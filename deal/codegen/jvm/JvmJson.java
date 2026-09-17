@@ -595,7 +595,14 @@ public final class JvmJson {
                 return raw instanceof Long ? raw : FAIL;
             }
             case "number" -> {
-                return (raw instanceof Double || raw instanceof Long) ? raw : FAIL;
+                // A number descriptor admits both lexical forms; an
+                // integer lexical carrier converts exactly to the number
+                // variant (the oracle's Int -> Number rule), so a decoded
+                // number slot always carries its own variant.
+                if (raw instanceof Long longValue) {
+                    return Double.valueOf(longValue.doubleValue());
+                }
+                return raw instanceof Double ? raw : FAIL;
             }
             case "string" -> {
                 return raw instanceof String string && validScalars(string) ? raw : FAIL;
@@ -615,7 +622,13 @@ public final class JvmJson {
         }
     }
 
-    /** Converts a parsed JSON container into the shared language value model. */
+    /**
+     * Converts one parsed JSON subtree into the shared language value
+     * model: containers recurse, a scalar leaf maps as-is (its own
+     * Long/Double/String/Boolean variant — the same per-occurrence
+     * classification the oracle's Int/Number carriers keep), and the
+     * JSON-null marker is mapped by the caller.
+     */
     private static Object toLanguage(Object value, int depth) {
         if (depth > MAX_DEPTH) {
             return null;
@@ -628,7 +641,9 @@ public final class JvmJson {
             out.length = out.elements.size();
             return out;
         }
-        JvmRuntime.Table table = (JvmRuntime.Table) value;
+        if (!(value instanceof JvmRuntime.Table table)) {
+            return value;
+        }
         JvmRuntime.Table out = new JvmRuntime.Table();
         for (Map.Entry<String, Object> entry : table.entries.entrySet()) {
             Object element = entry.getValue();

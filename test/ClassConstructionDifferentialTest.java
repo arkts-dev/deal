@@ -24,6 +24,8 @@ import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticOracle;
 import deal.semantic.SemanticRuntimeModel;
+import deal.semantic.ir.AnchorId;
+import deal.semantic.ir.BlockId;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ClassInterface;
@@ -39,15 +41,20 @@ import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.OpId;
+import deal.semantic.ir.OpResultType;
 import deal.semantic.ir.OperationContractSnapshot;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.ResolvedImport;
 import deal.semantic.ir.RuntimeDescriptor;
+import deal.semantic.ir.ScalarValue;
 import deal.semantic.ir.SemanticIdAllocator;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
+import deal.semantic.ir.SemanticValue;
 import deal.semantic.ir.SharedFactoryFacts;
+import deal.semantic.ir.SourceOrigin;
+import deal.semantic.ir.SourceOriginKind;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ValueId;
 
@@ -1046,36 +1053,57 @@ public class ClassConstructionDifferentialTest {
     /** The spec-stdlib declaration module path of the seed's cataloged import. */
     private static final String JSON_DECLARATION_PATH = "std/json.d.deal";
 
+    /** One spec-stdlib declaration module a seed's cataloged imports resolve to. */
+    private record StdlibDeclaration(String declarationPath, String modulePath,
+                                     String alias) {
+    }
+
+    private static final StdlibDeclaration JSON_DECLARATION =
+        new StdlibDeclaration(JSON_DECLARATION_PATH, "std/json", "json");
+    private static final StdlibDeclaration TABLE_DECLARATION =
+        new StdlibDeclaration("std/table.d.deal", "std/table", "tbl");
+
     /**
-     * The single-module class slice of the JSON_STRINGIFY seed: the same
+     * The single-module class slice of one seed: the same
      * production pipeline as {@link #lowerModule} plus the closure's
-     * spec-stdlib declaration module ({@code std/json.d.deal}) — the
-     * production population rule — so the manifest detector classifies the
-     * cataloged call as the CALL row's {@code STDLIB_CALL} form and the
-     * class-core session receives the resolved import facts (the closed
-     * stdlib recognition surface, exactly the full-program entry's
-     * {@code setModuleImports} wiring).
+     * spec-stdlib declaration modules ({@code std/json.d.deal} for the
+     * JSON_STRINGIFY seed) — the production population rule — so the
+     * manifest detector classifies the cataloged call as the CALL row's
+     * {@code STDLIB_CALL} form and the class-core session receives the
+     * resolved import facts (the closed stdlib recognition surface,
+     * exactly the full-program entry's {@code setModuleImports} wiring).
      */
     private static LoweredSlice lowerStdlibClassModule(String source, String what) {
+        return lowerStdlibClassModule(source, List.of(JSON_DECLARATION), what);
+    }
+
+    /** The class slice of a seed importing any of the given spec-stdlib modules. */
+    private static LoweredSlice lowerStdlibClassModule(String source,
+            List<StdlibDeclaration> declarations, String what) {
         CheckedSlice slice = checkSlice(source, MODULE, new StdlibResolver());
         if (slice == null) {
             return null;
         }
-        ProgramNode declaration = jsonDeclarationProgram();
-        if (declaration == null) {
-            return null;
+        List<ModuleFact> facts = new ArrayList<>();
+        List<ModuleFact.ImportFact> imports = new ArrayList<>();
+        for (StdlibDeclaration declaration : declarations) {
+            ProgramNode program = declarationProgram(declaration);
+            if (program == null) {
+                return null;
+            }
+            facts.add(new ModuleFact(declaration.declarationPath(),
+                new ModuleId(declaration.modulePath().replace('/', '.')), true, true,
+                program, Map.of(), null, null, List.of()));
+            imports.add(new ModuleFact.ImportFact(declaration.alias(),
+                declaration.modulePath(), declaration.declarationPath()));
         }
+        facts.add(new ModuleFact(SOURCE_ID, MODULE, false, false, slice.program(),
+            Map.of(), slice.symbols(), slice.checks(), imports));
         CompilerInvocation invocation = CompilerProfileProvider.resolveCommonShadow(
             SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
             CapabilityRegistry.releaseRegistry());
-        ModuleFact declarationFact = new ModuleFact(JSON_DECLARATION_PATH,
-            new ModuleId("std.json"), true, true, declaration, Map.of(), null, null,
-            List.of());
-        ModuleFact fact = new ModuleFact(SOURCE_ID, MODULE, false, false, slice.program(),
-            Map.of(), slice.symbols(), slice.checks(),
-            List.of(new ModuleFact.ImportFact("json", "std/json", JSON_DECLARATION_PATH)));
         deal.semantic.CheckedProjectBuildResult built = CheckedProjectBuilder.build(
-            invocation, MODULE, List.of(declarationFact, fact));
+            invocation, MODULE, facts);
         check(built != null && !built.hasErrors() && built.input() != null
                 && built.input().modules().size() == 1 && built.index() != null,
             what + ": the checked project builds cleanly: "
@@ -1120,19 +1148,19 @@ public class ClassConstructionDifferentialTest {
             result.registry());
     }
 
-    /** The parsed spec-stdlib {@code std/json} declaration program. */
-    private static ProgramNode jsonDeclarationProgram() {
+    /** The parsed spec-stdlib declaration program of one cataloged import. */
+    private static ProgramNode declarationProgram(StdlibDeclaration declaration) {
+        String path = declaration.declarationPath();
         try {
-            String text = Files.readString(Path.of(JSON_DECLARATION_PATH));
-            deal.lexer.LexResult lex = new Lexer(text, JSON_DECLARATION_PATH).tokenize();
-            deal.parser.ParseResult parse = new Parser(lex.tokens(), JSON_DECLARATION_PATH,
+            String text = Files.readString(Path.of(path));
+            deal.lexer.LexResult lex = new Lexer(text, path).tokenize();
+            deal.parser.ParseResult parse = new Parser(lex.tokens(), path,
                 lex.directiveEvents()).parse();
             check(parse.diagnostics().isEmpty(),
-                "the std/json declaration parses cleanly: " + parse.diagnostics());
+                "the " + path + " declaration parses cleanly: " + parse.diagnostics());
             return parse.diagnostics().isEmpty() ? parse.program() : null;
         } catch (java.io.IOException exception) {
-            fail("reading " + JSON_DECLARATION_PATH + " failed: "
-                + exception.getMessage());
+            fail("reading " + path + " failed: " + exception.getMessage());
             return null;
         }
     }
@@ -2138,7 +2166,201 @@ public class ClassConstructionDifferentialTest {
     }
 
     // =========================================================================
-    // 11. The emitter totality gate (one arm per kind; the default stays)
+    // 11. The class-JSON carrier interop (the cycle-3 review seed): a
+    //     table/array decoded by C$fromJson carries the full language-
+    //     carrier marker set (first-insertion order + per-slot number
+    //     marks), so the stdlib surfaces (TABLE_KEYS, JSON_STRINGIFY) and
+    //     the member writes/deletes work on a decoded carrier exactly as
+    //     on a TABLE_NEW carrier — three-way green with real artifacts.
+    // =========================================================================
+
+    static void testJsonFromClassCarrierInterop() {
+        System.out.println("-- Class-JSON carrier interop: a decoded table/array feeds "
+            + "tbl.keys, json.stringify and member write/delete on all three "
+            + "consumers --");
+        String source = """
+            import * as json from "std/json"
+            import * as tbl from "std/table"
+
+            // @jsonable
+            export class Wrap {
+              meta: table;
+              xs: number[];
+            }
+
+            let w: Wrap = {meta: {}, xs: []}
+            let s1: string = json.stringify(w.meta)
+            let s2: string = json.stringify({xs: w.xs})
+            let ks: string[] = tbl.keys(w.meta)
+            let s3: string = json.stringify({keys: ks})
+            let first: number = w.xs[0]
+            let s4: string = json.stringify({v: first})
+            w.meta.c = 3.5
+            let s5: string = json.stringify(w.meta)
+            delete w.meta.a
+            let s6: string = json.stringify(w.meta)
+            """;
+        LoweredSlice lowered = lowerStdlibClassModule(source,
+            List.of(JSON_DECLARATION, TABLE_DECLARATION),
+            "the class-JSON carrier interop seed");
+        if (lowered == null) {
+            return;
+        }
+        LoweredSlice driven = withJsonFromClassDrive(lowered,
+            "{\"meta\":{\"a\":1,\"b\":2.5},\"xs\":[1,2.5]}",
+            "the class-JSON carrier interop seed");
+        if (driven == null) {
+            return;
+        }
+        SemanticDifferentialHarness.Verdict verdict = SemanticDifferentialHarness.run(
+            driven.unit(), driven.table(),
+            new SemanticDifferentialHarness.Expectation(List.of(),
+                new SemanticDifferentialHarness.TerminalExpectation.SuccessWith("null"),
+                "the class-JSON carrier interop seed"),
+            WORKSPACE);
+        check(verdict.pass(), "the class-JSON carrier interop seed: the three-consumer "
+            + "matrix verdict passes:\n" + verdict.report());
+        if (!verdict.pass()) {
+            return;
+        }
+        // The decoded carriers through the stdlib surfaces: the table's
+        // per-slot variants, the array's, the first-insertion key order,
+        // and the member write/delete visibility. The tbl.keys array
+        // publishes as its allocation atom (identity, unconstrained).
+        List<String> outputs = successOutputs(verdict, SemanticOpKind.STDLIB_CALL);
+        List<String> texts = new ArrayList<>();
+        for (String output : outputs) {
+            texts.add(output.startsWith("ref:") ? "ref:*" : output);
+        }
+        check(texts.equals(List.of(
+                "str:{\"a\":1,\"b\":2.5}",
+                "str:{\"xs\":[1.0,2.5]}",
+                "ref:*",
+                "str:{\"keys\":[\"a\",\"b\"]}",
+                "str:{\"v\":1.0}",
+                "str:{\"a\":1,\"b\":2.5,\"c\":3.5}",
+                "str:{\"b\":2.5,\"c\":3.5}")),
+            "the decoded carriers serialize through TABLE_KEYS/JSON_STRINGIFY: " + outputs);
+    }
+
+    // =========================================================================
+    // The class-JSON drive wiring of one seed
+    // =========================================================================
+
+    /**
+     * Drives the lowered {@code C$fromJson} walk through the module-init
+     * walk of a class slice: the real lowered {@code JSON_FROM_CLASS} op
+     * replaces the module-level class literal it decodes — the same op
+     * identity, origin, parent, and result value, so the consuming chain
+     * observes the decoded instance exactly as the literal's — with the
+     * walk's JSON text operand a fresh {@code CONST} op. The generated
+     * function carries no callable binding in the class-core slice (its
+     * export publication is E10's), so the drive is the only path that
+     * executes the real lowered op; every consumer runs the resulting
+     * artifact through the real toolchains.
+     */
+    private static LoweredSlice withJsonFromClassDrive(LoweredSlice slice,
+            String jsonText, String what) {
+        LoweredModuleUnit unit = slice.unit();
+        List<SemanticOp> literals = ofKind(unit, SemanticOpKind.CLASS_NEW);
+        List<SemanticOp> walks = ofKind(unit, SemanticOpKind.JSON_FROM_CLASS);
+        check(literals.size() == 1 && walks.size() == 1,
+            what + ": the slice carries one class literal and one JSON_FROM_CLASS "
+                + "walk, got " + literals.size() + " / " + walks.size());
+        if (literals.size() != 1 || walks.size() != 1) {
+            return null;
+        }
+        SemanticOp literal = literals.get(0);
+        SemanticOp walk = walks.get(0);
+        List<SemanticOp> literalChildren = childrenOf(unit, literal);
+        check(literalChildren.size() == 2, what + ": the class literal parents its two "
+            + "field boundaries, got " + literalChildren.size());
+        if (literalChildren.size() != 2) {
+            return null;
+        }
+        java.util.Set<OpId> childIds = new java.util.LinkedHashSet<>();
+        for (SemanticOp child : literalChildren) {
+            childIds.add(child.opId());
+        }
+        long maxId = 0;
+        for (SemanticOp op : unit.ops()) {
+            maxId = Math.max(maxId, op.opId().id());
+            if (op.result() instanceof ValueId valueId) {
+                maxId = Math.max(maxId, valueId.id());
+            }
+        }
+        long fresh = maxId + 1000;
+        ValueId textValue = new ValueId(fresh);
+        OpId textOpId = new OpId(MODULE, fresh);
+        SemanticOp textOp = wiredOp(textOpId, SemanticOpKind.CONST,
+            new SourceOrigin(SOURCE_ID, literal.origin().span(),
+                SourceOriginKind.SYNTHETIC, new AnchorId(fresh), null),
+            textValue, RuntimeDescriptor.String.INSTANCE, List.of(), List.of(),
+            new KindPayload.ConstPayload(new ScalarValue.String(jsonText)),
+            FailurePolicyId.NO_DEAL_FAILURE);
+        KindPayload.JsonFromClassPayload walkPayload =
+            (KindPayload.JsonFromClassPayload) walk.payload();
+        SemanticOp driveOp = wiredOp(literal.opId(), SemanticOpKind.JSON_FROM_CLASS,
+            literal.origin(), (ValueId) literal.result(), walk.resultType(),
+            List.of(textValue), List.of(RuntimeDescriptor.String.INSTANCE),
+            new KindPayload.JsonFromClassPayload(walkPayload.layout(), textValue),
+            walk.failurePolicy());
+        List<SemanticOp> ops = new ArrayList<>();
+        for (SemanticOp op : unit.ops()) {
+            if (op.opId().equals(literal.opId())) {
+                ops.add(textOp);
+                ops.add(driveOp);
+            } else if (!childIds.contains(op.opId())) {
+                ops.add(op);
+            }
+        }
+        BlockId initBlock = unit.moduleInit().initBlock();
+        Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
+        for (Map.Entry<BlockId, List<OpId>> entry : slice.table().blockOps().entrySet()) {
+            List<OpId> ids = new ArrayList<>();
+            for (OpId id : entry.getValue()) {
+                if (id.equals(literal.opId())) {
+                    ids.add(textOpId);
+                    ids.add(driveOp.opId());
+                } else if (!childIds.contains(id)) {
+                    ids.add(id);
+                }
+            }
+            blockOps.put(entry.getKey(), ids);
+        }
+        Map<OpId, BlockId> opBlocks = new LinkedHashMap<>();
+        for (Map.Entry<OpId, BlockId> entry : slice.table().opBlocks().entrySet()) {
+            if (!childIds.contains(entry.getKey())) {
+                opBlocks.put(entry.getKey(), entry.getValue());
+            }
+        }
+        opBlocks.put(textOpId, initBlock);
+        opBlocks.put(driveOp.opId(), initBlock);
+        check(blockOps.containsKey(initBlock)
+                && blockOps.get(initBlock).contains(driveOp.opId()),
+            what + ": the module-init block carries the driven walk");
+        return new LoweredSlice(withOps(unit, ops),
+            new StructuredBodyTable(blockOps, opBlocks), slice.registry());
+    }
+
+    /** Builds one op with the contract snapshot recomputed over its own fields. */
+    private static SemanticOp wiredOp(OpId opId, SemanticOpKind kind, SourceOrigin origin,
+            SemanticValue result, OpResultType resultType, List<ValueId> operands,
+            List<RuntimeDescriptor> operandTypes, KindPayload payload,
+            FailurePolicyId failurePolicy) {
+        OperationContractSnapshot placeholder = new OperationContractSnapshot(
+            OperationContractSnapshot.VERSION, kind, resultType, operandTypes, null, payload,
+            failurePolicy, List.of(), "placeholder");
+        String digest = ContractSnapshotCanonicalizer.digest(placeholder);
+        OperationContractSnapshot contract = new OperationContractSnapshot(
+            OperationContractSnapshot.VERSION, kind, resultType, operandTypes, null, payload,
+            failurePolicy, List.of(), digest);
+        return new SemanticOp(opId, kind, origin, result, resultType, operands, operandTypes,
+            payload, failurePolicy, contract);
+    }
+
+    // =========================================================================
+    // 12. The emitter totality gate (one arm per kind; the default stays)
     // =========================================================================
 
     static void testEmitterTotality() {
@@ -2197,6 +2419,7 @@ public class ClassConstructionDifferentialTest {
         testRequiredFieldMissingRegistryError();
         testFieldProductionModeRealization();
         testJsonStringifyClassProjection();
+        testJsonFromClassCarrierInterop();
         testEmitterTotality();
         System.out.println();
         System.out.println("ClassConstructionDifferentialTest passed=" + passed

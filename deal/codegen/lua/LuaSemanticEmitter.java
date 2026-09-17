@@ -3936,7 +3936,6 @@ public final class LuaSemanticEmitter {
 local __JSONSYNTAX = setmetatable({}, {__tostring = function() return "json-syntax" end})
 local __JNULL = setmetatable({}, {__tostring = function() return "json-null" end})
 local __JSON_MAX_DEPTH = 512
-local __jsonIntCarriers = {}
 local __plans = {}
 local __BS = string.char(92)
 local __QT = string.char(34)
@@ -3947,7 +3946,7 @@ local function __jsonIsArray(v)
   return type(v) == "table" and v.__ja == true
 end
 local function __jsonEmptyObject()
-  return {__jo = true, __jkeys = {}}
+  return {__jo = true, __jkeys = {}, __jnum = {}}
 end
 local function __jsonUtf8(cp)
   if cp < 0x80 then return string.char(cp) end
@@ -3993,10 +3992,14 @@ local function __jsonValidUtf8(s)
   end
   return true
 end
--- The E8 parse: a digits-only in-range integer lexical form is recorded
--- in __jsonIntCarriers (the int-carrier mapping); duplicate keys keep the
--- last value and the first position; any syntax defect returns
--- __JSONSYNTAX.
+-- The E8 parse: every number carries its per-occurrence lexical variant
+-- in the container's __jnum set — a digits-only in-range integer form is
+-- the int variant, every other numeric form the number variant, exactly
+-- the classification the shared parser and the JVM keep — so the
+-- language carriers can mark their slots and the int descriptor admits
+-- only integer lexical carriers; duplicate keys keep the last value, the
+-- first position, and the last value's own variant; any syntax defect
+-- returns __JSONSYNTAX.
 local function __jsonParse(s)
   local pos = 1
   local len = #s
@@ -4107,9 +4110,12 @@ local function __jsonParse(s)
     local value = tonumber(text)
     if value == nil then return nil end
     if integral and value >= -2147483648 and value <= 2147483647 then
-      __jsonIntCarriers[value] = true
+      -- The signed32 integer lexical form: the int variant with -0
+      -- normalized to 0 (the shared parser's exact rule).
+      if value == 0 then value = 0 end
+      return value, false
     end
-    return value
+    return value, true
   end
   parseValue = function(depth)
     if depth > __JSON_MAX_DEPTH then return nil end
@@ -4118,7 +4124,7 @@ local function __jsonParse(s)
     local c = string.sub(s, pos, pos)
     if c == "{" then
       pos = pos + 1
-      local obj = {__jo = true, __jkeys = {}}
+      local obj = {__jo = true, __jkeys = {}, __jnum = {}}
       skipws()
       if pos <= len and string.sub(s, pos, pos) == "}" then
         pos = pos + 1
@@ -4132,10 +4138,11 @@ local function __jsonParse(s)
         skipws()
         if pos > len or string.sub(s, pos, pos) ~= ":" then return nil end
         pos = pos + 1
-        local value = parseValue(depth + 1)
+        local value, numberVariant = parseValue(depth + 1)
         if value == nil then return nil end
         if obj[key] == nil then obj.__jkeys[#obj.__jkeys + 1] = key end
         obj[key] = value
+        if numberVariant then obj.__jnum[key] = true else obj.__jnum[key] = nil end
         skipws()
         if pos > len then return nil end
         c = string.sub(s, pos, pos)
@@ -4145,17 +4152,18 @@ local function __jsonParse(s)
       end
     elseif c == "[" then
       pos = pos + 1
-      local arr = {__ja = true, __n = 0}
+      local arr = {__ja = true, __n = 0, __jnum = {}}
       skipws()
       if pos <= len and string.sub(s, pos, pos) == "]" then
         pos = pos + 1
         return arr
       end
       while true do
-        local value = parseValue(depth + 1)
+        local value, numberVariant = parseValue(depth + 1)
         if value == nil then return nil end
         arr.__n = arr.__n + 1
         arr[arr.__n] = value
+        if numberVariant then arr.__jnum[arr.__n] = true end
         skipws()
         if pos > len then return nil end
         c = string.sub(s, pos, pos)
@@ -4279,27 +4287,42 @@ local function __jsonDefaultRun(f)
   __ev(f.dk, "SUCCESS", "CLASS_DEFAULT", f.dd, "-", {}, __atom(f.k, produced), nil)
   return true, produced
 end
+-- The language carrier of one parsed JSON subtree: the shared table
+-- carrier's full marker set — the presence map __keys, the
+-- first-insertion order list __order (the TABLE_NEW / JSON_PARSE
+-- carriers'), and the per-slot number marks __nK — so every carrier
+-- consumer (TABLE_KEYS, JSON_STRINGIFY, the member/index writes and
+-- deletes, and the read-side variant materialization) works on a
+-- decoded table exactly as on a constructed one. The marks follow the
+-- parser's per-occurrence lexical int/number classification; a nested
+-- container carries its own markers.
 local function __jsonToLanguage(v)
   if __jsonIsArray(v) then
-    local out = {__a = true, __n = v.__n}
+    local out = {__a = true, __n = v.__n, __nK = {}}
     for i = 1, v.__n do
       local element = v[i]
       if element == __JNULL then out[i] = __NULL
       elseif __jsonIsObject(element) or __jsonIsArray(element) then
         out[i] = __jsonToLanguage(element)
-      else out[i] = element end
+      else
+        out[i] = element
+        if v.__jnum[i] == true then out.__nK[i] = true end
+      end
     end
     return out
   end
-  local out = {__t = true, __keys = {}}
+  local out = {__t = true, __keys = {}, __order = {}, __nK = {}}
   for i = 1, #v.__jkeys do
     local key = v.__jkeys[i]
     local element = v[key]
-    out.__keys[key] = true
+    __orderAdd(out, key)
     if element == __JNULL then out[key] = __NULL
     elseif __jsonIsObject(element) or __jsonIsArray(element) then
       out[key] = __jsonToLanguage(element)
-    else out[key] = element end
+    else
+      out[key] = element
+      if v.__jnum[key] == true then out.__nK[key] = true end
+    end
   end
   return out
 end
@@ -4332,7 +4355,15 @@ local function __jsonConforms(desc, v)
   return kind ~= "class"
 end
 -- The provided-field decode of one declared descriptor (K-D8 step 4).
-local function __jsonDecodeRaw(desc, v, depth)
+-- The fourth argument is the raw value's own number variant (the
+-- parser's per-occurrence lexical classification; meaningful for
+-- numbers): an int descriptor admits only an integer lexical carrier
+-- (the oracle's Int-only rule), a number descriptor admits both forms
+-- and publishes the number variant (its Int case converts exactly) —
+-- so every decoded scalar keeps its own variant, and the decoded
+-- container carriers record their slots' variants for the
+-- read/write/JSON_STRINGIFY consumers.
+local function __jsonDecodeRaw(desc, v, depth, numberVariant)
   if depth > __JSON_MAX_DEPTH then return false end
   local kind, inner = __jsonKindOf(desc)
   if kind == "null" then
@@ -4342,34 +4373,37 @@ local function __jsonDecodeRaw(desc, v, depth)
     if type(v) == "boolean" then return true, v end
     return false
   elseif kind == "int" then
-    if type(v) == "number" and v == math.floor(v)
-        and v >= -2147483648 and v <= 2147483647
-        and __jsonIntCarriers[v] == true then
-      return true, v
+    if type(v) == "number" and not numberVariant and v == math.floor(v)
+        and v >= -2147483648 and v <= 2147483647 then
+      return true, v, "int"
     end
     return false
   elseif kind == "number" then
-    if type(v) == "number" then return true, v end
+    if type(v) == "number" then return true, v, "number" end
     return false
   elseif kind == "string" then
     if type(v) == "string" and __jsonValidUtf8(v) then return true, v end
     return false
   elseif kind == "table" then
     if __jsonIsObject(v) then return true, __jsonToLanguage(v) end
-    if __jsonIsArray(v) and v.__n == 0 then return true, {__t = true, __keys = {}} end
+    if __jsonIsArray(v) and v.__n == 0 then
+      return true, {__t = true, __keys = {}, __order = {}, __nK = {}}
+    end
     return false
   elseif kind == "array" then
     if not __jsonIsArray(v) then return false end
-    local out = {__a = true, __n = v.__n}
+    local out = {__a = true, __n = v.__n, __nK = {}}
     for i = 1, v.__n do
-      local ok, element = __jsonDecodeRaw(inner, v[i], depth + 1)
+      local ok, element, elementVariant =
+        __jsonDecodeRaw(inner, v[i], depth + 1, v.__jnum[i] == true)
       if not ok then return false end
       out[i] = (element == nil) and __NULL or element
+      if elementVariant == "number" then out.__nK[i] = true end
     end
     return true, out
   elseif kind == "nullable" then
     if v == __JNULL then return true, nil end
-    return __jsonDecodeRaw(inner, v, depth)
+    return __jsonDecodeRaw(inner, v, depth, numberVariant)
   elseif kind == "class" then
     error("a nested @jsonable class field (" .. desc .. ") has no shared JSON walk "
       .. "in this slice (producer defect, the nested shape is not emitted)", 0)
@@ -4408,7 +4442,8 @@ local function __jsonFromClassOp(planName, text)
   for i = 1, #fields do
     local f = fields[i]
     if doc[f.name] ~= nil then
-      local ok, decoded = __jsonDecodeRaw(f.desc, doc[f.name], 0)
+      local ok, decoded = __jsonDecodeRaw(f.desc, doc[f.name], 0,
+        doc.__jnum[f.name] == true)
       if not ok then return nil end
       values[f.name] = decoded
       provided[f.name] = true
