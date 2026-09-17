@@ -100,19 +100,7 @@ public final class ReleaseConfiguration {
      * proven green three-way on the group/closure corpus — atomic
      * publication, fresh identities, one factory invocation per member
      * per execution, and the nested-scope emission shape — before the
-     * promotion landed). The step-7 cutover promotion (ISSUE-0585)
-     * extends the list with {@code STDLIB_SEMANTICS} for both targets,
-     * still in the pinned capability order: the existing
-     * {@code STDLIB_CALL} emission was completed and proven green
-     * three-way on the stdlib corpus — the closed 20-operation catalog
-     * (string/table/json/math families and the console effects) plus the
-     * failure projections (the parameter-boundary E8001, the
-     * {@code INT32_RESULT} E8004, the {@code SQRT_NEGATIVE} and
-     * {@code JSON_PARSE_SYNTAX}/{@code JSON_TO_ERROR} E8001 projections,
-     * and the return-boundary E8001) through the semantic oracle and
-     * both shared emitters' real artifacts — before the promotion
-     * landed; the locked {@code STDLIB_TIME_CONFLICT} marker stays
-     * outside the list. The list is the registry half of E12's one
+     * promotion landed). The list is the registry half of E12's one
      * atomic release change plus its later promotion units.
      */
     private static final List<ReleasePromotion> ACTIVATION_PROMOTIONS = List.of(
@@ -129,9 +117,7 @@ public final class ReleaseConfiguration {
         new ReleasePromotion(SemanticCapability.EVALUATION_ORDER, Target.LUAJIT),
         new ReleasePromotion(SemanticCapability.EVALUATION_ORDER, Target.JVM),
         new ReleasePromotion(SemanticCapability.BINDINGS, Target.LUAJIT),
-        new ReleasePromotion(SemanticCapability.BINDINGS, Target.JVM),
-        new ReleasePromotion(SemanticCapability.STDLIB_SEMANTICS, Target.LUAJIT),
-        new ReleasePromotion(SemanticCapability.STDLIB_SEMANTICS, Target.JVM));
+        new ReleasePromotion(SemanticCapability.BINDINGS, Target.JVM));
 
     /**
      * The release registry after E12's activation release action: the
@@ -181,15 +167,14 @@ public final class ReleaseConfiguration {
 
     /**
      * The release capability registry (foundation F7) after E12's
-     * activation plus the step-1 through step-5 and step-7 cutover
-     * promotions:
+     * activation plus the step-1 through step-5 cutover promotions:
      * {@link CapabilityRegistry#releaseRegistry()} composed with the
      * E12 promotion list through {@code withState} —
      * {@code FOUNDATION_VALUES}, {@code SIGNED_INT32},
      * {@code CONTAINERS_AND_STRINGS}, {@code DESCRIPTORS},
-     * {@code BOUNDARIES}, {@code EVALUATION_ORDER},
-     * {@code BINDINGS}, and {@code STDLIB_SEMANTICS} promoted for
-     * {@code LUAJIT} and {@code JVM}, every other entry {@code SHADOW}.
+     * {@code BOUNDARIES}, {@code EVALUATION_ORDER}, and
+     * {@code BINDINGS} promoted for {@code LUAJIT} and {@code JVM},
+     * every other entry {@code SHADOW}.
      * {@code deal/Main.java}, {@code CompilationOrchestrator}, and the
      * internal harnesses consume exactly this instance for invocation
      * resolution and route planning.

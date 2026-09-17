@@ -1411,7 +1411,7 @@ public class RuntimeIntegrationMatrixTest {
     }
 
     // =========================================================================
-    // 7. The stdlib matrix (the step-7 cutover): the closed STDLIB_CALL
+    // 7. The stdlib matrix (ISSUE-0585): the closed STDLIB_CALL
     //    realization — cataloged calls and failure projections through
     //    the semantic oracle and both shared emitters' real artifacts
     // =========================================================================

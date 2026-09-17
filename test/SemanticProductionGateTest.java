@@ -941,9 +941,9 @@ public class SemanticProductionGateTest {
             "the release registry promotes DESCRIPTORS for LUAJIT and JVM");
         List<ReleaseConfiguration.ReleasePromotion> promotions =
             ReleaseConfiguration.activationPromotions();
-        check(promotions.size() == 16,
+        check(promotions.size() == 14,
             "the release promotion list carries exactly the E12, step-1, "
-                + "step-2, step-3, step-4, step-5, and step-7 pairs (16 entries); got "
+                + "step-2, step-3, step-4, and step-5 pairs (14 entries); got "
                 + promotions.size());
         check(promotions.indexOf(new ReleaseConfiguration.ReleasePromotion(
                 deal.semantic.ir.SemanticCapability.DESCRIPTORS,
@@ -1294,9 +1294,9 @@ public class SemanticProductionGateTest {
             "the release registry promotes BOUNDARIES for LUAJIT and JVM");
         List<ReleaseConfiguration.ReleasePromotion> promotions =
             ReleaseConfiguration.activationPromotions();
-        check(promotions.size() == 16,
+        check(promotions.size() == 14,
             "the release promotion list carries exactly the E12, step-1, "
-                + "step-2, step-3, step-4, step-5, and step-7 pairs (16 entries); got "
+                + "step-2, step-3, step-4, and step-5 pairs (14 entries); got "
                 + promotions.size());
         check(promotions.indexOf(new ReleaseConfiguration.ReleasePromotion(
                 deal.semantic.ir.SemanticCapability.BOUNDARIES,
@@ -1313,13 +1313,12 @@ public class SemanticProductionGateTest {
             "the step-3 promotion sits in the pinned capability order with LUAJIT "
                 + "before JVM");
         // Capability order and the time lock stay enforced: no pair after
-        // STDLIB_SEMANTICS appears in the list, and the locked routing
-        // marker STDLIB_TIME_CONFLICT is never a promotion pair (parent
-        // D8).
+        // BINDINGS appears in the list, and the locked routing marker
+        // STDLIB_TIME_CONFLICT is never a promotion pair (parent D8).
         check(promotions.stream().allMatch(promotion ->
                 promotion.capability().ordinal()
-                    <= deal.semantic.ir.SemanticCapability.STDLIB_SEMANTICS.ordinal()),
-            "the promotion list carries no capability after STDLIB_SEMANTICS "
+                    <= deal.semantic.ir.SemanticCapability.BINDINGS.ordinal()),
+            "the promotion list carries no capability after BINDINGS "
                 + "(capability order enforced)");
         check(promotions.stream().noneMatch(promotion ->
                 promotion.capability()
@@ -1710,9 +1709,9 @@ public class SemanticProductionGateTest {
             "the release registry promotes EVALUATION_ORDER for LUAJIT and JVM");
         List<ReleaseConfiguration.ReleasePromotion> promotions =
             ReleaseConfiguration.activationPromotions();
-        check(promotions.size() == 16,
+        check(promotions.size() == 14,
             "the release promotion list carries exactly the E12, step-1, "
-                + "step-2, step-3, step-4, step-5, and step-7 pairs (16 entries); got "
+                + "step-2, step-3, step-4, and step-5 pairs (14 entries); got "
                 + promotions.size());
         check(promotions.indexOf(new ReleaseConfiguration.ReleasePromotion(
                 deal.semantic.ir.SemanticCapability.EVALUATION_ORDER,
@@ -1729,13 +1728,12 @@ public class SemanticProductionGateTest {
             "the step-4 promotion sits in the pinned capability order with LUAJIT "
                 + "before JVM");
         // Capability order and the time lock stay enforced: no pair after
-        // STDLIB_SEMANTICS appears in the list, and the locked routing
-        // marker STDLIB_TIME_CONFLICT is never a promotion pair (parent
-        // D8).
+        // BINDINGS appears in the list, and the locked routing marker
+        // STDLIB_TIME_CONFLICT is never a promotion pair (parent D8).
         check(promotions.stream().allMatch(promotion ->
                 promotion.capability().ordinal()
-                    <= deal.semantic.ir.SemanticCapability.STDLIB_SEMANTICS.ordinal()),
-            "the promotion list carries no capability after STDLIB_SEMANTICS "
+                    <= deal.semantic.ir.SemanticCapability.BINDINGS.ordinal()),
+            "the promotion list carries no capability after BINDINGS "
                 + "(capability order enforced)");
         check(promotions.stream().noneMatch(promotion ->
                 promotion.capability()
@@ -2191,9 +2189,9 @@ public class SemanticProductionGateTest {
             "the release registry promotes BINDINGS for LUAJIT and JVM");
         List<ReleaseConfiguration.ReleasePromotion> promotions =
             ReleaseConfiguration.activationPromotions();
-        check(promotions.size() == 16,
+        check(promotions.size() == 14,
             "the release promotion list carries exactly the E12, step-1, "
-                + "step-2, step-3, step-4, step-5, and step-7 pairs (16 entries); got "
+                + "step-2, step-3, step-4, and step-5 pairs (14 entries); got "
                 + promotions.size());
         check(promotions.indexOf(new ReleaseConfiguration.ReleasePromotion(
                 deal.semantic.ir.SemanticCapability.BINDINGS,
@@ -2210,13 +2208,12 @@ public class SemanticProductionGateTest {
             "the step-5 promotion sits in the pinned capability order with LUAJIT "
                 + "before JVM");
         // Capability order and the time lock stay enforced: no pair after
-        // STDLIB_SEMANTICS appears in the list, and the locked routing
-        // marker STDLIB_TIME_CONFLICT is never a promotion pair (parent
-        // D8).
+        // BINDINGS appears in the list, and the locked routing marker
+        // STDLIB_TIME_CONFLICT is never a promotion pair (parent D8).
         check(promotions.stream().allMatch(promotion ->
                 promotion.capability().ordinal()
-                    <= deal.semantic.ir.SemanticCapability.STDLIB_SEMANTICS.ordinal()),
-            "the promotion list carries no capability after STDLIB_SEMANTICS "
+                    <= deal.semantic.ir.SemanticCapability.BINDINGS.ordinal()),
+            "the promotion list carries no capability after BINDINGS "
                 + "(capability order enforced)");
         check(promotions.stream().noneMatch(promotion ->
                 promotion.capability()
@@ -2453,17 +2450,7 @@ public class SemanticProductionGateTest {
                     deal.semantic.Target.JVM) == CapabilityRegistry.State.SHADOW,
             "the post-step-4 registry keeps BINDINGS SHADOW for both targets");
 
-        // The step-5 release registry: the post-step-4 registry composed
-        // with the step-5 cutover promotion (BINDINGS for both targets)
-        // through the single withState transition surface — the exact
-        // release state the step-7 promotion (ISSUE-0585) extends.
-        // (The live release registry now carries the later step-7 pairs,
-        // so this historical pin composes the step-5 state explicitly.)
-        CapabilityRegistry step5 = postStep4
-            .withState(deal.semantic.ir.SemanticCapability.BINDINGS,
-                deal.semantic.Target.LUAJIT, CapabilityRegistry.State.PROMOTED)
-            .withState(deal.semantic.ir.SemanticCapability.BINDINGS,
-                deal.semantic.Target.JVM, CapabilityRegistry.State.PROMOTED);
+        CapabilityRegistry step5 = ReleaseConfiguration.releaseCapabilityRegistry();
         String step5Hash = step5.capabilityRegistryHash();
 
         // The promotion is a real registry transition: the digest over the
@@ -2543,312 +2530,6 @@ public class SemanticProductionGateTest {
                 + "EVALUATION_ORDER, and BINDINGS for both targets; every other "
                 + "capability stays SHADOW");
 
-        // Anti-hollow: re-deriving the step-5 promotion list prefix (the
-        // first fourteen release promotions) through the withState
-        // surface reproduces the step-5 release digest — the step-5
-        // registry is exactly the composed prefix, never a hand-written
-        // digest constant. (The full release list now carries the later
-        // step-7 pairs, so the full-list recomposition is the step-7
-        // digest test's proof.)
-        CapabilityRegistry recomposed = CapabilityRegistry.releaseRegistry();
-        List<ReleaseConfiguration.ReleasePromotion> promotions =
-            ReleaseConfiguration.activationPromotions();
-        for (int i = 0; i < 14 && i < promotions.size(); i++) {
-            ReleaseConfiguration.ReleasePromotion promotion = promotions.get(i);
-            recomposed = recomposed.withState(promotion.capability(),
-                promotion.target(), CapabilityRegistry.State.PROMOTED);
-        }
-        check(recomposed.capabilityRegistryHash().equals(step5Hash),
-            "re-deriving the step-5 promotion list prefix through withState "
-                + "reproduces the step-5 release registry digest");
-        check(!recomposed.capabilityRegistryHash().equals(postStep4Hash),
-            "the recomposed step-5 digest still differs from the post-step-4 "
-                + "digest (the prior release digest is left behind)");
-    }
-
-    private static final String STDLIB_RETAINED_SOURCE =
-        "import * as console from \"std/console\"\n"
-            + "import * as str from \"std/string\"\n"
-            + "import * as math from \"std/math\"\n"
-            + "import * as json from \"std/json\"\n"
-            + "\n"
-            + "function exercise(): null {\n"
-            + "  let n: int = str.length(\"héllo\")\n"
-            + "  let m: int = math.absInt(-5)\n"
-            + "  let d: table = json.parse(\"{\\\"a\\\": 1}\")\n"
-            + "  let a: int = d.a\n"
-            + "  if (n !== 5 || m !== 5 || a !== 1) {\n"
-            + "    throw { code: \"TEST_FAIL\", message: \"stdlib mismatch\" }\n"
-            + "  }\n"
-            + "  console.log(\"ok\")\n"
-            + "  return null\n"
-            + "}\n"
-            + "\n"
-            + "export function main(): null {\n"
-            + "  exercise()\n"
-            + "  return null\n"
-            + "}\n";
-
-    private static void testStep7CutoverPromotion() throws Exception {
-        System.out.println("-- Step-7 cutover: STDLIB_SEMANTICS promoted; stdlib-claiming "
-            + "modules route per rule 4 (SHARED where claims allow), the retained "
-            + "route still compiles and runs, and the bytes/time exceptions stay --");
-
-        // The release registry carries the step-7 promotion in the pinned
-        // capability order (STDLIB_SEMANTICS after BINDINGS, LUAJIT before
-        // JVM) with a recomputed digest.
-        CapabilityRegistry registry = ReleaseConfiguration.releaseCapabilityRegistry();
-        check(registry.state(deal.semantic.ir.SemanticCapability.STDLIB_SEMANTICS,
-                deal.semantic.Target.LUAJIT) == CapabilityRegistry.State.PROMOTED
-                && registry.state(
-                    deal.semantic.ir.SemanticCapability.STDLIB_SEMANTICS,
-                    deal.semantic.Target.JVM) == CapabilityRegistry.State.PROMOTED,
-            "the release registry promotes STDLIB_SEMANTICS for LUAJIT and JVM");
-        List<ReleaseConfiguration.ReleasePromotion> promotions =
-            ReleaseConfiguration.activationPromotions();
-        check(promotions.size() == 16,
-            "the release promotion list carries exactly the E12, step-1, "
-                + "step-2, step-3, step-4, step-5, and step-7 pairs (16 entries); got "
-                + promotions.size());
-        check(promotions.indexOf(new ReleaseConfiguration.ReleasePromotion(
-                deal.semantic.ir.SemanticCapability.STDLIB_SEMANTICS,
-                deal.semantic.Target.LUAJIT))
-                > promotions.indexOf(new ReleaseConfiguration.ReleasePromotion(
-                    deal.semantic.ir.SemanticCapability.BINDINGS,
-                    deal.semantic.Target.JVM))
-                && promotions.indexOf(new ReleaseConfiguration.ReleasePromotion(
-                    deal.semantic.ir.SemanticCapability.STDLIB_SEMANTICS,
-                    deal.semantic.Target.LUAJIT))
-                    < promotions.indexOf(new ReleaseConfiguration.ReleasePromotion(
-                        deal.semantic.ir.SemanticCapability.STDLIB_SEMANTICS,
-                        deal.semantic.Target.JVM)),
-            "the step-7 promotion sits in the pinned capability order with LUAJIT "
-                + "before JVM");
-        // Capability order and the time lock stay enforced: no pair after
-        // STDLIB_SEMANTICS appears in the list, and the locked routing
-        // marker STDLIB_TIME_CONFLICT is never a promotion pair (parent
-        // D8).
-        check(promotions.stream().allMatch(promotion ->
-                promotion.capability().ordinal()
-                    <= deal.semantic.ir.SemanticCapability.STDLIB_SEMANTICS.ordinal()),
-            "the promotion list carries no capability after STDLIB_SEMANTICS "
-                + "(capability order enforced)");
-        check(promotions.stream().noneMatch(promotion ->
-                promotion.capability()
-                    == deal.semantic.ir.SemanticCapability.STDLIB_TIME_CONFLICT),
-            "the promotion list never carries STDLIB_TIME_CONFLICT "
-                + "(the time lock stays enforced)");
-
-        // LuaJIT: the production PUBLIC_BUILD + V1_2_ACTIVE compile of a
-        // project exercising cataloged stdlib calls (string/math/json/
-        // console). The module's manifest claims MODULES (the import
-        // arm) — still SHADOW until the MODULES cutover — so rule 4
-        // keeps it on the retained route (SHARED only where every claim
-        // is promoted, never a silent flip); the retained artifact
-        // compiles and runs the cataloged calls as before under the real
-        // toolchain (anti-hollow: the throw guard fires unless the
-        // retained stdlib results land).
-        Path luaProject = Files.createTempDirectory("deal-e10-stdlib-lua-");
-        try {
-            write(luaProject, "deal.json", DEAL_JSON_LUA);
-            write(luaProject, "src/main.deal", STDLIB_RETAINED_SOURCE);
-            CompilationOrchestrator orchestrator =
-                compileProject(luaProject, "src/main.deal", "out");
-            check(orchestrator.semanticEmissionCount() == 0
-                    && orchestrator.retainedEmissionCount() == 1,
-                "the stdlib-claiming LuaJIT module emits zero semantic/one "
-                    + "retained artifact while its MODULES claim stays SHADOW: "
-                    + "semantic=" + orchestrator.semanticEmissionCount()
-                    + " retained=" + orchestrator.retainedEmissionCount());
-            RoutePlanResult plan = orchestrator.routePlan();
-            check(plan != null && !plan.hasErrors() && plan.plan() != null
-                    && plan.plan().entries().values().stream()
-                        .allMatch(route -> route == ModuleRoute.LEGACY),
-                "the stdlib-claiming plan stays LEGACY (rule 4: the MODULES "
-                    + "claim is not promoted yet; the promotion never flips an "
-                    + "unpromoted claim): " + (plan == null ? "null" : plan.plan()));
-            ProcessOutcome run = runProcess(luaProject.resolve("out"),
-                List.of("luajit", "main.lua"));
-            check(run.exitCode() == 0 && run.output().contains("ok"),
-                "the retained LuaJIT stdlib artifact compiles and runs the "
-                    + "cataloged calls as before: exit=" + run.exitCode()
-                    + " output=" + run.output().replace("\n", "\\n"));
-        } finally {
-            deleteRecursively(luaProject);
-        }
-
-        // JVM: the same production compile stays on the retained route
-        // (zero semantic/one retained); the retained artifact compiles
-        // under javac --release 25 -proc:none and runs under java.
-        Path jvmProject = Files.createTempDirectory("deal-e10-stdlib-jvm-");
-        try {
-            write(jvmProject, "deal.json", DEAL_JSON_JVM);
-            write(jvmProject, "src/main.deal", STDLIB_RETAINED_SOURCE);
-            CompilationOrchestrator orchestrator =
-                compileProject(jvmProject, "src/main.deal", "out");
-            check(orchestrator.semanticEmissionCount() == 0
-                    && orchestrator.retainedEmissionCount() == 1,
-                "the stdlib-claiming JVM module emits zero semantic/one "
-                    + "retained artifact while its MODULES claim stays SHADOW: "
-                    + "semantic=" + orchestrator.semanticEmissionCount()
-                    + " retained=" + orchestrator.retainedEmissionCount());
-            Path out = jvmProject.resolve("out");
-            String buildCp = Path.of("build").toAbsolutePath().normalize().toString();
-            ProcessOutcome javac = runProcess(jvmProject, List.of(
-                "javac", "--release", "25", "-proc:none", "-cp", buildCp,
-                "-d", out.toString(), out.resolve("Main.java").toString()));
-            check(javac.exitCode() == 0,
-                "the retained JVM stdlib artifact compiles: "
-                    + javac.output().replace("\n", "\\n"));
-            if (javac.exitCode() == 0) {
-                ProcessOutcome run = runProcess(out, List.of(
-                    "java", "-cp", buildCp + File.pathSeparator + out, "Main"));
-                check(run.exitCode() == 0 && run.output().contains("ok"),
-                    "the retained JVM stdlib artifact runs the cataloged calls "
-                        + "as before: exit=" + run.exitCode() + " output="
-                        + run.output().replace("\n", "\\n"));
-            }
-        } finally {
-            deleteRecursively(jvmProject);
-        }
-
-        // The bytes guard holds through the step-7 promotion: a
-        // bytes-bearing module stays on the retained route (rule 2b beats
-        // rule 4) with the bytes exception recorded — the T1/T3 state the
-        // CONTAINERS_AND_STRINGS promotion established is untouched by the
-        // STDLIB_SEMANTICS promotion.
-        Path bytesProject = Files.createTempDirectory("deal-e10-stdlib-bytes-");
-        try {
-            write(bytesProject, "deal.json", DEAL_JSON_LUA);
-            write(bytesProject, "src/main.deal", BYTES_SOURCE);
-            CompilationOrchestrator orchestrator =
-                compileProject(bytesProject, "src/main.deal", "out");
-            check(orchestrator.semanticEmissionCount() == 0
-                    && orchestrator.retainedEmissionCount() == 1,
-                "the bytes-bearing module still emits zero semantic/one retained "
-                    + "artifact after the STDLIB_SEMANTICS promotion: semantic="
-                    + orchestrator.semanticEmissionCount() + " retained="
-                    + orchestrator.retainedEmissionCount());
-            RoutePlanResult plan = orchestrator.routePlan();
-            check(plan != null && !plan.hasErrors() && plan.plan() != null
-                    && plan.plan().entries().values().stream()
-                        .allMatch(route -> route == ModuleRoute.LEGACY)
-                    && plan.plan().bytesExceptions().size() == 1,
-                "the bytes-bearing plan stays all-LEGACY with the bytes "
-                    + "exception recorded (rule 2b beats rule 4): "
-                    + (plan == null ? "null" : plan.plan()));
-        } finally {
-            deleteRecursively(bytesProject);
-        }
-    }
-
-    private static void testStep7RegistryDigestRecomputation() {
-        System.out.println("-- Step-7 registry digest: recomputed over its own entries; "
-            + "differs from the prior release digest --");
-
-        // The prior release registry: the release promotion list minus the
-        // step-7 pairs composed from the all-SHADOW release default through
-        // the single withState transition surface — the exact prior release
-        // state the step-7 promotion (ISSUE-0585) extends.
-        CapabilityRegistry prior = CapabilityRegistry.releaseRegistry();
-        List<ReleaseConfiguration.ReleasePromotion> promotions =
-            ReleaseConfiguration.activationPromotions();
-        for (int i = 0; i < promotions.size() - 2; i++) {
-            ReleaseConfiguration.ReleasePromotion promotion = promotions.get(i);
-            prior = prior.withState(promotion.capability(), promotion.target(),
-                CapabilityRegistry.State.PROMOTED);
-        }
-        String priorHash = prior.capabilityRegistryHash();
-        check(prior.state(
-                deal.semantic.ir.SemanticCapability.STDLIB_SEMANTICS,
-                deal.semantic.Target.LUAJIT) == CapabilityRegistry.State.SHADOW
-                && prior.state(
-                    deal.semantic.ir.SemanticCapability.STDLIB_SEMANTICS,
-                    deal.semantic.Target.JVM) == CapabilityRegistry.State.SHADOW,
-            "the prior registry keeps STDLIB_SEMANTICS SHADOW for both targets");
-
-        CapabilityRegistry step7 = ReleaseConfiguration.releaseCapabilityRegistry();
-        String step7Hash = step7.capabilityRegistryHash();
-
-        // The promotion is a real registry transition: the digest over the
-        // promoted entries recomputes and differs from the prior release
-        // digest.
-        check(!step7Hash.equals(priorHash),
-            "the step-7 release digest differs from the prior release digest: "
-                + priorHash + " -> " + step7Hash);
-
-        // The step-7 digest is the canonical recomputation over the
-        // registry's own entries — never a hand-rolled constant.
-        check(step7Hash.equals(deal.semantic.ir.CanonicalJson.sha256Hex(
-                deal.semantic.ir.CanonicalJson.serializeBytes(step7.canonicalJson()))),
-            "the step-7 digest equals the canonical SHA-256 recomputation over "
-                + "the registry's own canonical JSON");
-
-        // The transition changes exactly the two step-7 entries: the
-        // registries differ in exactly two entries, both STDLIB_SEMANTICS
-        // carrying PROMOTED; every other entry is byte-identical.
-        List<CapabilityRegistry.Entry> priorEntries = prior.entries();
-        List<CapabilityRegistry.Entry> stepEntries = step7.entries();
-        check(priorEntries.size() == stepEntries.size()
-                && stepEntries.size() == CapabilityRegistry.ENTRY_COUNT,
-            "both registries keep the closed " + CapabilityRegistry.ENTRY_COUNT
-                + "-entry cross product");
-        int differing = 0;
-        for (int i = 0; i < priorEntries.size() && i < stepEntries.size(); i++) {
-            CapabilityRegistry.Entry pre = priorEntries.get(i);
-            CapabilityRegistry.Entry step = stepEntries.get(i);
-            if (pre.capability() != step.capability()
-                    || pre.target() != step.target()
-                    || pre.state() != step.state()) {
-                differing++;
-            }
-        }
-        check(differing == 2
-                && step7.state(
-                    deal.semantic.ir.SemanticCapability.STDLIB_SEMANTICS,
-                    deal.semantic.Target.LUAJIT) == CapabilityRegistry.State.PROMOTED
-                && step7.state(
-                    deal.semantic.ir.SemanticCapability.STDLIB_SEMANTICS,
-                    deal.semantic.Target.JVM) == CapabilityRegistry.State.PROMOTED,
-            "the step-7 registry differs from the prior registry in exactly the "
-                + "two STDLIB_SEMANTICS x LUAJIT/JVM entries, both carrying "
-                + "PROMOTED (differing=" + differing + ")");
-
-        // The E12, step-1, step-2, step-3, step-4, step-5, and step-7
-        // pairs stay PROMOTED and every other capability stays SHADOW —
-        // including the locked routing marker STDLIB_TIME_CONFLICT (parent
-        // D8): the step-7 promotion flips nothing else.
-        boolean promotedExactly = true;
-        boolean shadowExactly = true;
-        for (CapabilityRegistry.Entry entry : step7.entries()) {
-            boolean promotedCapability = entry.capability()
-                    == deal.semantic.ir.SemanticCapability.FOUNDATION_VALUES
-                || entry.capability()
-                    == deal.semantic.ir.SemanticCapability.SIGNED_INT32
-                || entry.capability()
-                    == deal.semantic.ir.SemanticCapability.CONTAINERS_AND_STRINGS
-                || entry.capability()
-                    == deal.semantic.ir.SemanticCapability.DESCRIPTORS
-                || entry.capability()
-                    == deal.semantic.ir.SemanticCapability.BOUNDARIES
-                || entry.capability()
-                    == deal.semantic.ir.SemanticCapability.EVALUATION_ORDER
-                || entry.capability()
-                    == deal.semantic.ir.SemanticCapability.BINDINGS
-                || entry.capability()
-                    == deal.semantic.ir.SemanticCapability.STDLIB_SEMANTICS;
-            if (promotedCapability) {
-                promotedExactly &= entry.state() == CapabilityRegistry.State.PROMOTED;
-            } else {
-                shadowExactly &= entry.state() == CapabilityRegistry.State.SHADOW;
-            }
-        }
-        check(promotedExactly && shadowExactly,
-            "the step-7 registry promotes exactly FOUNDATION_VALUES, SIGNED_INT32, "
-                + "CONTAINERS_AND_STRINGS, DESCRIPTORS, BOUNDARIES, "
-                + "EVALUATION_ORDER, BINDINGS, and STDLIB_SEMANTICS for both "
-                + "targets; every other capability stays SHADOW");
-
         // Anti-hollow: re-deriving the release promotion list through the
         // withState surface reproduces the committed release digest — the
         // release registry is exactly the composed list, never a
@@ -2859,11 +2540,11 @@ public class SemanticProductionGateTest {
             recomposed = recomposed.withState(promotion.capability(),
                 promotion.target(), CapabilityRegistry.State.PROMOTED);
         }
-        check(recomposed.capabilityRegistryHash().equals(step7Hash),
+        check(recomposed.capabilityRegistryHash().equals(step5Hash),
             "re-deriving the release promotion list through withState reproduces "
                 + "the committed release registry digest");
-        check(!recomposed.capabilityRegistryHash().equals(priorHash),
-            "the recomposed step-7 digest still differs from the prior "
+        check(!recomposed.capabilityRegistryHash().equals(postStep4Hash),
+            "the recomposed step-5 digest still differs from the post-step-4 "
                 + "digest (the prior release digest is left behind)");
     }
 
@@ -2990,8 +2671,6 @@ public class SemanticProductionGateTest {
         testStep4RegistryDigestRecomputation();
         testStep5CutoverPromotion();
         testStep5RegistryDigestRecomputation();
-        testStep7CutoverPromotion();
-        testStep7RegistryDigestRecomputation();
         testFailurePreservesPriorArtifacts();
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
