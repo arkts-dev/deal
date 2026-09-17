@@ -277,6 +277,25 @@ public class RuntimeIntegrationMatrixTest {
         return verdict;
     }
 
+    /**
+     * Asserts every consumer's terminal failure message exactly (the
+     * cross-consumer verdict compares the traces event-for-event; this pin
+     * additionally fixes the closed projection text).
+     */
+    private static void checkTerminalMessage(SemanticDifferentialHarness.Verdict verdict,
+            String message, String what) {
+        if (verdict == null) {
+            return;
+        }
+        for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+            String actual = run.terminal()
+                    instanceof SemanticRuntimeModel.Terminal.DealFailure failure
+                ? failure.error().message() : run.terminal().toString();
+            check(message.equals(actual), what + ": " + run.consumer()
+                + " publishes the exact failure message (got " + actual + ")");
+        }
+    }
+
     private static final SemanticDifferentialHarness.TerminalExpectation SUCCESS =
         new SemanticDifferentialHarness.TerminalExpectation.SuccessWith("null");
     private static final SemanticDifferentialHarness.TerminalExpectation E8001 =
@@ -1972,6 +1991,21 @@ public class RuntimeIntegrationMatrixTest {
                 List.of(), E8001);
         }
 
+        // (o2) STDLIB_RETURN boundary over a top-level parsed array: the
+        // runtime value is an array, so the actual kind is "array" —
+        // never the declared static "table".
+        {
+            String source = CONSOLE + JSON
+                + "function main(): null {\n"
+                + "  let d: table = json.parse(\"[1,2]\")\n"
+                + "  console.log(\"after\")\n"
+                + "}\n";
+            SemanticDifferentialHarness.Verdict verdict = runMatrix(source,
+                "JSON_PARSE top-level array (E8001 array actual)", List.of(), E8001);
+            checkTerminalMessage(verdict, "expected table, got array",
+                "JSON_PARSE top-level array return boundary");
+        }
+
         // (p) JSON_TO_ERROR projection: the first declaration-order
         // unsupported value wins with its field path and actual token —
         // a nonfinite number at field n.
@@ -1984,6 +2018,40 @@ public class RuntimeIntegrationMatrixTest {
                 + "}\n";
             runMatrix(source, "JSON_STRINGIFY nonfinite number (E8001 field path)",
                 List.of(), E8001);
+        }
+
+        // (p2) JSON_TO_ERROR over a deleted array element: the deleted
+        // slot is the internal missing, not language null — the walker
+        // fails with the "missing" projection instead of emitting null.
+        {
+            String source = CONSOLE + JSON
+                + "function main(): null {\n"
+                + "  let xs: int[] = [1, 2, 3]\n"
+                + "  delete xs[1]\n"
+                + "  let t: table = { xs: xs }\n"
+                + "  let s: string = json.stringify(t)\n"
+                + "  console.log(\"after\")\n"
+                + "}\n";
+            SemanticDifferentialHarness.Verdict verdict = runMatrix(source,
+                "JSON_STRINGIFY deleted array element (E8001 missing)", List.of(), E8001);
+            checkTerminalMessage(verdict,
+                "value at xs.1 is not JSON serializable: missing",
+                "JSON_STRINGIFY deleted array element");
+        }
+
+        // (p3) The present-null element of a parsed array stays language
+        // null (the __NULL marker), never the deleted-slot missing — the
+        // round trip pins the distinction the missing arm must respect.
+        {
+            String source = CONSOLE + JSON
+                + "function main(): null {\n"
+                + "  let d: table = json.parse(\"{\\\"xs\\\": [1, null, 2]}\")\n"
+                + "  let s: string = json.stringify(d)\n"
+                + "  if (s === \"{\\\"xs\\\":[1,null,2]}\") { console.log(\"hole-ok\") } "
+                + "else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "JSON_STRINGIFY parsed present-null element (not missing)",
+                List.of("hole-ok"), SUCCESS);
         }
 
         // (q) Production-mode realization (no trace-only arm): the same

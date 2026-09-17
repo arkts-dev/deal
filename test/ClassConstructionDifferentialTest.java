@@ -1039,6 +1039,126 @@ public class ClassConstructionDifferentialTest {
             + op.origin().span().startColumn();
     }
 
+    // =========================================================================
+    // The stdlib-imported class slice (the JSON_STRINGIFY class seed)
+    // =========================================================================
+
+    /** The spec-stdlib declaration module path of the seed's cataloged import. */
+    private static final String JSON_DECLARATION_PATH = "std/json.d.deal";
+
+    /**
+     * The single-module class slice of the JSON_STRINGIFY seed: the same
+     * production pipeline as {@link #lowerModule} plus the closure's
+     * spec-stdlib declaration module ({@code std/json.d.deal}) — the
+     * production population rule — so the manifest detector classifies the
+     * cataloged call as the CALL row's {@code STDLIB_CALL} form and the
+     * class-core session receives the resolved import facts (the closed
+     * stdlib recognition surface, exactly the full-program entry's
+     * {@code setModuleImports} wiring).
+     */
+    private static LoweredSlice lowerStdlibClassModule(String source, String what) {
+        CheckedSlice slice = checkSlice(source, MODULE, new StdlibResolver());
+        if (slice == null) {
+            return null;
+        }
+        ProgramNode declaration = jsonDeclarationProgram();
+        if (declaration == null) {
+            return null;
+        }
+        CompilerInvocation invocation = CompilerProfileProvider.resolveCommonShadow(
+            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
+            CapabilityRegistry.releaseRegistry());
+        ModuleFact declarationFact = new ModuleFact(JSON_DECLARATION_PATH,
+            new ModuleId("std.json"), true, true, declaration, Map.of(), null, null,
+            List.of());
+        ModuleFact fact = new ModuleFact(SOURCE_ID, MODULE, false, false, slice.program(),
+            Map.of(), slice.symbols(), slice.checks(),
+            List.of(new ModuleFact.ImportFact("json", "std/json", JSON_DECLARATION_PATH)));
+        deal.semantic.CheckedProjectBuildResult built = CheckedProjectBuilder.build(
+            invocation, MODULE, List.of(declarationFact, fact));
+        check(built != null && !built.hasErrors() && built.input() != null
+                && built.input().modules().size() == 1 && built.index() != null,
+            what + ": the checked project builds cleanly: "
+                + (built == null ? "null" : built.diagnostics()));
+        if (built == null || built.hasErrors() || built.input() == null
+                || built.input().modules().size() != 1 || built.index() == null) {
+            return null;
+        }
+        RequirementManifestResult manifests = LoweringSupport.computeManifests(invocation,
+            built.input(), built.index());
+        check(manifests != null && manifests.diagnostics().isEmpty()
+                && manifests.manifests().size() == 1,
+            what + ": the foundation detector produces exactly one requirement "
+                + "manifest: " + (manifests == null ? "null" : manifests.diagnostics()));
+        if (manifests == null || !manifests.diagnostics().isEmpty()
+                || manifests.manifests().size() != 1) {
+            return null;
+        }
+        Map<ConstructKind, List<SemanticOpKind>> coverage = new LinkedHashMap<>(
+            manifests.manifests().get(0).constructCoverage());
+        coverage.remove(ConstructKind.IMPORT_EXPORT_ENTRY);
+        check(coverage.containsKey(ConstructKind.CALL)
+                && coverage.get(ConstructKind.CALL).contains(SemanticOpKind.STDLIB_CALL),
+            what + ": the cataloged call records the CALL row's STDLIB_CALL form "
+                + "(never CROSS_MODULE_CALL): " + coverage);
+        SemanticLowerer.ClassDeclarationCoreResult result =
+            SemanticLowerer.lowerModuleClassCore(built.input().modules().get(0),
+                SemanticProfile.DEAL_V1_2_INT32, coverage,
+                built.index().interfaceIndexDigest(), REGISTRY_HASH,
+                built.index().modules().get(MODULE), Map.of(),
+                SemanticIdAllocator.over(List.of(MODULE)));
+        check(result != null && result.lowering() != null && !result.lowering().hasErrors()
+                && result.lowering().unit() != null,
+            what + " lowers to a validated unit: "
+                + (result == null || result.lowering() == null ? "null"
+                    : result.lowering().diagnostics()));
+        if (result == null || result.lowering() == null || result.lowering().hasErrors()
+                || result.lowering().unit() == null) {
+            return null;
+        }
+        return new LoweredSlice(result.lowering().unit(), result.lowering().table(),
+            result.registry());
+    }
+
+    /** The parsed spec-stdlib {@code std/json} declaration program. */
+    private static ProgramNode jsonDeclarationProgram() {
+        try {
+            String text = Files.readString(Path.of(JSON_DECLARATION_PATH));
+            deal.lexer.LexResult lex = new Lexer(text, JSON_DECLARATION_PATH).tokenize();
+            deal.parser.ParseResult parse = new Parser(lex.tokens(), JSON_DECLARATION_PATH,
+                lex.directiveEvents()).parse();
+            check(parse.diagnostics().isEmpty(),
+                "the std/json declaration parses cleanly: " + parse.diagnostics());
+            return parse.diagnostics().isEmpty() ? parse.program() : null;
+        } catch (java.io.IOException exception) {
+            fail("reading " + JSON_DECLARATION_PATH + " failed: "
+                + exception.getMessage());
+            return null;
+        }
+    }
+
+    /** The spec-stdlib import resolver of the class JSON seed. */
+    private static final class StdlibResolver implements ModuleResolver {
+        @Override
+        public Map<String, deal.types.Type> resolveModule(String modulePath,
+                String importingModule, Set<String> modulesInProgress)
+                throws ModuleNotFoundException {
+            Map<String, Map<String, deal.types.Type>> modules =
+                deal.module.StdlibModuleResolver.stdlibExports(
+                    Path.of("std").toAbsolutePath().toString());
+            if (!modules.containsKey(modulePath)) {
+                throw new ModuleNotFoundException("Module not found: " + modulePath);
+            }
+            return modules.get(modulePath);
+        }
+
+        @Override
+        public Symbol.ClassSymbol resolveClassSymbol(String className, String modulePath,
+                String importingModule) throws ModuleNotFoundException {
+            return null;
+        }
+    }
+
     /**
      * Every consumer's event for the given op in the given phase, asserted
      * to carry the op's own module (the trace contract the harness checks:
@@ -1968,7 +2088,57 @@ public class ClassConstructionDifferentialTest {
     }
 
     // =========================================================================
-    // 10. The emitter totality gate (one arm per kind; the default stays)
+    // 10. JSON_STRINGIFY over a class instance (the stdlib walker's class
+    //     projection): a nested class value is the first declaration-order
+    //     unsupported value and projects as its canonical class:<ClassId>
+    //     identity on all three consumers (never the carrier's Lua/JVM
+    //     shape).
+    // =========================================================================
+
+    static void testJsonStringifyClassProjection() {
+        System.out.println("-- JSON_STRINGIFY class projection: a class value nested in "
+            + "the argument table fails with the canonical class:<ClassId> actual "
+            + "on all three consumers --");
+        String source = """
+            import * as json from "std/json"
+
+            export class Foo {
+              x: int = 1;
+            }
+
+            let f: Foo = {x: 1}
+            let t: table = {c: f}
+            let s: string = json.stringify(t)
+            """;
+        LoweredSlice lowered = lowerStdlibClassModule(source,
+            "class-in-table JSON_STRINGIFY seed");
+        if (lowered == null) {
+            return;
+        }
+        List<SemanticOp> calls = ofKind(lowered.unit(), SemanticOpKind.STDLIB_CALL);
+        check(calls.size() == 1, "the seed lowers exactly one STDLIB_CALL, got "
+            + calls.size());
+        if (calls.size() != 1) {
+            return;
+        }
+        SemanticDifferentialHarness.Verdict verdict = runFailureMatrix(lowered, "E8001",
+            originTextOf(calls.get(0)),
+            "class-in-table JSON_STRINGIFY (E8001 class:<ClassId>)");
+        if (verdict == null) {
+            return;
+        }
+        for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+            String message = run.terminal()
+                    instanceof SemanticRuntimeModel.Terminal.DealFailure failure
+                ? failure.error().message() : run.terminal().toString();
+            check("value at c is not JSON serializable: class:@main/Foo".equals(message),
+                "class-in-table JSON_STRINGIFY: " + run.consumer()
+                    + " projects the canonical class:<ClassId> actual: " + message);
+        }
+    }
+
+    // =========================================================================
+    // 11. The emitter totality gate (one arm per kind; the default stays)
     // =========================================================================
 
     static void testEmitterTotality() {
@@ -2026,6 +2196,7 @@ public class ClassConstructionDifferentialTest {
         testNegativeWrongBoundaryOwner();
         testRequiredFieldMissingRegistryError();
         testFieldProductionModeRealization();
+        testJsonStringifyClassProjection();
         testEmitterTotality();
         System.out.println();
         System.out.println("ClassConstructionDifferentialTest passed=" + passed

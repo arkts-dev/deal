@@ -2930,6 +2930,7 @@ public final class SemanticLowerer {
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator, true, true, true, false, false, false,
             module.ast().span(), false, true, ownInterface, sharedFactories);
+        lowerer.setModuleImports(module.imports());
         try {
             lowerer.lowerGroupModule(module.ast().statements());
         } catch (ConstructUnlowered unlowered) {

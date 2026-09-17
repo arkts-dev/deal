@@ -2108,6 +2108,13 @@ public final class JvmRuntime {
                 "value at " + fieldPath
                     + " is not JSON serializable: class:@builtin/Error", null,
                 null);
+        } else if (value instanceof ClassInstance instance) {
+            // A class instance is not JSON serializable and projects as its
+            // canonical identity (the closed class:<ClassId> actual token),
+            // never the carrier's shape.
+            throw new StdlibFailure("E8001",
+                "value at " + fieldPath + " is not JSON serializable: class:"
+                    + instance.classIdText(), null, null);
         } else {
             throw new StdlibFailure("E8001",
                 "value at " + fieldPath + " is not JSON serializable: table", null,

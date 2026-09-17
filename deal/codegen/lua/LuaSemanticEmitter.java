@@ -4839,10 +4839,19 @@ local function __actualOf(staticKind, v)
   end
   if t == "string" then return "string" end
   if t == "table" then
+    -- The runtime container markers decide the actual kind first (the
+    -- shared JVM runtime's actualOf resolves the carrier's own type before
+    -- any declared-kind fallback): a parsed/constructed array is an array
+    -- even against a declared table boundary, and a class instance or an
+    -- error/function carrier renders its own kind.
+    if v.__a then return "array" end
+    if v.__c then return "class:"..v.__id end
+    if v.__d then return "class:@builtin/Error" end
+    if v.__t then return "table" end
+    if v.__fn ~= nil or v.__f then return "function" end
     if staticKind == "err" then return "class:@builtin/Error" end
     if staticKind == "table" then return "table" end
     if staticKind == "array" then return "array" end
-    if v.__c then return "class:"..v.__id end
     -- A plain table against a class boundary renders its own kind.
     return "table"
   end
@@ -6031,10 +6040,15 @@ local function __stdlib(fn, opKey, digest, parent, origin, ...)
           for i = 1, v.__n do
             if i > 1 then out[#out + 1] = "," end
             local elem = v[i]
-            if elem == __NULL then elem = nil end
-            sfValue(elem, fieldPath == "" and tostring(i - 1)
-              or fieldPath.."."..tostring(i - 1),
-              marks ~= nil and marks[i] == true)
+            local elemPath = fieldPath == "" and tostring(i - 1)
+              or fieldPath.."."..tostring(i - 1)
+            -- A raw nil slot is the internal missing (the deleted
+            -- element model, exactly the read-side __arrayRead mapping);
+            -- a present null is the __NULL marker. The deleted element is
+            -- never serialized as JSON null.
+            if elem == __NULL then elem = nil
+            elseif elem == nil then sfFail("missing", elemPath) end
+            sfValue(elem, elemPath, marks ~= nil and marks[i] == true)
           end
           out[#out + 1] = "]"
           path[v] = nil
@@ -6058,6 +6072,11 @@ local function __stdlib(fn, opKey, digest, parent, origin, ...)
           path[v] = nil
           return
         end
+        -- The class instance carries its canonical identity (the closed
+        -- "class:<ClassId>" projection), never the carrier's shape: the
+        -- marker is checked before the function arm (every class instance
+        -- carries the field map __f).
+        if v.__c then sfFail("class:"..v.__id, fieldPath); return end
         if v.__fn ~= nil or v.__f then sfFail("function", fieldPath); return end
         if v.__d then sfFail("class:@builtin/Error", fieldPath); return end
         sfFail("table", fieldPath)
