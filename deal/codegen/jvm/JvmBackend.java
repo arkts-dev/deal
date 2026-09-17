@@ -5386,6 +5386,11 @@ public final class JvmBackend {
         emitLine("    DealError(java.lang.String code, java.lang.String message, java.lang.String oFile, int oLine, int oCol) {");
         emitLine("        this(code, message, oFile, oLine, oCol, null, null, null, null);");
         emitLine("    }");
+        emitLine("    // The origin path with the closed expected/actual pair (the host");
+        emitLine("    // boundary raises): frames/cause stay unpopulated, never fabricated.");
+        emitLine("    DealError(java.lang.String code, java.lang.String message, java.lang.String oFile, int oLine, int oCol, java.lang.String expected, java.lang.String actual) {");
+        emitLine("        this(code, message, oFile, oLine, oCol, expected, actual, null, null);");
+        emitLine("    }");
         emitLine("    // The complete-field path (the closed optional fields included).");
         emitLine("    DealError(java.lang.String code, java.lang.String message, java.lang.String oFile, int oLine, int oCol, java.lang.String expected, java.lang.String actual, java.lang.Integer frames, java.lang.String cause) {");
         emitLine("        super(message);");
@@ -5565,12 +5570,14 @@ public final class JvmBackend {
         emitLine("// is a load-time error). Extra host methods are never looked up.");
         emitLine("// D1: the origin (file/line/column) parameters thread through every");
         emitLine("// raise this helper performs; the short overload passes the explicit");
-        emitLine("// absent sentinel (null, -1, -1).");
+        emitLine("// absent sentinel (null, -1, -1). The missing-export text is the");
+        emitLine("// pinned canonical message (the descriptor stays in the reported");
+        emitLine("// expected/actual surface, not in the message).");
         emitLine("static java.lang.reflect.Method __hostMethod(java.lang.Class<?> h, java.lang.String module, java.lang.String name, java.lang.String desc, java.lang.Class<?>[] params) { return __hostMethod(h, module, name, desc, params, null, -1, -1); }");
         emitLine("static java.lang.reflect.Method __hostMethod(java.lang.Class<?> h, java.lang.String module, java.lang.String name, java.lang.String desc, java.lang.Class<?>[] params, java.lang.String oFile, int oLine, int oCol) {");
         emitLine("    try { return h.getDeclaredMethod(name, params); }");
         emitLine("    catch (java.lang.NoSuchMethodException e) {");
-        emitLine("        throw new DealError(\"E8011\", \"host export '\" + name + \"' in module '\" + module + \"' missing or has signature mismatch: expected \" + desc, oFile, oLine, oCol);");
+        emitLine("        throw new DealError(\"E8011\", \"missing host export '\" + name + \"' in module '\" + module + \"'\", oFile, oLine, oCol);");
         emitLine("    }");
         emitLine("}");
         emitLine("// Reflective invocation of a checked host export: DEAL errors the host");
@@ -5624,12 +5631,12 @@ public final class JvmBackend {
         emitLine("        try { return $hostCheckArray(d, v, oFile, oLine, oCol); }");
         emitLine("        catch (DealError inner) {");
         emitLine("            if (\"E8001\".equals(inner.code) && inner.getMessage().startsWith(\"expected instance of \")) throw inner;");
-        emitLine("            throw new DealError(completion ? \"E8001\" : \"E8010\", (completion ? \"expected \" : \"host function '\" + fn + \"' return value 1 type mismatch: expected \") + desc + \", got \" + inner.getMessage(), oFile, oLine, oCol);");
+        emitLine("            throw __hostReturnFail(completion, desc, v, __hostInnerMessage(d, v, inner), oFile, oLine, oCol);");
         emitLine("        }");
         emitLine("    }");
         emitLine("    if (d.startsWith(\"(\") || d.startsWith(\"async(\")) {");
         emitLine("        if (v instanceof $DealRt.FnValue f && checkSig(d, f.descriptor())) return f;");
-        emitLine("        throw new DealError(completion ? \"E8001\" : \"E8010\", (completion ? \"expected \" : \"host function '\" + fn + \"' return value 1 type mismatch: expected \") + desc + \", got \" + $describe(v), oFile, oLine, oCol);");
+        emitLine("        throw __hostReturnFail(completion, desc, v, __hostInnerMessage(d, v, null), oFile, oLine, oCol);");
         emitLine("    }");
         emitLine("    switch (d) {");
         emitLine("        case \"int\":");
@@ -5658,7 +5665,7 @@ public final class JvmBackend {
         emitLine("            if (v instanceof java.lang.Boolean b) return b;");
         emitLine("            break;");
         emitLine("        case \"string\":");
-        emitLine("            if (v instanceof java.lang.String s) { if (__hasUnpairedSurrogate(s)) throw new DealError(completion ? \"E8001\" : \"E8010\", \"expected string, got string with unpaired surrogate code units\", oFile, oLine, oCol); return s; }");
+        emitLine("            if (v instanceof java.lang.String s) { java.lang.String __reason = __unpairedSurrogateReason(s); if (__reason != null) throw __hostReturnFail(completion, desc, v, __reason, oFile, oLine, oCol); return s; }");
         emitLine("            break;");
         emitLine("        case \"bytes\":");
         emitLine("            if (v instanceof $DealRt.Bytes b) return b;");
@@ -5668,8 +5675,71 @@ public final class JvmBackend {
         emitLine("            break;");
         emitLine("    }");
         emitLine("    if (d.indexOf('@') == 0) return $check(desc, v, oFile, oLine, oCol);");
-        emitLine("    if (completion) throw new DealError(\"E8001\", \"expected \" + desc + \", got \" + $describe(v), oFile, oLine, oCol);");
-        emitLine("    throw new DealError(\"E8010\", \"host function '\" + fn + \"' return value 1 type mismatch: expected \" + desc + \", got \" + $describe(v), oFile, oLine, oCol);");
+        emitLine("    throw __hostReturnFail(completion, desc, v, __hostInnerMessage(d, v, null), oFile, oLine, oCol);");
+        emitLine("}");
+        emitLine("// The host return/completion failure: a sync return carries the");
+        emitLine("// Lua-mirrored \"return value 1 type mismatch: <reason>\" text with the");
+        emitLine("// declared descriptor as expected and the closed runtime-kind");
+        emitLine("// projection as actual; the await-site completion check keeps the");
+        emitLine("// bare reason text (the LuaJIT check_type surface) and E8001.");
+        emitLine("static DealError __hostReturnFail(boolean completion, java.lang.String desc, java.lang.Object v, java.lang.String reason, java.lang.String oFile, int oLine, int oCol) {");
+        emitLine("    return new DealError(completion ? \"E8001\" : \"E8010\", completion ? reason : \"return value 1 type mismatch: \" + reason, oFile, oLine, oCol, desc, __hostKind(v));");
+        emitLine("}");
+        emitLine("// The Lua-mirrored inner reason text of a failed host-boundary check —");
+        emitLine("// the composition the parameter/return wraps prepend (deal/runtime.lua's");
+        emitLine("// check_type messages, byte-for-byte, including the E8010 signature-");
+        emitLine("// mismatch text passed through unchanged).");
+        emitLine("static java.lang.String __hostInnerMessage(java.lang.String d, java.lang.Object v, DealError inner) {");
+        emitLine("    if (inner != null && (\"E8010\".equals(inner.code) || \"E8003\".equals(inner.code))) return inner.getMessage();");
+        emitLine("    if (d.startsWith(\"[\")) return \"expected array\";");
+        emitLine("    if (d.startsWith(\"(\") || d.startsWith(\"async(\")) return \"expected function\";");
+        emitLine("    switch (d) {");
+        emitLine("        case \"null\": return \"expected null\";");
+        emitLine("        case \"int\":");
+        emitLine("            if (v instanceof java.lang.Double dd) { if (dd.isNaN()) return \"expected int, got NaN\"; if (dd.isInfinite()) return \"expected int, got infinity\"; if (dd % 1.0 != 0.0) return \"expected int, got non-integer number\"; }");
+        emitLine("            return \"expected int\";");
+        emitLine("        case \"number\": return \"expected number\";");
+        emitLine("        case \"boolean\": return \"expected boolean\";");
+        emitLine("        case \"string\":");
+        emitLine("            if (v instanceof java.lang.String s) { java.lang.String r = __unpairedSurrogateReason(s); if (r != null) return r; }");
+        emitLine("            return \"expected string\";");
+        emitLine("        case \"bytes\": return \"expected bytes\";");
+        emitLine("        case \"table\": return \"expected table\";");
+        emitLine("    }");
+        emitLine("    if (d.indexOf('@') == 0) return \"expected class instance\";");
+        emitLine("    return \"expected \" + d;");
+        emitLine("}");
+        emitLine("// The closed runtime-kind projection of a host-boundary value (the");
+        emitLine("// LuaJIT type() analog): Java scalars/strings/bytes project to their");
+        emitLine("// DEAL kinds, every DEAL composite (table, class instance, array");
+        emitLine("// carrier, and the wrapped function-value carrier — Lua's");
+        emitLine("// {__kind=\"function\"} table) projects to table, and a raw host");
+        emitLine("// function value projects to function.");
+        emitLine("static java.lang.String __hostKind(java.lang.Object v) {");
+        emitLine("    if (v == null) return \"null\";");
+        emitLine("    if (v instanceof java.lang.String) return \"string\";");
+        emitLine("    if (v instanceof java.lang.Long || v instanceof java.lang.Integer || v instanceof java.lang.Double) return \"number\";");
+        emitLine("    if (v instanceof java.lang.Boolean) return \"boolean\";");
+        emitLine("    if (v instanceof $DealRt.Bytes) return \"bytes\";");
+        emitLine("    if (v instanceof $DealRt.FnValue) return \"table\";");
+        emitLine("    for (java.lang.Class<?> k : v.getClass().getInterfaces()) { int abstractMethods = 0; for (java.lang.reflect.Method m : k.getMethods()) { if (java.lang.reflect.Modifier.isAbstract(m.getModifiers())) abstractMethods++; } if (abstractMethods == 1) return \"function\"; }");
+        emitLine("    return \"table\";");
+        emitLine("}");
+        emitLine("// The malformed-encoding reason of a string carrying an unpaired UTF-16");
+        emitLine("// surrogate code unit (the JVM analog of the LuaJIT UTF-8 walk's split,");
+        emitLine("// ISSUE-0598): a string that is exactly one unpaired surrogate code");
+        emitLine("// point names the surrogate (the complete ED A0..BF sequence analog);");
+        emitLine("// every other malformed string is the general invalid-encoding reason.");
+        emitLine("// Returns null for a scalar-valid string.");
+        emitLine("static java.lang.String __unpairedSurrogateReason(java.lang.String s) {");
+        emitLine("    boolean malformed = false;");
+        emitLine("    for (int i = 0; i < s.length(); i++) {");
+        emitLine("        char c = s.charAt(i);");
+        emitLine("        if (java.lang.Character.isHighSurrogate(c) && i + 1 < s.length() && java.lang.Character.isLowSurrogate(s.charAt(i + 1))) { i++; }");
+        emitLine("        else if (java.lang.Character.isHighSurrogate(c) || java.lang.Character.isLowSurrogate(c)) { malformed = true; break; }");
+        emitLine("    }");
+        emitLine("    if (!malformed) return null;");
+        emitLine("    return s.length() == 1 ? \"expected string, got UTF-16 surrogate code point\" : \"expected string, got invalid UTF-8 encoding\";");
         emitLine("}");
         emitLine("// Host-boundary parameter check (ISSUE-0303 D2): every wrapper");
         emitLine("// parameter is validated against the declared parameter descriptor");
@@ -5700,7 +5770,7 @@ public final class JvmBackend {
         emitLine("        return $check(desc, v, oFile, oLine, oCol);");
         emitLine("    } catch (DealError inner) {");
         emitLine("        if (\"E8001\".equals(inner.code) && inner.getMessage().startsWith(\"expected instance of \")) throw inner;");
-        emitLine("        throw new DealError(\"E8010\", \"parameter \" + i + \" type mismatch: \" + inner.getMessage(), oFile, oLine, oCol);");
+        emitLine("        throw new DealError(\"E8010\", \"parameter \" + i + \" type mismatch: \" + __hostInnerMessage(d, v, inner), oFile, oLine, oCol, desc, __hostKind(v));");
         emitLine("    }");
         emitLine("}");
         emitLine("// Load-time capture of a declared host class's <C>_defaults map");
@@ -6806,6 +6876,32 @@ public final class JvmBackend {
                     .append(" p").append(i);
             }
             body.append(");\n");
+            // The DEAL-source-aware dispatch seam: the emitted call sites
+            // dispatch through invokeAt with the DEAL call site's origin,
+            // and the default body delegates to the plain host-facing
+            // invoke (a wrapper that reports DEAL boundary raises — the
+            // host export carrier — overrides invokeAt to thread the
+            // origin into its wrapper call). The host-facing invoke ABI
+            // is unchanged, so host implementations never move.
+            body.append("    ").append(silentReturnJavaType(f.returnType()))
+                .append(" invokeAt(java.lang.String file, int line, "
+                    + "int column");
+            for (int i = 0; i < f.paramTypes().size(); i++) {
+                body.append(", ");
+                body.append(silentJavaLocalType(f.paramTypes().get(i)))
+                    .append(" p").append(i);
+            }
+            body.append(") { ");
+            if ("void".equals(silentReturnJavaType(f.returnType()))) {
+                body.append("invoke(")
+                    .append(forwardedShapeArgs(f.paramTypes().size()))
+                    .append(");");
+            } else {
+                body.append("return invoke(")
+                    .append(forwardedShapeArgs(f.paramTypes().size()))
+                    .append(");");
+            }
+            body.append(" }\n");
             body.append("}\n");
             // The class text is spliced into the $DealRt body at indent
             // 1; prefix every line with the class-body indent.
@@ -7218,7 +7314,8 @@ public final class JvmBackend {
         if (raw != null) {
             emitLine("static {");
             indent++;
-            emitLine(hostLoadMethodName(id.alias()) + "();");
+            emitLine(hostLoadMethodName(id.alias()) + "("
+                + originArgs(id.span()) + ");");
             indent--;
             emitLine("}");
             return;
@@ -7348,6 +7445,36 @@ public final class JvmBackend {
         return "__host$" + javaName(alias) + "$" + javaName(exportName);
     }
 
+    /** The forwarded parameter references {@code p0, p1, …} of a shape
+     * wrapper's dispatch methods (the read-only invoke ABI). */
+    private static String forwardedShapeArgs(int count) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < count; i++) {
+            if (i > 0) sb.append(", ");
+            sb.append("p").append(i);
+        }
+        return sb.toString();
+    }
+
+    /** The argument list of an emitted indirect dispatch: the DEAL
+     * call-site origin triple followed by the arguments. */
+    private static String invokeAtArgs(String origins, String forwarded) {
+        return forwarded.isEmpty()
+            ? origins
+            : origins + ", " + forwarded;
+    }
+
+    /** The span of the await expression whose direct callee is currently
+     * being emitted: the completion-check origin of a host async call
+     * (the blocking lowering performs the completion check inside the
+     * wrapper but reports the await site, exactly like the LuaJIT
+     * reference). */
+    private Span pendingAwaitCalleeSpan;
+
+    /** The direct callee of the await expression whose span is in
+     * {@link #pendingAwaitCalleeSpan}. */
+    private ExpressionNode pendingAwaitCallee;
+
     /** Emitted name of the per-export first-class function-value carrier
      * field ({@code $host$<alias>$<fn>$fn}) — a shared {@code $DealRt}
      * wrapper instance whose {@code invoke} delegates to the emitted
@@ -7383,6 +7510,11 @@ public final class JvmBackend {
             .append(" = new ").append(shape).append("() {\n");
         List<String> argNames = new ArrayList<>();
         String ret = silentReturnJavaType(f.returnType());
+        // The plain host-facing invoke carries no DEAL call site: a host
+        // invoking the callback directly gets an honestly span-less
+        // boundary raise (never a fabricated origin).
+        String absentOrigins =
+            "(java.lang.String) null, -1, -1, (java.lang.String) null, -1, -1";
         body.append("    public ").append(ret).append(" invoke(");
         for (int i = 0; i < f.paramTypes().size(); i++) {
             if (i > 0) body.append(", ");
@@ -7390,14 +7522,39 @@ public final class JvmBackend {
                 .append(" p").append(i);
             argNames.add("p" + i);
         }
+        String forwarded = String.join(", ", argNames);
+        String absentArgs = forwarded.isEmpty() ? absentOrigins
+            : forwarded + ", " + absentOrigins;
         body.append(") { ");
         if ("void".equals(ret)) {
             body.append(hostWrapperName(alias, exportName)).append('(')
-                .append(String.join(", ", argNames)).append("); }");
+                .append(absentArgs).append("); }");
         } else {
             body.append("return ").append(hostWrapperName(alias, exportName))
-                .append('(').append(String.join(", ", argNames))
-                .append("); }");
+                .append('(').append(absentArgs).append("); }");
+        }
+        // The DEAL-source-aware dispatch: an indirect call through the
+        // value passes its call-site origin, and the wrapper reports
+        // both the async operation shape check and the completion check
+        // at that site (the LuaJIT function-value span triplet shape).
+        body.append("\n    @Override\n    public ").append(ret)
+            .append(" invokeAt(java.lang.String file, int line, "
+                + "int column");
+        for (int i = 0; i < f.paramTypes().size(); i++) {
+            body.append(", ");
+            body.append(silentJavaLocalType(f.paramTypes().get(i)))
+                .append(" p").append(i);
+        }
+        String originArgs = forwarded.isEmpty() ? "file, line, column"
+            : forwarded + ", file, line, column";
+        body.append(") { ");
+        if ("void".equals(ret)) {
+            body.append(hostWrapperName(alias, exportName)).append('(')
+                .append(originArgs).append(", file, line, column); }");
+        } else {
+            body.append("return ").append(hostWrapperName(alias, exportName))
+                .append('(').append(originArgs)
+                .append(", file, line, column); }");
         }
         body.append("\n};\n");
         emitLine(body.toString());
@@ -7621,16 +7778,20 @@ public final class JvmBackend {
         // and propagates them unchanged into every raise it performs
         // (the parameter/return boundary re-raises and the async-shape
         // failures alike); the short overload passes the explicit absent
-        // sentinel (null, -1, -1).
+        // sentinel (null, -1, -1). The DEAL call site threads a second
+        // triple — the await-site origin the blocking lowering reports
+        // the async completion check at (the LuaJIT await-site check);
+        // a sync host call passes the call-site triple for both.
         String delegateArgs = argNames.isEmpty() ? "" : String.join(", ", argNames) + ", ";
         String delegateReturn = "void".equals(javaRet) ? "" : "return ";
         emitLine("static " + javaRet + " " + hostWrapperName(alias, exportName)
             + "(" + paramList + ") { " + delegateReturn
             + hostWrapperName(alias, exportName)
-            + "(" + delegateArgs + "null, -1, -1); }");
+            + "(" + delegateArgs + "null, -1, -1, null, -1, -1); }");
         emitLine("static " + javaRet + " " + hostWrapperName(alias, exportName)
             + "(" + (paramList.isEmpty() ? "" : paramList + ", ")
-            + "java.lang.String oFile, int oLine, int oCol) {");
+            + "java.lang.String oFile, int oLine, int oCol, "
+            + "java.lang.String oAwaitFile, int oAwaitLine, int oAwaitCol) {");
         indent++;
         for (int i = 0; i < f.paramTypes().size(); i++) {
             emitLine(argNames.get(i) + " = __hostParamCheck(" + (i + 1) + ", "
@@ -7652,8 +7813,10 @@ public final class JvmBackend {
             // join; a failed operation propagates DEAL errors and wraps
             // other causes in E8010.
             emitLine("if (!(__r instanceof java.util.concurrent.CompletableFuture))"
-                + " throw new DealError(\"E8010\", \"host async function '"
-                + fn + "' must return an async operation, got \" + $describe(__r), oFile, oLine, oCol);");
+                + " throw new DealError(\"E8010\", \"host async function"
+                + " must return an async operation, got \" + __hostKind(__r),"
+                + " oFile, oLine, oCol, \"async operation\","
+                + " __hostKind(__r));");
             emitLine("java.lang.Object __v;");
             emitLine("try { __v = ((java.util.concurrent.CompletableFuture) __r).join(); }"
                 + " catch (java.util.concurrent.CompletionException e) {"
@@ -7662,9 +7825,11 @@ public final class JvmBackend {
                 + " if (__c instanceof Error er) throw er;"
                 + " throw new DealError(\"E8010\", \"host async function '"
                 + fn + "' operation failed: \" + __c, oFile, oLine, oCol); }");
-            emitLine(hostReturnStatement("__v", ret, fn, true, ", oFile, oLine, oCol"));
+            emitLine(hostReturnStatement("__v", ret, fn, true,
+                "oAwaitFile", "oAwaitLine", "oAwaitCol"));
         } else {
-            emitLine(hostReturnStatement("__r", ret, fn, false, ", oFile, oLine, oCol"));
+            emitLine(hostReturnStatement("__r", ret, fn, false,
+                "oFile", "oLine", "oCol"));
         }
         indent--;
         emitLine("}");
@@ -7681,15 +7846,30 @@ public final class JvmBackend {
      * sync returns (host-module-abi D3 case 2).
      */
     private String hostReturnStatement(String valueCode, Type ret, String fn,
-                                       boolean completion, String origin) {
+                                       boolean completion, String fileVar,
+                                       String lineVar, String colVar) {
+        String descLiteral = quoteJavaString(typeDescriptor(ret));
         if (ret instanceof Type.Null) {
             return "__hostCheck(\"null\", " + valueCode + ", "
-                + quoteJavaString(fn) + ", " + completion + origin + ");";
+                + quoteJavaString(fn) + ", " + completion + ", " + fileVar
+                + ", " + lineVar + ", " + colVar + ");";
         }
         String cast = hostReturnCast(ret);
-        return "return (" + cast + ") __hostCheck("
-            + quoteJavaString(typeDescriptor(ret)) + ", " + valueCode + ", "
-            + quoteJavaString(fn) + ", " + completion + origin + ");";
+        String check = "(" + cast + ") __hostCheck("
+            + descLiteral + ", " + valueCode + ", "
+            + quoteJavaString(fn) + ", " + completion + ", " + fileVar
+            + ", " + lineVar + ", " + colVar + ")";
+        if (completion || ret instanceof Type.Nullable) {
+            return "return " + check + ";";
+        }
+        // The presence rule (the LuaJIT nresults < 1 shape): a Java null
+        // result for a non-nullable declared return is the zero-result
+        // shape and raises the pinned "got nothing" return error.
+        return "if (" + valueCode + " == null) throw new DealError(\"E8010\","
+            + " \"return value 1 type mismatch: expected \" + " + descLiteral
+            + " + \", got nothing\", " + fileVar + ", " + lineVar + ", "
+            + colVar + ", " + descLiteral + ", \"nothing\"); return "
+            + check + ";";
     }
 
     /** The boxed Java cast of a checked host return value for the
@@ -8031,17 +8211,23 @@ public final class JvmBackend {
      * for one declared host class (ISSUE-0303 D4: deterministic from
      * the externals specifier and the class name — single emission
      * point in the shared scope, never bound to the Java host's own
-     * classes). */
-    static String hostRecordSimpleName(String rawSpecifier,
+     * classes). The name derives from the raw (slash) spelling of the
+     * externals specifier, so the host triplets' hand-written
+     * {@code $DealRt.$Host$...} references and every emitted reference
+     * — including the class-identity specifier's dotted typing-name
+     * projection of the corpus externals-identity convention —
+     * resolve to the one synthesized record class. */
+    static String hostRecordSimpleName(String specifier,
                                        String className) {
-        return "$Host$" + escapedIdentifier(rawSpecifier) + "$"
+        return "$Host$" + escapedIdentifier(
+                specifier.replace('.', '/')) + "$"
             + javaName(className);
     }
 
     /** The fully qualified shared record reference for one declared
      * host class ({@code $DealRt.$Host$...}). */
-    private String hostRecordJavaRef(String rawSpecifier, String className) {
-        return "$DealRt." + hostRecordSimpleName(rawSpecifier, className);
+    private String hostRecordJavaRef(String specifier, String className) {
+        return "$DealRt." + hostRecordSimpleName(specifier, className);
     }
 
     /** The fully qualified shared record reference for a host-class
@@ -12197,7 +12383,19 @@ public final class JvmBackend {
                 // narrowing invalidation needs no codegen counterpart
                 // (the type map already holds the un-narrowed types
                 // here).
-                String raw = emitExpression(aw.callee());
+                Span prevAwaitSpan = pendingAwaitCalleeSpan;
+                ExpressionNode prevAwaitCallee = pendingAwaitCallee;
+                if (aw.callee() instanceof CallExpr) {
+                    pendingAwaitCalleeSpan = aw.span();
+                    pendingAwaitCallee = aw.callee();
+                }
+                String raw;
+                try {
+                    raw = emitExpression(aw.callee());
+                } finally {
+                    pendingAwaitCalleeSpan = prevAwaitSpan;
+                    pendingAwaitCallee = prevAwaitCallee;
+                }
                 if (!(typeOf(aw) instanceof Type.Int)) {
                     yield raw;
                 }
@@ -12431,7 +12629,8 @@ public final class JvmBackend {
             preStatements.add(new PreLine("if (!" + defaultsRef
                 + ".containsKey(" + quoteJavaString(prop.name())
                 + ")) throw new DealError(\"E8007\", \"extra field '"
-                + prop.name() + "' in class '" + identity + "'\", null, -1, -1);", 0));
+                + prop.name() + "' in class '" + identity + "'\", "
+                + originArgs(obj.span()) + ");", 0));
         }
         // Phases 2\u20134: constructor arguments in field declaration
         // order — provided values, defaults-map fills for omitted
@@ -14930,8 +15129,10 @@ public final class JvmBackend {
                             call.args().get(i), argCodes.get(i),
                             f.paramTypes().get(i)));
                     }
-                    return mapped + ".invoke("
-                        + String.join(", ", argCodes) + ")";
+                    return mapped + ".invokeAt("
+                        + invokeAtArgs(originArgs(call.span()),
+                            String.join(", ", argCodes))
+                        + ")";
                 }
                 unsupported("calls through non-function values", call.span());
                 return "null";
@@ -15135,7 +15336,10 @@ public final class JvmBackend {
                     call.args().get(i), argCodes.get(i),
                     f.paramTypes().get(i)));
             }
-            return calleeTemp + ".invoke(" + String.join(", ", argCodes) + ")";
+            return calleeTemp + ".invokeAt("
+                + invokeAtArgs(originArgs(call.span()),
+                    String.join(", ", argCodes))
+                + ")";
         }
         unsupported("calls through non-identifier callees", call.span());
         return "null";
@@ -15195,7 +15399,10 @@ public final class JvmBackend {
             argCodes.set(i, boundaryArgCode(call.args().get(i),
                 argCodes.get(i), f.paramTypes().get(i)));
         }
-        return calleeTemp + ".invoke(" + String.join(", ", argCodes) + ")";
+        return calleeTemp + ".invokeAt("
+            + invokeAtArgs(originArgs(call.span()),
+                String.join(", ", argCodes))
+            + ")";
     }
 
     /**
@@ -15256,9 +15463,10 @@ public final class JvmBackend {
                 List<String> argCodes = emitOperandsInOrder(call.args(),
                     argTargets);
                 StringBuilder sb = new StringBuilder(calleeTemp)
-                    .append(".invoke(");
+                    .append(".invokeAt(")
+                    .append(originArgs(call.span()));
                 for (int i = 0; i < argCodes.size(); i++) {
-                    if (i > 0) sb.append(", ");
+                    sb.append(", ");
                     sb.append(boundaryArgCode(call.args().get(i),
                         argCodes.get(i), f.paramTypes().get(i)));
                 }
@@ -15342,6 +15550,20 @@ public final class JvmBackend {
                     call.args().get(i), "java.lang.Object",
                     call.args().get(i).span()));
             }
+            // The declared host boundary's origins: the call expression
+            // start (parameter/sync-return raises) and — when this call
+            // is the direct callee of an await — the await keyword start
+            // (the completion-value check).
+            if (sb.length() > 0
+                    && sb.charAt(sb.length() - 1) != '(') {
+                sb.append(", ");
+            }
+            sb.append(originArgs(call.span()));
+            sb.append(", ");
+            sb.append(pendingAwaitCallee == call
+                    && pendingAwaitCalleeSpan != null
+                ? originArgs(pendingAwaitCalleeSpan)
+                : originArgs(call.span()));
             return sb.append(')').toString();
         }
         if ("std/console".equals(module)) {
@@ -18467,10 +18689,19 @@ public final class JvmBackend {
      * the class (jvm-canonical-error-snapshot-convergence D3), emitted
      * as compile-time literals. The caller passes them unchanged into
      * the raising helper, which propagates them into every raise it
-     * performs — no thread-local state, no stack-frame derivation. */
+     * performs — no thread-local state, no stack-frame derivation. An
+     * absent span emits the explicit absent sentinel (null, -1, -1),
+     * and a span carrying no file falls back to this module's DEAL
+     * source path — the lane normalizes the value to the corpus-relative
+     * form through its deployment map. */
     private String originArgs(Span span) {
-        return quoteJavaString(span.file()) + ", " + span.startLine()
-            + ", " + span.startColumn();
+        if (span == null) {
+            // The explicit absent sentinel: file null, line/column -1.
+            return "(java.lang.String) null, -1, -1";
+        }
+        String file = span.file() != null ? span.file() : sourcePath;
+        return quoteJavaString(file == null ? "" : file) + ", "
+            + span.startLine() + ", " + span.startColumn();
     }
 
     /** Renders a DEAL string as a Java string literal (UTF-8 source). */

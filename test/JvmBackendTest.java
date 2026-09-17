@@ -1202,7 +1202,7 @@ public class JvmBackendTest {
             new XmodPin("imported call result used as a call-result callee", """
                 import * as lib from "./lib"
                 export function test(): int { return lib.picker()(41); }
-                """, "__fn0.invoke(41L)"));
+                """, "__fn0.invokeAt("));
         for (XmodPin pin : xmodPins) {
             Frontend f = compileFrontend(pin.source(),
                 "jvmtest-xmod-carrier.deal", new FixedModuleResolver(xmodLib));
@@ -5177,8 +5177,9 @@ public class JvmBackendTest {
                     "wrapper carries the canonical descriptor");
                 check(src.contains("static final $DealRt.Fn2_I_I_R_I add$fn = new $DealRt.Fn2_I_I_R_I()"),
                     "per-declaration wrapper instance field emitted");
-                check(src.contains("f.invoke(1L, 2L)"),
-                    "indirect call dispatches through invoke");
+                check(src.contains("f.invokeAt(") && src.contains(", 1L, 2L)"),
+                    "indirect call dispatches through invokeAt with the "
+                        + "call-site origin");
                 check(src.contains(
                     "$DealRt.Fn2_I_I_R_I g = new $DealRt.Fn2_I_I_R_I() { @Override long invoke(long p0, long p1) { return Main.inc(p0); } };"),
                     "arity adapter delegates to the qualified static method, dropping p1");
@@ -5254,8 +5255,14 @@ public class JvmBackendTest {
                 check(res.source().contains(
                         "$DealRt.Fn2_I_I_R_I g = new $DealRt.Fn2_I_I_R_I() { @Override long invoke(long p0, long p1) { return Main.invoke(p0); } };"),
                     "the arity adapter delegates to the qualified static invoke");
-                check(!res.source().contains("return invoke(p0);"),
-                    "never a bare invoke call recursing into the wrapper's own invoke");
+                check(!res.source().contains(
+                        "{ @Override long invoke(long p0) { return invoke(p0); } }"),
+                    "never a bare invoke call from the wrapper's own invoke "
+                        + "body (only the abstract shape's invokeAt "
+                        + "delegates to the abstract invoke)");
+                check(res.source().contains(".invokeAt("),
+                    "the DEAL indirect call sites dispatch through the "
+                        + "invokeAt origin seam");
             }
         }
 
@@ -5291,7 +5298,8 @@ public class JvmBackendTest {
                 check(res.source().contains("$DealRt.Fn1_I_R_I __fn0 = g;"),
                     "adapter snapshots the local into an effectively-final temporary");
                 check(res.source().contains("__fn0.invoke(p0)"),
-                    "adapter delegates through the snapshot temporary");
+                    "adapter delegates through the snapshot temporary (the "
+                        + "plain host-facing invoke ABI)");
             }
         }
 
@@ -5432,8 +5440,10 @@ public class JvmBackendTest {
                 check(res.source().contains("$DealRt.Fn2_I_I_R_I __fn0 = picker();"),
                     "the call-result callee is materialized into a temporary "
                     + "at its evaluation position");
-                check(res.source().contains("__fn0.invoke(41L, 1L)"),
-                    "the dispatch goes through the callee temporary");
+                check(res.source().contains("__fn0.invokeAt(")
+                        && res.source().contains(", 41L, 1L)"),
+                    "the dispatch goes through the callee temporary with "
+                        + "the call-site origin");
                 check(!res.source().contains("picker().invoke"),
                     "never an inline callee whose argument pre-statements "
                     + "would run first");
@@ -9589,10 +9599,12 @@ public class JvmBackendTest {
             "callback-argument boundary raises exactly E8004 once: "
                 + cb.output());
         String cbJava = int32Artifact(cbSrc, "boundary_callback_artifact");
-        check(cbJava.contains(
-                "f.invoke(checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L))"),
+        check(cbJava.contains("f.invokeAt(")
+                && cbJava.contains(
+                    "checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L))"),
             "the callback argument wraps the retained expression in "
-                + "checkInt");
+                + "checkInt and dispatches through the invokeAt origin "
+                + "seam");
         check(!cbJava.contains(
                 "(int) (java.lang.System.currentTimeMillis()"),
             "no bare (int) narrowing of the retained time expression at "
@@ -9747,7 +9759,7 @@ public class JvmBackendTest {
                 + "stays usable (42): " + hostInit.output());
         String hostInitJava = int32HostArtifact(hostInitSrc,
             "boundary_init_in");
-        check(hostInitJava.contains("int t = __host$log$add(20, 22);"),
+        check(hostInitJava.contains("int t = __host$log$add(20, 22, "),
             "the host call result is already the int carrier at the "
                 + "declaration boundary (pass-through, no redundant "
                 + "gate): "
@@ -9776,7 +9788,7 @@ public class JvmBackendTest {
                 + hostAssign.output());
         String hostAssignJava = int32HostArtifact(hostAssignSrc,
             "boundary_assign_in");
-        check(hostAssignJava.contains("t = __host$log$add(2, 3);"),
+        check(hostAssignJava.contains("t = __host$log$add(2, 3, "),
             "the host call result passes through the assignment boundary "
                 + "as the int carrier");
 
@@ -9795,7 +9807,7 @@ public class JvmBackendTest {
                 + hostRet.output());
         String hostRetJava = int32HostArtifact(hostRetSrc,
             "boundary_return_in");
-        check(hostRetJava.contains("return __host$log$add(6, 7);"),
+        check(hostRetJava.contains("return __host$log$add(6, 7, "),
             "the host call result passes through the return boundary as "
                 + "the int carrier");
 
@@ -9815,7 +9827,7 @@ public class JvmBackendTest {
                 + hostArg.output());
         String hostArgJava = int32HostArtifact(hostArgSrc,
             "boundary_callarg_in");
-        check(hostArgJava.contains("return use(__host$log$add(8, 9));"),
+        check(hostArgJava.contains("return use(__host$log$add(8, 9, "),
             "the host call result passes through the call-argument "
                 + "boundary as the int carrier");
 
@@ -9836,9 +9848,11 @@ public class JvmBackendTest {
                 + "(21): " + hostCb.output());
         String hostCbJava = int32HostArtifact(hostCbSrc,
             "boundary_callback_in");
-        check(hostCbJava.contains("f.invoke(__host$log$add(10, 11))"),
+        check(hostCbJava.contains("f.invokeAt(")
+                && hostCbJava.contains("__host$log$add(10, 11, "),
             "the host call result passes through the callback-argument "
-                + "boundary as the int carrier");
+                + "boundary as the int carrier (dispatched through the "
+                + "invokeAt origin seam)");
 
         // Await completion (host async, boxed at the host seam).
         String hostAwaitSrc = """
@@ -9855,11 +9869,11 @@ public class JvmBackendTest {
                 + "and stays usable (7): " + hostAwait.output());
         String hostAwaitJava = int32HostArtifact(hostAwaitSrc,
             "boundary_await_in");
-        check(hostAwaitJava.contains("return __host$log$fetchInt();"),
+        check(hostAwaitJava.contains("return __host$log$fetchInt("),
             "the host async completion passes through the await boundary "
                 + "as the int carrier (the completion check ran inside "
                 + "the host wrapper)");
-        check(!hostAwaitJava.contains("checkInt(__host$log$fetchInt())"),
+        check(!hostAwaitJava.contains("checkInt(__host$log$fetchInt("),
             "no redundant gate around the already-checked host async "
                 + "completion");
 
@@ -9882,7 +9896,7 @@ public class JvmBackendTest {
         String hostArrWriteJava = int32HostArtifact(hostArrWriteSrc,
             "boundary_arrwrite_in");
         check(hostArrWriteJava.contains(
-                "__intArrayWrite(xs, 0, __host$log$add(12, 13))"),
+                "__intArrayWrite(xs, 0, __host$log$add(12, 13, "),
             "the host call result passes through the array-write "
                 + "boundary as the int carrier");
 
@@ -9907,10 +9921,10 @@ public class JvmBackendTest {
         String hostNullJava = int32HostArtifact(hostNullSrc,
             "boundary_null_in");
         check(hostNullJava.contains(
-                "java.lang.Integer n = __host$log$maybe();"),
+                "java.lang.Integer n = __host$log$maybe("),
             "the nullable host return passes through the int | null "
                 + "boundary (no null-unsafe checkInt wrap)");
-        check(!hostNullJava.contains("checkInt(__host$log$maybe())"),
+        check(!hostNullJava.contains("checkInt(__host$log$maybe("),
             "no null-unsafe checkInt wrap around the nullable host "
                 + "return");
 
@@ -10000,10 +10014,12 @@ public class JvmBackendTest {
                 "checkInt((java.lang.System.currentTimeMillis()"),
             "no int32 gate leaks into the legacy assignment artifact");
         String legacyCbJava = legacyArtifact(cbSrc, "boundary_cb_legacy");
-        check(legacyCbJava.contains(
-                "f.invoke((java.lang.System.currentTimeMillis() / 1000L) * 1000L)"),
+        check(legacyCbJava.contains("f.invokeAt(")
+                && legacyCbJava.contains(
+                    "(java.lang.System.currentTimeMillis() / 1000L) * 1000L)"),
             "legacy callback argument keeps the pre-tree byte shape (no "
-                + "int32 wrap)");
+                + "int32 wrap) and dispatches through the invokeAt origin "
+                + "seam");
         String legacyArrWriteJava = legacyArtifact(arrWriteSrc,
             "boundary_arrwrite_legacy");
         check(legacyArrWriteJava.contains(
@@ -11105,9 +11121,10 @@ public class JvmBackendTest {
                 + "function value materializes the callee FIELD READ "
                 + "into a wrapper temporary at the callee's evaluation "
                 + "position");
-        check(artifact.contains("$DealRt.Bytes via = __fn0.invoke("),
+        check(artifact.contains("$DealRt.Bytes via = __fn0.invokeAt("),
             "the call through the class field dispatches through the "
-                + "materialized wrapper temporary's invoke");
+                + "materialized wrapper temporary's invokeAt with the "
+                + "call-site origin");
         check(!artifact.contains(
                 "if (v instanceof $DealRt.Bytes) throw new DealError("
                     + "\"E8001\", \"unsupported type for JSON encoding: "
@@ -11925,10 +11942,12 @@ public class JvmBackendTest {
             "per-declaration wrapper instance field");
         check(java.contains("$DealRt.FnA0_R_I f = value$fn;"),
             "function-typed local initializes from the wrapper field");
-        check(java.contains("checkInt(f.invoke())"),
-            "awaited indirect call dispatches through invoke");
-        check(java.contains("checkInt(cb.invoke(v))"),
-            "await through a callback parameter dispatches through invoke");
+        check(java.contains("checkInt(f.invokeAt("),
+            "awaited indirect call dispatches through invokeAt with the "
+                + "call-site origin");
+        check(java.contains("checkInt(cb.invokeAt("),
+            "await through a callback parameter dispatches through "
+                + "invokeAt");
         check(java.contains("noop();"),
             "null-returning await hoists the call into a pre-statement");
         check(!java.contains("checkInt(noop()"),
@@ -12045,7 +12064,7 @@ public class JvmBackendTest {
                 "$DealRt.FnA0_R_I f = new $DealRt.FnA0_R_I()"),
             "async function expression emits an anonymous FnA0_R_I "
                 + "subclass into the typed local: " + exprRes.source());
-        check(exprRes.source().contains("checkInt(f.invoke())"),
+        check(exprRes.source().contains("checkInt(f.invokeAt("),
             "awaited async function expression runs the completion "
                 + "check at the await site: " + exprRes.source());
         ExecResult exprRun = compileAndRunJvm("""
@@ -13943,12 +13962,14 @@ public class JvmBackendTest {
                     "the wrapped E8003 dynamic-element re-raise propagates "
                         + "the origin and the element projection");
                 check(java.contains(
-                        "throw new DealError(\"E8010\", \"parameter \" + i + \" type mismatch: \" + inner.getMessage(), oFile, oLine, oCol);"),
+                        "throw new DealError(\"E8010\", \"parameter \" + i + \" type mismatch: \" + __hostInnerMessage(d, v, inner), oFile, oLine, oCol, desc, __hostKind(v));"),
                     "the wrapped E8010 host-parameter re-raise propagates "
-                        + "the origin");
+                        + "the origin with the closed inner reason text "
+                        + "and the expected/actual projections");
                 check(java.contains(
-                        "throw new DealError(\"E8011\", \"host export '\" + name + \"' in module '\" + module + \"' missing or has signature mismatch: expected \" + desc, oFile, oLine, oCol);"),
-                    "the host load-time E8011 raise propagates the origin");
+                        "throw new DealError(\"E8011\", \"missing host export '\" + name + \"' in module '\" + module + \"'\", oFile, oLine, oCol);"),
+                    "the host load-time E8011 raise propagates the origin "
+                        + "with the pinned canonical message");
                 check(java.contains(
                         "throw new DealError(\"E1\", \"boom\", __SRC, 8, 5);"),
                     "the user-throw raise statement passes the throw "
@@ -15250,24 +15271,81 @@ public class JvmBackendTest {
         check(java.contains("__hostMethod(__h, \"host/log\", \"add\", \"(int,int)->int\""),
             "the presence check carries the declared descriptor");
         check(java.contains(
-                "static long __host$log$add(java.lang.Object __a0, java.lang.Object __a1)"),
-            "the wrapper signature takes java.lang.Object parameters "
+                "static long __host$log$add(java.lang.Object __a0, "
+                    + "java.lang.Object __a1, java.lang.String oFile, "
+                    + "int oLine, int oCol, java.lang.String "
+                    + "oAwaitFile, int oAwaitLine, int oAwaitCol)"),
+            "the wrapper signature takes java.lang.Object parameters and "
+                + "the call-site/await-site origin triples "
                 + "(ISSUE-0303 D2: the wrapper checks each argument "
                 + "against the declared descriptor at the call)");
-        check(java.contains("__a0 = __hostParamCheck(1, \"int\", __a0, oFile, oLine, oCol);"),
+        check(java.contains("__a0 = __hostParamCheck(1, \"int\", __a0, "
+                + "oFile, oLine, oCol);"),
             "the wrapper checks each argument at the call "
                 + "(HOST_PARAMETER boundary, E8010 'parameter {i} type "
-                + "mismatch')");
-        check(java.contains("__hostCheck(\"int\", __r, \"host/log.add\", false, oFile, oLine, oCol)"),
-            "the sync wrapper checks the return boundary (E8010 path)");
-        check(java.contains("__hostCheck(\"string\", __v, \"host/log.fetch\", true, oFile, oLine, oCol)"),
-            "the async wrapper checks the completion value (E8001 path)");
-        check(java.contains(
-                "__hasUnpairedSurrogate(s)) throw new DealError(completion ? \"E8001\" : \"E8010\""),
+                + "mismatch') with the call-site origin");
+        check(java.contains("__hostCheck(\"int\", __r, \"host/log.add\", "
+                + "false, oFile, oLine, oCol)"),
+            "the sync wrapper checks the return boundary (E8010 path) at "
+                + "the call site");
+        check(java.contains("__hostCheck(\"string\", __v, \"host/log.fetch\", "
+                + "true, oAwaitFile, oAwaitLine, oAwaitCol)"),
+            "the async wrapper checks the completion value (E8001 path) at "
+                + "the await site");
+        check(java.contains("__unpairedSurrogateReason(s)")
+                && java.contains("expected string, got invalid UTF-8 encoding")
+                && java.contains(
+                    "expected string, got UTF-16 surrogate code point"),
             "the host check's string branch runs the v1.2 unpaired-surrogate "
-                + "scan (E8010 sync / E8001 completion)");
-        check(java.contains("static {\n        __hostLoad$log();\n    }"),
-            "the import statement emits the load-time presence-check block");
+                + "scan and carries the closed reason texts "
+                + "(E8010 sync / E8001 completion)");
+        check(java.contains(
+                "static DealError __hostReturnFail(boolean completion, "
+                    + "java.lang.String desc, java.lang.Object v, "
+                    + "java.lang.String reason, java.lang.String oFile, "
+                    + "int oLine, int oCol)"),
+            "the host return/completion failure factory takes the origin "
+                + "and builds the closed projections");
+        check(java.contains(
+                "return new DealError(completion ? \"E8001\" : \"E8010\", "
+                    + "completion ? reason : \"return value 1 type mismatch: "
+                    + "\" + reason, oFile, oLine, oCol, desc, "
+                    + "__hostKind(v));"),
+            "the host return/completion re-raise carries the call-site "
+                + "origin, the declared descriptor as expected, and the "
+                + "closed runtime-kind projection as actual");
+        check(java.contains(
+                "throw new DealError(\"E8010\", \"parameter \" + i + \" "
+                    + "type mismatch: \" + __hostInnerMessage(d, v, inner), "
+                    + "oFile, oLine, oCol, desc, __hostKind(v));"),
+            "the host parameter re-raise propagates the call-site origin, "
+                + "the closed message, and the declared-descriptor/kind "
+                + "pair");
+        check(java.contains(
+                "throw new DealError(\"E8010\", \"host async function "
+                    + "must return an async operation, got \" + "
+                    + "__hostKind(__r), oFile, oLine, oCol, "
+                    + "\"async operation\", __hostKind(__r));"),
+            "the host async shape raise reports the call-site origin with "
+                + "the pinned expected/actual pair");
+        check(java.contains(
+                "throw new DealError(\"E8011\", \"missing host export '\" "
+                    + "+ name + \"' in module '\" + module + \"'\", "
+                    + "oFile, oLine, oCol);"),
+            "the missing-export load-time raise reports the pinned message "
+                + "and the import-site origin");
+        check(java.contains("return __host$log$add(2L, 3L, \"")
+                && java.contains("src/entry.deal\", 9, 37, \""),
+            "the direct host call threads the call-expression origin "
+                + "(the DEAL source-path file literal at the pinned "
+                + "line/column) into the wrapper, got: "
+                + java.lines()
+                    .filter(l -> l.contains("__host$log$add(")
+                        && l.contains("entry.deal"))
+                    .findFirst().orElse("<no host call>"));
+        check(java.contains("static {\n        __hostLoad$log(\""),
+            "the import statement emits the load-time presence-check block "
+                + "with the import-site origin");
 
         // Real execution: javac over the artifacts + host class + runner,
         // then java. The host's load-time call, the nullable return, and
@@ -15422,9 +15500,10 @@ public class JvmBackendTest {
         int exitSur = pSurRun.waitFor();
         check(exitSur == 1 && outSur.contains("DEAL_ERROR_CODE: E8010"),
             "unpaired-surrogate host return reports E8010: " + outSur);
-        check(outSur.contains(
-                "expected string, got string with unpaired surrogate code units"),
-            "the sync boundary rejection carries the seam's message: " + outSur);
+        check(outSur.contains("return value 1 type mismatch: expected string, "
+                + "got invalid UTF-8 encoding"),
+            "the sync boundary rejection carries the pinned host message: "
+                + outSur);
 
         // Async: an entry that awaits the host async export, with the
         // shape (E8010) and completion (E8001) failures.
@@ -15579,9 +15658,9 @@ public class JvmBackendTest {
             "unpaired-surrogate async completion reports E8001 at the await site: "
                 + out7);
         check(out7.contains(
-                "expected string, got string with unpaired surrogate code units"),
-            "the completion boundary rejection carries the seam's message: "
-                + out7);
+                "expected string, got invalid UTF-8 encoding"),
+            "the completion boundary rejection carries the pinned reason "
+                + "text: " + out7);
 
         // ISSUE-0551: declared bytes host parameters/returns ride the
         // shared $DealRt.Bytes carrier. The emitted wrapper keys the
@@ -15658,15 +15737,22 @@ public class JvmBackendTest {
                 "the bytes parameter resolves its load-time class literal "
                     + "as the shared $DealRt.Bytes carrier");
             check(javaBytes.contains(
-                    "static $DealRt.Bytes __host$host$echoBytes(java.lang.Object __a0)"),
-                "the bytes wrapper returns the shared carrier");
-            check(javaBytes.contains("__a0 = __hostParamCheck(1, \"bytes\", __a0, oFile, oLine, oCol);"),
+                    "static $DealRt.Bytes __host$host$echoBytes("
+                        + "java.lang.Object __a0, java.lang.String oFile, "
+                        + "int oLine, int oCol, java.lang.String "
+                        + "oAwaitFile, int oAwaitLine, int oAwaitCol)"),
+                "the bytes wrapper returns the shared carrier and carries "
+                    + "the origin triples");
+            check(javaBytes.contains("__a0 = __hostParamCheck(1, \"bytes\", "
+                    + "__a0, oFile, oLine, oCol);"),
                 "the bytes parameter check keys on the canonical \"bytes\" "
-                    + "descriptor at the call");
+                    + "descriptor at the call (call-site origin)");
             check(javaBytes.contains(
-                    "__hostCheck(\"bytes\", __r, \"host/byteshost.echoBytes\", false, oFile, oLine, oCol)"),
+                    "__hostCheck(\"bytes\", __r, "
+                        + "\"host/byteshost.echoBytes\", false, "
+                        + "oFile, oLine, oCol)"),
                 "the bytes return check keys on the canonical \"bytes\" "
-                    + "descriptor");
+                    + "descriptor at the call site");
         }
         Files.copy(tmpDir.get().resolve("HostByteshost.java"),
             outputDirBytes.resolve("HostByteshost.java"));
@@ -15751,9 +15837,9 @@ public class JvmBackendTest {
         check(exitBytesBad == 1 && outBytesBad.contains("DEAL_ERROR_CODE: E8010"),
             "wrong-kind bytes host return reports E8010: " + outBytesBad);
         check(outBytesBad.contains(
-                "host function 'host/byteshost.echoBytes' return value 1 type mismatch: expected bytes, got String"),
-            "the bytes return rejection carries the pinned host-function message: "
-                + outBytesBad);
+                "return value 1 type mismatch: expected bytes"),
+            "the bytes return rejection carries the pinned host-return "
+                + "message: " + outBytesBad);
     }
 
     /**

@@ -96,6 +96,7 @@ public class JvmLaneTest {
         hostBoundaryCodeParity();
         realTimeFixtureSpanlessConvergence();
         realJsonFixtureConvergence();
+        hostClassIdentityConvention();
         invocationDeclarationOrderProbe();
         discardedReturnValuesProbe();
         printReturnValueDivergenceProbe();
@@ -442,28 +443,68 @@ public class JvmLaneTest {
     }
 
     private static void hostBoundaryCodeParity() throws Exception {
-        // The E8010/E8011 host-boundary fixtures produce the same codes
-        // the Lua lane pins, through the deployed bad_string.java /
-        // missing_export.java triplets; the span stays absent until the
-        // epic's host-boundary origin leaf lands.
+        // The converged host ABI boundary (ISSUE-0607): every
+        // runtime-error host-abi fixture passes its sidecar byte-exact
+        // through the real lane and the real host triplets — the declared
+        // host boundary raises at the call expression with the closed
+        // per-branch message and the closed expected/actual pair.
         String[] cases = {
-            "backend-runtime/host-abi/host-invalid-utf8-e8010.deal:E8010",
-            "backend-runtime/host-abi/host-surrogate-utf8-e8010.deal:E8010",
-            "backend-runtime/host-abi/host-missing-export.deal:E8011"
+            "backend-runtime/host-abi/host-async-bad.deal",
+            "backend-runtime/host-abi/host-async-shape-bad.deal",
+            "backend-runtime/host-abi/host-async-shape-value.deal",
+            "backend-runtime/host-abi/host-bad-return.deal",
+            "backend-runtime/host-abi/host-bytes-param-mismatch-e8010.deal",
+            "backend-runtime/host-abi/host-bytes-return-mismatch-e8010.deal",
+            "backend-runtime/host-abi/host-class-extra-field.deal",
+            "backend-runtime/host-abi/host-empty-return-bad.deal",
+            "backend-runtime/host-abi/host-invalid-utf8-e8010.deal",
+            "backend-runtime/host-abi/host-missing-export.deal",
+            "backend-runtime/host-abi/host-null-return-bad.deal",
+            "backend-runtime/host-abi/host-nullable-function-param-bad.deal",
+            "backend-runtime/host-abi/host-nullable-function-return-bad.deal",
+            "backend-runtime/host-abi/host-nullable-return-bad.deal",
+            "backend-runtime/host-abi/host-prewrapped-bad.deal",
+            "backend-runtime/host-abi/host-rest-bad.deal",
+            "backend-runtime/host-abi/host-surrogate-utf8-e8010.deal"
         };
         JvmLane lane = new JvmLane(CORPUS_ROOT);
-        for (String entry : cases) {
-            String corpusPath = entry.substring(0, entry.indexOf(':'));
-            String code = entry.substring(entry.indexOf(':') + 1);
-            LaneExecution execution = lane.execute(realLaneCase(corpusPath));
-            check(execution instanceof LaneExecution.Infrastructure infra
-                    && infra.detail().contains("no span (file, line, column) "
-                        + "where one is required")
-                    && infra.detail().contains("code=" + code)
-                    && !infra.detail().contains(".java"),
-                "the host-boundary fixture " + corpusPath + " captures the "
-                    + "Lua-pinned code " + code + " with no fabricated "
-                    + "stack-frame file, got: " + execution);
+        for (String corpusPath : cases) {
+            assertPassed("the host-boundary fixture " + corpusPath
+                + " passes its pinned canonical snapshot byte-exact",
+                lane, realLaneCase(corpusPath));
+        }
+
+        // The surrogate fixture's snapshot, field-exact (the pinned
+        // message split the kind projection keeps at "string").
+        LaneExecution execution = lane.execute(realLaneCase(
+            "backend-runtime/host-abi/host-surrogate-utf8-e8010.deal"));
+        check(execution instanceof LaneExecution.Executed,
+            "the surrogate host-boundary run is a real execution, got: "
+                + execution);
+        if (execution instanceof LaneExecution.Executed executed) {
+            Optional<ErrorSnapshot.Framed> framed =
+                ErrorSnapshot.parseFraming(executed.stdout());
+            check(framed.isPresent(),
+                "the surrogate snapshot is a canonical framing, got: "
+                    + new String(executed.stdout(), StandardCharsets.UTF_8));
+            if (framed.isPresent()) {
+                SidecarExpectations.ErrorExpectation fields =
+                    framed.get().fields();
+                check(fields.code().equals("E8010")
+                        && fields.message().equals(
+                            "return value 1 type mismatch: expected "
+                                + "string, got UTF-16 surrogate code point")
+                        && fields.sourceFile().equals(
+                            "backend-runtime/host-abi/"
+                                + "host-surrogate-utf8-e8010.deal")
+                        && fields.line() == 11 && fields.column() == 19
+                        && fields.expected().equals(
+                            Optional.of("string"))
+                        && fields.actual().equals(Optional.of("string")),
+                    "the surrogate snapshot pins code/message/sourceFile/"
+                        + "line/column/expected/actual field-exact, got: "
+                        + fields);
+            }
         }
     }
 
@@ -517,6 +558,50 @@ public class JvmLaneTest {
             assertPassed("the JSON rejection fixture " + corpusPath
                 + " passes the production lane byte-exact against its "
                 + "sidecar", lane, realLaneCase(corpusPath));
+        }
+    }
+
+    /** The corpus conformance externals-identity convention through the
+     * real lane (the host-module-abi D4/D6 typing rule the Lua lane, the
+     * JS lane, and every sidecar pin share): a host module's class
+     * identities project through its dotted typing name
+     * ({@code @$external/host.presence/Config} — the raw external
+     * specifier with '/' -> '.'), so the E8007 extra-field rejection at
+     * the declared host class's construction carries that identity
+     * field-exact. The fixture passes byte-exact against its sidecar and
+     * the framing pins code/message/sourceFile/line/column. */
+    private static void hostClassIdentityConvention() throws Exception {
+        String corpusPath =
+            "backend-runtime/host-abi/host-class-extra-field.deal";
+        JvmLane lane = new JvmLane(CORPUS_ROOT);
+        assertPassed("the host-class extra-field fixture passes its"
+            + " pinned canonical snapshot byte-exact (the dotted"
+            + " externals identity)", lane, realLaneCase(corpusPath));
+
+        LaneExecution execution = lane.execute(realLaneCase(corpusPath));
+        check(execution instanceof LaneExecution.Executed,
+            "the host-class extra-field run is a real execution, got: "
+                + execution);
+        if (execution instanceof LaneExecution.Executed executed) {
+            Optional<ErrorSnapshot.Framed> framed =
+                ErrorSnapshot.parseFraming(executed.stdout());
+            check(framed.isPresent(),
+                "the E8007 snapshot is a canonical framing, got: "
+                    + new String(executed.stdout(), StandardCharsets.UTF_8));
+            if (framed.isPresent()) {
+                SidecarExpectations.ErrorExpectation fields =
+                    framed.get().fields();
+                check(fields.code().equals("E8007")
+                        && fields.message().equals("extra field 'fallback'"
+                            + " in class '@$external/host.presence/Config'")
+                        && fields.sourceFile().equals(
+                            "backend-runtime/host-abi/"
+                                + "host-class-extra-field.deal")
+                        && fields.line() == 9 && fields.column() == 28,
+                    "the E8007 snapshot pins code/message/sourceFile/"
+                        + "line/column field-exact (the dotted externals "
+                        + "identity), got: " + fields);
+            }
         }
     }
 
