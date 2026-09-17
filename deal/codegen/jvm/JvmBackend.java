@@ -2680,29 +2680,45 @@ public final class JvmBackend {
      * the pre-tree base table plus the ISSUE-0158 bytes helpers, whose
      * carriers match the legacy backend-wide long int mode (the
      * long-parameter bytesGet/bytesSet arms and the long bytesLength
-     * result). A DEAL function whose translated name and mapped
-     * parameter types match a helper exactly would emit a duplicate Java
-     * method; such declarations are rejected with E6000 instead.
+     * result). Every entry lists every emitted overload of the helper —
+     * the pre-threading short form and the origin-threading form
+     * (ISSUE-0603/ISSUE-0605) alike, because both are emitted methods and
+     * either would collide. A DEAL function whose translated name and
+     * mapped parameter types match an emitted overload exactly would emit
+     * a duplicate Java method; such declarations are rejected with E6000
+     * instead.
      */
-    private static final Map<String, List<String>> LEGACY_RUNTIME_HELPER_SIGNATURES = Map.ofEntries(
-        Map.entry("intAdd", List.of("long", "long")),
-        Map.entry("intSub", List.of("long", "long")),
-        Map.entry("intMul", List.of("long", "long")),
-        Map.entry("intDiv", List.of("long", "long")),
-        Map.entry("intMod", List.of("long", "long")),
-        Map.entry("intPow", List.of("long", "long")),
-        Map.entry("intNeg", List.of("long")),
-        Map.entry("numMod", List.of("double", "double")),
-        Map.entry("intFromNumber", List.of("double")),
-        Map.entry("numberFromInt", List.of("long")),
-        Map.entry("scalarCompare", List.of("java.lang.String", "java.lang.String")),
-        Map.entry("checkInt", List.of("long")),
-        Map.entry("__hasUnpairedSurrogate", List.of("java.lang.String")),
-        Map.entry("loopCond", List.of("boolean")),
-        Map.entry("booleanNotNull", List.of("java.lang.Boolean")),
-        Map.entry("intFromNullable", List.of("java.lang.Long")),
-        Map.entry("numberFromNullable", List.of("java.lang.Double")),
-        Map.entry("checkSig", List.of("java.lang.String", "java.lang.String")),
+    private static final Map<String, List<List<String>>> LEGACY_RUNTIME_HELPER_SIGNATURES = Map.ofEntries(
+        Map.entry("intAdd", List.of(List.of("long", "long"),
+            List.of("long", "long", "java.lang.String", "int", "int"))),
+        Map.entry("intSub", List.of(List.of("long", "long"),
+            List.of("long", "long", "java.lang.String", "int", "int"))),
+        Map.entry("intMul", List.of(List.of("long", "long"),
+            List.of("long", "long", "java.lang.String", "int", "int"))),
+        Map.entry("intDiv", List.of(List.of("long", "long"),
+            List.of("long", "long", "java.lang.String", "int", "int"))),
+        Map.entry("intMod", List.of(List.of("long", "long"),
+            List.of("long", "long", "java.lang.String", "int", "int"))),
+        Map.entry("intPow", List.of(List.of("long", "long"),
+            List.of("long", "long", "java.lang.String", "int", "int"))),
+        Map.entry("intNeg", List.of(List.of("long"),
+            List.of("long", "java.lang.String", "int", "int"))),
+        Map.entry("numMod", List.of(List.of("double", "double"))),
+        Map.entry("intFromNumber", List.of(List.of("double"),
+            List.of("double", "java.lang.String", "int", "int"))),
+        Map.entry("numberFromInt", List.of(List.of("long"))),
+        Map.entry("scalarCompare", List.of(List.of("java.lang.String", "java.lang.String"))),
+        Map.entry("checkInt", List.of(List.of("long"),
+            List.of("long", "java.lang.String", "int", "int"))),
+        Map.entry("__hasUnpairedSurrogate", List.of(List.of("java.lang.String"))),
+        Map.entry("loopCond", List.of(List.of("boolean"))),
+        Map.entry("booleanNotNull", List.of(List.of("java.lang.Boolean"),
+            List.of("java.lang.Boolean", "java.lang.String", "int", "int"))),
+        Map.entry("intFromNullable", List.of(List.of("java.lang.Long"),
+            List.of("java.lang.Long", "java.lang.String", "int", "int"))),
+        Map.entry("numberFromNullable", List.of(List.of("java.lang.Double"),
+            List.of("java.lang.Double", "java.lang.String", "int", "int"))),
+        Map.entry("checkSig", List.of(List.of("java.lang.String", "java.lang.String"))),
         // ISSUE-0158 bytes helpers (profile-matched carriers): under
         // LEGACY_SAFE_INT the backend-wide int carrier is long, so the
         // emitted bytesGet/bytesSet helpers take long index/value
@@ -2710,10 +2726,15 @@ public final class JvmBackend {
         // and bytesLength returns long — matching every emitted bytes
         // call site exactly, never a javac-rejected long-into-int
         // argument.
-        Map.entry("bytesNew", List.of("long")),
-        Map.entry("bytesLength", List.of("$DealRt.Bytes")),
-        Map.entry("bytesGet", List.of("$DealRt.Bytes", "long")),
-        Map.entry("bytesSet", List.of("$DealRt.Bytes", "long", "long")));
+        Map.entry("bytesNew", List.of(List.of("long"),
+            List.of("long", "java.lang.String", "int", "int"))),
+        Map.entry("bytesLength", List.of(List.of("$DealRt.Bytes"),
+            List.of("$DealRt.Bytes", "java.lang.String", "int", "int"))),
+        Map.entry("bytesGet", List.of(List.of("$DealRt.Bytes", "long"),
+            List.of("$DealRt.Bytes", "long", "java.lang.String", "int", "int"))),
+        Map.entry("bytesSet", List.of(
+            List.of("$DealRt.Bytes", "long", "long"),
+            List.of("$DealRt.Bytes", "long", "long", "java.lang.String", "int", "int"))));
 
     /**
      * Emitted runtime-helper signatures under {@code DEAL_V1_2_INT32}
@@ -2723,30 +2744,47 @@ public final class JvmBackend {
      * D3 boundary seam feeds it wider/boxed/foreign values — while every
      * other int-typed helper parameter and result is primitive {@code int}.
      */
-    private static final Map<String, List<String>> INT32_RUNTIME_HELPER_SIGNATURES = Map.ofEntries(
-        Map.entry("intAdd", List.of("int", "int")),
-        Map.entry("intSub", List.of("int", "int")),
-        Map.entry("intMul", List.of("int", "int")),
-        Map.entry("intDiv", List.of("int", "int")),
-        Map.entry("intMod", List.of("int", "int")),
-        Map.entry("intPow", List.of("int", "int")),
-        Map.entry("intNeg", List.of("int")),
-        Map.entry("numMod", List.of("double", "double")),
-        Map.entry("numPow", List.of("double", "double")),
-        Map.entry("intFromNumber", List.of("double")),
-        Map.entry("numberFromInt", List.of("int")),
-        Map.entry("scalarCompare", List.of("java.lang.String", "java.lang.String")),
-        Map.entry("checkInt", List.of("long")),
-        Map.entry("__hasUnpairedSurrogate", List.of("java.lang.String")),
-        Map.entry("loopCond", List.of("boolean")),
-        Map.entry("booleanNotNull", List.of("java.lang.Boolean")),
-        Map.entry("intFromNullable", List.of("java.lang.Integer")),
-        Map.entry("numberFromNullable", List.of("java.lang.Double")),
-        Map.entry("checkSig", List.of("java.lang.String", "java.lang.String")),
-        Map.entry("bytesNew", List.of("long")),
-        Map.entry("bytesLength", List.of("$DealRt.Bytes")),
-        Map.entry("bytesGet", List.of("$DealRt.Bytes", "int")),
-        Map.entry("bytesSet", List.of("$DealRt.Bytes", "int", "int")));
+    private static final Map<String, List<List<String>>> INT32_RUNTIME_HELPER_SIGNATURES = Map.ofEntries(
+        Map.entry("intAdd", List.of(List.of("int", "int"),
+            List.of("int", "int", "java.lang.String", "int", "int"))),
+        Map.entry("intSub", List.of(List.of("int", "int"),
+            List.of("int", "int", "java.lang.String", "int", "int"))),
+        Map.entry("intMul", List.of(List.of("int", "int"),
+            List.of("int", "int", "java.lang.String", "int", "int"))),
+        Map.entry("intDiv", List.of(List.of("int", "int"),
+            List.of("int", "int", "java.lang.String", "int", "int"))),
+        Map.entry("intMod", List.of(List.of("int", "int"),
+            List.of("int", "int", "java.lang.String", "int", "int"))),
+        Map.entry("intPow", List.of(List.of("int", "int"),
+            List.of("int", "int", "java.lang.String", "int", "int"))),
+        Map.entry("intNeg", List.of(List.of("int"),
+            List.of("int", "java.lang.String", "int", "int"))),
+        Map.entry("numMod", List.of(List.of("double", "double"))),
+        Map.entry("numPow", List.of(List.of("double", "double"))),
+        Map.entry("intFromNumber", List.of(List.of("double"),
+            List.of("double", "java.lang.String", "int", "int"))),
+        Map.entry("numberFromInt", List.of(List.of("int"))),
+        Map.entry("scalarCompare", List.of(List.of("java.lang.String", "java.lang.String"))),
+        Map.entry("checkInt", List.of(List.of("long"),
+            List.of("long", "java.lang.String", "int", "int"))),
+        Map.entry("__hasUnpairedSurrogate", List.of(List.of("java.lang.String"))),
+        Map.entry("loopCond", List.of(List.of("boolean"))),
+        Map.entry("booleanNotNull", List.of(List.of("java.lang.Boolean"),
+            List.of("java.lang.Boolean", "java.lang.String", "int", "int"))),
+        Map.entry("intFromNullable", List.of(List.of("java.lang.Integer"),
+            List.of("java.lang.Integer", "java.lang.String", "int", "int"))),
+        Map.entry("numberFromNullable", List.of(List.of("java.lang.Double"),
+            List.of("java.lang.Double", "java.lang.String", "int", "int"))),
+        Map.entry("checkSig", List.of(List.of("java.lang.String", "java.lang.String"))),
+        Map.entry("bytesNew", List.of(List.of("long"),
+            List.of("long", "java.lang.String", "int", "int"))),
+        Map.entry("bytesLength", List.of(List.of("$DealRt.Bytes"),
+            List.of("$DealRt.Bytes", "java.lang.String", "int", "int"))),
+        Map.entry("bytesGet", List.of(List.of("$DealRt.Bytes", "int"),
+            List.of("$DealRt.Bytes", "int", "java.lang.String", "int", "int"))),
+        Map.entry("bytesSet", List.of(
+            List.of("$DealRt.Bytes", "int", "int"),
+            List.of("$DealRt.Bytes", "int", "int", "java.lang.String", "int", "int"))));
 
     /**
      * The emitted runtime-helper signature table for the backend's
@@ -2756,7 +2794,7 @@ public final class JvmBackend {
      * guard keys on the table matching the helpers the artifact actually
      * emits for this backend instance.
      */
-    private Map<String, List<String>> runtimeHelperSignatures() {
+    private Map<String, List<List<String>>> runtimeHelperSignatures() {
         return int32Mode ? INT32_RUNTIME_HELPER_SIGNATURES
                          : LEGACY_RUNTIME_HELPER_SIGNATURES;
     }
@@ -5941,23 +5979,29 @@ public final class JvmBackend {
         emitLine("// grows the wrapped storage in place), so aliases observe every");
         emitLine("// write exactly like LuaJIT's shared 1-based table.");
         emitLine("// array reads: a negative index is E8002 (LuaJIT's emitted negative-index");
-        emitLine("// check); an index past the end is E8001 \"expected <T>, got null\" — LuaJIT");
-        emitLine("// reads nil there and the read site's typed boundary fails with exactly that");
-        emitLine("// shape (spec §Bounds and nil behavior: `let x: int = xs[99]` → nil is not");
-        emitLine("// int). A primitive Java array cannot yield nil, so the JVM read raises the");
-        emitLine("// boundary failure directly.");
+        emitLine("// check); an index past the end is E8001 \"expected <T>\" — LuaJIT reads nil");
+        emitLine("// there and the read site's typed boundary fails with exactly that shape");
+        emitLine("// (spec §Bounds and nil behavior: `let x: int = xs[99]` → nil is not int). A");
+        emitLine("// primitive Java array cannot yield nil, so the JVM read raises the boundary");
+        emitLine("// failure directly. Every raise carries the read site's index-expression");
+        emitLine("// origin; the past-end boundary failure of the primitive element reads and");
+        emitLine("// the bytes element read additionally carries the CONSUMER's boundary-check");
+        emitLine("// origin (ISSUE-0605): the declared contextual target annotation for an");
+        emitLine("// annotated binding initializer (the pinned `let value: int = values[2];`");
+        emitLine("// 8:14 convention), the read expression itself otherwise. The int past-end");
+        emitLine("// raise carries the closed D4 projection (expected \"int\", actual \"nil\").");
         emitLine(int32Mode
-            ? "static int __intArrayRead($DealRt.__IntArray a, long i) { return __intArrayRead(a, i, null, -1, -1); }"
-            : "static long __intArrayRead($DealRt.__IntArray a, long i) { return __intArrayRead(a, i, null, -1, -1); }");
+            ? "static int __intArrayRead($DealRt.__IntArray a, long i) { return __intArrayRead(a, i, null, -1, -1, null, -1, -1); }"
+            : "static long __intArrayRead($DealRt.__IntArray a, long i) { return __intArrayRead(a, i, null, -1, -1, null, -1, -1); }");
         emitLine(int32Mode
-            ? "static int __intArrayRead($DealRt.__IntArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected int, got null\", oFile, oLine, oCol); return a.data[(int) i]; }"
-            : "static long __intArrayRead($DealRt.__IntArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected int, got null\", oFile, oLine, oCol); return a.data[(int) i]; }");
-        emitLine("static double __numberArrayRead($DealRt.__NumberArray a, long i) { return __numberArrayRead(a, i, null, -1, -1); }");
-        emitLine("static double __numberArrayRead($DealRt.__NumberArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected number, got null\", oFile, oLine, oCol); return a.data[(int) i]; }");
-        emitLine("static java.lang.String __stringArrayRead($DealRt.__StringArray a, long i) { return __stringArrayRead(a, i, null, -1, -1); }");
-        emitLine("static java.lang.String __stringArrayRead($DealRt.__StringArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected string, got null\", oFile, oLine, oCol); return a.data[(int) i]; }");
-        emitLine("static boolean __booleanArrayRead($DealRt.__BooleanArray a, long i) { return __booleanArrayRead(a, i, null, -1, -1); }");
-        emitLine("static boolean __booleanArrayRead($DealRt.__BooleanArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected boolean, got null\", oFile, oLine, oCol); return a.data[(int) i]; }");
+            ? "static int __intArrayRead($DealRt.__IntArray a, long i, java.lang.String oFile, int oLine, int oCol, java.lang.String bFile, int bLine, int bCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected int\", bFile, bLine, bCol, \"int\", \"nil\", null, null); return a.data[(int) i]; }"
+            : "static long __intArrayRead($DealRt.__IntArray a, long i, java.lang.String oFile, int oLine, int oCol, java.lang.String bFile, int bLine, int bCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected int\", bFile, bLine, bCol, \"int\", \"nil\", null, null); return a.data[(int) i]; }");
+        emitLine("static double __numberArrayRead($DealRt.__NumberArray a, long i) { return __numberArrayRead(a, i, null, -1, -1, null, -1, -1); }");
+        emitLine("static double __numberArrayRead($DealRt.__NumberArray a, long i, java.lang.String oFile, int oLine, int oCol, java.lang.String bFile, int bLine, int bCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected number, got null\", bFile, bLine, bCol); return a.data[(int) i]; }");
+        emitLine("static java.lang.String __stringArrayRead($DealRt.__StringArray a, long i) { return __stringArrayRead(a, i, null, -1, -1, null, -1, -1); }");
+        emitLine("static java.lang.String __stringArrayRead($DealRt.__StringArray a, long i, java.lang.String oFile, int oLine, int oCol, java.lang.String bFile, int bLine, int bCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected string, got null\", bFile, bLine, bCol); return a.data[(int) i]; }");
+        emitLine("static boolean __booleanArrayRead($DealRt.__BooleanArray a, long i) { return __booleanArrayRead(a, i, null, -1, -1, null, -1, -1); }");
+        emitLine("static boolean __booleanArrayRead($DealRt.__BooleanArray a, long i, java.lang.String oFile, int oLine, int oCol, java.lang.String bFile, int bLine, int bCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected boolean, got null\", bFile, bLine, bCol); return a.data[(int) i]; }");
         emitLine("// boxed array reads for === / !== operand positions (ISSUE-0094 rework):");
         emitLine("// the read-site contract (spec §Bounds and nil behavior) applies no typed");
         emitLine("// boundary to a comparison operand, so LuaJIT reads nil past the end and");
@@ -6065,8 +6109,8 @@ public final class JvmBackend {
         emitLine("// read yields null past the end for === / !== operand positions");
         emitLine("// (no typed boundary at a comparison operand — LuaJIT computes");
         emitLine("// the comparison on nil).");
-        emitLine("static $DealRt.Bytes __bytesArrayRead($DealRt.__BytesArray a, long i) { return __bytesArrayRead(a, i, null, -1, -1); }");
-        emitLine("static $DealRt.Bytes __bytesArrayRead($DealRt.__BytesArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected bytes, got null\", oFile, oLine, oCol); return a.data[(int) i]; }");
+        emitLine("static $DealRt.Bytes __bytesArrayRead($DealRt.__BytesArray a, long i) { return __bytesArrayRead(a, i, null, -1, -1, null, -1, -1); }");
+        emitLine("static $DealRt.Bytes __bytesArrayRead($DealRt.__BytesArray a, long i, java.lang.String oFile, int oLine, int oCol, java.lang.String bFile, int bLine, int bCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected bytes, got null\", bFile, bLine, bCol); return a.data[(int) i]; }");
         emitLine("static $DealRt.Bytes __bytesArrayReadBoxed($DealRt.__BytesArray a, long i) { return __bytesArrayReadBoxed(a, i, null, -1, -1); }");
         emitLine("static $DealRt.Bytes __bytesArrayReadBoxed($DealRt.__BytesArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
         emitLine("static $DealRt.Bytes __bytesArrayWrite($DealRt.__BytesArray a, long i, $DealRt.Bytes v) { return __bytesArrayWrite(a, i, v, null, -1, -1); }");
@@ -11010,10 +11054,12 @@ public final class JvmBackend {
         if (!ok) return;
 
         // A DEAL function whose name and mapped signature collide with an
-        // emitted runtime helper would produce a duplicate Java method.
+        // emitted runtime helper would produce a duplicate Java method —
+        // every emitted overload of a helper is guarded (the short form
+        // and the origin-threading form alike).
         String javaFn = javaName(fd.name());
-        List<String> helperSignature = runtimeHelperSignatures().get(javaFn);
-        if (helperSignature != null && helperSignature.equals(paramTypes)) {
+        List<List<String>> helperSignatures = runtimeHelperSignatures().get(javaFn);
+        if (helperSignatures != null && helperSignatures.contains(paramTypes)) {
             unsupported("function '" + fd.name() + "' whose signature "
                 + "collides with the emitted runtime helper '" + javaFn + "'",
                 fd.span());
@@ -16199,7 +16245,8 @@ public final class JvmBackend {
                 List.of(idx.array(), idx.index()));
             String indexCode = adaptIntBoundary(idx.index(),
                 codes.get(1), Type.Int.INSTANCE);
-            return "bytesGet(" + codes.get(0) + ", " + indexCode + ")";
+            return "bytesGet(" + codes.get(0) + ", " + indexCode
+                + ", " + originArgs(idx.span()) + ")";
         }
         if (!(arrayType instanceof Type.Array arr)) {
             unsupported("indexing of " + typeName(arrayType), idx.span());
@@ -16229,7 +16276,7 @@ public final class JvmBackend {
                 String indexCode = adaptIntBoundary(idx.index(),
                     codes.get(1), Type.Int.INSTANCE);
                 return nilHelper + "(" + codes.get(0) + ", "
-                    + indexCode + ")";
+                    + indexCode + ", " + originArgs(idx.span()) + ")";
             }
             // Local-only class guard failed: fall through to the
             // element-typed chain below, which records the E6000.
@@ -16268,7 +16315,39 @@ public final class JvmBackend {
         List<String> codes = emitOperandsInOrder(List.of(idx.array(), idx.index()));
         String indexCode = adaptIntBoundary(idx.index(), codes.get(1),
             Type.Int.INSTANCE);
-        return helper + "(" + codes.get(0) + ", " + indexCode + ")";
+        return helper + "(" + codes.get(0) + ", " + indexCode
+            + ", " + readHelperOrigins(element, idx.span()) + ")";
+    }
+
+    /**
+     * The origin arguments of an element-read helper call (ISSUE-0605).
+     * Every read helper takes the index-expression origin (the E8002
+     * negative-index raise, exactly the span the Lua lane's read
+     * lowering carries); the helpers that raise the past-end E8001
+     * boundary failure ({@link #arrayReadHelper} shapes) additionally
+     * take the CONSUMER's boundary-check origin — the span the Lua
+     * lane's typed boundary check carries: the active declared-boundary
+     * origin while one is pushed (the declared contextual target
+     * annotation for an annotated binding initializer — the pinned
+     * {@code let value: int = values[2];} 8:14 convention — the
+     * returned expression for a return boundary, the callee's declared
+     * parameter annotation for a checked call argument), the read
+     * expression itself otherwise.
+     */
+    private String readHelperOrigins(Type element, Span indexSpan) {
+        String origins = originArgs(indexSpan);
+        if (arrayReadHelper(element) == null) return origins;
+        return origins + ", " + boundaryCheckOriginArgs(indexSpan);
+    }
+
+    /** The consumer's boundary-check origin as emitted arguments
+     * (ISSUE-0605): the active declared-boundary origin, else the
+     * fallback node's own span. */
+    private String boundaryCheckOriginArgs(Span fallback) {
+        BoundaryOrigin origin = currentBoundaryOrigin();
+        if (origin == null) return originArgs(fallback);
+        return quoteJavaString(origin.file()) + ", " + origin.line() + ", "
+            + origin.column();
     }
 
     /**
@@ -16362,7 +16441,10 @@ public final class JvmBackend {
      * unconditionally at the read). The receiver and the index are
      * emitted with {@link #emitOperandsInOrder} first, so the read's
      * evaluation order holds even when one of them hoists side-effecting
-     * pre-statements.
+     * pre-statements. The call carries the read's index-expression origin
+     * (ISSUE-0605): the helper's negative-index E8002 raise is the read's
+     * own failure, so it transports the same span the sibling
+     * nil-yielding read of {@link #emitIndexRead} does.
      */
     private String emitBoxedReadTemp(IndexExpr idx) {
         Type element = ((Type.Array) typeOf(idx.array())).element();
@@ -16371,7 +16453,8 @@ public final class JvmBackend {
         String n = nextEvalTempName();
         preStatements.add(new PreLine(boxedArrayJavaType(element, idx.span())
             + " " + n + " = " + boxedArrayReadHelper(element)
-            + "(" + ops.get(0) + ", " + ops.get(1) + ");", 0));
+            + "(" + ops.get(0) + ", " + ops.get(1) + ", "
+            + originArgs(idx.span()) + ");", 0));
         preStatementsDeclareTemps = true;
         return n;
     }
@@ -17013,7 +17096,8 @@ public final class JvmBackend {
                 if (argType instanceof Type.Int) {
                     yield "bytesNew("
                         + adaptIntBoundary(arg, emitted,
-                            Type.Int.INSTANCE) + ")";
+                            Type.Int.INSTANCE)
+                        + ", " + originArgs(call.span()) + ")";
                 }
                 unsupported("bytes() on " + typeName(argType), call.span());
                 yield "null";
@@ -17107,7 +17191,7 @@ public final class JvmBackend {
                 String indexCode = adaptIntBoundary(idx.index(),
                     codes.get(1), Type.Int.INSTANCE);
                 return "bytesSet(" + codes.get(0) + ", " + indexCode
-                    + ", " + rhs + ")";
+                    + ", " + rhs + ", " + originArgs(idx.span()) + ")";
             }
             // Array element write `xs[i] = v` (ISSUE-0094). The checker
             // enforces int indexes and element-type assignability
@@ -17185,7 +17269,7 @@ public final class JvmBackend {
             String indexCode = adaptIntBoundary(idx.index(), codes.get(1),
                 Type.Int.INSTANCE);
             return writeHelper + "(" + codes.get(0) + ", " + indexCode
-                + ", " + rhs + ")";
+                + ", " + rhs + ", " + originArgs(idx.span()) + ")";
         }
         if (ae.target() instanceof MemberAccessExpr mae) {
             Type objType = typeOf(mae.object());

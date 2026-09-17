@@ -460,6 +460,10 @@ public class JvmBackendTest {
             new TestCase("testInt32ArrayAndFieldBoundaries", () -> testInt32ArrayAndFieldBoundaries()),
             new TestCase("testBytesRuntimeLane", () -> testBytesRuntimeLane()),
             new TestCase("testOriginThreadingSurface", () -> testOriginThreadingSurface()),
+            new TestCase("testErrorSnapshotOriginLiterals",
+                () -> testErrorSnapshotOriginLiterals()),
+            new TestCase("testOriginThreadingHelperCollisions",
+                () -> testOriginThreadingHelperCollisions()),
             new TestCase("testDeclaredBoundaryOrigins", () -> testDeclaredBoundaryOrigins()),
             new TestCase("testUserThrowOrigins", () -> testUserThrowOrigins()),
             new TestCase("testRecursiveBytesClosureLane", () -> testRecursiveBytesClosureLane()),
@@ -1846,10 +1850,17 @@ public class JvmBackendTest {
                     "shared $DealRt __IntArray wrapper class emitted");
                 check(java.contains("new $DealRt.__IntArray(new long[]{10L, 20L})"),
                     "int[] literal lowers to new $DealRt.__IntArray(new long[]{…})");
-                check(java.contains("__intArrayWrite(xs, 1L, 99L);"),
-                    "element write lowers to the __intArrayWrite helper call");
-                check(java.contains("__intArrayRead(xs, 0L)"),
-                    "element read lowers to the __intArrayRead helper call");
+                String boundaryFile = "Main.java";
+                check(java.contains("__intArrayWrite(xs, 1L, 99L, "
+                        + "\"jvmtest-arrays-emission.deal\", 3, 3);"),
+                    "element write lowers to the __intArrayWrite helper call "
+                        + "carrying the index expression origin (3:3)");
+                check(java.contains("__intArrayRead(xs, 0L, "
+                        + "\"jvmtest-arrays-emission.deal\", 4, 10, "
+                        + "\"" + boundaryFile + "\", 4, 10)"),
+                    "element read lowers to the __intArrayRead helper call "
+                        + "carrying the index expression origin (4:10) and "
+                        + "the return-boundary origin");
                 check(java.contains("((long) xs.data.length)"),
                     ".length lowers to a wrapped storage-length read");
                 check(java.contains("v = checkInt(v, oFile, oLine, oCol);"),
@@ -2002,8 +2013,11 @@ public class JvmBackendTest {
                         && sideIdx < tempIdx && tempIdx < valueIdx,
                     "the inline index call is materialized into __t0 between "
                     + "the index-side and value-side hoisted prints");
-                check(java.contains("__intArrayWrite(xs, __t0, pick(\"value\", null));"),
-                    "the write helper call carries the materialized index");
+                check(java.contains("__intArrayWrite(xs, __t0, "
+                        + "pick(\"value\", null), "
+                        + "\"jvmtest-arrord-emission.deal\", 5, 3);"),
+                    "the write helper call carries the materialized index "
+                        + "and the index expression origin (5:3)");
             }
         }
     }
@@ -2163,8 +2177,13 @@ public class JvmBackendTest {
                 String java = res.source();
                 check(java.contains("static java.lang.Long __intArrayReadBoxed"),
                     "__intArrayReadBoxed helper emitted");
-                check(java.contains("__intArrayReadBoxed(xs, 99L)"),
-                    "past-end === read routes through the boxed helper");
+                check(java.contains("__intArrayReadBoxed(xs, 99L, "
+                        + "\"jvmtest-arrcmp-emission.deal\", 4, 7)")
+                        && java.contains("__intArrayReadBoxed(xs, 99L, "
+                        + "\"jvmtest-arrcmp-emission.deal\", 5, 7)"),
+                    "both past-end comparison reads route through the "
+                        + "boxed helper carrying their index-expression "
+                        + "origins (4:7, 5:7): " + java);
                 check(java.contains("static java.lang.String __stringArrayReadBoxed")
                         && java.contains("static java.lang.Double __numberArrayReadBoxed")
                         && java.contains("static java.lang.Boolean __booleanArrayReadBoxed"),
@@ -2353,11 +2372,15 @@ public class JvmBackendTest {
             if (!res.hasErrors()) {
                 String java = res.source();
                 int leftReadIdx = java.indexOf(
-                    "__intArrayReadBoxed(ys, intNeg(1L));");
+                    "__intArrayReadBoxed(ys, intNeg(1L), "
+                        + "\"jvmtest-arrboth-order-emission.deal\", "
+                        + "5, 7);");
                 int hoistIdx = java.indexOf(
                     "java.lang.System.out.println(\"h\");");
                 int rightReadIdx = java.indexOf(
-                    "__intArrayReadBoxed(makeArr(\"made\", null), 0L);");
+                    "__intArrayReadBoxed(makeArr(\"made\", null), 0L, "
+                        + "\"jvmtest-arrboth-order-emission.deal\", "
+                        + "5, 18);");
                 check(leftReadIdx >= 0 && hoistIdx >= 0 && rightReadIdx >= 0
                         && leftReadIdx < hoistIdx && hoistIdx < rightReadIdx,
                     "the left read's boxed helper call lands before the "
@@ -2504,7 +2527,9 @@ public class JvmBackendTest {
                 + res.diagnostics());
             if (!res.hasErrors()) {
                 String java = res.source();
-                check(java.contains("__intArrayReadBoxed(xs, 99L)")
+                check(java.contains("__intArrayReadBoxed(xs, 99L, "
+                            + "\"jvmtest-arrboundaryless-emission.deal\", "
+                            + "6, 3)")
                         && java.contains("java.lang.Long __ignored"),
                     "the discarded read emits the boxed helper call and a "
                     + "boxed dummy-local discard: " + java);
@@ -2700,24 +2725,40 @@ public class JvmBackendTest {
                 check(java.contains(
                         "static $DealRt.Bytes __bytesArrayRead(")
                         && java.contains(
-                        "if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected bytes, got null\", oFile, oLine, oCol);"),
+                        "if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected bytes, got null\", bFile, bLine, bCol);"),
                     "the element-typed bytes[] helper keeps the E8001 "
-                        + "past-end raise: " + java);
+                        + "past-end raise at the consumer boundary origin: "
+                        + java);
                 check(java.contains(
                         "static $DealRt.Bytes __bytesArrayReadBoxed(")
-                        && java.contains("__bytesArrayReadBoxed(xs, 1L)"),
+                        && java.contains(
+                            "__bytesArrayReadBoxed(xs, 1L, "
+                            + "\"jvmtest-bytesarrpastend-emission.deal\", "
+                            + "9, 22)"),
                     "the boxed bytes[] read helper exists and the "
-                        + "bytes | null target site routes through it: "
-                        + java);
-                check(java.contains("__bytesArrayReadBoxed(xs, 1L)")
-                        && java.contains("__bytesOrNullArrayRead(ys, 1L)"),
+                        + "bytes | null target site routes through it "
+                        + "with the index-expression origin: " + java);
+                check(java.contains(
+                        "__bytesArrayReadBoxed(xs, 1L, "
+                            + "\"jvmtest-bytesarrpastend-emission.deal\", "
+                            + "9, 22)")
+                        && java.contains(
+                            "__bytesOrNullArrayRead(ys, 1L, "
+                            + "\"jvmtest-bytesarrpastend-emission.deal\", "
+                            + "14, 3)"),
                     "both discarded past-end reads use the nil-yielding "
                         + "helpers (no element-typed E8001 at a discard): "
                         + java);
-                check(java.contains("__bytesArrayRead(xs, 1L)"),
+                check(java.contains(
+                        "__bytesArrayRead(xs, 1L, "
+                            + "\"jvmtest-bytesarrpastend-emission.deal\", "
+                            + "15, 18, "
+                            + "\"Main.java\", 15, 10)"),
                     "the non-nullable bytes target keeps the "
-                        + "element-typed read helper (the boundary "
-                        + "failure shape): " + java);
+                        + "element-typed read helper carrying the index "
+                        + "expression (15:18) and the declared bytes "
+                        + "annotation (15:10) as the boundary origin: "
+                        + java);
             }
         }
     }
@@ -2899,13 +2940,15 @@ public class JvmBackendTest {
                 String java = res.source();
                 int markIdx = java.indexOf("long __t0 = mark(\"lhs\", 5L);");
                 int read1Idx = java.indexOf(
-                    "__intArrayReadBoxed(xs, intNeg(1L));");
+                    "__intArrayReadBoxed(xs, intNeg(1L), "
+                        + "\"jvmtest-arrplainlhs-order-emission.deal\", "
+                        + "5, 26);");
                 int addIdx = java.indexOf(
                     "intAdd(9007199254740991L, 1L);");
-                int read2Idx = read1Idx >= 0
-                    ? java.indexOf("__intArrayReadBoxed(xs, intNeg(1L));",
-                        read1Idx + 1)
-                    : -1;
+                int read2Idx = java.indexOf(
+                    "__intArrayReadBoxed(xs, intNeg(1L), "
+                        + "\"jvmtest-arrplainlhs-order-emission.deal\", "
+                        + "6, 34);");
                 check(markIdx >= 0 && read1Idx >= 0 && addIdx >= 0
                         && markIdx < read1Idx && addIdx < read2Idx,
                     "each effectful left operand's materialization lands "
@@ -9633,7 +9676,7 @@ public class JvmBackendTest {
         String arrWriteJava = int32Artifact(arrWriteSrc,
             "boundary_arrwrite_artifact");
         check(arrWriteJava.contains(
-                "__intArrayWrite(xs, 0, checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L))"),
+                "__intArrayWrite(xs, 0, checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L),"),
             "the array element write wraps the retained expression in "
                 + "checkInt before the storage helper call");
         check(!arrWriteJava.contains(
@@ -9945,10 +9988,10 @@ public class JvmBackendTest {
                 + "(67): " + arrRead.output());
         String arrReadJava = int32Artifact(arrReadSrc,
             "boundary_arrread_in_artifact");
-        check(arrReadJava.contains("int a = __intArrayRead(xs, 0);"),
+        check(arrReadJava.contains("int a = __intArrayRead(xs, 0,"),
             "the int-array read emits the primitive int carrier at the "
                 + "declaration boundary");
-        check(arrReadJava.contains("int b = __intArrayRead(xs, 1);"),
+        check(arrReadJava.contains("int b = __intArrayRead(xs, 1,"),
             "the second read does the same");
         check(!arrReadJava.contains("checkInt(__intArrayRead("),
             "no redundant gate around the in-range gated-storage read");
@@ -9973,7 +10016,7 @@ public class JvmBackendTest {
         String arrNullReadJava = int32Artifact(arrNullReadSrc,
             "boundary_arrnullread_in_artifact");
         check(arrNullReadJava.contains(
-                "java.lang.Integer n = __intOrNullArrayRead(xs, 0);"),
+                "java.lang.Integer n = __intOrNullArrayRead(xs, 0,"),
             "the nullable int-array read emits the boxed element carrier "
                 + "at the int | null boundary");
         check(!arrNullReadJava.contains("checkInt(__intOrNullArrayRead("),
@@ -10023,9 +10066,12 @@ public class JvmBackendTest {
         String legacyArrWriteJava = legacyArtifact(arrWriteSrc,
             "boundary_arrwrite_legacy");
         check(legacyArrWriteJava.contains(
-                "__intArrayWrite(xs, 0L, (java.lang.System.currentTimeMillis() / 1000L) * 1000L);"),
+                "__intArrayWrite(xs, 0L, (java.lang.System.currentTimeMillis() / 1000L) * 1000L,"),
             "legacy array element write keeps the pre-tree byte shape "
-                + "(the legacy helper gates the long carrier internally)");
+                + "(the legacy helper gates the long carrier internally): "
+                + legacyArrWriteJava.lines()
+                    .filter(l -> l.contains("__intArrayWrite(xs"))
+                    .findFirst().orElse("<missing>"));
         String legacyAwaitJava = legacyArtifact(asyncTimeSrc,
             "boundary_await_legacy");
         check(legacyAwaitJava.contains("checkInt(g())"),
@@ -10398,7 +10444,7 @@ public class JvmBackendTest {
             "array element write raises exactly E8004 once at the "
                 + "boundary: " + arr.output());
         String arrJava = int32Artifact(arraySource, "array_element_artifact");
-        check(arrJava.contains("__intArrayWrite(xs, 0, checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L))"),
+        check(arrJava.contains("__intArrayWrite(xs, 0, checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L),"),
             "the int[] element write routes through the signed32 "
                 + "checkInt: "
                 + arrJava.lines().filter(l -> l.contains("__intArrayWrite"))
@@ -13934,8 +13980,9 @@ public class JvmBackendTest {
                         "static long bytesGet($DealRt.Bytes b, long i, java.lang.String oFile, int oLine, int oCol)"),
                     "bytesGet carries the origin parameters");
                 check(java.contains(
-                        "static long __intArrayRead($DealRt.__IntArray a, long i, java.lang.String oFile, int oLine, int oCol)"),
-                    "the int-array read helper carries the origin parameters");
+                        "static long __intArrayRead($DealRt.__IntArray a, long i, java.lang.String oFile, int oLine, int oCol, java.lang.String bFile, int bLine, int bCol)"),
+                    "the int-array read helper carries the origin parameters "
+                        + "(the index expression and the consumer boundary)");
                 check(java.contains(
                         "static long __intArrayWrite($DealRt.__IntArray a, long i, long v, java.lang.String oFile, int oLine, int oCol)"),
                     "the int-array write helper carries the origin parameters");
@@ -13992,7 +14039,8 @@ public class JvmBackendTest {
                     String args = end < 0 ? java.substring(idx)
                         : java.substring(idx, end);
                     if (!args.contains("oFile") && !args.contains("null, -1, -1")
-                            && !args.contains("__SRC")) {
+                            && !args.contains("__SRC")
+                            && !args.contains("bFile")) {
                         originLess++;
                     }
                     idx = java.indexOf("new DealError(", idx + 1);
@@ -14042,6 +14090,307 @@ public class JvmBackendTest {
             }
         }
         System.out.println("  origin-threading helper surface pinned");
+    }
+
+    /**
+     * The ISSUE-0605 origin literals and the closed D4 projections at the
+     * array/bytes index and member-read raise sites
+     * (jvm-canonical-error-snapshot-convergence D3/D4): the array index
+     * read and write carry the index-expression start, the bytes get/set
+     * and the bytes(...) construction carry the index/call expression
+     * start, the past-end element read carries the index expression as
+     * the E8002 origin and the consumer's boundary-check span as the
+     * E8001 origin with the closed expected "int" / actual "nil"
+     * projection, and the table member read consumed by an annotated
+     * binding raises at the declared contextual target annotation (never
+     * the member access) through the canonical declared-boundary seam.
+     * The consumer boundary origin's file component is the module's
+     * emitted artifact class file ({@code Main.java}), which the lane's
+     * deployment map normalizes to the canonical corpus-relative path.
+     */
+    private static void testErrorSnapshotOriginLiterals() throws Exception {
+        System.out.println("-- Error-snapshot origin literals (ISSUE-0605) --");
+
+        // Array read/write, bytes read/write, and the bytes(...)
+        // construction carry their index/call expression starts; the
+        // table member read carries the declared contextual annotation.
+        Frontend f = compileFrontend("""
+            export function main(): null {
+              let xs: int[] = [1];
+              let b: bytes = bytes(2);
+              xs[0] = b[1];
+              let n: int = b[2];
+              b[0] = 7;
+              let t: table = { v: "bad" };
+              let r: int = t.v;
+              return null;
+            }
+            """, "jvmtest-origin-emission.deal");
+        check(f.errors().isEmpty(), "origin emission frontend clean: "
+            + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-origin-emission.deal", "main");
+            check(!res.hasErrors(), "origin emission codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                check(java.contains(
+                        "bytesNew(2L, \"jvmtest-origin-emission.deal\", "
+                            + "3, 18)"),
+                    "the bytes(...) construction raises at the call "
+                        + "expression start (3:18)");
+                check(java.contains(
+                        "bytesGet(b, 1L, \"jvmtest-origin-emission.deal\", "
+                            + "4, 11)"),
+                    "the bytes index read raises at the index expression "
+                        + "start (4:11)");
+                check(java.contains(
+                        "bytesGet(b, 2L, \"jvmtest-origin-emission.deal\", "
+                            + "5, 16)"),
+                    "an annotated-binding bytes read keeps the index "
+                        + "expression (5:16) as its single origin — never "
+                        + "the int annotation");
+                check(java.contains(
+                        "bytesSet(b, 0L, 7L, "
+                            + "\"jvmtest-origin-emission.deal\", 6, 3)"),
+                    "the bytes element write raises at the index "
+                        + "expression start (6:3)");
+                check(java.contains(
+                        "__intArrayWrite(xs, 0L, bytesGet(b, 1L, "
+                            + "\"jvmtest-origin-emission.deal\", 4, 11), "
+                            + "\"jvmtest-origin-emission.deal\", 4, 3)"),
+                    "the array element write raises at the index "
+                        + "expression start (4:3)");
+                check(java.contains(
+                        "$check(\"int\", (t).get(\"v\"), "
+                            + "\"Main.java\", 8, 10)"),
+                    "the table member read raises at the declared "
+                        + "contextual target annotation (8:10) — never "
+                        + "the member access — through the canonical "
+                        + "declared-boundary seam");
+            }
+        }
+
+        // The past-end element read carries the index expression start
+        // with the closed projection: message "expected int", expected
+        // "int", actual "nil".
+        Frontend p = compileFrontend("""
+            export function test(): int {
+              let xs: int[] = [1];
+              return xs[99];
+            }
+            """, "jvmtest-pastend-emission.deal");
+        check(p.errors().isEmpty(), "past-end emission frontend clean: "
+            + p.errors());
+        if (p.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                p.program(), p.checkResult(),
+                "jvmtest-pastend-emission.deal", "main");
+            check(!res.hasErrors(), "past-end emission codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                check(java.contains(
+                        "if (i >= (long) a.data.length) throw new "
+                            + "DealError(\"E8001\", \"expected int\", "
+                            + "bFile, bLine, bCol, \"int\", \"nil\", "
+                            + "null, null);"),
+                    "the past-end element read raises the closed "
+                        + "projection (expected int / actual nil) at the "
+                        + "consumer's boundary-check origin");
+                check(java.contains(
+                        "__intArrayRead(xs, 99L, "
+                            + "\"jvmtest-pastend-emission.deal\", 3, 10, "
+                            + "\"Main.java\", 3, 10)"),
+                    "the past-end element read raises at the index "
+                        + "expression start (3:10) when no declared "
+                        + "annotation overrides the consumer span");
+            }
+        }
+
+        // The past-end boundary failure of an array read consumed by an
+        // ANNOTATED binding raises at the declared contextual target
+        // annotation — the pinned `let value: int = values[2];` 8:14
+        // convention the real lane enforces for
+        // backend-runtime/source-location/036-runtime-source-array-oob.deal
+        // and nested-array-oob-source.deal — while the index-expression
+        // origin stays the read itself for the E8002 raise. The bytes
+        // read keeps the index expression even under an annotated
+        // binding (the pinned bytes-negative-read-error 8:20
+        // convention), so the two origins never collapse into one.
+        Frontend c = compileFrontend("""
+            export function test(): null {
+              let values: int[] = [1];
+              let value: int = values[2];
+              let b: bytes = bytes(1);
+              let v: int = b[5];
+              return null;
+            }
+            """, "jvmtest-contextual-read-emission.deal");
+        check(c.errors().isEmpty(), "contextual read emission frontend "
+            + "clean: " + c.errors());
+        if (c.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                c.program(), c.checkResult(),
+                "jvmtest-contextual-read-emission.deal", "main");
+            check(!res.hasErrors(), "contextual read emission codegen "
+                + "clean: " + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                check(java.contains(
+                        "__intArrayRead(values, 2L, "
+                            + "\"jvmtest-contextual-read-emission.deal\", "
+                            + "3, 20, "
+                            + "\"Main.java\", 3, 14)"),
+                    "the annotated-binding past-end read carries the "
+                        + "index expression (3:20) as the E8002 origin and "
+                        + "the declared int annotation (3:14) as the "
+                        + "E8001 boundary origin");
+                check(java.contains(
+                        "bytesGet(b, 5L, "
+                            + "\"jvmtest-contextual-read-emission.deal\", "
+                            + "5, 16)"),
+                    "the bytes read keeps the index expression (5:16) as "
+                        + "its single origin even under an annotated "
+                        + "binding");
+            }
+        }
+
+        // The comparison-operand read shape (the boxed helper path):
+        // the negative-index E8002 raised by the boxed helper carries
+        // the read's index-expression origin, exactly like the
+        // element-typed read the same site lowers for a typed target
+        // (review cycle 2, finding 1 — the sentinel call form is gone).
+        Frontend x = compileFrontend("""
+            export function test(): boolean {
+              let xs: int[] = [1];
+              return xs[-1] === 5;
+            }
+            """, "jvmtest-boxed-read-origin-emission.deal");
+        check(x.errors().isEmpty(), "boxed read origin emission frontend "
+            + "clean: " + x.errors());
+        if (x.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                x.program(), x.checkResult(),
+                "jvmtest-boxed-read-origin-emission.deal", "main");
+            check(!res.hasErrors(), "boxed read origin emission codegen "
+                + "clean: " + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                check(java.contains(
+                        "__intArrayReadBoxed(xs, intNeg(1L), "
+                            + "\"jvmtest-boxed-read-origin-emission.deal\", "
+                            + "3, 10)"),
+                    "the comparison-operand read passes the index "
+                        + "expression origin (3:10) into the boxed "
+                        + "helper call — never the span-absent sentinel: "
+                        + java);
+                check(!java.contains("__intArrayReadBoxed(xs, intNeg(1L));"),
+                    "the sentinel two-argument boxed call form is gone: "
+                        + java);
+            }
+        }
+    }
+
+    /**
+     * The emitted-helper collision guard against the origin-threading
+     * overloads (ISSUE-0605): a DEAL function whose mapped parameter
+     * list equals an emitted helper overload exactly is rejected with
+     * E6000, so no duplicate Java method can be emitted. Under
+     * {@code DEAL_V1_2_INT32} the origin parameters are Java
+     * {@code int}s, reachable from DEAL's int mapping; under
+     * {@code LEGACY_SAFE_INT} the same declaration maps to the long
+     * carrier and is therefore a legal overload (the helper's origin
+     * parameters are unreachable from DEAL's legacy int mapping) — the
+     * full legacy pipeline must compile and run it.
+     */
+    private static void testOriginThreadingHelperCollisions() throws Exception {
+        System.out.println("-- Emitted-helper collision guard: origin-threading "
+            + "overloads (ISSUE-0605) --");
+
+        // int32: the mapped parameter list equals the emitted
+        // origin-threading bytesGet/bytesSet helpers exactly.
+        String bytesGetCollision = """
+            function bytesGet(b: bytes, i: int, f: string, l: int, c: int): int { return b[i]; }
+            export function main(): null { return null; }
+            export function test(): int { return bytesGet(bytes(1), 0, "x", 0, 0); }
+            """;
+        Frontend f = compileFrontend(bytesGetCollision,
+            "jvmtest-bytesget-origin-collision.deal");
+        check(f.errors().isEmpty(),
+            "bytesGet origin-collision frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-bytesget-origin-collision.deal", "main",
+                Map.of(), Map.of(), Map.of(), true,
+                SemanticProfile.DEAL_V1_2_INT32);
+            check(res.hasErrors() && res.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())
+                        && d.message().contains("collides with the emitted "
+                            + "runtime helper 'bytesGet'")),
+                "the int32 bytesGet origin-threading overload collision "
+                    + "is rejected E6000 (never a duplicate Java method): "
+                    + res.diagnostics());
+        }
+
+        String bytesSetCollision = """
+            function bytesSet(b: bytes, i: int, v: int, f: string, l: int, c: int): int { b[i] = v; return 1; }
+            export function main(): null { return null; }
+            export function test(): int { return bytesSet(bytes(1), 0, 1, "x", 0, 0); }
+            """;
+        Frontend s = compileFrontend(bytesSetCollision,
+            "jvmtest-bytesset-origin-collision.deal");
+        check(s.errors().isEmpty(),
+            "bytesSet origin-collision frontend clean: " + s.errors());
+        if (s.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                s.program(), s.checkResult(),
+                "jvmtest-bytesset-origin-collision.deal", "main",
+                Map.of(), Map.of(), Map.of(), true,
+                SemanticProfile.DEAL_V1_2_INT32);
+            check(res.hasErrors() && res.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())
+                        && d.message().contains("collides with the emitted "
+                            + "runtime helper 'bytesSet'")),
+                "the int32 bytesSet origin-threading overload collision "
+                    + "is rejected E6000 (never a duplicate Java method): "
+                    + res.diagnostics());
+        }
+
+        // The four-parameter negative control maps to no emitted
+        // overload: the declaration stays legal.
+        Frontend neg = compileFrontend("""
+            function bytesGet(b: bytes, i: int, f: string, l: int): int { return b[i]; }
+            export function main(): null { return null; }
+            export function test(): int { return bytesGet(bytes(1), 0, "x", 0); }
+            """, "jvmtest-bytesget-negative-control.deal");
+        check(neg.errors().isEmpty(), "negative-control frontend clean: "
+            + neg.errors());
+        if (neg.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                neg.program(), neg.checkResult(),
+                "jvmtest-bytesget-negative-control.deal", "main",
+                Map.of(), Map.of(), Map.of(), true,
+                SemanticProfile.DEAL_V1_2_INT32);
+            check(!res.hasErrors(), "the four-parameter bytesGet is a legal "
+                + "overload under int32: " + res.diagnostics());
+        }
+
+        // Legacy: the same origin-bearing declaration maps to the long
+        // carrier (never the helper's int origin parameters) — a legal
+        // overload the full legacy pipeline must compile and run.
+        ExecResult legacy = runLegacyProject("""
+            function bytesGet(b: bytes, i: int, f: string, l: int, c: int): int { return b[i] + l + c; }
+            export function main(): null { return null; }
+            export function test(): int { return bytesGet(bytes(3), 1, "x", 2, 3); }
+            """, "bytesget_legacy_origin_overload");
+        check(legacy.exitCode() == 0 && legacy.output().contains("5"),
+            "the legacy no-collision overload javac-compiles and runs "
+                + "(the helper's int origin parameters are unreachable "
+                + "from DEAL's legacy int mapping): " + legacy.output());
     }
 
     /**

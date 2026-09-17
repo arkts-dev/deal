@@ -95,6 +95,7 @@ public class JvmLaneTest {
         realThrowOriginFixtures();
         hostBoundaryCodeParity();
         realTimeFixtureSpanlessConvergence();
+        promotedIndexAndMemberReadFraming();
         realJsonFixtureConvergence();
         hostClassIdentityConvention();
         invocationDeclarationOrderProbe();
@@ -535,6 +536,123 @@ public class JvmLaneTest {
                 + execution);
         assertPassed("the sanctioned span-less time fixture passes the "
             + "differential verdict byte-exact", lane, laneCase);
+    }
+
+    private static void promotedIndexAndMemberReadFraming()
+            throws Exception {
+        // Anti-hollow for the ISSUE-0605 index/member-read origin leaf:
+        // every fixture that converged here passes the real lane
+        // byte-exact — the array/bytes index raises carry the index
+        // expression origin, the bytes(...) construction carries the
+        // call expression origin, the array past-end element read
+        // carries the consumer's boundary-check origin with the closed
+        // expected/actual projection, and the table member-read boundary
+        // raises carry the declared contextual target annotation (never
+        // the member access) — so the lane serializes the exact pinned
+        // canonical snapshot through the real orchestrator->javac->java
+        // pipeline, and the real comparator verdict passes too.
+        String[][] cases = {
+            {"backend-runtime/bytes/bytes-index-bounds.deal",
+             "DEAL_ERROR_CODE: E8012\n"
+             + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8012\",\"message\":\"bytes index out of bounds\",\"sourceFile\":\"backend-runtime/bytes/bytes-index-bounds.deal\",\"line\":8,\"column\":10}\n"},
+            {"backend-runtime/bytes/bytes-write-range.deal",
+             "DEAL_ERROR_CODE: E8013\n"
+             + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8013\",\"message\":\"bytes value out of range\",\"sourceFile\":\"backend-runtime/bytes/bytes-write-range.deal\",\"line\":8,\"column\":3}\n"},
+            {"backend-runtime/source-location/bytes-index-bounds-source.deal",
+             "DEAL_ERROR_CODE: E8012\n"
+             + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8012\",\"message\":\"bytes index out of bounds\",\"sourceFile\":\"backend-runtime/source-location/bytes-index-bounds-source.deal\",\"line\":9,\"column\":10}\n"},
+            {"backend-runtime/source-location/bytes-write-range-source.deal",
+             "DEAL_ERROR_CODE: E8013\n"
+             + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8013\",\"message\":\"bytes value out of range\",\"sourceFile\":\"backend-runtime/source-location/bytes-write-range-source.deal\",\"line\":8,\"column\":3}\n"},
+            {"backend-runtime/bytes/bytes-negative-length-error.deal",
+             "DEAL_ERROR_CODE: E8012\n"
+             + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8012\",\"message\":\"bytes length must be non-negative\",\"sourceFile\":\"backend-runtime/bytes/bytes-negative-length-error.deal\",\"line\":7,\"column\":22}\n"},
+            {"backend-runtime/bytes/bytes-negative-read-error.deal",
+             "DEAL_ERROR_CODE: E8012\n"
+             + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8012\",\"message\":\"bytes index out of bounds\",\"sourceFile\":\"backend-runtime/bytes/bytes-negative-read-error.deal\",\"line\":8,\"column\":20}\n"},
+            {"backend-runtime/bytes/bytes-read-at-length-error.deal",
+             "DEAL_ERROR_CODE: E8012\n"
+             + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8012\",\"message\":\"bytes index out of bounds\",\"sourceFile\":\"backend-runtime/bytes/bytes-read-at-length-error.deal\",\"line\":8,\"column\":20}\n"},
+            {"backend-runtime/bytes/bytes-write-at-length-error.deal",
+             "DEAL_ERROR_CODE: E8012\n"
+             + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8012\",\"message\":\"bytes index out of bounds\",\"sourceFile\":\"backend-runtime/bytes/bytes-write-at-length-error.deal\",\"line\":8,\"column\":3}\n"},
+            {"backend-runtime/bytes/bytes-write-negative-error.deal",
+             "DEAL_ERROR_CODE: E8013\n"
+             + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8013\",\"message\":\"bytes value out of range\",\"sourceFile\":\"backend-runtime/bytes/bytes-write-negative-error.deal\",\"line\":8,\"column\":3}\n"},
+            {"backend-runtime/arrays/index-negative-read.deal",
+             "DEAL_ERROR_CODE: E8002\n"
+             + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8002\",\"message\":\"negative array index\",\"sourceFile\":\"backend-runtime/arrays/index-negative-read.deal\",\"line\":8,\"column\":10}\n"},
+            {"backend-runtime/arrays/index-negative-write.deal",
+             "DEAL_ERROR_CODE: E8002\n"
+             + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8002\",\"message\":\"array index out of bounds\",\"sourceFile\":\"backend-runtime/arrays/index-negative-write.deal\",\"line\":8,\"column\":3}\n"},
+            {"backend-runtime/arrays/index-oob.deal",
+             "DEAL_ERROR_CODE: E8001\n"
+             + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected int\",\"sourceFile\":\"backend-runtime/arrays/index-oob.deal\",\"line\":8,\"column\":10,\"expected\":\"int\",\"actual\":\"nil\"}\n"},
+            {"backend-runtime/arrays/index-write-gap.deal",
+             "DEAL_ERROR_CODE: E8002\n"
+             + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8002\",\"message\":\"array index out of bounds\",\"sourceFile\":\"backend-runtime/arrays/index-write-gap.deal\",\"line\":8,\"column\":3}\n"},
+            {"backend-runtime/runtime-errors/array-negative-write-e8002.deal",
+             "DEAL_ERROR_CODE: E8002\n"
+             + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8002\",\"message\":\"array index out of bounds\",\"sourceFile\":\"backend-runtime/runtime-errors/array-negative-write-e8002.deal\",\"line\":8,\"column\":3}\n"},
+            {"backend-runtime/runtime-errors/nested-array-oob-e8001.deal",
+             "DEAL_ERROR_CODE: E8001\n"
+             + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected int\",\"sourceFile\":\"backend-runtime/runtime-errors/nested-array-oob-e8001.deal\",\"line\":8,\"column\":10,\"expected\":\"int\",\"actual\":\"nil\"}\n"},
+            {"backend-runtime/runtime-errors/chained-access-type-error-e8001.deal",
+             "DEAL_ERROR_CODE: E8001\n"
+             + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected int\",\"sourceFile\":\"backend-runtime/runtime-errors/chained-access-type-error-e8001.deal\",\"line\":9,\"column\":15,\"expected\":\"int\",\"actual\":\"string\"}\n"},
+            {"backend-runtime/source-location/036-runtime-source-array-oob.deal",
+             "DEAL_ERROR_CODE: E8001\n"
+             + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected int\",\"sourceFile\":\"backend-runtime/source-location/036-runtime-source-array-oob.deal\",\"line\":8,\"column\":14,\"expected\":\"int\",\"actual\":\"nil\"}\n"},
+            {"backend-runtime/source-location/nested-array-oob-source.deal",
+             "DEAL_ERROR_CODE: E8001\n"
+             + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected int\",\"sourceFile\":\"backend-runtime/source-location/nested-array-oob-source.deal\",\"line\":8,\"column\":14,\"expected\":\"int\",\"actual\":\"nil\"}\n"},
+            {"backend-runtime/tables/table-missing-read-nonnullable-error.deal",
+             "DEAL_ERROR_CODE: E8001\n"
+             + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected int\",\"sourceFile\":\"backend-runtime/tables/table-missing-read-nonnullable-error.deal\",\"line\":8,\"column\":14,\"expected\":\"int\",\"actual\":\"nil\"}\n"},
+            {"backend-runtime/tables/table-dynamic-read-runtime-error.deal",
+             "DEAL_ERROR_CODE: E8001\n"
+             + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected int\",\"sourceFile\":\"backend-runtime/tables/table-dynamic-read-runtime-error.deal\",\"line\":8,\"column\":15,\"expected\":\"int\",\"actual\":\"string\"}\n"},
+        };
+        JvmLane lane = new JvmLane(CORPUS_ROOT);
+        for (String[] entry : cases) {
+            String corpusPath = entry[0];
+            LaneCase laneCase = realLaneCase(corpusPath);
+            LaneExecution execution = lane.execute(laneCase);
+            check(execution instanceof LaneExecution.Executed executed
+                    && executed.exitCode() == 1
+                    && new String(executed.stdout(), StandardCharsets.UTF_8)
+                        .equals(entry[1])
+                    && executed.stderr().length == 0,
+                "the converged fixture " + corpusPath + " passes the real "
+                    + "lane byte-exact (the pinned canonical snapshot over "
+                    + "the real orchestrator->javac->java pipeline), got: "
+                    + execution);
+            assertPassed("the converged fixture " + corpusPath
+                + " passes the real comparator verdict", lane, laneCase);
+        }
+
+        // The comparison-operand shape of the same read class (review
+        // cycle 2, finding 1): a `===` operand is lowered through the
+        // boxed read helper, so the read's negative-index E8002 must
+        // transport the index-expression origin there too — never the
+        // span-absent sentinel. The scratch fixture runs the real
+        // orchestrator->javac->java pipeline and the real comparator.
+        String boxedPath = "backend-runtime/scratch/boxed-neg-read.deal";
+        ScratchFixture boxed = writeScratchFixture(boxedPath,
+            "export function test(): boolean {\n"
+            + "  let xs: int[] = [1];\n"
+            + "  return xs[-1] === 5;\n"
+            + "}\n"
+            + "\n"
+            + "export function main(): null {\n"
+            + "  return null;\n"
+            + "}\n");
+        LaneCase boxedCase = laneCase(boxedPath, boxed.file(),
+            boxed.strippedSource(), runtimeError(error("E8002",
+                "negative array index", boxedPath, 3, 10)));
+        assertPassed("the comparison-operand array read transports the "
+            + "index-expression origin (E8002 at 3:10) through the real "
+            + "lane", new JvmLane(boxed.root()), boxedCase);
     }
 
     private static void realJsonFixtureConvergence() throws Exception {
