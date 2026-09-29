@@ -13,9 +13,11 @@ import java.util.Objects;
  * }</pre>
  *
  * <p>in the pinned order; no open or unknown fallback member exists.
- * Actual-kind tokens appear in {@code {actual}} placeholder positions of
- * failure-policy templates (e.g. {@code TYPE_DESCRIPTOR} E8001
- * {@code expected {expected}, got {actual}}). Target class names never
+ * {@link #canonicalToken(ActualKind, String)} is the IR/trace-level
+ * identity spelling of a value kind; the DEAL-visible failure arms render
+ * their own closed projections instead (the typed-boundary projection, the
+ * carrier-kind projection, and the completion variant of the canonical
+ * failure-projection authority P2). Target class names never
  * appear: {@link #CLASS} is the only kind that renders with an identity,
  * as {@code class:<ClassId>}, and {@link #canonicalToken(ActualKind,
  * String)} fails closed for every other combination — a non-class kind

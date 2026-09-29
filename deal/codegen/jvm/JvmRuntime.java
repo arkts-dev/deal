@@ -962,8 +962,8 @@ public final class JvmRuntime {
 
     /**
      * The actual runtime kind of one value for failure projections: the
-     * value's own kind — missing → "missing", null → "null", else the
-     * runtime type's canonical kind text (a wrong-kind value projects as
+     * value's own kind — the absent marker → "nil", null → "null", else
+     * the runtime type's canonical kind text (a wrong-kind value projects as
      * its own kind, never the declared static kind; the declared kind is
      * the fallback for carriers outside the closed value kinds).
      */

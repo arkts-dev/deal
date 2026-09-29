@@ -4943,12 +4943,13 @@ public final class JvmSemanticEmitter {
                     out.append(indent(indent)).append("if (true) {\n");
                     out.append(indent(indent)).append("  JvmRuntime.DealError ")
                         .append(errName)
-                        .append(" = new JvmRuntime.DealError(")
-                        .append(javaString("E8007")).append(", ")
-                        .append(javaString("extra field '" + field.name()
-                            + "' in class '" + payload.classId().text() + "'"))
-                        .append(", ").append(javaString(originOf(op)))
-                        .append(", null, null, JvmRuntime.framesText(), null);\n");
+                        .append(" = JvmRuntime.arm(deal.semantic.ir."
+                            + "FailureArmId.CLASS_EXTRA_FIELD, java.util.Map.of(\"field\", ")
+                        .append(javaString(field.name()))
+                        .append(", \"classId\", ")
+                        .append(javaString(payload.classId().text()))
+                        .append("), ").append(javaString(originOf(op)))
+                        .append(", null, null);\n");
                     if (trace) {
                         emitFailureEvent(op.opId(), op.kind().name(), op,
                             "JvmRuntime.errtext(" + errName + ")", indent + 1);
@@ -5182,12 +5183,13 @@ public final class JvmSemanticEmitter {
                 String errName = "__eh_" + op.opId().id() + "_"
                     + Integer.toHexString(field.name().hashCode() & 0x7fffffff);
                 out.append(indent(indent)).append("  JvmRuntime.DealError ")
-                    .append(errName).append(" = new JvmRuntime.DealError(")
-                    .append(javaString("E8007")).append(", ")
-                    .append(javaString("extra field '" + field.name()
-                        + "' in class '" + payload.classId().text() + "'"))
-                    .append(", ").append(javaString(originOf(op)))
-                    .append(", null, null, JvmRuntime.framesText(), null);\n");
+                    .append(errName).append(" = JvmRuntime.arm(deal.semantic.ir."
+                        + "FailureArmId.CLASS_EXTRA_FIELD, java.util.Map.of(\"field\", ")
+                    .append(javaString(field.name()))
+                    .append(", \"classId\", ")
+                    .append(javaString(payload.classId().text()))
+                    .append("), ").append(javaString(originOf(op)))
+                    .append(", null, null);\n");
                 if (trace) {
                     emitFailureEvent(op.opId(), op.kind().name(), op,
                         "JvmRuntime.errtext(" + errName + ")", indent + 1);

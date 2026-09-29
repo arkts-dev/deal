@@ -50,8 +50,16 @@ TEST_MAINS=(
   # family's class/array cells and the std/json rejection arm's carrier-kind
   # cells through the oracle, the JVM runtime and the emitted prelude under
   # luajit, the bytes-at-table/bytes-at-kind rejection with its two
-  # admissions, and the negative single-source control (a composing consumer
-  # is reported by field name).
+  # admissions, the int-ladder wrong-kind cell (a string fed into
+  # INT_CONVERT) through the oracle's engine, the JVM ladder and the
+  # emitted prelude, and the negative single-source control (a composing
+  # consumer is reported by field name).
+  # ISSUE-0704 also owns the JVM consumer's arm renders: the emitted
+  # class-construction sites render the CLASS_EXTRA_FIELD arm
+  # (HostClassConstructionTest's emitted-text assertion plus
+  # ClassConstructionDifferentialTest's emitter-source control) and the
+  # emitted host load entry renders HOST_LOAD_MISSING_EXPORT
+  # (HostModuleLoadEmissionTest), each holding no failure text of its own.
   'fg|=== Running Failure Arm Authority Tests (ISSUE-0704) ===|java -ea -cp build deal.test.FailureArmAuthorityTest'
   'fg|=== Running Canonical JSON / Snapshot Digest Tests (ISSUE-0283) ===|java -ea -cp build deal.test.CanonicalJsonTest'
   'fg|=== Running Semantic IR Validator Tests (ISSUE-0286) ===|java -ea -cp build deal.test.SemanticIrValidatorTest'
@@ -468,7 +476,7 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # the stdlib primitive) rendering `int out of safe range`, the
   # JSON_TO_ERROR row's corpus-aligned STDLIB_CALL(JSON_STRINGIFY)
   # rejection template with the pinned expected/actual pair, the
-  # literal-carrying shared JVM runtime sites, and the two probes
+  # closed-arm shared JVM runtime sites, and the two probes
   # (int32 overflow, json.stringify rejection) driving the one project
   # lowering through the oracle, the production LuaJIT artifact under
   # real luajit, and the production JVM artifact under javac --release 25

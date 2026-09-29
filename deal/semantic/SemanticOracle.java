@@ -5937,13 +5937,12 @@ public final class SemanticOracle {
 
         /**
          * The INT_CONVERSION ladder: null → NaN → infinity → fractional → the
-         * E8004 range gate → the wrong-kind {@code TYPE_DESCRIPTOR} projection.
-         * Each arm throws through its own pinned row template (ISSUE-0679
-         * retargeted the arm selection: the row carries the four ordered
-         * INT_CONVERSION texts, so the per-case template index is the
-         * arm's), so the oracle projects the same texts the shared
-         * {@code SharedValueSemantics} rows and both artifacts project — the
-         * one algorithm authority with the invoking op's own context.
+         * E8004 range gate → the closed typed-boundary kind arm
+         * ({@code TYPED_BOUNDARY_KIND}, the suffix-less {@code expected int}).
+         * Each arm throws through its own closed arm render, so the oracle
+         * projects the same texts the shared {@code SharedValueSemantics}
+         * rows and both artifacts project — the one algorithm authority with
+         * the invoking op's own context.
          */
         private Value convertInt(SemanticOp op, Value input) {
             if (input instanceof Value.NullValue) {
@@ -5973,7 +5972,7 @@ public final class SemanticOracle {
             if (input instanceof Value.IntValue intValue) {
                 return intValue;
             }
-            throw conversionFailure(op, FailurePolicyId.TYPE_DESCRIPTOR, 0, "int",
+            throw armFailure(op, FailureArmId.TYPED_BOUNDARY_KIND, "int",
                 canonicalKind(input));
         }
 
@@ -6045,22 +6044,6 @@ public final class SemanticOracle {
                 case Value.SlotValue ignored -> throw new IllegalStateException(
                     "a slot value is never a conversion input");
             };
-        }
-
-        /**
-         * One conversion-ladder failure from its pinned row template: the
-         * template index selects the case's own text (ISSUE-0679; the
-         * INT_CONVERSION row carries the ordered null/NaN/infinity/fractional
-         * texts, every other row its single template), and the origin is the
-         * invoking op's.
-         */
-        private DealFailure conversionFailure(SemanticOp op, FailurePolicyId policy,
-                                              int templateIndex, String expected,
-                                              String actual) {
-            BoundaryFailure failure = BoundaryFailure.fromRow(
-                FailureContractRegistry.row(policy), templateIndex, expected, actual,
-                new LinkedHashMap<>(), null);
-            return DealFailure.of(failure, op.origin(), List.copyOf(frames));
         }
 
         private String executeStdlib(SemanticOp op) {

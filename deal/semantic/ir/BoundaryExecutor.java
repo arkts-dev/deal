@@ -31,9 +31,11 @@ import java.util.Set;
  * cell has a defined projection here and no other cell does.</p>
  *
  * <p><b>Projections (normative, D3).</b> The descriptor-kind rule: a
- * non-function descriptor check projects wrong kinds as E8001
- * {@code expected {expected}, got {actual}} with the canonical
- * {@link ActualKind} token; the {@code int} path follows the pinned order
+ * non-function descriptor check projects wrong kinds as the closed
+ * suffix-less E8001 kind arm {@code expected {kind}} (the arm's kind text;
+ * a nullable descriptor projects its inner descriptor's text) with the
+ * closed typed-boundary actual projection as the actual field; the
+ * {@code int} path follows the pinned order
  * (kind → NaN → infinity → non-integer → E8004 {@code int out of safe range});
  * a string view classified {@code invalid-unicode} projects the pinned
  * {@code expected string, got invalid Unicode scalar encoding}; a class
@@ -47,11 +49,13 @@ import java.util.Set;
  * {@code function signature mismatch: expected {expected}, got {actual}}
  * (actual = the carried signature's canonical text) and a non-function
  * value as E8001. {@code HOST_PARAMETER} projects every failure through
- * the single pinned E8010
- * {@code parameter {index} type mismatch: expected {expected}, got {actual}};
- * {@code HOST_SYNC_RETURN} through
+ * the single pinned E8010 composite
+ * {@code parameter {index} type mismatch: {inner}} with the host
+ * inner-reason render as its {@code {inner}} parameter; {@code
+ * HOST_SYNC_RETURN} through
  * {@code return value 1 type mismatch: expected {expected}, got nothing}
- * (no value) or {@code … got {actual}} (wrong value);
+ * (no value) or the composite {@code return value 1 type mismatch: {inner}}
+ * (wrong value);
  * {@code ASYNC_COMPLETION} mismatches as E8001
  * {@code expected {expected}} with the cell's actual kind (a numeric
  * completion carrier is the single {@code number} kind — the pinned corpus

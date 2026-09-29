@@ -652,6 +652,16 @@ public class HostClassConstructionTest {
                         + (9 - compiled.headerLinesStripped()) + ":28"),
                 "the E8007 fixture fails with the pinned code, message, and literal"
                     + " origin under java: " + outcome.output());
+            // The single-source property at the JVM consumer: the class
+            // construction renders the closed CLASS_EXTRA_FIELD arm and
+            // holds no failure text of its own.
+            check(emission.source().contains("JvmRuntime.arm(deal.semantic.ir."
+                    + "FailureArmId.CLASS_EXTRA_FIELD, java.util.Map.of(\"field\", "
+                    + "\"fallback\", \"classId\", "
+                    + "\"@$external/host.presence/Config\")")
+                    && !emission.source().contains("extra field '"),
+                "the JVM class construction renders the closed class-extra-field arm "
+                    + "and composes no text of its own");
         } finally {
             deleteRecursively(workspace);
             deleteRecursively(compiled.root());

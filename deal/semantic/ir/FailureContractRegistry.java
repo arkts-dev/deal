@@ -23,10 +23,15 @@ import java.util.Objects;
  * <p>Closed rows. The table maps each of the 27 policies to exactly one
  * row — no missing row, no extra row, and no fallback. The row data
  * (code, templates, metadata keys, origin rule, cause rule, frame
- * rule, precedence) is the parent's closed table, including
+ * rule, precedence) is the parent's closed table with the corrections of
+ * the canonical failure-projection authority, including
  * the exact visible-error templates (E8001
- * {@code expected {expected}, got {actual}} plus the invalid-Unicode
- * variant, the {@code ASYNC_COMPLETION} cell's corpus-aligned
+ * {@code expected {kind}} — the suffix-less typed-boundary kind arm,
+ * whose {@code {kind}} is the closed kind text — plus the invalid-Unicode
+ * variant, the class-identity text
+ * {@code expected instance of {expected}, got {actual}}, the two
+ * inner-only host string-carrier texts, the {@code ASYNC_COMPLETION}
+ * cell's corpus-aligned
  * {@code expected {expected}} — the completion check's pinned transcript
  * text, whose numeric actual kind is the single number kind — E8002
  * {@code negative array index} /
@@ -41,6 +46,16 @@ import java.util.Objects;
  * {@code sqrt of negative number}, and the propagation/preserve/infrastructure
  * rows). Consumers receive the resolved record in the operation snapshot
  * and never select messages.</p>
+ *
+ * <p>Closed arm table. {@link #arm(FailureArmId)} owns the closed
+ * DEAL-visible projection arms beside the rows (canonical
+ * failure-projection authority P1): each arm names its row and template
+ * index, its named parameters with their sources, its expected-token
+ * source or absence, its actual projection or absence, its origin
+ * convention, and its render scope (top-level, or host-inner-only for the
+ * two host string-carrier arms). Every retained row template is bound to
+ * exactly one arm of its row, and each row's template list equals its
+ * declared arms' templates in arm order (fail-closed).</p>
  *
  * <p>Reserved policy names are not rows. The four reserved names
  * {@code EXTERNAL_PARAMETER}, {@code EXTERNAL_RETURN},

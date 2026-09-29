@@ -88,6 +88,7 @@ public class FailureArmAuthorityTest {
         testTypedBoundaryBytesCarrier();
         testStdJsonArmDrive();
         testInt32AndSqrtArmFamily();
+        testIntLadderWrongKindCell();
         testNegativeSingleSourceControl();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -1034,6 +1035,148 @@ public class FailureArmAuthorityTest {
             error.actual);
         checkEq(null, firstDifferingField(reference, published),
             note + " publishes the closed " + armId + " arm's own tuple");
+    }
+
+    // =========================================================================
+    // 11b. The int-ladder wrong-kind cell (the closed kind arm)
+    // =========================================================================
+
+    /**
+     * The conversion ladder's wrong-kind tail (P2 item 1: the closed
+     * typed-boundary kind arm): every carrier outside the ladder's
+     * int/number/null/NaN/infinity/fractional cases renders the arm's own
+     * suffix-less text with the closed token — the oracle through its
+     * ladder's arm render, the JVM runtime through {@code intConv}, and the
+     * emitted prelude through {@code __intConv}: one identical tuple, never
+     * an internal producer defect and never the superseded row projection.
+     * The oracle leg drives the ladder's engine directly (the tail's
+     * totality guard over the closed value kinds).
+     */
+    static void testIntLadderWrongKindCell() throws Exception {
+        System.out.println("-- the int-ladder wrong-kind cell (the closed kind arm) --");
+        String origin = "int-ladder.deal:3:16";
+        Tuple reference = tupleOf(FailureContractRegistry.render(
+            FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", "int"), "int", "string",
+            null), origin);
+        checkEq(new Tuple("E8001", "expected int", origin, "int", "string"),
+            reference, "the authority renders the suffix-less kind arm");
+        // The JVM leg: the ladder's wrong-kind tail.
+        checkJvmArm(FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", "int"), "int",
+            "string", origin, "the JVM int-ladder wrong-kind cell",
+            () -> deal.codegen.jvm.JvmRuntime.intConv("bad", "INTRINSIC_CALL",
+                "number", "op", "digest", "parent", origin));
+        // The emitted prelude leg, under real luajit.
+        List<String> rows = runPreludeProbe("""
+            local ok, value = pcall(__intConv, "bad", "INTRINSIC_CALL", "number",
+              "op", "digest", "parent", "origin")
+            row("int-kind", ok, value)
+            ok, value = pcall(__numConv, true, "INTRINSIC_CALL", "int",
+              "op", "digest", "parent", "origin")
+            row("number-kind", ok, value)
+            """, "int-ladder-probe", 2);
+        checkEq("int-kind|E8001|int|string|expected int", rows.get(0),
+            "the emitted prelude's int ladder renders the closed kind arm");
+        checkEq("number-kind|E8001|number|boolean|expected number", rows.get(1),
+            "the emitted prelude's number ladder renders the closed kind arm");
+        checkEq(null, firstDifferingField(reference, luaTuple(rows.get(0), origin)),
+            "the Lua artifact renders the oracle's identical int-ladder tuple");
+        // The oracle leg: a lowered unit whose module-init block feeds a
+        // string const into the ladder (the cell's own engine render).
+        Tuple oracleTuple = oracleIntLadderWrongKindLeg();
+        checkEq(null, firstDifferingField(reference,
+            new Tuple(oracleTuple.code(), oracleTuple.message(), origin,
+                oracleTuple.expected(), oracleTuple.actual())),
+            "the oracle renders the authority's identical int-ladder tuple");
+        // The superseded projection cannot render the corrected row: the
+        // TYPE_DESCRIPTOR row's kind template carries no {expected}/{actual}
+        // placeholder, so the old row-index call is a fail-closed Defect (the
+        // control that makes the oracle leg's subject load-bearing).
+        expectDefect(() -> BoundaryFailure.fromRow(
+            FailureContractRegistry.row(FailurePolicyId.TYPE_DESCRIPTOR), 0, "int",
+            "string", new LinkedHashMap<>(), null),
+            "the superseded row projection fails closed on the corrected kind template");
+    }
+
+    /**
+     * The oracle's int-ladder wrong-kind cell, driven at the engine with a
+     * lowered unit whose module-init block holds a string {@code CONST}
+     * feeding {@code INTRINSIC_CALL(INT_CONVERT)} (the intrinsic carries no
+     * boundary child, so the value reaches the ladder unchanged). The
+     * oracle must render the closed suffix-less kind arm — before the
+     * correction the tail projected the superseded {@code TYPE_DESCRIPTOR}
+     * row template and aborted as an internal producer defect.
+     */
+    private static Tuple oracleIntLadderWrongKindLeg() {
+        deal.semantic.ir.ModuleId module = new deal.semantic.ir.ModuleId("int-ladder");
+        deal.semantic.ir.OpId constOp = new deal.semantic.ir.OpId(module, 0);
+        deal.semantic.ir.OpId intrinsicOp = new deal.semantic.ir.OpId(module, 1);
+        deal.semantic.ir.BlockId initBlock = new deal.semantic.ir.BlockId(0);
+        deal.semantic.ir.ValueId input = new deal.semantic.ir.ValueId(2);
+        deal.semantic.ir.SourceOrigin origin = new deal.semantic.ir.SourceOrigin(
+            module.path(), deal.semantic.ir.SourceSpan.synthetic(module.path()),
+            deal.semantic.ir.SourceOriginKind.SYNTHETIC, new deal.semantic.ir.AnchorId(0),
+            null);
+        List<deal.semantic.ir.SemanticOp> ops = List.of(
+            intLadderOp(constOp, deal.semantic.ir.SemanticOpKind.CONST,
+                new deal.semantic.ir.KindPayload.ConstPayload(
+                    new deal.semantic.ir.ScalarValue.String("bad")), input,
+                RuntimeDescriptor.String.INSTANCE,
+                deal.semantic.ir.FailurePolicyId.NO_DEAL_FAILURE, origin, List.of(),
+                List.of()),
+            intLadderOp(intrinsicOp, deal.semantic.ir.SemanticOpKind.INTRINSIC_CALL,
+                new deal.semantic.ir.KindPayload.IntrinsicCallPayload(
+                    deal.semantic.ir.IntrinsicKind.INT_CONVERT, input),
+                new deal.semantic.ir.ValueId(3), RuntimeDescriptor.Int.INSTANCE,
+                deal.semantic.ir.FailurePolicyId.INT_CONVERSION, origin, List.of(input),
+                List.of(RuntimeDescriptor.Number.INSTANCE)));
+        deal.semantic.ir.LoweredModuleUnit unit =
+            new deal.semantic.ir.LoweredModuleUnit(
+                deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
+                deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32, module, "hash",
+                "context", java.util.Set.of(), Map.of(), Map.of(), Map.of(),
+                new deal.semantic.ir.ModuleInitPlan(List.of(), initBlock),
+                deal.semantic.ir.ExportPlan.empty(), Map.of(), ops);
+        deal.semantic.ir.StructuredBodyTable table =
+            new deal.semantic.ir.StructuredBodyTable(
+                Map.of(initBlock, List.of(constOp, intrinsicOp)),
+                Map.of(constOp, initBlock, intrinsicOp, initBlock));
+        deal.semantic.SemanticRuntimeModel.ConsumerRun run =
+            deal.semantic.SemanticOracle.execute(unit, table);
+        check(run.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal
+                .DealFailure,
+            "the oracle terminates the int-ladder cell with a DEAL failure, never an "
+                + "internal defect: " + run.terminal());
+        if (!(run.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal
+                .DealFailure failure)) {
+            return new Tuple("?", "?", origin.toString(), "int", "string");
+        }
+        return new Tuple(failure.error().code(), failure.error().message(),
+            failure.error().origin(), failure.error().expected(),
+            failure.error().actual());
+    }
+
+    /** One contract-complete op of the int-ladder oracle unit. */
+    private static deal.semantic.ir.SemanticOp intLadderOp(
+            deal.semantic.ir.OpId id, deal.semantic.ir.SemanticOpKind kind,
+            deal.semantic.ir.KindPayload payload, deal.semantic.ir.SemanticValue result,
+            deal.semantic.ir.OpResultType resultType,
+            deal.semantic.ir.FailurePolicyId policy,
+            deal.semantic.ir.SourceOrigin origin,
+            List<deal.semantic.ir.ValueId> operands,
+            List<RuntimeDescriptor> operandTypes) {
+        deal.semantic.ir.ClosedSelector selector =
+            payload instanceof deal.semantic.ir.KindPayload.SelectorCarrying carrying
+                ? carrying.selector() : null;
+        deal.semantic.ir.OperationContractSnapshot contract =
+            new deal.semantic.ir.OperationContractSnapshot(
+                deal.semantic.ir.OperationContractSnapshot.VERSION, kind, resultType,
+                operandTypes, selector, payload, policy, List.of(), "placeholder");
+        contract = new deal.semantic.ir.OperationContractSnapshot(
+            deal.semantic.ir.OperationContractSnapshot.VERSION, kind, resultType,
+            operandTypes, selector, payload, policy, List.of(),
+            deal.semantic.ir.ContractSnapshotCanonicalizer.digest(contract));
+        return new deal.semantic.ir.SemanticOp(id, kind, origin, result, resultType,
+            operands, operandTypes, payload, policy, contract);
     }
 
     // =========================================================================

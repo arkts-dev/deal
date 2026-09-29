@@ -840,9 +840,13 @@ public class HostModuleLoadEmissionTest {
             check(source.contains("\"host class '\" + name + \"' in module '\" + module "
                     + "+ \"' is missing its defaults field (\" + name + \"_defaults)\""),
                 "the pinned missing-defaults E8011 text is emitted");
-            check(source.contains("throw JvmRuntime.fail(\"E8011\", \"missing host "
-                    + "export '\" + name + \"' in module '\" + module + \"'\""),
-                "the pinned missing-export E8011 text is emitted");
+            check(source.contains("throw JvmRuntime.arm(deal.semantic.ir."
+                    + "FailureArmId.HOST_LOAD_MISSING_EXPORT, java.util.Map.of(\"name\", "
+                    + "name, \"module\", module), oFile + \":\" + oLine + \":\" + oCol, "
+                    + "null, null)"),
+                "the load entry renders the host-load missing-export arm");
+            check(!source.contains("missing host export '"),
+                "the load entry composes no missing-export text of its own");
 
             // The per-export wrappers: the declared parameter cells in one-based
             // order and the declared return cell.

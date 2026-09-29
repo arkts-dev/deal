@@ -707,7 +707,7 @@ final class JvmHostAbiEmission {
      * {@link JvmBackend#classNameFor(String)} derivation, binding one
      * {@code java.lang.reflect.Method} per declared function export in
      * declaration order with the declared parameter-class projection
-     * (E8011 {@code missing host export '<name>' in module '<raw>'}), and
+     * (E8011 through the closed {@code HOST_LOAD_MISSING_EXPORT} arm), and
      * capturing one declared class export's mandatory
      * {@code <C>_defaults} map (E8011 when missing).
      */
@@ -826,8 +826,9 @@ final class JvmHostAbiEmission {
      * declared parameter cells in one-based order (the pinned E8010
      * {@code parameter {i} type mismatch} at the call origin), the
      * reflective invocation through the module binding, and the declared
-     * return cell (the pinned E8010 {@code return value 1 type mismatch:
-     * expected {expected}, got {actual}} / {@code got nothing}); a
+     * return cells rendered by the closed arms ({@code
+     * HOST_SYNC_RETURN_NOTHING} for a missing mandatory value, {@code
+     * HOST_SYNC_RETURN_CELL}'s composite for a wrong value); a
      * declared async return runs the operation-shape check and returns the
      * host operation handle.
      */
@@ -1057,7 +1058,7 @@ final class JvmHostAbiEmission {
         out.append("    try {\n");
         out.append("      return h.getDeclaredMethod(name, params);\n");
         out.append("    } catch (java.lang.NoSuchMethodException __e) {\n");
-        out.append("      throw JvmRuntime.fail(\"E8011\", \"missing host export '\" + name + \"' in module '\" + module + \"'\", oFile + \":\" + oLine + \":\" + oCol, null, null);\n");
+        out.append("      throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.HOST_LOAD_MISSING_EXPORT, java.util.Map.of(\"name\", name, \"module\", module), oFile + \":\" + oLine + \":\" + oCol, null, null);\n");
         out.append("    }\n");
         out.append("  }\n\n");
         out.append("  static java.util.Map<java.lang.String, java.lang.Object>"

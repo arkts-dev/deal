@@ -2389,6 +2389,27 @@ public class ClassConstructionDifferentialTest {
                 fail("reading " + path + " failed: " + exception.getMessage());
             }
         }
+        // ISSUE-0704: the class-construction extra-key arm renders through the
+        // closed arm table on the JVM target (the LOCAL/SHARED_FACTORY and
+        // HOST_DEFAULTS sites alike) — the emitter composes no failure text of
+        // its own, so an authority template change cannot silently desynchronize
+        // the artifact.
+        try {
+            String jvmEmitter = Files.readString(Path.of(
+                "deal/codegen/jvm/JvmSemanticEmitter.java"));
+            int armSites = 0;
+            int index = jvmEmitter.indexOf("FailureArmId.CLASS_EXTRA_FIELD");
+            while (index >= 0) {
+                armSites++;
+                index = jvmEmitter.indexOf("FailureArmId.CLASS_EXTRA_FIELD", index + 1);
+            }
+            check(armSites == 2 && !jvmEmitter.contains("extra field '"),
+                "the JVM emitter renders the closed CLASS_EXTRA_FIELD arm at its two"
+                    + " class-construction sites and holds no failure text of its own"
+                    + " (arm sites: " + armSites + ")");
+        } catch (Exception exception) {
+            fail("reading the JVM emitter failed: " + exception.getMessage());
+        }
     }
 
     // =========================================================================
