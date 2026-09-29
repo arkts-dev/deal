@@ -32,6 +32,11 @@ public final class FailureProjections {
         LANGUAGE_NULL,
         /** A boolean carrier. */
         BOOLEAN,
+        /**
+         * A string carrier: a valid Unicode scalar sequence and an invalid
+         * one alike project the Lua {@code type()} spelling {@code string}.
+         */
+        STRING,
         /** Every numeric carrier. */
         NUMBER,
         /** A raw host-facing function. */
@@ -93,9 +98,10 @@ public final class FailureProjections {
     /**
      * The carrier-kind projection's token (P2 item 2): the Lua-{@code type()}
      * shape of the unchanged runtimes — the absent marker is {@code nil},
-     * the DEAL-null sentinel is {@code table}, and every other table-carried
-     * value is {@code table} while a raw host-facing function stays
-     * {@code function}.
+     * the DEAL-null sentinel is {@code table}, a string carrier (a valid or
+     * invalid Unicode scalar sequence) is {@code string}, and every other
+     * table-carried value is {@code table} while a raw host-facing function
+     * stays {@code function}.
      */
     public static String carrierKindToken(CarrierKind kind) {
         Objects.requireNonNull(kind, "kind must not be null");
@@ -103,6 +109,7 @@ public final class FailureProjections {
             case ABSENT -> "nil";
             case LANGUAGE_NULL -> "table";
             case BOOLEAN -> "boolean";
+            case STRING -> "string";
             case NUMBER -> "number";
             case HOST_FUNCTION -> "function";
             case TABLE -> "table";

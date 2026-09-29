@@ -512,10 +512,10 @@ public final class FailureContractRegistry {
             "inner", FailureArm.ParameterSource.HOST_INNER_REASON));
         declared.add(arm(FailureArmId.ASYNC_COMPLETION_KIND,
             FailurePolicyId.ASYNC_COMPLETION, 0,
-            FailureArm.ExpectedSource.CELL_DESCRIPTOR, null,
+            FailureArm.ExpectedSource.KIND_TOKEN, null,
             FailureArm.ActualProjection.COMPLETION,
             FailureArm.OriginConvention.AWAIT_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL,
-            "expected", FailureArm.ParameterSource.CELL_DESCRIPTOR));
+            "expected", FailureArm.ParameterSource.KIND_TEXT));
         declared.add(arm(FailureArmId.ASYNC_COMPLETION_REFINEMENT,
             FailurePolicyId.ASYNC_COMPLETION, 1,
             FailureArm.ExpectedSource.CELL_DESCRIPTOR, null,

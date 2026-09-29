@@ -932,14 +932,19 @@ public final class JvmRuntime {
     }
 
     /**
-     * The typed-boundary kind arm's render (the completion cell's own
-     * expected-only arm when the check is the completion cell's).
+     * The typed-boundary kind arm's render (the completion cell's own kind
+     * arm when the check is the completion cell's): the arm's template is
+     * the message — the descriptor's closed kind text — and the closed
+     * projections are the fields. The completion kind arm renders the kind
+     * text in its message and the kind token as its expected field (the
+     * unchanged runtime matcher's own form "expected array"/"array" and
+     * "expected class instance"/"class").
      */
     private static DealError kindFailure(String desc, String actual, boolean completion) {
         if (completion) {
-            String expected = kindTokenOf(desc);
             return arm(deal.semantic.ir.FailureArmId.ASYNC_COMPLETION_KIND,
-                java.util.Map.of("expected", expected), "-", expected, actual);
+                java.util.Map.of("expected", kindTextOf(desc)), "-",
+                kindTokenOf(desc), actual);
         }
         return arm(deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND,
             java.util.Map.of("kind", kindTextOf(desc)), "-", kindTokenOf(desc), actual);

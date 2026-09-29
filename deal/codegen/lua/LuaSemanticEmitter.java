@@ -8479,7 +8479,6 @@ local function __ffiClassPlan(module, class)
 end
 """;
     /**
-    /**
      * The shared bytes surface (K6 items 1/2/4/7/13): the emitted helpers
      * over the deployed runtime's landed bytes entries
      * ({@code __rt.bytes_new}/{@code bytes_length}/{@code bytes_get}/
@@ -9217,12 +9216,15 @@ end
 local function __bcheck(desc, staticKind, v, csig, completion)
   local actual = completion and __completionBoundaryKind(staticKind, v)
     or __typedBoundaryKind(staticKind, v)
-  -- The typed-boundary kind arm (the completion cell's own expected-only
-  -- arm): the arm's template is the message, the closed projections are the
-  -- fields, and no site composes a suffix.
+  -- The typed-boundary kind arm (the completion cell's own kind arm): the
+  -- arm's template is the message, the closed projections are the fields,
+  -- and no site composes a suffix. The completion kind arm renders the
+  -- descriptor's closed kind text in its message and the kind token as its
+  -- expected field (the unchanged runtime matcher's own form
+  -- "expected array"/"array" and "expected class instance"/"class").
   local function failKind(kindText, expected)
     if completion then
-      return error(__arm("ASYNC_COMPLETION_KIND", {expected = expected}, "-",
+      return error(__arm("ASYNC_COMPLETION_KIND", {expected = kindText}, "-",
         expected, actual), 0)
     end
     return error(__arm("TYPED_BOUNDARY_KIND", {kind = kindText}, "-", expected,

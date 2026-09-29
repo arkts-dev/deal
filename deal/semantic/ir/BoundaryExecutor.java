@@ -810,12 +810,12 @@ public final class BoundaryExecutor {
         FailureArm arm = FailureContractRegistry.arm(armId);
         Map<String, String> parameters = new LinkedHashMap<>();
         for (String parameter : arm.parameters()) {
-            switch (parameter) {
-                case "kind" -> parameters.put(parameter,
+            switch (arm.parameterSources().get(parameter)) {
+                case KIND_TEXT -> parameters.put(parameter,
                     FailureProjections.kindText(fail.descriptor()));
-                case "expected" -> parameters.put(parameter,
+                case CELL_DESCRIPTOR -> parameters.put(parameter,
                     fail.descriptor().canonicalSpecText());
-                case "actual" -> parameters.put(parameter, fail.actualToken());
+                case TYPED_BOUNDARY_ACTUAL -> parameters.put(parameter, fail.actualToken());
                 default -> throw new Defect("the kind arm " + armId + " names the "
                     + "unsupported parameter {" + parameter + "} (producer defect)");
             }
@@ -871,9 +871,10 @@ public final class BoundaryExecutor {
 
     /**
      * The host arms' actual: the carrier-kind projection of the failing
-     * value (P2 item 2) — never the typed-boundary token, so a class
-     * instance or a DEAL function wrapper projects {@code table} exactly
-     * as the unchanged host runtimes project it.
+     * value (P2 item 2) — never the typed-boundary token, so a string
+     * carrier projects {@code string} while a class instance or a DEAL
+     * function wrapper projects {@code table}, exactly as the unchanged
+     * host runtimes project them.
      */
     private static String hostActual(BoundaryValueView view, CoreFail fail) {
         return FailureProjections.carrierKindToken(carrierKindOf(view));
@@ -885,6 +886,7 @@ public final class BoundaryExecutor {
             case MISSING -> FailureProjections.CarrierKind.ABSENT;
             case NULL -> FailureProjections.CarrierKind.LANGUAGE_NULL;
             case BOOLEAN -> FailureProjections.CarrierKind.BOOLEAN;
+            case STRING, INVALID_UNICODE -> FailureProjections.CarrierKind.STRING;
             case INT, NUMBER -> FailureProjections.CarrierKind.NUMBER;
             default -> FailureProjections.CarrierKind.TABLE;
         };
