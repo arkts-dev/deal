@@ -334,6 +334,30 @@ public class FailureArmAuthorityTest {
         }
         check(lua.contains("local function __arm(id, values, origin, expected, actual)"),
             "the prelude renders every failure site through the one arm renderer");
+
+        // The JVM consumer resolves the same closed arm table through the
+        // registry (a focused assertion over the arms, never the artifact
+        // text): one render per family carries the identical tuple.
+        deal.codegen.jvm.JvmRuntime.DealError javaKind = deal.codegen.jvm.JvmRuntime.arm(
+            FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", "int"), "origin",
+            "int", "string");
+        deal.semantic.ir.BoundaryFailure registryKind =
+            FailureContractRegistry.render(FailureArmId.TYPED_BOUNDARY_KIND,
+                Map.of("kind", "int"), "int", "string", null);
+        check(javaKind.code.equals(registryKind.code().name())
+                && javaKind.msg.equals(registryKind.message())
+                && javaKind.expected.equals(registryKind.expected())
+                && javaKind.actual.equals(registryKind.actual()),
+            "the JVM arm render resolves the registry's own arm tuple");
+        check(FailureProjections.refinementReason("int", "number")
+                .equals(deal.codegen.jvm.JvmRuntime.refinementReason("number"))
+                && FailureProjections.stringCarrierReason(true)
+                    .equals(deal.codegen.jvm.JvmRuntime.stringCarrierReason(true))
+                && FailureContractRegistry.arm(FailureArmId.INT32_RANGE).template()
+                    .equals(deal.codegen.jvm.JvmRuntime.rangeReason()),
+            "the JVM host inner-reason helpers resolve the registry's own texts "
+                + "(the int refinement, the surrogate string-carrier arm, the "
+                + "signed32-range pass-through)");
     }
 
     private static String quote(String text) {
