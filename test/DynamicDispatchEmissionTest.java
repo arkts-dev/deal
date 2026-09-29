@@ -1886,10 +1886,11 @@ public class DynamicDispatchEmissionTest {
                 && jvm.contains(".fid != null"),
             "the JVM async arm resolves the source's owning module through the "
                 + "emitted lookup");
-        check(lua.contains("else\n") && lua.contains("__dynE = __failExpr(\"E8001\"")
-                && jvm.contains("JvmRuntime.fail(\"E8001\", \"expected function, "
-                    + "got \""),
-            "every other carrier class residues with the pinned E8001 text");
+        check(lua.contains("else\n")
+                && lua.contains("__dynE = __arm(\"TYPED_BOUNDARY_KIND\"")
+                && jvm.contains("JvmRuntime.arm("
+                    + "deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND"),
+            "every other carrier class residues through the typed-boundary kind arm");
     }
 
     /** Whether the runtime's adapter carrier pins the null function id. */
