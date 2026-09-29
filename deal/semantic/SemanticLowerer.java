@@ -2246,7 +2246,7 @@ public final class SemanticLowerer {
         // checked project's declarations before the module walk, so every
         // declaration-owned parameter boundary carries the callee's declared
         // annotation span rather than the call site.
-        Map<ModuleId, Map<String, List<List<Span>>>> declaredParameterAnnotations =
+        Map<ModuleId, DeclaredParameterAnnotations> declaredParameterAnnotations =
             declaredParameterAnnotationIndex(checkedProject);
 
         for (CheckedModuleInput module : checkedProject.modules()) {
@@ -2314,9 +2314,9 @@ public final class SemanticLowerer {
      * declaration-owned parameter boundaries read it so every consumer
      * renders the callee's declared annotation span, in the callee's file.
      */
-    private static Map<ModuleId, Map<String, List<List<Span>>>> declaredParameterAnnotationIndex(
+    private static Map<ModuleId, DeclaredParameterAnnotations> declaredParameterAnnotationIndex(
             CheckedProjectInput checkedProject) {
-        Map<ModuleId, Map<String, List<List<Span>>>> index = new LinkedHashMap<>();
+        Map<ModuleId, DeclaredParameterAnnotations> index = new LinkedHashMap<>();
         for (CheckedModuleInput module : checkedProject.modules()) {
             Map<String, List<List<Span>>> byName = new LinkedHashMap<>();
             for (StatementNode statement : module.ast().statements()) {
@@ -2331,9 +2331,24 @@ public final class SemanticLowerer {
                         .add(List.copyOf(annotations));
                 }
             }
-            index.put(module.moduleId(), byName);
+            index.put(module.moduleId(),
+                new DeclaredParameterAnnotations(module.sourceId(), byName));
         }
         return index;
+    }
+
+    /**
+     * One module's declared-parameter index (P3): the module's stable
+     * source id (the origin file of the declaration-owned parameter cells)
+     * and its declared functions' parameter type-annotation spans by
+     * declared function name.
+     */
+    private record DeclaredParameterAnnotations(String sourceId,
+            Map<String, List<List<Span>>> byFunctionName) {
+    }
+
+    /** One declaration-owned parameter cell origin (P3): file and span. */
+    private record DeclaredParameterOrigin(String sourceId, Span span) {
     }
 
     /**
@@ -2363,7 +2378,7 @@ public final class SemanticLowerer {
             deal.semantic.ir.ExternalModuleInterface ownInterface,
             SemanticIrValidator.ComparisonFacts comparisonFacts,
             Map<ClassId, SharedFactoryFacts> sharedFactories,
-            Map<ModuleId, Map<String, List<List<Span>>>> declaredParameterAnnotations) {
+            Map<ModuleId, DeclaredParameterAnnotations> declaredParameterAnnotations) {
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator, true, true, true, false, false, false,
             module.ast().span(), true, true, ownInterface,
@@ -4299,7 +4314,18 @@ public final class SemanticLowerer {
          * {@code null} on a non-project session (the entry sets it before
          * the walk).
          */
-        private Map<ModuleId, Map<String, List<List<Span>>>> declaredParameterAnnotations;
+        private Map<ModuleId, DeclaredParameterAnnotations> declaredParameterAnnotations;
+        /**
+         * The member-read nodes that are the direct argument expression of a
+         * declared callee's call (P3): the callee's parameter cell performs
+         * their contextual kind check at the declaration-owned origin (the
+         * unchanged reference defers the check to the declared parameter),
+         * so a scalar contextual argument read lowers to its raw read and
+         * composes no boundary of its own. Identity-keyed: only the exact
+         * argument node is affected, never a nested read.
+         */
+        private final java.util.Set<MemberAccessExpr> callArgumentReads =
+            java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         /** The module's recorded {@code EXTERNAL_ENTRY} op ids by export name. */
         private final LinkedHashMap<String, OpId> recordedEntries = new LinkedHashMap<>();
         /** The module's recorded {@code CALLBACK_INVOKE} op ids by export name. */
@@ -10070,10 +10096,23 @@ public final class SemanticLowerer {
         /** Builds (without emitting) one BOUNDARY child parented to the given op. */
         private SemanticOp buildChildBoundary(BoundaryKind kind, RuntimeDescriptor descriptor,
                                               ValueId input, Span span, OpId parent) {
+            return buildChildBoundary(kind, descriptor, input, span, null, parent);
+        }
+
+        /**
+         * Builds one BOUNDARY child whose origin carries the given source
+         * id — the declaration-owned cross-module parameter cell's origin
+         * is the callee's file (P3), while the op belongs to the caller's
+         * unit. A {@code null} source id is the emitting module's own.
+         */
+        private SemanticOp buildChildBoundary(BoundaryKind kind, RuntimeDescriptor descriptor,
+                                              ValueId input, Span span, String originSourceId,
+                                              OpId parent) {
             FailurePolicyId policy = descriptorKindPolicy(descriptor);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
-            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span),
+            SourceOrigin origin = new SourceOrigin(
+                originSourceId != null ? originSourceId : sourceId, toSourceSpan(span),
                 SourceOriginKind.SYNTHETIC, anchor, parent);
             return buildOp(opId, SemanticOpKind.BOUNDARY,
                 new KindPayload.BoundaryPayload(kind, descriptor, input,
@@ -10227,7 +10266,7 @@ public final class SemanticLowerer {
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
             for (ExpressionNode argument : call.args()) {
-                args.add(lowerExpression(argument));
+                args.add(lowerCallArgument(argument));
                 argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
                     checkedType(argument)));
             }
@@ -11220,7 +11259,7 @@ public final class SemanticLowerer {
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
             for (ExpressionNode argument : call.args()) {
-                args.add(lowerExpression(argument));
+                args.add(lowerCallArgument(argument));
                 argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
                     checkedType(argument)));
             }
@@ -11248,10 +11287,12 @@ public final class SemanticLowerer {
                 for (int i = 0; i < args.size(); i++) {
                     // The cross-module declared callee's own parameter
                     // annotation, in the callee's file (P3).
+                    DeclaredParameterOrigin declared = declaredParameterOrigin(
+                        callee.moduleId(), callee.exportName(), args.size(), i);
                     SemanticOp boundary = buildChildBoundary(BoundaryKind.EXTERNAL_PARAMETER,
                         descriptor.paramTypes().get(i), args.get(i),
-                        declaredParameterOrigin(callee.moduleId(), callee.exportName(),
-                            args.size(), i, call.span()),
+                        declared != null ? declared.span() : call.span(),
+                        declared != null ? declared.sourceId() : null,
                         callOpId);
                     parameterBoundaryOps.add(boundary);
                     parameterBoundaryIds.add(boundary.opId());
@@ -12179,7 +12220,7 @@ public final class SemanticLowerer {
          * span instead of the call site.
          */
         void setDeclaredParameterAnnotations(
-                Map<ModuleId, Map<String, List<List<Span>>>> index) {
+                Map<ModuleId, DeclaredParameterAnnotations> index) {
             this.declaredParameterAnnotations = index;
         }
 
@@ -12190,14 +12231,16 @@ public final class SemanticLowerer {
          * declared arity. A declared callee with no recorded annotation
          * fails closed — never a fallback to the call span.
          */
-        private Span declaredParameterSpan(ModuleId calleeModule, String functionName,
-                                           int arity, int parameterIndex) {
+        private DeclaredParameterOrigin declaredParameterSpan(ModuleId calleeModule,
+                                                              String functionName,
+                                                              int arity,
+                                                              int parameterIndex) {
             if (declaredParameterAnnotations == null) {
                 return null;
             }
-            Map<String, List<List<Span>>> byName =
+            DeclaredParameterAnnotations moduleIndex =
                 declaredParameterAnnotations.get(calleeModule);
-            if (byName == null) {
+            if (moduleIndex == null) {
                 // A callee outside the checked project's implementation
                 // closure (a host/extern-C declaration module): the host
                 // cells' own convention applies, never a fabricated
@@ -12205,7 +12248,7 @@ public final class SemanticLowerer {
                 // closure's own declared callees.
                 return null;
             }
-            List<List<Span>> candidates = byName.get(functionName);
+            List<List<Span>> candidates = moduleIndex.byFunctionName().get(functionName);
             if (candidates == null) {
                 throw new ConstructUnlowered("the declared callee '" + functionName
                     + "' of module '" + calleeModule.path() + "' has no recorded parameter"
@@ -12215,7 +12258,8 @@ public final class SemanticLowerer {
             }
             for (List<Span> declared : candidates) {
                 if (declared.size() == arity && parameterIndex < declared.size()) {
-                    return declared.get(parameterIndex);
+                    return new DeclaredParameterOrigin(moduleIndex.sourceId(),
+                        declared.get(parameterIndex));
                 }
             }
             throw new ConstructUnlowered("the declared callee '" + functionName
@@ -12224,12 +12268,17 @@ public final class SemanticLowerer {
                 + " defect, never a fallback span)");
         }
 
-        /** The declaration-owned origin of one declared parameter cell (P3). */
-        private Span declaredParameterOrigin(ModuleId calleeModule, String functionName,
-                                             int arity, int parameterIndex, Span callSpan) {
-            Span declared = declaredParameterSpan(calleeModule, functionName, arity,
-                parameterIndex);
-            return declared != null ? declared : callSpan;
+        /**
+         * The declaration-owned origin of one declared parameter cell (P3):
+         * the callee's declared annotation span in the callee's own file,
+         * or {@code null} when no declaration-owned origin applies (a
+         * callee outside the closure).
+         */
+        private DeclaredParameterOrigin declaredParameterOrigin(ModuleId calleeModule,
+                                                                 String functionName,
+                                                                 int arity,
+                                                                 int parameterIndex) {
+            return declaredParameterSpan(calleeModule, functionName, arity, parameterIndex);
         }
 
         /** The module's recorded {@code EXTERNAL_ENTRY} op ids by export name. */
@@ -13906,6 +13955,28 @@ public final class SemanticLowerer {
             return lowerMemberRead(access, null);
         }
 
+        /**
+         * Lowers one call argument of a declared callee: the callee's
+         * parameter cell performs the contextual member read's kind check
+         * (the unchanged reference defers the check to the declared
+         * parameter, whose origin is the declaration-owned annotation), so
+         * a scalar contextual member read lowers to its raw read and
+         * composes no boundary of its own. A composite/carrier read keeps
+         * its landed pass-through boundary and a nullable read its optional
+         * envelope.
+         */
+        private ValueId lowerCallArgument(ExpressionNode argument) {
+            if (!(argument instanceof MemberAccessExpr access)) {
+                return lowerExpression(argument);
+            }
+            callArgumentReads.add(access);
+            try {
+                return lowerExpression(argument);
+            } finally {
+                callArgumentReads.remove(access);
+            }
+        }
+
         private ValueId lowerMemberRead(MemberAccessExpr access, ValueId slot) {
             Type contextualType = checkedType(access);
             RuntimeDescriptor resultType =
@@ -13964,6 +14035,14 @@ public final class SemanticLowerer {
             emit(buildOp(opId, SemanticOpKind.MEMBER_READ,
                 new KindPayload.MemberReadPayload(receiver, access.field()),
                 readResult, resultType, FailurePolicyId.NO_DEAL_FAILURE, origin));
+            if (callArgumentReads.contains(access)
+                    && consumingCellOwnsKindCheck(resultType)) {
+                // The declared callee's parameter cell performs the check at
+                // the declaration-owned annotation origin (the unchanged
+                // reference's deferral); the raw read composes no boundary.
+                registerDynamicMaterialization(readResult, opId, resultType);
+                return readResult;
+            }
             emitNullOp(SemanticOpKind.BOUNDARY,
                 new KindPayload.BoundaryPayload(BoundaryKind.CONTEXTUAL_TABLE_READ,
                     resultType, readResult,
@@ -13992,6 +14071,20 @@ public final class SemanticLowerer {
             // narrowed cell).
             registerDynamicMaterialization(readResult, opId, resultType);
             return readResult;
+        }
+
+        /**
+         * Whether one contextual read descriptor's kind check belongs to the
+         * consuming declared cell: the scalar/kind descriptors defer when the
+         * read is a call argument of a declared callee (the parameter cell
+         * owns the projection), while the composite/carrier descriptors keep
+         * their landed pass-through boundary (the emitters' and oracle's
+         * identical {@code defersContextualCheck} rule).
+         */
+        private static boolean consumingCellOwnsKindCheck(RuntimeDescriptor descriptor) {
+            return !(descriptor instanceof RuntimeDescriptor.Func)
+                && !(descriptor instanceof RuntimeDescriptor.Array)
+                && !(descriptor instanceof RuntimeDescriptor.Bytes);
         }
 
         /** {@code STRING_CONCAT}/{@code BINARY} — the binary dispatch (I3 arithmetic). */

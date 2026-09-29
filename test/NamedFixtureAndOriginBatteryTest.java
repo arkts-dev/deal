@@ -133,7 +133,9 @@ public class NamedFixtureAndOriginBatteryTest {
         String pinnedExpected,
         String pinnedActual,
         int pinnedLine,
-        int pinnedColumn) {
+        int pinnedColumn,
+        String originFile,
+        boolean legacyFunctionRow) {
 
         String fixtureFile() {
             return BACKEND_RUNTIME + "/" + relativePath + ".deal";
@@ -143,8 +145,20 @@ public class NamedFixtureAndOriginBatteryTest {
             return BACKEND_RUNTIME + "/" + relativePath + ".expect.json";
         }
 
+        /** The corpus file the pinned origin lives in (the companion for a
+         * declaration-owned cross-module parameter cell). */
+        String originCorpusFile() {
+            return originFile == null ? fixtureFile() : BACKEND_RUNTIME + "/" + originFile;
+        }
+
         boolean runtimeOk() {
             return pinnedCode == null;
+        }
+
+        /** True when the fixture's own exported {@code main} is the entry the
+         * drive invokes (the fixture is the compiled project's entry module). */
+        boolean entryIsFixture() {
+            return "main".equals(exportName);
         }
 
         String what() {
@@ -155,21 +169,37 @@ public class NamedFixtureAndOriginBatteryTest {
     private static NamedFixture runtimeOk(String path, String export, String type,
                                           String atom, String... companions) {
         return new NamedFixture(path, export, type, atom, List.of(companions),
-            null, null, null, null, 0, 0);
+            null, null, null, null, 0, 0, null, false);
     }
 
     private static NamedFixture runtimeError(String path, String export, String code,
                                              String message, String expected,
                                              String actual, int line, int column) {
         return new NamedFixture(path, export, "int", null, List.of(), code, message,
-            expected, actual, line, column);
+            expected, actual, line, column, null, false);
     }
 
-    /** The function-typed declaration crossing with a non-function value. */
+    /** One canonical-divergence fixture whose pinned origin is declaration-owned
+     * (the callee's parameter annotation, possibly in a companion file). */
+    private static NamedFixture divergence(String path, String export, String code,
+                                           String message, String expected,
+                                           String actual, int line, int column,
+                                           String originCompanion,
+                                           String... companions) {
+        return new NamedFixture(path, export, "int", null, List.of(companions), code,
+            message, expected, actual, line, column, originCompanion, false);
+    }
+
+    /**
+     * The function-typed declaration crossing with a non-function value. Its
+     * sidecar still carries the retained lane's {@code number} actual token
+     * and the projection's shared actual is the {@code int} carrier token
+     * (the two legacy pins this drive keeps distinct, the lane cutover's).
+     */
     private static final NamedFixture NONFUNCTION_TO_FUNCTION =
-        runtimeError("type-system/dynamic-nonfunction-to-function-e8001",
-            "test_dynamic_nonfunction_to_function_runtime_error", "E8001",
-            "expected function", "function", "number", 8, 10);
+        new NamedFixture("type-system/dynamic-nonfunction-to-function-e8001",
+            "test_dynamic_nonfunction_to_function_runtime_error", "int", null, List.of(),
+            "E8001", "expected function", "function", "number", 8, 10, null, true);
 
     /** The differing carried signature (the canonical descriptor text pin). */
     private static final NamedFixture CANONICAL_SIG_MISMATCH =
@@ -200,10 +230,49 @@ public class NamedFixtureAndOriginBatteryTest {
     private static final NamedFixture JS_REFERENCE =
         runtimeOk("functions/js-reference-program", "test", "int", "1");
 
+    // -- the canonical divergences (canonical-failure-projection-authority
+    // Verification 1): every sidecar pin below is reproduced through the
+    // production pipeline by the oracle and both production artifacts.
+
+    /** The absent array element: the suffix-less kind text with the absent
+     * marker's {@code nil} token at the declaration-owned read origin. The
+     * fixture's own {@code main} is its entry (the drive calls it). */
+    private static final NamedFixture ARRAY_OOB_036 =
+        new NamedFixture("source-location/036-runtime-source-array-oob", "main",
+            "null", null, List.of(), "E8001", "expected int", "int", "nil", 8, 14,
+            null, false);
+
+    /** The same-unit declared parameter annotation origin (6:21). */
+    private static final NamedFixture TYPE_MISMATCH_E8001 =
+        divergence("runtime-errors/type-mismatch-e8001",
+            "test_runtime_type_mismatch", "E8001",
+            "expected int", "int", "string", 6, 21, null);
+
+    /** The fractional int ladder: the message names the case while the actual
+     * is the closed number kind. */
+    private static final NamedFixture INT_CONVERT_FRACTION =
+        divergence("arithmetic/int-convert-fraction", "test_int_fraction", "E8001",
+            "expected int, got non-integer number", "int", "number", 7, 10, null);
+
+    private static final NamedFixture INT_CONVERT_NONINTEGER =
+        divergence("runtime/int-convert-noninteger", "test_int_noninteger", "E8001",
+            "expected int, got non-integer number", "int", "number", 7, 10, null);
+
+    /** The cross-module declared parameter annotation origin: the companion's
+     * own file and annotation span. */
+    private static final NamedFixture IMPORTED_CLASS_PARAM_E8001 =
+        divergence("class-runtime-errors/dynamic-bad-imported-class-param-e8001",
+            "test_dynamic_bad_imported_class_param", "E8001",
+            "expected class instance", "class", "table", 7, 28,
+            "class-runtime-errors/imported_class_lib.deal",
+            "class-runtime-errors/imported_class_lib");
+
     private static final List<NamedFixture> NAMED = List.of(
         NONFUNCTION_TO_FUNCTION, CANONICAL_SIG_MISMATCH,
         CLOSURE_RETURNED_FROM_MODULE, INTRINSIC_AS_FUNCTION_VALUE,
-        INTRINSIC_AS_CALLBACK, INTRINSIC_ARITY_EXTENSION);
+        INTRINSIC_AS_CALLBACK, INTRINSIC_ARITY_EXTENSION,
+        ARRAY_OOB_036, TYPE_MISMATCH_E8001, INT_CONVERT_FRACTION,
+        INT_CONVERT_NONINTEGER, IMPORTED_CLASS_PARAM_E8001);
 
     private static void testCorpusPins() throws Exception {
         System.out.println("-- the named fixtures and their pinned sidecars --");
@@ -265,17 +334,29 @@ public class NamedFixtureAndOriginBatteryTest {
                 + ": the pinned line");
             checkEq(fixture.pinnedColumn(), error.column(), fixture.what()
                 + ": the pinned column");
-            checkEq(fixture.fixtureFile(), error.sourceFile(), fixture.what()
-                + ": the pinned source file");
-            // The declared type annotation's span is the pinned origin.
-            List<String> lines = raw.lines().toList();
-            String annotated = lines.get(fixture.pinnedLine() - 1);
-            check(annotated.startsWith("  let f: ("), fixture.what()
-                + ": the pinned span is the declaration's type annotation: '"
-                + annotated + "'");
-            check(annotated.substring(fixture.pinnedColumn() - 1).startsWith("("),
-                fixture.what() + ": the pinned column is the annotation's first "
-                    + "character: '" + annotated + "'");
+            checkEq(fixture.originCorpusFile(), error.sourceFile(), fixture.what()
+                + ": the pinned source file (the companion for a declaration-owned "
+                + "cross-module parameter cell)");
+            if (fixture.legacyFunctionRow()) {
+                // The declared type annotation's span is the pinned origin.
+                List<String> lines = raw.lines().toList();
+                String annotated = lines.get(fixture.pinnedLine() - 1);
+                check(annotated.startsWith("  let f: ("), fixture.what()
+                    + ": the pinned span is the declaration's type annotation: '"
+                    + annotated + "'");
+                check(annotated.substring(fixture.pinnedColumn() - 1).startsWith("("),
+                    fixture.what() + ": the pinned column is the annotation's first "
+                        + "character: '" + annotated + "'");
+            } else if (fixture.originFile() != null) {
+                // The cross-module parameter cell's pinned span is the
+                // companion's declared parameter annotation.
+                List<String> companionLines = Files.readAllLines(
+                    CORPUS.resolve(fixture.originCorpusFile()), StandardCharsets.UTF_8);
+                String annotated = companionLines.get(fixture.pinnedLine() - 1);
+                check(annotated.substring(fixture.pinnedColumn() - 1).startsWith("Box"),
+                    fixture.what() + ": the pinned column is the companion's declared "
+                        + "parameter annotation: '" + annotated + "'");
+            }
         }
         // The returned-closure fixture's companion factory is part of the
         // corpus closure the drive compiles.
@@ -296,7 +377,8 @@ public class NamedFixtureAndOriginBatteryTest {
         List<SemanticRequirementManifest> manifests,
         HostDeclarationSurface surface,
         Map<ModuleId, CanonicalModuleIdentity> identities,
-        int strippedHeaderLines) {
+        int strippedHeaderLines,
+        Map<String, Integer> companionStrippedLines) {
     }
 
     /** One lowered, validated fixture drive. */
@@ -361,25 +443,30 @@ public class NamedFixtureAndOriginBatteryTest {
         // drive supplies its own entry module and calls the fixture's test
         // export, so the shim is removed — the fixture module then carries no
         // ENTRY_INVOKE of its own (the emitters never run a non-entry module's
-        // entry delegation).
-        check(source.contains(CORPUS_ENTRY_SHIM), fixture.what()
-            + ": the corpus entry shim is present for the drive's own entry");
-        source = source.replace(CORPUS_ENTRY_SHIM, "");
+        // entry delegation). A fixture whose own export is its entry (the
+        // absent-read divergence) keeps its body and is called directly.
+        if (source.contains(CORPUS_ENTRY_SHIM)) {
+            source = source.replace(CORPUS_ENTRY_SHIM, "");
+        }
         Files.writeString(fixtureFile, source, StandardCharsets.UTF_8);
+        Map<String, Integer> companionStripped = new LinkedHashMap<>();
         for (String companion : fixture.companions()) {
             Path companionFile = corpusRoot.resolve(BACKEND_RUNTIME)
                 .resolve(companion + ".deal");
             Files.createDirectories(companionFile.getParent());
-            int[] ignored = new int[1];
+            int[] companionStrip = new int[1];
             String companionRaw = Files.readString(
                 CORPUS.resolve(BACKEND_RUNTIME).resolve(companion + ".deal"),
                 StandardCharsets.UTF_8);
-            Files.writeString(companionFile, stripHeaders(companionRaw, ignored),
+            Files.writeString(companionFile, stripHeaders(companionRaw, companionStrip),
                 StandardCharsets.UTF_8);
+            companionStripped.put(companion + ".deal", companionStrip[0]);
         }
-        Path entry = root.resolve("app.deal");
-        Files.writeString(entry, driver(fixture), StandardCharsets.UTF_8);
-        return compile(root, entry, fixture.what(), strippedLines[0]);
+        Path entry = fixture.entryIsFixture() ? fixtureFile : root.resolve("app.deal");
+        if (!fixture.entryIsFixture()) {
+            Files.writeString(entry, driver(fixture), StandardCharsets.UTF_8);
+        }
+        return compile(root, entry, fixture.what(), strippedLines[0], companionStripped);
     }
 
     /** The drive's own entry: it imports the fixture and calls its test export. */
@@ -403,10 +490,18 @@ public class NamedFixtureAndOriginBatteryTest {
     /** The real orchestrator over one project root (the production entry). */
     private static Compiled compile(Path root, Path entry, String what,
                                     int strippedHeaderLines) throws Exception {
+        return compile(root, entry, what, strippedHeaderLines, Map.of());
+    }
+
+    private static Compiled compile(Path root, Path entry, String what,
+                                    int strippedHeaderLines,
+                                    Map<String, Integer> companionStrippedLines)
+            throws Exception {
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entry.toAbsolutePath(), root.resolve("out").toAbsolutePath(),
             false, false, false, false, Backend.LUAJIT, null,
-            List.of(root.toAbsolutePath()), null, null, productionInvocation());
+            List.of(root.toAbsolutePath()), Path.of("std").toAbsolutePath().normalize(),
+            null, productionInvocation());
         boolean compiled = orchestrator.compile();
         CheckedProjectBuildResult built = orchestrator.checkedProject();
         RequirementManifestResult manifests = orchestrator.requirementManifests();
@@ -432,7 +527,8 @@ public class NamedFixtureAndOriginBatteryTest {
                 new CanonicalModuleIdentity.ExternalModule(declaration.path()));
         }
         return new Compiled(root, built.input(), built.index(), manifests.manifests(),
-            orchestrator.hostDeclarationSurface(), identities, strippedHeaderLines);
+            orchestrator.hostDeclarationSurface(), identities, strippedHeaderLines,
+            companionStrippedLines);
     }
 
     /** The production project lowering entry over one compiled project. */
@@ -470,12 +566,20 @@ public class NamedFixtureAndOriginBatteryTest {
         return new Drive(compiled, result, unit, spec);
     }
 
-    /** The compiled source coordinate of one pinned raw coordinate. */
+    /**
+     * The compiled source coordinate of one pinned raw coordinate, in the
+     * file the pin names (the fixture, or the companion file of a
+     * declaration-owned cross-module parameter cell).
+     */
     private static String compiledOrigin(Drive drive, int rawLine, int rawColumn) {
+        NamedFixture spec = drive.spec();
+        int stripped = spec.originFile() == null
+            ? drive.compiled().strippedHeaderLines()
+            : drive.compiled().companionStrippedLines()
+                .getOrDefault(spec.originFile(), 0);
         Path mirror = drive.compiled().root().resolve("corpus")
-            .resolve(drive.spec().fixtureFile()).toAbsolutePath();
-        return mirror + ":" + (rawLine - drive.compiled().strippedHeaderLines())
-            + ":" + rawColumn;
+            .resolve(spec.originCorpusFile()).toAbsolutePath();
+        return mirror + ":" + (rawLine - stripped) + ":" + rawColumn;
     }
 
     private static void deleteRecursively(Path path) {
@@ -677,10 +781,11 @@ public class NamedFixtureAndOriginBatteryTest {
 
     private static void driveFailureRow(Drive drive) throws Exception {
         NamedFixture spec = drive.spec();
-        // The declaration crossing is a free boundary: unparented, and the only
-        // FAILURE terminal the run emits at the annotation's span.
-        int declarationLine = spec.pinnedLine()
-            - drive.compiled().strippedHeaderLines();
+        String expectedOrigin = compiledOrigin(drive, spec.pinnedLine(),
+            spec.pinnedColumn());
+        // The declaration crossing is a free boundary at the pinned span; the
+        // corrected-row fixtures fail at their own boundary/call op instead
+        // (the declaration-owned parameter cell and the conversion call).
         SemanticOp declaration = null;
         for (SemanticOp op : opsOfKind(drive.unit(), SemanticOpKind.BOUNDARY)) {
             KindPayload.BoundaryPayload payload =
@@ -688,22 +793,52 @@ public class NamedFixtureAndOriginBatteryTest {
             if (payload.kind() == BoundaryKind.VARIABLE_DECLARATION
                     && op.origin().parentOpId() == null
                     && op.origin().span() != null
-                    && op.origin().span().startLine() == declarationLine
-                    && op.origin().span().startColumn() == spec.pinnedColumn()) {
-                check(declaration == null, spec.what() + ": exactly one free "
-                    + "declaration boundary sits at the annotation's span");
-                declaration = op;
+                    && spec.legacyFunctionRow()) {
+                // The legacy declaration crossing carries the declared
+                // annotation at the pinned span on its own line.
+                int declarationLine = spec.pinnedLine()
+                    - drive.compiled().strippedHeaderLines();
+                if (op.origin().span().startLine() == declarationLine
+                        && op.origin().span().startColumn() == spec.pinnedColumn()) {
+                    check(declaration == null, spec.what() + ": exactly one free "
+                        + "declaration boundary sits at the annotation's span");
+                    declaration = op;
+                }
             }
         }
-        check(declaration != null, spec.what() + ": the free declaration boundary "
-            + "carries the declared annotation's span as its origin");
-        if (declaration == null) {
-            return;
+        if (spec.legacyFunctionRow()) {
+            check(declaration != null, spec.what() + ": the free declaration boundary "
+                + "carries the declared annotation's span as its origin");
+            if (declaration == null) {
+                return;
+            }
+            checkEq(expectedOrigin, originText(declaration), spec.what() + ": the free "
+                + "declaration boundary's origin is the annotation's span");
+        } else if (ARRAY_OOB_036 == spec) {
+            // The absent-read divergence's pinned origin is the free
+            // declaration boundary of the read's declaration.
+            for (SemanticOp op : opsOfKind(drive.unit(), SemanticOpKind.BOUNDARY)) {
+                if (expectedOrigin.equals(originText(op))) {
+                    check(declaration == null, spec.what() + ": exactly one boundary "
+                        + "carries the pinned declaration origin");
+                    declaration = op;
+                }
+            }
+            check(declaration != null, spec.what() + ": the boundary carries the "
+                + "pinned declaration origin: " + expectedOrigin);
+        } else {
+            // The canonical divergences' origin cells: the parameter cell
+            // (declaration-owned, possibly cross-module) or the conversion
+            // call expression. At least one op carries the pinned origin.
+            boolean carries = false;
+            for (SemanticOp op : drive.unit().ops()) {
+                if (expectedOrigin.equals(originText(op))) {
+                    carries = true;
+                }
+            }
+            check(carries, spec.what() + ": an op carries the pinned origin: "
+                + expectedOrigin);
         }
-        String expectedOrigin = compiledOrigin(drive, spec.pinnedLine(),
-            spec.pinnedColumn());
-        checkEq(expectedOrigin, originText(declaration), spec.what() + ": the free "
-            + "declaration boundary's origin is the annotation's span");
 
         SemanticDifferentialHarness.Verdict verdict = runMatrix(drive,
             SemanticDifferentialHarness.Expectation.failure(spec.what(), List.of(),
@@ -716,19 +851,21 @@ public class NamedFixtureAndOriginBatteryTest {
 
         String expectedMessage = sharedMessage(spec);
         for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
-            checkEq(1, eventCount(run, declaration.opId(),
-                SemanticRuntimeModel.Phase.FAILURE), run.consumer() + ": exactly one "
-                + "FAILURE terminal for the free declaration boundary");
-            SemanticRuntimeModel.TraceEvent failure =
-                failureEvent(run, declaration.opId());
-            check(failure != null && failure.error() != null
-                    && spec.pinnedCode().equals(failure.error().code())
-                    && expectedOrigin.equals(failure.error().origin())
-                    && expectedMessage.equals(failure.error().message())
-                    && sharedExpected(spec).equals(failure.error().expected())
-                    && sharedActual(spec).equals(failure.error().actual()),
-                run.consumer() + ": the boundary row is the pinned function row at "
-                    + "the annotation's span: " + failure);
+            if (declaration != null) {
+                checkEq(1, eventCount(run, declaration.opId(),
+                    SemanticRuntimeModel.Phase.FAILURE), run.consumer() + ": exactly one "
+                    + "FAILURE terminal for the free declaration boundary");
+                SemanticRuntimeModel.TraceEvent failure =
+                    failureEvent(run, declaration.opId());
+                check(failure != null && failure.error() != null
+                        && spec.pinnedCode().equals(failure.error().code())
+                        && expectedOrigin.equals(failure.error().origin())
+                        && expectedMessage.equals(failure.error().message())
+                        && sharedExpected(spec).equals(failure.error().expected())
+                        && sharedActual(spec).equals(failure.error().actual()),
+                    run.consumer() + ": the boundary row is the pinned row at "
+                        + "the annotation's span: " + failure);
+            }
             check(run.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure
                     terminal && spec.pinnedCode().equals(terminal.error().code())
                     && expectedOrigin.equals(terminal.error().origin())
@@ -760,7 +897,7 @@ public class NamedFixtureAndOriginBatteryTest {
         // (ISSUE-0628), never re-pinned here.
         check(expectedMessage.startsWith(spec.pinnedMessage()), spec.what()
             + ": the shared row keeps the pinned message stem: " + expectedMessage);
-        if ("E8001".equals(spec.pinnedCode())) {
+        if (spec.legacyFunctionRow()) {
             checkEq("expected function", expectedMessage, spec.what()
                 + ": the shared classification carries the legacy tail the lane "
                 + "cutover re-pins");
@@ -768,8 +905,8 @@ public class NamedFixtureAndOriginBatteryTest {
                 + "keeps its legacy actual-kind token (the lane cutover's)");
         } else {
             checkEq(spec.pinnedMessage(), expectedMessage, spec.what() + ": the "
-                + "shared row equals the pinned message exactly (the two canonical "
-                + "signature texts)");
+                + "shared row equals the pinned message exactly (the arm's own "
+                + "template)");
         }
     }
 
@@ -780,9 +917,7 @@ public class NamedFixtureAndOriginBatteryTest {
      * (the pinned corpus texts).
      */
     private static String sharedMessage(NamedFixture spec) {
-        return "E8001".equals(spec.pinnedCode())
-            ? "expected function"
-            : spec.pinnedMessage();
+        return spec.legacyFunctionRow() ? "expected function" : spec.pinnedMessage();
     }
 
     private static String sharedExpected(NamedFixture spec) {
@@ -790,7 +925,7 @@ public class NamedFixtureAndOriginBatteryTest {
     }
 
     private static String sharedActual(NamedFixture spec) {
-        return "E8001".equals(spec.pinnedCode()) ? "int" : spec.pinnedActual();
+        return spec.legacyFunctionRow() ? "int" : spec.pinnedActual();
     }
 
     private static String originText(SemanticOp op) {

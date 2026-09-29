@@ -8924,6 +8924,15 @@ local function __numHex(v)
 end
 local function __atom(kind, v)
   if v == __MISSING then return "missing" end
+  if kind == "missing" then return "missing" end
+  -- The value's own scalar kind wins over a mismatched declared kind
+  -- (the oracle's atomOf): a deferred contextual read lets a wrong-kind
+  -- value reach the consuming op's START, and the trace atoms must agree
+  -- on the value's actual kind. Numeric carriers keep the declared-kind
+  -- rule below (the int/number variant is carried by the value itself).
+  if v == nil then return "null" end
+  if type(v) == "string" then return "str:"..__esc(v) end
+  if type(v) == "boolean" then return "bool:"..tostring(v) end
   if type(v) == "table" and v.__jn then
     if v.k == "int" then return "int:"..tostring(v.d) end
     return __atom("number", v.d)

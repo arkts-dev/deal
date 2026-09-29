@@ -619,6 +619,20 @@ public final class JvmRuntime {
             }
             return "num:" + Double.toHexString(d);
         }
+        // The value's own scalar kind wins over a mismatched declared kind
+        // (the oracle's atomOf): a deferred contextual read lets a
+        // wrong-kind value reach the consuming op's START, and the trace
+        // atoms must agree on the value's actual kind. Numeric carriers
+        // keep the declared-kind rule (the variant is carried by the value).
+        if (v == null) {
+            return "null";
+        }
+        if (v instanceof String stringValue) {
+            return "str:" + esc(stringValue);
+        }
+        if (v instanceof Boolean booleanValue) {
+            return "bool:" + booleanValue;
+        }
         switch (kind) {
             case "null" -> {
                 return "null";

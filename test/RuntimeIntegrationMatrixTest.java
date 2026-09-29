@@ -322,6 +322,26 @@ public class RuntimeIntegrationMatrixTest {
         }
     }
 
+    /**
+     * Asserts every consumer's terminal failure origin exactly (the op's own
+     * {@code SourceOrigin}, never a consumer-chosen span).
+     */
+    private static void checkTerminalOrigin(SemanticDifferentialHarness.Verdict verdict,
+            String origin, String what) {
+        if (verdict == null) {
+            return;
+        }
+        for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+            if (!(run.terminal()
+                    instanceof SemanticRuntimeModel.Terminal.DealFailure failure)) {
+                continue;
+            }
+            check(origin.equals(failure.error().origin()),
+                what + ": " + run.consumer() + " publishes the exact failure origin "
+                    + "(got " + failure.error().origin() + ")");
+        }
+    }
+
     private static final SemanticDifferentialHarness.TerminalExpectation SUCCESS =
         new SemanticDifferentialHarness.TerminalExpectation.SuccessWith("null");
     private static final SemanticDifferentialHarness.TerminalExpectation E8001 =
@@ -820,8 +840,18 @@ public class RuntimeIntegrationMatrixTest {
                 + "  }\n"
                 + "  console.log(\"after\");\n"
                 + "}\n";
-            runMatrix(source, "FOR_EACH shrink (missing element E8001 at the "
-                + "FOR_EACH origin)", List.of("v"), E8001);
+            SemanticDifferentialHarness.Verdict forEachShrink = runMatrix(source,
+                "FOR_EACH shrink (missing element E8001 at the FOR_EACH origin)",
+                List.of("v"), E8001);
+            // The corrected arm tuple (canonical-failure-projection-authority
+            // Verification 2): the suffix-less typed-boundary kind text with
+            // the absent marker's nil token, at the op's own for-of origin.
+            checkTerminalMessage(forEachShrink, "expected int",
+                "FOR_EACH deleted-element check");
+            checkTerminalExpectedActual(forEachShrink, "int", "nil",
+                "FOR_EACH deleted-element element check");
+            checkTerminalOrigin(forEachShrink, "test.deal:4:3",
+                "FOR_EACH deleted-element element check");
         }
 
         {

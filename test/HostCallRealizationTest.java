@@ -1912,6 +1912,11 @@ public class HostCallRealizationTest {
      * </ul>
      */
     private static final Map<String, String> TRACE_DRIVE_EXCLUSIONS = Map.ofEntries(
+        Map.entry("host-rest-bad",
+            "the deferred rest-argument carrier: the oracle's closed value model keeps "
+                + "the admitted int value where the artifacts carry the packed rest "
+                + "array (the pinned parameter/return texts and origins are asserted by "
+                + "the fixture-set drives above)"),
         Map.entry("host-boundary-apply-function",
             "the deployed host invokes the crossed DEAL closure; the oracle's "
                 + "HostResponder carries no invocation handle for a crossed function value"),
@@ -1951,15 +1956,6 @@ public class HostCallRealizationTest {
             "same return-cell failure path (the oracle also projects the invalid "
                 + "string as invalid-unicode, the pinned corpus text is the runtime's "
                 + "UTF-16 surrogate reason)"),
-        Map.entry("host-rest-bad",
-            "the oracle's landed HOST_PARAMETER projection text/actual (the shared "
-                + "closed-boundary row) differs from the corpus-pinned runtime text "
-                + "(\"expected array\" / actual number) the artifacts produce; the "
-                + "deferred read's own events (the composite-read drive below) and "
-                + "the event prefix through them match on all three consumers"),
-        Map.entry("host-nullable-function-param-bad",
-            "same parameter-cell projection text (the oracle's row vs the pinned "
-                + "runtime signature-mismatch text)"),
         Map.entry("host-array-return-ok",
             "the H7 per-crossing array materialization allocates a second value on "
                 + "LuaJIT, so the CALL SUCCESS identity atom differs from the "
