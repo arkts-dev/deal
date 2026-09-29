@@ -271,8 +271,9 @@ public class CanonicalFailureTextParityTest {
         checkEq("call origin", jsonRow.originRule(),
             "the JSON_TO_ERROR row pins the call origin");
 
-        // The std/json walker's projection: the pinned message, expected
-        // text, actual token, and internal metadata.
+        // The std/json walker's projection: the JSON_STRINGIFY_UNSUPPORTED
+        // arm's own render — its pinned expected text and the carrier-kind
+        // actual token — with the walker's internal fieldPath metadata.
         SharedStdlibSemantics.Value table = SharedStdlibSemantics.Value.table();
         SharedStdlibSemantics.Value.Table tableView =
             (SharedStdlibSemantics.Value.Table) table;

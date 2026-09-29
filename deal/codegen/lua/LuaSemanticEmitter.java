@@ -8612,7 +8612,15 @@ end
                 .append(Session.luaString(arm.expectedSource().name())).append(", a=")
                 .append(Session.luaString(arm.actualProjection().name())).append(", s=")
                 .append(Session.luaString(arm.scope().name())).append(", o=")
-                .append(Session.luaString(arm.origin().name())).append("},\n");
+                .append(Session.luaString(arm.origin().name()));
+            if (arm.pinnedExpectedText() != null) {
+                // The arm's own pinned expected text (its expected field's
+                // single source): the prelude renders it, never a literal
+                // held at a failure site.
+                out.append(", p=")
+                    .append(Session.luaString(arm.pinnedExpectedText()));
+            }
+            out.append("},\n");
         }
         out.append("}\n");
         return out.toString();
@@ -9094,7 +9102,16 @@ local function __arm(id, values, origin, expected, actual)
     error("failure arm '"..id.."' has a SIBLING_OWNED projection binding "
       .."(producer defect)", 0)
   end
-  if (arm.e == "NONE") ~= (expected == nil) then
+  -- An arm whose expected source is its own pinned text renders that
+  -- text: a caller-supplied different text is a producer defect and the
+  -- arm's own text always wins.
+  if arm.e == "PINNED_TEXT" then
+    if expected ~= nil and expected ~= arm.p then
+      error("failure arm '"..id.."' declares the pinned expected text "
+        ..tostring(arm.p).." (producer defect)", 0)
+    end
+    expected = arm.p
+  elseif (arm.e == "NONE") ~= (expected == nil) then
     error("failure arm '"..id.."' does not match the rendered expected field "
       .."(producer defect)", 0)
   end
@@ -9133,6 +9150,10 @@ local function __typedBoundaryKind(staticKind, v)
   end
   if t == "string" then return "string" end
   if t == "table" then
+    -- The bytes carrier keeps its own closed kind (the same head rule as
+    -- __actualOf): a bytes value never projects the table spelling, so a
+    -- non-bytes typed boundary rejects it instead of admitting it.
+    if v.__kind == "bytes" then return "bytes" end
     if v.__a then return "array" end
     if v.__c then return v.__id end
     if v.__d then return "class:@builtin/Error" end
@@ -9165,6 +9186,26 @@ local function __carrierKind(v)
   local t = type(v)
   if t == "table" then
     if v.__jn then return "number" end
+    return "table"
+  end
+  return t
+end
+-- The std/json rejection arm's actual projection (P2 item 2 with the
+-- arm's two pinned members): the carrier-kind projection plus the
+-- pinned bytes carrier ("bytes") and DEAL function value ("function").
+-- The shared token table's Lua implementation; the failure site holds
+-- no token of its own.
+local function __stdJsonKind(v)
+  if v == __MISSING or v == nil then return "nil" end
+  if v == __NULL then return "table" end
+  local t = type(v)
+  if t == "table" then
+    if v.__jn then return "number" end
+    if v.__kind == "bytes" then return "bytes" end
+    if v.__c or v.__d then return "table" end
+    if v.__fn ~= nil or v.__f or v.__csig ~= nil or v.__kind == "function" then
+      return "function"
+    end
     return "table"
   end
   return t
@@ -10502,13 +10543,16 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
   elseif fn == "JSON_STRINGIFY" then
     local out = {}
     local path = {}
-    -- The pinned STDLIB_CALL(JSON_STRINGIFY) rejection: the visible
-    -- message carries the canonical actual-kind token, and the expected
-    -- text and the token are the projection's expected/actual fields (the
-    -- shared walker's internal fieldPath never surfaces).
-    local function sfFail(actual)
+    -- The pinned STDLIB_CALL(JSON_STRINGIFY) rejection: the
+    -- JSON_STRINGIFY_UNSUPPORTED arm's own render — its pinned expected
+    -- text (the serialized arm table's p field) and the closed std/json
+    -- carrier-kind projection of the failing value (the shared walker's
+    -- internal fieldPath never surfaces). The failure site holds no
+    -- token or text of its own.
+    local function sfFail(v)
+      local actual = __stdJsonKind(v)
       __sfail("JSON_STRINGIFY_UNSUPPORTED", {actual = actual},
-        "string, number, boolean, or table", actual)
+        __arms.JSON_STRINGIFY_UNSUPPORTED.p, actual)
     end
     local sfValue
     -- The number slot flag is the written slot's recorded static kind
@@ -10519,7 +10563,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     -- the int spelling stands, exactly the JSON_PARSE carrier split.
     sfValue = function(v, isNumber)
       if v == nil then out[#out + 1] = "null"; return end
-      if v == __MISSING then sfFail("missing"); return end
+      if v == __MISSING then sfFail(v); return end
       local t = type(v)
       if t == "boolean" then
         out[#out + 1] = (v and "true" or "false")
@@ -10527,7 +10571,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
       end
       if t == "number" then
         if v ~= v or v == math.huge or v == -math.huge then
-          sfFail("number")
+          sfFail(v)
         end
         if isNumber then out[#out + 1] = __sfNumText(v)
         else out[#out + 1] = tostring(v) end
@@ -10539,14 +10583,14 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
           if v.k == "int" then out[#out + 1] = tostring(v.d)
           else
             if v.d ~= v.d or v.d == math.huge or v.d == -math.huge then
-              sfFail("number")
+              sfFail(v)
             end
             out[#out + 1] = __sfNumText(v.d)
           end
           return
         end
         if v.__a then
-          if path[v] then sfFail("array"); return end
+          if path[v] then sfFail(v); return end
           path[v] = true
           out[#out + 1] = "["
           local marks = v.__nK
@@ -10559,7 +10603,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
             -- a present null is the __NULL marker. The deleted element is
             -- never serialized as JSON null.
             if elem == __NULL then elem = nil
-            elseif elem == nil then sfFail("missing") end
+            elseif elem == nil then sfFail(__MISSING) end
             sfValue(elem, marks ~= nil and marks[i] == true)
           end
           out[#out + 1] = "]"
@@ -10568,7 +10612,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
         end
         local ns = __nsSurfaces[v]
         if ns ~= nil then
-          if path[v] then sfFail("table"); return end
+          if path[v] then sfFail(v); return end
           path[v] = true
           out[#out + 1] = "{"
           for i = 1, #ns.order do
@@ -10587,7 +10631,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
           return
         end
         if v.__t then
-          if path[v] then sfFail("table"); return end
+          if path[v] then sfFail(v); return end
           path[v] = true
           out[#out + 1] = "{"
           local marks = v.__nK
@@ -10603,20 +10647,19 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
           path[v] = nil
           return
         end
-        -- The class instance carries its canonical identity (the closed
-        -- "class:<ClassId>" projection), never the carrier's shape: the
-        -- marker is checked before the function arm (every class instance
-        -- carries the field map __f).
-        if v.__c then sfFail("class:"..v.__id); return end
+        -- The class instance is a table-carried value on the carrier-kind
+        -- projection (the std/json member included), never its canonical
+        -- identity: the marker is checked before the function arm (every
+        -- class instance carries the field map __f).
+        if v.__c or v.__d then sfFail(v); return end
         if v.__fn ~= nil or v.__f or v.__kind == "function" then
-          sfFail("function"); return
+          sfFail(v); return
         end
-        if v.__d then sfFail("class:@builtin/Error"); return end
-        sfFail("table")
+        sfFail(v)
         return
       end
-      if t == "function" then sfFail("function"); return end
-      sfFail("table")
+      if t == "function" then sfFail(v); return end
+      sfFail(v)
     end
     sfValue(__args[1], false)
     return table.concat(out)

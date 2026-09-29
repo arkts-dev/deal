@@ -2063,8 +2063,10 @@ public class RuntimeIntegrationMatrixTest {
         }
 
         // (p) JSON_TO_ERROR projection: the first declaration-order
-        // unsupported value wins with its field path and actual token —
-        // a nonfinite number at field n.
+        // unsupported value wins through the JSON_STRINGIFY_UNSUPPORTED
+        // arm's carrier-kind projection — a nonfinite number at field n
+        // projects the number token (the walk's own field path stays
+        // internal).
         {
             String source = CONSOLE + JSON
                 + "function main(): null {\n"
@@ -2078,7 +2080,9 @@ public class RuntimeIntegrationMatrixTest {
 
         // (p2) JSON_TO_ERROR over a deleted array element: the deleted
         // slot is the internal missing, not language null — the walker
-        // fails with the "missing" projection instead of emitting null.
+        // fails through the JSON_STRINGIFY_UNSUPPORTED arm, whose
+        // carrier-kind projection renders the absent marker as "nil"
+        // instead of emitting null.
         {
             String source = CONSOLE + JSON
                 + "function main(): null {\n"
@@ -2089,14 +2093,19 @@ public class RuntimeIntegrationMatrixTest {
                 + "  console.log(\"after\")\n"
                 + "}\n";
             SemanticDifferentialHarness.Verdict verdict = runMatrix(source,
-                "JSON_STRINGIFY deleted array element (E8001 missing)", List.of(), E8001);
+                "JSON_STRINGIFY deleted array element (E8001 nil)", List.of(), E8001);
             checkTerminalMessage(verdict,
-                "unsupported type for JSON encoding: missing",
+                "unsupported type for JSON encoding: nil",
                 "JSON_STRINGIFY deleted array element");
             checkTerminalExpectedActual(verdict,
-                SharedStdlibSemantics.JSON_STRINGIFY_EXPECTED, "missing",
+                SharedStdlibSemantics.JSON_STRINGIFY_EXPECTED, "nil",
                 "JSON_STRINGIFY deleted array element");
         }
+
+        // The class-instance and bytes cells of the same arm are driven at
+        // the arm level in test/FailureArmAuthorityTest.java (the oracle,
+        // the JVM runtime, and the emitted prelude): class construction is
+        // E9's sibling slice and does not lower through this harness yet.
 
         // (p3) The present-null element of a parsed array stays language
         // null (the __NULL marker), never the deleted-slot missing — the

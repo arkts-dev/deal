@@ -39,8 +39,19 @@ public final class FailureProjections {
         STRING,
         /** Every numeric carrier. */
         NUMBER,
+        /**
+         * The bytes carrier at the {@code std/json} rejection arm's pinned
+         * member (the corpus pins {@code bytes}).
+         */
+        BYTES,
         /** A raw host-facing function. */
         HOST_FUNCTION,
+        /**
+         * A DEAL function-shaped carrier at the {@code std/json} rejection
+         * arm's pinned member (the corpus pins {@code function} for a DEAL
+         * function value; the host arms keep the table spelling).
+         */
+        DEAL_FUNCTION,
         /** Every other table-carried value. */
         TABLE
     }
@@ -101,7 +112,10 @@ public final class FailureProjections {
      * the DEAL-null sentinel is {@code table}, a string carrier (a valid or
      * invalid Unicode scalar sequence) is {@code string}, and every other
      * table-carried value is {@code table} while a raw host-facing function
-     * stays {@code function}.
+     * stays {@code function}. The {@code std/json} rejection arm's two
+     * pinned members ({@link CarrierKind#BYTES},
+     * {@link CarrierKind#DEAL_FUNCTION}) project their own tokens; the host
+     * arms never classify a value as either member.
      */
     public static String carrierKindToken(CarrierKind kind) {
         Objects.requireNonNull(kind, "kind must not be null");
@@ -111,7 +125,8 @@ public final class FailureProjections {
             case BOOLEAN -> "boolean";
             case STRING -> "string";
             case NUMBER -> "number";
-            case HOST_FUNCTION -> "function";
+            case BYTES -> "bytes";
+            case HOST_FUNCTION, DEAL_FUNCTION -> "function";
             case TABLE -> "table";
         };
     }
@@ -185,6 +200,29 @@ public final class FailureProjections {
         FailureArmId id = surrogate
             ? FailureArmId.HOST_STRING_SURROGATE : FailureArmId.HOST_STRING_INVALID_UTF8;
         return FailureContractRegistry.renderInner(id, Map.of());
+    }
+
+    /**
+     * The {@code std/json} rejection arm's render
+     * ({@code JSON_STRINGIFY_UNSUPPORTED}): the arm's own pinned expected
+     * text and the carrier-kind projection of the failing value as its
+     * actual field (P2 item 2 with the arm's two pinned members). One
+     * render for the oracle's executor family and the JVM runtime; the
+     * emitted Lua prelude renders the same arm through its serialized
+     * table.
+     *
+     * @param carrierKind the failing value's closed carrier kind; must not
+     *                    be null
+     * @return the rendered arm tuple
+     */
+    public static BoundaryFailure stringifyUnsupported(CarrierKind carrierKind) {
+        FailureArm arm = FailureContractRegistry.arm(
+            FailureArmId.JSON_STRINGIFY_UNSUPPORTED);
+        String actual = carrierKindToken(carrierKind);
+        return FailureContractRegistry.render(FailureArmId.JSON_STRINGIFY_UNSUPPORTED,
+            Map.of("actual", actual),
+            expectedFor(arm, null, null),
+            actualFor(arm, null, actual, null, null, null), null);
     }
 
     /** The array-element inner reason: the element arm's own text. */

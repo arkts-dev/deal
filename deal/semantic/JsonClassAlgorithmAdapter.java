@@ -237,8 +237,10 @@ public final class JsonClassAlgorithmAdapter {
      * synthetic empty-key wrapper for arrays/leaves). On success the
      * emitted text is returned (the wrapper's {@code {"":…}} framing
      * stripped); on failure the pre-walk's pinned path and actual token
-     * are projected after a fail-closed cross-check against E8's own
-     * failure metadata.
+     * are projected after a fail-closed cross-check of the walk position
+     * against the E8 failure's internal {@code fieldPath} metadata (the
+     * arm's declared actual token follows its own carrier-kind
+     * convention, so the two arms' tokens are not compared).
      */
     private static ClassOpsExecutor.JsonStringify stringifyE8(
             SharedStdlibSemantics.Value.Table e8Root, String fieldPathPrefix,
@@ -273,21 +275,25 @@ public final class JsonClassAlgorithmAdapter {
             return new ClassOpsExecutor.JsonStringify.Success(unwrappedValid);
         }
         if (outcome instanceof SharedStdlibSemantics.Outcome.Failure<?> failure) {
+            // The walk's internal position metadata (the JSON_TO_ERROR row's
+            // fieldPath key): the E8 arm publishes the carrier-kind actual
+            // and no walk position, and the two arms' actual conventions
+            // differ by declaration (the walk arm's canonical tokens vs the
+            // std/json arm's carrier-kind tokens), so the divergence guard
+            // compares the projection-independent position. The pre-walk
+            // owns both the pinned path and the actual token it returns.
             String reportedPath = failure.failure().failure().metadata().get("fieldPath");
-            String reportedActual = failure.failure().failure().metadata().get("actual");
             if (first == null) {
                 throw new IllegalStateException("the E8 JSON_STRINGIFY algorithm "
                     + "projected a JSON_TO_ERROR failure at " + reportedPath + " but the "
                     + "adapter's first-failure pre-walk over the identical structure found "
                     + "none — a walk divergence is a producer defect, never a projection");
             }
-            if (!first.e8Path().equals(reportedPath)
-                    || !first.actual().equals(reportedActual)) {
+            if (reportedPath == null || !first.e8Path().equals(reportedPath)) {
                 throw new IllegalStateException("the adapter's first-failure pre-walk and "
                     + "the E8 JSON_STRINGIFY algorithm disagree on the failing position "
-                    + "or actual token (pre-walk " + first.e8Path() + "/" + first.actual()
-                    + " vs E8 " + reportedPath + "/" + reportedActual + ") — a walk "
-                    + "divergence is a producer defect, never a projection");
+                    + "(pre-walk " + first.e8Path() + " vs E8 " + reportedPath + ") — a "
+                    + "walk divergence is a producer defect, never a projection");
             }
             return new ClassOpsExecutor.JsonStringify.Failure(
                 fieldPathPrefix + first.pinnedPath(), first.actual());
@@ -427,7 +433,8 @@ public final class JsonClassAlgorithmAdapter {
      * segments (a table key {@code k} appends {@code ".k"}, an array
      * element {@code i} appends {@code "[i]"}) and E8's own dot-joined
      * spelling, so the caller can cross-check the pre-walk against
-     * E8's reported failure metadata.
+     * E8's reported failing position (the row's internal
+     * {@code fieldPath} metadata).
      *
      * @param root the direct executor value (never a synthetic
      *             wrapper; E8's empty wrapper key contributes nothing

@@ -3,8 +3,10 @@ package deal.semantic;
 import deal.semantic.ir.ActualKind;
 import deal.semantic.ir.BoundaryFailure;
 import deal.semantic.ir.CanonicalJson;
+import deal.semantic.ir.FailureArmId;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
+import deal.semantic.ir.FailureProjections;
 import deal.semantic.ir.JsonScan;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.SemanticArray;
@@ -343,10 +345,11 @@ public final class SharedStdlibSemantics {
          * buffer: JSON_STRINGIFY rejects it with the corpus-pinned
          * {@code unsupported type for JSON encoding: bytes}, so no other
          * algorithm may receive it as a serializable value).
-         * {@code JSON_STRINGIFY} reports it through its canonical
-         * {@link ActualKind} token ({@code class:<ClassId>} for a class
-         * value, never a target class name); no other algorithm consumes
-         * an {@code Other} value.
+         * {@code JSON_STRINGIFY} rejects it through the
+         * {@code JSON_STRINGIFY_UNSUPPORTED} arm's carrier-kind projection
+         * ({@code nil}, {@code table}, {@code bytes}, {@code function}),
+         * never the {@code class:} IR/trace spelling; no other algorithm
+         * consumes an {@code Other} value.
          */
         record Other(ActualKind kind, java.lang.String classId) implements Value {
 
@@ -788,12 +791,56 @@ public final class SharedStdlibSemantics {
         return metadata;
     }
 
-    /** The pinned two-key metadata map of the {@code JSON_TO_ERROR} row. */
-    private static Map<String, String> jsonToErrorMetadata(String fieldPath, String actual) {
+    /**
+     * Attaches the walk's internal position metadata to one rendered arm
+     * failure: the {@code JSON_TO_ERROR} row's {@code fieldPath} key with
+     * the walk's own spelling (owned here) beside the arm's actual token.
+     * The visible tuple stays exactly the arm's own render — the metadata
+     * is internal and the emitted runtimes carry no such field; the
+     * failure's own fields are never re-derived here.
+     */
+    private static BoundaryFailure withWalkMetadata(BoundaryFailure rendered,
+                                                    String fieldPath) {
         Map<String, String> metadata = new LinkedHashMap<>();
-        metadata.put("fieldPath", fieldPath);
-        metadata.put("actual", actual);
-        return metadata;
+        for (String key : FailureContractRegistry.row(rendered.policy()).metadataKeys()) {
+            switch (key) {
+                case "fieldPath" -> metadata.put(key, fieldPath);
+                case "actual" -> metadata.put(key, rendered.actual());
+                default -> { }
+            }
+        }
+        return new BoundaryFailure(rendered.policy(), rendered.code(), rendered.message(),
+            rendered.expected(), rendered.actual(), metadata, rendered.cause());
+    }
+
+    /**
+     * The std/json rejection arm's carrier classification of one semantic
+     * value (P2 item 2 with the arm's two pinned members): the absent
+     * marker is {@code nil}, a DEAL function value is {@code function},
+     * the bytes view is {@code bytes}, and every other table-carried value
+     * — tables, arrays, class instances, Error values, async-operation
+     * handles — is {@code table}. The token table itself is
+     * {@link FailureProjections#carrierKindToken(FailureProjections.CarrierKind)}.
+     */
+    private static FailureProjections.CarrierKind stringifyCarrierKind(Value value) {
+        return switch (value) {
+            case Value.Null ignored -> FailureProjections.CarrierKind.LANGUAGE_NULL;
+            case Value.Bool ignored -> FailureProjections.CarrierKind.BOOLEAN;
+            case Value.Int ignored -> FailureProjections.CarrierKind.NUMBER;
+            case Value.Number ignored -> FailureProjections.CarrierKind.NUMBER;
+            case Value.String ignored -> FailureProjections.CarrierKind.STRING;
+            case Value.Table ignored -> FailureProjections.CarrierKind.TABLE;
+            case Value.Array ignored -> FailureProjections.CarrierKind.TABLE;
+            case Value.Other other -> switch (other.kind()) {
+                case MISSING -> FailureProjections.CarrierKind.ABSENT;
+                case FUNCTION -> FailureProjections.CarrierKind.DEAL_FUNCTION;
+                case BYTES -> FailureProjections.CarrierKind.BYTES;
+                case CLASS, ASYNC_OPERATION -> FailureProjections.CarrierKind.TABLE;
+                default -> throw new Defect("the std/json rejection arm carries no "
+                    + "carrier kind for the actual kind " + other.kind()
+                    + " (producer defect)");
+            };
+        };
     }
 
     /** The signed32 gate ({@code INT32_RESULT}): success publishes the int, overflow E8004. */
@@ -1200,14 +1247,16 @@ public final class SharedStdlibSemantics {
     public static final String REASON_UNEXPECTED_END = "unexpected end of input";
 
     /**
-     * The pinned expected text of the {@code STDLIB_CALL(JSON_STRINGIFY)}
-     * rejection (the {@code JSON_TO_ERROR} row's second template): the
-     * value kinds JSON encoding admits. Shared by the primitive's
-     * projection and by the two target runtimes' stdlib realizations —
-     * the three consumers are compared event-for-event.
+     * The {@code STDLIB_CALL(JSON_STRINGIFY)} rejection's expected text —
+     * the {@code JSON_STRINGIFY_UNSUPPORTED} arm's own pinned text (the
+     * single source): the value kinds JSON encoding admits. The
+     * primitive's projection and the two target runtimes' stdlib
+     * realizations render the arm's own field, so the three consumers are
+     * compared event-for-event.
      */
     public static final String JSON_STRINGIFY_EXPECTED =
-        "string, number, boolean, or table";
+        FailureContractRegistry.arm(FailureArmId.JSON_STRINGIFY_UNSUPPORTED)
+            .pinnedExpectedText();
 
     /** The internal parse failure: the defect class and its 1-based UTF-8 byte offset. */
     private static final class JsonParseFailure extends RuntimeException {
@@ -1224,18 +1273,22 @@ public final class SharedStdlibSemantics {
         }
     }
 
-    /** The internal stringify failure: the first declaration-order path and actual token. */
+    /**
+     * The internal stringify failure: the first declaration-order path and
+     * the failing value's carrier kind (the arm's actual projection).
+     */
     private static final class JsonStringifyFailure extends RuntimeException {
 
         private static final long serialVersionUID = 1L;
 
         final String fieldPath;
-        final String actual;
+        final FailureProjections.CarrierKind carrierKind;
 
-        JsonStringifyFailure(String fieldPath, String actual) {
-            super("value at " + fieldPath + " is not JSON serializable: " + actual);
+        JsonStringifyFailure(String fieldPath, FailureProjections.CarrierKind carrierKind) {
+            super("value at " + fieldPath + " is not JSON serializable: "
+                + FailureProjections.carrierKindToken(carrierKind));
             this.fieldPath = fieldPath;
-            this.actual = actual;
+            this.carrierKind = carrierKind;
         }
     }
 
@@ -1302,14 +1355,14 @@ public final class SharedStdlibSemantics {
      * quote, backslash; surrogate pairs emitted as raw scalar UTF-8);
      * shortest round-trippable decimal number formatting
      * ({@code Double.toString}); the first failure in declaration order
-     * fails via {@code JSON_TO_ERROR} — E8001
-     * {@code unsupported type for JSON encoding: {actual}}
-     * with the pinned expected text {@code string, number, boolean, or
-     * table}, actual = the value's canonical actual-kind token, and
-     * metadata {@code {fieldPath}}/{@code {actual}} (the field path
-     * stays internal metadata), origin = the call origin. Unsupported
-     * values, cycles, and nonfinite numbers fail here; acyclic finite
-     * data never fails.
+     * fails through the {@code JSON_STRINGIFY_UNSUPPORTED} arm — E8001
+     * {@code unsupported type for JSON encoding: {actual}} with the
+     * arm's own pinned expected text and actual = the failing value's
+     * carrier-kind projection ({@code nil}, {@code table},
+     * {@code bytes}, {@code function}, {@code number}, {@code string}),
+     * origin = the call origin. The walker's field path stays internal
+     * and never surfaces. Unsupported values, cycles, and nonfinite
+     * numbers fail here; acyclic finite data never fails.
      *
      * <p>{@code {fieldPath}} spelling (owned here): a dot-separated
      * pre-order traversal from the root value — table fields append the
@@ -1335,13 +1388,18 @@ public final class SharedStdlibSemantics {
         try {
             stringifyTable(out, table, "", path);
         } catch (JsonStringifyFailure stringifyFailure) {
-            // The STDLIB_CALL(JSON_STRINGIFY) rejection: row template 1
-            // (the corpus-aligned visible text); the walker's fieldPath
-            // stays internal metadata.
-            return failOf(FailurePolicyId.JSON_TO_ERROR, 1, JSON_STRINGIFY_EXPECTED,
-                stringifyFailure.actual,
-                jsonToErrorMetadata(stringifyFailure.fieldPath, stringifyFailure.actual),
-                origin);
+            // The STDLIB_CALL(JSON_STRINGIFY) rejection: the
+            // JSON_STRINGIFY_UNSUPPORTED arm's own render — its pinned
+            // expected text and the carrier-kind projection of the
+            // failing value. The walk's own position (the {fieldPath}
+            // spelling owned here) stays internal metadata and is never
+            // part of the visible projection the three consumers compare.
+            return new Outcome.Failure<>(new StdlibFailure(
+                withWalkMetadata(
+                    FailureProjections.stringifyUnsupported(
+                        stringifyFailure.carrierKind),
+                    stringifyFailure.fieldPath),
+                origin));
         }
         return new Outcome.Success<>(Value.string(out.toString()));
     }
@@ -1351,7 +1409,7 @@ public final class SharedStdlibSemantics {
                                        String fieldPath, Set<Object> path) {
         if (!path.add(table)) {
             throw new JsonStringifyFailure(fieldPath,
-                ActualKind.canonicalToken(ActualKind.TABLE, null));
+                FailureProjections.CarrierKind.TABLE);
         }
         out.append('{');
         List<String> keys = table.keys();
@@ -1383,8 +1441,10 @@ public final class SharedStdlibSemantics {
     private static void stringifyArray(StringBuilder out, SemanticArray<Value> elements,
                                        String fieldPath, Set<Object> path) {
         if (!path.add(elements)) {
+            // An array carrier is a table-carried value on the carrier-kind
+            // projection (the unchanged runtimes' Lua type() shape).
             throw new JsonStringifyFailure(fieldPath,
-                ActualKind.canonicalToken(ActualKind.ARRAY, null));
+                FailureProjections.CarrierKind.TABLE);
         }
         out.append('[');
         for (int i = 0; i < elements.size(); i++) {
@@ -1408,14 +1468,16 @@ public final class SharedStdlibSemantics {
             case Value.Number number -> {
                 if (!Double.isFinite(number.value())) {
                     throw new JsonStringifyFailure(fieldPath,
-                        ActualKind.canonicalToken(ActualKind.NUMBER, null));
+                        FailureProjections.CarrierKind.NUMBER);
                 }
                 out.append(Double.toString(number.value()));
             }
             case Value.String string -> {
                 if (string.scalar() instanceof UnicodeScalars.Invalid) {
+                    // An invalid scalar sequence is still a string carrier
+                    // on the carrier-kind projection.
                     throw new JsonStringifyFailure(fieldPath,
-                        ActualKind.canonicalToken(ActualKind.INVALID_UNICODE, null));
+                        FailureProjections.CarrierKind.STRING);
                 }
                 appendJsonString(out, ((UnicodeScalars.Valid) string.scalar()).carrier());
             }
@@ -1423,7 +1485,7 @@ public final class SharedStdlibSemantics {
             case Value.Array array ->
                 stringifyArray(out, array.elements(), fieldPath, path);
             case Value.Other other -> throw new JsonStringifyFailure(fieldPath,
-                ActualKind.canonicalToken(other.kind(), other.classId()));
+                stringifyCarrierKind(other));
         }
     }
 

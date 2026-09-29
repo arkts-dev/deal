@@ -738,7 +738,9 @@ public final class FailureContractRegistry {
     /**
      * The canonical serialization of the closed arm table, one arm per
      * line in arm declaration order:
-     * {@code id|code|template|expectedSource|actualProjection|scope|origin}.
+     * {@code id|code|template|expectedSource|actualProjection|scope|origin},
+     * with the arm's own pinned expected text appended for an arm whose
+     * expected source is {@link FailureArm.ExpectedSource#PINNED_TEXT}.
      * The emitted Lua prelude serializes exactly this table — the
      * emitter-side table is compared against this text, so no fork of the
      * authority can exist on the emission side.
@@ -746,9 +748,13 @@ public final class FailureContractRegistry {
     public static List<String> canonicalArmSerialization() {
         List<String> lines = new ArrayList<>();
         for (FailureArm arm : ARMS.values()) {
-            lines.add(arm.id() + "|" + codeOf(arm) + "|" + arm.template() + "|"
+            String line = arm.id() + "|" + codeOf(arm) + "|" + arm.template() + "|"
                 + arm.expectedSource() + "|" + arm.actualProjection() + "|"
-                + arm.scope() + "|" + arm.origin());
+                + arm.scope() + "|" + arm.origin();
+            if (arm.pinnedExpectedText() != null) {
+                line = line + "|" + arm.pinnedExpectedText();
+            }
+            lines.add(line);
         }
         return List.copyOf(lines);
     }

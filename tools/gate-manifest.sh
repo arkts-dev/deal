@@ -44,11 +44,14 @@ TEST_MAINS=(
   # arm rendered top-level, a SIBLING_OWNED arm rendered by a production
   # consumer, a field-shape mismatch), the corrected template enumeration,
   # the two closed projections and the host inner-reason render (the
-  # carrier-kind string member included), the emitted Lua prelude's
+  # carrier-kind string member, the std/json bytes/function members, and the
+  # typed-boundary bytes carrier included), the emitted Lua prelude's
   # serialized arm table against the canonical serialization, the completion
-  # family's class/array cells through the oracle, the JVM runtime and the
-  # emitted prelude under luajit, and the negative single-source control
-  # (a composing consumer is reported by field name).
+  # family's class/array cells and the std/json rejection arm's carrier-kind
+  # cells through the oracle, the JVM runtime and the emitted prelude under
+  # luajit, the bytes-at-table/bytes-at-kind rejection with its two
+  # admissions, and the negative single-source control (a composing consumer
+  # is reported by field name).
   'fg|=== Running Failure Arm Authority Tests (ISSUE-0704) ===|java -ea -cp build deal.test.FailureArmAuthorityTest'
   'fg|=== Running Canonical JSON / Snapshot Digest Tests (ISSUE-0283) ===|java -ea -cp build deal.test.CanonicalJsonTest'
   'fg|=== Running Semantic IR Validator Tests (ISSUE-0286) ===|java -ea -cp build deal.test.SemanticIrValidatorTest'

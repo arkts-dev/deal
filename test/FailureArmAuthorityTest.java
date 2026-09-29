@@ -85,6 +85,8 @@ public class FailureArmAuthorityTest {
         testEmittedTable();
         testCarrierKindStringActual();
         testCompletionFamilyDrive();
+        testTypedBoundaryBytesCarrier();
+        testStdJsonArmDrive();
         testNegativeSingleSourceControl();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -292,6 +294,15 @@ public class FailureArmAuthorityTest {
                     deal.semantic.ir.ActualKind.STRING, null).equals("string"),
             "the completion variant maps every numeric carrier to number");
         check(FailureProjections.carrierKindToken(
+                FailureProjections.CarrierKind.BYTES).equals("bytes")
+                && FailureProjections.carrierKindToken(
+                    FailureProjections.CarrierKind.DEAL_FUNCTION).equals("function"),
+            "the carrier-kind projection carries the std/json arm's two pinned members "
+                + "(bytes, function)");
+        check(FailureProjections.typedBoundaryToken(
+                deal.semantic.ir.ActualKind.BYTES, null).equals("bytes"),
+            "the typed-boundary projection projects the bytes carrier");
+        check(FailureProjections.carrierKindToken(
                 FailureProjections.CarrierKind.ABSENT).equals("nil")
                 && FailureProjections.carrierKindToken(
                     FailureProjections.CarrierKind.LANGUAGE_NULL).equals("table")
@@ -363,18 +374,26 @@ public class FailureArmAuthorityTest {
             String line = arm.id() + "|" + FailureContractRegistry.codeOf(arm) + "|"
                 + arm.template() + "|" + arm.expectedSource() + "|"
                 + arm.actualProjection() + "|" + arm.scope() + "|" + arm.origin();
+            String pinned = arm.pinnedExpectedText();
+            if (pinned != null) {
+                line = line + "|" + pinned;
+            }
             check(canonical.contains(line),
                 "the canonical serialization carries arm " + arm.id()
-                    + " with its scope and projection binding");
+                    + " with its scope, projection binding, and pinned expected text");
             String expectedEntry = "[\"" + arm.id() + "\"] = {c="
                 + quote(FailureContractRegistry.codeOf(arm)) + ", t="
                 + quote(arm.template()) + ", e=" + quote(arm.expectedSource().name())
                 + ", a=" + quote(arm.actualProjection().name()) + ", s="
-                + quote(arm.scope().name()) + ", o=" + quote(arm.origin().name()) + "}";
+                + quote(arm.scope().name()) + ", o=" + quote(arm.origin().name());
+            if (pinned != null) {
+                expectedEntry = expectedEntry + ", p=" + quote(pinned);
+            }
+            expectedEntry = expectedEntry + "}";
             check(lua.contains(expectedEntry),
                 "the emitted prelude serializes arm " + arm.id()
-                    + " (scope and projection binding included); expected "
-                    + expectedEntry);
+                    + " (scope, projection binding, and pinned expected text included); "
+                    + "expected " + expectedEntry);
         }
         check(lua.contains("local function __arm(id, values, origin, expected, actual)"),
             "the prelude renders every failure site through the one arm renderer");
@@ -609,11 +628,30 @@ public class FailureArmAuthorityTest {
      * cell.
      */
     private static List<String> luaCompletionRows() throws Exception {
-        Path workspace = Files.createTempDirectory("failure-arm-completion");
+        return runPreludeProbe("""
+            local ok, value = pcall(__bcheck, "@src/app/User", "table", "abc", nil, true)
+            row("class", ok, value)
+            ok, value = pcall(__bcheck, "array(int)", "table", "abc", nil, true)
+            row("array", ok, value)
+            ok, value = pcall(__bcheck, "string", "string", 5, nil, true)
+            row("string", ok, value)
+            print("carrier-string|" .. __carrierKind("abc"))
+            """, "completion-probe", 4);
+    }
+
+    /**
+     * Runs one probe body against the emitted arm-only prelude under
+     * {@code luajit}: the prelude (up to its surface return) plus the
+     * standard {@code row(label, ok, value)} helper and the caller's body.
+     * Returns the printed rows.
+     */
+    private static List<String> runPreludeProbe(String body, String probeName, int minRows)
+            throws Exception {
+        Path workspace = Files.createTempDirectory("failure-arm-" + probeName);
         try {
             Path artifact = workspace.resolve("arms.lua");
             Files.writeString(artifact, emittedArmsChunk(), StandardCharsets.UTF_8);
-            Path probe = workspace.resolve("completion-probe.lua");
+            Path probe = workspace.resolve(probeName + ".lua");
             Files.writeString(probe, """
                 local text = io.open("%s"):read("*a")
                 text = text:gsub("%%s*$", "")
@@ -625,19 +663,13 @@ public class FailureArmAuthorityTest {
                   print(label .. "|" .. tostring(value.code) .. "|" .. tostring(value.e)
                     .. "|" .. tostring(value.a) .. "|" .. tostring(value.m))
                 end
-                local ok, value = pcall(__bcheck, "@src/app/User", "table", "abc", nil, true)
-                row("class", ok, value)
-                ok, value = pcall(__bcheck, "array(int)", "table", "abc", nil, true)
-                row("array", ok, value)
-                ok, value = pcall(__bcheck, "string", "string", 5, nil, true)
-                row("string", ok, value)
-                print("carrier-string|" .. __carrierKind("abc"))
+                %s
                 ]==]
-                local chunk = assert(load(text:sub(1, #text - #tail) .. row, "completion-probe"))
+                local chunk = assert(load(text:sub(1, #text - #tail) .. row, "%s"))
                 chunk()
-                """.formatted(artifact.toAbsolutePath().toString()),
+                """.formatted(artifact.toAbsolutePath().toString(), body, probeName),
                 StandardCharsets.UTF_8);
-            ProcessBuilder builder = new ProcessBuilder("luajit", "completion-probe.lua");
+            ProcessBuilder builder = new ProcessBuilder("luajit", probeName + ".lua");
             builder.directory(workspace.toFile());
             builder.redirectErrorStream(true);
             Process process = builder.start();
@@ -652,7 +684,7 @@ public class FailureArmAuthorityTest {
                     rows.add(line.strip());
                 }
             }
-            check(rows.size() >= 4, "the prelude probe prints its rows: " + output);
+            check(rows.size() >= minRows, "the prelude probe prints its rows: " + output);
             return rows;
         } finally {
             deleteRecursively(workspace);
@@ -671,7 +703,266 @@ public class FailureArmAuthorityTest {
     }
 
     // =========================================================================
-    // 9. The negative single-source control
+    // 9. The typed-boundary bytes carrier (the non-bytes cell admission)
+    // =========================================================================
+
+    /**
+     * The typed-boundary projection's bytes member at the kind arm: a
+     * bytes carrier projects {@code bytes}, so a non-bytes typed boundary
+     * rejects it on every consumer. The cell is the reachable bytes value
+     * crossing a {@code table} (and an {@code int}) typed boundary; before
+     * the closed bytes case the emitted Lua prelude projected the table
+     * spelling and admitted the value while the oracle and the JVM
+     * artifact rejected it. One identical tuple from the oracle, the JVM
+     * runtime, and the emitted prelude under {@code luajit}, with the
+     * table-at-table and bytes-at-bytes admissions as the controls.
+     */
+    static void testTypedBoundaryBytesCarrier() throws Exception {
+        System.out.println("-- the typed-boundary bytes carrier (the table/int cells) --");
+        String span = FailureContractRegistry.arm(FailureArmId.TYPED_BOUNDARY_KIND)
+            .origin().name();
+        Tuple oracleTable = tupleOf(oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.TYPE_DESCRIPTOR, RuntimeDescriptor.Table.INSTANCE,
+            BoundaryValueView.of(ActualKind.BYTES), BoundaryContext.none()),
+            "the bytes-at-table cell"), span);
+        checkEq(new Tuple("E8001", "expected table", span, "table", "bytes"),
+            oracleTable, "the oracle rejects a bytes carrier at a table boundary");
+        Tuple oracleInt = tupleOf(oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.TYPE_DESCRIPTOR, RuntimeDescriptor.Int.INSTANCE,
+            BoundaryValueView.of(ActualKind.BYTES), BoundaryContext.none()),
+            "the bytes-at-int cell"), span);
+        checkEq(new Tuple("E8001", "expected int", span, "int", "bytes"),
+            oracleInt, "the oracle rejects a bytes carrier at an int boundary");
+        // The JVM runtime leg (a real bytes carrier).
+        deal.codegen.jvm.JvmRuntime.BytesValue bytesValue =
+            new deal.codegen.jvm.JvmRuntime.BytesValue(2);
+        deal.codegen.jvm.JvmRuntime.DealError jvmTable = jvmFailure(
+            () -> deal.codegen.jvm.JvmRuntime.bcheck("table", "table", bytesValue));
+        check(jvmTable != null, "the JVM table boundary rejects the bytes carrier");
+        if (jvmTable != null) {
+            checkEq(null, firstDifferingField(oracleTable,
+                new Tuple(jvmTable.code, jvmTable.msg, span, jvmTable.expected,
+                    jvmTable.actual)),
+                "the JVM runtime renders the oracle's identical bytes-at-table tuple");
+        }
+        deal.codegen.jvm.JvmRuntime.DealError jvmInt = jvmFailure(
+            () -> deal.codegen.jvm.JvmRuntime.bcheck("int", "int", bytesValue));
+        check(jvmInt != null, "the JVM int boundary rejects the bytes carrier");
+        if (jvmInt != null) {
+            checkEq(null, firstDifferingField(oracleInt,
+                new Tuple(jvmInt.code, jvmInt.msg, span, jvmInt.expected, jvmInt.actual)),
+                "the JVM runtime renders the oracle's identical bytes-at-int tuple");
+        }
+        // The emitted prelude leg, under real luajit: the failures and the
+        // two admissions.
+        List<String> rows = runPreludeProbe("""
+            local bytes = {__kind = "bytes", __len = 0}
+            local ok, value = pcall(__bcheck, "table", "table", bytes, nil)
+            row("bytes-at-table", ok, value)
+            ok, value = pcall(__bcheck, "int", "int", bytes, nil)
+            row("bytes-at-int", ok, value)
+            ok, value = pcall(__bcheck, "table", "table", {__t = true, __order = {}}, nil)
+            row("table-at-table", ok, value)
+            ok, value = pcall(__bcheck, "bytes", "bytes", bytes, nil)
+            row("bytes-at-bytes", ok, value)
+            """, "bytes-boundary-probe", 4);
+        checkEq("bytes-at-table|E8001|table|bytes|expected table", rows.get(0),
+            "the emitted prelude rejects the bytes carrier at a table boundary with the "
+                + "closed kind tuple");
+        checkEq("bytes-at-int|E8001|int|bytes|expected int", rows.get(1),
+            "the emitted prelude rejects the bytes carrier at an int boundary");
+        checkEq("table-at-table|OK|", rows.get(2),
+            "the emitted prelude admits a table carrier at a table boundary");
+        checkEq("bytes-at-bytes|OK|", rows.get(3),
+            "the emitted prelude admits the bytes carrier at a bytes boundary");
+        checkEq(null, firstDifferingField(oracleTable, luaTuple(rows.get(0), span)),
+            "the Lua artifact renders the oracle's identical bytes-at-table tuple");
+        checkEq(null, firstDifferingField(oracleInt, luaTuple(rows.get(1), span)),
+            "the Lua artifact renders the oracle's identical bytes-at-int tuple");
+    }
+
+    // =========================================================================
+    // 10. The std/json rejection arm: the carrier-kind cells
+    // =========================================================================
+
+    /**
+     * The {@code JSON_STRINGIFY_UNSUPPORTED} arm's render: one identical
+     * {@code (code, message, expected, actual)} tuple from the oracle
+     * (through {@link FailureProjections#stringifyUnsupported}), the JVM
+     * runtime's stdlib realization, and the emitted prelude under
+     * {@code luajit}. The cells are the reachable carrier kinds — the
+     * absent marker ({@code nil}), a class instance ({@code table}), a
+     * DEAL function value ({@code function}), the bytes carrier
+     * ({@code bytes}), and a nonfinite number ({@code number}); the
+     * expected field is the arm's own pinned text on every consumer.
+     */
+    static void testStdJsonArmDrive() throws Exception {
+        System.out.println("-- the std/json rejection arm: the carrier-kind cells --");
+        String span = FailureContractRegistry.arm(
+            FailureArmId.JSON_STRINGIFY_UNSUPPORTED).origin().name();
+        String expectedText = FailureContractRegistry.arm(
+            FailureArmId.JSON_STRINGIFY_UNSUPPORTED).pinnedExpectedText();
+        checkEq(FailureContractRegistry.arm(FailureArmId.JSON_STRINGIFY_UNSUPPORTED)
+                .pinnedExpectedText(),
+            deal.semantic.SharedStdlibSemantics.JSON_STRINGIFY_EXPECTED,
+            "the shared expected constant derives from the arm's own pinned text");
+        deal.semantic.ir.SourceOrigin origin = new deal.semantic.ir.SourceOrigin(
+            "arm-battery", deal.semantic.ir.SourceSpan.synthetic("arm-battery"),
+            deal.semantic.ir.SourceOriginKind.SYNTHETIC,
+            new deal.semantic.ir.AnchorId(1), null);
+        // The oracle leg: the shared primitive's render per carrier kind.
+        Tuple oracleMissing = checkStdJsonOracle(origin,
+            new deal.semantic.SharedStdlibSemantics.Value.Other(ActualKind.MISSING, null),
+            span, expectedText, "nil", "the oracle projects the absent marker as nil");
+        Tuple oracleClass = checkStdJsonOracle(origin,
+            new deal.semantic.SharedStdlibSemantics.Value.Other(ActualKind.CLASS,
+                "@src/app/Admin"), span, expectedText, "table",
+            "the oracle projects a class instance as the table-carried value");
+        Tuple oracleFunction = checkStdJsonOracle(origin,
+            new deal.semantic.SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null),
+            span, expectedText, "function",
+            "the oracle projects a DEAL function value as the function member");
+        Tuple oracleBytes = checkStdJsonOracle(origin,
+            new deal.semantic.SharedStdlibSemantics.Value.Other(ActualKind.BYTES, null),
+            span, expectedText, "bytes",
+            "the oracle projects the bytes carrier as the bytes member");
+        Tuple oracleNumber = checkStdJsonOracle(origin,
+            new deal.semantic.SharedStdlibSemantics.Value.Number(Double.NaN),
+            span, expectedText, "number",
+            "the oracle projects a nonfinite number as number");
+        // The JVM runtime leg (the same arm through the shared helper).
+        Tuple jvmMissing = checkStdJsonJvm(tableWith("m", deal.codegen.jvm.JvmRuntime.MISSING),
+            span, expectedText, "nil", "the JVM runtime projects the absent marker as nil");
+        Tuple jvmClass = checkStdJsonJvm(tableWith("c",
+                new deal.codegen.jvm.JvmRuntime.ErrorValue("E8001", "x")),
+            span, expectedText, "table",
+            "the JVM runtime projects a class instance as the table-carried value");
+        Tuple jvmFunction = checkStdJsonJvm(tableWith("f",
+                new deal.codegen.jvm.JvmRuntime.FunctionValue(args -> null, "() -> null")),
+            span, expectedText, "function",
+            "the JVM runtime projects a DEAL function value as the function member");
+        Tuple jvmBytes = checkStdJsonJvm(tableWith("b",
+                new deal.codegen.jvm.JvmRuntime.BytesValue(2)),
+            span, expectedText, "bytes",
+            "the JVM runtime projects the bytes carrier as the bytes member");
+        Tuple jvmNumber = checkStdJsonJvm(tableWith("n", Double.valueOf(Double.NaN)),
+            span, expectedText, "number",
+            "the JVM runtime projects a nonfinite number as number");
+        checkEq(null, firstDifferingField(oracleMissing, jvmMissing),
+            "the JVM runtime renders the oracle's identical absent-marker tuple");
+        checkEq(null, firstDifferingField(oracleClass, jvmClass),
+            "the JVM runtime renders the oracle's identical class tuple");
+        checkEq(null, firstDifferingField(oracleFunction, jvmFunction),
+            "the JVM runtime renders the oracle's identical function tuple");
+        checkEq(null, firstDifferingField(oracleBytes, jvmBytes),
+            "the JVM runtime renders the oracle's identical bytes tuple");
+        checkEq(null, firstDifferingField(oracleNumber, jvmNumber),
+            "the JVM runtime renders the oracle's identical number tuple");
+        // The emitted prelude leg, under real luajit: the arm's own render
+        // through the serialized table (its pinned text included).
+        List<String> rows = runPreludeProbe("""
+            local function call(root)
+              return pcall(__stdlibInvoke, "STDLIB_CALL", "JSON_STRINGIFY", "op",
+                "digest", "parent", "origin", root)
+            end
+            local ok, value = call({__t = true, __order = {"m"}, m = __MISSING})
+            row("missing", ok, value)
+            ok, value = call({__t = true, __order = {"c"},
+              c = {__c = true, __id = "@a/B", __f = {}, __p = {}}})
+            row("class", ok, value)
+            ok, value = call({__t = true, __order = {"f"}, f = function() end})
+            row("function", ok, value)
+            ok, value = call({__t = true, __order = {"b"},
+              b = {__kind = "bytes", __len = 0}})
+            row("bytes", ok, value)
+            ok, value = call({__t = true, __order = {"n"}, n = 0 / 0})
+            row("nan", ok, value)
+            """, "std-json-probe", 5);
+        checkEq("missing|E8001|" + expectedText
+                + "|nil|unsupported type for JSON encoding: nil",
+            rows.get(0), "the emitted prelude renders the arm's nil cell");
+        checkEq("class|E8001|" + expectedText
+                + "|table|unsupported type for JSON encoding: table",
+            rows.get(1), "the emitted prelude renders the arm's table cell");
+        checkEq("function|E8001|" + expectedText
+                + "|function|unsupported type for JSON encoding: function",
+            rows.get(2), "the emitted prelude renders the arm's function member");
+        checkEq("bytes|E8001|" + expectedText
+                + "|bytes|unsupported type for JSON encoding: bytes",
+            rows.get(3), "the emitted prelude renders the arm's bytes member");
+        checkEq("nan|E8001|" + expectedText
+                + "|number|unsupported type for JSON encoding: number",
+            rows.get(4), "the emitted prelude renders the arm's number cell");
+        checkEq(null, firstDifferingField(oracleMissing,
+            luaTuple(rows.get(0), span)),
+            "the Lua artifact renders the oracle's identical absent-marker tuple");
+        checkEq(null, firstDifferingField(oracleClass, luaTuple(rows.get(1), span)),
+            "the Lua artifact renders the oracle's identical class tuple");
+        checkEq(null, firstDifferingField(oracleFunction, luaTuple(rows.get(2), span)),
+            "the Lua artifact renders the oracle's identical function tuple");
+        checkEq(null, firstDifferingField(oracleBytes, luaTuple(rows.get(3), span)),
+            "the Lua artifact renders the oracle's identical bytes tuple");
+        checkEq(null, firstDifferingField(oracleNumber, luaTuple(rows.get(4), span)),
+            "the Lua artifact renders the oracle's identical number tuple");
+    }
+
+    /** One oracle std/json rejection assertion (the arm's tuple per carrier). */
+    private static Tuple checkStdJsonOracle(deal.semantic.ir.SourceOrigin origin,
+                                            deal.semantic.SharedStdlibSemantics.Value value,
+                                            String span, String expected, String actual,
+                                            String note) {
+        deal.semantic.SharedStdlibSemantics.Value.Table table =
+            (deal.semantic.SharedStdlibSemantics.Value.Table)
+                deal.semantic.SharedStdlibSemantics.Value.table();
+        table.table().put("v", value);
+        deal.semantic.SharedStdlibSemantics.Outcome<
+                deal.semantic.SharedStdlibSemantics.Value> outcome =
+            deal.semantic.SharedStdlibSemantics.jsonStringify(origin, table.table());
+        if (!(outcome instanceof deal.semantic.SharedStdlibSemantics.Outcome.Failure<
+                deal.semantic.SharedStdlibSemantics.Value> failure)) {
+            check(false, note + " (no failure: " + outcome + ")");
+            return new Tuple("?", "?", span, expected, actual);
+        }
+        BoundaryFailure projection = failure.failure().failure();
+        Tuple tuple = new Tuple(projection.code().name(), projection.message(), span,
+            projection.expected(), projection.actual());
+        checkEq(new Tuple("E8001", "unsupported type for JSON encoding: " + actual, span,
+            expected, actual), tuple, note);
+        return tuple;
+    }
+
+    /** One JVM std/json rejection assertion through the shared stdlib dispatch. */
+    private static Tuple checkStdJsonJvm(deal.codegen.jvm.JvmRuntime.Table table,
+                                         String span, String expected, String actual,
+                                         String note) {
+        deal.codegen.jvm.JvmRuntime.DealError error = jvmFailure(
+            () -> deal.codegen.jvm.JvmRuntime.stdlib("STDLIB_CALL", "JSON_STRINGIFY",
+                "op", "digest", "parent", "origin", new Object[] {table}));
+        check(error != null, note + " (no failure thrown)");
+        if (error == null) {
+            return new Tuple("?", "?", span, expected, actual);
+        }
+        Tuple tuple = new Tuple(error.code, error.msg, span, error.expected, error.actual);
+        checkEq(new Tuple("E8001", "unsupported type for JSON encoding: " + actual, span,
+            expected, actual), tuple, note);
+        return tuple;
+    }
+
+    /** One single-entry JVM table. */
+    private static deal.codegen.jvm.JvmRuntime.Table tableWith(String key, Object value) {
+        deal.codegen.jvm.JvmRuntime.Table table = new deal.codegen.jvm.JvmRuntime.Table();
+        table.write(key, value);
+        return table;
+    }
+
+    /** One prelude probe row ({@code label|code|expected|actual|message}) as a tuple. */
+    private static Tuple luaTuple(String row, String span) {
+        String[] parts = row.split("\\|", -1);
+        return new Tuple(parts[1], parts[4], span, parts[2], parts[3]);
+    }
+
+    // =========================================================================
+    // 11. The negative single-source control
     // =========================================================================
 
     /**

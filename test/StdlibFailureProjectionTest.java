@@ -33,6 +33,7 @@ import deal.semantic.ir.ContractSnapshotCanonicalizer;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FailurePolicyRow;
+import deal.semantic.ir.FailureProjections;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.KindPayload;
@@ -426,9 +427,10 @@ public class StdlibFailureProjectionTest {
                 SharedStdlibSemantics.REASON_UNEXPECTED_END),
             origin(), "a missing array value reports the end-of-input defect");
 
-        // JSON_TO_ERROR: first declaration-order failure with the
-        // corpus-aligned rejection text; the walker's {fieldPath} stays
-        // internal metadata (never part of the visible projection).
+        // JSON_TO_ERROR: first declaration-order failure through the
+        // JSON_STRINGIFY_UNSUPPORTED arm's own render (its pinned expected
+        // text and the carrier-kind actual), with the walker's internal
+        // {fieldPath} metadata (never part of the visible projection).
         SemanticTable<Value> table = new SemanticTable<>();
         table.put("f", new Value.Other(ActualKind.FUNCTION, null));
         table.put("m", new Value.Other(ActualKind.MISSING, null));
@@ -1173,26 +1175,24 @@ public class StdlibFailureProjectionTest {
                 "parse defect " + input + " resolves to the registry row's exact "
                     + "record, message " + q() + expected + q());
         }
-        FailurePolicyRow toErrorRow = FailureContractRegistry.row(
-            FailurePolicyId.JSON_TO_ERROR);
         SemanticTable<Value> firstOrder = new SemanticTable<>();
         firstOrder.put("a", new Value.Other(ActualKind.FUNCTION, null));
         firstOrder.put("b", new Value.Other(ActualKind.MISSING, null));
-        String toErrorExpected = BoundaryFailure.fromRow(toErrorRow, 1,
-            SharedStdlibSemantics.JSON_STRINGIFY_EXPECTED, "function",
-            Map.of("fieldPath", "a", "actual", "function"), null).message();
+        // The arm's own render supplies the visible tuple; the walk's
+        // fieldPath stays internal metadata.
+        BoundaryFailure toErrorArm = FailureProjections.stringifyUnsupported(
+            FailureProjections.CarrierKind.DEAL_FUNCTION);
         Outcome<Value> toErrorOutcome =
             SharedStdlibSemantics.jsonStringify(origin(), firstOrder);
         boolean firstWins = toErrorOutcome instanceof Outcome.Failure<Value> failure
-            && failure.failure().failure().message().equals(toErrorExpected)
-            && SharedStdlibSemantics.JSON_STRINGIFY_EXPECTED.equals(
-                failure.failure().failure().expected())
-            && "function".equals(failure.failure().failure().actual())
+            && failure.failure().failure().message().equals(toErrorArm.message())
+            && failure.failure().failure().expected().equals(toErrorArm.expected())
+            && failure.failure().failure().actual().equals(toErrorArm.actual())
             && failure.failure().failure().metadata().equals(
                 Map.of("fieldPath", "a", "actual", "function"));
         check(firstWins,
-            "the first declaration-order stringify failure wins and equals the "
-                + "registry record; a wrong ordering would change the record");
+            "the first declaration-order stringify failure wins and renders the "
+                + "arm's own tuple; a wrong ordering would change the record");
     }
 
     // =========================================================================

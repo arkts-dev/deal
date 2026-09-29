@@ -731,13 +731,19 @@ public class SharedStdlibSemanticsTest {
             note);
     }
 
+    /**
+     * The {@code JSON_STRINGIFY_UNSUPPORTED} arm's render: the arm's own
+     * pinned expected text and the carrier-kind projection of the failing
+     * value, with the walker's internal {@code {fieldPath}} metadata (the
+     * path is never part of the visible projection).
+     */
     private static void expectStringifyFailure(SemanticTable<Value> table, String fieldPath,
-                                               String actual, String note) {
+                                               String carrierToken, String note) {
         expectFailure(SharedStdlibSemantics.jsonStringify(origin(), table),
             FailurePolicyId.JSON_TO_ERROR, DiagnosticCode.E8001,
-            "unsupported type for JSON encoding: " + actual,
-            SharedStdlibSemantics.JSON_STRINGIFY_EXPECTED, actual,
-            Map.of("fieldPath", fieldPath, "actual", actual), origin(), note);
+            "unsupported type for JSON encoding: " + carrierToken,
+            SharedStdlibSemantics.JSON_STRINGIFY_EXPECTED, carrierToken,
+            Map.of("fieldPath", fieldPath, "actual", carrierToken), origin(), note);
     }
 
     static void testJsonStringifyValues() {
@@ -804,15 +810,15 @@ public class SharedStdlibSemanticsTest {
         System.out.println("-- JSON_STRINGIFY: first declaration-order JSON_TO_ERROR --");
 
         expectStringifyFailure(tableOf("f", new Value.Other(ActualKind.FUNCTION, null)),
-            "f", "function", "a function value fails with its actual kind");
+            "f", "function", "a DEAL function value projects the pinned function member");
         expectStringifyFailure(tableOf("m", new Value.Other(ActualKind.MISSING, null)),
-            "m", "missing", "a missing value fails with actual 'missing'");
+            "m", "nil", "the absent marker projects the carrier-kind nil token");
         expectStringifyFailure(tableOf("a",
                 new Value.Other(ActualKind.ASYNC_OPERATION, null)),
-            "a", "async-operation", "an async-operation handle fails");
+            "a", "table", "an async-operation handle is a table-carried value");
         expectStringifyFailure(tableOf("c",
                 new Value.Other(ActualKind.CLASS, "@src/app/Admin")),
-            "c", "class:@src/app/Admin", "a class value fails with the canonical class token");
+            "c", "table", "a class value is a table-carried value (never its identity)");
         expectStringifyFailure(tableOf("n", new Value.Number(Double.NaN)),
             "n", "number", "NaN fails with actual 'number'");
         expectStringifyFailure(tableOf("n", new Value.Number(Double.POSITIVE_INFINITY)),
@@ -821,7 +827,7 @@ public class SharedStdlibSemanticsTest {
             "n", "number", "-Infinity fails with actual 'number'");
         expectStringifyFailure(tableOf("s",
                 Value.string(UnicodeScalars.Invalid.INSTANCE)),
-            "s", "invalid-unicode", "an invalid scalar sequence fails");
+            "s", "string", "an invalid scalar sequence is still a string carrier");
 
         // First declaration-order failure wins.
         expectStringifyFailure(tableOf("a", new Value.Other(ActualKind.FUNCTION, null),
@@ -832,24 +838,25 @@ public class SharedStdlibSemanticsTest {
                 "a", new Value.Table(tableOf("b", new Value.Other(ActualKind.FUNCTION, null),
                     "c", new Value.Other(ActualKind.MISSING, null)))),
             "a.b", "function",
-            "nested failures report the dot-separated field path in pre-order");
+            "nested failures keep the pre-order walk (the inner function wins over the "
+                + "later missing field)");
         expectStringifyFailure(tableOf("arr", Value.array(new Value.Int(1),
                 new Value.Other(ActualKind.FUNCTION, null))),
-            "arr.1", "function", "array elements append the 0-based index");
+            "arr.1", "function", "array elements walk in index order");
         expectStringifyFailure(tableOf("arr", Value.array(new Value.Number(Double.NaN))),
-            "arr.0", "number", "a nonfinite element reports its index path");
+            "arr.0", "number", "a nonfinite element projects the number token");
 
-        // A cycle fails at the repeated container's path.
+        // A cycle fails on the repeated container.
         SemanticTable<Value> self = new SemanticTable<>();
         self.put("self", new Value.Table(self));
         expectStringifyFailure(self, "self", "table",
-            "a table cycle fails at the repeated table's path");
+            "a table cycle fails on the repeated table");
         SemanticTable<Value> root = new SemanticTable<>();
         SemanticTable<Value> child = new SemanticTable<>();
         child.put("up", new Value.Table(root));
         root.put("a", new Value.Table(child));
         expectStringifyFailure(root, "a.up", "table",
-            "an indirect cycle reports the path of the repetition");
+            "an indirect cycle fails on the repeated table");
 
         // Acyclic finite data never fails: a deep but finite shape passes.
         SemanticTable<Value> deep = new SemanticTable<>();

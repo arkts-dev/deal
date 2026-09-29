@@ -2118,14 +2118,14 @@ public class ClassConstructionDifferentialTest {
     // =========================================================================
     // 10. JSON_STRINGIFY over a class instance (the stdlib walker's class
     //     projection): a nested class value is the first declaration-order
-    //     unsupported value and projects as its canonical class:<ClassId>
-    //     identity on all three consumers (never the carrier's Lua/JVM
-    //     shape).
+    //     unsupported value and projects as the table-carried value it is
+    //     (the JSON_STRINGIFY_UNSUPPORTED arm's carrier-kind projection) on
+    //     all three consumers, never its identity.
     // =========================================================================
 
     static void testJsonStringifyClassProjection() {
         System.out.println("-- JSON_STRINGIFY class projection: a class value nested in "
-            + "the argument table fails with the canonical class:<ClassId> actual "
+            + "the argument table fails with the carrier-kind table actual "
             + "on all three consumers --");
         String source = """
             import * as json from "std/json"
@@ -2151,7 +2151,7 @@ public class ClassConstructionDifferentialTest {
         }
         SemanticDifferentialHarness.Verdict verdict = runFailureMatrix(lowered, "E8001",
             originTextOf(calls.get(0)),
-            "class-in-table JSON_STRINGIFY (E8001 class:<ClassId>)");
+            "class-in-table JSON_STRINGIFY (E8001 table)");
         if (verdict == null) {
             return;
         }
@@ -2159,9 +2159,9 @@ public class ClassConstructionDifferentialTest {
             String message = run.terminal()
                     instanceof SemanticRuntimeModel.Terminal.DealFailure failure
                 ? failure.error().message() : run.terminal().toString();
-            check("unsupported type for JSON encoding: class:@main/Foo".equals(message),
+            check("unsupported type for JSON encoding: table".equals(message),
                 "class-in-table JSON_STRINGIFY: " + run.consumer()
-                    + " projects the canonical class:<ClassId> actual: " + message);
+                    + " projects the carrier-kind table actual: " + message);
         }
     }
 

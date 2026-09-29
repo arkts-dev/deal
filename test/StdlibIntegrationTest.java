@@ -38,6 +38,7 @@ import deal.semantic.ir.ContractSnapshotCanonicalizer;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FailurePolicyRow;
+import deal.semantic.ir.FailureProjections;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
@@ -1510,9 +1511,10 @@ public final class StdlibIntegrationTest {
             "T4: the STDLIB_RETURN boundary rejects the non-table top-level parse "
                 + "with E8001 'expected table'");
 
-        // (c) JSON_TO_ERROR: the first declaration-order failure with the
-        // corpus-aligned rejection text and the expected/actual pair; the
-        // walker's {fieldPath} stays internal metadata.
+        // (c) JSON_TO_ERROR: the first declaration-order failure through the
+        // JSON_STRINGIFY_UNSUPPORTED arm's own render (its pinned expected
+        // text and the carrier-kind actual); the walker's {fieldPath} stays
+        // internal and never surfaces.
         SemanticOp stringifyOp = corpus.ops().get(StdlibFunctionId.JSON_STRINGIFY);
         SemanticTable<Value> table = new SemanticTable<>();
         table.put("a", i(1));
@@ -1525,20 +1527,21 @@ public final class StdlibIntegrationTest {
                 + "the function leaf, got " + describeOutcome(stringify));
         }
         BoundaryFailure toError = view.view(stringifyFailure.failure().failure());
+        BoundaryFailure toErrorArm = FailureProjections.stringifyUnsupported(
+            FailureProjections.CarrierKind.DEAL_FUNCTION);
         if (toError.policy() != FailurePolicyId.JSON_TO_ERROR
                 || toError.code() != DiagnosticCode.E8001
-                || !toError.message()
-                    .equals("unsupported type for JSON encoding: function")
-                || !SharedStdlibSemantics.JSON_STRINGIFY_EXPECTED.equals(toError.expected())
-                || !"function".equals(toError.actual())
-                || !toError.metadata()
-                    .equals(Map.of("fieldPath", "f", "actual", "function"))
+                || !toError.message().equals(toErrorArm.message())
+                || !toError.expected().equals(toErrorArm.expected())
+                || !toError.actual().equals(toErrorArm.actual())
+                || !toError.metadata().equals(Map.of("fieldPath", "f", "actual", "function"))
                 || toError.cause() != null
                 || !stringifyFailure.failure().origin().equals(stringifyOp.origin())) {
-            return defect("T4 failure projection — JSON_TO_ERROR — expected E8001 "
-                + "'unsupported type for JSON encoding: function' with expected "
-                + "'string, number, boolean, or table', actual 'function', the "
-                + "internal {fieldPath:f} metadata at the call origin and no cause; got "
+            return defect("T4 failure projection — JSON_TO_ERROR — expected the "
+                + "JSON_STRINGIFY_UNSUPPORTED arm's own tuple (E8001 'unsupported "
+                + "type for JSON encoding: function', expected 'string, number, "
+                + "boolean, or table', actual 'function') with the internal "
+                + "{fieldPath:f} metadata at the call origin and no cause; got "
                 + "policy=" + toError.policy() + " code=" + toError.code()
                 + " message='" + toError.message() + "' expected=" + toError.expected()
                 + " actual=" + toError.actual() + " metadata=" + toError.metadata());

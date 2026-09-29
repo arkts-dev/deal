@@ -601,6 +601,8 @@ public final class StdlibEquivalenceBatteryTest {
         cases.add(new ValueCase("stringify-surrogate", StdlibFunctionId.JSON_STRINGIFY,
             List.of(new Arg.TableArg(List.of("a"), List.of(s("😀")))), LUA_JS,
             ok(s("{\"a\":\"😀\"}"))));
+        // The std/json rejection renders the JSON_STRINGIFY_UNSUPPORTED
+        // arm's own tuple; the walker's field path is internal metadata.
         cases.add(new ValueCase("stringify-nan", StdlibFunctionId.JSON_STRINGIFY,
             List.of(new Arg.NaNTableArg()), JS,
             fail(FailurePolicyId.JSON_TO_ERROR, DiagnosticCode.E8001,
@@ -2385,7 +2387,8 @@ public final class StdlibEquivalenceBatteryTest {
     /**
      * The T4 pinning controls: the pinned projection assertions of the
      * reference run reject a tampered {@code {reason}} and a tampered
-     * {@code {fieldPath}} — breaking a projection fails the reference run.
+     * internal {@code {fieldPath}} — breaking a projection fails the
+     * reference run.
      */
     private static void testReferenceProjectionPinningControls() {
         System.out.println("-- Reference: tampered projections fail the pinned reference run --");
@@ -2408,12 +2411,15 @@ public final class StdlibEquivalenceBatteryTest {
             "a tampered {reason} fails the pinned projection assertion (breaking a projection "
                 + "fails the reference run)");
 
+        // A tampered internal fieldPath metadata fails the pinned assertion:
+        // the arm's own render plus the walk's internal position is the
+        // compared projection.
         Map<String, String> tamperedPath = new LinkedHashMap<>();
         tamperedPath.put("fieldPath", "tampered");
         tamperedPath.put("actual", "number");
         BoundaryFailure tamperedPathFailure = BoundaryFailure.fromRow(
             deal.semantic.ir.FailureContractRegistry.row(FailurePolicyId.JSON_TO_ERROR),
-            0, null, null, tamperedPath, null);
+            1, SharedStdlibSemantics.JSON_STRINGIFY_EXPECTED, "number", tamperedPath, null);
         Outcome<Value> tamperedPathOutcome = new Outcome.Failure<>(
             new SharedStdlibSemantics.StdlibFailure(tamperedPathFailure,
                 Reference.ORIGIN));
@@ -2422,7 +2428,7 @@ public final class StdlibEquivalenceBatteryTest {
             SharedStdlibSemantics.JSON_STRINGIFY_EXPECTED, "number",
             "fieldPath", "a", "actual", "number");
         check(!pinnedMatches(tamperedPathOutcome, pathPin),
-            "a tampered {fieldPath} fails the pinned projection assertion");
+            "a tampered internal fieldPath metadata fails the pinned projection assertion");
     }
 
     /** The negative control: a deliberately broken stub helper must fail the battery. */

@@ -2001,9 +2001,9 @@ public final class JvmRuntime {
      * = the canonical hex float), {@code JSON_PARSE_SYNTAX} E8001
      * {@code JSON parse error at position {oneBasedByteOffset}:
      * {reason}}, and {@code JSON_TO_ERROR} E8001
-     * {@code unsupported type for JSON encoding: {actual}} with the pinned
-     * expected text {@code string, number, boolean, or table} and the
-     * canonical actual-kind token —
+     * {@code unsupported type for JSON encoding: {actual}} rendered through
+     * the {@code JSON_STRINGIFY_UNSUPPORTED} arm (its own pinned expected
+     * text and the failing value's carrier-kind projection) —
      * at the {@code STDLIB_CALL} call origin with the active frames.
      * {@code TIME_NOW_MILLIS} reads the target clock
      * ({@link System#currentTimeMillis()}) and its single terminal is the
@@ -2495,27 +2495,61 @@ public final class JvmRuntime {
 
     /**
      * The pinned {@code STDLIB_CALL(JSON_STRINGIFY)} rejection: the
-     * corpus-aligned visible text (the {@code JSON_TO_ERROR} row's second
-     * template) with the projection's expected text and the value's
-     * canonical actual-kind token. The walk's internal position never
+     * {@code JSON_STRINGIFY_UNSUPPORTED} arm's own render — its pinned
+     * expected text and the carrier-kind projection of the failing value
+     * (P2 item 2 with the arm's two pinned members), the same helper the
+     * oracle's executor family renders. The walk's internal position never
      * surfaces — the first declaration-order failure is the only
      * observable fact.
      */
-    private static StdlibFailure jsonEncodingFailure(String actual) {
+    private static StdlibFailure jsonEncodingFailure(Object value) {
         deal.semantic.ir.BoundaryFailure failure =
-            deal.semantic.ir.FailureContractRegistry.render(
-                deal.semantic.ir.FailureArmId.JSON_STRINGIFY_UNSUPPORTED,
-                java.util.Map.of("actual", actual),
-                SharedStdlibSemantics.JSON_STRINGIFY_EXPECTED, actual, null);
+            deal.semantic.ir.FailureProjections.stringifyUnsupported(
+                jsonCarrierKind(value));
         return new StdlibFailure(failure.code().name(), failure.message(),
             failure.expected(), failure.actual());
+    }
+
+    /**
+     * The carrier-kind classification of one stringify-walk value (the
+     * std/json member of the closed carrier-kind projection): the absent
+     * marker is {@code nil}, the DEAL function-shaped carriers are
+     * {@code function}, the bytes carrier is {@code bytes}, and every
+     * other table-carried value — tables, arrays, class instances (the
+     * builtin Error value included) — is {@code table}. The token table
+     * itself is the shared {@code FailureProjections} helper.
+     */
+    private static deal.semantic.ir.FailureProjections.CarrierKind jsonCarrierKind(
+            Object value) {
+        if (value == MISSING) {
+            return deal.semantic.ir.FailureProjections.CarrierKind.ABSENT;
+        }
+        if (value == null) {
+            return deal.semantic.ir.FailureProjections.CarrierKind.LANGUAGE_NULL;
+        }
+        if (value instanceof Boolean) {
+            return deal.semantic.ir.FailureProjections.CarrierKind.BOOLEAN;
+        }
+        if (value instanceof Long || value instanceof Double) {
+            return deal.semantic.ir.FailureProjections.CarrierKind.NUMBER;
+        }
+        if (value instanceof String) {
+            return deal.semantic.ir.FailureProjections.CarrierKind.STRING;
+        }
+        if (value instanceof BytesValue) {
+            return deal.semantic.ir.FailureProjections.CarrierKind.BYTES;
+        }
+        if (value instanceof FunctionValue) {
+            return deal.semantic.ir.FailureProjections.CarrierKind.DEAL_FUNCTION;
+        }
+        return deal.semantic.ir.FailureProjections.CarrierKind.TABLE;
     }
 
     /** Serializes one table (object) with cycle detection and first-insertion order. */
     private static void stringifyTable(StringBuilder out, Table table,
                                        java.util.Set<Object> path) {
         if (!path.add(table)) {
-            throw jsonEncodingFailure("table");
+            throw jsonEncodingFailure(table);
         }
         out.append('{');
         List<String> keys = new ArrayList<>(table.entries.keySet());
@@ -2536,7 +2570,9 @@ public final class JvmRuntime {
     private static void stringifyArray(StringBuilder out, Array array,
                                        java.util.Set<Object> path) {
         if (!path.add(array)) {
-            throw jsonEncodingFailure("array");
+            // An array carrier is a table-carried value on the carrier-kind
+            // projection.
+            throw jsonEncodingFailure(array);
         }
         out.append('[');
         for (int i = 0; i < array.elements.size(); i++) {
@@ -2561,7 +2597,7 @@ public final class JvmRuntime {
         } else if (value instanceof Double doubleValue) {
             double d = doubleValue.doubleValue();
             if (!Double.isFinite(d)) {
-                throw jsonEncodingFailure("number");
+                throw jsonEncodingFailure(doubleValue);
             }
             out.append(Double.toString(d));
         } else if (value instanceof String string) {
@@ -2571,23 +2607,19 @@ public final class JvmRuntime {
         } else if (value instanceof Array array) {
             stringifyArray(out, array, path);
         } else if (value == MISSING) {
-            throw jsonEncodingFailure("missing");
-        } else if (value instanceof FunctionValue || value instanceof Intrinsic
-                || value instanceof AdapterValue) {
-            throw jsonEncodingFailure("function");
+            throw jsonEncodingFailure(value);
+        } else if (value instanceof FunctionValue) {
+            throw jsonEncodingFailure(value);
         } else if (value instanceof BytesValue) {
             // Bytes are not JSON serializable: the pinned rejection
-            // carries the canonical bytes actual token (K6/K8).
-            throw jsonEncodingFailure("bytes");
-        } else if (value instanceof ErrorValue) {
-            throw jsonEncodingFailure("class:@builtin/Error");
-        } else if (value instanceof ClassInstance instance) {
-            // A class instance is not JSON serializable and projects as its
-            // canonical identity (the closed class:<ClassId> actual token),
-            // never the carrier's shape.
-            throw jsonEncodingFailure("class:" + instance.classIdText());
+            // carries the bytes actual token (K6/K8).
+            throw jsonEncodingFailure(value);
+        } else if (value instanceof ClassInstance) {
+            // A class instance (the builtin Error value included) is a
+            // table-carried value on the carrier-kind projection.
+            throw jsonEncodingFailure(value);
         } else {
-            throw jsonEncodingFailure("table");
+            throw jsonEncodingFailure(value);
         }
     }
 
