@@ -1313,6 +1313,13 @@ public class FailureArmAuthorityTest {
             Map.of("kind", "int"), "WRONG", "string", null),
             "an expected field outside the arm's own kind text fails closed");
         expectDefect(() -> FailureContractRegistry.render(FailureArmId.TYPED_BOUNDARY_KIND,
+            Map.of("kind", "frobnicate"), "frobnicate", "string", null),
+            "an expected field derived from an unknown kind text fails closed");
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.TYPED_BOUNDARY_KIND,
+            Map.of("kind", "class"), "class", "string", null),
+            "the class-kind arm's token is not its kind text (the closed kind text is "
+                + "'class instance') and fails closed");
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.TYPED_BOUNDARY_KIND,
             Map.of("kind", "int"), "int", "WRONG", null),
             "an actual token outside the closed typed-boundary vocabulary fails closed");
         expectDefect(() -> FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
@@ -1357,10 +1364,13 @@ public class FailureArmAuthorityTest {
             print("fieldless-actual|" .. tostring(ok))
             ok = pcall(__arm, "TYPED_BOUNDARY_KIND", {kind = "int"}, "-", "string", "string")
             print("kind-pair|" .. tostring(ok))
+            ok = pcall(__arm, "TYPED_BOUNDARY_KIND", {kind = "frobnicate"}, "-",
+              "frobnicate", "string")
+            print("kind-text|" .. tostring(ok))
             local value = __arm("TYPED_BOUNDARY_KIND", {kind = "int"}, "-", "int", "string")
             print("control|" .. value.code .. "|" .. value.e .. "|" .. value.a .. "|"
               .. value.m)
-            """, "field-shape-probe", 6);
+            """, "field-shape-probe", 7);
         checkEq("kind-expected|false", rows.get(0),
             "the Lua renderer fails closed on a fabricated kind expected token");
         checkEq("kind-actual|false", rows.get(1),
@@ -1372,7 +1382,9 @@ public class FailureArmAuthorityTest {
         checkEq("kind-pair|false", rows.get(4),
             "the Lua renderer derives the kind token from the arm's serialized "
                 + "parameter sources (a closed-but-foreign pair fails closed)");
-        checkEq("control|E8001|int|string|expected int", rows.get(5),
+        checkEq("kind-text|false", rows.get(5),
+            "the Lua renderer fails closed on an unknown kind text");
+        checkEq("control|E8001|int|string|expected int", rows.get(6),
             "the Lua renderer keeps the arm's own declared fields green");
     }
 

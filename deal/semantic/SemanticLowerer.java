@@ -2323,12 +2323,13 @@ public final class SemanticLowerer {
                 StatementNode declaration = statement instanceof ExportDeclaration export
                     ? export.declaration() : statement;
                 if (declaration instanceof FunctionDeclaration function) {
-                    List<Span> annotations = new ArrayList<>();
-                    for (Parameter parameter : function.params()) {
-                        annotations.add(parameter.type().span());
-                    }
+                    // The declared parameter type-annotation spans in
+                    // declaration order; a parameter without a type
+                    // annotation records a null entry and fails the
+                    // declaration-owned lookup closed (never a call-site
+                    // fallback).
                     byName.computeIfAbsent(function.name(), ignored -> new ArrayList<>())
-                        .add(List.copyOf(annotations));
+                        .add(ModuleLowerer.parameterTypeSpans(function.params()));
                 }
             }
             index.put(module.moduleId(),
@@ -4374,9 +4375,9 @@ public final class SemanticLowerer {
              * ({@code runtime-errors/type-mismatch-e8001} at the callee
              * parameter's annotation; the unchanged JS and retained Lua
              * wrappers emit exactly that span) — so every call of a lowered
-             * body carries them. A synthetic or generated body without a
-             * declaration leaves the list empty and the call site is the
-             * fallback.
+             * body carries them. A declared callee without a recorded
+             * annotation fails closed (P3: a producer defect, never a
+             * fallback span).
              */
             final List<Span> parameterTypeSpans;
             boolean returnBoundaryEmitted;
@@ -4407,14 +4408,33 @@ public final class SemanticLowerer {
                 this.signature = signature;
                 this.returnBoundaryOpId = returnBoundaryOpId;
                 this.callSiteOpId = callSiteOpId;
-                this.parameterTypeSpans = List.copyOf(parameterTypeSpans);
+                // Null-tolerant: a declared parameter without a type
+                // annotation records a null entry, and the declared-context
+                // lookup fails closed on it (never a call-site fallback).
+                this.parameterTypeSpans = java.util.Collections.unmodifiableList(
+                    new java.util.ArrayList<>(parameterTypeSpans));
             }
 
-            /** The parameter cell's origin span: the declared annotation, else the fallback. */
-            Span parameterSpan(int index, Span fallback) {
-                return index < parameterTypeSpans.size()
-                    && parameterTypeSpans.get(index) != null
-                    ? parameterTypeSpans.get(index) : fallback;
+            /**
+             * The parameter cell's origin span: the declared type-annotation
+             * span at the parameter index (P3). A declared callee without a
+             * recorded annotation at the index — an empty list, a short
+             * list, or a null entry — is a fail-closed producer defect,
+             * never a fallback to the invoking call site; only the cells
+             * without a declared callee keep the call expression.
+             */
+            Span parameterSpan(int index) {
+                Span span = index < parameterTypeSpans.size()
+                    ? parameterTypeSpans.get(index) : null;
+                if (span == null) {
+                    throw new ConstructUnlowered("the declared parameter "
+                        + (index + 1) + " of function id " + functionId.id()
+                        + " has no recorded type annotation in the one lowering's"
+                        + " declaration index (a declared callee without a recorded"
+                        + " annotation is a fail-closed producer defect, never a"
+                        + " fallback span)");
+                }
+                return span;
             }
 
             /**
@@ -10297,7 +10317,7 @@ public final class SemanticLowerer {
                     entryInvocation ? BoundaryKind.EXTERNAL_PARAMETER
                         : BoundaryKind.FUNCTION_PARAMETER,
                     context.signature.paramTypes().get(i), args.get(i),
-                    context.parameterSpan(i, call.span()),
+                    context.parameterSpan(i),
                     callOpId);
                 parameterBoundaryOps.add(boundary);
                 parameterBoundaryIds.add(boundary.opId());
@@ -10836,7 +10856,7 @@ public final class SemanticLowerer {
                             BoundaryKind.FUNCTION_PARAMETER,
                             signature.paramTypes().get(i), args.get(i),
                             bodyContext == null ? call.span()
-                                : bodyContext.parameterSpan(i, call.span()),
+                                : bodyContext.parameterSpan(i),
                             callOpId);
                         parameterBoundaryOps.add(boundary);
                         parameterBoundaryIds.add(boundary.opId());
@@ -11598,7 +11618,7 @@ public final class SemanticLowerer {
                         SemanticOp boundary = buildChildBoundary(
                             BoundaryKind.FUNCTION_PARAMETER,
                             context.signature.paramTypes().get(i), args.get(i),
-                            context.parameterSpan(i, call.span()), startOpId);
+                            context.parameterSpan(i), startOpId);
                         parameterBoundaryOps.add(boundary);
                         parameterBoundaryIds.add(boundary.opId());
                     }
@@ -12258,8 +12278,17 @@ public final class SemanticLowerer {
             }
             for (List<Span> declared : candidates) {
                 if (declared.size() == arity && parameterIndex < declared.size()) {
-                    return new DeclaredParameterOrigin(moduleIndex.sourceId(),
-                        declared.get(parameterIndex));
+                    Span span = declared.get(parameterIndex);
+                    if (span == null) {
+                        throw new ConstructUnlowered("the declared parameter "
+                            + (parameterIndex + 1) + " of '" + functionName
+                            + "' of module '" + calleeModule.path()
+                            + "' has no recorded type annotation in the one"
+                            + " lowering's declaration index (a declared callee without"
+                            + " a recorded annotation is a fail-closed producer"
+                            + " defect, never a fallback span)");
+                    }
+                    return new DeclaredParameterOrigin(moduleIndex.sourceId(), span);
                 }
             }
             throw new ConstructUnlowered("the declared callee '" + functionName

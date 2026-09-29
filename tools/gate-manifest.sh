@@ -67,7 +67,12 @@ TEST_MAINS=(
   # the emitted Lua bytes gates render the closed arms and hold no composed
   # E8012 text; it also drives the declared expected/actual field shapes
   # fail-closed on both the registry renderer and the serialized Lua renderer
-  # under luajit (a fabricated token never renders, a matching one stays green).
+  # under luajit (a fabricated token never renders, a matching one stays green,
+  # and a kind text outside the closed vocabulary — including the class-kind
+  # token used as a kind text — never derives a DEAL-visible token); the
+  # declared-parameter origin index fails closed on a same-unit declared callee
+  # without a recorded annotation (MaterializationSiteOriginTest's doctored-AST
+  # negative drives the production entry to its E6005).
   'fg|=== Running Failure Arm Authority Tests (ISSUE-0704) ===|java -ea -cp build deal.test.FailureArmAuthorityTest'
   'fg|=== Running Canonical JSON / Snapshot Digest Tests (ISSUE-0283) ===|java -ea -cp build deal.test.CanonicalJsonTest'
   'fg|=== Running Semantic IR Validator Tests (ISSUE-0286) ===|java -ea -cp build deal.test.SemanticIrValidatorTest'
@@ -1148,8 +1153,13 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # materialized value's allocation identity with the runtime carrier's
   # own binding at the unit level — the pending DynamicFunctionValue
   # producer rule of ISSUE-0622; the end-to-end fixture drive belongs to
-  # the joint fixture battery. The class lives in package deal.semantic
-  # to reach the package-internal project walk.
+  # the joint fixture battery. The battery also carries the ISSUE-0704
+  # declared-context negative: a same-unit declared callee without a
+  # recorded parameter annotation (a null-typed parameter or a short
+  # declaration against the checked signature) fails the production
+  # entry closed with its E6005 and launches no project — the parameter
+  # cell never falls back to the invoking call site. The class lives in
+  # package deal.semantic to reach the package-internal project walk.
   'fg|=== Running Materialization-Site Origin / Function-Row Projection Tests (ISSUE-0681) ===|java -ea -cp build deal.semantic.MaterializationSiteOriginTest'
   # ISSUE-0667 registration: the oracle plan-projection seam and the FFI
   # construction execution (luajit-ffi-struct-plan-construction-and-oracle-

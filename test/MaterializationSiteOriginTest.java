@@ -3,11 +3,13 @@ package deal.semantic;
 import deal.ast.Block;
 import deal.ast.ExportDeclaration;
 import deal.ast.FunctionDeclaration;
+import deal.ast.Parameter;
 import deal.ast.ProgramNode;
 import deal.ast.Span;
 import deal.ast.StatementNode;
 import deal.ast.VariableDeclaration;
 import deal.checker.CheckResult;
+import deal.checker.BuiltinErrorDeclaration;
 import deal.checker.ModuleResolver;
 import deal.checker.NameResolver;
 import deal.checker.Symbol;
@@ -1398,6 +1400,145 @@ public class MaterializationSiteOriginTest {
     }
 
     // =========================================================================
+    // The declared-context lookup fails closed (P3)
+    // =========================================================================
+
+    /**
+     * The declared-context lookup fails closed (P3): a same-unit declared
+     * callee whose declaration records no type annotation at the parameter
+     * index is a producer defect — the parameter cell never falls back to
+     * the invoking call site, because a fallback would misattribute a
+     * parameter failure and hide an incomplete lowering index. The two
+     * negative controls drive the release-owned production entry over a
+     * doctored AST (a null-typed annotation and an empty declaration list
+     * against the checked signature); the control lowers the same source
+     * with the recorded annotation. {@link HostDeclarationSurface} and the
+     * interface index stay the checked project's own — the doctor only
+     * removes the annotation fact.
+     */
+    static void testMissingParameterAnnotationFailsClosed() throws Exception {
+        System.out.println("-- a declared callee without a recorded annotation "
+            + "fails closed --");
+        String nullTyped = """
+            function needInt(x: int): int {
+              return x
+            }
+
+            export function main(): null {
+              let r: int = needInt(1)
+              return null
+            }
+            """;
+        SemanticLowerer.ProjectLoweringResult control = lowerDoctored(nullTyped,
+            "needInt", null, "the annotation control");
+        check(control != null && control.project() != null,
+            "the declared callee with its annotation lowers cleanly: "
+                + (control == null ? "null" : control.diagnostics()));
+        SemanticLowerer.ProjectLoweringResult nullAnnotation = lowerDoctored(
+            nullTyped, "needInt",
+            params -> List.of(new Parameter(params.get(0).span(), params.get(0).name(),
+                null)),
+            "the null-typed annotation");
+        assertMissingAnnotationDefect(nullAnnotation,
+            "a null-typed declared annotation fails closed");
+        String shortDeclaration = """
+            function constOne(x: int): int {
+              return 1
+            }
+
+            export function main(): null {
+              let r: int = constOne(1)
+              return null
+            }
+            """;
+        SemanticLowerer.ProjectLoweringResult emptyDeclaration = lowerDoctored(
+            shortDeclaration, "constOne", params -> List.of(),
+            "the short declaration");
+        assertMissingAnnotationDefect(emptyDeclaration,
+            "a declaration without the parameter entry fails closed");
+    }
+
+    private static void assertMissingAnnotationDefect(
+            SemanticLowerer.ProjectLoweringResult result, String what) {
+        check(result != null && result.project() == null,
+            what + ": the production entry stages no project");
+        if (result == null) {
+            return;
+        }
+        checkEq(1, result.diagnostics().size(), what + ": exactly one diagnostic");
+        if (result.diagnostics().isEmpty()) {
+            return;
+        }
+        deal.diagnostics.CompilerDiagnostic diagnostic = result.diagnostics().get(0);
+        checkEq("E6005", diagnostic.code(), what + ": the diagnostic code is E6005");
+        check(diagnostic.message().contains("no recorded type annotation"),
+            what + ": the defect names the missing annotation; got "
+                + diagnostic.message());
+    }
+
+    /**
+     * The release-owned production entry over a checked project whose named
+     * declared callee's parameter list is doctored ({@code null} doctor
+     * means no doctor — the control). The doctor only removes annotation
+     * facts; the checks, the symbol table, and the interface index stay the
+     * checked project's own.
+     */
+    private static SemanticLowerer.ProjectLoweringResult lowerDoctored(String source,
+            String calleeName, java.util.function.UnaryOperator<List<Parameter>> doctor,
+            String what) {
+        CheckedSlice slice = checkSlice(source, what);
+        if (slice == null) {
+            return null;
+        }
+        ProgramNode program = slice.program();
+        if (doctor != null) {
+            List<StatementNode> statements = new ArrayList<>();
+            boolean found = false;
+            for (StatementNode statement : program.statements()) {
+                if (statement instanceof FunctionDeclaration function
+                        && function.name().equals(calleeName)) {
+                    found = true;
+                    statements.add(new FunctionDeclaration(function.span(),
+                        function.name(), doctor.apply(function.params()),
+                        function.returnType(), function.body(), function.isAsync(),
+                        function.isExternal()));
+                } else {
+                    statements.add(statement);
+                }
+            }
+            check(found, what + ": the callee '" + calleeName + "' is declared");
+            program = new ProgramNode(program.span(), statements,
+                program.fileDirectives());
+        }
+        List<ModuleFact> facts = List.of(new ModuleFact(SOURCE_ID, MODULE, false, false,
+            program, Map.of(), slice.symbols(), slice.checks(), List.of()));
+        CompilerInvocation invocation = invocation();
+        CheckedProjectBuildResult built = CheckedProjectBuilder.build(invocation, MODULE,
+            facts);
+        check(built != null && !built.hasErrors() && built.input() != null
+                && built.index() != null,
+            what + ": the checked project builds: "
+                + (built == null ? "null" : built.diagnostics()));
+        if (built == null || built.hasErrors() || built.input() == null
+                || built.index() == null) {
+            return null;
+        }
+        RequirementManifestResult manifestResult = LoweringSupport.computeManifests(
+            invocation, built.input(), built.index());
+        check(manifestResult != null && manifestResult.diagnostics().isEmpty(),
+            what + ": the requirement manifests compute: "
+                + (manifestResult == null ? "null" : manifestResult.diagnostics()));
+        if (manifestResult == null || !manifestResult.diagnostics().isEmpty()) {
+            return null;
+        }
+        return SemanticLowerer.lowerProject(invocation, built.input(), built.index(),
+            manifestResult.manifests(), new HostDeclarationSurface(Map.of()), Map.of(),
+            Map.of(), BuiltinErrorDeclaration.synthesized(program.span()),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
+            Set.of());
+    }
+
+    // =========================================================================
 
     public static void main(String[] args) throws Exception {
         testDeclarationArmOrigins();
@@ -1405,6 +1546,7 @@ public class MaterializationSiteOriginTest {
         testDeferredRowDrive();
         testSignatureMismatchDrive();
         testFreeBoundaryOutsideDeclarationArms();
+        testMissingParameterAnnotationFailsClosed();
         System.out.println();
         System.out.println("Materialization-site origin and function-row projection: "
             + passed + " passed, " + failed + " failed");

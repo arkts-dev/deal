@@ -993,6 +993,17 @@ public final class FailureContractRegistry {
     private static final Set<String> KIND_TOKENS = Set.of("null", "boolean", "int",
         "number", "string", "table", "bytes", "array", "function", "class");
 
+    /**
+     * The closed typed-boundary kind <em>texts</em> (P2 item 3): the
+     * {@code {kind}} parameter of a {@code KIND_TOKEN} arm is one of these
+     * — a class projects {@code class instance} while its token is
+     * {@code class} — and a foreign text never derives a DEAL-visible
+     * token.
+     */
+    private static final Set<String> KIND_TEXTS = Set.of("null", "boolean", "int",
+        "number", "string", "table", "bytes", "array", "function",
+        "class instance");
+
     /** The closed typed-boundary actual tokens (P2 item 1). */
     private static final Set<String> TYPED_BOUNDARY_TOKENS = Set.of("nil", "null",
         "boolean", "int", "number", "string", "invalid-unicode", "table", "array",
@@ -1057,9 +1068,18 @@ public final class FailureContractRegistry {
                         throw shapeDefect(arm, "expected", expected,
                             "a closed typed-boundary kind token (one of " + KIND_TOKENS + ")");
                     }
-                } else if (!kindTokenOfText(kindText).equals(expected)) {
-                    throw shapeDefect(arm, "expected", expected,
-                        "the kind token of its kind text \"" + kindText + "\"");
+                } else {
+                    // The kind text itself belongs to the closed vocabulary:
+                    // an invented kind text never derives a DEAL-visible
+                    // token through the authority.
+                    if (!KIND_TEXTS.contains(kindText)) {
+                        throw shapeDefect(arm, "kind", kindText,
+                            "a closed typed-boundary kind text (one of " + KIND_TEXTS + ")");
+                    }
+                    if (!kindTokenOfText(kindText).equals(expected)) {
+                        throw shapeDefect(arm, "expected", expected,
+                            "the kind token of its kind text \"" + kindText + "\"");
+                    }
                 }
             }
             case CLASS_ATOM -> requireClassAtom(arm, "expected", expected);

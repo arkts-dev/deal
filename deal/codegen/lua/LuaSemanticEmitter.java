@@ -9058,6 +9058,13 @@ end
 local __kindTokens = {["null"] = true, ["boolean"] = true, ["int"] = true,
   ["number"] = true, ["string"] = true, ["table"] = true, ["bytes"] = true,
   ["array"] = true, ["function"] = true, ["class"] = true}
+-- The closed typed-boundary kind *texts* (P2 item 3): the {kind} parameter
+-- of a KIND_TOKEN arm is one of these (a class projects "class instance"
+-- while its token is "class"), so an invented kind text never derives a
+-- DEAL-visible token through the authority.
+local __kindTexts = {["null"] = true, ["boolean"] = true, ["int"] = true,
+  ["number"] = true, ["string"] = true, ["table"] = true, ["bytes"] = true,
+  ["array"] = true, ["function"] = true, ["class instance"] = true}
 local __typedTokens = {["nil"] = true, ["null"] = true, ["boolean"] = true,
   ["int"] = true, ["number"] = true, ["string"] = true,
   ["invalid-unicode"] = true, ["table"] = true, ["array"] = true,
@@ -9162,6 +9169,9 @@ local function __checkExpectedField(id, arm, values, expected)
   elseif arm.e == "KIND_TOKEN" then
     local kindText = __parameterWithSource(arm, values, "KIND_TEXT")
     if kindText ~= nil then
+      if not __kindTexts[kindText] then
+        __fieldDefect(id, "kind", "a closed typed-boundary kind text", kindText)
+      end
       local token = kindText == "class instance" and "class" or kindText
       if expected ~= token then
         __fieldDefect(id, "expected",
