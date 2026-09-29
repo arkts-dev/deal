@@ -30,6 +30,7 @@ import deal.semantic.ir.BoundaryRealization;
 import deal.semantic.ir.BoundaryValueView;
 import deal.semantic.ir.CanonicalJson;
 import deal.semantic.ir.ContractSnapshotCanonicalizer;
+import deal.semantic.ir.FailureArmId;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FailurePolicyRow;
@@ -299,8 +300,8 @@ public class StdlibFailureProjectionTest {
                 + "variant, the identity arm, and the two inner-only host string arms "
                 + "(a bytes descriptor projects the kind arm's own text)");
 
-        // Row instantiation is the only message source; an unbound
-        // placeholder fails closed.
+        // The bound arm is the only message source; an unbound
+        // placeholder and a field outside the arm's declaration fail closed.
         String expectedMessage = BoundaryFailure.fromRow(parseRow, 0, null, null,
             Map.of("oneBasedByteOffset", "4", "reason",
                 SharedStdlibSemantics.REASON_INVALID_ESCAPE), null).message();
@@ -325,11 +326,25 @@ public class StdlibFailureProjectionTest {
         }
         check(unboundFailed,
             "an unbound placeholder fails closed — a broken projection never renders");
-        BoundaryFailure invalidString = BoundaryFailure.fromRow(typeRow, 1, null, null,
-            new LinkedHashMap<>(), null);
+        // The invalid-Unicode arm's own render: the arm's template with its
+        // declared fields. A row-position instantiation that supplies
+        // neither declared field fails closed — the arm's declaration is the
+        // render (a fail-closed control, driven below).
+        BoundaryFailure invalidString = FailureContractRegistry.render(
+            FailureArmId.TYPED_BOUNDARY_INVALID_UNICODE, new LinkedHashMap<>(),
+            "string", "invalid-unicode", null);
         check(invalidString.message().equals(
                 "expected string, got invalid Unicode scalar encoding"),
-            "the TYPE_DESCRIPTOR invalid-string template instantiates exactly");
+            "the TYPE_DESCRIPTOR invalid-string arm renders exactly");
+        boolean bypassedFieldFailed = false;
+        try {
+            BoundaryFailure.fromRow(typeRow, 1, null, null, new LinkedHashMap<>(), null);
+        } catch (BoundaryExecutor.Defect expected) {
+            bypassedFieldFailed = true;
+        }
+        check(bypassedFieldFailed,
+            "a row-position instantiation that omits the arm's declared fields fails "
+                + "closed — the arm's declaration is the render");
     }
 
     // =========================================================================
@@ -450,10 +465,11 @@ public class StdlibFailureProjectionTest {
             origin(), "nested failures keep the dot-separated path as internal "
                 + "metadata");
 
-        // SQRT_NEGATIVE: E8001, operation origin; NaN passes.
+        // SQRT_NEGATIVE: E8001, operation origin; NaN passes. The arm's own
+        // render carries the failing operand's canonical hex-float actual.
         expectProjection(SharedStdlibSemantics.mathSqrt(origin(), -4.0),
-            FailurePolicyId.SQRT_NEGATIVE, new LinkedHashMap<>(), origin(),
-            "sqrt of -4.0 fails SQRT_NEGATIVE");
+            FailurePolicyId.SQRT_NEGATIVE, 0, null, CanonicalJson.numberHex(-4.0),
+            new LinkedHashMap<>(), origin(), "sqrt of -4.0 fails SQRT_NEGATIVE");
         Outcome<Value> sqrtNan = SharedStdlibSemantics.mathSqrt(origin(), Double.NaN);
         check(sqrtNan instanceof Outcome.Success<Value> success
                 && success.value() instanceof Value.Number number

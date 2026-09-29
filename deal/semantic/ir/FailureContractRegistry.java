@@ -12,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * The closed failure-policy registry of {@code deal.semantic-ir/1}
@@ -52,10 +53,24 @@ import java.util.Objects;
  * failure-projection authority P1): each arm names its row and template
  * index, its named parameters with their sources, its expected-token
  * source or absence, its actual projection or absence, its origin
- * convention, and its render scope (top-level, or host-inner-only for the
- * two host string-carrier arms). Every retained row template is bound to
- * exactly one arm of its row, and each row's template list equals its
- * declared arms' templates in arm order (fail-closed).</p>
+ * convention, its render scope (top-level, or host-inner-only for the
+ * two host string-carrier arms), and its own DEAL-visible code where the
+ * multi-code bytes row pins one beside the row's (E8013 for the
+ * {@code BYTES_WRITE} value-range arm). Every retained row template is
+ * bound to exactly one arm of its row, and each row's template list
+ * equals its declared arms' templates in arm order (fail-closed).</p>
+ *
+ * <p>Field shapes are enforced at the render ({@link #render}): the arm's
+ * declared expected/actual fields must be present exactly when the arm
+ * declares them and must lie inside the arm's declared token shape (its
+ * pinned text, the closed kind tokens, a canonical class atom, a
+ * descriptor text, the closed typed-boundary/carrier-kind vocabularies,
+ * the fixed tokens, or the canonical floating-point text). A
+ * caller-supplied token the arm's declaration does not produce is a
+ * producer defect — the renderer never publishes a fabricated field, and
+ * {@link #renderAtTemplate} (the row-position entry point behind
+ * {@code BoundaryFailure.fromRow}) cannot instantiate a retained template
+ * behind its arm's back.</p>
  *
  * <p>Reserved policy names are not rows. The four reserved names
  * {@code EXTERNAL_PARAMETER}, {@code EXTERNAL_RETURN},
@@ -494,8 +509,9 @@ public final class FailureContractRegistry {
         declared.add(arm(FailureArmId.BYTES_WRITE_BOUNDS, FailurePolicyId.BYTES_WRITE, 0,
             FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
             FailureArm.OriginConvention.INDEX_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));
-        declared.add(arm(FailureArmId.BYTES_WRITE_RANGE, FailurePolicyId.BYTES_WRITE, 1,
-            FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
+        declared.add(armWithCode(FailureArmId.BYTES_WRITE_RANGE, FailurePolicyId.BYTES_WRITE, 1,
+            DiagnosticCode.E8013, FailureArm.ExpectedSource.NONE, null,
+            FailureArm.ActualProjection.NONE,
             FailureArm.OriginConvention.ASSIGNMENT_EXPRESSION,
             FailureArm.RenderScope.TOP_LEVEL));
 
@@ -630,6 +646,22 @@ public final class FailureContractRegistry {
                                   FailureArm.ActualProjection actual,
                                   FailureArm.OriginConvention origin,
                                   FailureArm.RenderScope scope, Object... parameterSources) {
+        return armWithCode(id, policy, templateIndex, null, expected, pinnedExpected, actual,
+            origin, scope, parameterSources);
+    }
+
+    /**
+     * Builds one declared arm that pins its own DEAL-visible code beside its
+     * row's ({@code BYTES_WRITE}'s value-range arm is the one multi-code arm).
+     */
+    private static FailureArm armWithCode(FailureArmId id, FailurePolicyId policy,
+                                          int templateIndex, DiagnosticCode code,
+                                          FailureArm.ExpectedSource expected,
+                                          String pinnedExpected,
+                                          FailureArm.ActualProjection actual,
+                                          FailureArm.OriginConvention origin,
+                                          FailureArm.RenderScope scope,
+                                          Object... parameterSources) {
         FailurePolicyRow row = row(policy);
         if (templateIndex >= row.templates().size()) {
             throw new IllegalStateException("arm " + id + " names template index "
@@ -649,7 +681,7 @@ public final class FailureContractRegistry {
             }
         }
         return new FailureArm(id, policy, templateIndex, template, parameters, sources,
-            expected, pinnedExpected, actual, origin, scope);
+            expected, pinnedExpected, actual, origin, scope, code);
     }
 
     /** The {@code {name}} placeholders of a template, in order of first appearance. */
@@ -743,35 +775,59 @@ public final class FailureContractRegistry {
         return ARMS;
     }
 
-    /** The DEAL-visible code text of one arm's row, or the empty text. */
+    /**
+     * The DEAL-visible code text of one arm: the arm's own pinned code when it
+     * carries one (the multi-code {@code BYTES_WRITE} row's value-range arm),
+     * else its row's code; the empty text when the row pins no code.
+     */
     public static String codeOf(FailureArm arm) {
         Objects.requireNonNull(arm, "arm must not be null");
-        DiagnosticCode code = row(arm.policy()).code();
+        DiagnosticCode code = codeOfArm(arm);
         return code == null ? "" : code.name();
+    }
+
+    /** The arm's resolved DEAL-visible code (its own, else its row's). */
+    private static DiagnosticCode codeOfArm(FailureArm arm) {
+        return arm.code() != null ? arm.code() : row(arm.policy()).code();
     }
 
     /**
      * The canonical serialization of the closed arm table, one arm per
      * line in arm declaration order:
-     * {@code id|code|template|expectedSource|actualProjection|scope|origin},
+     * {@code id|code|template|expectedSource|actualProjection|scope|origin|parameterSources},
      * with the arm's own pinned expected text appended for an arm whose
-     * expected source is {@link FailureArm.ExpectedSource#PINNED_TEXT}.
-     * The emitted Lua prelude serializes exactly this table — the
-     * emitter-side table is compared against this text, so no fork of the
-     * authority can exist on the emission side.
+     * expected source is {@link FailureArm.ExpectedSource#PINNED_TEXT}. The
+     * parameter sources are the arm's parameters in order, each as
+     * {@code name=SOURCE}. The emitted Lua prelude serializes exactly this
+     * table — the emitter-side table is compared against this text, so no
+     * fork of the authority can exist on the emission side.
      */
     public static List<String> canonicalArmSerialization() {
         List<String> lines = new ArrayList<>();
         for (FailureArm arm : ARMS.values()) {
             String line = arm.id() + "|" + codeOf(arm) + "|" + arm.template() + "|"
                 + arm.expectedSource() + "|" + arm.actualProjection() + "|"
-                + arm.scope() + "|" + arm.origin();
+                + arm.scope() + "|" + arm.origin() + "|" + parameterSourcesText(arm);
             if (arm.pinnedExpectedText() != null) {
                 line = line + "|" + arm.pinnedExpectedText();
             }
             lines.add(line);
         }
         return List.copyOf(lines);
+    }
+
+    /** One arm's parameter sources in parameter order ({@code name=SOURCE}, comma-joined). */
+    public static String parameterSourcesText(FailureArm arm) {
+        Objects.requireNonNull(arm, "arm must not be null");
+        StringBuilder text = new StringBuilder();
+        for (String parameter : arm.parameters()) {
+            if (text.length() > 0) {
+                text.append(',');
+            }
+            text.append(parameter).append('=')
+                .append(arm.parameterSources().get(parameter).name());
+        }
+        return text.toString();
     }
 
     /**
@@ -851,19 +907,344 @@ public final class FailureContractRegistry {
                 + "projection binding and no production consumer may render it");
         }
         checkParameters(arm, parameters);
+        checkArmFields(arm, parameters, expected, actual);
+        String message = instantiateArm(arm, parameters);
+        return new BoundaryFailure(arm.policy(), codeOfArm(arm), message, expected,
+            actual, metadataOf(arm, parameters), cause);
+    }
+
+    /**
+     * One arm render addressed by its retained template position — the
+     * legacy {@code (policy, templateIndex, fields)} entry point. The bound
+     * arm's own template, its own code, and its declared field contract are
+     * the render: a caller cannot instantiate a retained row template behind
+     * its arm's back, so the arm's declared expected/actual shapes, its
+     * parameters, and its render scope can never be bypassed in production.
+     * The supplied metadata map is the render's metadata verbatim (the walk's
+     * internal position keys included) — it is never re-derived here.
+     *
+     * <p>The one sibling-owned arm ({@code JSON_TO_WALK}) keeps its landed
+     * row-template rendering: this slice declares it so the row's retained
+     * template has a bound arm, and its projection binding and origin cell
+     * are bound by the {@code @jsonable} sibling (P7).</p>
+     *
+     * @param policy        the row's policy; must not be null
+     * @param templateIndex the retained template index; must be in range
+     * @param expected      the expected field, or {@code null} exactly when
+     *                      the arm declares none
+     * @param actual        the actual field, or {@code null} exactly when the
+     *                      arm declares none
+     * @param metadata      the render's metadata; may be empty, never null
+     * @param cause         the leaf failure where the row pins one, else null
+     * @return the rendered boundary failure
+     * @throws BoundaryExecutor.Defect if the render is not the arm's own
+     */
+    public static BoundaryFailure renderAtTemplate(FailurePolicyId policy, int templateIndex,
+                                                   String expected, String actual,
+                                                   Map<String, String> metadata,
+                                                   BoundaryFailure cause) {
+        Objects.requireNonNull(policy, "policy must not be null");
+        FailureArm arm = armForTemplate(policy, templateIndex);
+        Map<String, String> supplied = metadata == null
+            ? new LinkedHashMap<>() : metadata;
+        if (arm.isSiblingOwned()) {
+            // The landed sibling-owned walk rendering: the retained row
+            // template with the supplied fields and metadata, no projection
+            // claim (the sibling binds the arm's projection and origin, so
+            // this slice enforces no field shape for it).
+            String message = instantiate(row(policy).templates().get(templateIndex), expected,
+                actual, supplied);
+            return new BoundaryFailure(policy, codeOfArm(arm), message, expected, actual,
+                supplied, cause);
+        }
+        Map<String, String> parameters = new LinkedHashMap<>();
+        for (String parameter : arm.parameters()) {
+            // The parameter value comes from the declared source: an
+            // expected-token source is the expected field, a carried/actual
+            // projection is the actual field, and every other source is the
+            // caller's metadata. A source the row-position surface cannot
+            // supply (the kind text) stays absent and fails the parameter
+            // check closed, so the entry point never guesses a text.
+            FailureArm.ParameterSource source = arm.parameterSources().get(parameter);
+            String value = switch (source) {
+                case CELL_DESCRIPTOR, ELEMENT_DESCRIPTOR, DECLARED_SIGNATURE,
+                        CLASS_ATOM -> expected;
+                case CARRIED_SIGNATURE, CARRIED_CLASS_ATOM, TYPED_BOUNDARY_ACTUAL,
+                        CARRIER_KIND_ACTUAL, SIBLING_OWNED_ACTUAL -> actual;
+                case KIND_TEXT -> null;
+                default -> supplied.get(parameter);
+            };
+            if (value != null) {
+                parameters.put(parameter, value);
+            }
+        }
+        checkParameters(arm, parameters);
+        checkArmFields(arm, parameters, expected, actual);
+        return new BoundaryFailure(policy, codeOfArm(arm),
+            instantiateArm(arm, parameters), expected, actual, supplied, cause);
+    }
+
+    // =========================================================================
+    // The declared field shapes (P2): a token outside its arm's closed shape
+    // is a producer defect, never a fabricated DEAL-visible field
+    // =========================================================================
+
+    /** The closed typed-boundary kind tokens (P2 item 1). */
+    private static final Set<String> KIND_TOKENS = Set.of("null", "boolean", "int",
+        "number", "string", "table", "bytes", "array", "function", "class");
+
+    /** The closed typed-boundary actual tokens (P2 item 1). */
+    private static final Set<String> TYPED_BOUNDARY_TOKENS = Set.of("nil", "null",
+        "boolean", "int", "number", "string", "invalid-unicode", "table", "array",
+        "bytes", "function", "async-operation", "nothing", "NaN", "infinity");
+
+    /**
+     * The closed completion-variant tokens (P2 item 4): the typed-boundary
+     * vocabulary with every numeric carrier projecting the single
+     * {@code number} kind, so no bare {@code int} token exists.
+     */
+    private static final Set<String> COMPLETION_TOKENS = Set.of("nil", "null", "boolean",
+        "number", "string", "invalid-unicode", "table", "array", "bytes",
+        "function", "async-operation", "nothing", "NaN", "infinity");
+
+    /** The closed carrier-kind tokens (P2 item 2). */
+    private static final Set<String> CARRIER_KIND_TOKENS = Set.of("nil", "table",
+        "boolean", "number", "string", "bytes", "function");
+
+    /**
+     * Enforces the arm's declared expected/actual field contract: presence
+     * exactly when the arm declares the field, and the closed shape of the
+     * arm's declared token source or projection. A caller-supplied token the
+     * arm's declaration does not produce is a producer defect — the renderer
+     * never publishes a fabricated field.
+     */
+    private static void checkArmFields(FailureArm arm, Map<String, String> parameters,
+                                       String expected, String actual) {
         if (arm.declaresExpected() ? expected == null : expected != null) {
-            throw new BoundaryExecutor.Defect("arm " + id + " "
+            throw new BoundaryExecutor.Defect("arm " + arm.id() + " "
                 + (arm.declaresExpected() ? "declares" : "does not declare")
                 + " an expected field; got " + expected);
         }
         if (arm.declaresActual() ? actual == null : actual != null) {
-            throw new BoundaryExecutor.Defect("arm " + id + " "
+            throw new BoundaryExecutor.Defect("arm " + arm.id() + " "
                 + (arm.declaresActual() ? "declares" : "does not declare")
                 + " an actual field; got " + actual);
         }
-        String message = instantiateArm(arm, parameters);
-        return new BoundaryFailure(arm.policy(), row(arm.policy()).code(), message, expected,
-            actual, metadataOf(arm, parameters), cause);
+        if (expected != null) {
+            checkExpectedShape(arm, parameters, expected);
+        }
+        if (actual != null) {
+            checkActualShape(arm, actual);
+        }
+    }
+
+    /** The expected field's declared shape. */
+    private static void checkExpectedShape(FailureArm arm, Map<String, String> parameters,
+                                           String expected) {
+        switch (arm.expectedSource()) {
+            case NONE -> { /* the presence check already rejected a value */ }
+            case PINNED_TEXT -> {
+                if (!arm.pinnedExpectedText().equals(expected)) {
+                    throw shapeDefect(arm, "expected", expected, "its pinned text \""
+                        + arm.pinnedExpectedText() + "\"");
+                }
+            }
+            case KIND_TOKEN -> {
+                String kindText = parameterWithSource(arm, parameters,
+                    FailureArm.ParameterSource.KIND_TEXT);
+                if (kindText == null) {
+                    if (!KIND_TOKENS.contains(expected)) {
+                        throw shapeDefect(arm, "expected", expected,
+                            "a closed typed-boundary kind token (one of " + KIND_TOKENS + ")");
+                    }
+                } else if (!kindTokenOfText(kindText).equals(expected)) {
+                    throw shapeDefect(arm, "expected", expected,
+                        "the kind token of its kind text \"" + kindText + "\"");
+                }
+            }
+            case CLASS_ATOM -> requireClassAtom(arm, "expected", expected);
+            case CELL_DESCRIPTOR, ELEMENT_DESCRIPTOR ->
+                requireDescriptorText(arm, "expected", expected, false);
+            case SIGNATURE -> requireDescriptorText(arm, "expected", expected, true);
+            case ASYNC_OPERATION_TOKEN -> {
+                if (!"async operation".equals(expected)) {
+                    throw shapeDefect(arm, "expected", expected, "\"async operation\"");
+                }
+            }
+        }
+    }
+
+    /** The actual field's declared projection shape. */
+    private static void checkActualShape(FailureArm arm, String actual) {
+        switch (arm.actualProjection()) {
+            case NONE -> { /* the presence check already rejected a value */ }
+            case TYPED_BOUNDARY -> requireTypedBoundaryToken(arm, actual, TYPED_BOUNDARY_TOKENS);
+            case COMPLETION -> requireTypedBoundaryToken(arm, actual, COMPLETION_TOKENS);
+            case CARRIER_KIND -> {
+                if (!CARRIER_KIND_TOKENS.contains(actual)) {
+                    throw shapeDefect(arm, "actual", actual,
+                        "a closed carrier-kind token (one of " + CARRIER_KIND_TOKENS + ")");
+                }
+            }
+            case NOTHING_TOKEN -> {
+                if (!"nothing".equals(actual)) {
+                    throw shapeDefect(arm, "actual", actual, "\"nothing\"");
+                }
+            }
+            case CARRIED_CLASS_ATOM -> requireClassAtom(arm, "actual", actual);
+            case CARRIED_SIGNATURE -> requireDescriptorText(arm, "actual", actual, true);
+            case CANONICAL_VALUE_TEXT -> {
+                try {
+                    Double.parseDouble(actual);
+                } catch (NumberFormatException notANumber) {
+                    throw shapeDefect(arm, "actual", actual,
+                        "the canonical floating-point text of the failing value");
+                }
+            }
+            case SIBLING_OWNED -> throw new BoundaryExecutor.Defect("arm " + arm.id()
+                + " has a SIBLING_OWNED projection binding and no production consumer "
+                + "may render it");
+        }
+    }
+
+    /** One (kind text, kind token) pair: a class kind's text is {@code class instance}. */
+    private static String kindTokenOfText(String kindText) {
+        return "class instance".equals(kindText) ? "class" : kindText;
+    }
+
+    /** The closed typed-boundary token check (the carried class spelling included). */
+    private static void requireTypedBoundaryToken(FailureArm arm, String token,
+                                                  Set<String> closed) {
+        if (closed.contains(token) || isClassSpelling(token)) {
+            return;
+        }
+        throw shapeDefect(arm, "actual", token, "a closed typed-boundary token");
+    }
+
+    /**
+     * A class spelling: the canonical atom the typed-boundary projection
+     * carries, or the {@code class:} IR/trace spelling the landed Error
+     * carrier keeps (its identity is not corpus-pinned in this slice).
+     */
+    private static boolean isClassSpelling(String token) {
+        if (token.startsWith("class:")) {
+            return token.length() > "class:".length();
+        }
+        return isClassAtomText(token);
+    }
+
+    /** The declared or carried canonical class atom ({@code @modulePath/Name}). */
+    private static void requireClassAtom(FailureArm arm, String field, String value) {
+        if (!isClassAtomText(value)) {
+            throw shapeDefect(arm, field, value, "a canonical class atom (\"@modulePath/Class\")");
+        }
+    }
+
+    private static boolean isClassAtomText(String value) {
+        if (!value.startsWith("@")) {
+            return false;
+        }
+        try {
+            return RuntimeDescriptor.parseCanonicalText(value)
+                instanceof RuntimeDescriptor.Class;
+        } catch (RuntimeException decodeFailure) {
+            return false;
+        }
+    }
+
+    /**
+     * A descriptor text: the canonical descriptor spelling (the one decoder
+     * {@link RuntimeDescriptor#parseCanonicalText(String)}) with the
+     * emitters' internal dialect spellings ({@code array(…)}/…
+     * {@code nullable(…)}/{@code function(p;r)}) accepted where a landed
+     * site still carries them. A signature may additionally be the empty
+     * carried-signature-less spelling.
+     */
+    private static void requireDescriptorText(FailureArm arm, String field, String value,
+                                              boolean signatureMayBeEmpty) {
+        if (value.isEmpty()) {
+            if (signatureMayBeEmpty) {
+                return;
+            }
+            throw shapeDefect(arm, field, value, "a canonical descriptor text");
+        }
+        try {
+            RuntimeDescriptor.parseCanonicalText(value);
+            return;
+        } catch (RuntimeException decodeFailure) {
+            // The emitters' internal descriptor dialect (never a DEAL-visible
+            // text of its own): accepted so the arm's declared source still
+            // holds for the landed sites that pass it.
+        }
+        if (!isDialectDescriptorText(value)) {
+            throw shapeDefect(arm, field, value, "a canonical descriptor text");
+        }
+    }
+
+    /** The emitters' internal descriptor dialect ({@code array(…)} etc.). */
+    private static boolean isDialectDescriptorText(String text) {
+        if (KIND_TOKENS.contains(text) && !"class".equals(text)) {
+            return true;
+        }
+        if (text.startsWith("?")) {
+            return isDialectDescriptorText(text.substring(1));
+        }
+        if (text.startsWith("[") && text.endsWith("]") && text.length() > 2) {
+            return isDialectDescriptorText(text.substring(1, text.length() - 1));
+        }
+        if (text.startsWith("array(") && text.endsWith(")") && text.length() > 7) {
+            return isDialectDescriptorText(text.substring(6, text.length() - 1));
+        }
+        if (text.startsWith("nullable(") && text.endsWith(")") && text.length() > 10) {
+            return isDialectDescriptorText(text.substring(9, text.length() - 1));
+        }
+        if (text.startsWith("function(") && text.endsWith(")") && text.length() > 10) {
+            String inner = text.substring(9, text.length() - 1);
+            int separator = inner.lastIndexOf(';');
+            return separator > 0 && separator + 1 < inner.length()
+                && isDialectDescriptorText(inner.substring(separator + 1));
+        }
+        return false;
+    }
+
+    /** The parameter whose declared source is {@code source}, or {@code null}. */
+    private static String parameterWithSource(FailureArm arm, Map<String, String> parameters,
+                                              FailureArm.ParameterSource source) {
+        for (Map.Entry<String, FailureArm.ParameterSource> entry
+                : arm.parameterSources().entrySet()) {
+            if (entry.getValue() == source) {
+                return parameters.get(entry.getKey());
+            }
+        }
+        return null;
+    }
+
+    private static BoundaryExecutor.Defect shapeDefect(FailureArm arm, String field,
+                                                       String value, String declared) {
+        return new BoundaryExecutor.Defect("arm " + arm.id() + " declares its " + field
+            + " as " + declared + "; the render supplied \"" + value + "\" (a token "
+            + "outside the arm's declared shape is a producer defect)");
+    }
+
+    /** Instantiates one row template from the legacy field surface (walk render). */
+    private static String instantiate(String template, String expected, String actual,
+                                      Map<String, String> metadata) {
+        String message = template;
+        if (expected != null) {
+            message = message.replace("{expected}", expected);
+        }
+        if (actual != null) {
+            message = message.replace("{actual}", actual);
+        }
+        for (Map.Entry<String, String> entry : metadata.entrySet()) {
+            message = message.replace("{" + entry.getKey() + "}", entry.getValue());
+        }
+        if (message.indexOf('{') >= 0 || message.indexOf('}') >= 0) {
+            throw new BoundaryExecutor.Defect(
+                "an uninstantiated placeholder remains in the pinned template: \""
+                    + message + "\"");
+        }
+        return message;
     }
 
     /**

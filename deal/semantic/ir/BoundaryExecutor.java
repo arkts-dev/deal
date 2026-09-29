@@ -1,7 +1,5 @@
 package deal.semantic.ir;
 
-import deal.diagnostics.DiagnosticCode;
-
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -70,10 +68,12 @@ import java.util.Set;
  * are the enclosing commit's (this executor commits nothing). {@code JSON_FROM_NULL} swallows every failure into
  * language null (never a DEAL failure); {@code JSON_TO_ERROR} projects the
  * first unsupported/wrong-identity/missing/nonfinite value as E8001
- * {@code value at {fieldPath} is not JSON serializable: {actual}}.
- * Messages are instantiated from the registry rows
- * ({@code FailureContractRegistry.row(policy)}) — the executor never
- * selects message text.</p>
+ * {@code value at {fieldPath} is not JSON serializable: {actual}} (the
+ * declared sibling-owned walk arm's landed rendering).
+ * Every other failure renders the declared
+ * {@link FailureContractRegistry} arm bound to its template — the executor
+ * never selects message text, never instantiates a retained row template
+ * behind its arm's back, and never composes an expected/actual token.</p>
  *
  * <p><b>Missing.</b> A {@code missing} view against a nullable descriptor
  * maps to language null and passes — the {@code OPTIONAL_FIELD_READ} and
@@ -420,10 +420,9 @@ public final class BoundaryExecutor {
         Integer index = requireContextField(context.index(), "index",
             "ARRAY_READ_INDEX_THEN_DESCRIPTOR");
         if (index < 0) {
-            return new BoundaryOutcome.Fail(BoundaryFailure.fromRow(
-                FailureContractRegistry.row(
-                    FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR),
-                0, null, null, new LinkedHashMap<>(), null));
+            return new BoundaryOutcome.Fail(FailureContractRegistry.render(
+                FailureArmId.ARRAY_READ_NEGATIVE_INDEX, new LinkedHashMap<>(), null, null,
+                null));
         }
         // The read's value/missing decision is the contextual boundary's,
         // not this cell's; the executor commits nothing.
@@ -443,10 +442,8 @@ public final class BoundaryExecutor {
                 + "length; got " + length);
         }
         if (index < 0 || index > length) {
-            return new BoundaryOutcome.Fail(BoundaryFailure.fromRow(
-                FailureContractRegistry.row(
-                    FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT),
-                0, null, null, new LinkedHashMap<>(), null));
+            return new BoundaryOutcome.Fail(FailureContractRegistry.render(
+                FailureArmId.ARRAY_WRITE_BOUNDS, new LinkedHashMap<>(), null, null, null));
         }
         // The mutation is the enclosing commit op's, after this boundary;
         // the executor commits nothing.
@@ -468,9 +465,8 @@ public final class BoundaryExecutor {
             throw new Defect("BYTES_READ names a non-negative bytes length; got " + length);
         }
         if (index < 0 || index >= length) {
-            return new BoundaryOutcome.Fail(BoundaryFailure.fromRow(
-                FailureContractRegistry.row(FailurePolicyId.BYTES_READ),
-                0, null, null, new LinkedHashMap<>(), null));
+            return new BoundaryOutcome.Fail(FailureContractRegistry.render(
+                FailureArmId.BYTES_READ, new LinkedHashMap<>(), null, null, null));
         }
         return descriptorKindOutcome(tdProjection(), core(descriptor, view));
     }
@@ -491,9 +487,8 @@ public final class BoundaryExecutor {
             throw new Defect("BYTES_WRITE names a non-negative bytes length; got " + length);
         }
         if (index < 0 || index >= length) {
-            return new BoundaryOutcome.Fail(BoundaryFailure.fromRow(
-                FailureContractRegistry.row(FailurePolicyId.BYTES_WRITE),
-                0, null, null, new LinkedHashMap<>(), null));
+            return new BoundaryOutcome.Fail(FailureContractRegistry.render(
+                FailureArmId.BYTES_WRITE_BOUNDS, new LinkedHashMap<>(), null, null, null));
         }
         return descriptorKindOutcome(tdProjection(), core(descriptor, view));
     }
@@ -505,9 +500,8 @@ public final class BoundaryExecutor {
      * {@code INDEX_WRITE} child at the assignment-expression origin.
      */
     public static BoundaryFailure bytesWriteRangeFailure() {
-        return BoundaryFailure.fromRowWithCode(
-            FailureContractRegistry.row(FailurePolicyId.BYTES_WRITE), 1,
-            DiagnosticCode.E8013, null, null, new LinkedHashMap<>(), null);
+        return FailureContractRegistry.render(FailureArmId.BYTES_WRITE_RANGE,
+            new LinkedHashMap<>(), null, null, null);
     }
 
     /** ARRAY_DELETE_BOUNDS: index < 0 or > length; otherwise pass. */
@@ -522,9 +516,8 @@ public final class BoundaryExecutor {
                 + length);
         }
         if (index < 0 || index > length) {
-            return new BoundaryOutcome.Fail(BoundaryFailure.fromRow(
-                FailureContractRegistry.row(FailurePolicyId.ARRAY_DELETE_BOUNDS),
-                0, null, null, new LinkedHashMap<>(), null));
+            return new BoundaryOutcome.Fail(FailureContractRegistry.render(
+                FailureArmId.ARRAY_DELETE_BOUNDS, new LinkedHashMap<>(), null, null, null));
         }
         // The commit's nil write runs after the boundary.
         return new BoundaryOutcome.Pass(view);
@@ -540,7 +533,13 @@ public final class BoundaryExecutor {
         };
     }
 
-    /** JSON_TO_ERROR: the first declaration-order unsupported value projects E8001. */
+    /**
+     * JSON_TO_ERROR: the first declaration-order unsupported value projects
+     * E8001. The {@code JSON_TO_WALK} arm is declared with its projection
+     * binding sibling-owned (P7): its landed row-template rendering is kept
+     * here and the {@code @jsonable} sibling binds the projection and the
+     * origin cell in its own slice.
+     */
     private static BoundaryOutcome checkJsonToError(RuntimeDescriptor descriptor,
                                                     BoundaryValueView view,
                                                     BoundaryContext context) {
@@ -749,7 +748,7 @@ public final class BoundaryExecutor {
     }
 
     // =========================================================================
-    // Projection: core failures instantiate the registry rows' pinned templates
+    // Projection: core failures render the bound arms' own templates
     // =========================================================================
 
     /** The arm selection of one descriptor-kind projection set. */

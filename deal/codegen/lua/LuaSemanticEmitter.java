@@ -8509,7 +8509,7 @@ end
 local function __bytesNew(length, evKind, opKey, digest, parent, origin, src, line, col)
   local n = __num(length)
   if n < 0 then
-    local e = __failExpr("E8012", "bytes length must be non-negative", origin, nil, nil)
+    local e = __arm("BYTES_ALLOCATE", nil, origin, nil, nil)
     __ev(opKey, "FAILURE", evKind, digest, parent, {}, nil, __errtext(e))
     error(e, 0)
   end
@@ -8551,7 +8551,7 @@ local function __bytesRead(opKey, digest, parent, bKey, bDigest, bParent, contai
   local atom = (elem == __MISSING) and "missing" or ("int:"..tostring(elem))
   __ev(bKey, "START", "BOUNDARY", bDigest, bParent, {atom}, nil, nil)
   if elem == __MISSING then
-    local e = __failExpr("E8012", "bytes index out of bounds", origin, nil, nil)
+    local e = __arm("BYTES_READ", nil, origin, nil, nil)
     __ev(bKey, "FAILURE", "BOUNDARY", bDigest, bParent, {}, nil, __errtext(e))
     __ev(opKey, "FAILURE", "INDEX_READ", digest, parent, {}, nil, __errtext(e))
     error(e, 0)
@@ -8567,7 +8567,7 @@ local function __bytesBounds(bKey, bDigest, bParent, input, slotName, desc, kind
   local index = slotName.i
   __ev(bKey, "START", "BOUNDARY", bDigest, bParent, {__atom(kind, input)}, nil, nil)
   if index < 0 or index >= slotName.n then
-    local e = __failExpr("E8012", "bytes index out of bounds", origin, nil, nil)
+    local e = __arm("BYTES_WRITE_BOUNDS", nil, origin, nil, nil)
     __ev(bKey, "FAILURE", "BOUNDARY", bDigest, bParent, {}, nil, __errtext(e))
     error(e, 0)
   end
@@ -8612,7 +8612,9 @@ end
                 .append(Session.luaString(arm.expectedSource().name())).append(", a=")
                 .append(Session.luaString(arm.actualProjection().name())).append(", s=")
                 .append(Session.luaString(arm.scope().name())).append(", o=")
-                .append(Session.luaString(arm.origin().name()));
+                .append(Session.luaString(arm.origin().name())).append(", k=")
+                .append(Session.luaString(
+                    FailureContractRegistry.parameterSourcesText(arm)));
             if (arm.pinnedExpectedText() != null) {
                 // The arm's own pinned expected text (its expected field's
                 // single source): the prelude renders it, never a literal
@@ -9050,6 +9052,180 @@ local function __renderTemplate(id, values)
   end
   return msg
 end
+-- The closed field shapes of the arm declaration (P2): a caller-supplied
+-- expected/actual token outside its arm's declared shape is a producer
+-- defect — the renderer never publishes a fabricated field.
+local __kindTokens = {["null"] = true, ["boolean"] = true, ["int"] = true,
+  ["number"] = true, ["string"] = true, ["table"] = true, ["bytes"] = true,
+  ["array"] = true, ["function"] = true, ["class"] = true}
+local __typedTokens = {["nil"] = true, ["null"] = true, ["boolean"] = true,
+  ["int"] = true, ["number"] = true, ["string"] = true,
+  ["invalid-unicode"] = true, ["table"] = true, ["array"] = true,
+  ["bytes"] = true, ["function"] = true, ["async-operation"] = true,
+  ["nothing"] = true, ["NaN"] = true, ["infinity"] = true}
+local __completionTokens = {["nil"] = true, ["null"] = true, ["boolean"] = true,
+  ["number"] = true, ["string"] = true, ["invalid-unicode"] = true,
+  ["table"] = true, ["array"] = true, ["bytes"] = true, ["function"] = true,
+  ["async-operation"] = true, ["nothing"] = true, ["NaN"] = true,
+  ["infinity"] = true}
+local __carrierTokens = {["nil"] = true, ["table"] = true, ["boolean"] = true,
+  ["number"] = true, ["string"] = true, ["bytes"] = true, ["function"] = true}
+local __descriptorPrimitives = {["null"] = true, ["boolean"] = true, ["int"] = true,
+  ["number"] = true, ["string"] = true, ["table"] = true, ["bytes"] = true}
+local function __isClassAtom(s)
+  if type(s) ~= "string" or string.sub(s, 1, 1) ~= "@" then return false end
+  if string.find(s, "/", 1, true) == nil then return false end
+  return string.find(s, "[%s{}]") == nil
+end
+local function __isClassSpelling(s)
+  if type(s) ~= "string" then return false end
+  if string.sub(s, 1, 6) == "class:" then return #s > 6 end
+  return __isClassAtom(s)
+end
+-- A descriptor text: the canonical grammar and the prelude's own internal
+-- dialect (array(inner)/nullable(inner)/function(params;result)).
+local function __isDescriptorText(s)
+  if type(s) ~= "string" or s == "" then return false end
+  if __descriptorPrimitives[s] then return true end
+  local first = string.sub(s, 1, 1)
+  if first == "@" then return __isClassAtom(s) end
+  if first == "?" then return __isDescriptorText(string.sub(s, 2)) end
+  if first == "[" then
+    return string.sub(s, -1) == "]" and #s > 2
+      and __isDescriptorText(string.sub(s, 2, -2))
+  end
+  if first == "(" then
+    local arrow = string.find(s, "%)%-%>", 1)
+    return arrow ~= nil and __isDescriptorText(string.sub(s, arrow + 3))
+  end
+  if string.sub(s, 1, 6) == "async(" then
+    local arrow = string.find(s, "%)%-%>", 1)
+    return arrow ~= nil and __isDescriptorText(string.sub(s, arrow + 3))
+  end
+  if string.sub(s, 1, 7) == "array(" and string.sub(s, -1) == ")" then
+    return __isDescriptorText(string.sub(s, 7, -2))
+  end
+  if string.sub(s, 1, 10) == "nullable(" and string.sub(s, -1) == ")" then
+    return __isDescriptorText(string.sub(s, 11, -2))
+  end
+  if string.sub(s, 1, 10) == "function(" and string.sub(s, -1) == ")" then
+    local inner = string.sub(s, 10, -2)
+    local semi = 0
+    for i = #inner, 1, -1 do
+      if string.sub(inner, i, i) == ";" then semi = i break end
+    end
+    return semi >= 1 and semi < #inner
+      and __isDescriptorText(string.sub(inner, semi + 1))
+  end
+  return false
+end
+-- The canonical floating-point text of the failing value (the sqrt arm's
+-- actual): Java's hex-float spelling or the special values.
+local function __isNumberText(s)
+  if type(s) ~= "string" then return false end
+  if s == "NaN" or s == "Infinity" or s == "-Infinity" then return true end
+  if string.find(s, "^%-?0x[%x%.]+p[%+%-]?%d+$") ~= nil then return true end
+  return tonumber(s) ~= nil
+end
+local function __fieldDefect(id, field, declared, value)
+  error("failure arm '"..id.."' declares its "..field.." as "..declared
+    .."; the render supplied '"..tostring(value).."' (producer defect)", 0)
+end
+-- The value of the arm's parameter whose declared source is `source`, or nil.
+local function __parameterWithSource(arm, values, source)
+  if values == nil then return nil end
+  for entry in string.gmatch(arm.k or "", "[^,]+") do
+    local eq = string.find(entry, "=", 1, true)
+    if eq ~= nil and string.sub(entry, eq + 1) == source then
+      return values[string.sub(entry, 1, eq - 1)]
+    end
+  end
+  return nil
+end
+-- The expected field's declared shape.
+local function __checkExpectedField(id, arm, values, expected)
+  if arm.e == "NONE" then
+    if expected ~= nil then
+      error("failure arm '"..id.."' does not declare an expected field "
+        .."(producer defect)", 0)
+    end
+    return
+  end
+  if expected == nil then
+    error("failure arm '"..id.."' declares an expected field but the render "
+      .."supplied none (producer defect)", 0)
+  end
+  if arm.e == "PINNED_TEXT" then
+    if expected ~= arm.p then
+      __fieldDefect(id, "expected", "the pinned text '"..tostring(arm.p).."'", expected)
+    end
+  elseif arm.e == "KIND_TOKEN" then
+    local kindText = __parameterWithSource(arm, values, "KIND_TEXT")
+    if kindText ~= nil then
+      local token = kindText == "class instance" and "class" or kindText
+      if expected ~= token then
+        __fieldDefect(id, "expected",
+          "the kind token of its kind text '"..tostring(kindText).."'", expected)
+      end
+    elseif not __kindTokens[expected] then
+      __fieldDefect(id, "expected", "a closed typed-boundary kind token", expected)
+    end
+  elseif arm.e == "CLASS_ATOM" then
+    if not __isClassAtom(expected) then
+      __fieldDefect(id, "expected", "a canonical class atom", expected)
+    end
+  elseif arm.e == "ASYNC_OPERATION_TOKEN" then
+    if expected ~= "async operation" then
+      __fieldDefect(id, "expected", "the async-operation token", expected)
+    end
+  elseif arm.e == "SIGNATURE" then
+    if expected ~= "" and not __isDescriptorText(expected) then
+      __fieldDefect(id, "expected", "a canonical descriptor text", expected)
+    end
+  elseif not __isDescriptorText(expected) then
+    __fieldDefect(id, "expected", "a canonical descriptor text", expected)
+  end
+end
+-- The actual field's declared projection shape.
+local function __checkActualField(id, arm, actual)
+  if arm.a == "NONE" then
+    if actual ~= nil then
+      error("failure arm '"..id.."' does not declare an actual field "
+        .."(producer defect)", 0)
+    end
+    return
+  end
+  if actual == nil then
+    error("failure arm '"..id.."' declares an actual field but the render "
+      .."supplied none (producer defect)", 0)
+  end
+  if arm.a == "TYPED_BOUNDARY" or arm.a == "COMPLETION" then
+    local closed = arm.a == "COMPLETION" and __completionTokens or __typedTokens
+    if not closed[actual] and not __isClassSpelling(actual) then
+      __fieldDefect(id, "actual", "a closed typed-boundary token", actual)
+    end
+  elseif arm.a == "CARRIER_KIND" then
+    if not __carrierTokens[actual] then
+      __fieldDefect(id, "actual", "a closed carrier-kind token", actual)
+    end
+  elseif arm.a == "NOTHING_TOKEN" then
+    if actual ~= "nothing" then
+      __fieldDefect(id, "actual", "the nothing token", actual)
+    end
+  elseif arm.a == "CARRIED_CLASS_ATOM" then
+    if not __isClassAtom(actual) then
+      __fieldDefect(id, "actual", "a canonical class atom", actual)
+    end
+  elseif arm.a == "CARRIED_SIGNATURE" then
+    if actual ~= "" and not __isDescriptorText(actual) then
+      __fieldDefect(id, "actual", "a canonical descriptor text", actual)
+    end
+  elseif arm.a == "CANONICAL_VALUE_TEXT" then
+    if not __isNumberText(actual) then
+      __fieldDefect(id, "actual", "the canonical floating-point text", actual)
+    end
+  end
+end
 local function __arm(id, values, origin, expected, actual)
   local arm = __arms[id]
   if arm == nil then
@@ -9063,23 +9239,8 @@ local function __arm(id, values, origin, expected, actual)
     error("failure arm '"..id.."' has a SIBLING_OWNED projection binding "
       .."(producer defect)", 0)
   end
-  -- An arm whose expected source is its own pinned text renders that
-  -- text: a caller-supplied different text is a producer defect and the
-  -- arm's own text always wins.
-  if arm.e == "PINNED_TEXT" then
-    if expected ~= nil and expected ~= arm.p then
-      error("failure arm '"..id.."' declares the pinned expected text "
-        ..tostring(arm.p).." (producer defect)", 0)
-    end
-    expected = arm.p
-  elseif (arm.e == "NONE") ~= (expected == nil) then
-    error("failure arm '"..id.."' does not match the rendered expected field "
-      .."(producer defect)", 0)
-  end
-  if (arm.a == "NONE") ~= (actual == nil) then
-    error("failure arm '"..id.."' does not match the rendered actual field "
-      .."(producer defect)", 0)
-  end
+  __checkExpectedField(id, arm, values, expected)
+  __checkActualField(id, arm, actual)
   return __failExpr(arm.c, __renderTemplate(id, values), origin, expected, actual)
 end
 -- An inner-only arm's message text (the host arms' inner reasons).

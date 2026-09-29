@@ -89,6 +89,8 @@ public class FailureArmAuthorityTest {
         testStdJsonArmDrive();
         testInt32AndSqrtArmFamily();
         testIntLadderWrongKindCell();
+        testBoundsAndBytesArms();
+        testDeclaredFieldShapeNegatives();
         testNegativeSingleSourceControl();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -214,7 +216,7 @@ public class FailureArmAuthorityTest {
         foreign.set(foreign.indexOf(kind), new FailureArm(kind.id(), kind.policy(),
             kind.templateIndex(), "expected {kind}, got {actual}", kind.parameters(),
             kind.parameterSources(), kind.expectedSource(), null, kind.actualProjection(),
-            kind.origin(), kind.scope()));
+            kind.origin(), kind.scope(), kind.code()));
         expectIllegalState(() -> FailureContractRegistry.checkArmConsistency(rows, foreign),
             "a foreign template fails closed");
 
@@ -375,27 +377,30 @@ public class FailureArmAuthorityTest {
         for (FailureArm arm : FailureContractRegistry.arms().values()) {
             String line = arm.id() + "|" + FailureContractRegistry.codeOf(arm) + "|"
                 + arm.template() + "|" + arm.expectedSource() + "|"
-                + arm.actualProjection() + "|" + arm.scope() + "|" + arm.origin();
+                + arm.actualProjection() + "|" + arm.scope() + "|" + arm.origin() + "|"
+                + FailureContractRegistry.parameterSourcesText(arm);
             String pinned = arm.pinnedExpectedText();
             if (pinned != null) {
                 line = line + "|" + pinned;
             }
             check(canonical.contains(line),
                 "the canonical serialization carries arm " + arm.id()
-                    + " with its scope, projection binding, and pinned expected text");
+                    + " with its scope, projection binding, parameter sources, and "
+                    + "pinned expected text");
             String expectedEntry = "[\"" + arm.id() + "\"] = {c="
                 + quote(FailureContractRegistry.codeOf(arm)) + ", t="
                 + quote(arm.template()) + ", e=" + quote(arm.expectedSource().name())
                 + ", a=" + quote(arm.actualProjection().name()) + ", s="
-                + quote(arm.scope().name()) + ", o=" + quote(arm.origin().name());
+                + quote(arm.scope().name()) + ", o=" + quote(arm.origin().name())
+                + ", k=" + quote(FailureContractRegistry.parameterSourcesText(arm));
             if (pinned != null) {
                 expectedEntry = expectedEntry + ", p=" + quote(pinned);
             }
             expectedEntry = expectedEntry + "}";
             check(lua.contains(expectedEntry),
                 "the emitted prelude serializes arm " + arm.id()
-                    + " (scope, projection binding, and pinned expected text included); "
-                    + "expected " + expectedEntry);
+                    + " (scope, projection binding, parameter sources, and pinned "
+                    + "expected text included); expected " + expectedEntry);
         }
         check(lua.contains("local function __arm(id, values, origin, expected, actual)"),
             "the prelude renders every failure site through the one arm renderer");
@@ -1177,6 +1182,198 @@ public class FailureArmAuthorityTest {
             deal.semantic.ir.ContractSnapshotCanonicalizer.digest(contract));
         return new deal.semantic.ir.SemanticOp(id, kind, origin, result, resultType,
             operands, operandTypes, payload, policy, contract);
+    }
+
+    // =========================================================================
+    // 11c. The reachable bounds/bytes arms render through the arm table
+    // =========================================================================
+
+    /**
+     * Every reachable array/bytes bounds arm and the multi-code
+     * {@code BYTES_WRITE} value-range arm renders through the closed arm
+     * table — the oracle's shared executor, the row-position entry point
+     * ({@code fromRow}, which resolves the bound arm and can never
+     * instantiate a retained template behind its arm's back), and the JVM
+     * runtime's bytes sites. The emitted Lua prelude's bytes gates render the
+     * same arms and hold no failure text of their own.
+     */
+    static void testBoundsAndBytesArms() throws Exception {
+        System.out.println("-- the array/bytes bounds arms and the multi-code range arm --");
+        String span = "bounds-arms.deal:1:1";
+        checkEq("E8012", FailureContractRegistry.codeOf(
+                FailureContractRegistry.arm(FailureArmId.BYTES_WRITE_BOUNDS)),
+            "the bytes bounds arm keeps its row's E8012");
+        checkEq("E8013", FailureContractRegistry.codeOf(
+                FailureContractRegistry.arm(FailureArmId.BYTES_WRITE_RANGE)),
+            "the multi-code row's value-range arm pins its own E8013");
+        // The oracle's shared executor renders each reachable bounds arm.
+        checkEq(null, firstDifferingField(
+            tupleOf(FailureContractRegistry.render(FailureArmId.ARRAY_READ_NEGATIVE_INDEX,
+                Map.of(), null, null, null), span),
+            tupleOf(oracleFailure(BoundaryExecutor.check(
+                FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR,
+                RuntimeDescriptor.Int.INSTANCE, BoundaryValueView.ofInt(0),
+                BoundaryContext.arrayIndex(-1)), "the negative-index read"), span)),
+            "the oracle renders ARRAY_READ_NEGATIVE_INDEX");
+        checkEq(null, firstDifferingField(
+            tupleOf(FailureContractRegistry.render(FailureArmId.ARRAY_WRITE_BOUNDS,
+                Map.of(), null, null, null), span),
+            tupleOf(oracleFailure(BoundaryExecutor.check(
+                FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT,
+                RuntimeDescriptor.Int.INSTANCE, BoundaryValueView.ofInt(0),
+                BoundaryContext.writeBounds(2, 1)), "the write bounds"), span)),
+            "the oracle renders ARRAY_WRITE_BOUNDS");
+        checkEq(null, firstDifferingField(
+            tupleOf(FailureContractRegistry.render(FailureArmId.ARRAY_DELETE_BOUNDS,
+                Map.of(), null, null, null), span),
+            tupleOf(oracleFailure(BoundaryExecutor.check(
+                FailurePolicyId.ARRAY_DELETE_BOUNDS, RuntimeDescriptor.Int.INSTANCE,
+                BoundaryValueView.ofInt(0), BoundaryContext.writeBounds(-1, 1)),
+                "the delete bounds"), span)),
+            "the oracle renders ARRAY_DELETE_BOUNDS");
+        checkEq(null, firstDifferingField(
+            tupleOf(FailureContractRegistry.render(FailureArmId.BYTES_READ,
+                Map.of(), null, null, null), span),
+            tupleOf(oracleFailure(BoundaryExecutor.check(FailurePolicyId.BYTES_READ,
+                RuntimeDescriptor.Int.INSTANCE, BoundaryValueView.ofInt(0),
+                BoundaryContext.bytesBounds(2, 2)), "the bytes read bounds"), span)),
+            "the oracle renders BYTES_READ");
+        checkEq(null, firstDifferingField(
+            tupleOf(FailureContractRegistry.render(FailureArmId.BYTES_WRITE_BOUNDS,
+                Map.of(), null, null, null), span),
+            tupleOf(oracleFailure(BoundaryExecutor.check(FailurePolicyId.BYTES_WRITE,
+                RuntimeDescriptor.Int.INSTANCE, BoundaryValueView.ofInt(0),
+                BoundaryContext.bytesBounds(-1, 2)), "the bytes write bounds"), span)),
+            "the oracle renders BYTES_WRITE_BOUNDS");
+        checkEq(null, firstDifferingField(
+            tupleOf(FailureContractRegistry.render(FailureArmId.BYTES_WRITE_RANGE,
+                Map.of(), null, null, null), span),
+            tupleOf(BoundaryExecutor.bytesWriteRangeFailure(), span)),
+            "the oracle's value-range projection renders the multi-code arm");
+        // The row-position entry point resolves the bound arm: the same
+        // template and the arm's own code, never a caller-selected code.
+        checkEq(null, firstDifferingField(
+            tupleOf(FailureContractRegistry.render(FailureArmId.BYTES_WRITE_RANGE,
+                Map.of(), null, null, null), span),
+            tupleOf(BoundaryFailure.fromRow(FailureContractRegistry.row(
+                FailurePolicyId.BYTES_WRITE), 1, null, null, new LinkedHashMap<>(), null),
+                span)),
+            "the row-position entry point renders the arm's own code and template");
+        // The JVM runtime's bytes sites render the same arms.
+        checkJvmArm(FailureArmId.BYTES_ALLOCATE, Map.of(), null, null, span,
+            "the bytes allocation cell",
+            () -> deal.codegen.jvm.JvmRuntime.bytesNew(-1L, "INTRINSIC_CALL", "op",
+                "digest", "parent", span));
+        checkJvmArm(FailureArmId.BYTES_READ, Map.of(), null, null, span,
+            "the bytes read bounds cell",
+            () -> deal.codegen.jvm.JvmRuntime.bytesRead("op", "digest", "parent",
+                "bkey", "bdigest", "bparent",
+                new deal.codegen.jvm.JvmRuntime.BytesValue(2), 2L, 2L, span));
+        checkJvmArm(FailureArmId.BYTES_WRITE_BOUNDS, Map.of(), null, null, span,
+            "the bytes write bounds cell",
+            () -> deal.codegen.jvm.JvmRuntime.bytesBounds("bkey", "bdigest", "bparent",
+                Long.valueOf(0), -1L, 2L, "int", "int", span));
+        checkJvmArm(FailureArmId.BYTES_WRITE_RANGE, Map.of(), null, null, span,
+            "the bytes value-range cell",
+            () -> deal.codegen.jvm.JvmRuntime.bytesCommit("op", "digest", "parent",
+                new deal.codegen.jvm.JvmRuntime.BytesValue(1), 0L, Long.valueOf(256),
+                span));
+        checkJvmArm(FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", "bytes"), "bytes",
+            "string", span, "the bytes-descriptor kind cell",
+            () -> { throw deal.codegen.jvm.JvmRuntime.bytesKindFailure("not-bytes", span); });
+        // The emitted Lua bytes gates render the same arms (a source control
+        // over the emitter: no composed bytes failure text remains).
+        String luaSource = Files.readString(Path.of("deal", "codegen", "lua",
+            "LuaSemanticEmitter.java"), StandardCharsets.UTF_8);
+        check(!luaSource.contains("__failExpr(\"E8012\""),
+            "the Lua emitter holds no composed E8012 failure text at a failure site");
+        check(luaSource.contains("__arm(\"BYTES_ALLOCATE\"")
+                && luaSource.contains("__arm(\"BYTES_READ\"")
+                && luaSource.contains("__arm(\"BYTES_WRITE_BOUNDS\""),
+            "the emitted bytes gates render the closed bytes arms");
+    }
+
+    // =========================================================================
+    // 11d. The declared expected/actual field shapes fail closed
+    // =========================================================================
+
+    /**
+     * A caller-supplied expected/actual field outside its arm's declared
+     * shape is a producer defect on the registry renderer and on the
+     * serialized Lua renderer — never a fabricated DEAL-visible token. The
+     * matching renders stay green (the control).
+     */
+    static void testDeclaredFieldShapeNegatives() throws Exception {
+        System.out.println("-- the declared expected/actual shapes fail closed --");
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.JSON_STRINGIFY_UNSUPPORTED, Map.of("actual", "function"),
+            "WRONG", "function", null),
+            "a fabricated expected text on the pinned-text arm fails closed");
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.TYPED_BOUNDARY_KIND,
+            Map.of("kind", "int"), "WRONG", "string", null),
+            "an expected field outside the arm's own kind text fails closed");
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.TYPED_BOUNDARY_KIND,
+            Map.of("kind", "int"), "int", "WRONG", null),
+            "an actual token outside the closed typed-boundary vocabulary fails closed");
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+            Map.of("index", "1", "inner", "expected bytes"), "WRONG", "number", null),
+            "a host cell's expected field outside the descriptor grammar fails closed");
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.INT32_RANGE,
+            Map.of(), null, "WRONG", null),
+            "an actual field on a field-less arm fails closed");
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.SQRT_NEGATIVE,
+            Map.of(), null, "WRONG", null),
+            "a non-number canonical-value actual fails closed");
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.CLASS_IDENTITY,
+            Map.of("expected", "not-an-atom", "actual", "@a/C"), "not-an-atom", "@a/C",
+            null),
+            "a class-identity expected field outside the atom grammar fails closed");
+        expectDefect(() -> BoundaryFailure.fromRow(
+            FailureContractRegistry.row(FailurePolicyId.ASYNC_COMPLETION), 0,
+            "string", "number", new LinkedHashMap<>(), null),
+            "the row-position entry point never guesses a parameter its fields do not "
+                + "declare (the completion kind arm's kind text)");
+        // The controls: the arm's own declared fields render.
+        checkEq("unsupported type for JSON encoding: function",
+            FailureContractRegistry.render(FailureArmId.JSON_STRINGIFY_UNSUPPORTED,
+                Map.of("actual", "function"), "string, number, boolean, or table",
+                "function", null).message(),
+            "the matching pinned expected text renders");
+        checkEq("expected int, got non-integer number",
+            FailureContractRegistry.render(FailureArmId.INT_CONVERSION_FRACTIONAL,
+                Map.of(), "int", "number", null).message(),
+            "the fractional ladder arm keeps its pinned actual token");
+        // The serialized Lua renderer's equivalent fail-closed validation,
+        // under real luajit.
+        List<String> rows = runPreludeProbe("""
+            local ok = pcall(__arm, "TYPED_BOUNDARY_KIND", {kind = "int"}, "-", "WRONG", "string")
+            print("kind-expected|" .. tostring(ok))
+            ok = pcall(__arm, "TYPED_BOUNDARY_KIND", {kind = "int"}, "-", "int", "WRONG")
+            print("kind-actual|" .. tostring(ok))
+            ok = pcall(__arm, "JSON_STRINGIFY_UNSUPPORTED", {actual = "function"}, "-",
+              "WRONG", "function")
+            print("pinned-expected|" .. tostring(ok))
+            ok = pcall(__arm, "INT32_RANGE", nil, "-", nil, "WRONG")
+            print("fieldless-actual|" .. tostring(ok))
+            ok = pcall(__arm, "TYPED_BOUNDARY_KIND", {kind = "int"}, "-", "string", "string")
+            print("kind-pair|" .. tostring(ok))
+            local value = __arm("TYPED_BOUNDARY_KIND", {kind = "int"}, "-", "int", "string")
+            print("control|" .. value.code .. "|" .. value.e .. "|" .. value.a .. "|"
+              .. value.m)
+            """, "field-shape-probe", 6);
+        checkEq("kind-expected|false", rows.get(0),
+            "the Lua renderer fails closed on a fabricated kind expected token");
+        checkEq("kind-actual|false", rows.get(1),
+            "the Lua renderer fails closed on a fabricated typed-boundary actual");
+        checkEq("pinned-expected|false", rows.get(2),
+            "the Lua renderer fails closed on a fabricated pinned expected text");
+        checkEq("fieldless-actual|false", rows.get(3),
+            "the Lua renderer fails closed on an actual field a field-less arm declares none");
+        checkEq("kind-pair|false", rows.get(4),
+            "the Lua renderer derives the kind token from the arm's serialized "
+                + "parameter sources (a closed-but-foreign pair fails closed)");
+        checkEq("control|E8001|int|string|expected int", rows.get(5),
+            "the Lua renderer keeps the arm's own declared fields green");
     }
 
     // =========================================================================

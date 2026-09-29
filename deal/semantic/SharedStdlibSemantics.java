@@ -3,6 +3,7 @@ package deal.semantic;
 import deal.semantic.ir.ActualKind;
 import deal.semantic.ir.BoundaryFailure;
 import deal.semantic.ir.CanonicalJson;
+import deal.semantic.ir.FailureArm;
 import deal.semantic.ir.FailureArmId;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
@@ -39,10 +40,11 @@ import java.util.Set;
  * over the closed value view ({@link Value} over
  * {@link UnicodeScalars.ScalarString} and {@link SemanticTable})
  * returning a sealed {@link Outcome} ({@code Success(value)} /
- * {@code Failure(StdlibFailure)}). Every DEAL-visible failure delegates
- * to the named {@link FailureContractRegistry} row through
- * {@link BoundaryFailure#fromRow} — the primitive never builds message
- * text ad hoc and consumers never select messages.
+ * {@code Failure(StdlibFailure)}). Every DEAL-visible failure renders the
+ * declared {@link deal.semantic.ir.FailureArm} bound to its
+ * {@link FailureContractRegistry} row template (through
+ * {@link FailureContractRegistry#render}) — the primitive never builds
+ * message text ad hoc and consumers never select messages.
  *
  * <p><b>Executor-primitive pattern.</b> Like {@link SharedValueSemantics},
  * {@code ContainerOpsExecutor}, and {@code BoundaryExecutor}, the
@@ -443,11 +445,11 @@ public final class SharedStdlibSemantics {
     // =========================================================================
 
     /**
-     * One algorithm failure: the structured registry-row projection
-     * (built with {@link BoundaryFailure#fromRow} — the primitive never
-     * selects message text) paired with the operation origin of the
-     * closed table's rule — the {@code STDLIB_CALL} call origin for
-     * every stdlib row ({@code JSON_PARSE_SYNTAX},
+     * One algorithm failure: the structured registry-arm projection
+     * (rendered through {@link FailureContractRegistry#render} — the
+     * primitive never selects message text) paired with the operation
+     * origin of the closed table's rule — the {@code STDLIB_CALL} call
+     * origin for every stdlib row ({@code JSON_PARSE_SYNTAX},
      * {@code JSON_TO_ERROR}, {@code SQRT_NEGATIVE} operation origin,
      * {@code INT32_RESULT} at the call origin).
      */
@@ -777,9 +779,26 @@ public final class SharedStdlibSemantics {
                                                  String expected, String actual,
                                                  Map<String, String> metadata,
                                                  SourceOrigin origin) {
-        BoundaryFailure failure = BoundaryFailure.fromRow(
-            FailureContractRegistry.row(policy), templateIndex, expected, actual,
-            metadata, null);
+        // The arm bound to the row's template position renders its own
+        // template, its own code, and its declared field contract; the
+        // named parameters come from the pinned metadata (the two field
+        // texts from the expected/actual fields) and are never composed.
+        FailureArm arm = FailureContractRegistry.armForTemplate(policy, templateIndex);
+        Map<String, String> parameters = new LinkedHashMap<>();
+        for (String parameter : arm.parameters()) {
+            switch (parameter) {
+                case "expected" -> parameters.put(parameter, expected);
+                case "actual" -> parameters.put(parameter, actual);
+                default -> {
+                    String value = metadata.get(parameter);
+                    if (value != null) {
+                        parameters.put(parameter, value);
+                    }
+                }
+            }
+        }
+        BoundaryFailure failure = FailureContractRegistry.render(arm.id(), parameters,
+            expected, actual, null);
         return new Outcome.Failure<>(new StdlibFailure(failure, origin));
     }
 

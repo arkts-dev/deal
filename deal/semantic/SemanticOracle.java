@@ -2074,9 +2074,12 @@ public final class SemanticOracle {
         /** A pinned registry-row failure at the operation origin. */
         private DealFailure registryFailure(SemanticOp op, FailurePolicyId policy,
                                             String expected, String actual) {
-            BoundaryFailure failure = BoundaryFailure.fromRow(
-                FailureContractRegistry.row(policy), 0, expected, actual,
-                new LinkedHashMap<>(), null);
+            // The arm bound to the row's primary template: the render is the
+            // arm's own (template, code, declared fields), never a row
+            // instantiation behind the arm's back.
+            FailureArm arm = FailureContractRegistry.armForTemplate(policy, 0);
+            BoundaryFailure failure = FailureContractRegistry.render(arm.id(),
+                new LinkedHashMap<>(), expected, actual, null);
             return DealFailure.of(failure, op.origin(), List.copyOf(frames));
         }
 
@@ -5906,9 +5909,8 @@ public final class SemanticOracle {
         private Value allocateBytes(SemanticOp op, Value input) {
             long length = ((Value.IntValue) input).value();
             if (length < 0) {
-                throw DealFailure.of(BoundaryFailure.fromRow(
-                    FailureContractRegistry.row(FailurePolicyId.BYTES_ALLOCATE),
-                    0, null, null, new LinkedHashMap<>(), null),
+                throw DealFailure.of(FailureContractRegistry.render(
+                    FailureArmId.BYTES_ALLOCATE, new LinkedHashMap<>(), null, null, null),
                     op.origin(), List.copyOf(frames));
             }
             if (length > Integer.MAX_VALUE) {

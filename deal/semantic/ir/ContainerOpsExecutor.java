@@ -89,13 +89,12 @@ import java.util.Objects;
  * generation check; the payload itself is never rewritten per
  * iteration.</p>
  *
- * <p><b>Failure rows.</b> Every op-level failure is instantiated from the
- * pinned {@link FailureContractRegistry} row through
- * {@link BoundaryFailure#fromRow(FailurePolicyRow, int, String, String,
- * Map, BoundaryFailure)} — the executor never selects message text, and
- * consumers never select messages. {@link OpFailure} pairs the
- * structured projection with the executed op's origin (the operation
- * origin of the closed table's rule).</p>
+ * <p><b>Failure rows.</b> Every op-level failure renders the declared
+ * {@link FailureContractRegistry} arm bound to its row's template through
+ * {@link FailureContractRegistry#render} — the executor never selects
+ * message text, and consumers never select messages. {@link OpFailure}
+ * pairs the structured projection with the executed op's origin (the
+ * operation origin of the closed table's rule).</p>
  *
  * <p><b>Purity and bounds.</b> No mutation of the unit, no randomness, no
  * I/O, no host code, no retry, no {@code deal.types} dependency; the
@@ -306,9 +305,9 @@ public final class ContainerOpsExecutor {
     // =========================================================================
 
     /**
-     * One op-level failure: the structured registry-row projection
-     * (built with {@link BoundaryFailure#fromRow}) paired with the
-     * executed op's origin — the operation origin of the closed table's
+     * One op-level failure: the structured registry-arm projection
+     * (rendered through {@link FailureContractRegistry#render}) paired with
+     * the executed op's origin — the operation origin of the closed table's
      * rule (for {@code FOR_EACH(STRING_SCALARS)} the for-of origin; for
      * {@code ARRAY_LENGTH} the {@code .length} span; for a
      * {@code ARRAY_NEW}/{@code MEMBER_READ} child failure the parent op's
@@ -715,9 +714,8 @@ public final class ContainerOpsExecutor {
         // the bounded semantic model never produces an out-of-range count.
         long count = array.array().size();
         if (count < -2147483648L || count > 2147483647L) {
-            BoundaryFailure failure = BoundaryFailure.fromRow(
-                FailureContractRegistry.row(FailurePolicyId.INT32_RESULT), 0, null, null,
-                new LinkedHashMap<>(), null);
+            BoundaryFailure failure = FailureContractRegistry.render(FailureArmId.INT32_RANGE,
+                new LinkedHashMap<>(), null, null, null);
             return new Outcome.Failure<Integer>(new OpFailure(failure, op.origin()));
         }
         return new Outcome.Success<Integer>((int) count);
@@ -852,9 +850,12 @@ public final class ContainerOpsExecutor {
         // zero body steps.
         UnicodeScalars.ScalarString scalar = stringIterable.scalar();
         if (scalar instanceof UnicodeScalars.Invalid) {
-            BoundaryFailure failure = BoundaryFailure.fromRow(
-                FailureContractRegistry.row(FailurePolicyId.TYPE_DESCRIPTOR),
-                1, "string", "invalid-unicode", new LinkedHashMap<>(), null);
+            // The invalid-Unicode TYPE_DESCRIPTOR arm's own render (the
+            // pinned text, expected {@code string}, actual
+            // {@code invalid-unicode}), never a row instantiation.
+            BoundaryFailure failure = FailureContractRegistry.render(
+                FailureArmId.TYPED_BOUNDARY_INVALID_UNICODE, new LinkedHashMap<>(),
+                "string", "invalid-unicode", null);
             return new Outcome.Failure<Integer>(new OpFailure(failure, op.origin()));
         }
 

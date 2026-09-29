@@ -1158,14 +1158,14 @@ public final class JvmRuntime {
         if ("bytes".equals(desc)) {
             // The bytes view (K6 item 11): the carrier passes unchanged
             // (classification only — the view carries no contents); every
-            // other value projects the carrier's pinned v1.2 text
-            // (expected "bytes", actual the value's own kind), the
-            // canonical projection the retained runtimes and the corpus
-            // pins carry.
+            // other value projects the closed typed-boundary kind arm's own
+            // render (the arm table is the text source, never a composed
+            // literal).
             if (v instanceof BytesValue) {
                 return v;
             }
-            throw fail("E8001", "expected bytes", "-", "bytes", actual);
+            throw arm(deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND,
+                java.util.Map.of("kind", "bytes"), "-", "bytes", actual);
         }
         if (desc.startsWith("@")) {
             if ("@/Error".equals(desc)) {
@@ -2950,8 +2950,8 @@ public final class JvmRuntime {
                                   String parent, String origin) {
         long n = indexOf(length);
         if (n < 0) {
-            DealError e = fail("E8012", "bytes length must be non-negative", origin, null,
-                null);
+            DealError e = arm(deal.semantic.ir.FailureArmId.BYTES_ALLOCATE,
+                java.util.Map.of(), origin, null, null);
             ev(currentModule(), opKey, "FAILURE", evKind, digest, parent, List.of(), null,
                 errtext(e));
             throw e;
@@ -2978,7 +2978,8 @@ public final class JvmRuntime {
      */
     public static DealError bytesKindFailure(Object v, String origin) {
         String actual = actualOf("bytes", v);
-        return fail("E8001", "expected bytes", origin, "bytes", actual);
+        return arm(deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND,
+            java.util.Map.of("kind", "bytes"), origin, "bytes", actual);
     }
 
     /** The bytes receiver of one element site, or the fail-closed kind failure. */
@@ -3006,7 +3007,8 @@ public final class JvmRuntime {
         ev(currentModule(), bKey, "START", "BOUNDARY", bDigest, bParent,
             List.of(elemAtom), null, null);
         if (elem == MISSING) {
-            DealError e = fail("E8012", "bytes index out of bounds", origin, null, null);
+            DealError e = arm(deal.semantic.ir.FailureArmId.BYTES_READ,
+                java.util.Map.of(), origin, null, null);
             ev(currentModule(), bKey, "FAILURE", "BOUNDARY", bDigest, bParent, List.of(),
                 null, errtext(e));
             ev(currentModule(), opKey, "FAILURE", "INDEX_READ", digest, parent, List.of(),
@@ -3030,7 +3032,8 @@ public final class JvmRuntime {
         ev(currentModule(), bKey, "START", "BOUNDARY", bDigest, bParent,
             List.of(inputAtom), null, null);
         if (index < 0 || index >= length) {
-            DealError e = fail("E8012", "bytes index out of bounds", origin, null, null);
+            DealError e = arm(deal.semantic.ir.FailureArmId.BYTES_WRITE_BOUNDS,
+                java.util.Map.of(), origin, null, null);
             ev(currentModule(), bKey, "FAILURE", "BOUNDARY", bDigest, bParent, List.of(),
                 null, errtext(e));
             throw e;
@@ -3055,7 +3058,8 @@ public final class JvmRuntime {
                                    long index, Object value, String origin) {
         long written = indexOf(value);
         if (written < 0 || written > 255) {
-            DealError e = fail("E8013", "bytes value out of range", origin, null, null);
+            DealError e = arm(deal.semantic.ir.FailureArmId.BYTES_WRITE_RANGE,
+                java.util.Map.of(), origin, null, null);
             ev(currentModule(), opKey, "FAILURE", "INDEX_WRITE", digest, parent, List.of(),
                 null, errtext(e));
             throw e;

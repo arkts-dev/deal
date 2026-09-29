@@ -60,6 +60,14 @@ TEST_MAINS=(
   # ClassConstructionDifferentialTest's emitter-source control) and the
   # emitted host load entry renders HOST_LOAD_MISSING_EXPORT
   # (HostModuleLoadEmissionTest), each holding no failure text of its own.
+  # The same battery drives every reachable array/bytes bounds arm and the
+  # multi-code BYTES_WRITE value-range arm through the oracle's executor, the
+  # row-position entry point (which renders the bound arm's own code and
+  # template) and the JVM runtime's bytes sites, plus the source control that
+  # the emitted Lua bytes gates render the closed arms and hold no composed
+  # E8012 text; it also drives the declared expected/actual field shapes
+  # fail-closed on both the registry renderer and the serialized Lua renderer
+  # under luajit (a fabricated token never renders, a matching one stays green).
   'fg|=== Running Failure Arm Authority Tests (ISSUE-0704) ===|java -ea -cp build deal.test.FailureArmAuthorityTest'
   'fg|=== Running Canonical JSON / Snapshot Digest Tests (ISSUE-0283) ===|java -ea -cp build deal.test.CanonicalJsonTest'
   'fg|=== Running Semantic IR Validator Tests (ISSUE-0286) ===|java -ea -cp build deal.test.SemanticIrValidatorTest'

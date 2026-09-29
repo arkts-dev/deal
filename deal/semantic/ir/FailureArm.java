@@ -33,6 +33,12 @@ import java.util.Objects;
  * @param actualProjection  the actual projection, or {@link ActualProjection#NONE}
  * @param origin            the arm's origin convention
  * @param scope             the arm's render scope
+ * @param code              the arm's DEAL-visible code, or {@code null} exactly
+ *                          when the arm keeps its row's code. The multi-code
+ *                          {@code BYTES_WRITE} row pins E8013 for its
+ *                          value-range arm beside the row's own E8012, so the
+ *                          arm carries that code and no consumer selects a
+ *                          code of its own.
  */
 public record FailureArm(
     FailureArmId id,
@@ -45,7 +51,8 @@ public record FailureArm(
     String pinnedExpectedText,
     ActualProjection actualProjection,
     OriginConvention origin,
-    RenderScope scope
+    RenderScope scope,
+    deal.diagnostics.DiagnosticCode code
 ) {
 
     /** The arm's render scope (P1). */

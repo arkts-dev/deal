@@ -143,9 +143,9 @@ import java.util.function.Supplier;
  * {@code CLASS_NEW} runs zero return boundaries and the executor never
  * drives a {@code FUNCTION_RETURN} child.</p>
  *
- * <p><b>Failure rows.</b> The E8007 projection is instantiated from the
- * pinned {@link FailureContractRegistry} {@code CLASS_CONSTRUCTION} row
- * through {@link BoundaryFailure#fromRow} with the row's metadata
+ * <p><b>Failure rows.</b> The E8007 projection renders the declared
+ * {@link FailureContractRegistry} {@code CLASS_EXTRA_FIELD} arm through
+ * {@link FailureContractRegistry#render} with the arm's named parameters
  * ({@code field}, {@code classId}) — the executor never selects message
  * text, and consumers never select messages. {@link OpFailure} pairs the
  * structured projection with the executed op's origin (the operation
@@ -436,9 +436,9 @@ public final class ClassOpsExecutor {
     // =========================================================================
 
     /**
-     * One op-level failure: the structured registry-row projection
-     * (built with {@link BoundaryFailure#fromRow}) paired with the
-     * executed op's origin — the operation origin of the closed table's
+     * One op-level failure: the structured registry-arm projection
+     * (rendered through {@link FailureContractRegistry#render}) paired with
+     * the executed op's origin — the operation origin of the closed table's
      * rule (for {@code CLASS_NEW} the extra-key scan reports at the op
      * origin; for a field-boundary child failure the parent op's origin —
      * the child's own origin stays observable through the unit's ops).
@@ -1206,11 +1206,10 @@ public final class ClassOpsExecutor {
         // validation.
         for (KindPayload.ProvidedField field : payload.providedFields()) {
             if (!hostDefaults.containsKey(field.name())) {
-                BoundaryFailure failure = BoundaryFailure.fromRow(
-                    FailureContractRegistry.row(FailurePolicyId.CLASS_CONSTRUCTION), 0,
-                    null, null,
-                    metadataOf("field", field.name(), "classId", payload.classId().text()),
-                    null);
+                BoundaryFailure failure = FailureContractRegistry.render(
+                    FailureArmId.CLASS_EXTRA_FIELD,
+                    parametersOf("field", field.name(), "classId", payload.classId().text()),
+                    null, null, null);
                 return new Outcome.Failure<Value>(new OpFailure(failure, op.origin()));
             }
         }
@@ -4232,11 +4231,10 @@ public final class ClassOpsExecutor {
             SemanticOp op, KindPayload.ClassNewPayload payload, ClassLayout layout) {
         for (KindPayload.ProvidedField field : payload.providedFields()) {
             if (fieldOf(layout, field.name()) == null) {
-                BoundaryFailure failure = BoundaryFailure.fromRow(
-                    FailureContractRegistry.row(FailurePolicyId.CLASS_CONSTRUCTION), 0,
-                    null, null,
-                    metadataOf("field", field.name(), "classId", payload.classId().text()),
-                    null);
+                BoundaryFailure failure = FailureContractRegistry.render(
+                    FailureArmId.CLASS_EXTRA_FIELD,
+                    parametersOf("field", field.name(), "classId", payload.classId().text()),
+                    null, null, null);
                 return new Outcome.Failure<Value>(new OpFailure(failure, op.origin()));
             }
         }
@@ -4572,5 +4570,14 @@ public final class ClassOpsExecutor {
         metadata.put(key1, value1);
         metadata.put(key2, value2);
         return metadata;
+    }
+
+    /** The named-parameter values of one two-parameter arm render. */
+    private static Map<String, String> parametersOf(String key1, String value1,
+                                                    String key2, String value2) {
+        Map<String, String> parameters = new LinkedHashMap<>();
+        parameters.put(key1, value1);
+        parameters.put(key2, value2);
+        return parameters;
     }
 }
