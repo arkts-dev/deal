@@ -20,10 +20,15 @@ import deal.semantic.SemanticRequirementManifest;
 import deal.semantic.SemanticRuntimeModel;
 import deal.semantic.SemanticTraceProtocol;
 import deal.semantic.ir.ExecutableLoweredProject;
+import deal.semantic.ir.ActualKind;
 import deal.semantic.ir.AnchorId;
 import deal.semantic.ir.BlockId;
+import deal.semantic.ir.BoundaryContext;
+import deal.semantic.ir.BoundaryExecutor;
 import deal.semantic.ir.BoundaryKind;
+import deal.semantic.ir.BoundaryOutcome;
 import deal.semantic.ir.BoundaryRealization;
+import deal.semantic.ir.BoundaryValueView;
 import deal.semantic.ir.CallMode;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ClosedSelector;
@@ -378,32 +383,42 @@ public class HostCallRealizationTest {
         System.out.println("-- the sync host fixture set under luajit (production "
             + "emission, pinned outcomes) --");
         for (String name : SYNC_FIXTURES) {
-            SyncFixture fixture = syncFixture(name);
-            Fixture compiled = compile(fixture);
-            Path workspace = Files.createTempDirectory("host-call-lua");
-            try {
-                SemanticLowerer.ProjectLoweringResult result = lower(compiled);
-                if (result.project() == null) {
-                    fail("the fixture '" + name + "' lowers: " + result.diagnostics());
-                    continue;
-                }
-                ExecutableLoweredProject project = result.project();
-                Path artifact = workspace.resolve("project.lua");
-                Files.writeString(artifact, LuaSemanticEmitter.emitProductionProject(
-                    project, result.tables(), result.registries(), compiled.surface()),
-                    StandardCharsets.UTF_8);
-                deployRuntime(workspace);
-                deployHostLua(workspace, fixture);
-                Path probe = workspace.resolve("probe.lua");
-                Files.writeString(probe, luaDriver(artifact, compiled.entryPath()),
-                    StandardCharsets.UTF_8);
-                Outcome outcome = runLua(probe, workspace);
-                checkFixtureOutcome(name, outcome, "luajit",
-                    compiled.headerLinesStripped());
-            } finally {
-                deleteRecursively(workspace);
-                deleteRecursively(compiled.root());
+            driveLuaFixture(name);
+        }
+    }
+
+    /**
+     * One admitted fixture's production LuaJIT artifact under real
+     * {@code luajit} (the pinned sidecar outcome), or {@code null} when the
+     * fixture does not lower.
+     */
+    private static Outcome driveLuaFixture(String name) throws Exception {
+        SyncFixture fixture = syncFixture(name);
+        Fixture compiled = compile(fixture);
+        Path workspace = Files.createTempDirectory("host-call-lua");
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(compiled);
+            if (result.project() == null) {
+                fail("the fixture '" + name + "' lowers: " + result.diagnostics());
+                return null;
             }
+            ExecutableLoweredProject project = result.project();
+            Path artifact = workspace.resolve("project.lua");
+            Files.writeString(artifact, LuaSemanticEmitter.emitProductionProject(
+                project, result.tables(), result.registries(), compiled.surface()),
+                StandardCharsets.UTF_8);
+            deployRuntime(workspace);
+            deployHostLua(workspace, fixture);
+            Path probe = workspace.resolve("probe.lua");
+            Files.writeString(probe, luaDriver(artifact, compiled.entryPath()),
+                StandardCharsets.UTF_8);
+            Outcome outcome = runLua(probe, workspace);
+            checkFixtureOutcome(name, outcome, "luajit",
+                compiled.headerLinesStripped());
+            return outcome;
+        } finally {
+            deleteRecursively(workspace);
+            deleteRecursively(compiled.root());
         }
     }
 
@@ -411,53 +426,101 @@ public class HostCallRealizationTest {
         System.out.println("-- the sync host fixture set under javac + java (production "
             + "emission, pinned outcomes) --");
         for (String name : SYNC_FIXTURES) {
-            SyncFixture fixture = syncFixture(name);
-            Fixture compiled = compile(fixture);
-            Path workspace = Files.createTempDirectory("host-call-jvm");
-            try {
-                SemanticLowerer.ProjectLoweringResult result = lower(compiled);
-                if (result.project() == null) {
-                    fail("the fixture '" + name + "' lowers: " + result.diagnostics());
-                    continue;
-                }
-                ExecutableLoweredProject project = result.project();
-                String className = JvmBackend.classNameFor(project.entryModule().path());
-                JvmSemanticEmitter.EmissionResult emission =
-                    JvmSemanticEmitter.emitProductionProject(project, result.tables(),
-                        result.registries(), className, compiled.surface());
-                Files.writeString(workspace.resolve(className + ".java"),
-                    emission.source(), StandardCharsets.UTF_8);
-                Files.writeString(workspace.resolve("HostCallProbe.java"),
-                    jvmDriver(className, compiled.entryPath()), StandardCharsets.UTF_8);
-                String hostSource = Files.readString(
-                    Path.of(fixture.corpusHost() + ".java"), StandardCharsets.UTF_8);
-                Files.writeString(workspace.resolve(
-                    JvmBackend.classNameFor(fixture.hostSpecifier()) + ".java"),
-                    hostSource, StandardCharsets.UTF_8);
-                Path classes = workspace.resolve("classes");
-                Files.createDirectories(classes);
-                String classpath = absoluteClasspath();
-                Outcome javacRun = runProcess(List.of("javac", "--release", "25",
-                    "-proc:none", "-cp", classpath, "-d", classes.toString(),
-                    className + ".java",
-                    JvmBackend.classNameFor(fixture.hostSpecifier()) + ".java",
-                    "HostCallProbe.java"), workspace);
-                check(javacRun.exitCode() == 0,
-                    "the fixture '" + name + "' compiles under javac: "
-                        + javacRun.stdout() + javacRun.stderr());
-                if (javacRun.exitCode() != 0) {
-                    continue;
-                }
-                Outcome outcome = runProcess(List.of("java", "-cp",
-                    classpath + java.io.File.pathSeparator + classes, "HostCallProbe"),
-                    workspace);
-                checkFixtureOutcome(name, outcome, "java",
-                    compiled.headerLinesStripped());
-            } finally {
-                deleteRecursively(workspace);
-                deleteRecursively(compiled.root());
-            }
+            driveJvmFixture(name);
         }
+    }
+
+    /**
+     * One admitted fixture's production JVM artifact under
+     * {@code javac --release 25 -proc:none} plus {@code java} (the pinned
+     * sidecar outcome), or {@code null} when the fixture does not compile.
+     */
+    private static Outcome driveJvmFixture(String name) throws Exception {
+        SyncFixture fixture = syncFixture(name);
+        Fixture compiled = compile(fixture);
+        Path workspace = Files.createTempDirectory("host-call-jvm");
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(compiled);
+            if (result.project() == null) {
+                fail("the fixture '" + name + "' lowers: " + result.diagnostics());
+                return null;
+            }
+            ExecutableLoweredProject project = result.project();
+            String className = JvmBackend.classNameFor(project.entryModule().path());
+            JvmSemanticEmitter.EmissionResult emission =
+                JvmSemanticEmitter.emitProductionProject(project, result.tables(),
+                    result.registries(), className, compiled.surface());
+            Files.writeString(workspace.resolve(className + ".java"),
+                emission.source(), StandardCharsets.UTF_8);
+            Files.writeString(workspace.resolve("HostCallProbe.java"),
+                jvmDriver(className, compiled.entryPath()), StandardCharsets.UTF_8);
+            String hostSource = Files.readString(
+                Path.of(fixture.corpusHost() + ".java"), StandardCharsets.UTF_8);
+            Files.writeString(workspace.resolve(
+                JvmBackend.classNameFor(fixture.hostSpecifier()) + ".java"),
+                hostSource, StandardCharsets.UTF_8);
+            Path classes = workspace.resolve("classes");
+            Files.createDirectories(classes);
+            String classpath = absoluteClasspath();
+            Outcome javacRun = runProcess(List.of("javac", "--release", "25",
+                "-proc:none", "-cp", classpath, "-d", classes.toString(),
+                className + ".java",
+                JvmBackend.classNameFor(fixture.hostSpecifier()) + ".java",
+                "HostCallProbe.java"), workspace);
+            check(javacRun.exitCode() == 0,
+                "the fixture '" + name + "' compiles under javac: "
+                    + javacRun.stdout() + javacRun.stderr());
+            if (javacRun.exitCode() != 0) {
+                return null;
+            }
+            Outcome outcome = runProcess(List.of("java", "-cp",
+                classpath + java.io.File.pathSeparator + classes, "HostCallProbe"),
+                workspace);
+            checkFixtureOutcome(name, outcome, "java",
+                compiled.headerLinesStripped());
+            return outcome;
+        } finally {
+            deleteRecursively(workspace);
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /**
+     * The carrier-kind projection's string member across the three consumers
+     * (P2 item 2): the oracle projects the closed {@code string} token for a
+     * string carrier at a host cell, and both production artifacts project
+     * the same token — the pinned
+     * {@code host-abi/host-bytes-return-mismatch-e8010} cell, whose sidecar
+     * pins {@code actual: "string"}, driven through the real toolchains.
+     */
+    private static void testStringCarrierActualParity() throws Exception {
+        System.out.println("-- the carrier-kind string actual across the three consumers "
+            + "(host-bytes-return-mismatch-e8010) --");
+        String name = "host-bytes-return-mismatch-e8010";
+        Expectation expectation = expectationOf(name);
+        BoundaryOutcome outcome = BoundaryExecutor.check(
+            FailurePolicyId.HOST_SYNC_RETURN, RuntimeDescriptor.Bytes.INSTANCE,
+            BoundaryValueView.of(ActualKind.STRING), BoundaryContext.none());
+        check(outcome instanceof BoundaryOutcome.Fail,
+            "the oracle host return cell fails: " + outcome);
+        if (outcome instanceof BoundaryOutcome.Fail fail) {
+            checkEq(expectation.code(), fail.failure().code().name(),
+                "the oracle projects the pinned host return code");
+            checkEq(expectation.message(), fail.failure().message(),
+                "the oracle projects the pinned host return message");
+            checkEq(expectation.expected(), fail.failure().expected(),
+                "the oracle projects the pinned host return expected field");
+            checkEq(expectation.actual(), fail.failure().actual(),
+                "the oracle projects the pinned carrier-kind string actual");
+        }
+        Outcome lua = driveLuaFixture(name);
+        check(lua != null && lua.value().endsWith("|" + expectation.actual()),
+            "the LuaJIT artifact projects the pinned carrier-kind string actual: "
+                + (lua == null ? "no outcome" : lua.value()));
+        Outcome jvm = driveJvmFixture(name);
+        check(jvm != null && jvm.value().endsWith("|" + expectation.actual()),
+            "the JVM artifact projects the pinned carrier-kind string actual: "
+                + (jvm == null ? "no outcome" : jvm.value()));
     }
 
     /**
@@ -2508,6 +2571,7 @@ public class HostCallRealizationTest {
         }
         testLuaFixtureSet();
         testJvmFixtureSet();
+        testStringCarrierActualParity();
         testTwoAliasCall();
         testJvmCrossingProjection();
         testAdapterCarrierCrossing();

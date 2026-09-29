@@ -38,14 +38,17 @@ TEST_MAINS=(
   'fg|=== Running Failure Contract Registry Tests (ISSUE-0285) ===|java -ea -cp build deal.test.FailureContractRegistryTest'
   # ISSUE-0704 registration: the canonical failure-projection authority's
   # arm-table battery (canonical-failure-projection-authority P1/P2 and
-  # Verification 2/4): the closed arm table beside its rows, the fail-closed
+  # Verification 2/3/4): the closed arm table beside its rows, the fail-closed
   # row/arm consistency invariant with its negative controls (an unbound
   # retained template, a foreign template, a duplicate binding, an INNER_ONLY
   # arm rendered top-level, a SIBLING_OWNED arm rendered by a production
   # consumer, a field-shape mismatch), the corrected template enumeration,
-  # the two closed projections and the host inner-reason render, and the
-  # emitted Lua prelude's serialized arm table against the canonical
-  # serialization.
+  # the two closed projections and the host inner-reason render (the
+  # carrier-kind string member included), the emitted Lua prelude's
+  # serialized arm table against the canonical serialization, the completion
+  # family's class/array cells through the oracle, the JVM runtime and the
+  # emitted prelude under luajit, and the negative single-source control
+  # (a composing consumer is reported by field name).
   'fg|=== Running Failure Arm Authority Tests (ISSUE-0704) ===|java -ea -cp build deal.test.FailureArmAuthorityTest'
   'fg|=== Running Canonical JSON / Snapshot Digest Tests (ISSUE-0283) ===|java -ea -cp build deal.test.CanonicalJsonTest'
   'fg|=== Running Semantic IR Validator Tests (ISSUE-0286) ===|java -ea -cp build deal.test.SemanticIrValidatorTest'

@@ -2,15 +2,23 @@ package deal.test;
 
 import deal.codegen.lua.LuaSemanticEmitter;
 import deal.semantic.HostDeclarationSurface;
+import deal.semantic.ir.ActualKind;
+import deal.semantic.ir.BoundaryContext;
 import deal.semantic.ir.BoundaryExecutor;
 import deal.semantic.ir.BoundaryFailure;
+import deal.semantic.ir.BoundaryOutcome;
+import deal.semantic.ir.BoundaryValueView;
 import deal.semantic.ir.FailureArm;
 import deal.semantic.ir.FailureArmId;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FailurePolicyRow;
 import deal.semantic.ir.FailureProjections;
+import deal.semantic.ir.RuntimeDescriptor;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.EnumSet;
@@ -68,17 +76,80 @@ public class FailureArmAuthorityTest {
         }
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         testClosedArmTable();
         testConsistencyInvariantNegatives();
         testCorrectedTemplates();
         testClosedProjections();
         testRendersAndMarkedArms();
         testEmittedTable();
+        testCarrierKindStringActual();
+        testCompletionFamilyDrive();
+        testNegativeSingleSourceControl();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
             System.exit(1);
+        }
+    }
+
+    private static void checkEq(Object expected, Object actual, String message) {
+        check(java.util.Objects.equals(expected, actual), message + " (expected "
+            + expected + ", got " + actual + ")");
+    }
+
+    /** One rendered failure tuple (the arm rendering contract's projection). */
+    private record Tuple(String code, String message, String span, String expected,
+                         String actual) {
+    }
+
+    /**
+     * The three-consumer comparison helper: the first differing field's name
+     * ({@code code}, {@code message}, {@code span}, {@code expected},
+     * {@code actual}), or {@code null} when the tuples agree. A consumer that
+     * composes its own text or picks its own span is reported by the name of
+     * the field it composed (Verification 3).
+     */
+    private static String firstDifferingField(Tuple reference, Tuple candidate) {
+        if (!java.util.Objects.equals(reference.code(), candidate.code())) {
+            return "code";
+        }
+        if (!java.util.Objects.equals(reference.message(), candidate.message())) {
+            return "message";
+        }
+        if (!java.util.Objects.equals(reference.span(), candidate.span())) {
+            return "span";
+        }
+        if (!java.util.Objects.equals(reference.expected(), candidate.expected())) {
+            return "expected";
+        }
+        if (!java.util.Objects.equals(reference.actual(), candidate.actual())) {
+            return "actual";
+        }
+        return null;
+    }
+
+    private static Tuple tupleOf(BoundaryFailure failure, String span) {
+        return new Tuple(failure.code().name(), failure.message(), span,
+            failure.expected(), failure.actual());
+    }
+
+    /** The oracle's rendered failure of one boundary check, or a defect. */
+    private static BoundaryFailure oracleFailure(deal.semantic.ir.BoundaryOutcome outcome,
+                                                 String what) {
+        if (outcome instanceof deal.semantic.ir.BoundaryOutcome.Fail fail) {
+            return fail.failure();
+        }
+        throw new IllegalStateException(what + " did not fail: " + outcome);
+    }
+
+    /** The JVM runtime's failure of one check, or {@code null} when it passed. */
+    private static deal.codegen.jvm.JvmRuntime.DealError jvmFailure(Runnable action) {
+        try {
+            action.run();
+            return null;
+        } catch (deal.codegen.jvm.JvmRuntime.DealError error) {
+            return error;
         }
     }
 
@@ -284,34 +355,7 @@ public class FailureArmAuthorityTest {
 
     static void testEmittedTable() {
         System.out.println("-- the emitted Lua arm table --");
-        deal.semantic.ir.ModuleId entry = new deal.semantic.ir.ModuleId("arms");
-        deal.semantic.ir.LoweredModuleUnit unit = new deal.semantic.ir.LoweredModuleUnit(
-            deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
-            deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32, entry, "hash", "context",
-            java.util.Set.of(), Map.of(), Map.of(), Map.of(),
-            new deal.semantic.ir.ModuleInitPlan(List.of(),
-                new deal.semantic.ir.BlockId(0)),
-            new deal.semantic.ir.ExportPlan(List.of()), Map.of());
-        Map<deal.semantic.ir.ModuleId, deal.semantic.ir.LoweredModuleUnit> modules =
-            new LinkedHashMap<>();
-        modules.put(entry, unit);
-        deal.semantic.ir.ProjectInterfaceIndex index =
-            new deal.semantic.ir.ProjectInterfaceIndex(
-                deal.semantic.ir.ProjectInterfaceIndex.FORMAT_VERSION,
-                Map.of(entry, new deal.semantic.ir.ExternalModuleInterface(entry,
-                    deal.semantic.ir.ExternalModuleKind.IMPLEMENTATION, List.of(),
-                    List.of(), List.of(),
-                    deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
-        deal.semantic.ir.ExecutableLoweredProject project =
-            new deal.semantic.ir.ExecutableLoweredProject(
-                deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32, index, modules, entry);
-        Map<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable> tables =
-            new LinkedHashMap<>();
-        tables.put(entry, new deal.semantic.ir.StructuredBodyTable(
-            Map.of(new deal.semantic.ir.BlockId(0), List.of()),
-            Map.of()));
-        String lua = LuaSemanticEmitter.emitProductionProject(project, tables, Map.of(),
-            emptySurface());
+        String lua = emittedArmsChunk();
         List<String> canonical = FailureContractRegistry.canonicalArmSerialization();
         check(canonical.size() == FailureArmId.values().length,
             "the canonical serialization carries every declared arm");
@@ -366,5 +410,318 @@ public class FailureArmAuthorityTest {
 
     private static HostDeclarationSurface emptySurface() {
         return new HostDeclarationSurface(Map.of());
+    }
+
+    /** The production chunk of the arm-only project (the emitted prelude). */
+    private static String emittedArmsChunk() {
+        deal.semantic.ir.ModuleId entry = new deal.semantic.ir.ModuleId("arms");
+        deal.semantic.ir.LoweredModuleUnit unit = new deal.semantic.ir.LoweredModuleUnit(
+            deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
+            deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32, entry, "hash", "context",
+            java.util.Set.of(), Map.of(), Map.of(), Map.of(),
+            new deal.semantic.ir.ModuleInitPlan(List.of(),
+                new deal.semantic.ir.BlockId(0)),
+            new deal.semantic.ir.ExportPlan(List.of()), Map.of());
+        Map<deal.semantic.ir.ModuleId, deal.semantic.ir.LoweredModuleUnit> modules =
+            new LinkedHashMap<>();
+        modules.put(entry, unit);
+        deal.semantic.ir.ProjectInterfaceIndex index =
+            new deal.semantic.ir.ProjectInterfaceIndex(
+                deal.semantic.ir.ProjectInterfaceIndex.FORMAT_VERSION,
+                Map.of(entry, new deal.semantic.ir.ExternalModuleInterface(entry,
+                    deal.semantic.ir.ExternalModuleKind.IMPLEMENTATION, List.of(),
+                    List.of(), List.of(),
+                    deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
+        deal.semantic.ir.ExecutableLoweredProject project =
+            new deal.semantic.ir.ExecutableLoweredProject(
+                deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32, index, modules, entry);
+        Map<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable> tables =
+            new LinkedHashMap<>();
+        tables.put(entry, new deal.semantic.ir.StructuredBodyTable(
+            Map.of(new deal.semantic.ir.BlockId(0), List.of()),
+            Map.of()));
+        return LuaSemanticEmitter.emitProductionProject(project, tables, Map.of(),
+            emptySurface());
+    }
+
+    // =========================================================================
+    // 7. The carrier-kind string member (the host string actual)
+    // =========================================================================
+
+    /**
+     * The carrier-kind projection's string member (P2 item 2): a string
+     * carrier — a valid Unicode scalar sequence and an invalid one alike —
+     * projects the closed {@code string} token at the host cells, exactly as
+     * the unchanged runtimes and both production artifacts do. The pinned
+     * host fixtures are {@code host-abi/host-bytes-return-mismatch-e8010},
+     * {@code host-bad-return}, {@code host-null-return-bad},
+     * {@code host-prewrapped-bad}, {@code host-invalid-utf8-e8010}, and
+     * {@code host-surrogate-utf8-e8010} (all pinned {@code actual: string});
+     * the artifact legs of the named fixture run in
+     * {@code HostCallRealizationTest}'s pinned fixture set.
+     */
+    static void testCarrierKindStringActual() {
+        System.out.println("-- the carrier-kind string member (the host string actual) --");
+        checkEq("string", FailureProjections.carrierKindToken(
+            FailureProjections.CarrierKind.STRING),
+            "the carrier-kind projection has the closed string token");
+        // host-bytes-return-mismatch-e8010: the declared bytes return cell
+        // with a string value (pinned actual "string").
+        BoundaryFailure bytesReturn = oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.HOST_SYNC_RETURN, RuntimeDescriptor.Bytes.INSTANCE,
+            BoundaryValueView.of(ActualKind.STRING), BoundaryContext.none()),
+            "the host bytes return cell");
+        checkEq("E8010", bytesReturn.code().name(), "the pinned host return code");
+        checkEq("return value 1 type mismatch: expected bytes", bytesReturn.message(),
+            "the pinned host return message");
+        checkEq("bytes", bytesReturn.expected(), "the declared cell descriptor");
+        checkEq("string", bytesReturn.actual(),
+            "the oracle projects the carrier-kind string actual");
+        // host-bad-return / host-null-return-bad / host-prewrapped-bad: the
+        // same string actual at the declared int/null return cells.
+        for (RuntimeDescriptor descriptor : List.of(RuntimeDescriptor.Int.INSTANCE,
+                RuntimeDescriptor.Null.INSTANCE)) {
+            BoundaryFailure wrong = oracleFailure(BoundaryExecutor.check(
+                FailurePolicyId.HOST_SYNC_RETURN, descriptor,
+                BoundaryValueView.of(ActualKind.STRING), BoundaryContext.none()),
+                "the host return cell of " + descriptor);
+            checkEq("string", wrong.actual(), "a string value at the " + descriptor
+                + " return cell projects the carrier-kind string actual");
+            checkEq("return value 1 type mismatch: expected "
+                + FailureProjections.kindText(descriptor), wrong.message(),
+                "the host return composite carries the descriptor's kind reason");
+        }
+        // host-invalid-utf8-e8010 / host-surrogate-utf8-e8010: the invalid
+        // Unicode classification is a string carrier too.
+        BoundaryFailure invalid = oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.HOST_SYNC_RETURN, RuntimeDescriptor.String.INSTANCE,
+            BoundaryValueView.of(ActualKind.INVALID_UNICODE), BoundaryContext.none()),
+            "the host invalid-Unicode return cell");
+        checkEq("return value 1 type mismatch: expected string, got invalid UTF-8 "
+            + "encoding", invalid.message(),
+            "the host string-carrier inner reason is the INNER_ONLY arm's own text");
+        checkEq("string", invalid.actual(),
+            "an invalid-Unicode view is a string carrier on the carrier-kind projection");
+        // The host parameter cell of the same shape (host-bytes-param-mismatch's
+        // sibling int cell with a string value).
+        BoundaryFailure parameter = oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.HOST_PARAMETER, RuntimeDescriptor.Int.INSTANCE,
+            BoundaryValueView.of(ActualKind.STRING), BoundaryContext.parameter(1)),
+            "the host int parameter cell");
+        checkEq("E8010", parameter.code().name(), "the pinned host parameter code");
+        checkEq("parameter 1 type mismatch: expected int", parameter.message(),
+            "the host parameter composite carries the descriptor's kind reason");
+        checkEq("string", parameter.actual(),
+            "the oracle projects the carrier-kind string actual at the parameter cell");
+    }
+
+    // =========================================================================
+    // 8. The completion family drive: one tuple from the three consumers
+    // =========================================================================
+
+    /**
+     * The completion family's class/array cells (the {@code ASYNC_COMPLETION}
+     * kind arm): one identical {@code (code, message, expected, actual)} tuple
+     * from the oracle, the JVM runtime, and the emitted Lua prelude under
+     * {@code luajit}. The arm renders the descriptor's closed kind text in
+     * its message and the kind token as its expected field — the unchanged
+     * runtime matcher's own form {@code expected class instance}/{@code class}
+     * and {@code expected array}/{@code array} — with the pinned corpus
+     * completion form ({@code expected string}/{@code string}, the numeric
+     * carrier projecting {@code number}) as the control.
+     */
+    static void testCompletionFamilyDrive() throws Exception {
+        System.out.println("-- the completion family: class/array cells from the three "
+            + "consumers --");
+        String span = FailureContractRegistry.arm(FailureArmId.ASYNC_COMPLETION_KIND)
+            .origin().name();
+        // The oracle leg: the two named canonical descriptors and the pinned
+        // string control.
+        Tuple oracleClass = tupleOf(oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.ASYNC_COMPLETION,
+            RuntimeDescriptor.parseCanonicalText("@src/app/User"),
+            BoundaryValueView.of(ActualKind.STRING), BoundaryContext.none()),
+            "the class completion cell"), span);
+        checkEq(new Tuple("E8001", "expected class instance", span, "class", "string"),
+            oracleClass, "the oracle renders the class completion kind arm");
+        Tuple oracleArray = tupleOf(oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.ASYNC_COMPLETION,
+            RuntimeDescriptor.parseCanonicalText("[int]"),
+            BoundaryValueView.of(ActualKind.STRING), BoundaryContext.none()),
+            "the array completion cell"), span);
+        checkEq(new Tuple("E8001", "expected array", span, "array", "string"),
+            oracleArray, "the oracle renders the array completion kind arm");
+        Tuple oraclePinned = tupleOf(oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.ASYNC_COMPLETION, RuntimeDescriptor.String.INSTANCE,
+            BoundaryValueView.ofInt(5), BoundaryContext.none()),
+            "the pinned string completion cell"), span);
+        checkEq(new Tuple("E8001", "expected string", span, "string", "number"),
+            oraclePinned, "the oracle keeps the pinned host-async-bad completion form");
+        // The JVM runtime leg (the same closed arm and helper).
+        deal.codegen.jvm.JvmRuntime.DealError jvmClass = jvmFailure(
+            () -> deal.codegen.jvm.JvmRuntime.bcheckCompletion("@src/app/User",
+                "table", "abc"));
+        check(jvmClass != null, "the JVM completion check fails: " + jvmClass);
+        if (jvmClass != null) {
+            checkEq(null, firstDifferingField(oracleClass,
+                new Tuple(jvmClass.code, jvmClass.msg, span, jvmClass.expected,
+                    jvmClass.actual)),
+                "the JVM runtime renders the oracle's identical class completion tuple");
+        }
+        deal.codegen.jvm.JvmRuntime.DealError jvmArray = jvmFailure(
+            () -> deal.codegen.jvm.JvmRuntime.bcheckCompletion("array(int)",
+                "table", "abc"));
+        check(jvmArray != null, "the JVM array completion check fails: " + jvmArray);
+        if (jvmArray != null) {
+            checkEq(null, firstDifferingField(oracleArray,
+                new Tuple(jvmArray.code, jvmArray.msg, span, jvmArray.expected,
+                    jvmArray.actual)),
+                "the JVM runtime renders the oracle's identical array completion tuple");
+        }
+        // The emitted Lua prelude leg, under real luajit.
+        List<String> luaRows = luaCompletionRows();
+        checkEq("class|E8001|class|string|expected class instance", luaRows.get(0),
+            "the emitted prelude renders the class completion arm");
+        checkEq("array|E8001|array|string|expected array", luaRows.get(1),
+            "the emitted prelude renders the array completion arm");
+        checkEq("string|E8001|string|number|expected string", luaRows.get(2),
+            "the emitted prelude keeps the pinned completion form");
+        checkEq("carrier-string|string", luaRows.get(3),
+            "the emitted prelude's carrier-kind projection renders the string member");
+        // The three consumers' tuples: one comparison, reported by field name.
+        String[] parts = luaRows.get(0).split("\\|", -1);
+        checkEq(null, firstDifferingField(oracleClass,
+            new Tuple(parts[1], parts[4], span, parts[2], parts[3])),
+            "the Lua artifact renders the oracle's identical class completion tuple");
+        parts = luaRows.get(1).split("\\|", -1);
+        checkEq(null, firstDifferingField(oracleArray,
+            new Tuple(parts[1], parts[4], span, parts[2], parts[3])),
+            "the Lua artifact renders the oracle's identical array completion tuple");
+        parts = luaRows.get(2).split("\\|", -1);
+        checkEq(null, firstDifferingField(oraclePinned,
+            new Tuple(parts[1], parts[4], span, parts[2], parts[3])),
+            "the Lua artifact renders the pinned identical completion tuple");
+    }
+
+    /**
+     * Runs the emitted prelude's completion and carrier-kind renders under
+     * {@code luajit}: one {@code label|code|expected|actual|message} row per
+     * cell.
+     */
+    private static List<String> luaCompletionRows() throws Exception {
+        Path workspace = Files.createTempDirectory("failure-arm-completion");
+        try {
+            Path artifact = workspace.resolve("arms.lua");
+            Files.writeString(artifact, emittedArmsChunk(), StandardCharsets.UTF_8);
+            Path probe = workspace.resolve("completion-probe.lua");
+            Files.writeString(probe, """
+                local text = io.open("%s"):read("*a")
+                text = text:gsub("%%s*$", "")
+                local tail = 'return __exportSurfaces["arms"]'
+                assert(text:sub(-#tail) == tail, "the artifact tail is the surface return")
+                local row = [==[
+                local function row(label, ok, value)
+                  if ok then print(label .. "|OK|") return end
+                  print(label .. "|" .. tostring(value.code) .. "|" .. tostring(value.e)
+                    .. "|" .. tostring(value.a) .. "|" .. tostring(value.m))
+                end
+                local ok, value = pcall(__bcheck, "@src/app/User", "table", "abc", nil, true)
+                row("class", ok, value)
+                ok, value = pcall(__bcheck, "array(int)", "table", "abc", nil, true)
+                row("array", ok, value)
+                ok, value = pcall(__bcheck, "string", "string", 5, nil, true)
+                row("string", ok, value)
+                print("carrier-string|" .. __carrierKind("abc"))
+                ]==]
+                local chunk = assert(load(text:sub(1, #text - #tail) .. row, "completion-probe"))
+                chunk()
+                """.formatted(artifact.toAbsolutePath().toString()),
+                StandardCharsets.UTF_8);
+            ProcessBuilder builder = new ProcessBuilder("luajit", "completion-probe.lua");
+            builder.directory(workspace.toFile());
+            builder.redirectErrorStream(true);
+            Process process = builder.start();
+            String output = new String(process.getInputStream().readAllBytes(),
+                StandardCharsets.UTF_8);
+            int exit = process.waitFor();
+            check(exit == 0, "the emitted prelude runs under luajit: exit=" + exit
+                + " output=" + output);
+            List<String> rows = new ArrayList<>();
+            for (String line : output.lines().toList()) {
+                if (line.contains("|") && !line.startsWith("luajit")) {
+                    rows.add(line.strip());
+                }
+            }
+            check(rows.size() >= 4, "the prelude probe prints its rows: " + output);
+            return rows;
+        } finally {
+            deleteRecursively(workspace);
+        }
+    }
+
+    private static void deleteRecursively(Path root) throws Exception {
+        if (!Files.exists(root)) {
+            return;
+        }
+        try (var walk = Files.walk(root)) {
+            for (Path path : walk.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(path);
+            }
+        }
+    }
+
+    // =========================================================================
+    // 9. The negative single-source control
+    // =========================================================================
+
+    /**
+     * The negative single-source proof (Verification 3): the comparison
+     * helper reports the first differing field by name, so a consumer that
+     * composes its own text or picks its own span is caught by the field it
+     * composed. The reference tuples are the authority's own renders; each
+     * negative drives a deliberately composing snapshot: the superseded
+     * suffixed spelling, the superseded {@code FOR_EACH} absent-element text,
+     * the superseded host composite, and a call-site span for a
+     * declaration-owned arm.
+     */
+    static void testNegativeSingleSourceControl() {
+        System.out.println("-- the negative single-source control --");
+        // The reference: the authority's own kind arm (runtime-errors/
+        // type-mismatch-e8001's corrected tuple at the declaration span).
+        Tuple kind = tupleOf(FailureContractRegistry.render(
+            FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", "int"), "int", "string",
+            null), "type-mismatch-e8001.deal:6:21");
+        checkEq(null, firstDifferingField(kind, kind),
+            "the identical tuple compares equal (the control is not vacuous)");
+        // (1) A consumer composing the superseded suffix.
+        checkEq("message", firstDifferingField(kind, new Tuple(kind.code(),
+            "expected int, got string", kind.span(), kind.expected(), kind.actual())),
+            "the superseded suffixed spelling is caught by field name message");
+        // (2) The superseded FOR_EACH absent-element text (the cell now
+        // renders the kind arm with the typed-boundary nil actual).
+        Tuple foreach = tupleOf(FailureContractRegistry.render(
+            FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", "int"), "int", "nil",
+            null), "for-of:8:3");
+        checkEq("message", firstDifferingField(foreach, new Tuple(foreach.code(),
+            "expected int, got missing", foreach.span(), foreach.expected(),
+            "missing")),
+            "the superseded absent-element text is caught by field name message");
+        // (3) The superseded host composite (expected/actual inlined instead
+        // of the host inner reason).
+        Tuple host = tupleOf(FailureContractRegistry.render(
+            FailureArmId.HOST_PARAMETER_CELL,
+            Map.of("index", "1", "inner",
+                FailureProjections.kindReason(RuntimeDescriptor.Bytes.INSTANCE)),
+            "bytes", "number", null), "host-bytes-param-mismatch-e8010.deal:10:10");
+        checkEq("parameter 1 type mismatch: expected bytes", host.message(),
+            "the authority renders the host composite with the inner reason");
+        checkEq("message", firstDifferingField(host, new Tuple(host.code(),
+            "parameter 1 type mismatch: expected bytes, got number", host.span(),
+            host.expected(), host.actual())),
+            "the superseded host composite is caught by field name message");
+        // (4) A call-site span for a declaration-owned arm.
+        checkEq("span", firstDifferingField(kind, new Tuple(kind.code(), kind.message(),
+            "type-mismatch-e8001.deal:9:10", kind.expected(), kind.actual())),
+            "a call-site span for a declaration-owned arm is caught by field name span");
     }
 }

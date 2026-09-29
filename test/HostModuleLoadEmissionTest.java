@@ -957,10 +957,18 @@ public class HostModuleLoadEmissionTest {
                 }
             }
 
-            // The probe: the load entry's bindings, its idempotence, and the
-            // wrapper cells.
+            // The probe: the load entry's bindings, its idempotence, the
+            // wrapper cells, and the declared class-identity cell (the
+            // foreign identity's closed E8010 composite).
+            HostDeclarationSurface.DeclarationFacts cfgFacts =
+                fixture.surface().require(cfgModule);
+            String serverDescriptor = DescriptorService.describe(
+                cfgFacts.exports().get("ServerConfig")).canonicalSpecText();
+            String endpointDescriptor = DescriptorService.describe(
+                cfgFacts.exports().get("Endpoint")).canonicalSpecText();
             Files.writeString(workspace.resolve("HostModuleLoadProbe.java"),
-                jvmProbe(probeKey, cfgKey), StandardCharsets.UTF_8);
+                jvmProbe(probeKey, cfgKey, serverDescriptor, endpointDescriptor),
+                StandardCharsets.UTF_8);
 
             Path classes = workspace.resolve("classes");
             Files.createDirectories(classes);
@@ -1017,8 +1025,11 @@ public class HostModuleLoadEmissionTest {
         """;
 
     /** The JVM probe: the load entry's bindings, its idempotence, the cells. */
-    private static String jvmProbe(String probeKey, String cfgKey) {
-        return PROBE_JAVA.replace("$PROBE$", probeKey).replace("$CFG$", cfgKey);
+    private static String jvmProbe(String probeKey, String cfgKey,
+                                   String serverDescriptor, String endpointDescriptor) {
+        return PROBE_JAVA.replace("$PROBE$", probeKey).replace("$CFG$", cfgKey)
+            .replace("$SERVER_DESC$", serverDescriptor)
+            .replace("$ENDPOINT_DESC$", endpointDescriptor);
     }
 
     private static final String PROBE_JAVA = """
@@ -1091,7 +1102,28 @@ public class HostModuleLoadEmissionTest {
                 expect("E8010", "return value 1 type mismatch: expected int",
                     () -> App.__host$$PROBE$$badReturn("probe.deal", 9, 1));
 
+                // The declared class-identity cell: a foreign identity renders
+                // the closed E8010 host composite with the identity inner
+                // reason (the host inner-reason pass-through) — never a
+                // top-level E8001.
+                expect("E8010", "parameter 1 type mismatch: expected instance of "
+                    + "$SERVER_DESC$" + ", got $ENDPOINT_DESC$",
+                    () -> App.__host$$CFG$$describe(new Foreign(), "probe.deal", 11, 1));
+                expect("E8010", "parameter 1 type mismatch: expected class instance",
+                    () -> App.__host$$CFG$$describe("junk", "probe.deal", 12, 1));
+
                 System.out.println("PROBE-OK " + passed);
+              }
+
+              /** A class value of another declared identity. */
+              static final class Foreign implements deal.codegen.jvm.JvmRuntime.ClassInstance {
+                public String classIdText() { return "$ENDPOINT_DESC$"; }
+                public boolean isPresent(String field) { return false; }
+                public Object read(String field) {
+                  return deal.codegen.jvm.JvmRuntime.MISSING;
+                }
+                public void write(String field, Object value) { }
+                public void delete(String field) { }
               }
             }
             """;
