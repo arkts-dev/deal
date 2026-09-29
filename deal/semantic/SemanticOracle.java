@@ -2071,15 +2071,6 @@ public final class SemanticOracle {
             return new Value.IntValue(result);
         }
 
-        /**
-         * One operation-site failure rendered through the closed arm table
-         * (the closed projections' expected/actual fields).
-         */
-        private DealFailure registryArmFailure(SemanticOp op, FailureArmId armId,
-                                               String expected, String actual) {
-            return armFailure(op, armId, expected, actual);
-        }
-
         /** A pinned registry-row failure at the operation origin. */
         private DealFailure registryFailure(SemanticOp op, FailurePolicyId policy,
                                             String expected, String actual) {

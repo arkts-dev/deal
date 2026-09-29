@@ -858,9 +858,11 @@ public class HostModuleLoadEmissionTest {
             check(source.contains("return ((java.lang.Integer) __hostCheck(\"int\", "
                     + "__r, false, oFile, oLine, oCol)).intValue();"),
                 "the sync return cell runs the declared descriptor");
-            check(source.contains("throw JvmRuntime.fail(\"E8010\", \"return value 1 "
-                    + "type mismatch: expected int, got nothing\""),
-                "the presence rule emits the pinned 'got nothing' return text");
+            check(source.contains("throw JvmRuntime.arm("
+                    + "deal.semantic.ir.FailureArmId.HOST_SYNC_RETURN_NOTHING, "
+                    + "java.util.Map.of(\"expected\", \"int\"), oFile + \":\" + oLine "
+                    + "+ \":\" + oCol, \"int\", \"nothing\")"),
+                "the presence rule renders the host return-nothing arm");
             check(source.contains("throw JvmRuntime.arm("
                     + "deal.semantic.ir.FailureArmId.HOST_PARAMETER_CELL, "
                     + "java.util.Map.of(\"index\", java.lang.Integer.toString(i), "

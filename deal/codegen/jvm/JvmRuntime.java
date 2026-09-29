@@ -1883,8 +1883,9 @@ public final class JvmRuntime {
             case "INT32_DIV_TRUNC" -> {
                 long divisor = ((Long) r);
                 if (divisor == 0) {
-                    raise(opKey, digest, parent, origin, "BINARY", "E8005",
-                        "integer division by zero", null, null);
+                    raiseArm(deal.semantic.ir.FailureArmId.INT32_DIVISION_BY_ZERO,
+                        java.util.Map.of(), null, null, opKey, digest, parent, origin,
+                        "BINARY");
                 }
                 return int32Result(((Long) l) / divisor, opKey, digest, parent, origin,
                     "BINARY");
@@ -1892,8 +1893,9 @@ public final class JvmRuntime {
             case "INT32_MOD_TRUNC" -> {
                 long divisor = ((Long) r);
                 if (divisor == 0) {
-                    raise(opKey, digest, parent, origin, "BINARY", "E8005",
-                        "integer division by zero", null, null);
+                    raiseArm(deal.semantic.ir.FailureArmId.INT32_DIVISION_BY_ZERO,
+                        java.util.Map.of(), null, null, opKey, digest, parent, origin,
+                        "BINARY");
                 }
                 return int32Result(((Long) l) % divisor, opKey, digest, parent, origin,
                     "BINARY");
@@ -1901,8 +1903,9 @@ public final class JvmRuntime {
             case "INT32_POW" -> {
                 long exponent = ((Long) r);
                 if (exponent < 0) {
-                    raise(opKey, digest, parent, origin, "BINARY", "E8006",
-                        "integer exponent must be non-negative", null, null);
+                    raiseArm(deal.semantic.ir.FailureArmId.INT32_NEGATIVE_EXPONENT,
+                        java.util.Map.of(), null, null, opKey, digest, parent, origin,
+                        "BINARY");
                 }
                 long result = 1;
                 try {
@@ -1910,8 +1913,9 @@ public final class JvmRuntime {
                         result = Math.multiplyExact(result, ((Long) l));
                     }
                 } catch (ArithmeticException overflow) {
-                    raise(opKey, digest, parent, origin, "BINARY", "E8004",
-                        "int out of safe range", null, null);
+                    raiseArm(deal.semantic.ir.FailureArmId.INT32_RANGE,
+                        java.util.Map.of(), null, null, opKey, digest, parent, origin,
+                        "BINARY");
                 }
                 return int32Result(result, opKey, digest, parent, origin, "BINARY");
             }
@@ -1944,15 +1948,25 @@ public final class JvmRuntime {
     static Object int32Result(long result, String opKey, String digest, String parent,
                               String origin, String kind) {
         if (result < Integer.MIN_VALUE || result > Integer.MAX_VALUE) {
-            raise(opKey, digest, parent, origin, kind, "E8004", "int out of safe range", null,
-                null);
+            raiseArm(deal.semantic.ir.FailureArmId.INT32_RANGE, java.util.Map.of(), null,
+                null, opKey, digest, parent, origin, kind);
         }
         return result;
     }
 
-    static void raise(String opKey, String digest, String parent, String origin,
-                      String kind, String code, String msg, String expected, String actual) {
-        DealError e = fail(code, msg, origin, expected, actual);
+    /**
+     * One closed arm's operation-site failure (canonical failure-projection
+     * authority P4 item 3): the arm's own template with its named parameters
+     * and its declared expected/actual fields, published as the invoking
+     * op's FAILURE event. A site that holds the arm's text as a literal is a
+     * producer defect; the parity battery reports the composed field by
+     * name.
+     */
+    static void raiseArm(deal.semantic.ir.FailureArmId id,
+                         java.util.Map<String, String> parameters, String expected,
+                         String actual, String opKey, String digest, String parent,
+                         String origin, String kind) {
+        DealError e = arm(id, parameters, origin, expected, actual);
         ev(currentModule(), opKey, "FAILURE", kind, digest, parent, List.of(), null,
             errtext(e));
         throw e;
@@ -1972,13 +1986,32 @@ public final class JvmRuntime {
 
         private static final long serialVersionUID = 1L;
 
+        /** The closed arm of an arm-rendered failure, or null for a producer defect. */
+        final deal.semantic.ir.FailureArmId armId;
+        final java.util.Map<String, String> parameters;
         final String code;
         final String msg;
         final String expected;
         final String actual;
 
+        /** A table arm's failure: rendered through the arm at the op boundary. */
+        StdlibFailure(deal.semantic.ir.FailureArmId armId,
+                      java.util.Map<String, String> parameters, String expected,
+                      String actual) {
+            super(armId.name());
+            this.armId = armId;
+            this.parameters = parameters;
+            this.expected = expected;
+            this.actual = actual;
+            this.code = null;
+            this.msg = null;
+        }
+
+        /** A fail-closed producer defect outside the closed arm table. */
         StdlibFailure(String code, String msg, String expected, String actual) {
             super(msg);
+            this.armId = null;
+            this.parameters = null;
             this.code = code;
             this.msg = msg;
             this.expected = expected;
@@ -1995,7 +2028,8 @@ public final class JvmRuntime {
      * integral {@link Double}, a number parameter is a {@link Double} or
      * a {@link Long}, and a table parameter is a {@link Table}. A
      * failure raises the op FAILURE event and the {@link DealError}
-     * through {@link #raise} with the exact closed projections —
+     * through the closed arm render ({@link #raiseArm} or the stdlib
+     * failure's own arm) with the exact closed projections —
      * {@code INT32_RESULT} E8004 {@code int out of safe range},
      * {@code SQRT_NEGATIVE} E8001 {@code sqrt of negative number} (actual
      * = the canonical hex float), {@code JSON_PARSE_SYNTAX} E8001
@@ -2023,7 +2057,8 @@ public final class JvmRuntime {
                     String text = (String) args[0];
                     long count = text.codePointCount(0, text.length());
                     if (count > Integer.MAX_VALUE) {
-                        throw new StdlibFailure("E8004", "int out of safe range", null, null);
+                        throw new StdlibFailure(deal.semantic.ir.FailureArmId.INT32_RANGE,
+                            java.util.Map.of(), null, null);
                     }
                     return Long.valueOf(count);
                 }
@@ -2143,8 +2178,8 @@ public final class JvmRuntime {
                 case "MATH_SQRT" -> {
                     double value = numberOf(args[0]);
                     if (value < 0) {
-                        throw new StdlibFailure("E8001", "sqrt of negative number", null,
-                            Double.toHexString(value));
+                        throw new StdlibFailure(deal.semantic.ir.FailureArmId.SQRT_NEGATIVE,
+                            java.util.Map.of(), null, Double.toHexString(value));
                     }
                     return Math.sqrt(value);
                 }
@@ -2152,7 +2187,8 @@ public final class JvmRuntime {
                     long value = longOf(args[0]);
                     long absolute = value < 0 ? -value : value;
                     if (absolute > Integer.MAX_VALUE) {
-                        throw new StdlibFailure("E8004", "int out of safe range", null, null);
+                        throw new StdlibFailure(deal.semantic.ir.FailureArmId.INT32_RANGE,
+                            java.util.Map.of(), null, null);
                     }
                     return Long.valueOf(absolute);
                 }
@@ -2178,9 +2214,14 @@ public final class JvmRuntime {
                     "unknown stdlib call " + fn, null, null);
             }
         } catch (StdlibFailure failure) {
-            raise(opKey, digest, parent, origin, kind, failure.code, failure.msg,
-                failure.expected, failure.actual);
-            return null; // unreachable: raise throws
+            DealError e = failure.armId != null
+                ? arm(failure.armId, failure.parameters, origin, failure.expected,
+                    failure.actual)
+                : fail(failure.code, failure.msg, origin, failure.expected,
+                    failure.actual);
+            ev(currentModule(), opKey, "FAILURE", kind, digest, parent, List.of(), null,
+                errtext(e));
+            throw e;
         }
     }
 
@@ -2482,10 +2523,10 @@ public final class JvmRuntime {
             }
             return value;
         } catch (JsonParseFailure parseFailure) {
-            throw new StdlibFailure("E8001",
-                "JSON parse error at position " + parseFailure.oneBasedByteOffset
-                    + ": " + parseFailure.reason,
-                null, null);
+            throw new StdlibFailure(deal.semantic.ir.FailureArmId.JSON_PARSE_ERROR,
+                java.util.Map.of("oneBasedByteOffset",
+                    Long.toString(parseFailure.oneBasedByteOffset),
+                    "reason", parseFailure.reason), null, null);
         }
     }
 

@@ -4958,7 +4958,7 @@ public final class LuaSemanticEmitter {
          * string, and the publication is the canonical err carrier
          * {@code {__d = true, code = &lt;code&gt;, m = &lt;message&gt;}} —
          * the same carrier {@code THROW}, the async failure path,
-         * {@code __bcheck("@/Error")}, and {@code __actualOf} already
+         * {@code __bcheck("@/Error")}, and {@code __carrierKind} already
          * speak. No default child, no factory transfer, and no extra-key
          * projection (the checker's E4002 rejects an extra literal field
          * before lowering).
@@ -8990,45 +8990,6 @@ local function __ev(op, phase, kind, digest, parent, inputs, output, errtext)
   io.stderr:flush()
   __seq = __seq + 1
 end
-local function __actualOf(staticKind, v)
-  if v == __MISSING then return "missing" end
-  if v == nil then return "null" end
-  if type(v) == "table" and v.__jn then return v.k end
-  local t = type(v)
-  if t == "boolean" then return "boolean" end
-  if t == "number" then
-    local inner = staticKind
-    if string.sub(staticKind, 1, 9) == "nullable:" then inner = string.sub(staticKind, 10) end
-    if inner == "int" then return "int" end
-    if inner == "number" then return "number" end
-    -- A number at a non-number declared kind (a dynamic read): integral
-    -- values carry the int kind (int-typed positions), the rest the
-    -- number kind.
-    if v % 1 == 0 then return "int" end
-    return "number"
-  end
-  if t == "string" then return "string" end
-  if t == "table" then
-    -- The runtime container markers decide the actual kind first (the
-    -- shared JVM runtime's actualOf resolves the carrier's own type before
-    -- any declared-kind fallback): a parsed/constructed array is an array
-    -- even against a declared table boundary, and a class instance or an
-    -- error/function carrier renders its own kind.
-    if v.__kind == "bytes" then return "bytes" end
-    if v.__a then return "array" end
-    if v.__c then return "class:"..v.__id end
-    if v.__d then return "class:@builtin/Error" end
-    if v.__t then return "table" end
-    if v.__fn ~= nil or v.__f then return "function" end
-    if staticKind == "err" then return "class:@builtin/Error" end
-    if staticKind == "table" then return "table" end
-    if staticKind == "array" then return "array" end
-    -- A plain table against a class boundary renders its own kind.
-    return "table"
-  end
-  if t == "function" then return "function" end
-  return staticKind
-end
 -- The raw read atom of the OPTIONAL_READ envelope: the value's actual
 -- runtime kind — missing → "missing", null → "null", else the actual
 -- kind's atom (a wrong-kind present value atomizes as its own kind,
@@ -9150,9 +9111,9 @@ local function __typedBoundaryKind(staticKind, v)
   end
   if t == "string" then return "string" end
   if t == "table" then
-    -- The bytes carrier keeps its own closed kind (the same head rule as
-    -- __actualOf): a bytes value never projects the table spelling, so a
-    -- non-bytes typed boundary rejects it instead of admitting it.
+    -- The bytes carrier keeps its own closed kind: a bytes value never
+    -- projects the table spelling, so a non-bytes typed boundary rejects
+    -- it instead of admitting it.
     if v.__kind == "bytes" then return "bytes" end
     if v.__a then return "array" end
     if v.__c then return v.__id end
@@ -9209,17 +9170,6 @@ local function __stdJsonKind(v)
     return "table"
   end
   return t
-end
--- The completion cell's actual kind (the ASYNC_COMPLETION boundary at an
--- AWAIT): the pinned corpus projection of the cell has one numeric kind,
--- so every numeric carrier — the plain Lua number (the shared int carrier)
--- and the {__jn} number carrier — projects as "number"; every other
--- carrier keeps the shared classification.
-local function __completionActualOf(staticKind, v)
-  if type(v) == "number" or (type(v) == "table" and v.__jn) then
-    return "number"
-  end
-  return __actualOf(staticKind, v)
 end
 -- The function row's carried-signature check (E8010): the row's own
 -- text is the canonical spec text (the declared descriptor beside the

@@ -60,9 +60,9 @@ import java.util.Set;
  *       carries the corpus-aligned {@code STDLIB_CALL(JSON_STRINGIFY)}
  *       rejection template {@code unsupported type for JSON encoding:
  *       {actual}}; the emitted Lua prelude and the shared JVM runtime
- *       carry the same pinned literals and the pinned expected text, and
- *       no shared v1.2 producer renders the legacy {@code int out of
- *       range}.</li>
+ *       resolve the same closed arm table (the arm's own pinned text and
+ *       expected token), and no shared v1.2 producer renders the legacy
+ *       {@code int out of range}.</li>
  *   <li><b>Int32-overflow probe.</b> One project lowers through the one
  *       project lowering and drives the oracle, the production LuaJIT
  *       artifact under real {@code luajit}, and the production JVM
@@ -449,15 +449,15 @@ public class CanonicalFailureTextParityTest {
     }
 
     // =========================================================================
-    // 4. The literal-carrying shared JVM runtime producers
+    // 4. The shared JVM runtime producers (the closed arm renders)
     // =========================================================================
 
     static void testSharedJvmRuntimeProducers() {
-        System.out.println("-- Shared JVM runtime producers: the literal-carrying sites --");
+        System.out.println("-- Shared JVM runtime producers: the closed arm renders --");
         JvmRuntime.setTraceEnabled(false);
 
         // The int boundary ladder and the int arithmetic gates (every
-        // literal-carrying site: bcheck, int32Result, the INT32_POW
+        // arm-rendered site: bcheck, int32Result, the INT32_POW
         // long-overflow arm, the conversion ladder, and the stdlib gate).
         try {
             JvmRuntime.bcheck("int", "int", Double.valueOf(2147483648.0));

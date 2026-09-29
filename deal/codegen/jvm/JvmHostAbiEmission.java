@@ -928,12 +928,14 @@ final class JvmHostAbiEmission {
         }
         boolean nullable = ret instanceof Type.Nullable;
         if (!nullable) {
+            // The HOST_SYNC_RETURN_NOTHING arm's own render (the no-value
+            // presence rule): the emitted wrapper holds no failure text.
             out.append("    if (__r == null) {\n");
-            out.append("      throw JvmRuntime.fail(\"E8010\", \"return value 1"
-                    + " type mismatch: expected ").append(desc)
-                .append(", got nothing\", oFile + \":\" + oLine + \":\" + oCol,"
-                    + " \"").append(desc)
-                .append("\", \"nothing\");\n");
+            out.append("      throw JvmRuntime.arm("
+                    + "deal.semantic.ir.FailureArmId.HOST_SYNC_RETURN_NOTHING,"
+                    + " java.util.Map.of(\"expected\", ").append(javaString(desc))
+                .append("), oFile + \":\" + oLine + \":\" + oCol, ")
+                .append(javaString(desc)).append(", \"nothing\");\n");
             out.append("    }\n");
         }
         String checked = "__hostCheck(" + javaString(desc)

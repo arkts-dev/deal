@@ -87,6 +87,7 @@ public class FailureArmAuthorityTest {
         testCompletionFamilyDrive();
         testTypedBoundaryBytesCarrier();
         testStdJsonArmDrive();
+        testInt32AndSqrtArmFamily();
         testNegativeSingleSourceControl();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -962,7 +963,81 @@ public class FailureArmAuthorityTest {
     }
 
     // =========================================================================
-    // 11. The negative single-source control
+    // 11. The int32/sqrt family: the JVM runtime renders the arms
+    // =========================================================================
+
+    /**
+     * The int32/sqrt family's JVM render sites (P4 item 3): the arithmetic
+     * range and division arms, the negative-exponent arm, the
+     * {@code SQRT_NEGATIVE} arm, the {@code MATH_ABS_INT} range cell, and
+     * the JSON parse arm each publish the closed arm's own tuple — never a
+     * hard-coded copy of its text. {@code JvmRuntime} composes no failure
+     * text for a table arm; the arm render is the only source of each
+     * message and field.
+     */
+    static void testInt32AndSqrtArmFamily() {
+        System.out.println("-- the int32/sqrt family: the JVM runtime renders the arms --");
+        String origin = "arm-battery.deal:1:1";
+        checkJvmArm(FailureArmId.INT32_RANGE, Map.of(), null, null, origin,
+            "the arithmetic range cell",
+            () -> deal.codegen.jvm.JvmRuntime.arith("INT32_ADD", 2147483647L, 1L,
+                "op", "digest", "parent", origin));
+        checkJvmArm(FailureArmId.INT32_RANGE, Map.of(), null, null, origin,
+            "the exponent-overflow cell",
+            () -> deal.codegen.jvm.JvmRuntime.arith("INT32_POW", 2L, 100L,
+                "op", "digest", "parent", origin));
+        checkJvmArm(FailureArmId.INT32_DIVISION_BY_ZERO, Map.of(), null, null, origin,
+            "the division-by-zero cell",
+            () -> deal.codegen.jvm.JvmRuntime.arith("INT32_DIV_TRUNC", 1L, 0L,
+                "op", "digest", "parent", origin));
+        checkJvmArm(FailureArmId.INT32_DIVISION_BY_ZERO, Map.of(), null, null, origin,
+            "the modulo-by-zero cell",
+            () -> deal.codegen.jvm.JvmRuntime.arith("INT32_MOD_TRUNC", 1L, 0L,
+                "op", "digest", "parent", origin));
+        checkJvmArm(FailureArmId.INT32_NEGATIVE_EXPONENT, Map.of(), null, null, origin,
+            "the negative-exponent cell",
+            () -> deal.codegen.jvm.JvmRuntime.arith("INT32_POW", 2L, -1L,
+                "op", "digest", "parent", origin));
+        checkJvmArm(FailureArmId.INT32_RANGE, Map.of(), null, null, origin,
+            "the MATH_ABS_INT range cell",
+            () -> deal.codegen.jvm.JvmRuntime.stdlib("STDLIB_CALL", "MATH_ABS_INT",
+                "op", "digest", "parent", origin,
+                new Object[] {Long.valueOf(-2147483648L)}));
+        checkJvmArm(FailureArmId.SQRT_NEGATIVE, Map.of(), null,
+            Double.toHexString(-1.0d), origin, "the MATH_SQRT cell",
+            () -> deal.codegen.jvm.JvmRuntime.stdlib("STDLIB_CALL", "MATH_SQRT",
+                "op", "digest", "parent", origin,
+                new Object[] {Double.valueOf(-1.0d)}));
+        checkJvmArm(FailureArmId.JSON_PARSE_ERROR,
+            Map.of("oneBasedByteOffset", "2", "reason", "unexpected end of input"),
+            null, null, origin, "the JSON parse cell",
+            () -> deal.codegen.jvm.JvmRuntime.stdlib("STDLIB_CALL", "JSON_PARSE",
+                "op", "digest", "parent", origin, new Object[] {"{"}));
+    }
+
+    /**
+     * One JVM runtime failure of one arm-rendered site: the published tuple
+     * must equal the closed arm's own render (the single-source property at
+     * the JVM consumer), reported by the first differing field's name.
+     */
+    private static void checkJvmArm(FailureArmId armId, Map<String, String> parameters,
+                                    String expected, String actual, String origin,
+                                    String note, Runnable action) {
+        Tuple reference = tupleOf(FailureContractRegistry.render(armId, parameters,
+            expected, actual, null), origin);
+        deal.codegen.jvm.JvmRuntime.DealError error = jvmFailure(action);
+        check(error != null, note + " fails: " + error);
+        if (error == null) {
+            return;
+        }
+        Tuple published = new Tuple(error.code, error.msg, error.origin, error.expected,
+            error.actual);
+        checkEq(null, firstDifferingField(reference, published),
+            note + " publishes the closed " + armId + " arm's own tuple");
+    }
+
+    // =========================================================================
+    // 12. The negative single-source control
     // =========================================================================
 
     /**
