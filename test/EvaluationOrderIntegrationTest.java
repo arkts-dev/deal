@@ -799,7 +799,7 @@ public class EvaluationOrderIntegrationTest {
             BoundaryOutcome wrongElement = BoundaryExecutor.check(
                 FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT, intDescriptor,
                 numberView(2.5), BoundaryContext.writeBounds(0, 2));
-            checkE8001(wrongElement, "int", "non-integer number",
+            checkE8001(wrongElement, "int", "number",
                 "an in-range number value fails the int element descriptor");
             check(wrongElement instanceof BoundaryOutcome.Fail failure
                     && failure.failure().code() == DiagnosticCode.E8001
@@ -839,7 +839,7 @@ public class EvaluationOrderIntegrationTest {
             BoundaryOutcome wrongValue = BoundaryExecutor.check(
                 FailurePolicyId.TYPE_DESCRIPTOR, intDescriptor,
                 numberView(1.5), BoundaryContext.none());
-            checkE8001(wrongValue, "int", "non-integer number",
+            checkE8001(wrongValue, "int", "number",
                 "the VARIABLE boundary rejects a wrong dynamic value (E8001) and the "
                     + "commit runs nothing");
             BoundaryOutcome rightValue = BoundaryExecutor.check(

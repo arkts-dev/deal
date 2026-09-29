@@ -9,6 +9,7 @@ import deal.semantic.ir.BoundaryFailure;
 import deal.semantic.ir.BoundaryOutcome;
 import deal.semantic.ir.BoundaryRealization;
 import deal.semantic.ir.BoundaryValueView;
+import deal.semantic.ir.FailureArmId;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FailurePolicyRow;
@@ -212,9 +213,38 @@ public class BoundaryExecutorTest {
         return BoundaryFailure.fromRow(row, templateIndex, expected, actual, metadata, cause);
     }
 
+    /** The typed-boundary kind text of one canonical descriptor spelling. */
+    private static String kindTextOf(String descriptorText) {
+        if (descriptorText.startsWith("?")) {
+            return kindTextOf(descriptorText.substring(1));
+        }
+        if (descriptorText.startsWith("@")) {
+            return "class instance";
+        }
+        if (descriptorText.startsWith("[")) {
+            return "array";
+        }
+        if (descriptorText.contains("->")) {
+            return "function";
+        }
+        return descriptorText;
+    }
+
+    /** The typed-boundary kind token of one canonical descriptor spelling. */
+    private static String kindTokenOf(String descriptorText) {
+        if (descriptorText.startsWith("?")) {
+            return kindTokenOf(descriptorText.substring(1));
+        }
+        if (descriptorText.startsWith("@")) {
+            return "class";
+        }
+        return kindTextOf(descriptorText);
+    }
+
     private static BoundaryFailure expectedKindMismatch(String descriptorText, String actual) {
-        return expected(FailureContractRegistry.row(FailurePolicyId.TYPE_DESCRIPTOR), 0,
-            descriptorText, actual, new LinkedHashMap<>(), null);
+        return FailureContractRegistry.render(FailureArmId.TYPED_BOUNDARY_KIND,
+            java.util.Map.of("kind", kindTextOf(descriptorText)), kindTokenOf(descriptorText),
+            actual, null);
     }
 
     private static final FailurePolicyRow TD_ROW =
@@ -258,21 +288,21 @@ public class BoundaryExecutorTest {
         record Case(BoundaryValueView view, String token) {}
         List<Case> cases = List.of(
             new Case(BoundaryValueView.nullView(), "null"),
-            new Case(BoundaryValueView.of(ActualKind.MISSING), "missing"),
+            new Case(BoundaryValueView.of(ActualKind.MISSING), "nil"),
             new Case(BoundaryValueView.of(ActualKind.BOOLEAN), "boolean"),
             new Case(BoundaryValueView.ofInt(7), "int"),
             new Case(BoundaryValueView.ofNumber(1.5), "number"),
             new Case(BoundaryValueView.of(ActualKind.TABLE), "table"),
             new Case(BoundaryValueView.ofArray(BoundaryValueView.ofNumber(1)), "array"),
             new Case(BoundaryValueView.ofFunction(SYNC_INT_TO_STRING), "function"),
-            new Case(BoundaryValueView.ofClass("@src/app/User"), "class:@src/app/User"),
+            new Case(BoundaryValueView.ofClass("@src/app/User"), "@src/app/User"),
             new Case(BoundaryValueView.of(ActualKind.ASYNC_OPERATION), "async-operation"),
             new Case(BoundaryValueView.of(ActualKind.NOTHING), "nothing"));
 
         for (Case c : cases) {
             BoundaryOutcome outcome = checkCell(FailurePolicyId.TYPE_DESCRIPTOR, STRING, c.view());
             expectFail(outcome, FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-                "expected string, got " + c.token(), "string", c.token(),
+                "expected string", "string", c.token(),
                 new LinkedHashMap<>(), null,
                 "string descriptor vs " + c.token() + " view");
         }
@@ -288,17 +318,17 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, BOOLEAN,
                 BoundaryValueView.nullView()),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected boolean, got null", "boolean", "null", new LinkedHashMap<>(), null,
+            "expected boolean", "boolean", "null", new LinkedHashMap<>(), null,
             "boolean descriptor vs null view");
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NULL_DESCRIPTOR,
                 BoundaryValueView.of(ActualKind.BOOLEAN)),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected null, got boolean", "null", "boolean", new LinkedHashMap<>(), null,
+            "expected null", "null", "boolean", new LinkedHashMap<>(), null,
             "null descriptor vs boolean view");
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, TABLE,
                 BoundaryValueView.of(ActualKind.NOTHING)),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected table, got nothing", "table", "nothing", new LinkedHashMap<>(), null,
+            "expected table", "table", "nothing", new LinkedHashMap<>(), null,
             "table descriptor vs nothing view");
     }
 
@@ -308,8 +338,9 @@ public class BoundaryExecutorTest {
         BoundaryValueView invalid = BoundaryValueView.of(ActualKind.INVALID_UNICODE);
         BoundaryOutcome outcome = checkCell(FailurePolicyId.TYPE_DESCRIPTOR, STRING, invalid);
         expectFail(outcome, FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected string, got invalid Unicode scalar encoding", "string", "invalid-unicode",
-            new LinkedHashMap<>(), null, "string descriptor vs invalid-unicode view");
+            "expected string, got invalid Unicode scalar encoding", "string",
+            "invalid-unicode", new LinkedHashMap<>(), null,
+            "string descriptor vs invalid-unicode view");
 
         // The pinned message is the registry row's second template, verbatim.
         check(TD_ROW.templates().get(1).equals("expected string, got invalid Unicode scalar encoding"),
@@ -331,33 +362,33 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT,
                 BoundaryValueView.of(ActualKind.STRING)),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected int, got string", "int", "string", new LinkedHashMap<>(), null,
+            "expected int", "int", "string", new LinkedHashMap<>(), null,
             "int descriptor vs string view");
 
         // NaN.
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT,
                 BoundaryValueView.ofNumber(Double.NaN)),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected int, got NaN", "int", "NaN", new LinkedHashMap<>(), null,
+            "expected int", "int", "NaN", new LinkedHashMap<>(), null,
             "int descriptor vs NaN number");
 
         // Both infinities.
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT,
                 BoundaryValueView.ofNumber(Double.POSITIVE_INFINITY)),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected int, got infinity", "int", "infinity", new LinkedHashMap<>(), null,
+            "expected int", "int", "infinity", new LinkedHashMap<>(), null,
             "int descriptor vs +infinity");
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT,
                 BoundaryValueView.ofNumber(Double.NEGATIVE_INFINITY)),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected int, got infinity", "int", "infinity", new LinkedHashMap<>(), null,
+            "expected int", "int", "infinity", new LinkedHashMap<>(), null,
             "int descriptor vs -infinity");
 
         // Non-integral.
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT,
                 BoundaryValueView.ofNumber(3.5)),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected int, got non-integer number", "int", "non-integer number",
+            "expected int", "int", "number",
             new LinkedHashMap<>(), null, "int descriptor vs 3.5");
 
         // E8004 at both signed32 ends; the pinned message is the INT32_RESULT
@@ -365,12 +396,12 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT,
                 BoundaryValueView.ofNumber(2147483648.0)),
             FailurePolicyId.INT32_RESULT, DiagnosticCode.E8004, "int out of safe range",
-            "int", "number", new LinkedHashMap<>(), null,
+            null, null, new LinkedHashMap<>(), null,
             "int descriptor vs 2147483648.0");
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT,
                 BoundaryValueView.ofNumber(-2147483649.0)),
             FailurePolicyId.INT32_RESULT, DiagnosticCode.E8004, "int out of safe range",
-            "int", "number", new LinkedHashMap<>(), null,
+            null, null, new LinkedHashMap<>(), null,
             "int descriptor vs -2147483649.0");
 
         // The nearest valid values on each side pass and keep the same value.
@@ -390,7 +421,7 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT,
                 BoundaryValueView.ofNumber(2147483647.5)),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected int, got non-integer number", "int", "non-integer number",
+            "expected int", "int", "number",
             new LinkedHashMap<>(), null, "int descriptor vs 2147483647.5");
 
         // Zero forms and plain integral carriers pass.
@@ -413,7 +444,7 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NUMBER,
                 BoundaryValueView.of(ActualKind.BOOLEAN)),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected number, got boolean", "number", "boolean", new LinkedHashMap<>(), null,
+            "expected number", "number", "boolean", new LinkedHashMap<>(), null,
             "number descriptor vs boolean view");
     }
 
@@ -432,13 +463,13 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, USER,
                 BoundaryValueView.ofClass("@src/app/Admin")),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected @src/app/User, got class:@src/app/Admin", "@src/app/User",
-            "class:@src/app/Admin", new LinkedHashMap<>(), null,
+            "expected instance of @src/app/User, got @src/app/Admin", "@src/app/User",
+            "@src/app/Admin", new LinkedHashMap<>(), null,
             "class descriptor vs byte-mismatched atom");
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, USER,
                 BoundaryValueView.ofNumber(1)),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected @src/app/User, got number", "@src/app/User", "number",
+            "expected class instance", "class", "number",
             new LinkedHashMap<>(), null, "class descriptor vs non-class view");
 
         // The builtin Error atom is the schema-pinned @/Error spelling.
@@ -447,7 +478,7 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, BUILTIN_ERROR,
                 BoundaryValueView.ofClass("@src/app/User")),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected @/Error, got class:@src/app/User", "@/Error", "class:@src/app/User",
+            "expected instance of @/Error, got @src/app/User", "@/Error", "@src/app/User",
             new LinkedHashMap<>(), null, "builtin Error vs foreign class atom");
     }
 
@@ -484,8 +515,7 @@ public class BoundaryExecutorTest {
         BoundaryValueView nested = BoundaryValueView.ofArray(
             BoundaryValueView.ofArray(BoundaryValueView.ofInt(3)),
             BoundaryValueView.ofArray(BoundaryValueView.ofNumber(1.5)));
-        BoundaryFailure leafNonIntegral = expected(TD_ROW, 0, "int", "non-integer number",
-            new LinkedHashMap<>(), null);
+        BoundaryFailure leafNonIntegral = expectedKindMismatch("int", "number");
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NESTED_INT_ARRAY, nested),
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
             "array element 2 type mismatch", "[int]", "array",
@@ -495,8 +525,8 @@ public class BoundaryExecutorTest {
         // A leaf E8004 travels inside the cause with its code and template.
         BoundaryValueView rangeLeaf = BoundaryValueView.ofArray(
             BoundaryValueView.ofNumber(3000000000.0));
-        BoundaryFailure leafRange = expected(RANGE_ROW, 0, "int", "number",
-            new LinkedHashMap<>(), null);
+        BoundaryFailure leafRange = FailureContractRegistry.render(
+            FailureArmId.INT32_RANGE, java.util.Map.of(), null, null, null);
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT_ARRAY, rangeLeaf),
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
             "array element 1 type mismatch", "int", "number",
@@ -511,7 +541,7 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NUMBER_ARRAY,
                 BoundaryValueView.of(ActualKind.STRING)),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected array, got string", "array", "string", new LinkedHashMap<>(),
+            "expected array", "array", "string", new LinkedHashMap<>(),
             null, "[number] vs string view");
 
         // An empty array passes with the same value.
@@ -558,12 +588,12 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.FUNCTION_SIGNATURE, SYNC_INT_TO_STRING,
                 BoundaryValueView.ofNumber(1)),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected function, got number", "function", "number",
+            "expected function", "function", "number",
             new LinkedHashMap<>(), null, "non-function view vs function descriptor");
         expectFail(checkCell(FailurePolicyId.FUNCTION_SIGNATURE, SYNC_INT_TO_STRING,
                 BoundaryValueView.of(ActualKind.MISSING)),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected function, got missing", "function", "missing",
+            "expected function", "function", "nil",
             new LinkedHashMap<>(), null, "missing view vs function descriptor");
 
         // The descriptor/policy pairing is a validator cell: broken pairings fail closed.
@@ -586,22 +616,23 @@ public class BoundaryExecutorTest {
                 BoundaryValueView.ofNumber(3.5), BoundaryContext.parameter(2)),
             FailurePolicyId.HOST_PARAMETER, DiagnosticCode.E8010,
             "parameter 2 type mismatch: expected int, got non-integer number",
-            "int", "non-integer number", Map.of("index", "2"), null,
+            "int", "number", Map.of("index", "2"), null,
             "host parameter 2 vs 3.5");
 
         expectFail(checkCell(FailurePolicyId.HOST_PARAMETER, INT,
                 BoundaryValueView.ofNumber(Double.NaN), BoundaryContext.parameter(1)),
             FailurePolicyId.HOST_PARAMETER, DiagnosticCode.E8010,
             "parameter 1 type mismatch: expected int, got NaN",
-            "int", "NaN", Map.of("index", "1"), null,
+            "int", "number", Map.of("index", "1"), null,
             "host parameter 1 vs NaN");
 
         // Function-typed parameters project the carried signature as actual.
         expectFail(checkCell(FailurePolicyId.HOST_PARAMETER, SYNC_INT_TO_STRING,
                 BoundaryValueView.ofFunction(SYNC_INT_TO_INT), BoundaryContext.parameter(1)),
             FailurePolicyId.HOST_PARAMETER, DiagnosticCode.E8010,
-            "parameter 1 type mismatch: expected (int)->string, got (int)->int",
-            "(int)->string", "(int)->int", Map.of("index", "1"), null,
+            "parameter 1 type mismatch: function signature mismatch: expected "
+                + "(int)->string, got (int)->int",
+            "(int)->string", "table", Map.of("index", "1"), null,
             "host function parameter signature mismatch");
 
         // An array parameter with a failing element projects the whole array kind.
@@ -610,8 +641,8 @@ public class BoundaryExecutorTest {
                     BoundaryValueView.of(ActualKind.STRING)),
                 BoundaryContext.parameter(1)),
             FailurePolicyId.HOST_PARAMETER, DiagnosticCode.E8010,
-            "parameter 1 type mismatch: expected [number], got array",
-            "[number]", "array", Map.of("index", "1"), null,
+            "parameter 1 type mismatch: array element 2 type mismatch",
+            "[number]", "table", Map.of("index", "1"), null,
             "host array parameter with a failing element");
 
         // Success passes the same value.
@@ -648,7 +679,7 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.HOST_SYNC_RETURN, STRING,
                 BoundaryValueView.ofNumber(1)),
             FailurePolicyId.HOST_SYNC_RETURN, DiagnosticCode.E8010,
-            "return value 1 type mismatch: expected string, got number",
+            "return value 1 type mismatch: expected string",
             "string", "number", new LinkedHashMap<>(), null,
             "host sync return vs number");
 
@@ -700,13 +731,14 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.ASYNC_COMPLETION, INT,
                 BoundaryValueView.ofNumber(2147483648.0)),
             FailurePolicyId.INT32_RESULT, DiagnosticCode.E8004, "int out of safe range",
-            "int", "number", new LinkedHashMap<>(), null,
+            null, null, new LinkedHashMap<>(), null,
             "async int completion out of range");
 
         // Array completions project the shared E8003 with the leaf cause;
         // the leaf's projection is the executing policy's row (ASYNC_COMPLETION).
-        BoundaryFailure leaf = expected(AC_ROW, 0, "number", "string",
-            new LinkedHashMap<>(), null);
+        BoundaryFailure leaf = FailureContractRegistry.render(
+            FailureArmId.ASYNC_COMPLETION_KIND, java.util.Map.of("expected", "number"),
+            "number", "string", null);
         expectFail(checkCell(FailurePolicyId.ASYNC_COMPLETION, NUMBER_ARRAY,
                 BoundaryValueView.ofArray(BoundaryValueView.ofNumber(1),
                     BoundaryValueView.of(ActualKind.STRING))),
@@ -733,7 +765,7 @@ public class BoundaryExecutorTest {
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
             "array element 3 type mismatch", "int", "number",
             Map.of("oneBasedIndex", "3"),
-            expected(TD_ROW, 0, "int", "non-integer number", new LinkedHashMap<>(), null),
+            expectedKindMismatch("int", "number"),
             "array element 3 vs 1.5");
 
         // A nested array element: the wrap uses the boundary's descriptor, the
@@ -744,7 +776,7 @@ public class BoundaryExecutorTest {
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
             "array element 1 type mismatch", "[[int]]", "array",
             Map.of("oneBasedIndex", "1"),
-            expected(TD_ROW, 0, "array", "number", new LinkedHashMap<>(), null),
+            expectedKindMismatch("[int]", "number"),
             "nested array element vs [1.5]");
 
         BoundaryValueView ok = BoundaryValueView.ofInt(2);
@@ -807,7 +839,7 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT, INT,
                 BoundaryValueView.ofNumber(1.5), BoundaryContext.writeBounds(5, 5)),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected int, got non-integer number", "int", "non-integer number",
+            "expected int", "int", "number",
             new LinkedHashMap<>(), null, "append-slot write vs 1.5 (leaf projection)");
 
         BoundaryValueView ok = BoundaryValueView.ofInt(3);
@@ -991,7 +1023,7 @@ public class BoundaryExecutorTest {
         // cell: missing is classified as actual kind 'missing'.
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, STRING, missing),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected string, got missing", "string", "missing", new LinkedHashMap<>(), null,
+            "expected string", "string", "nil", new LinkedHashMap<>(), null,
             "non-nullable descriptor vs missing");
 
         // OPTIONAL_FIELD_READ pre-maps missing to null at the op before
@@ -1003,17 +1035,17 @@ public class BoundaryExecutorTest {
         expectPass(mappedNullPass, "OPTIONAL_FIELD_READ nullable vs pre-mapped null");
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, STRING, nullView),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected string, got null", "string", "null", new LinkedHashMap<>(), null,
+            "expected string", "string", "null", new LinkedHashMap<>(), null,
             "OPTIONAL_FIELD_READ non-nullable vs pre-mapped null");
 
         // The same classification serves every other cell of the closed table.
         expectFail(checkCell(FailurePolicyId.FUNCTION_SIGNATURE, SYNC_INT_TO_STRING, missing),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected function, got missing", "function", "missing",
+            "expected function", "function", "nil",
             new LinkedHashMap<>(), null, "function boundary vs missing");
         expectFail(checkCell(FailurePolicyId.ASYNC_COMPLETION, STRING, missing),
             FailurePolicyId.ASYNC_COMPLETION, DiagnosticCode.E8001,
-            "expected string", "string", "missing", new LinkedHashMap<>(), null,
+            "expected string", "string", "nil", new LinkedHashMap<>(), null,
             "completion boundary vs missing");
     }
 
@@ -1094,7 +1126,7 @@ public class BoundaryExecutorTest {
         BoundaryValueView wouldFail = BoundaryValueView.ofNumber(1);
         BoundaryOutcome checked = checkCell(FailurePolicyId.TYPE_DESCRIPTOR, STRING, wouldFail);
         expectFail(checked, FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected string, got number", "string", "number", new LinkedHashMap<>(), null,
+            "expected string", "string", "number", new LinkedHashMap<>(), null,
             "the same view fails under RuntimeValidation");
 
         BoundaryOutcome proved = BoundaryExecutor.execute(FailurePolicyId.TYPE_DESCRIPTOR,
@@ -1126,7 +1158,7 @@ public class BoundaryExecutorTest {
             STRING, wouldFail, BoundaryContext.none(),
             new BoundaryRealization.RuntimeValidation("check-1"));
         expectFail(validated, FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected string, got number", "string", "number", new LinkedHashMap<>(), null,
+            "expected string", "string", "number", new LinkedHashMap<>(), null,
             "RuntimeValidation dispatches to check");
 
         // A policy outside the closed 11 fails closed on both paths.

@@ -383,7 +383,7 @@ public class BoundaryIntegrationTest {
             passArm(BoundaryValueView.ofNumber(7.0)),
             failArm(BoundaryValueView.ofNumber(2147483648.0), BoundaryContext.none(),
                 new ExecFail(FailurePolicyId.INT32_RESULT, DiagnosticCode.E8004,
-                    "int out of safe range", "int", "number", new LinkedHashMap<>(), null))));
+                    "int out of safe range", null, null, new LinkedHashMap<>(), null))));
 
         // 2. MODULE_EXPORT number — number accepts an int carrier.
         OpId numBoundary = nextOpId();
@@ -399,9 +399,8 @@ public class BoundaryIntegrationTest {
         ops.add(boundaryWith(arrBoundary, BoundaryKind.IMPORTED_MEMBER_READ, INT_ARRAY,
             FailurePolicyId.TYPE_DESCRIPTOR,
             new BoundaryRealization.RuntimeValidation("check-arr"), null));
-        BoundaryFailure leafNonIntegral = BoundaryFailure.fromRow(
-            FailureContractRegistry.row(FailurePolicyId.TYPE_DESCRIPTOR), 0,
-            "int", "non-integer number", new LinkedHashMap<>(), null);
+        BoundaryFailure leafNonIntegral = deal.semantic.ir.FailureProjections
+            .kindFailure("int", "number");
         arms.put(arrBoundary, List.of(
             passArm(BoundaryValueView.ofArray(BoundaryValueView.ofInt(1),
                 BoundaryValueView.ofInt(2))),
@@ -421,8 +420,8 @@ public class BoundaryIntegrationTest {
             passArm(BoundaryValueView.ofClass("@src/app/User")),
             failArm(BoundaryValueView.ofClass("@src/app/Admin"), BoundaryContext.none(),
                 new ExecFail(FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-                    "expected @src/app/User, got class:@src/app/Admin", "@src/app/User",
-                    "class:@src/app/Admin", new LinkedHashMap<>(), null))));
+                    "expected instance of @src/app/User, got @src/app/Admin",
+                    "@src/app/User", "@src/app/Admin", new LinkedHashMap<>(), null))));
 
         // 5. OPTIONAL_FIELD_READ ?string — language null passes the nullable.
         OpId optBoundary = nextOpId();
@@ -504,7 +503,7 @@ public class BoundaryIntegrationTest {
             failArm(BoundaryValueView.ofNumber(3.5), BoundaryContext.parameter(1),
                 new ExecFail(FailurePolicyId.HOST_PARAMETER, DiagnosticCode.E8010,
                     "parameter 1 type mismatch: expected int, got non-integer number",
-                    "int", "non-integer number", Map.of("index", "1"), null))));
+                    "int", "number", Map.of("index", "1"), null))));
         ops.add(boundaryWith(hostPb2, BoundaryKind.DEAL_TO_HOST, INT,
             FailurePolicyId.HOST_PARAMETER,
             new BoundaryRealization.RepresentationProof("jvm-method-signature"), hostCallOp));
@@ -784,7 +783,7 @@ public class BoundaryIntegrationTest {
         assertExec(validatedOutcome,
             new ExecFail(FailurePolicyId.HOST_PARAMETER, DiagnosticCode.E8010,
                 "parameter 1 type mismatch: expected int, got non-integer number",
-                "int", "non-integer number", Map.of("index", "1"), null),
+                "int", "number", Map.of("index", "1"), null),
             "the RuntimeValidation cell projects the {index} E8010 template");
 
         // The physical check on the proved cell's shape projects {index}=2
@@ -794,7 +793,7 @@ public class BoundaryIntegrationTest {
         assertExec(physicalCheck,
             new ExecFail(FailurePolicyId.HOST_PARAMETER, DiagnosticCode.E8010,
                 "parameter 2 type mismatch: expected int, got non-integer number",
-                "int", "non-integer number", Map.of("index", "2"), null),
+                "int", "number", Map.of("index", "2"), null),
             "the same cell under a physical check projects parameter 2 ({index} from context)");
 
         // The proved cell always Passes with the value unchanged — no check

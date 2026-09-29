@@ -808,20 +808,21 @@ public class FfiStructConstructionTest {
                 + broken.origin().span().startLine() + ":"
                 + broken.origin().span().startColumn();
             String regionA = constructionRegion(chunkA, "extra field 'zzz'");
-            int guardAt = regionA.indexOf("__failExpr(\"E8007\","
-                + " \"extra field 'zzz'");
+            int guardAt = regionA.indexOf("__arm(\"CLASS_EXTRA_FIELD\","
+                + " {field = \"zzz\"");
             int entryAt = regionA.indexOf("pcall(__rt.class_plan_, ");
             check(guardAt > 0, "the emitted guard names the first"
                 + " provided-source extra: " + regionA);
             check(guardAt > 0 && guardAt < entryAt,
                 "the guard precedes the runtime entry call (no default runs"
                     + " for the failed attempt)");
-            check(chunkA.contains("extra field 'zzz' in class '"
-                    + FOCUSED_PROBE_DESC + "'\", \"" + origin
+            check(chunkA.contains("{field = \"zzz\", classId = \""
+                    + FOCUSED_PROBE_DESC + "\"}, \"" + origin
                     + "\", nil, nil)"),
-                "the guard raises E8007 at the literal origin " + origin);
-            check(regionA.indexOf("extra field 'zzz'")
-                    < regionA.indexOf("extra field 'yyy'"),
+                "the guard renders the class-construction arm at the literal"
+                    + " origin " + origin);
+            check(regionA.indexOf("__arm(\"CLASS_EXTRA_FIELD\", {field = \"zzz\"")
+                    < regionA.indexOf("__arm(\"CLASS_EXTRA_FIELD\", {field = \"yyy\""),
                 "the guards keep the provided-source order");
             check(regionA.indexOf("__provT[\"a\"] = ") > 0
                     && regionA.indexOf("__provT[\"a\"] = ") < guardAt,
@@ -873,9 +874,10 @@ public class FfiStructConstructionTest {
                         + " is zero after the failure): "
                         + escaped(probe.stdout()));
             }
-            String regionB = constructionRegion(chunkB, "extra field 'zzz'");
-            check(regionB.indexOf("extra field 'zzz'") > 0
-                    && regionB.indexOf("extra field 'zzz'")
+            String regionB = constructionRegion(chunkB,
+                "__arm(\"CLASS_EXTRA_FIELD\", {field = \"zzz\"");
+            check(regionB.indexOf("{field = \"zzz\"") > 0
+                    && regionB.indexOf("{field = \"zzz\"")
                         < regionB.indexOf("pcall(__rt.class_plan_, "),
                 "the second doctored site keeps the guard-before-entry order: "
                     + regionB);

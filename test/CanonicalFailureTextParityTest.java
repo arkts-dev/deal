@@ -420,8 +420,13 @@ public class CanonicalFailureTextParityTest {
                 "the production LuaJIT artifact carries the pinned rejection message");
             check(lua.contains(SharedStdlibSemantics.JSON_STRINGIFY_EXPECTED),
                 "the production LuaJIT artifact carries the pinned expected text");
-            check(!lua.contains("not JSON serializable"),
-                "the production LuaJIT artifact renders no internal fieldPath spelling");
+            // The closed arm table is serialized into the prelude (the
+            // authority's own text); no failure site composes the walk's
+            // spelling, so the only occurrence is the serialized template.
+            check(lua.contains("value at {fieldPath} is not JSON serializable: {actual}")
+                    && !lua.contains("\"value at \"..__jpathT"),
+                "the production LuaJIT artifact carries the walk template only in the "
+                    + "serialized arm table");
             ProcessOutcome luaRun = runLua(lua, workspace.resolve("lua"));
             checkEq(1, luaRun.exitCode(),
                 "the LuaJIT artifact exits 1: stdout=" + escaped(luaRun.stdout())

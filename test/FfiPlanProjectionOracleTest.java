@@ -1185,9 +1185,9 @@ public class FfiPlanProjectionOracleTest {
                     instanceof SemanticRuntimeModel.Terminal.DealFailure failure) {
                 checkEq("E8001", failure.error().code(),
                     "the wrong-kind plan default raises E8001");
-                checkEq("expected int, got non-integer number",
+                checkEq("expected int",
                     failure.error().message(),
-                    "the E8001 text is the canonical matcher's");
+                    "the E8001 text is the typed-boundary kind arm's");
                 checkEq(origin, failure.error().origin(),
                     "the E8001 origin is the literal origin");
             }

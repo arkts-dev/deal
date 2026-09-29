@@ -718,7 +718,7 @@ public class CompiledExportReadRealizationTest {
             checkEq(List.of("missing"), luaReadAtoms(absent.stderr(), readOps),
                 "the entry-only per-unit chunk projects the __MISSING sentinel for the "
                     + "compiled read");
-            check(absent.stderr().contains("!E8001;expected function, got missing"),
+            check(absent.stderr().contains("!E8001;expected function;"),
                 "the entry-only per-unit chunk's function-typed binding boundary rejects "
                     + "the absent-slot value: " + absent.stderr().replace("\n", "\\n"));
 

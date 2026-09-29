@@ -1386,7 +1386,7 @@ public class DynamicClassDispatchTest {
             String stderr = Files.readString(stderrFile, StandardCharsets.UTF_8);
             checkEq(0, exit, "the async residue LuaJIT artifact executes: " + stdout
                 + stderr);
-            check(stdout.contains("ERR:E8001|expected function, got string|" + origin),
+            check(stdout.contains("ERR:E8001|expected function|" + origin),
                 "the LuaJIT async residue projects the pinned E8001 at the start "
                     + "origin: " + stdout.replace("\n", "\\n"));
         } finally {
@@ -1447,7 +1447,7 @@ public class DynamicClassDispatchTest {
                 workspace);
             checkEq(0, run.exitCode(), "the async residue artifact executes under java: "
                 + run.output());
-            check(run.stdout().contains("ERR:E8001|expected function, got string|"
+            check(run.stdout().contains("ERR:E8001|expected function|"
                     + origin),
                 "the JVM async residue projects the pinned E8001 at the start origin: "
                     + run.stdout().replace("\n", "\\n"));

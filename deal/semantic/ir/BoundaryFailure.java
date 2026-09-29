@@ -85,6 +85,10 @@ public record BoundaryFailure(
                 "template index " + templateIndex + " is outside the pinned templates of "
                     + row.policy());
         }
+        // Every retained template is bound to exactly one declared arm of
+        // its row (the fail-closed row/arm consistency invariant): a
+        // retained template with no bound arm never renders.
+        FailureContractRegistry.armForTemplate(row.policy(), templateIndex);
         String message = instantiate(templates.get(templateIndex), expected, actual, metadata);
         return new BoundaryFailure(row.policy(), row.code(), message, expected, actual,
             metadata == null ? new LinkedHashMap<>() : metadata, cause);
@@ -125,6 +129,10 @@ public record BoundaryFailure(
                 "template index " + templateIndex + " is outside the pinned templates of "
                     + row.policy());
         }
+        // Every retained template is bound to exactly one declared arm of
+        // its row (the fail-closed row/arm consistency invariant): a
+        // retained template with no bound arm never renders.
+        FailureContractRegistry.armForTemplate(row.policy(), templateIndex);
         String message = instantiate(templates.get(templateIndex), expected, actual, metadata);
         return new BoundaryFailure(row.policy(), code, message, expected, actual,
             metadata == null ? new LinkedHashMap<>() : metadata, cause);

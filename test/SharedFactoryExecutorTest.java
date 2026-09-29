@@ -401,9 +401,8 @@ public class SharedFactoryExecutorTest {
     /** A pinned registry-row failure for the fail-first fixture. */
     private static final class BoundaryFailureFixture {
         static BoundaryFailure failure() {
-            return BoundaryFailure.fromRow(
-                FailureContractRegistry.row(FailurePolicyId.TYPE_DESCRIPTOR), 0,
-                INT.canonicalSpecText(), "string", Map.of(), null);
+            return deal.semantic.ir.FailureProjections.kindFailure(
+                INT.canonicalSpecText(), "string");
         }
     }
 

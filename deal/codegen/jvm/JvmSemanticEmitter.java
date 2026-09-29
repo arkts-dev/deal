@@ -3971,9 +3971,10 @@ public final class JvmSemanticEmitter {
                                                int indent) {
             String error = "__dy_" + op.opId().id();
             out.append(indent(indent)).append("JvmRuntime.DealError ").append(error)
-                .append(" = JvmRuntime.fail(\"E8001\", \"expected function, got \""
-                    + " + JvmRuntime.actualOf(\"function\", ").append(carrierExpr)
-                .append("), ").append(javaString(originOf(op)))
+                .append(" = JvmRuntime.arm("
+                    + "deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND,"
+                    + " java.util.Map.of(\"kind\", \"function\"), ")
+                .append(javaString(originOf(op)))
                 .append(", \"function\", JvmRuntime.actualOf(\"function\", ")
                 .append(carrierExpr).append("));\n");
             emitFailureEvent(op.opId(), op.kind().name(), op,
@@ -6660,10 +6661,10 @@ public final class JvmSemanticEmitter {
                 .append(String.join(", ", args)).append("});\n");
             out.append(indent(indent)).append("if (__bound == null) {\n");
             out.append(indent(indent + 1)).append("JvmRuntime.DealError __e = "
-                + "JvmRuntime.fail(\"E8010\", \"async operation mismatch: expected "
-                + "async-operation, got nothing\", ")
+                + "JvmRuntime.arm(deal.semantic.ir.FailureArmId.ASYNC_SHAPE, "
+                + "java.util.Map.of(\"actual\", \"nothing\"), ")
                 .append(javaString(originOf(op)))
-                .append(", \"async-operation\", \"nothing\");\n");
+                .append(", \"async operation\", \"nothing\");\n");
             emitFailureEvent(op.opId(), op.kind().name(), op, "JvmRuntime.errtext(__e)",
                 indent + 1);
             out.append(indent(indent + 1)).append("throw __e;\n");

@@ -1505,10 +1505,10 @@ public final class StdlibIntegrationTest {
             BoundaryValueView.ofInt(1), BoundaryContext.none());
         check(returnCheck instanceof BoundaryOutcome.Fail fail
                 && fail.failure().code() == DiagnosticCode.E8001
-                && fail.failure().message().equals("expected table, got int")
+                && fail.failure().message().equals("expected table")
                 && fail.failure().policy() == FailurePolicyId.TYPE_DESCRIPTOR,
             "T4: the STDLIB_RETURN boundary rejects the non-table top-level parse "
-                + "with E8001 'expected table, got int'");
+                + "with E8001 'expected table'");
 
         // (c) JSON_TO_ERROR: the first declaration-order failure with the
         // corpus-aligned rejection text and the expected/actual pair; the
@@ -1610,7 +1610,7 @@ public final class StdlibIntegrationTest {
             if (run.terminal()
                     instanceof SemanticRuntimeModel.Terminal.DealFailure terminal) {
                 check(terminal.error().code().equals("E8001")
-                        && terminal.error().message().equals("expected table, got int")
+                        && terminal.error().message().equals("expected table")
                         && terminal.error().cause() == null
                         && returnBoundary != null
                         && terminal.error().origin().equals(originAtomOf(returnBoundary)),

@@ -36,6 +36,17 @@ TEST_MAINS=(
   'fg|=== Running the Class Construction Differential Matrix (ISSUE-0586: semantic oracle + shared LuaJIT + shared JVM) ===|java -ea -cp build deal.test.ClassConstructionDifferentialTest'
   'fg|=== Running Unicode Scalars Tests (ISSUE-0382, ISSUE-0232 D5) ===|java -ea -cp build deal.test.UnicodeScalarsTest'
   'fg|=== Running Failure Contract Registry Tests (ISSUE-0285) ===|java -ea -cp build deal.test.FailureContractRegistryTest'
+  # ISSUE-0704 registration: the canonical failure-projection authority's
+  # arm-table battery (canonical-failure-projection-authority P1/P2 and
+  # Verification 2/4): the closed arm table beside its rows, the fail-closed
+  # row/arm consistency invariant with its negative controls (an unbound
+  # retained template, a foreign template, a duplicate binding, an INNER_ONLY
+  # arm rendered top-level, a SIBLING_OWNED arm rendered by a production
+  # consumer, a field-shape mismatch), the corrected template enumeration,
+  # the two closed projections and the host inner-reason render, and the
+  # emitted Lua prelude's serialized arm table against the canonical
+  # serialization.
+  'fg|=== Running Failure Arm Authority Tests (ISSUE-0704) ===|java -ea -cp build deal.test.FailureArmAuthorityTest'
   'fg|=== Running Canonical JSON / Snapshot Digest Tests (ISSUE-0283) ===|java -ea -cp build deal.test.CanonicalJsonTest'
   'fg|=== Running Semantic IR Validator Tests (ISSUE-0286) ===|java -ea -cp build deal.test.SemanticIrValidatorTest'
   'fg|=== Running Dynamic Resolution IR Tests (ISSUE-0531) ===|java -ea -cp build deal.test.DynamicResolutionIrTest'

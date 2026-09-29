@@ -773,10 +773,11 @@ public class FfiTypedCrossingTest {
                     "the class parameter cell accepts the chunk representation");
                 checkEq("OK", lines.get("param-chunk-identity"),
                     "the accepted value is the program's own value, unchanged");
-                checkEq("E8010;" + HANDLE_DESC + ";@src.app/Box",
+                checkEq("E8010;" + HANDLE_DESC + ";table",
                     lines.get("param-wrong-identity"),
                     "a class value of another identity fails E8010 with the "
-                        + "carried identity");
+                        + "carrier-kind token (a class carrier is a table on the "
+                        + "unchanged host projection)");
                 check(lines.get("param-wrong-identity-message") != null
                         && lines.get("param-wrong-identity-message").startsWith(
                             "parameter 1 type mismatch: expected instance of "
@@ -789,10 +790,10 @@ public class FfiTypedCrossingTest {
                 checkEq("parameter 1 type mismatch: expected class instance",
                     lines.get("param-non-class-message"),
                     "the non-class message is the pinned class-instance text");
-                checkEq("E8010;" + HANDLE_DESC + ";null",
+                checkEq("E8010;" + HANDLE_DESC + ";nil",
                     lines.get("param-null"),
-                    "an absent value at a class position fails E8010, never a "
-                        + "null mapping");
+                    "an absent value at a class position fails E8010 with the "
+                        + "absent marker's nil token");
                 checkEq("OK", lines.get("param-int"),
                     "a non-class position keeps the landed cell");
                 checkEq("E8010;int;string", lines.get("param-int-mismatch"),
@@ -801,9 +802,10 @@ public class FfiTypedCrossingTest {
                     "the cell also accepts the wrapper-facing representation");
                 checkEq("OK", lines.get("return-chunk"),
                     "the return cell accepts the chunk representation");
-                checkEq("E8010;" + HANDLE_DESC + ";@src.app/Box",
+                checkEq("E8010;" + HANDLE_DESC + ";table",
                     lines.get("return-wrong-identity"),
-                    "the return cell rejects a foreign identity");
+                    "the return cell rejects a foreign identity with the "
+                        + "carrier-kind token");
                 checkEq("fresh", lines.get("project-fresh"),
                     "the chunk-to-wrapper projection allocates a fresh value");
                 checkEq("class;" + HANDLE_DESC, lines.get("project-shape"),

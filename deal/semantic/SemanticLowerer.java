@@ -2241,6 +2241,14 @@ public final class SemanticLowerer {
         Map<ClassId, SharedFactoryFacts> inProjectFactoryFacts =
             new LinkedHashMap<>();
 
+        // (4b) The declared-parameter-annotation index of the one lowering
+        // (canonical failure-projection authority P3): built once from the
+        // checked project's declarations before the module walk, so every
+        // declaration-owned parameter boundary carries the callee's declared
+        // annotation span rather than the call site.
+        Map<ModuleId, Map<String, List<List<Span>>>> declaredParameterAnnotations =
+            declaredParameterAnnotationIndex(checkedProject);
+
         for (CheckedModuleInput module : checkedProject.modules()) {
             SemanticRequirementManifest manifest =
                 manifestOf(requirementManifests, module.moduleId());
@@ -2265,7 +2273,7 @@ public final class SemanticLowerer {
                 interfaceHash, capabilityRegistryHash, allocator, closureRoutes,
                 calleeExternalEntries, callbackExports, seeds.seeds(),
                 conversionIntrinsics, ownInterface, comparisonFacts,
-                inProjectFactoryFacts);
+                inProjectFactoryFacts, declaredParameterAnnotations);
             if (lowered.hasErrors()) {
                 return projectFailureResult(lowered.diagnostics());
             }
@@ -2299,6 +2307,36 @@ public final class SemanticLowerer {
     }
 
     /**
+     * The declared-parameter-annotation index of the one lowering
+     * (canonical failure-projection authority P3): {@code module → declared
+     * function name → declared parameter type-annotation spans}, built from
+     * the checked project's declarations — never from a call site. The
+     * declaration-owned parameter boundaries read it so every consumer
+     * renders the callee's declared annotation span, in the callee's file.
+     */
+    private static Map<ModuleId, Map<String, List<List<Span>>>> declaredParameterAnnotationIndex(
+            CheckedProjectInput checkedProject) {
+        Map<ModuleId, Map<String, List<List<Span>>>> index = new LinkedHashMap<>();
+        for (CheckedModuleInput module : checkedProject.modules()) {
+            Map<String, List<List<Span>>> byName = new LinkedHashMap<>();
+            for (StatementNode statement : module.ast().statements()) {
+                StatementNode declaration = statement instanceof ExportDeclaration export
+                    ? export.declaration() : statement;
+                if (declaration instanceof FunctionDeclaration function) {
+                    List<Span> annotations = new ArrayList<>();
+                    for (Parameter parameter : function.params()) {
+                        annotations.add(parameter.type().span());
+                    }
+                    byName.computeIfAbsent(function.name(), ignored -> new ArrayList<>())
+                        .add(List.copyOf(annotations));
+                }
+            }
+            index.put(module.moduleId(), byName);
+        }
+        return index;
+    }
+
+    /**
      * One module's lowering inside the one project walk (ISSUE-0634): the
      * session with every arm active under the assembled context, the
      * composed per-unit closed chain over the produced unit, and the
@@ -2324,11 +2362,13 @@ public final class SemanticLowerer {
             List<IntrinsicKind> conversionIntrinsics,
             deal.semantic.ir.ExternalModuleInterface ownInterface,
             SemanticIrValidator.ComparisonFacts comparisonFacts,
-            Map<ClassId, SharedFactoryFacts> sharedFactories) {
+            Map<ClassId, SharedFactoryFacts> sharedFactories,
+            Map<ModuleId, Map<String, List<List<Span>>>> declaredParameterAnnotations) {
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator, true, true, true, false, false, false,
             module.ast().span(), true, true, ownInterface,
             Map.copyOf(sharedFactories));
+        lowerer.setDeclaredParameterAnnotations(declaredParameterAnnotations);
         lowerer.setModuleImports(module.imports());
         lowerer.setRegistrationSeeds(seeds);
         lowerer.setDeclaredConversionIntrinsics(conversionIntrinsics);
@@ -4254,6 +4294,12 @@ public final class SemanticLowerer {
         private Map<ModuleId, Map<String, OpId>> calleeExternalEntries = Map.of();
         /** The exported function names the scenario invokes as callbacks. */
         private Set<String> callbackExports = Set.of();
+        /**
+         * The one lowering's declared-parameter-annotation index (P3), or
+         * {@code null} on a non-project session (the entry sets it before
+         * the walk).
+         */
+        private Map<ModuleId, Map<String, List<List<Span>>>> declaredParameterAnnotations;
         /** The module's recorded {@code EXTERNAL_ENTRY} op ids by export name. */
         private final LinkedHashMap<String, OpId> recordedEntries = new LinkedHashMap<>();
         /** The module's recorded {@code CALLBACK_INVOKE} op ids by export name. */
@@ -10201,11 +10247,19 @@ public final class SemanticLowerer {
             List<SemanticOp> parameterBoundaryOps = new ArrayList<>();
             List<OpId> parameterBoundaryIds = new ArrayList<>();
             for (int i = 0; i < args.size(); i++) {
+                // The declared callee's own parameter annotation is the
+                // parameter cell's origin (P3): the declaration-owned
+                // convention, in the callee's file, never the call site.
+                // The callee context carries the declared annotation for a
+                // same-unit callee (module-level or local); the project-wide
+                // declared-parameter index supplies the cross-module
+                // declaration's span.
                 SemanticOp boundary = buildChildBoundary(
                     entryInvocation ? BoundaryKind.EXTERNAL_PARAMETER
                         : BoundaryKind.FUNCTION_PARAMETER,
                     context.signature.paramTypes().get(i), args.get(i),
-                    context.parameterSpan(i, call.span()), callOpId);
+                    context.parameterSpan(i, call.span()),
+                    callOpId);
                 parameterBoundaryOps.add(boundary);
                 parameterBoundaryIds.add(boundary.opId());
             }
@@ -11189,9 +11243,16 @@ public final class SemanticLowerer {
                 hostParameterBoundaries(descriptor, args, call, callOpId,
                     parameterBoundaryOps, parameterBoundaryIds);
             } else {
+                FunctionExecutionBinding.ExternalFunction callee =
+                    (FunctionExecutionBinding.ExternalFunction) binding;
                 for (int i = 0; i < args.size(); i++) {
+                    // The cross-module declared callee's own parameter
+                    // annotation, in the callee's file (P3).
                     SemanticOp boundary = buildChildBoundary(BoundaryKind.EXTERNAL_PARAMETER,
-                        descriptor.paramTypes().get(i), args.get(i), call.span(), callOpId);
+                        descriptor.paramTypes().get(i), args.get(i),
+                        declaredParameterOrigin(callee.moduleId(), callee.exportName(),
+                            args.size(), i, call.span()),
+                        callOpId);
                     parameterBoundaryOps.add(boundary);
                     parameterBoundaryIds.add(boundary.opId());
                 }
@@ -12108,6 +12169,67 @@ public final class SemanticLowerer {
             this.calleeRoutes = Map.copyOf(routes);
             this.calleeExternalEntries = Map.copyOf(calleeEntries);
             this.callbackExports = Set.copyOf(callbacks);
+        }
+
+        /**
+         * The declared-parameter-annotation index of the one lowering
+         * (canonical failure-projection authority P3): the production entry
+         * supplies it before the module walk, so a declaration-owned
+         * parameter boundary reads the callee's declared type-annotation
+         * span instead of the call site.
+         */
+        void setDeclaredParameterAnnotations(
+                Map<ModuleId, Map<String, List<List<Span>>>> index) {
+            this.declaredParameterAnnotations = index;
+        }
+
+        /**
+         * The declared parameter type-annotation span of one
+         * declaration-owned parameter boundary (P3): the callee's
+         * declaration, selected by module, declared function name, and
+         * declared arity. A declared callee with no recorded annotation
+         * fails closed — never a fallback to the call span.
+         */
+        private Span declaredParameterSpan(ModuleId calleeModule, String functionName,
+                                           int arity, int parameterIndex) {
+            if (declaredParameterAnnotations == null) {
+                return null;
+            }
+            Map<String, List<List<Span>>> byName =
+                declaredParameterAnnotations.get(calleeModule);
+            if (byName == null) {
+                // A callee outside the checked project's implementation
+                // closure (a host/extern-C declaration module): the host
+                // cells' own convention applies, never a fabricated
+                // annotation. The fail-closed rule below applies to the
+                // closure's own declared callees.
+                return null;
+            }
+            List<List<Span>> candidates = byName.get(functionName);
+            if (candidates == null) {
+                throw new ConstructUnlowered("the declared callee '" + functionName
+                    + "' of module '" + calleeModule.path() + "' has no recorded parameter"
+                    + " annotation in the one lowering's declaration index (a declared"
+                    + " callee without a recorded annotation is a fail-closed producer"
+                    + " defect, never a fallback span)");
+            }
+            for (List<Span> declared : candidates) {
+                if (declared.size() == arity && parameterIndex < declared.size()) {
+                    return declared.get(parameterIndex);
+                }
+            }
+            throw new ConstructUnlowered("the declared callee '" + functionName
+                + "' of module '" + calleeModule.path() + "' has no declaration of arity "
+                + arity + " in the one lowering's declaration index (fail-closed producer"
+                + " defect, never a fallback span)");
+        }
+
+        /** The declaration-owned origin of one declared parameter cell (P3). */
+        private Span declaredParameterOrigin(ModuleId calleeModule, String functionName,
+                                             int arity, int parameterIndex, Span callSpan) {
+            Span declared = declaredParameterSpan(calleeModule, functionName, arity,
+                parameterIndex);
+            return declared != null ? declared : callSpan;
         }
 
         /** The module's recorded {@code EXTERNAL_ENTRY} op ids by export name. */

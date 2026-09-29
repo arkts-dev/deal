@@ -583,7 +583,7 @@ public final class StdlibEquivalenceBatteryTest {
         cases.add(new ValueCase("parse-top-level-scalar", StdlibFunctionId.JSON_PARSE,
             List.of(new Arg.StrArg("1")), LUA_JS,
             fail(FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-                "expected table, got int", "table", "int")));
+                "expected table", "table", "int")));
 
         // ---- json stringify direct tables ----
         cases.add(new ValueCase("stringify-empty", StdlibFunctionId.JSON_STRINGIFY,

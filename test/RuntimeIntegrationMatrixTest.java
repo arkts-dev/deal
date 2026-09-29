@@ -2028,7 +2028,7 @@ public class RuntimeIntegrationMatrixTest {
                 + "}\n";
             SemanticDifferentialHarness.Verdict verdict = runMatrix(source,
                 "JSON_PARSE top-level array (E8001 array actual)", List.of(), E8001);
-            checkTerminalMessage(verdict, "expected table, got array",
+            checkTerminalMessage(verdict, "expected table",
                 "JSON_PARSE top-level array return boundary");
         }
 

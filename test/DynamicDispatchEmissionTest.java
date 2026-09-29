@@ -1767,9 +1767,10 @@ public class DynamicDispatchEmissionTest {
         check(lua.contains("__hostProjectArg(") && lua.contains("__hostReturnCell,"),
             "the HOST row invokes the loaded surface entry through the host calling "
                 + "convention and runs the recorded HOST_TO_DEAL + HOST_SYNC_RETURN cell");
-        check(lua.contains("expected function, got ")
-                && lua.contains("__actualOf(\"function\", __dynC)"),
-            "the residue projects the pinned E8001 expected/actual text");
+        check(lua.contains("__arm(\"TYPED_BOUNDARY_KIND\", {kind = \"function\"}")
+                && lua.contains("__typedBoundaryKind(\"function\", __dynC)"),
+            "the residue renders the typed-boundary kind arm with the closed "
+                + "typed-boundary projection");
         check(jvm.contains("instanceof JvmRuntime.AdapterValue")
                 && jvm.contains("instanceof JvmRuntime.FunctionValue")
                 && jvm.contains(".fid != null"),
@@ -1779,8 +1780,10 @@ public class DynamicDispatchEmissionTest {
                 + "and switches the module context");
         check(jvm.contains("JvmRuntime.pushFrame("), "the JVM DEAL_BODY path pushes "
             + "the callee frame");
-        check(jvm.contains("JvmRuntime.fail(\"E8001\", \"expected function, got \""),
-            "the JVM residue projects the pinned E8001 expected/actual text");
+        check(jvm.contains("JvmRuntime.arm("
+                + "deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND,"
+                + " java.util.Map.of(\"kind\", \"function\")"),
+            "the JVM residue renders the typed-boundary kind arm");
         check(jvm.contains("JvmRuntime.fnCheck(JvmRuntime.adapterSource(")
                 && jvm.contains("java.util.Arrays.copyOfRange("),
             "the JVM adapter path runs the landed D15 sequence with the leading-M "
@@ -2034,9 +2037,9 @@ public class DynamicDispatchEmissionTest {
             "the oracle fails closed on the unresolvable carrier: " + oracleFailure);
         // The artifacts project the pinned E8001 at the call origin.
         assertResidueRun("luajit", luaResidue(project, raw.table()), "E8001",
-            "expected function, got string");
+            "expected function");
         assertResidueRun("java", jvmResidue(project, raw.table()), "E8001",
-            "expected function, got string");
+            "expected function");
     }
 
     private static Outcome luaResidue(ExecutableLoweredProject project,
@@ -2347,7 +2350,7 @@ public class DynamicDispatchEmissionTest {
                 check(consumer.terminal()
                         instanceof SemanticRuntimeModel.Terminal.DealFailure failure
                         && "E8001".equals(failure.error().code())
-                        && "expected int, got string".equals(failure.error().message())
+                        && "expected int".equals(failure.error().message())
                         && cellOrigin.equals(failure.error().origin()),
                     "the " + consumer.consumer() + " terminal projects the callee "
                         + "body's RETURN-cell projection with the callee's origin "
@@ -2368,9 +2371,9 @@ public class DynamicDispatchEmissionTest {
             deleteRecursively(workspace);
         }
         assertFaultRun("luajit", luaResidue(drive.project(), raw.table()), "E8001",
-            "expected int, got string", cellOrigin);
+            "expected int", cellOrigin);
         assertFaultRun("java", jvmResidue(drive.project(), raw.table()), "E8001",
-            "expected int, got string", cellOrigin);
+            "expected int", cellOrigin);
     }
 
     /** The FAILURE snapshot of one op in one consumer's trace, or null. */
@@ -2477,9 +2480,9 @@ public class DynamicDispatchEmissionTest {
         // The artifacts project the pinned E8001 residue at the call origin.
         String callOrigin = originText(call);
         assertFaultRun("luajit", luaResidue(drive.project(), raw.table()), "E8001",
-            "expected function, got function", callOrigin);
+            "expected function", callOrigin);
         assertFaultRun("java", jvmResidue(drive.project(), raw.table()), "E8001",
-            "expected function, got function", callOrigin);
+            "expected function", callOrigin);
     }
 
     /**

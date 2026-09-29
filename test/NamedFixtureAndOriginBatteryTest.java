@@ -761,7 +761,7 @@ public class NamedFixtureAndOriginBatteryTest {
         check(expectedMessage.startsWith(spec.pinnedMessage()), spec.what()
             + ": the shared row keeps the pinned message stem: " + expectedMessage);
         if ("E8001".equals(spec.pinnedCode())) {
-            checkEq("expected function, got int", expectedMessage, spec.what()
+            checkEq("expected function", expectedMessage, spec.what()
                 + ": the shared classification carries the legacy tail the lane "
                 + "cutover re-pins");
             checkEq("number", spec.pinnedActual(), spec.what() + ": the sidecar "
@@ -781,7 +781,7 @@ public class NamedFixtureAndOriginBatteryTest {
      */
     private static String sharedMessage(NamedFixture spec) {
         return "E8001".equals(spec.pinnedCode())
-            ? "expected function, got int"
+            ? "expected function"
             : spec.pinnedMessage();
     }
 

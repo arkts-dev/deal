@@ -911,10 +911,11 @@ final class JvmHostAbiEmission {
         if (func.isAsync()) {
             out.append("    if (!(__r instanceof "
                     + "java.util.concurrent.CompletableFuture)) {\n");
-            out.append("      throw JvmRuntime.fail(\"E8010\", \"host async"
-                    + " function must return an async operation, got \" +"
-                    + " __hostKind(__r), oFile + \":\" + oLine + \":\" + oCol,"
-                    + " \"async operation\", __hostKind(__r));\n");
+            out.append("      throw JvmRuntime.arm("
+                    + "deal.semantic.ir.FailureArmId.ASYNC_SHAPE,"
+                    + " java.util.Map.of(\"actual\", __hostKind(__r)), oFile + \":\""
+                    + " + oLine + \":\" + oCol, \"async operation\","
+                    + " __hostKind(__r));\n");
             out.append("    }\n");
             out.append("    return __r;\n");
             return;
@@ -981,7 +982,7 @@ final class JvmHostAbiEmission {
         out.append("      return __hostCheckValue(desc, v, oFile, oLine, oCol);\n");
         out.append("    } catch (JvmRuntime.DealError __inner) {\n");
         out.append("      if (\"E8001\".equals(__inner.code) && __inner.msg.startsWith(\"expected instance of \")) { throw __inner; }\n");
-        out.append("      throw JvmRuntime.fail(\"E8010\", \"parameter \" + i + \" type mismatch: \" + __hostInnerMessage(desc, v, __inner), oFile + \":\" + oLine + \":\" + oCol, desc, __hostKind(v));\n");
+        out.append("      throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.HOST_PARAMETER_CELL, java.util.Map.of(\"index\", java.lang.Integer.toString(i), \"inner\", __hostInnerMessage(desc, v, __inner)), oFile + \":\" + oLine + \":\" + oCol, desc, __hostKind(v));\n");
         out.append("    }\n");
         out.append("  }\n\n");
         out.append("  static java.lang.Object __hostCheck(java.lang.String desc, "
@@ -991,8 +992,8 @@ final class JvmHostAbiEmission {
         out.append("      return __hostCheckValue(desc, v, oFile, oLine, oCol);\n");
         out.append("    } catch (JvmRuntime.DealError __inner) {\n");
         out.append("      if (\"E8001\".equals(__inner.code) && __inner.msg.startsWith(\"expected instance of \")) { throw __inner; }\n");
-        out.append("      if (completion) { throw JvmRuntime.fail(\"E8001\", __hostInnerMessage(desc, v, __inner), oFile + \":\" + oLine + \":\" + oCol, desc, __hostKind(v)); }\n");
-        out.append("      throw JvmRuntime.fail(\"E8010\", \"return value 1 type mismatch: \" + __hostInnerMessage(desc, v, __inner), oFile + \":\" + oLine + \":\" + oCol, desc, __hostKind(v));\n");
+        out.append("      if (completion) { throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.ASYNC_COMPLETION_KIND, java.util.Map.of(\"expected\", desc), oFile + \":\" + oLine + \":\" + oCol, desc, __hostKind(v)); }\n");
+        out.append("      throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.HOST_SYNC_RETURN_CELL, java.util.Map.of(\"inner\", __hostInnerMessage(desc, v, __inner)), oFile + \":\" + oLine + \":\" + oCol, desc, __hostKind(v));\n");
         out.append("    }\n");
         out.append("  }\n\n");
         out.append("  static JvmRuntime.DealError __hostFail(java.lang.String reason, "
@@ -1001,14 +1002,12 @@ final class JvmHostAbiEmission {
         out.append("    return JvmRuntime.fail(\"E8001\", reason, oFile + \":\" + oLine + \":\" + oCol, desc, __hostKind(v));\n");
         out.append("  }\n\n");
         out.append("  static java.lang.String __hostKind(java.lang.Object v) {\n");
-        out.append("    if (v == null) return \"null\";\n");
+        out.append("    if (v == JvmRuntime.MISSING) return \"nil\";\n");
+        out.append("    if (v == null) return \"table\";\n");
         out.append("    if (v instanceof java.lang.String) return \"string\";\n");
         out.append("    if (v instanceof java.lang.Long || v instanceof java.lang.Integer || v instanceof java.lang.Double) return \"number\";\n");
         out.append("    if (v instanceof java.lang.Boolean) return \"boolean\";\n");
-        out.append("    if (v instanceof $DealRt.Bytes) return \"bytes\";\n");
-        out.append("    if (v instanceof JvmRuntime.FunctionValue || v instanceof $DealRt.FnValue) return \"table\";\n");
-        out.append("    if (v instanceof JvmRuntime.Table || v instanceof JvmRuntime.Array || v instanceof JvmRuntime.ClassInstance) return \"table\";\n");
-        out.append("    for (java.lang.Class<?> __k : v.getClass().getInterfaces()) { int __n = 0; for (java.lang.reflect.Method __m : __k.getMethods()) { if (java.lang.reflect.Modifier.isAbstract(__m.getModifiers())) __n++; } if (__n == 1) return \"function\"; }\n");
+        out.append("    for (java.lang.Class<?> __k : v.getClass().getInterfaces()) { int __n = 0; for (java.lang.reflect.Method __m : __k.getMethods()) { if (java.lang.reflect.Modifier.isAbstract(__m.getModifiers())) __n++; } if (__n >= 1 && !(v instanceof $DealRt.Bytes) && !(v instanceof JvmRuntime.Table) && !(v instanceof JvmRuntime.Array) && !(v instanceof JvmRuntime.ClassInstance) && !(v instanceof JvmRuntime.FunctionValue) && !(v instanceof $DealRt.FnValue)) return \"function\"; }\n");
         out.append("    return \"table\";\n");
         out.append("  }\n\n");
         out.append("  static java.lang.String __hostStringReason(java.lang.String s) {\n");
@@ -1019,29 +1018,13 @@ final class JvmHostAbiEmission {
         out.append("      else if (java.lang.Character.isHighSurrogate(c) || java.lang.Character.isLowSurrogate(c)) { malformed = true; break; }\n");
         out.append("    }\n");
         out.append("    if (!malformed) return null;\n");
-        out.append("    return s.length() == 1 ? \"expected string, got UTF-16 surrogate code point\" : \"expected string, got invalid UTF-8 encoding\";\n");
+        out.append("    return s.length() == 1 ? JvmRuntime.stringCarrierReason(true) : JvmRuntime.stringCarrierReason(false);\n");
         out.append("  }\n\n");
         out.append("  static java.lang.String __hostInnerMessage(java.lang.String d, "
             + "java.lang.Object v, JvmRuntime.DealError inner) {\n");
         out.append("    if (d.startsWith(\"?\")) return __hostInnerMessage(d.substring(1), v, inner);\n");
-        out.append("    if (inner != null && (\"E8010\".equals(inner.code) || \"E8003\".equals(inner.code))) return inner.msg;\n");
-        out.append("    if (d.startsWith(\"[\")) return \"expected array\";\n");
-        out.append("    if (d.startsWith(\"(\") || d.startsWith(\"async(\")) return \"expected function\";\n");
-        out.append("    if (d.equals(\"null\")) return \"expected null\";\n");
-        out.append("    if (d.equals(\"int\")) {\n");
-        out.append("      if (v instanceof java.lang.Double __dd) { if (__dd.isNaN()) return \"expected int, got NaN\"; if (__dd.isInfinite()) return \"expected int, got infinity\"; if (__dd % 1.0 != 0.0) return \"expected int, got non-integer number\"; }\n");
-        out.append("      return \"expected int\";\n");
-        out.append("    }\n");
-        out.append("    if (d.equals(\"number\")) return \"expected number\";\n");
-        out.append("    if (d.equals(\"boolean\")) return \"expected boolean\";\n");
-        out.append("    if (d.equals(\"string\")) {\n");
-        out.append("      if (v instanceof java.lang.String __s) { java.lang.String __r = __hostStringReason(__s); if (__r != null) return __r; }\n");
-        out.append("      return \"expected string\";\n");
-        out.append("    }\n");
-        out.append("    if (d.equals(\"bytes\")) return \"expected bytes\";\n");
-        out.append("    if (d.equals(\"table\")) return \"expected table\";\n");
-        out.append("    if (d.startsWith(\"@\")) return \"expected class instance\";\n");
-        out.append("    return \"expected \" + d;\n");
+        out.append("    if (inner == null) { throw new java.lang.IllegalStateException(\"the host inner-reason render has no inner failure (producer defect)\"); }\n");
+        out.append("    return inner.msg;\n");
         out.append("  }\n\n");
         emitCheckValue(out);
         out.append("  static java.lang.Object __hostDefault(java.util.Map<java.lang.String, java.lang.Object> defaults, java.lang.String name, java.lang.String cls, java.lang.String oFile, int oLine, int oCol) {\n");
@@ -1428,35 +1411,35 @@ final class JvmHostAbiEmission {
         out.append("      if (v == null) return null;\n");
         out.append("      return __hostCheckValue(d.substring(1), v, oFile, oLine, oCol);\n");
         out.append("    }\n");
-        out.append("    if (d.equals(\"null\")) { if (v == null) return null; throw __hostFail(\"expected null\", d, v, oFile, oLine, oCol); }\n");
-        out.append("    if (d.equals(\"boolean\")) { if (v instanceof java.lang.Boolean) return v; throw __hostFail(\"expected boolean\", d, v, oFile, oLine, oCol); }\n");
+        out.append("    if (d.equals(\"null\")) { if (v == null) return null; throw __hostFail(JvmRuntime.kindReason(\"null\"), d, v, oFile, oLine, oCol); }\n");
+        out.append("    if (d.equals(\"boolean\")) { if (v instanceof java.lang.Boolean) return v; throw __hostFail(JvmRuntime.kindReason(\"boolean\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.equals(\"int\")) {\n");
         out.append("      if (v instanceof java.lang.Integer) return v;\n");
         out.append("      if (v instanceof java.lang.Long) return v;\n");
         out.append("      if (v instanceof java.lang.Double __dd) {\n");
-        out.append("        if (__dd.isNaN()) throw __hostFail(\"expected int, got NaN\", d, v, oFile, oLine, oCol);\n");
-        out.append("        if (__dd.isInfinite()) throw __hostFail(\"expected int, got infinity\", d, v, oFile, oLine, oCol);\n");
-        out.append("        if (__dd % 1.0 != 0.0) throw __hostFail(\"expected int, got non-integer number\", d, v, oFile, oLine, oCol);\n");
-        out.append("        if (__dd < -2147483648.0 || __dd > 2147483647.0) { throw JvmRuntime.fail(\"E8004\", \"int out of safe range\", oFile + \":\" + oLine + \":\" + oCol, \"int\", \"number\"); }\n");
+        out.append("        if (__dd.isNaN()) throw __hostFail(JvmRuntime.refinementReason(\"NaN\"), d, v, oFile, oLine, oCol);\n");
+        out.append("        if (__dd.isInfinite()) throw __hostFail(JvmRuntime.refinementReason(\"infinity\"), d, v, oFile, oLine, oCol);\n");
+        out.append("        if (__dd % 1.0 != 0.0) throw __hostFail(JvmRuntime.refinementReason(\"number\"), d, v, oFile, oLine, oCol);\n");
+        out.append("        if (__dd < -2147483648.0 || __dd > 2147483647.0) { throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.INT32_RANGE, java.util.Map.of(), oFile + \":\" + oLine + \":\" + oCol, null, null); }\n");
         out.append("        return v;\n");
         out.append("      }\n");
-        out.append("      throw __hostFail(\"expected int\", d, v, oFile, oLine, oCol);\n");
+        out.append("      throw __hostFail(JvmRuntime.kindReason(\"int\"), d, v, oFile, oLine, oCol);\n");
         out.append("    }\n");
-        out.append("    if (d.equals(\"number\")) { if (v instanceof java.lang.Double || v instanceof java.lang.Long) return v; throw __hostFail(\"expected number\", d, v, oFile, oLine, oCol); }\n");
-        out.append("    if (d.equals(\"string\")) { if (v instanceof java.lang.String __s) { java.lang.String __r = __hostStringReason(__s); if (__r != null) throw __hostFail(__r, d, v, oFile, oLine, oCol); return v; } throw __hostFail(\"expected string\", d, v, oFile, oLine, oCol); }\n");
-        out.append("    if (d.equals(\"bytes\")) { if (v instanceof $DealRt.Bytes) return v; throw __hostFail(\"expected bytes\", d, v, oFile, oLine, oCol); }\n");
-        out.append("    if (d.equals(\"table\")) { if (v instanceof JvmRuntime.Table) return v; throw __hostFail(\"expected table\", d, v, oFile, oLine, oCol); }\n");
+        out.append("    if (d.equals(\"number\")) { if (v instanceof java.lang.Double || v instanceof java.lang.Long) return v; throw __hostFail(JvmRuntime.kindReason(\"number\"), d, v, oFile, oLine, oCol); }\n");
+        out.append("    if (d.equals(\"string\")) { if (v instanceof java.lang.String __s) { java.lang.String __r = __hostStringReason(__s); if (__r != null) throw __hostFail(__r, d, v, oFile, oLine, oCol); return v; } throw __hostFail(JvmRuntime.kindReason(\"string\"), d, v, oFile, oLine, oCol); }\n");
+        out.append("    if (d.equals(\"bytes\")) { if (v instanceof $DealRt.Bytes) return v; throw __hostFail(JvmRuntime.kindReason(\"bytes\"), d, v, oFile, oLine, oCol); }\n");
+        out.append("    if (d.equals(\"table\")) { if (v instanceof JvmRuntime.Table) return v; throw __hostFail(JvmRuntime.kindReason(\"table\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.startsWith(\"[\")) { return __hostCheckArray(d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.startsWith(\"(\") || d.startsWith(\"async(\")) {\n");
         out.append("      java.lang.String __carried = null;\n");
         out.append("      if (v instanceof $DealRt.FnValue __f) { __carried = __f.descriptor(); }\n");
         out.append("      else if (v instanceof JvmRuntime.FunctionValue __fv) { __carried = __fv.spec != null ? __fv.spec : __fv.signature; }\n");
         out.append("      if (__carried != null && __carried.equals(d)) return v;\n");
-        out.append("      if (__carried != null) { throw JvmRuntime.fail(\"E8010\", \"function signature mismatch: expected \" + d + \", got \" + __carried, oFile + \":\" + oLine + \":\" + oCol, d, __carried); }\n");
-        out.append("      throw __hostFail(\"expected function\", d, v, oFile, oLine, oCol);\n");
+        out.append("      if (__carried != null) { throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.FUNCTION_SIGNATURE_MISMATCH, java.util.Map.of(\"expected\", d, \"actual\", __carried), oFile + \":\" + oLine + \":\" + oCol, d, __carried); }\n");
+        out.append("      throw __hostFail(JvmRuntime.kindReason(\"function\"), d, v, oFile, oLine, oCol);\n");
         out.append("    }\n");
         out.append("    if (d.startsWith(\"@\")) { return __hostCheckIdentity(d, v, oFile, oLine, oCol); }\n");
-        out.append("    throw __hostFail(\"expected \" + d, d, v, oFile, oLine, oCol);\n");
+        out.append("    throw __hostFail(JvmRuntime.kindReason(d), d, v, oFile, oLine, oCol);\n");
         out.append("  }\n\n");
         out.append("  static java.lang.Object __hostCheckArray(java.lang.String d,"
             + " java.lang.Object v, java.lang.String oFile, int oLine, int oCol) {\n");
@@ -1465,7 +1448,7 @@ final class JvmHostAbiEmission {
         out.append("      for (int __i = 0; __i < __arr.elements.size(); __i++) {\n");
         out.append("        java.lang.Object __e = __arr.elements.get(__i);\n");
         out.append("        try { __hostCheckValue(__inner, __e, oFile, oLine, oCol); }\n");
-        out.append("        catch (JvmRuntime.DealError __leaf) { throw JvmRuntime.fail(\"E8003\", \"array element \" + (__i + 1) + \" type mismatch\", oFile + \":\" + oLine + \":\" + oCol, __inner, __hostKind(__e)); }\n");
+        out.append("        catch (JvmRuntime.DealError __leaf) { throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.ARRAY_ELEMENT_KIND, java.util.Map.of(\"oneBasedIndex\", java.lang.Integer.toString(__i + 1)), oFile + \":\" + oLine + \":\" + oCol, __inner, __hostKind(__e)); }\n");
         out.append("      }\n");
         out.append("      return v;\n");
         out.append("    }\n");
@@ -1474,7 +1457,7 @@ final class JvmHostAbiEmission {
                 .append(") && v instanceof $DealRt.").append(carrier.getValue())
                 .append(") { return v; }\n");
         }
-        out.append("    throw __hostFail(\"expected array\", d, v, oFile, oLine, oCol);\n");
+        out.append("    throw __hostFail(JvmRuntime.kindReason(\"array\"), d, v, oFile, oLine, oCol);\n");
         out.append("  }\n\n");
         out.append("  static java.lang.Object __hostCheckIdentity(java.lang.String d,"
             + " java.lang.Object v, java.lang.String oFile, int oLine, int oCol) {\n");
@@ -1483,7 +1466,7 @@ final class JvmHostAbiEmission {
                 .append(" __rec && d.equals(__rec.$identity)) { return v; }\n");
         }
         out.append("    if (v instanceof JvmRuntime.ClassInstance __ci && d.equals(__ci.classIdText())) { return v; }\n");
-        out.append("    throw JvmRuntime.fail(\"E8001\", \"expected instance of \" + d + \", got \" + __hostKind(v), oFile + \":\" + oLine + \":\" + oCol, d, null);\n");
+        out.append("    throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.CLASS_IDENTITY, java.util.Map.of(\"expected\", d, \"actual\", __hostKind(v)), oFile + \":\" + oLine + \":\" + oCol, d, __hostKind(v));\n");
         out.append("  }\n\n");
     }
 

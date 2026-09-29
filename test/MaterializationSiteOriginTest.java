@@ -863,7 +863,7 @@ public class MaterializationSiteOriginTest {
                 checkEq(1, boundaryFailures, run.consumer() + ": the declaration "
                     + "boundary emits exactly one FAILURE terminal");
                 check(failureText != null && failureText.contains(expectedOrigin)
-                        && failureText.contains("expected function, got int")
+                        && failureText.contains("expected function")
                         && failureText.contains(";function;int;"),
                     run.consumer() + ": the failure carries the pinned function row "
                         + "(E8001, expected function, actual int) at the annotation "
@@ -882,13 +882,13 @@ public class MaterializationSiteOriginTest {
         // The production artifacts under the real toolchains.
         String lua = luaProductionFailure(project, raw.table(),
             new ClassFactoryRegistry(Map.of()), "function row");
-        checkEq("ERR:E8001|expected function, got int|" + expectedOrigin
+        checkEq("ERR:E8001|expected function|" + expectedOrigin
                 + "|function|int", lua,
             "the LuaJIT production artifact pins the function row at the "
                 + "annotation span");
         String jvm = jvmProductionFailure(project, raw.table(),
             new ClassFactoryRegistry(Map.of()), "function row");
-        checkEq("ERR:E8001|expected function, got int|" + expectedOrigin
+        checkEq("ERR:E8001|expected function|" + expectedOrigin
                 + "|function|int", jvm,
             "the JVM production artifact pins the function row at the "
                 + "annotation span");
@@ -989,13 +989,13 @@ public class MaterializationSiteOriginTest {
         // origin and the descriptor-kind row.
         String lua = luaProductionFailure(project, raw.table(),
             new ClassFactoryRegistry(Map.of()), "deferred row");
-        check(lua.equals("ERR:E8001|expected array, got string|" + expectedOrigin
+        check(lua.equals("ERR:E8001|expected array|" + expectedOrigin
                 + "|array|string"),
             "the LuaJIT production artifact fails at the annotation span with the "
                 + "descriptor-kind row: " + lua);
         String jvm = jvmProductionFailure(project, raw.table(),
             new ClassFactoryRegistry(Map.of()), "deferred row");
-        check(jvm.equals("ERR:E8001|expected array, got string|" + expectedOrigin
+        check(jvm.equals("ERR:E8001|expected array|" + expectedOrigin
                 + "|array|string"),
             "the JVM production artifact fails at the annotation span with the "
                 + "descriptor-kind row: " + jvm);
@@ -1269,7 +1269,7 @@ public class MaterializationSiteOriginTest {
         check(oracle.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure
                 failure && expectedOrigin.equals(failure.error().origin())
                 && "E8001".equals(failure.error().code())
-                && "expected int, got string".equals(failure.error().message())
+                && "expected int".equals(failure.error().message())
                 && "int".equals(failure.error().expected())
                 && "string".equals(failure.error().actual()),
             "the oracle projects the free boundary's own origin and its "
@@ -1297,13 +1297,13 @@ public class MaterializationSiteOriginTest {
 
         String lua = luaProductionFailure(project, table,
             new ClassFactoryRegistry(Map.of()), "free boundary");
-        check(lua.equals("ERR:E8001|expected int, got string|" + expectedOrigin
+        check(lua.equals("ERR:E8001|expected int|" + expectedOrigin
                 + "|int|string"),
             "the LuaJIT production artifact projects the free boundary's own origin "
                 + "and its descriptor-kind row: " + lua);
         String jvm = jvmProductionFailure(project, table,
             new ClassFactoryRegistry(Map.of()), "free boundary");
-        check(jvm.equals("ERR:E8001|expected int, got string|" + expectedOrigin
+        check(jvm.equals("ERR:E8001|expected int|" + expectedOrigin
                 + "|int|string"),
             "the JVM production artifact projects the free boundary's own origin and "
                 + "its descriptor-kind row: " + jvm);
@@ -1315,7 +1315,7 @@ public class MaterializationSiteOriginTest {
         checkEq(1, failures.size(), consumer + ": exactly one free-boundary FAILURE "
             + "terminal: " + failures);
         check(!failures.isEmpty() && failures.get(0).contains(expectedOrigin)
-                && failures.get(0).contains("expected int, got string"),
+                && failures.get(0).contains("expected int"),
             consumer + ": the free-boundary FAILURE terminal carries the boundary's "
                 + "own origin and the descriptor-kind row: " + failures);
         checkEq(1, linesOf(protocol, boundaryKey, "START").size(),

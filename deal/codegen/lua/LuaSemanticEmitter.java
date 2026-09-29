@@ -22,6 +22,9 @@ import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ClassLayout;
 import deal.semantic.ir.DefaultOwner;
 import deal.semantic.ir.ExecutableLoweredProject;
+import deal.semantic.ir.FailureArm;
+import deal.semantic.ir.FailureArmId;
+import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.ExternalAsyncLink;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FunctionAllocationIdentity;
@@ -791,7 +794,7 @@ public final class LuaSemanticEmitter {
             // mode.
             out.append("local __traceMode = ").append(trace ? "true" : "false")
                 .append("\n");
-            out.append(PRELUDE);
+            out.append(preludeWithArms());
             out.append(PRELUDE_ASYNC);
             out.append(JSON_PRELUDE);
             if (!trace) {
@@ -4326,9 +4329,9 @@ public final class LuaSemanticEmitter {
          * terminal, and raises — nothing executes silently.
          */
         private void emitDynamicCarrierFailure(SemanticOp op, String origin) {
-            out.append("__dynE = __failExpr(\"E8001\", \"expected function, got \""
-                + "..__actualOf(\"function\", __dynC), ").append(origin)
-                .append(", \"function\", __actualOf(\"function\", __dynC))\n");
+            out.append("__dynE = __arm(\"TYPED_BOUNDARY_KIND\", {kind = \"function\"}, ")
+                .append(origin)
+                .append(", \"function\", __typedBoundaryKind(\"function\", __dynC))\n");
             emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__dynE)");
             out.append("error(__dynE, 0)\n");
         }
@@ -4892,11 +4895,11 @@ public final class LuaSemanticEmitter {
                 KindPayload.ClassNewPayload payload, ClassLayout layout) {
             for (KindPayload.ProvidedField field : payload.providedFields()) {
                 if (fieldOf(layout, field.name()) == null) {
-                    out.append("__eT = __failExpr(")
-                        .append(luaString("E8007")).append(", ")
-                        .append(luaString("extra field '" + field.name()
-                            + "' in class '" + payload.classId().text() + "'"))
-                        .append(", ").append(luaString(originOf(op)))
+                    out.append("__eT = __arm(\"CLASS_EXTRA_FIELD\", {field = ")
+                        .append(luaString(field.name()))
+                        .append(", classId = ")
+                        .append(luaString(payload.classId().text()))
+                        .append("}, ").append(luaString(originOf(op)))
                         .append(", nil, nil)\n");
                     emitFailureEvent(op.opId(), op.kind().name(), op,
                         "__errtext(__eT)");
@@ -6337,10 +6340,10 @@ public final class LuaSemanticEmitter {
                 .append(op.opId().id()).append(", 1, #S.__sa")
                 .append(op.opId().id()).append("))\n");
             out.append("if __handleH == nil then\n");
-            out.append("  local __eH = __failExpr(\"E8010\", "
-                + "\"async operation mismatch: expected async-operation, got nothing\", ")
+            out.append("  local __eH = __arm(\"ASYNC_SHAPE\", {actual = ")
+                .append(luaString("nothing")).append("}, ")
                 .append(luaString(originOf(op)))
-                .append(", \"async-operation\", \"nothing\")\n");
+                .append(", \"async operation\", \"nothing\")\n");
             emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__eH)");
             out.append("  error(__eH, 0)\n");
             out.append("end\n");
@@ -7295,8 +7298,9 @@ public final class LuaSemanticEmitter {
                 .append(luaString(payload.layout().classId().text())).append(", ")
                 .append(slot(payload.classValue())).append(")\n");
             out.append("if not __jokT then\n");
-            out.append("__eT = __failExpr(\"E8001\", \"value at \"..__jpathT..\" is "
-                + "not JSON serializable: \"..__jactT, ")
+            out.append("__eT = __failExpr(\"E8001\", "
+                + "__renderTemplate(\"JSON_TO_WALK\", ")
+                .append("{fieldPath = __jpathT, actual = __jactT}), ")
                 .append(luaString(originOf(op))).append(", nil, nil)\n");
             emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__eT)");
             out.append("error(__eT, 0)\n");
@@ -8183,11 +8187,7 @@ __rt.__INT32 = true
 -- projections' {actual}): the runtime carrier's own kind, never the Lua
 -- table spelling of a DEAL function or number carrier.
 local function __hostKindOf(v)
-  if v == nil or v == __NULL then return "null" end
-  local t = type(v)
-  if t ~= "table" then return t end
-  if v.__jn then return "number" end
-  return t
+  return __carrierKind(v)
 end
 -- The carried class identity of one class value in either
 -- representation: the chunk's __c/__id carrier or the loaded runtime's
@@ -8201,6 +8201,17 @@ local function __hostClassIdOf(v)
   if v.__c then return v.__id end
   return nil
 end
+-- One host parameter/return cell failure: the host arm's composite with the
+-- inner reason, the declared cell descriptor, and the carrier-kind
+-- projection.
+local function __hostCellFailure(index, inner, desc, v, origin, isReturn)
+  if isReturn then
+    return error(__arm("HOST_SYNC_RETURN_CELL", {inner = inner}, origin, desc,
+      __carrierKind(v)), 0)
+  end
+  return error(__arm("HOST_PARAMETER_CELL", {index = index, inner = inner},
+    origin, desc, __carrierKind(v)), 0)
+end
 -- The declared cell of one class-typed host-crossing position: a value
 -- carrying the declared identity passes unchanged in either
 -- representation; every other value fails through the pinned E8010
@@ -8208,16 +8219,16 @@ end
 -- identity (or the canonical kind token) as actual — never the runtime
 -- matcher's E8001.
 local function __hostClassCell(desc, index, v, origin, isReturn)
-  local prefix = isReturn and "return value 1 type mismatch: "
-    or ("parameter "..index.." type mismatch: ")
   local carried = __hostClassIdOf(v)
   if carried == nil then
-    return error(__failExpr("E8010", prefix.."expected class instance",
-      origin, desc, __hostKindOf(v)), 0)
+    -- The descriptor-kind inner reason of the class cell: the typed-boundary
+    -- kind arm's own text with the class kind.
+    local inner = __renderTemplate("TYPED_BOUNDARY_KIND", {kind = "class instance"})
+    return __hostCellFailure(index, inner, desc, v, origin, isReturn)
   end
   if carried ~= desc then
-    return error(__failExpr("E8010", prefix.."expected instance of "..desc
-      ..", got "..carried, origin, desc, carried), 0)
+    local inner = __renderTemplate("CLASS_IDENTITY", {expected = desc, actual = carried})
+    return __hostCellFailure(index, inner, desc, v, origin, isReturn)
   end
   return v
 end
@@ -8259,8 +8270,11 @@ local function __hostDealProject(desc, v, origin)
   if v.__c then return v end
   if v.__kind ~= "class" then return v end
   if v.__classname ~= desc then
-    return error(__failExpr("E8010", "expected instance of "..desc..", got "
-      ..tostring(v.__classname), origin, desc, v.__classname), 0)
+    -- The bridge guard keeps its landed E8010 code while its text is the
+    -- identity arm's own template (no composed spelling).
+    return error(__failExpr("E8010",
+      __renderTemplate("CLASS_IDENTITY", {expected = desc,
+        actual = tostring(v.__classname)}), origin, desc, v.__classname), 0)
   end
   local out = {__c = true, __id = desc, __f = {}, __p = {}}
   for k, val in pairs(v) do
@@ -8281,10 +8295,13 @@ end
 -- carried canonical descriptor) or a host-facing wrapper; the pinned
 -- E8010 text is the loaded wrapper's own parameter projection.
 local function __hostFnParam(desc, inner, index, v, origin)
+  local function kindReason()
+    return __renderTemplate("TYPED_BOUNDARY_KIND", {kind = "function"})
+  end
   if v == nil or v == __NULL then
     if string.sub(desc, 1, 1) == "?" then return __rt.__NULL end
-    return error(__failExpr("E8010", "parameter "..index.." type mismatch: expected"
-      .." function", origin, desc, __hostKindOf(v)), 0)
+    return error(__arm("HOST_PARAMETER_CELL", {index = index, inner = kindReason()},
+      origin, desc, __carrierKind(v)), 0)
   end
   local carried = nil
   if type(v) == "table" then
@@ -8292,13 +8309,13 @@ local function __hostFnParam(desc, inner, index, v, origin)
     elseif v.__kind == "function" then carried = v.sig end
   end
   if carried == nil then
-    return error(__failExpr("E8010", "parameter "..index.." type mismatch: expected"
-      .." function", origin, desc, __hostKindOf(v)), 0)
+    return error(__arm("HOST_PARAMETER_CELL", {index = index, inner = kindReason()},
+      origin, desc, __carrierKind(v)), 0)
   end
   if carried ~= inner then
-    return error(__failExpr("E8010", "parameter "..index.." type mismatch: function"
-      .." signature mismatch: expected "..inner..", got "..carried, origin, desc,
-      __hostKindOf(v)), 0)
+    return error(__arm("HOST_PARAMETER_CELL", {index = index,
+      inner = __renderTemplate("FUNCTION_SIGNATURE_MISMATCH",
+        {expected = inner, actual = carried})}, origin, desc, __carrierKind(v)), 0)
   end
   return v
 end
@@ -8318,8 +8335,8 @@ local function __hostParamCell(desc, index, v, origin)
     return checked
   end
   local inner = type(checked) == "table" and checked.message or tostring(checked)
-  return error(__failExpr("E8010", "parameter "..index.." type mismatch: "..inner,
-    origin, desc, __hostKindOf(v)), 0)
+  return error(__arm("HOST_PARAMETER_CELL", {index = index, inner = inner},
+    origin, desc, __carrierKind(v)), 0)
 end
 -- The declared-kind event atom of one host-crossing value (the
 -- declared-cell boundaries of the host arms): the deployed runtime's
@@ -8352,8 +8369,8 @@ local function __hostToDealArray(v)
 end
 local function __hostReturnCell(desc, v, origin, nothing)
   if nothing and v == nil then
-    return error(__failExpr("E8010", "return value 1 type mismatch: expected "..desc
-      ..", got nothing", origin, desc, "nothing"), 0)
+    return error(__arm("HOST_SYNC_RETURN_NOTHING", {expected = desc}, origin, desc,
+      "nothing"), 0)
   end
   if string.sub(desc, 1, 1) == "@" then
     return __hostClassCell(desc, 0, v, origin, true)
@@ -8361,8 +8378,8 @@ local function __hostReturnCell(desc, v, origin, nothing)
   local ok, checked = pcall(__rt.check_type, desc, v)
   if not ok then
     local inner = type(checked) == "table" and checked.message or tostring(checked)
-    return error(__failExpr("E8010", "return value 1 type mismatch: "..inner, origin,
-      desc, __hostKindOf(v)), 0)
+    return error(__arm("HOST_SYNC_RETURN_CELL", {inner = inner}, origin, desc,
+      __carrierKind(v)), 0)
   end
   if checked == __rt.__NULL then return nil end
   if string.sub(desc, 1, 1) == "[" or string.sub(desc, 1, 2) == "?[" then
@@ -8461,6 +8478,7 @@ local function __ffiClassPlan(module, class)
   return surface[class.."_plan"]
 end
 """;
+    /**
     /**
      * The shared bytes surface (K6 items 1/2/4/7/13): the emitted helpers
      * over the deployed runtime's landed bytes entries
@@ -8576,6 +8594,35 @@ local function __bytesCommit(opKey, digest, parent, container, slotName, value, 
   return written
 end
 """;
+
+    /**
+     * The serialized closed failure-arm table (canonical failure-projection
+     * authority P1/P4): the registry's arms, verbatim — id, code, template,
+     * expected-token source, actual projection, render scope, and origin.
+     * The table is the only failure-text source of the emitted chunk and is
+     * compared against {@link FailureContractRegistry#canonicalArmSerialization()}
+     * (no emitter-side fork).
+     */
+    private static String armTableLiteral() {
+        StringBuilder out = new StringBuilder();
+        out.append("local __arms = {\n");
+        for (FailureArm arm : FailureContractRegistry.arms().values()) {
+            out.append("  [").append(Session.luaString(arm.id().name())).append("] = {c=")
+                .append(Session.luaString(FailureContractRegistry.codeOf(arm))).append(", t=")
+                .append(Session.luaString(arm.template())).append(", e=")
+                .append(Session.luaString(arm.expectedSource().name())).append(", a=")
+                .append(Session.luaString(arm.actualProjection().name())).append(", s=")
+                .append(Session.luaString(arm.scope().name())).append(", o=")
+                .append(Session.luaString(arm.origin().name())).append("},\n");
+        }
+        out.append("}\n");
+        return out.toString();
+    }
+
+    /** The prelude with the serialized closed arm table spliced in. */
+    private static String preludeWithArms() {
+        return PRELUDE.replace("__ARM_TABLE__", armTableLiteral());
+    }
 
     private static final String PRELUDE = """
 -- ==== shared runtime prelude ====
@@ -8997,6 +9044,123 @@ local function __failExpr(code, msg, o, e, a)
   return {__d = true, code = code, m = msg, o = o, e = e, a = a, f = __framesText(),
           cause = nil}
 end
+-- The closed failure-arm table (canonical failure-projection authority P1):
+-- the registry's arms serialized verbatim. Every failure site renders
+-- through the one arm renderer below; a failure site composes no text of
+-- its own.
+__ARM_TABLE__
+-- One arm renderer. The arm's own template is the message source; the
+-- named-parameter map supplies exactly the arm's declared parameters. A
+-- missing arm, an INNER_ONLY arm rendered at a failure site, a
+-- SIBLING_OWNED arm, or an expected/actual field that does not match the
+-- arm's declared shape is a producer defect — never a fallback text and
+-- never a composed suffix.
+-- One arm template's text instantiated with its named parameter values.
+local function __renderTemplate(id, values)
+  local arm = __arms[id]
+  if arm == nil then
+    error("unknown failure arm '"..tostring(id).."' (producer defect)", 0)
+  end
+  local msg = arm.t
+  if values ~= nil then
+    for k, v in pairs(values) do
+      msg = string.gsub(msg, "{"..k.."}", function() return tostring(v) end)
+    end
+  end
+  if string.find(msg, "{", 1, true) ~= nil then
+    error("failure arm '"..id.."' left an unbound placeholder: "..msg
+      .." (producer defect)", 0)
+  end
+  return msg
+end
+local function __arm(id, values, origin, expected, actual)
+  local arm = __arms[id]
+  if arm == nil then
+    error("unknown failure arm '"..tostring(id).."' (producer defect)", 0)
+  end
+  if arm.s ~= "TOP_LEVEL" then
+    error("failure arm '"..id.."' is INNER_ONLY: it renders only into another "
+      .."arm's inner reason (producer defect)", 0)
+  end
+  if arm.a == "SIBLING_OWNED" then
+    error("failure arm '"..id.."' has a SIBLING_OWNED projection binding "
+      .."(producer defect)", 0)
+  end
+  if (arm.e == "NONE") ~= (expected == nil) then
+    error("failure arm '"..id.."' does not match the rendered expected field "
+      .."(producer defect)", 0)
+  end
+  if (arm.a == "NONE") ~= (actual == nil) then
+    error("failure arm '"..id.."' does not match the rendered actual field "
+      .."(producer defect)", 0)
+  end
+  return __failExpr(arm.c, __renderTemplate(id, values), origin, expected, actual)
+end
+-- An inner-only arm's message text (the host arms' inner reasons).
+local function __innerArm(id, values)
+  local arm = __arms[id]
+  if arm == nil or arm.s ~= "INNER_ONLY" then
+    error("failure arm '"..tostring(id).."' is not an inner reason "
+      .."(producer defect)", 0)
+  end
+  return __renderTemplate(id, values)
+end
+-- The typed-boundary projection (P2 item 1): the closed token of the
+-- failing value — the absent marker is nil, the language-null sentinel
+-- null, and a class instance its carried canonical class atom (never a
+-- target class name, never the class: IR/trace spelling).
+local function __typedBoundaryKind(staticKind, v)
+  if v == __MISSING then return "nil" end
+  if v == nil then return "null" end
+  if type(v) == "table" and v.__jn then return v.k end
+  local t = type(v)
+  if t == "boolean" then return "boolean" end
+  if t == "number" then
+    local inner = staticKind
+    if string.sub(staticKind, 1, 9) == "nullable:" then inner = string.sub(staticKind, 10) end
+    if inner == "int" then return "int" end
+    if inner == "number" then return "number" end
+    if v % 1 == 0 then return "int" end
+    return "number"
+  end
+  if t == "string" then return "string" end
+  if t == "table" then
+    if v.__a then return "array" end
+    if v.__c then return v.__id end
+    if v.__d then return "class:@builtin/Error" end
+    if v.__t then return "table" end
+    if v.__fn ~= nil or v.__f then return "function" end
+    if staticKind == "err" then return "class:@builtin/Error" end
+    if staticKind == "table" then return "table" end
+    if staticKind == "array" then return "array" end
+    return "table"
+  end
+  if t == "function" then return "function" end
+  return staticKind
+end
+-- The completion variant (P2 item 4): every numeric carrier is the single
+-- number kind.
+local function __completionBoundaryKind(staticKind, v)
+  if type(v) == "number" or (type(v) == "table" and v.__jn) then
+    return "number"
+  end
+  return __typedBoundaryKind(staticKind, v)
+end
+-- The carrier-kind projection (P2 item 2): the Lua type() shape of the
+-- unchanged runtimes — the absent marker is nil, the language-null
+-- sentinel is table, every other table-carried value is table, and a raw
+-- host-facing function stays function.
+local function __carrierKind(v)
+  if v == __MISSING then return "nil" end
+  if v == nil then return "nil" end
+  if v == __NULL then return "table" end
+  local t = type(v)
+  if t == "table" then
+    if v.__jn then return "number" end
+    return "table"
+  end
+  return t
+end
 -- The completion cell's actual kind (the ASYNC_COMPLETION boundary at an
 -- AWAIT): the pinned corpus projection of the cell has one numeric kind,
 -- so every numeric carrier — the plain Lua number (the shared int carrier)
@@ -9025,9 +9189,8 @@ local function __fnRow(desc, csig, v, carriedCsig, carriedSig)
     matches = (carriedSig == desc)
   end
   if matches then return v end
-  return error(__failExpr("E8010",
-    "function signature mismatch: expected "..wanted..", got "..carried,
-    "-", wanted, carried), 0)
+  return error(__arm("FUNCTION_SIGNATURE_MISMATCH",
+    {expected = wanted, actual = carried}, "-", wanted, carried), 0)
 end
 -- The closed canonical spelling of one prelude-internal descriptor text
 -- (the semantic oracle's canonicalSpecText over the same descriptor): a
@@ -9043,17 +9206,30 @@ local function __canonDesc(desc)
   return desc
 end
 local function __bcheck(desc, staticKind, v, csig, completion)
-  local actual = completion and __completionActualOf(staticKind, v)
-    or __actualOf(staticKind, v)
-  local function fail(expected)
+  local actual = completion and __completionBoundaryKind(staticKind, v)
+    or __typedBoundaryKind(staticKind, v)
+  -- The typed-boundary kind arm (the completion cell's own expected-only
+  -- arm): the arm's template is the message, the closed projections are the
+  -- fields, and no site composes a suffix.
+  local function failKind(kindText, expected)
     if completion then
-      -- The completion cell's pinned transcript: message
-      -- "expected {expected}" (the corpus completion-cell text).
-      return error(__failExpr("E8001", "expected "..expected, "-", expected,
-        actual), 0)
+      return error(__arm("ASYNC_COMPLETION_KIND", {expected = expected}, "-",
+        expected, actual), 0)
     end
-    return error(__failExpr("E8001", "expected "..expected..", got "..actual,
-      "-", expected, actual), 0)
+    return error(__arm("TYPED_BOUNDARY_KIND", {kind = kindText}, "-", expected,
+      actual), 0)
+  end
+  -- The class arms: a carried atom projects the identity arm, every other
+  -- value the closed kind arm.
+  local function failClass(descText, carried)
+    if carried ~= nil then
+      return error(__arm("CLASS_IDENTITY",
+        {expected = descText, actual = carried}, "-", descText, carried), 0)
+    end
+    return failKind("class instance", "class")
+  end
+  local function fail(expected)
+    return failKind(expected, expected)
   end
   if desc == "null" then
     if v == nil then return v end
@@ -9067,43 +9243,32 @@ local function __bcheck(desc, staticKind, v, csig, completion)
     -- int ladder (NaN → infinity → non-integer → E8004 range) with
     -- the exact actual tokens and returns its carrier — the oracle's
     -- and the shared JVM runtime's variant-preserving admission.
+    local function failRefinement(token)
+      if completion then
+        return error(__arm("ASYNC_COMPLETION_REFINEMENT",
+          {expected = "int", actual = token}, "-", "int", token), 0)
+      end
+      return error(__arm("TYPED_BOUNDARY_KIND", {kind = "int"}, "-", "int",
+        token), 0)
+    end
+    local function failRange()
+      return error(__arm("INT32_RANGE", nil, "-", nil, nil), 0)
+    end
     if type(v) == "table" and v.__jn then
       if v.k == "int" then return v end
-      if v.d ~= v.d then
-        return error(__failExpr("E8001", "expected int, got NaN", "-", "int",
-          "NaN"), 0)
-      end
+      if v.d ~= v.d then return failRefinement("NaN") end
       if v.d == math.huge or v.d == -math.huge then
-        return error(__failExpr("E8001", "expected int, got infinity", "-", "int",
-          "infinity"), 0)
+        return failRefinement("infinity")
       end
-      if v.d % 1 ~= 0 then
-        return error(__failExpr("E8001", "expected int, got non-integer number", "-",
-          "int", "non-integer number"), 0)
-      end
-      if v.d < -2147483648 or v.d > 2147483647 then
-        return error(__failExpr("E8004", "int out of safe range", "-", "int",
-          "number"), 0)
-      end
+      if v.d % 1 ~= 0 then return failRefinement("number") end
+      if v.d < -2147483648 or v.d > 2147483647 then return failRange() end
       return v
     end
     if type(v) == "number" then
-      if v ~= v then
-        return error(__failExpr("E8001", "expected int, got NaN", "-", "int",
-          "NaN"), 0)
-      end
-      if v == math.huge or v == -math.huge then
-        return error(__failExpr("E8001", "expected int, got infinity", "-", "int",
-          "infinity"), 0)
-      end
-      if v % 1 ~= 0 then
-        return error(__failExpr("E8001", "expected int, got non-integer number", "-",
-          "int", "non-integer number"), 0)
-      end
-      if v < -2147483648 or v > 2147483647 then
-        return error(__failExpr("E8004", "int out of safe range", "-", "int",
-          "number"), 0)
-      end
+      if v ~= v then return failRefinement("NaN") end
+      if v == math.huge or v == -math.huge then return failRefinement("infinity") end
+      if v % 1 ~= 0 then return failRefinement("number") end
+      if v < -2147483648 or v > 2147483647 then return failRange() end
       return v
     end
     return fail("int")
@@ -9124,7 +9289,7 @@ local function __bcheck(desc, staticKind, v, csig, completion)
     -- (the marked carriers of other kinds keep their own arms and never
     -- pass a table boundary; the two internal sentinels never do).
     if type(v) == "table" and v ~= __MISSING and v ~= __NULL
-        and __actualOf(staticKind, v) == "table" then
+        and __typedBoundaryKind(staticKind, v) == "table" then
       return v
     end
     return fail("table")
@@ -9132,25 +9297,19 @@ local function __bcheck(desc, staticKind, v, csig, completion)
     -- The builtin Error class (the err carrier): an Error table
     -- passes unchanged.
     if type(v) == "table" and v.__d then return v end
-    return fail(desc)
+    return failClass(desc, (type(v) == "table" and v.__c) and v.__id or nil)
   elseif desc == "bytes" then
     -- The bytes view (K6 item 11): the runtime carrier passes unchanged
     -- (classification only — the view carries no contents); every other
-    -- value projects the carrier's pinned v1.2 text (expected "bytes",
-    -- actual the value's own kind), the canonical projection the
-    -- retained runtimes and the corpus pins carry.
+    -- value projects the closed kind arm's bytes text (the arm table is
+    -- the text source, never a composed literal).
     if type(v) == "table" and v.__kind == "bytes" then return v end
-    if completion then
-      return error(__failExpr("E8001", "expected bytes", "-", "bytes",
-        __completionActualOf(staticKind, v)), 0)
-    end
-    return error(__failExpr("E8001", "expected bytes", "-", "bytes",
-      __actualOf(staticKind, v)), 0)
+    return failKind("bytes", "bytes")
   elseif string.sub(desc, 1, 1) == "@" then
     -- A nominal class descriptor (E5): the canonical @module/Class
     -- identity text — the instance must carry the identical tag.
     if type(v) == "table" and v.__c and v.__id == desc then return v end
-    return fail(desc)
+    return failClass(desc, (type(v) == "table" and v.__c) and v.__id or nil)
   elseif string.sub(desc, 1, 6) == "array(" then
     if type(v) == "table" and v.__a then
       local inner = string.sub(desc, 7, -2)
@@ -9172,9 +9331,10 @@ local function __bcheck(desc, staticKind, v, csig, completion)
         local ok, checked = pcall(__bcheck, inner,
           (elem == __MISSING) and "missing" or inner, elem, innerSig)
         if not ok then
-          local actualKind = __actualOf((elem == __MISSING) and "missing" or inner, elem)
-          return error(__failExpr("E8003",
-            "array element "..i.." type mismatch", "-", innerExpected, actualKind), 0)
+          local actualKind = __typedBoundaryKind(
+            (elem == __MISSING) and "missing" or inner, elem)
+          return error(__arm("ARRAY_ELEMENT_KIND", {oneBasedIndex = i}, "-",
+            innerExpected, actualKind), 0)
         end
       end
       return v
@@ -9204,9 +9364,9 @@ local function __bcheck(desc, staticKind, v, csig, completion)
       -- internal text).
       local wanted = csig or desc
       if v.sig == wanted then return v end
-      return error(__failExpr("E8010",
-        "function signature mismatch: expected "..wanted..", got "
-          ..tostring(v.sig or "nil"), "-", wanted, v.sig), 0)
+      return error(__arm("FUNCTION_SIGNATURE_MISMATCH",
+        {expected = wanted, actual = tostring(v.sig or "nil")}, "-", wanted,
+        v.sig), 0)
     end
     return fail("function")
   end
@@ -9270,7 +9430,7 @@ local function __unary(selector, v, opKey, digest, parent, origin)
   if selector == "INT32_NEG" then
     local r = -v
     if r < -2147483648 or r > 2147483647 then
-      local e = __failExpr("E8004", "int out of safe range", origin, nil, nil)
+      local e = __arm("INT32_RANGE", nil, origin, nil, nil)
       __ev(opKey, "FAILURE", "UNARY", digest, parent, {}, nil, __errtext(e))
       error(e, 0)
     end
@@ -9282,7 +9442,7 @@ local function __arith(selector, l, r, opKey, digest, parent, origin)
   l = __num(l); r = __num(r)
   local function rng(v)
     if v < -2147483648 or v > 2147483647 then
-      local e = __failExpr("E8004", "int out of safe range", origin, nil, nil)
+      local e = __arm("INT32_RANGE", nil, origin, nil, nil)
       __ev(opKey, "FAILURE", "BINARY", digest, parent, {}, nil, __errtext(e))
       error(e, 0)
     end
@@ -9293,7 +9453,7 @@ local function __arith(selector, l, r, opKey, digest, parent, origin)
   if selector == "INT32_MUL" then return rng(l * r) end
   if selector == "INT32_DIV_TRUNC" then
     if r == 0 then
-      local e = __failExpr("E8005", "integer division by zero", origin, nil, nil)
+      local e = __arm("INT32_DIVISION_BY_ZERO", nil, origin, nil, nil)
       __ev(opKey, "FAILURE", "BINARY", digest, parent, {}, nil, __errtext(e))
       error(e, 0)
     end
@@ -9304,7 +9464,7 @@ local function __arith(selector, l, r, opKey, digest, parent, origin)
   end
   if selector == "INT32_MOD_TRUNC" then
     if r == 0 then
-      local e = __failExpr("E8005", "integer division by zero", origin, nil, nil)
+      local e = __arm("INT32_DIVISION_BY_ZERO", nil, origin, nil, nil)
       __ev(opKey, "FAILURE", "BINARY", digest, parent, {}, nil, __errtext(e))
       error(e, 0)
     end
@@ -9312,7 +9472,7 @@ local function __arith(selector, l, r, opKey, digest, parent, origin)
   end
   if selector == "INT32_POW" then
     if r < 0 then
-      local e = __failExpr("E8006", "integer exponent must be non-negative", origin,
+      local e = __arm("INT32_NEGATIVE_EXPONENT", nil, origin,
         nil, nil)
       __ev(opKey, "FAILURE", "BINARY", digest, parent, {}, nil, __errtext(e))
       error(e, 0)
@@ -9331,52 +9491,49 @@ local function __arith(selector, l, r, opKey, digest, parent, origin)
 end
 local function __intConv(v, evKind, kind, opKey, digest, parent, origin)
   if v == nil then
-    local e = __failExpr("E8001", "cannot convert null to int", origin, "int", "null")
+    local e = __arm("INT_CONVERSION_NULL", nil, origin, "int", "null")
     __ev(opKey, "FAILURE", evKind, digest, parent, {}, nil, __errtext(e))
     error(e, 0)
   end
   v = __num(v)
   if type(v) == "number" then
     if v ~= v then
-      local e = __failExpr("E8001", "expected int, got NaN", origin, "int", "NaN")
+      local e = __arm("INT_CONVERSION_NAN", nil, origin, "int", "NaN")
       __ev(opKey, "FAILURE", evKind, digest, parent, {}, nil, __errtext(e))
       error(e, 0)
     end
     if v == math.huge or v == -math.huge then
-      local e = __failExpr("E8001", "expected int, got infinity", origin, "int",
-        "infinity")
+      local e = __arm("INT_CONVERSION_INFINITY", nil, origin, "int", "infinity")
       __ev(opKey, "FAILURE", evKind, digest, parent, {}, nil, __errtext(e))
       error(e, 0)
     end
     if v % 1 ~= 0 then
-      local e = __failExpr("E8001", "expected int, got non-integer number", origin,
-        "int", "non-integer number")
+      local e = __arm("INT_CONVERSION_FRACTIONAL", nil, origin, "int", "number")
       __ev(opKey, "FAILURE", evKind, digest, parent, {}, nil, __errtext(e))
       error(e, 0)
     end
     if v < -2147483648 or v > 2147483647 then
-      local e = __failExpr("E8004", "int out of safe range", origin, "int", "number")
+      local e = __arm("INT32_RANGE", nil, origin, nil, nil)
       __ev(opKey, "FAILURE", evKind, digest, parent, {}, nil, __errtext(e))
       error(e, 0)
     end
     return v
   end
-  local e = __failExpr("E8001", "expected int, got "..__actualOf(kind, v), origin,
-    "int", __actualOf(kind, v))
+  local token = __typedBoundaryKind(kind, v)
+  local e = __arm("TYPED_BOUNDARY_KIND", {kind = "int"}, origin, "int", token)
   __ev(opKey, "FAILURE", evKind, digest, parent, {}, nil, __errtext(e))
   error(e, 0)
 end
 local function __numConv(v, evKind, kind, opKey, digest, parent, origin)
   if v == nil then
-    local e = __failExpr("E8001", "cannot convert null to number", origin, "number",
-      "null")
+    local e = __arm("NUMBER_CONVERSION_NULL", nil, origin, "number", "null")
     __ev(opKey, "FAILURE", evKind, digest, parent, {}, nil, __errtext(e))
     error(e, 0)
   end
   v = __num(v)
   if type(v) == "number" then return v end
-  local e = __failExpr("E8001", "expected number, got "..__actualOf(kind, v), origin,
-    "number", __actualOf(kind, v))
+  local token = __typedBoundaryKind(kind, v)
+  local e = __arm("TYPED_BOUNDARY_KIND", {kind = "number"}, origin, "number", token)
   __ev(opKey, "FAILURE", evKind, digest, parent, {}, nil, __errtext(e))
   error(e, 0)
 end
@@ -9410,7 +9567,7 @@ local function __arrayRead(opKey, digest, parent, bKey, bDigest, bParent, desc, 
   if index < 0 then
     __ev(bKey, "START", "BOUNDARY", bDigest, bParent, {__atom("missing", __MISSING)},
       nil, nil)
-    local e = __failExpr("E8002", "negative array index", origin, nil, nil)
+    local e = __arm("ARRAY_READ_NEGATIVE_INDEX", nil, origin, nil, nil)
     __ev(bKey, "FAILURE", "BOUNDARY", bDigest, bParent, {}, nil, __errtext(e))
     __ev(opKey, "FAILURE", "INDEX_READ", digest, parent, {}, nil, __errtext(e))
     error(e, 0)
@@ -9445,7 +9602,7 @@ local function __arrayBounds(bKey, bDigest, bParent, input, slotName, lengthSlot
   __ev(bKey, "START", "BOUNDARY", bDigest, bParent, {__atom(staticKind, input)},
     nil, nil)
   if index < 0 or index > lengthSlot then
-    local e = __failExpr("E8002", "array index out of bounds", origin, nil, nil)
+    local e = __arm("ARRAY_WRITE_BOUNDS", nil, origin, nil, nil)
     __ev(bKey, "FAILURE", "BOUNDARY", bDigest, bParent, {}, nil, __errtext(e))
     error(e, 0)
   end
@@ -9473,24 +9630,24 @@ local function __arrayBoundsSlot(bKey, bDigest, bParent, slotName, lengthSlot,
   local index = slotName.i
   __ev(bKey, "START", "BOUNDARY", bDigest, bParent, {__slotAtom(slotName)}, nil, nil)
   if index < 0 or index > lengthSlot then
-    local e = __failExpr("E8002", "array index out of bounds", origin, nil, nil)
+    local e = __arm("ARRAY_DELETE_BOUNDS", nil, origin, nil, nil)
     __ev(bKey, "FAILURE", "BOUNDARY", bDigest, bParent, {}, nil, __errtext(e))
     error(e, 0)
   end
   __ev(bKey, "SUCCESS", "BOUNDARY", bDigest, bParent, {}, __slotAtom(slotName), nil)
 end
 local function __foreachCheck(opKey, digest, parent, desc, elem, origin)
-  if elem == __MISSING then
-    local e = __failExpr("E8001", "expected "..desc..", got missing", origin, desc,
-      "missing")
-    __ev(opKey, "FAILURE", "FOR_EACH", digest, parent, {}, nil, __errtext(e))
-    error(e, 0)
-  end
+  -- The op's own TYPE_DESCRIPTOR terminal check renders the typed-boundary
+  -- kind arm on every element: an absent (deleted) slot projects the
+  -- suffix-less kind text with the absent marker's token, like every other
+  -- boundary of the check.
   local ok, checked = pcall(__bcheck, desc, desc, elem)
   if not ok then
-    local e = checked
-    __ev(opKey, "FAILURE", "FOR_EACH", digest, parent, {}, nil, __errtext(e))
-    error(e, 0)
+    -- The op's own origin is the failure's origin (the op-level boundary
+    -- cell), never the prelude's internal placeholder.
+    checked.o = origin
+    __ev(opKey, "FAILURE", "FOR_EACH", digest, parent, {}, nil, __errtext(checked))
+    error(checked, 0)
   end
 end
 local function __normalizeEvent(opKey, digest, parent, slotName)
@@ -9583,8 +9740,8 @@ local function __fncheck(v, expected, origin)
   if type(v) == "table" then carried = v.__csig or v.sig or "" end
   if type(v) == "function" then carried = v.__csig or "" end
   if carried == expected then return v end
-  return error(__failExpr("E8010", "function signature mismatch: expected "..expected
-    ..", got "..carried, origin, expected, carried), 0)
+  return error(__arm("FUNCTION_SIGNATURE_MISMATCH",
+    {expected = expected, actual = carried}, origin, expected, carried), 0)
 end
 -- The adapter's source resolution per the closed capture mode
 -- (D15 creation half): 0 VALUE, 1 SHARED_CELL, 2 REEVALUATE_THUNK.
@@ -10017,14 +10174,14 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     local __a = __args[__i]
     if type(__a) == "table" and __a.__jn then __args[__i] = __a.d end
   end
-  local function __sfail(code, msg, expected, actual)
-    local e = __failExpr(code, msg, origin, expected, actual)
+  local function __sfail(armId, values, expected, actual)
+    local e = __arm(armId, values, origin, expected, actual)
     __ev(opKey, "FAILURE", kind, digest, parent, {}, nil, __errtext(e))
     error(e, 0)
   end
   local function __int32Gate(value)
     if value < -2147483648 or value > 2147483647 then
-      __sfail("E8004", "int out of safe range", nil, nil)
+      __sfail("INT32_RANGE", nil, nil, nil)
     end
     return value
   end
@@ -10137,8 +10294,8 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
       return cp
     end
     local function parseFail(reason)
-      __sfail("E8001",
-        "JSON parse error at position "..(consumed + 1)..": "..reason, nil, nil)
+      __sfail("JSON_PARSE_ERROR",
+        {oneBasedByteOffset = consumed + 1, reason = reason}, nil, nil)
     end
     local function skipWs()
       while not atEnd() do
@@ -10339,7 +10496,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     -- text and the token are the projection's expected/actual fields (the
     -- shared walker's internal fieldPath never surfaces).
     local function sfFail(actual)
-      __sfail("E8001", "unsupported type for JSON encoding: "..actual,
+      __sfail("JSON_STRINGIFY_UNSUPPORTED", {actual = actual},
         "string, number, boolean, or table", actual)
     end
     local sfValue
@@ -10458,7 +10615,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     return math.ceil(__args[1])
   elseif fn == "MATH_SQRT" then
     if __args[1] < 0 then
-      __sfail("E8001", "sqrt of negative number", nil, __numHex(__args[1]))
+      __sfail("SQRT_NEGATIVE", nil, nil, __numHex(__args[1]))
     end
     return math.sqrt(__args[1])
   elseif fn == "MATH_ABS_INT" then
@@ -10475,7 +10632,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
   elseif fn == "TIME_NOW_MILLIS" then
     return os.time() * 1000
   end
-  __sfail("E8001", "unknown stdlib call "..tostring(fn), nil, nil)
+  error("unknown stdlib call "..tostring(fn).." (producer defect)", 0)
 end
 -- The mode-gated console effect of the two cataloged console rows (M4):
 -- the row invoker's single-effect write, shared by the direct

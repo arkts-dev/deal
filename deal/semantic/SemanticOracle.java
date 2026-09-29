@@ -33,7 +33,10 @@ import deal.semantic.ir.ClassOpsExecutor;
 import deal.semantic.ir.ComparisonExecutor;
 import deal.semantic.ir.ComparisonOperandView;
 import deal.semantic.ir.DefaultOwner;
+import deal.semantic.ir.FailureArm;
+import deal.semantic.ir.FailureArmId;
 import deal.semantic.ir.FailureContractRegistry;
+import deal.semantic.ir.FailureProjections;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
@@ -2068,6 +2071,15 @@ public final class SemanticOracle {
             return new Value.IntValue(result);
         }
 
+        /**
+         * One operation-site failure rendered through the closed arm table
+         * (the closed projections' expected/actual fields).
+         */
+        private DealFailure registryArmFailure(SemanticOp op, FailureArmId armId,
+                                               String expected, String actual) {
+            return armFailure(op, armId, expected, actual);
+        }
+
         /** A pinned registry-row failure at the operation origin. */
         private DealFailure registryFailure(SemanticOp op, FailurePolicyId policy,
                                             String expected, String actual) {
@@ -3767,11 +3779,13 @@ public final class SemanticOracle {
                                               RuntimeDescriptor descriptor) {
             if (checked instanceof Value.MissingValue
                     && !(descriptor instanceof RuntimeDescriptor.Nullable)) {
-                BoundaryFailure failure = BoundaryFailure.fromRow(
-                    FailureContractRegistry.row(FailurePolicyId.TYPE_DESCRIPTOR), 0,
-                    descriptor.canonicalSpecText(),
-                    ActualKind.canonicalToken(ActualKind.MISSING, null),
-                    new LinkedHashMap<>(), null);
+                // The typed-boundary kind arm with the closed typed-boundary
+                // projection: an absent value projects the arm's own
+                // suffix-less text with the absent marker's token.
+                BoundaryFailure failure = FailureContractRegistry.render(
+                    FailureArmId.TYPED_BOUNDARY_KIND,
+                    Map.of("kind", FailureProjections.kindText(descriptor)),
+                    FailureProjections.kindToken(descriptor), "nil", null);
                 throw DealFailure.of(failure, op.origin(), List.copyOf(frames));
             }
             if (checked instanceof Value.MissingValue) {
@@ -5425,8 +5439,8 @@ public final class SemanticOracle {
             String bound = responder.startAsync(hostModuleId, exportName, descriptor,
                 List.copyOf(args), label);
             if (bound == null) {
-                throw registryFailure(op, FailurePolicyId.ASYNC_OPERATION_HANDLE,
-                    "async-operation", "nothing");
+                throw armFailure(op, FailureArmId.ASYNC_SHAPE,
+                    "async operation", "nothing");
             }
             hostOperations.put(token.tokenId(), bound);
             tasks.put(token.tokenId(), new Task(token, null));
@@ -5942,26 +5956,26 @@ public final class SemanticOracle {
          */
         private Value convertInt(SemanticOp op, Value input) {
             if (input instanceof Value.NullValue) {
-                throw conversionFailure(op, FailurePolicyId.INT_CONVERSION, 0, "int",
-                    "null");
+                throw armFailure(op, FailureArmId.INT_CONVERSION_NULL, "int", "null");
             }
             if (input instanceof Value.NumValue num) {
                 double value = num.value();
                 if (Double.isNaN(value)) {
-                    throw conversionFailure(op, FailurePolicyId.INT_CONVERSION, 1, "int",
-                        "NaN");
+                    throw armFailure(op, FailureArmId.INT_CONVERSION_NAN, "int", "NaN");
                 }
                 if (Double.isInfinite(value)) {
-                    throw conversionFailure(op, FailurePolicyId.INT_CONVERSION, 2, "int",
+                    throw armFailure(op, FailureArmId.INT_CONVERSION_INFINITY, "int",
                         "infinity");
                 }
                 if (value != Math.rint(value)) {
-                    throw conversionFailure(op, FailurePolicyId.INT_CONVERSION, 3, "int",
-                        "non-integer number");
+                    // The fractional case's text names the case while its
+                    // actual token is the closed number kind (the pinned
+                    // corpus projection).
+                    throw armFailure(op, FailureArmId.INT_CONVERSION_FRACTIONAL, "int",
+                        "number");
                 }
                 if (value < -2147483648d || value > 2147483647d) {
-                    throw conversionFailure(op, FailurePolicyId.INT32_RESULT, 0, "int",
-                        "number");
+                    throw armFailure(op, FailureArmId.INT32_RANGE, null, null);
                 }
                 return new Value.IntValue((long) value);
             }
@@ -5979,8 +5993,8 @@ public final class SemanticOracle {
          */
         private Value convertNumber(SemanticOp op, Value input) {
             if (input instanceof Value.NullValue) {
-                throw conversionFailure(op, FailurePolicyId.NUMBER_CONVERSION, 0,
-                    "number", "null");
+                throw armFailure(op, FailureArmId.NUMBER_CONVERSION_NULL, "number",
+                    "null");
             }
             if (input instanceof Value.IntValue intValue) {
                 return new Value.NumValue((double) intValue.value());
@@ -5988,11 +6002,34 @@ public final class SemanticOracle {
             if (input instanceof Value.NumValue num) {
                 return num;
             }
-            throw conversionFailure(op, FailurePolicyId.TYPE_DESCRIPTOR, 0, "number",
+            throw armFailure(op, FailureArmId.TYPED_BOUNDARY_KIND, "number",
                 canonicalKind(input));
         }
 
-        /** The canonical actual-kind token of a runtime value. */
+        /**
+         * One conversion/typed-boundary arm failure at the invoking op's
+         * origin: the arm's own template with its declared expected token
+         * and the closed actual projection, never a composed text.
+         */
+        private DealFailure armFailure(SemanticOp op, FailureArmId armId, String expected,
+                                       String actual) {
+            FailureArm arm = FailureContractRegistry.arm(armId);
+            Map<String, String> parameters = new LinkedHashMap<>();
+            for (String parameter : arm.parameters()) {
+                switch (parameter) {
+                    case "kind", "expected" -> parameters.put(parameter, expected);
+                    case "actual" -> parameters.put(parameter, actual);
+                    default -> throw new IllegalStateException("the arm " + armId
+                        + " names the unsupported parameter {" + parameter
+                        + "} for an operation-site render (producer defect)");
+                }
+            }
+            BoundaryFailure failure = FailureContractRegistry.render(armId, parameters,
+                expected, actual, null);
+            return DealFailure.of(failure, op.origin(), List.copyOf(frames));
+        }
+
+        /** The canonical typed-boundary token of a runtime value (P2 item 1). */
         private String canonicalKind(Value input) {
             return switch (input) {
                 case Value.NullValue ignored -> "null";
@@ -6008,9 +6045,12 @@ public final class SemanticOracle {
                 case Value.IntrinsicValue ignored -> "function";
                 case Value.StdlibCallableValue ignored -> "function";
                 case Value.HostEntryValue ignored -> "function";
+                // The builtin Error carrier keeps its landed runtime
+                // spelling (the corpus pins neither form; this authority
+                // neither pins nor changes it).
                 case Value.ErrorValue ignored -> "class:@builtin/Error";
-                case Value.ClassValue classValue -> "class:" + classValue.classId().text();
-                case Value.MissingValue ignored -> "missing";
+                case Value.ClassValue classValue -> classValue.classId().text();
+                case Value.MissingValue ignored -> "nil";
                 case Value.SlotValue ignored -> throw new IllegalStateException(
                     "a slot value is never a conversion input");
             };

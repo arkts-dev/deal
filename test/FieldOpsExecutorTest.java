@@ -462,9 +462,9 @@ public class FieldOpsExecutorTest {
     }
 
     private static BoundaryCheckRunner failFirst() {
-        return (boundary, input) -> new BoundaryResult.Fail(BoundaryFailure.fromRow(
-            FailureContractRegistry.row(FailurePolicyId.TYPE_DESCRIPTOR), 0,
-            boundary.descriptor().canonicalSpecText(), "number", new LinkedHashMap<>(), null));
+        return (boundary, input) -> new BoundaryResult.Fail(
+            deal.semantic.ir.FailureProjections.kindFailure(
+                boundary.descriptor().canonicalSpecText(), "number"));
     }
 
     // =========================================================================
@@ -549,12 +549,12 @@ public class FieldOpsExecutorTest {
             realDelegate(null));
         check(requiredMissing instanceof Outcome.Failure<Value> requiredFail
                 && requiredFail.failure().failure().code() == DiagnosticCode.E8001
-                && "expected int, got null".equals(requiredFail.failure().failure().message())
+                && "expected int".equals(requiredFail.failure().failure().message())
                 && "int".equals(requiredFail.failure().failure().expected())
                 && "null".equals(requiredFail.failure().failure().actual())
                 && requiredFail.failure().origin().equals(xRead.op().origin()),
             "a missing required field pre-maps to null and the non-nullable descriptor "
-                + "fails E8001 'expected int, got null' at the op origin; got "
+                + "fails E8001 'expected int' at the op origin; got "
                 + requiredMissing);
     }
 
@@ -571,10 +571,10 @@ public class FieldOpsExecutorTest {
             read.receiverBoundary(), read.fieldBoundary(), layouts, realDelegate(null));
         check(nullRead instanceof Outcome.Failure<Value> nullReadFail
                 && nullReadFail.failure().failure().code() == DiagnosticCode.E8001
-                && ("expected " + classText + ", got null")
+                && "expected class instance"
                     .equals(nullReadFail.failure().failure().message())
                 && "null".equals(nullReadFail.failure().failure().actual()),
-            "a null receiver read fails E8001 'expected " + classText + ", got null'; got "
+            "a null receiver read fails E8001 'expected class instance'; got "
                 + nullRead);
 
         ValueId stored = nextValue();
@@ -587,9 +587,9 @@ public class FieldOpsExecutorTest {
             realDelegate(null));
         check(nullWrite instanceof Outcome.Failure<Value> nullWriteFail
                 && nullWriteFail.failure().failure().code() == DiagnosticCode.E8001
-                && ("expected " + classText + ", got null")
+                && "expected class instance"
                     .equals(nullWriteFail.failure().failure().message()),
-            "a null receiver write fails E8001 'expected " + classText + ", got null'; got "
+            "a null receiver write fails E8001 'expected class instance'; got "
                 + nullWrite);
 
         FieldDeleteFixture delete = fieldDeleteFixture(BASE_REF, CLS, "y");
@@ -597,9 +597,9 @@ public class FieldOpsExecutorTest {
             nullHeap, delete.receiverBoundary(), layouts, realDelegate(null));
         check(nullDelete instanceof Outcome.Failure<Value> nullDeleteFail
                 && nullDeleteFail.failure().failure().code() == DiagnosticCode.E8001
-                && ("expected " + classText + ", got null")
+                && "expected class instance"
                     .equals(nullDeleteFail.failure().failure().message()),
-            "a null receiver delete fails E8001 'expected " + classText + ", got null'; got "
+            "a null receiver delete fails E8001 'expected class instance'; got "
                 + nullDelete);
 
         // (b) wrong-identity receiver — read/write/delete.
@@ -609,11 +609,11 @@ public class FieldOpsExecutorTest {
             read.receiverBoundary(), read.fieldBoundary(), layouts, realDelegate(null));
         check(wrongRead instanceof Outcome.Failure<Value> wrongReadFail
                 && wrongReadFail.failure().failure().code() == DiagnosticCode.E8001
-                && ("expected " + classText + ", got class:" + OTHER_CLS.text())
+                && ("expected instance of " + classText + ", got " + OTHER_CLS.text())
                     .equals(wrongReadFail.failure().failure().message())
-                && ("class:" + OTHER_CLS.text())
+                && (OTHER_CLS.text())
                     .equals(wrongReadFail.failure().failure().actual()),
-            "a wrong-identity receiver read fails E8001 with actual class:<other>; got "
+            "a wrong-identity receiver read fails E8001 with actual <other>; got "
                 + wrongRead);
 
         Map<ValueId, Value> otherWriteHeap = new LinkedHashMap<>();
@@ -624,18 +624,18 @@ public class FieldOpsExecutorTest {
             realDelegate(null));
         check(wrongWrite instanceof Outcome.Failure<Value> wrongWriteFail
                 && wrongWriteFail.failure().failure().code() == DiagnosticCode.E8001
-                && ("class:" + OTHER_CLS.text())
+                && (OTHER_CLS.text())
                     .equals(wrongWriteFail.failure().failure().actual()),
-            "a wrong-identity receiver write fails E8001 with actual class:<other>; got "
+            "a wrong-identity receiver write fails E8001 with actual <other>; got "
                 + wrongWrite);
 
         Outcome<Value> wrongDelete = ClassOpsExecutor.executeFieldDelete(delete.op(),
             otherHeap, delete.receiverBoundary(), layouts, realDelegate(null));
         check(wrongDelete instanceof Outcome.Failure<Value> wrongDeleteFail
                 && wrongDeleteFail.failure().failure().code() == DiagnosticCode.E8001
-                && ("class:" + OTHER_CLS.text())
+                && (OTHER_CLS.text())
                     .equals(wrongDeleteFail.failure().failure().actual()),
-            "a wrong-identity receiver delete fails E8001 with actual class:<other>; got "
+            "a wrong-identity receiver delete fails E8001 with actual <other>; got "
                 + wrongDelete);
     }
 
@@ -711,9 +711,9 @@ public class FieldOpsExecutorTest {
             realDelegate(null));
         check(badCommitted instanceof Outcome.Failure<Value> badFail
                 && badFail.failure().failure().code() == DiagnosticCode.E8001
-                && "expected int, got string".equals(badFail.failure().failure().message()),
+                && "expected int".equals(badFail.failure().failure().message()),
             "a wrong-kind stored value fails the CLASS_FIELD_ASSIGNMENT boundary E8001 "
-                + "'expected int, got string'; got " + badCommitted);
+                + "'expected int'; got " + badCommitted);
         check(fieldValue(base.instance(), LAYOUT, "x").equals(new Value.Int(1))
                 && fieldState(base.instance(), LAYOUT, "y") == FieldState.Missing.INSTANCE
                 && fieldValue(base.instance(), LAYOUT, "t").equals(Value.string("v")),

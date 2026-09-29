@@ -529,9 +529,8 @@ public class ContainerOpsExecutorTest {
 
     /** The pinned E8003 projection a failing element fixture uses. */
     private static BoundaryFailure e8003ElementFailure() {
-        BoundaryFailure leaf = BoundaryFailure.fromRow(
-            FailureContractRegistry.row(FailurePolicyId.TYPE_DESCRIPTOR), 0,
-            "int", "string", new LinkedHashMap<>(), null);
+        BoundaryFailure leaf = deal.semantic.ir.FailureProjections
+            .kindFailure("int", "string");
         return BoundaryFailure.fromRow(
             FailureContractRegistry.row(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR), 0,
             "int", "string", metadataOf("oneBasedIndex", "2"), leaf);
@@ -815,7 +814,7 @@ public class ContainerOpsExecutorTest {
             mismatchValues, mismatchChild, realProjectionDelegate(null));
         if (mismatch instanceof Outcome.Failure<Value> failure) {
             check(failure.failure().failure().code() == DiagnosticCode.E8001
-                    && "expected int, got string".equals(failure.failure().failure().message())
+                    && "expected int".equals(failure.failure().failure().message())
                     && "int".equals(failure.failure().failure().expected())
                     && "string".equals(failure.failure().failure().actual()),
                 "a present wrong-kind value fails through the delegate's projection");
@@ -855,14 +854,14 @@ public class ContainerOpsExecutorTest {
             emptyValues, nonNullableChild, realProjectionDelegate(null));
         if (missing instanceof Outcome.Failure<Value> failure) {
             check(failure.failure().failure().code() == DiagnosticCode.E8001
-                    && "expected int, got missing".equals(failure.failure().failure().message())
+                    && "expected int".equals(failure.failure().failure().message())
                     && "int".equals(failure.failure().failure().expected())
-                    && "missing".equals(failure.failure().failure().actual())
+                    && "nil".equals(failure.failure().failure().actual())
                     && failure.failure().failure().policy() == FailurePolicyId.TYPE_DESCRIPTOR,
                 "missing against a non-nullable descriptor fails with the pinned "
-                    + "expected int, got missing projection");
+                    + "expected int projection (the absent marker's nil actual)");
         } else {
-            fail("missing + non-nullable did not fail with got missing");
+            fail("missing + non-nullable did not fail with the absent-marker projection");
         }
 
         // Present null: distinct from missing (D4) — nullable passes null,
@@ -892,9 +891,9 @@ public class ContainerOpsExecutorTest {
         Outcome<Value> presentNullInt = ContainerOpsExecutor.executeMemberRead(nullNonNullableOp,
             nullValues, nullNonNullableChild, realProjectionDelegate(null));
         check(presentNullInt instanceof Outcome.Failure<Value> failure
-                && "expected int, got null".equals(failure.failure().failure().message()),
-            "a present null against a non-nullable descriptor projects got null, "
-                + "distinct from got missing");
+                && "expected int".equals(failure.failure().failure().message()),
+            "a present null against a non-nullable descriptor projects the kind arm with "
+                + "the null actual, distinct from the absent marker");
     }
 
     static void testMemberReadDefects() {

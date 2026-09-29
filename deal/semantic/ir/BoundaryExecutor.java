@@ -267,7 +267,12 @@ public final class BoundaryExecutor {
         return descriptorKindOutcome(signatureProjection(), core(descriptor, view));
     }
 
-    /** HOST_PARAMETER: every failure through the single pinned E8010 template. */
+    /**
+     * HOST_PARAMETER: every failure through the host parameter arm — the
+     * composite {@code parameter {index} type mismatch: {inner}} with the
+     * host inner-reason render, the declared cell descriptor as expected,
+     * and the carrier-kind projection as actual.
+     */
     private static BoundaryOutcome checkHostParameter(RuntimeDescriptor descriptor,
                                                       BoundaryValueView view,
                                                       BoundaryContext context) {
@@ -280,33 +285,80 @@ public final class BoundaryExecutor {
         CoreResult result = core(descriptor, view);
         return switch (result) {
             case CorePass pass -> new BoundaryOutcome.Pass(pass.value());
-            case CoreFail fail -> new BoundaryOutcome.Fail(BoundaryFailure.fromRow(
-                FailureContractRegistry.row(FailurePolicyId.HOST_PARAMETER), 0,
-                descriptor.canonicalSpecText(), hostActual(view, fail),
-                metadataOf("index", Integer.toString(parameterIndex)), null));
+            case CoreFail fail -> new BoundaryOutcome.Fail(renderHostParameter(
+                descriptor, view, fail, parameterIndex));
         };
     }
 
-    /** HOST_SYNC_RETURN: no value first, then the descriptor-kind check. */
+    /** One host parameter arm render (the composite with the inner reason). */
+    private static BoundaryFailure renderHostParameter(RuntimeDescriptor descriptor,
+                                                       BoundaryValueView view, CoreFail fail,
+                                                       int parameterIndex) {
+        FailureArm arm = FailureContractRegistry.arm(FailureArmId.HOST_PARAMETER_CELL);
+        Map<String, String> parameters = new LinkedHashMap<>();
+        parameters.put("index", Integer.toString(parameterIndex));
+        parameters.put("inner", innerReason(fail));
+        return FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL, parameters,
+            FailureProjections.expectedFor(arm, descriptor, null),
+            FailureProjections.actualFor(arm, null, hostActual(view, fail), null, null, null), null);
+    }
+
+    /** HOST_SYNC_RETURN: no value first, then the host return cell arm. */
     private static BoundaryOutcome checkHostSyncReturn(RuntimeDescriptor descriptor,
                                                        BoundaryValueView view) {
         if (view.kind() == ActualKind.NOTHING) {
-            return new BoundaryOutcome.Fail(BoundaryFailure.fromRow(
-                FailureContractRegistry.row(FailurePolicyId.HOST_SYNC_RETURN), 0,
-                descriptor.canonicalSpecText(), "nothing", new LinkedHashMap<>(), null));
+            FailureArm arm = FailureContractRegistry.arm(FailureArmId.HOST_SYNC_RETURN_NOTHING);
+            return new BoundaryOutcome.Fail(FailureContractRegistry.render(
+                FailureArmId.HOST_SYNC_RETURN_NOTHING,
+                Map.of("expected", descriptor.canonicalSpecText()),
+                FailureProjections.expectedFor(arm, descriptor, null),
+                FailureProjections.actualFor(arm, null, null, null, null, null), null));
         }
         CoreResult result = core(descriptor, view);
         return switch (result) {
             case CorePass pass -> new BoundaryOutcome.Pass(pass.value());
-            case CoreFail fail -> new BoundaryOutcome.Fail(BoundaryFailure.fromRow(
-                FailureContractRegistry.row(FailurePolicyId.HOST_SYNC_RETURN), 1,
-                descriptor.canonicalSpecText(), hostActual(view, fail),
-                new LinkedHashMap<>(), null));
+            case CoreFail fail -> {
+                FailureArm arm = FailureContractRegistry.arm(FailureArmId.HOST_SYNC_RETURN_CELL);
+                Map<String, String> parameters = new LinkedHashMap<>();
+                parameters.put("inner", innerReason(fail));
+                yield new BoundaryOutcome.Fail(FailureContractRegistry.render(
+                    FailureArmId.HOST_SYNC_RETURN_CELL, parameters,
+                    FailureProjections.expectedFor(arm, descriptor, null),
+                    FailureProjections.actualFor(arm, null, hostActual(view, fail), null, null, null),
+                    null));
+            }
         };
     }
 
     /**
-     * ASYNC_COMPLETION: mismatches through the row's pinned E8001 template.
+     * The closed host inner-reason render (P2 item 3): the failing inner
+     * check's own message. A failure that carries its own row text (the
+     * signed32-range, signature, and array-element failures) renders that
+     * text unchanged; every other inner failure renders a vocabulary entry.
+     * An inner failure outside the vocabulary is a producer defect.
+     */
+    private static String innerReason(CoreFail fail) {
+        return switch (fail.caseKind()) {
+            case KIND_MISMATCH -> FailureProjections.kindReason(fail.descriptor());
+            case INT_REFINEMENT -> FailureProjections.refinementReason(
+                FailureProjections.kindToken(fail.descriptor()), fail.actualToken());
+            case INT_OUT_OF_RANGE -> FailureContractRegistry
+                .arm(FailureArmId.INT32_RANGE).template();
+            case INVALID_UNICODE -> FailureProjections.stringCarrierReason(false);
+            case CLASS_IDENTITY -> renderIdentity(fail).message();
+            case SIG_MISMATCH -> {
+                FailureArm arm = FailureContractRegistry.arm(
+                    FailureArmId.FUNCTION_SIGNATURE_MISMATCH);
+                yield arm.template()
+                    .replace("{expected}", fail.descriptor().canonicalSpecText())
+                    .replace("{actual}", fail.actualToken());
+            }
+            case ELEMENT -> FailureProjections.elementReason(fail.elementIndex());
+        };
+    }
+
+    /**
+     * ASYNC_COMPLETION: mismatches through the row's pinned E8001 arm.
      * The cell's actual-kind token is the pinned corpus projection: a
      * completion value's numeric carrier has the single {@code number} kind
      * (the corpus completion-cell pin {@code expected string} /
@@ -324,8 +376,7 @@ public final class BoundaryExecutor {
         if (result instanceof CoreFail fail
                 && fail.caseKind() == FailureCase.KIND_MISMATCH
                 && view.kind() == ActualKind.INT) {
-            return new CoreFail(fail.caseKind(), fail.expected(),
-                ActualKind.NUMBER.token(), 0, null);
+            return new CoreFail(fail.caseKind(), fail.descriptor(), "number", 0, null);
         }
         return result;
     }
@@ -345,11 +396,15 @@ public final class BoundaryExecutor {
             case CorePass pass -> new BoundaryOutcome.Pass(pass.value());
             case CoreFail fail -> {
                 CoreFail leaf = fail.caseKind() == FailureCase.ELEMENT ? fail.cause() : fail;
-                yield new BoundaryOutcome.Fail(BoundaryFailure.fromRow(
-                    FailureContractRegistry.row(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR), 0,
-                    descriptor.canonicalSpecText(),
-                    ActualKind.canonicalToken(view.kind(), view.classId()),
-                    metadataOf("oneBasedIndex", Integer.toString(elementIndex)),
+                FailureArm arm = FailureContractRegistry.arm(FailureArmId.ARRAY_ELEMENT_KIND);
+                Map<String, String> parameters = new LinkedHashMap<>();
+                parameters.put("oneBasedIndex", Integer.toString(elementIndex));
+                yield new BoundaryOutcome.Fail(FailureContractRegistry.render(
+                    FailureArmId.ARRAY_ELEMENT_KIND, parameters,
+                    FailureProjections.expectedFor(arm, descriptor, descriptor),
+                    FailureProjections.actualFor(arm,
+                        FailureProjections.typedBoundaryToken(view.kind(), view.classId()),
+                        null, null, null, null),
                     project(tdProjection(), leaf)));
             }
         };
@@ -502,22 +557,18 @@ public final class BoundaryExecutor {
 
     /** The core's failure cases: the pinned check order of the closed table. */
     private enum FailureCase {
-        /** A wrong-kind value; projected as E8001 with the canonical actual token. */
+        /** A wrong-kind value; projected through the typed-boundary kind arm. */
         KIND_MISMATCH,
         /** A string view classified invalid-unicode. */
         INVALID_UNICODE,
+        /** A class instance carrying a different canonical atom (the identity arm). */
+        CLASS_IDENTITY,
         /** The int path's NaN / infinity / non-integer number refinement. */
         INT_REFINEMENT,
         /** The int path's signed32 range failure (E8004). */
         INT_OUT_OF_RANGE,
         /** A function value with a differing carried signature (E8010). */
         SIG_MISMATCH,
-        /**
-         * A non-bytes value at a bytes descriptor: the canonical v1.2
-         * {@code expected bytes} projection (the bytes carrier's own
-         * pinned text, with the expected/actual metadata beside it).
-         */
-        BYTES_KIND_MISMATCH,
         /** A failing array element in increasing index order (E8003 + cause). */
         ELEMENT
     }
@@ -528,41 +579,24 @@ public final class BoundaryExecutor {
     private record CorePass(BoundaryValueView value) implements CoreResult {
     }
 
-    private record CoreFail(FailureCase caseKind, String expected, String actual,
-                            int elementIndex, CoreFail cause) implements CoreResult {
+    /**
+     * One classification failure: its pinned case, the descriptor of the
+     * failing position, the typed-boundary actual token of the failing
+     * value (or the carried signature/atom the case names), the one-based
+     * element index of an E8003 leaf, and the leaf failure.
+     */
+    private record CoreFail(FailureCase caseKind, RuntimeDescriptor descriptor,
+                            String actualToken, int elementIndex, CoreFail cause)
+        implements CoreResult {
     }
 
     private static CoreResult pass(BoundaryValueView view) {
         return new CorePass(view);
     }
 
-    /**
-     * The bytes descriptor's kind-mismatch projection: the pinned
-     * {@code expected bytes} text (the corpus's canonical v1.2 projection
-     * for a non-bytes value at a bytes descriptor) with the expected
-     * {@code bytes} and the value's canonical actual kind.
-     */
-    private static CoreResult bytesKindFail(BoundaryValueView view) {
-        return new CoreFail(FailureCase.BYTES_KIND_MISMATCH, "bytes",
-            ActualKind.canonicalToken(view.kind(), view.classId()), 0, null);
-    }
-
     private static CoreResult kindFail(RuntimeDescriptor descriptor, BoundaryValueView view) {
-        return new CoreFail(FailureCase.KIND_MISMATCH, kindExpected(descriptor),
-            ActualKind.canonicalToken(view.kind(), view.classId()), 0, null);
-    }
-
-    /**
-     * The kind-mismatch expected token of one descriptor: an array keeps
-     * the fixed {@code array} token the unchanged reference runtime and
-     * every shared producer print ({@code expected array, got table}) —
-     * the descriptor's canonical {@code [D]} text is the E8003 element
-     * projection's spelling, never the array kind row's — while every
-     * other descriptor projects its canonical text.
-     */
-    private static String kindExpected(RuntimeDescriptor descriptor) {
-        return descriptor instanceof RuntimeDescriptor.Array
-            ? "array" : descriptor.canonicalSpecText();
+        return new CoreFail(FailureCase.KIND_MISMATCH, descriptor,
+            FailureProjections.typedBoundaryToken(view.kind(), view.classId()), 0, null);
     }
 
     /**
@@ -595,19 +629,19 @@ public final class BoundaryExecutor {
             case RuntimeDescriptor.String ignored ->
                 view.kind() == ActualKind.STRING ? pass(view)
                     : view.kind() == ActualKind.INVALID_UNICODE
-                        ? new CoreFail(FailureCase.INVALID_UNICODE, "string",
+                        ? new CoreFail(FailureCase.INVALID_UNICODE, descriptor,
                             "invalid-unicode", 0, null)
                         : kindFail(descriptor, view);
             case RuntimeDescriptor.Table ignored ->
                 view.kind() == ActualKind.TABLE ? pass(view) : kindFail(descriptor, view);
             case RuntimeDescriptor.Bytes ignored ->
                 // K6 item 11: the bytes descriptor's boundary projection is
-                // the kind check — a bytes view passes, every other view
-                // projects the bytes carrier's pinned v1.2 text
-                // ({@code expected bytes} with the expected/actual metadata,
-                // the canonical projection every backend produces).
+                // the kind arm — a bytes view passes, every other view
+                // projects the closed kind text {@code expected bytes} with
+                // the value's typed-boundary actual token (the sibling bytes
+                // sub-epic renders this arm; no separate bytes text exists).
                 view.kind() == ActualKind.BYTES ? pass(view)
-                    : bytesKindFail(view);
+                    : kindFail(descriptor, view);
             case RuntimeDescriptor.Class cls -> coreClass(cls, view);
             case RuntimeDescriptor.Array array -> coreArray(array, view);
             case RuntimeDescriptor.Nullable nullable -> coreNullable(nullable, view);
@@ -622,17 +656,20 @@ public final class BoundaryExecutor {
             case NUMBER -> {
                 double value = view.numberValue();
                 if (Double.isNaN(value)) {
-                    yield new CoreFail(FailureCase.INT_REFINEMENT, "int", "NaN", 0, null);
+                    yield new CoreFail(FailureCase.INT_REFINEMENT, RuntimeDescriptor.Int.INSTANCE,
+                        "NaN", 0, null);
                 }
                 if (Double.isInfinite(value)) {
-                    yield new CoreFail(FailureCase.INT_REFINEMENT, "int", "infinity", 0, null);
+                    yield new CoreFail(FailureCase.INT_REFINEMENT, RuntimeDescriptor.Int.INSTANCE,
+                        "infinity", 0, null);
                 }
                 if (value != Math.rint(value)) {
-                    yield new CoreFail(FailureCase.INT_REFINEMENT, "int",
-                        "non-integer number", 0, null);
+                    yield new CoreFail(FailureCase.INT_REFINEMENT, RuntimeDescriptor.Int.INSTANCE,
+                        "number", 0, null);
                 }
                 if (value < -2147483648d || value > 2147483647d) {
-                    yield new CoreFail(FailureCase.INT_OUT_OF_RANGE, "int", "number", 0, null);
+                    yield new CoreFail(FailureCase.INT_OUT_OF_RANGE,
+                        RuntimeDescriptor.Int.INSTANCE, "number", 0, null);
                 }
                 yield pass(view);
             }
@@ -640,12 +677,19 @@ public final class BoundaryExecutor {
         };
     }
 
-    /** Class atom identity: byte-equal to the descriptor's pinned atom text. */
+    /**
+     * Class atom identity: a byte-equal atom passes; a class instance with a
+     * different atom projects the identity arm; every other value projects
+     * the typed-boundary kind arm.
+     */
     private static CoreResult coreClass(RuntimeDescriptor.Class descriptor,
                                         BoundaryValueView view) {
-        if (view.kind() == ActualKind.CLASS
-                && descriptor.classId().text().equals(view.classId())) {
-            return pass(view);
+        if (view.kind() == ActualKind.CLASS) {
+            String carried = view.classId();
+            if (carried != null && descriptor.classId().text().equals(carried)) {
+                return pass(view);
+            }
+            return new CoreFail(FailureCase.CLASS_IDENTITY, descriptor, carried, 0, null);
         }
         return kindFail(descriptor, view);
     }
@@ -663,9 +707,8 @@ public final class BoundaryExecutor {
             if (elementResult instanceof CoreFail elementFail) {
                 CoreFail leaf = elementFail.caseKind() == FailureCase.ELEMENT
                     ? elementFail.cause() : elementFail;
-                return new CoreFail(FailureCase.ELEMENT,
-                    descriptor.element().canonicalSpecText(),
-                    ActualKind.canonicalToken(element.kind(), element.classId()),
+                return new CoreFail(FailureCase.ELEMENT, descriptor.element(),
+                    FailureProjections.typedBoundaryToken(element.kind(), element.classId()),
                     i + 1, leaf);
             }
         }
@@ -694,43 +737,43 @@ public final class BoundaryExecutor {
         if (view.kind() == ActualKind.FUNCTION) {
             RuntimeDescriptor.Func carried = view.functionSignature();
             return descriptor.equals(carried) ? pass(view)
-                : new CoreFail(FailureCase.SIG_MISMATCH, descriptor.canonicalSpecText(),
+                : new CoreFail(FailureCase.SIG_MISMATCH, descriptor,
                     carried.canonicalSpecText(), 0, null);
         }
-        return new CoreFail(FailureCase.KIND_MISMATCH, "function",
-            ActualKind.canonicalToken(view.kind(), view.classId()), 0, null);
+        return new CoreFail(FailureCase.KIND_MISMATCH, descriptor,
+            FailureProjections.typedBoundaryToken(view.kind(), view.classId()), 0, null);
     }
 
     // =========================================================================
     // Projection: core failures instantiate the registry rows' pinned templates
     // =========================================================================
 
-    /** The pinned template selection of one descriptor-kind projection set. */
-    private record Projection(FailurePolicyRow kindRow, int kindTemplate,
-                              int refinementTemplate, int unicodeTemplate,
-                              FailurePolicyRow sigRow, int bytesTemplate) {
+    /** The arm selection of one descriptor-kind projection set. */
+    private record Projection(FailureArmId kindArm, FailureArmId refinementArm,
+                              FailureArmId unicodeArm, FailureArmId signatureArm) {
     }
 
     /** TYPE_DESCRIPTOR: kind mismatches, the pinned invalid-unicode variant, E8010 signatures. */
     private static Projection tdProjection() {
-        return new Projection(FailureContractRegistry.row(FailurePolicyId.TYPE_DESCRIPTOR),
-            0, -1, 1, FailureContractRegistry.row(FailurePolicyId.FUNCTION_SIGNATURE), 2);
+        return new Projection(FailureArmId.TYPED_BOUNDARY_KIND, null,
+            FailureArmId.TYPED_BOUNDARY_INVALID_UNICODE,
+            FailureArmId.FUNCTION_SIGNATURE_MISMATCH);
     }
 
-    /** FUNCTION_SIGNATURE: non-functions project the E8001 kind template. */
+    /** FUNCTION_SIGNATURE: non-functions project the kind arm. */
     private static Projection signatureProjection() {
-        return new Projection(FailureContractRegistry.row(FailurePolicyId.TYPE_DESCRIPTOR),
-            0, -1, -1, FailureContractRegistry.row(FailurePolicyId.FUNCTION_SIGNATURE), -1);
+        return new Projection(FailureArmId.TYPED_BOUNDARY_KIND, null, null,
+            FailureArmId.FUNCTION_SIGNATURE_MISMATCH);
     }
 
     /**
      * ASYNC_COMPLETION: kind mismatches through the row's corpus-aligned
-     * {@code expected {expected}} template, the int ladder's pinned refinement
-     * texts through the row's second template.
+     * {@code expected {expected}} arm, the int ladder's pinned refinement
+     * texts through the row's second arm.
      */
     private static Projection asyncProjection() {
-        return new Projection(FailureContractRegistry.row(FailurePolicyId.ASYNC_COMPLETION),
-            0, 1, 1, null, -1);
+        return new Projection(FailureArmId.ASYNC_COMPLETION_KIND,
+            FailureArmId.ASYNC_COMPLETION_REFINEMENT, FailureArmId.ASYNC_COMPLETION_KIND, null);
     }
 
     /** The descriptor-kind outcome: Pass keeps the value; a failure projects per the set. */
@@ -743,50 +786,108 @@ public final class BoundaryExecutor {
     }
 
     /**
-     * Projects a core failure through one projection set: the row, the
-     * template index, the metadata, and the E8003 leaf cause all come
-     * from the closed registry rows — the executor never selects message
-     * text.
+     * Projects a core failure through one projection set: the arm, its
+     * template, its expected token, its actual token, and the E8003 leaf
+     * cause all come from the closed arm table and the closed projections —
+     * the executor never selects or composes message text.
      */
     private static BoundaryFailure project(Projection projection, CoreFail fail) {
-        record Selected(FailurePolicyRow row, int templateIndex) {
-        }
-        Selected selected = switch (fail.caseKind()) {
-            case KIND_MISMATCH ->
-                new Selected(projection.kindRow(), projection.kindTemplate());
-            case INT_REFINEMENT -> new Selected(projection.kindRow(),
-                projection.refinementTemplate() >= 0
-                    ? projection.refinementTemplate() : projection.kindTemplate());
-            case INVALID_UNICODE -> new Selected(projection.kindRow(),
-                projection.unicodeTemplate() >= 0
-                    ? projection.unicodeTemplate() : projection.kindTemplate());
-            case INT_OUT_OF_RANGE -> new Selected(
-                FailureContractRegistry.row(FailurePolicyId.INT32_RESULT), 0);
-            case SIG_MISMATCH -> new Selected(
-                projection.sigRow() != null ? projection.sigRow() : projection.kindRow(), 0);
-            case BYTES_KIND_MISMATCH -> new Selected(projection.kindRow(),
-                projection.bytesTemplate() >= 0
-                    ? projection.bytesTemplate() : projection.kindTemplate());
-            case ELEMENT -> new Selected(
-                FailureContractRegistry.row(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR), 0);
+        return switch (fail.caseKind()) {
+            case KIND_MISMATCH -> renderKind(projection.kindArm(), fail);
+            case INT_REFINEMENT -> renderKind(projection.refinementArm() != null
+                ? projection.refinementArm() : projection.kindArm(), fail);
+            case INVALID_UNICODE -> renderKind(projection.unicodeArm() != null
+                ? projection.unicodeArm() : projection.kindArm(), fail);
+            case INT_OUT_OF_RANGE -> renderSimple(FailureArmId.INT32_RANGE, fail);
+            case CLASS_IDENTITY -> renderIdentity(fail);
+            case SIG_MISMATCH -> renderSignature(projection, fail);
+            case ELEMENT -> renderElement(projection, fail);
         };
-        Map<String, String> metadata = fail.caseKind() == FailureCase.ELEMENT
-            ? metadataOf("oneBasedIndex", Integer.toString(fail.elementIndex()))
-            : new LinkedHashMap<>();
-        BoundaryFailure cause = fail.caseKind() == FailureCase.ELEMENT
-            ? project(projection, fail.cause()) : null;
-        return BoundaryFailure.fromRow(selected.row(), selected.templateIndex(),
-            fail.expected(), fail.actual(), metadata, cause);
+    }
+
+    /** One typed-boundary kind/refinement/invalid-unicode arm render. */
+    private static BoundaryFailure renderKind(FailureArmId armId, CoreFail fail) {
+        FailureArm arm = FailureContractRegistry.arm(armId);
+        Map<String, String> parameters = new LinkedHashMap<>();
+        for (String parameter : arm.parameters()) {
+            switch (parameter) {
+                case "kind" -> parameters.put(parameter,
+                    FailureProjections.kindText(fail.descriptor()));
+                case "expected" -> parameters.put(parameter,
+                    fail.descriptor().canonicalSpecText());
+                case "actual" -> parameters.put(parameter, fail.actualToken());
+                default -> throw new Defect("the kind arm " + armId + " names the "
+                    + "unsupported parameter {" + parameter + "} (producer defect)");
+            }
+        }
+        return FailureContractRegistry.render(armId, parameters,
+            FailureProjections.expectedFor(arm, fail.descriptor(), null),
+            FailureProjections.actualFor(arm, fail.actualToken(), null, null, null, null), null);
+    }
+
+    /** One parameter-less arm render (the bounds, int32, sqrt and fixed-text rows). */
+    private static BoundaryFailure renderSimple(FailureArmId armId, CoreFail fail) {
+        FailureArm arm = FailureContractRegistry.arm(armId);
+        return FailureContractRegistry.render(armId, new LinkedHashMap<>(),
+            FailureProjections.expectedFor(arm, fail.descriptor(), null),
+            FailureProjections.actualFor(arm, fail.actualToken(), null, null, null, null), null);
+    }
+
+    /** The class-identity arm: the declared atom beside the carried atom. */
+    private static BoundaryFailure renderIdentity(CoreFail fail) {
+        FailureArm arm = FailureContractRegistry.arm(FailureArmId.CLASS_IDENTITY);
+        String declared = ((RuntimeDescriptor.Class) fail.descriptor()).classId().text();
+        Map<String, String> parameters = new LinkedHashMap<>();
+        parameters.put("expected", declared);
+        parameters.put("actual", fail.actualToken());
+        return FailureContractRegistry.render(FailureArmId.CLASS_IDENTITY, parameters,
+            FailureProjections.expectedFor(arm, fail.descriptor(), null),
+            FailureProjections.actualFor(arm, null, null, fail.actualToken(), null, null), null);
+    }
+
+    /** The signature arm: the declared canonical text beside the carried text. */
+    private static BoundaryFailure renderSignature(Projection projection, CoreFail fail) {
+        FailureArmId armId = projection.signatureArm() != null
+            ? projection.signatureArm() : projection.kindArm();
+        FailureArm arm = FailureContractRegistry.arm(armId);
+        Map<String, String> parameters = new LinkedHashMap<>();
+        parameters.put("expected", fail.descriptor().canonicalSpecText());
+        parameters.put("actual", fail.actualToken());
+        return FailureContractRegistry.render(armId, parameters,
+            FailureProjections.expectedFor(arm, fail.descriptor(), null),
+            FailureProjections.actualFor(arm, null, null, null, fail.actualToken(), null), null);
+    }
+
+    /** The E8003 element arm with the first failing element's leaf cause. */
+    private static BoundaryFailure renderElement(Projection projection, CoreFail fail) {
+        FailureArm arm = FailureContractRegistry.arm(FailureArmId.ARRAY_ELEMENT_KIND);
+        Map<String, String> parameters = new LinkedHashMap<>();
+        parameters.put("oneBasedIndex", Integer.toString(fail.elementIndex()));
+        BoundaryFailure cause = project(projection, fail.cause());
+        return FailureContractRegistry.render(FailureArmId.ARRAY_ELEMENT_KIND, parameters,
+            FailureProjections.expectedFor(arm, null, fail.descriptor()),
+            FailureProjections.actualFor(arm, fail.actualToken(), null, null, null, null), cause);
     }
 
     /**
-     * The host-wrap actual: the canonical token of the whole value for an
-     * element failure (the parameter/return is the array), otherwise the
-     * core failure's pinned classification.
+     * The host arms' actual: the carrier-kind projection of the failing
+     * value (P2 item 2) — never the typed-boundary token, so a class
+     * instance or a DEAL function wrapper projects {@code table} exactly
+     * as the unchanged host runtimes project it.
      */
     private static String hostActual(BoundaryValueView view, CoreFail fail) {
-        return fail.caseKind() == FailureCase.ELEMENT
-            ? ActualKind.canonicalToken(view.kind(), view.classId()) : fail.actual();
+        return FailureProjections.carrierKindToken(carrierKindOf(view));
+    }
+
+    /** The carrier-kind classification of one oracle value view. */
+    private static FailureProjections.CarrierKind carrierKindOf(BoundaryValueView view) {
+        return switch (view.kind()) {
+            case MISSING -> FailureProjections.CarrierKind.ABSENT;
+            case NULL -> FailureProjections.CarrierKind.LANGUAGE_NULL;
+            case BOOLEAN -> FailureProjections.CarrierKind.BOOLEAN;
+            case INT, NUMBER -> FailureProjections.CarrierKind.NUMBER;
+            default -> FailureProjections.CarrierKind.TABLE;
+        };
     }
 
     // =========================================================================

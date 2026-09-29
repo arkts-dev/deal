@@ -1466,7 +1466,7 @@ public class ModuleNamespaceValueTest {
                     check(run.terminal()
                             instanceof SemanticRuntimeModel.Terminal.DealFailure f
                             && "E8001".equals(f.error().code())
-                            && "expected function, got int".equals(f.error().message())
+                            && "expected function".equals(f.error().message())
                             && f.error().origin().endsWith("app.deal:3:10"),
                         "the non-function read (" + run.consumer() + ") publishes the "
                             + "pinned E8001 at the read site; got " + run.terminal());
@@ -1517,7 +1517,7 @@ public class ModuleNamespaceValueTest {
                     check(run.terminal()
                             instanceof SemanticRuntimeModel.Terminal.DealFailure f
                             && "E8001".equals(f.error().code())
-                            && "expected function, got missing".equals(
+                            && "expected function".equals(
                                 f.error().message())
                             && f.error().origin().endsWith("app.deal:5:10"),
                         "the missing read (" + run.consumer() + ") publishes the "

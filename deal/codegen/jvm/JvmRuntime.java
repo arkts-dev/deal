@@ -808,6 +808,140 @@ public final class JvmRuntime {
     }
 
     /**
+     * One closed failure arm rendered on the JVM target (canonical
+     * failure-projection authority P4 item 3): the arm's own template with
+     * its named parameters and the arm's declared expected/actual fields —
+     * the same authority the oracle and the emitted Lua prelude render. A
+     * production render of a marked (INNER_ONLY / SIBLING_OWNED) arm or a
+     * field that does not match the arm's declaration fails closed as a
+     * producer defect.
+     */
+    public static DealError arm(deal.semantic.ir.FailureArmId id,
+                                java.util.Map<String, String> parameters, String origin,
+                                String expected, String actual) {
+        deal.semantic.ir.BoundaryFailure failure =
+            deal.semantic.ir.FailureContractRegistry.render(id, parameters, expected, actual,
+                null);
+        return new DealError(failure.code().name(), failure.message(), origin,
+            failure.expected(), failure.actual(), framesText(), null);
+    }
+
+    /** The typed-boundary kind text of one canonical descriptor text (P2 item 1). */
+    public static String kindTextOf(String desc) {
+        if (desc.startsWith("nullable(")) {
+            return kindTextOf(desc.substring(9, desc.length() - 1));
+        }
+        if (desc.startsWith("array(")) {
+            return "array";
+        }
+        if (desc.startsWith("function(")) {
+            return "function";
+        }
+        if (desc.startsWith("@")) {
+            return "class instance";
+        }
+        return desc;
+    }
+
+    /**
+     * The descriptor-kind inner reason of the host arms (P2 item 3): the
+     * typed-boundary kind arm's own template instantiated with the closed
+     * kind text — the single source of the host inner-reason vocabulary's
+     * descriptor entries.
+     */
+    public static String kindReason(String desc) {
+        return deal.semantic.ir.FailureContractRegistry
+            .arm(deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND).template()
+            .replace("{kind}", kindTextOf(desc));
+    }
+
+    /**
+     * The int refinement inner reason ({@code expected int, got NaN} / …):
+     * the closed refinement arms' own texts.
+     */
+    public static String refinementReason(String actualToken) {
+        return switch (actualToken) {
+            case "NaN" -> deal.semantic.ir.FailureContractRegistry
+                .arm(deal.semantic.ir.FailureArmId.INT_CONVERSION_NAN).template();
+            case "infinity" -> deal.semantic.ir.FailureContractRegistry
+                .arm(deal.semantic.ir.FailureArmId.INT_CONVERSION_INFINITY).template();
+            case "number" -> deal.semantic.ir.FailureContractRegistry
+                .arm(deal.semantic.ir.FailureArmId.INT_CONVERSION_FRACTIONAL).template();
+            default -> throw new IllegalStateException(
+                "the int refinement " + actualToken + " has no closed arm (producer defect)");
+        };
+    }
+
+    /** The signed32-range inner reason (the {@code INT32_RANGE} arm's text). */
+    public static String rangeReason() {
+        return deal.semantic.ir.FailureContractRegistry
+            .arm(deal.semantic.ir.FailureArmId.INT32_RANGE).template();
+    }
+
+    /** One inner-only string-carrier reason (the two INNER_ONLY arms' texts). */
+    public static String stringCarrierReason(boolean surrogate) {
+        return deal.semantic.ir.FailureContractRegistry.renderInner(
+            surrogate ? deal.semantic.ir.FailureArmId.HOST_STRING_SURROGATE
+                : deal.semantic.ir.FailureArmId.HOST_STRING_INVALID_UTF8,
+            java.util.Map.of());
+    }
+
+    /** The array-element inner reason (the element arm's own text). */
+    public static String elementReason(int oneBasedIndex) {
+        return deal.semantic.ir.FailureContractRegistry
+            .arm(deal.semantic.ir.FailureArmId.ARRAY_ELEMENT_KIND).template()
+            .replace("{oneBasedIndex}", Integer.toString(oneBasedIndex));
+    }
+
+    /** The class-identity inner reason (the identity arm's own template). */
+    public static String identityReason(String declared, String carried) {
+        return deal.semantic.ir.FailureContractRegistry
+            .arm(deal.semantic.ir.FailureArmId.CLASS_IDENTITY).template()
+            .replace("{expected}", declared).replace("{actual}", carried);
+    }
+
+    /** The typed-boundary kind token of one canonical descriptor text (P2 item 1). */
+    public static String kindTokenOf(String desc) {
+        if (desc.startsWith("nullable(")) {
+            return kindTokenOf(desc.substring(9, desc.length() - 1));
+        }
+        if (desc.startsWith("@")) {
+            return "class";
+        }
+        if (desc.startsWith("array(")) {
+            return "array";
+        }
+        if (desc.startsWith("function(")) {
+            return "function";
+        }
+        return desc;
+    }
+
+    /**
+     * The typed-boundary kind arm's render (the completion cell's own
+     * expected-only arm when the check is the completion cell's).
+     */
+    private static DealError kindFailure(String desc, String actual, boolean completion) {
+        if (completion) {
+            String expected = kindTokenOf(desc);
+            return arm(deal.semantic.ir.FailureArmId.ASYNC_COMPLETION_KIND,
+                java.util.Map.of("expected", expected), "-", expected, actual);
+        }
+        return arm(deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND,
+            java.util.Map.of("kind", kindTextOf(desc)), "-", kindTokenOf(desc), actual);
+    }
+
+    /** The int path's refinement render (the kind arm, or the completion row's second). */
+    private static DealError refinementFailure(String token, boolean completion) {
+        if (completion) {
+            return arm(deal.semantic.ir.FailureArmId.ASYNC_COMPLETION_REFINEMENT,
+                java.util.Map.of("expected", "int", "actual", token), "-", "int", token);
+        }
+        return arm(deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND,
+            java.util.Map.of("kind", "int"), "-", "int", token);
+    }
+
+    /**
      * The actual runtime kind of one value for failure projections: the
      * value's own kind — missing → "missing", null → "null", else the
      * runtime type's canonical kind text (a wrong-kind value projects as
@@ -816,7 +950,7 @@ public final class JvmRuntime {
      */
     public static String actualOf(String staticKind, Object v) {
         if (v == MISSING) {
-            return "missing";
+            return "nil";
         }
         if (v == null) {
             return "null";
@@ -849,7 +983,7 @@ public final class JvmRuntime {
             return "class:@builtin/Error";
         }
         if (v instanceof ClassInstance instance) {
-            return "class:" + instance.classIdText();
+            return instance.classIdText();
         }
         return staticKind;
     }
@@ -914,13 +1048,17 @@ public final class JvmRuntime {
     }
 
     /**
-     * The kind-mismatch failure text: the shared form, or the completion
-     * cell's pinned {@code expected {expected}} form.
+     * The class arms: a carried atom projects the identity arm, every other
+     * value the closed kind arm.
      */
-    private static String kindMismatch(String expected, String actual,
-            boolean completion) {
-        return completion ? "expected " + expected
-            : "expected " + expected + ", got " + actual;
+    private static DealError classFailure(String desc, Object v, String actual,
+                                          boolean completion) {
+        if (v instanceof ClassInstance instance) {
+            String carried = instance.classIdText();
+            return arm(deal.semantic.ir.FailureArmId.CLASS_IDENTITY,
+                java.util.Map.of("expected", desc, "actual", carried), "-", desc, carried);
+        }
+        return kindFailure(desc, actual, completion);
     }
 
     private static Object bcheck(String desc, String staticKind, Object v,
@@ -949,15 +1087,13 @@ public final class JvmRuntime {
             if (v == null) {
                 return v;
             }
-            throw fail("E8001", kindMismatch("null", actual, completion), "-", "null",
-                actual);
+            throw kindFailure("null", actual, completion);
         }
         if ("boolean".equals(desc)) {
             if (v instanceof Boolean) {
                 return v;
             }
-            throw fail("E8001", kindMismatch("boolean", actual, completion), "-",
-                "boolean", actual);
+            throw kindFailure("boolean", actual, completion);
         }
         if ("int".equals(desc)) {
             if (v instanceof Long longValue) {
@@ -966,44 +1102,39 @@ public final class JvmRuntime {
             if (v instanceof Double doubleValue) {
                 double d = doubleValue;
                 if (Double.isNaN(d)) {
-                    throw fail("E8001", "expected int, got NaN", "-", "int", "NaN");
+                    throw refinementFailure("NaN", completion);
                 }
                 if (Double.isInfinite(d)) {
-                    throw fail("E8001", "expected int, got infinity", "-", "int",
-                        "infinity");
+                    throw refinementFailure("infinity", completion);
                 }
                 if (d != Math.rint(d)) {
-                    throw fail("E8001", "expected int, got non-integer number", "-", "int",
-                        "non-integer number");
+                    throw refinementFailure("number", completion);
                 }
                 if (d < -2147483648d || d > 2147483647d) {
-                    throw fail("E8004", "int out of safe range", "-", "int", "number");
+                    throw arm(deal.semantic.ir.FailureArmId.INT32_RANGE,
+                        java.util.Map.of(), "-", null, null);
                 }
                 return d;
             }
-            throw fail("E8001", kindMismatch("int", actual, completion), "-", "int",
-                actual);
+            throw kindFailure("int", actual, completion);
         }
         if ("number".equals(desc)) {
             if (v instanceof Double || v instanceof Long) {
                 return v;
             }
-            throw fail("E8001", kindMismatch("number", actual, completion), "-",
-                "number", actual);
+            throw kindFailure("number", actual, completion);
         }
         if ("string".equals(desc)) {
             if (v instanceof String) {
                 return v;
             }
-            throw fail("E8001", kindMismatch("string", actual, completion), "-",
-                "string", actual);
+            throw kindFailure("string", actual, completion);
         }
         if ("table".equals(desc)) {
             if (v instanceof Table) {
                 return v;
             }
-            throw fail("E8001", kindMismatch("table", actual, completion), "-",
-                "table", actual);
+            throw kindFailure("table", actual, completion);
         }
         if ("bytes".equals(desc)) {
             // The bytes view (K6 item 11): the carrier passes unchanged
@@ -1024,8 +1155,7 @@ public final class JvmRuntime {
                 if (v instanceof ErrorValue) {
                     return v;
                 }
-                throw fail("E8001", kindMismatch(desc, actual, completion), "-", desc,
-                    actual);
+                throw classFailure(desc, v, actual, completion);
             }
             // A nominal class descriptor (E5): the canonical
             // @modulePath/ClassName identity text — the instance must
@@ -1034,8 +1164,7 @@ public final class JvmRuntime {
                     && desc.equals(instance.classIdText())) {
                 return v;
             }
-            throw fail("E8001", kindMismatch(desc, actual, completion), "-", desc,
-                actual);
+            throw classFailure(desc, v, actual, completion);
         }
         if (desc.startsWith("array(")) {
             if (v instanceof Array array) {
@@ -1057,16 +1186,15 @@ public final class JvmRuntime {
                         // The canonical element text (the semantic oracle's
                         // closed canonical spelling), never the runtime's
                         // internal array(...) dialect.
-                        throw fail("E8003", "array element " + (i + 1)
-                            + " type mismatch", "-",
-                            innerCanonical != null ? innerCanonical : inner,
+                        throw arm(deal.semantic.ir.FailureArmId.ARRAY_ELEMENT_KIND,
+                            java.util.Map.of("oneBasedIndex", Integer.toString(i + 1)),
+                            "-", innerCanonical != null ? innerCanonical : inner,
                             actualOf(elem == MISSING ? "missing" : inner, elem));
                     }
                 }
                 return v;
             }
-            throw fail("E8001", kindMismatch("array", actual, completion), "-",
-                "array", actual);
+            throw kindFailure("array", actual, completion);
         }
         if (desc.startsWith("nullable(")) {
             if (v == null || v == MISSING) {
@@ -1087,11 +1215,11 @@ public final class JvmRuntime {
                 if (matches) {
                     return v;
                 }
-                throw fail("E8010", "function signature mismatch: expected " + wanted
-                    + ", got " + carried, "-", wanted, carried);
+                throw arm(deal.semantic.ir.FailureArmId.FUNCTION_SIGNATURE_MISMATCH,
+                    java.util.Map.of("expected", wanted, "actual", carried), "-", wanted,
+                    carried);
             }
-            throw fail("E8001", kindMismatch("function", actual, completion), "-",
-                "function", actual);
+            throw kindFailure("function", actual, completion);
         }
         return v;
     }
@@ -1115,8 +1243,9 @@ public final class JvmRuntime {
         if (expected.equals(carried)) {
             return v;
         }
-        throw fail("E8010", "function signature mismatch: expected " + expected
-            + ", got " + carried, origin, expected, carried);
+        throw arm(deal.semantic.ir.FailureArmId.FUNCTION_SIGNATURE_MISMATCH,
+            java.util.Map.of("expected", expected, "actual", carried), origin, expected,
+            carried);
     }
 
     /**
@@ -2354,9 +2483,13 @@ public final class JvmRuntime {
      * observable fact.
      */
     private static StdlibFailure jsonEncodingFailure(String actual) {
-        return new StdlibFailure("E8001",
-            "unsupported type for JSON encoding: " + actual,
-            SharedStdlibSemantics.JSON_STRINGIFY_EXPECTED, actual);
+        deal.semantic.ir.BoundaryFailure failure =
+            deal.semantic.ir.FailureContractRegistry.render(
+                deal.semantic.ir.FailureArmId.JSON_STRINGIFY_UNSUPPORTED,
+                java.util.Map.of("actual", actual),
+                SharedStdlibSemantics.JSON_STRINGIFY_EXPECTED, actual, null);
+        return new StdlibFailure(failure.code().name(), failure.message(),
+            failure.expected(), failure.actual());
     }
 
     /** Serializes one table (object) with cycle detection and first-insertion order. */
@@ -2483,7 +2616,8 @@ public final class JvmRuntime {
         if (index < 0) {
             ev(currentModule(), bKey, "START", "BOUNDARY", bDigest, bParent,
                 List.of(atom(MISSING, "missing")), null, null);
-            DealError e = fail("E8002", "negative array index", origin, null, null);
+            DealError e = arm(deal.semantic.ir.FailureArmId.ARRAY_READ_NEGATIVE_INDEX,
+                java.util.Map.of(), origin, null, null);
             ev(currentModule(), bKey, "FAILURE", "BOUNDARY", bDigest, bParent,
                 List.of(), null, errtext(e));
             ev(currentModule(), opKey, "FAILURE", "INDEX_READ", digest, parent,
@@ -2539,7 +2673,8 @@ public final class JvmRuntime {
         ev(currentModule(), bKey, "START", "BOUNDARY", bDigest, bParent,
             List.of(atom(input, staticKind)), null, null);
         if (index < 0 || index > length) {
-            DealError e = fail("E8002", "array index out of bounds", origin, null, null);
+            DealError e = arm(deal.semantic.ir.FailureArmId.ARRAY_WRITE_BOUNDS,
+                java.util.Map.of(), origin, null, null);
             ev(currentModule(), bKey, "FAILURE", "BOUNDARY", bDigest, bParent, List.of(),
                 null, errtext(e));
             throw e;
@@ -2560,7 +2695,8 @@ public final class JvmRuntime {
         ev(currentModule(), bKey, "START", "BOUNDARY", bDigest, bParent,
             List.of(slotAtom), null, null);
         if (index < 0 || index > length) {
-            DealError e = fail("E8002", "array index out of bounds", origin, null, null);
+            DealError e = arm(deal.semantic.ir.FailureArmId.ARRAY_WRITE_BOUNDS,
+                java.util.Map.of(), origin, null, null);
             ev(currentModule(), bKey, "FAILURE", "BOUNDARY", bDigest, bParent, List.of(),
                 null, errtext(e));
             throw e;
@@ -2572,19 +2708,16 @@ public final class JvmRuntime {
     /** The FOR_EACH op's own TYPE_DESCRIPTOR terminal check. */
     public static void foreachCheck(String opKey, String digest, String parent,
                                     String desc, Object elem, String origin) {
-        if (elem == MISSING) {
-            DealError e = fail("E8001", "expected " + desc + ", got missing", origin, desc,
-                "missing");
-            ev(currentModule(), opKey, "FAILURE", "FOR_EACH", digest, parent, List.of(),
-                null, errtext(e));
-            throw e;
-        }
         try {
             bcheck(desc, desc, elem);
         } catch (DealError e) {
+            // The op's own origin is the failure's origin (the op-level
+            // boundary cell), never the prelude's internal placeholder.
+            DealError failure = new DealError(e.code, e.msg, origin, e.expected, e.actual,
+                e.frames, e.cause);
             ev(currentModule(), opKey, "FAILURE", "FOR_EACH", digest, parent, List.of(),
-                null, errtext(e));
-            throw e;
+                null, errtext(failure));
+            throw failure;
         }
     }
 
@@ -2602,7 +2735,8 @@ public final class JvmRuntime {
     public static Object intConv(Object v, String evKind, String kind, String opKey,
                                  String digest, String parent, String origin) {
         if (v == null) {
-            DealError e = fail("E8001", "cannot convert null to int", origin, "int", "null");
+            DealError e = arm(deal.semantic.ir.FailureArmId.INT_CONVERSION_NULL,
+                java.util.Map.of(), origin, "int", "null");
             ev(currentModule(), opKey, "FAILURE", evKind, digest, parent,
                 List.of(), null, errtext(e));
             throw e;
@@ -2610,27 +2744,31 @@ public final class JvmRuntime {
         if (v instanceof Double doubleValue) {
             double d = doubleValue;
             if (Double.isNaN(d)) {
-                DealError e = fail("E8001", "expected int, got NaN", origin, "int", "NaN");
+                DealError e = arm(deal.semantic.ir.FailureArmId.INT_CONVERSION_NAN,
+                    java.util.Map.of(), origin, "int", "NaN");
                 ev(currentModule(), opKey, "FAILURE", evKind, digest, parent,
                     List.of(), null, errtext(e));
                 throw e;
             }
             if (Double.isInfinite(d)) {
-                DealError e = fail("E8001", "expected int, got infinity", origin, "int",
-                    "infinity");
+                DealError e = arm(deal.semantic.ir.FailureArmId.INT_CONVERSION_INFINITY,
+                    java.util.Map.of(), origin, "int", "infinity");
                 ev(currentModule(), opKey, "FAILURE", evKind, digest, parent,
                     List.of(), null, errtext(e));
                 throw e;
             }
             if (d != Math.rint(d)) {
-                DealError e = fail("E8001", "expected int, got non-integer number",
-                    origin, "int", "non-integer number");
+                // The fractional case's text names the case while its actual
+                // token is the closed number kind (the corpus projection).
+                DealError e = arm(deal.semantic.ir.FailureArmId.INT_CONVERSION_FRACTIONAL,
+                    java.util.Map.of(), origin, "int", "number");
                 ev(currentModule(), opKey, "FAILURE", evKind, digest, parent,
                     List.of(), null, errtext(e));
                 throw e;
             }
             if (d < -2147483648d || d > 2147483647d) {
-                DealError e = fail("E8004", "int out of safe range", origin, "int", "number");
+                DealError e = arm(deal.semantic.ir.FailureArmId.INT32_RANGE,
+                    java.util.Map.of(), origin, null, null);
                 ev(currentModule(), opKey, "FAILURE", evKind, digest, parent,
                     List.of(), null, errtext(e));
                 throw e;
@@ -2640,8 +2778,8 @@ public final class JvmRuntime {
         if (v instanceof Long) {
             return v;
         }
-        DealError e = fail("E8001", "expected int, got " + actualOf(kind, v), origin, "int",
-            actualOf(kind, v));
+        DealError e = arm(deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND,
+            java.util.Map.of("kind", "int"), origin, "int", actualOf(kind, v));
         ev(currentModule(), opKey, "FAILURE", evKind, digest, parent, List.of(),
             null, errtext(e));
         throw e;
@@ -2650,8 +2788,8 @@ public final class JvmRuntime {
     public static Object numConv(Object v, String evKind, String kind, String opKey,
                                  String digest, String parent, String origin) {
         if (v == null) {
-            DealError e = fail("E8001", "cannot convert null to number", origin, "number",
-                "null");
+            DealError e = arm(deal.semantic.ir.FailureArmId.NUMBER_CONVERSION_NULL,
+                java.util.Map.of(), origin, "number", "null");
             ev(currentModule(), opKey, "FAILURE", evKind, digest, parent,
                 List.of(), null, errtext(e));
             throw e;
@@ -2662,8 +2800,8 @@ public final class JvmRuntime {
         if (v instanceof Double) {
             return v;
         }
-        DealError e = fail("E8001", "expected number, got " + actualOf(kind, v), origin,
-            "number", actualOf(kind, v));
+        DealError e = arm(deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND,
+            java.util.Map.of("kind", "number"), origin, "number", actualOf(kind, v));
         ev(currentModule(), opKey, "FAILURE", evKind, digest, parent, List.of(),
             null, errtext(e));
         throw e;

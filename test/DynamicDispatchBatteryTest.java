@@ -2655,11 +2655,11 @@ public class DynamicDispatchBatteryTest {
             int exit = process.waitFor();
             String stderr = Files.readString(stderrFile, StandardCharsets.UTF_8);
             checkEq(0, exit, "the residue LuaJIT artifact executes: " + stdout + stderr);
-            check(stdout.contains("ERR:E8001|expected function, got string|" + origin
+            check(stdout.contains("ERR:E8001|expected function|" + origin
                     + "|function|string"),
-                "the residue LuaJIT artifact projects the pinned E8001 "
-                    + "\"expected function, got string\" row with the expected/actual "
-                    + "fields at the call origin: " + stdout.replace("\n", "\\n"));
+                "the residue LuaJIT artifact renders the typed-boundary kind arm "
+                    + "with the expected/actual fields at the call origin: "
+                    + stdout.replace("\n", "\\n"));
         } finally {
             deleteRecursively(workspace);
         }
@@ -2707,11 +2707,11 @@ public class DynamicDispatchBatteryTest {
                 workspace);
             checkEq(0, run.exitCode(), "the residue JVM artifact executes: "
                 + run.output());
-            check(run.stdout().contains("ERR:E8001|expected function, got string|"
+            check(run.stdout().contains("ERR:E8001|expected function|"
                     + origin + "|function|string"),
-                "the residue JVM artifact projects the pinned E8001 "
-                    + "\"expected function, got string\" row with the expected/actual "
-                    + "fields at the call origin: " + run.stdout().replace("\n", "\\n"));
+                "the residue JVM artifact renders the typed-boundary kind arm "
+                    + "with the expected/actual fields at the call origin: "
+                    + run.stdout().replace("\n", "\\n"));
         } finally {
             deleteRecursively(workspace);
         }

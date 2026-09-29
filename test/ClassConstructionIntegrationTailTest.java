@@ -1451,7 +1451,7 @@ public class ClassConstructionIntegrationTailTest {
             drive.layouts(), realDelegate(failureLog), drive.callerRunner());
         check(failing instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().code() == DiagnosticCode.E8001
-                && failure.failure().failure().message().equals("expected int, got string")
+                && failure.failure().failure().message().equals("expected int")
                 && failure.failure().origin().equals(p.origin()),
             "the tampered age fails the declaration-order boundary with the exact "
                 + "E8001 at the op origin; got " + failing);
@@ -1773,7 +1773,7 @@ public class ClassConstructionIntegrationTailTest {
         check(maybeCityRead instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().code() == DiagnosticCode.E8001
                 && failure.failure().failure().message().equals(
-                    "expected @owner/Address, got null")
+                    "expected class instance")
                 && failure.failure().origin().equals(reads.get(2).origin()),
             "the nullable receiver read fails the nominal receiver boundary with the "
                 + "exact E8001 at the op origin; got " + maybeCityRead);
@@ -1812,10 +1812,11 @@ public class ClassConstructionIntegrationTailTest {
         check(wrongIdentity instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().code() == DiagnosticCode.E8001
                 && failure.failure().failure().message().equals(
-                    "expected @owner/Address, got class:@main/Person")
+                    "expected instance of @owner/Address, got @main/Person")
+                && "@main/Person".equals(failure.failure().failure().actual())
                 && failure.failure().origin().equals(maybeRead.origin()),
             "the wrong-identity receiver fails with the canonical actual "
-                + "class:@main/Person at the op origin; got " + wrongIdentity);
+                + "@main/Person at the op origin; got " + wrongIdentity);
 
         // The required-field missing read: a defective Address instance
         // (city missing) pre-maps to null and fails the declared string
@@ -1830,7 +1831,7 @@ public class ClassConstructionIntegrationTailTest {
             realDelegate(new ArrayList<>()));
         check(missingRequired instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().code() == DiagnosticCode.E8001
-                && failure.failure().failure().message().equals("expected string, got null")
+                && failure.failure().failure().message().equals("expected string")
                 && failure.failure().origin().equals(maybeRead.origin()),
             "a required field of a defective instance fails the read with the exact "
                 + "E8001 (expected string, got null); got " + missingRequired);

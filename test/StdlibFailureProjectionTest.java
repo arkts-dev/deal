@@ -290,12 +290,13 @@ public class StdlibFailureProjectionTest {
         FailurePolicyRow typeRow = FailureContractRegistry.row(
             FailurePolicyId.TYPE_DESCRIPTOR);
         check(typeRow.code() == DiagnosticCode.E8001
-                && typeRow.templates().size() == 3
+                && typeRow.templates().size() == 5
+                && typeRow.templates().get(0).equals("expected {kind}")
                 && typeRow.templates().get(1).equals(
-                    "expected string, got invalid Unicode scalar encoding")
-                && typeRow.templates().get(2).equals("expected bytes"),
-            "TYPE_DESCRIPTOR pins the wrong-kind template, the invalid-string "
-                + "variant, and the bytes kind-mismatch projection (ISSUE-0626)");
+                    "expected string, got invalid Unicode scalar encoding"),
+            "TYPE_DESCRIPTOR pins the typed-boundary kind template, the invalid-string "
+                + "variant, the identity arm, and the two inner-only host string arms "
+                + "(a bytes descriptor projects the kind arm's own text)");
 
         // Row instantiation is the only message source; an unbound
         // placeholder fails closed.
@@ -782,7 +783,7 @@ public class StdlibFailureProjectionTest {
                 SemanticRuntimeModel.ConsumerRun run =
                     SemanticOracle.execute(nonTable.unit(), nonTable.table());
                 expectTerminal(nonTable, run, "E8001",
-                    "expected table, got " + actual, originAtomOf(returnBoundary),
+                    "expected table", originAtomOf(returnBoundary),
                     expectedFrames(nonTable, call),
                     "a successful parse of " + input + " fails the STDLIB_RETURN "
                         + "boundary at the boundary origin");

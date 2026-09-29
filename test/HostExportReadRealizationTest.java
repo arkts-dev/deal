@@ -982,7 +982,7 @@ public class HostExportReadRealizationTest {
                     + "value (the identical atom)");
             checkEq(List.of("missing"), luaReadAtoms(luaRun.stderr(), List.of(hostKey)),
                 "the LuaJIT per-unit entry chunk projects __MISSING for the HOST read");
-            check(luaRun.stderr().contains("!E8001;expected function, got missing"),
+            check(luaRun.stderr().contains("!E8001;expected function;"),
                 "the LuaJIT run fails at the function-typed binding boundary of the HOST "
                     + "read: " + luaRun.stderr().replace("\n", "\\n"));
 
@@ -1024,7 +1024,7 @@ public class HostExportReadRealizationTest {
             check(populatedAtoms.size() == 1 && !"missing".equals(populatedAtoms.get(0)),
                 "the LuaJIT HOST read resolves the seeded surface entry — never the "
                     + "absent slot; got " + populatedAtoms);
-            check(populatedRun.stderr().contains("!E8001;expected function, got string"),
+            check(populatedRun.stderr().contains("!E8001;expected function;"),
                 "the LuaJIT boundary sees exactly the seeded entry's kind (the read "
                     + "returns the entry itself, never a wrap): "
                     + populatedRun.stderr().replace("\n", "\\n"));
@@ -1107,7 +1107,7 @@ public class HostExportReadRealizationTest {
         source.append("      check(\"E8001\".equals(e.code), \"the binding boundary "
             + "raises the pinned E8001; got \" + e.code);\n");
         source.append("      check(String.valueOf(e.getMessage()).contains("
-            + "\"expected function, got missing\"), \"the boundary names the absent-slot "
+            + "\"expected function\"), \"the boundary renders the typed-boundary kind arm "
             + "value; got \" + e.getMessage());\n");
         source.append("    }\n");
         source.append("    Object published = deal.codegen.jvm.JvmRuntime.EXPORT_SURFACES"
@@ -1155,7 +1155,7 @@ public class HostExportReadRealizationTest {
         source.append("      check(\"E8001\".equals(e.code), \"the boundary raises the "
             + "pinned E8001; got \" + e.code);\n");
         source.append("      check(String.valueOf(e.getMessage()).contains("
-            + "\"expected function, got string\"), \"the boundary sees exactly the "
+            + "\"expected function\"), \"the boundary renders the typed-boundary kind arm "
             + "seeded entry; got \" + e.getMessage());\n");
         source.append("    }\n");
         source.append("    Object host = ").append(appClass).append(".v")

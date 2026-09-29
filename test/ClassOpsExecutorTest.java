@@ -824,9 +824,8 @@ public class ClassOpsExecutorTest {
             boundaryChild(null, BoundaryKind.CLASS_LITERAL_FIELD, INT, vC,
                 FailurePolicyId.TYPE_DESCRIPTOR)));
 
-        BoundaryFailure scripted = BoundaryFailure.fromRow(
-            FailureContractRegistry.row(FailurePolicyId.TYPE_DESCRIPTOR), 0,
-            "int", "string", new LinkedHashMap<>(), null);
+        BoundaryFailure scripted = deal.semantic.ir.FailureProjections
+            .kindFailure("int", "string");
         List<String> log = new ArrayList<>();
         ScriptedDelegate delegate = new ScriptedDelegate(log, 1, scripted);
         ClassNewFixture fixture = classNewFixture(layout, provided, List.of(), entries);
@@ -838,7 +837,7 @@ public class ClassOpsExecutorTest {
 
         check(outcome instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message()
-                    .equals("expected int, got string")
+                    .equals("expected int")
                 && failure.failure().origin().equals(fixture.op().origin()),
             "the first failing boundary (b, the second field in declaration order) "
                 + "fails the op with that child's failure at the op origin");
@@ -878,10 +877,10 @@ public class ClassOpsExecutorTest {
                 && failure.failure().failure().policy() == FailurePolicyId.TYPE_DESCRIPTOR
                 && failure.failure().failure().expected().equals("int")
                 && failure.failure().failure().actual().equals("string")
-                && failure.failure().failure().message().equals("expected int, got string")
+                && failure.failure().failure().message().equals("expected int")
                 && failure.failure().origin().equals(fixture.op().origin()),
             "the real delegate projects the int-field kind mismatch as E8001 "
-                + "expected int, got string at the op origin");
+                + "expected int at the op origin");
 
         // A function-typed field: a differing carried signature fails E8010.
         ClassLayout fnLayout = layout(field("f", FUNC_NULL, true));

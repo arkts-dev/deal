@@ -861,15 +861,19 @@ public class HostModuleLoadEmissionTest {
             check(source.contains("throw JvmRuntime.fail(\"E8010\", \"return value 1 "
                     + "type mismatch: expected int, got nothing\""),
                 "the presence rule emits the pinned 'got nothing' return text");
-            check(source.contains("throw JvmRuntime.fail(\"E8010\", \"parameter \" + i "
-                    + "+ \" type mismatch: \" + __hostInnerMessage(desc, v, __inner)"),
-                "the parameter cell emits the pinned E8010 parameter text");
-            check(source.contains("throw JvmRuntime.fail(\"E8010\", \"return value 1 "
-                    + "type mismatch: \" + __hostInnerMessage(desc, v, __inner)"),
-                "the return cell emits the pinned E8010 return text");
-            check(source.contains("host async function must return an async operation, "
-                    + "got \" + __hostKind(__r)"),
-                "the declared async export runs the operation-shape check");
+            check(source.contains("throw JvmRuntime.arm("
+                    + "deal.semantic.ir.FailureArmId.HOST_PARAMETER_CELL, "
+                    + "java.util.Map.of(\"index\", java.lang.Integer.toString(i), "
+                    + "\"inner\", __hostInnerMessage(desc, v, __inner))"),
+                "the parameter cell renders the host parameter arm");
+            check(source.contains("throw JvmRuntime.arm("
+                    + "deal.semantic.ir.FailureArmId.HOST_SYNC_RETURN_CELL, "
+                    + "java.util.Map.of(\"inner\", __hostInnerMessage(desc, v, __inner))"),
+                "the return cell renders the host return arm");
+            check(source.contains("JvmRuntime.arm("
+                    + "deal.semantic.ir.FailureArmId.ASYNC_SHAPE,"
+                    + " java.util.Map.of(\"actual\", __hostKind(__r))"),
+                "the declared async export renders the async-shape arm");
 
             // The synthesized host-record and host-carrier scope.
             check(source.contains("class $DealRt {"),

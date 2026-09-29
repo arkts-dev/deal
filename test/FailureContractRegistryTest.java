@@ -207,9 +207,11 @@ public class FailureContractRegistryTest {
             "only already-started child/operand failure may propagate");
 
         expectRow(FailurePolicyId.TYPE_DESCRIPTOR, "E8001", "RUNTIME",
-            List.of("expected {expected}, got {actual}",
+            List.of("expected {kind}",
                 "expected string, got invalid Unicode scalar encoding",
-                "expected bytes"),
+                "expected instance of {expected}, got {actual}",
+                "expected string, got invalid UTF-8 encoding",
+                "expected string, got UTF-16 surrogate code point"),
             List.of("expected", "actual"),
             op, none, frames,
             "single check: wrong-kind or invalid-unicode-string projection per the checked "
@@ -274,7 +276,7 @@ public class FailureContractRegistryTest {
                 + "descriptor-checking boundary whose checked descriptor is a function type");
 
         expectRow(FailurePolicyId.HOST_PARAMETER, "E8010", "RUNTIME",
-            List.of("parameter {index} type mismatch: expected {expected}, got {actual}"),
+            List.of("parameter {index} type mismatch: {inner}"),
             List.of("index", "expected", "actual"),
             "the call origin", none, frames,
             "in one-based parameter order at the host call; all argument expressions finish "
@@ -282,7 +284,7 @@ public class FailureContractRegistryTest {
 
         expectRow(FailurePolicyId.HOST_SYNC_RETURN, "E8010", "RUNTIME",
             List.of("return value 1 type mismatch: expected {expected}, got nothing",
-                "return value 1 type mismatch: expected {expected}, got {actual}"),
+                "return value 1 type mismatch: {inner}"),
             List.of("expected", "actual"),
             "the call origin", none, frames,
             "no value first, then wrong value");
@@ -294,7 +296,7 @@ public class FailureContractRegistryTest {
             "operation failure wins, then the completion descriptor check");
 
         expectRow(FailurePolicyId.ASYNC_OPERATION_HANDLE, "E8010", "RUNTIME",
-            List.of("async operation mismatch: expected {expected}, got {actual}"),
+            List.of("host async function must return an async operation, got {actual}"),
             List.of("expected", "actual"),
             "the async call origin", none, frames,
             "the ASYNC_START(HOST) op's own terminal check, not a BOUNDARY child");

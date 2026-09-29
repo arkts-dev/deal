@@ -1898,7 +1898,7 @@ public class JvmBackendTest {
     }
 
     /** Array runtime checks surface with DEAL error codes: negative read
-     * E8002, read past the end E8001 "expected int, got null", negative
+     * E8002, read past the end E8001 "expected int", negative
      * write E8002, gap write E8002, out-of-safe-range int element write
      * E8004 (the element value check). */
     private static void testArrayRuntimeErrorCodes() throws Exception {
@@ -1927,7 +1927,7 @@ public class JvmBackendTest {
             }
         }
 
-        // The boolean element spelling ("expected boolean, got null") is
+        // The boolean element spelling ("expected boolean") is
         // pinned explicitly: the past-end boolean[] read raises the
         // boundary failure with the element-type message, not a generic
         // one.
@@ -1936,7 +1936,7 @@ public class JvmBackendTest {
             + "let bs: boolean[] = [true]; return bs[1]; }", "arrerrbool");
         check(boolSpelling.exitCode() == 1
                 && boolSpelling.output().contains("DEAL_ERROR_CODE: E8001")
-                && boolSpelling.output().contains("expected boolean, got null"),
+                && boolSpelling.output().contains("expected boolean"),
             "the boolean oob read spells 'expected boolean, got null': "
                 + boolSpelling.output());
 
@@ -2423,7 +2423,7 @@ public class JvmBackendTest {
      * lower to boxed {@code java.lang.Boolean} temporaries with
      * truthiness guards — while the result nil (e.g. {@code bs[99] && true})
      * still fails at a typed boolean boundary exactly where LuaJIT's
-     * check_boolean(nil) fails (E8001 "expected boolean, got null"). */
+     * check_boolean(nil) fails (E8001 "expected boolean"). */
     private static void testArrayBoundaryLessReadPositions() throws Exception {
         System.out.println("-- Boundary-less read positions (javac + java) --");
 
@@ -2480,7 +2480,7 @@ public class JvmBackendTest {
         check(boundary.exitCode() == 1, "nil && result at a boolean "
             + "boundary exits 1: " + boundary.output());
         check(boundary.output().contains("DEAL_ERROR_CODE: E8001")
-                && boundary.output().contains("expected boolean, got null"),
+                && boundary.output().contains("expected boolean"),
             "the && nil result fails the boolean boundary with E8001 "
             + "'expected boolean, got null': " + boundary.output());
 
@@ -2591,7 +2591,7 @@ public class JvmBackendTest {
         // Shape 1 — (bytes | null)[] past-end read into a bytes | null
         // parameter: the nullable element accepts the LuaJIT nil, so the
         // read yields the DEAL null and probe returns 7 (the pre-fix
-        // helper raised E8001 "expected bytes, got null" here).
+        // helper raised E8001 "expected bytes" here).
         ExecResult orNullShape = compileAndRunJvm("""
             import * as console from "std/console"
             function probe(b: bytes | null): int { return 7; }
@@ -2662,7 +2662,7 @@ public class JvmBackendTest {
             """, "bytesarrnonnulltarget");
         check(nonNullTarget.exitCode() == 1
                 && nonNullTarget.output().contains("DEAL_ERROR_CODE: E8001")
-                && nonNullTarget.output().contains("expected bytes, got null"),
+                && nonNullTarget.output().contains("expected bytes"),
             "bytes[] past-end read at a bytes target still raises E8001 "
                 + "'expected bytes, got null': " + nonNullTarget.output());
 
@@ -7607,7 +7607,7 @@ public class JvmBackendTest {
             "E8006 reported for negative exponent: " + negExp.output());
 
         // Extreme power: Math.pow overflows to Infinity; LuaJIT's check_int
-        // reports E8001 ("expected int, got infinity"), not E8004.
+        // reports E8001 ("expected int"), not E8004.
         ExecResult powInf = compileAndRunJvm(
             "export function test(): int { return 10 ** 400; }",
             "powinf");
