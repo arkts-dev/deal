@@ -876,6 +876,10 @@ public class HostModuleLoadEmissionTest {
                     + "deal.semantic.ir.FailureArmId.HOST_SYNC_RETURN_CELL, "
                     + "java.util.Map.of(\"inner\", __hostInnerMessage(desc, v, __inner))"),
                 "the return cell renders the host return arm");
+            check(source.contains(
+                    "throw __hostFail(JvmRuntime.kindReason(d), d, v, oFile, oLine, oCol);"),
+                "the unknown-descriptor branch routes through the validated "
+                    + "descriptor-kind helper (never a composed reason)");
             check(source.contains("JvmRuntime.arm("
                     + "deal.semantic.ir.FailureArmId.ASYNC_SHAPE,"
                     + " java.util.Map.of(\"actual\", __hostKind(__r))"),

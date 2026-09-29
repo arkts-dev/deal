@@ -9035,10 +9035,52 @@ __ARM_TABLE__
 -- arm's declared shape is a producer defect — never a fallback text and
 -- never a composed suffix.
 -- One arm template's text instantiated with its named parameter values.
+-- The render must supply exactly the arm's declared parameters (its
+-- serialized parameter sources): a missing or extra parameter is a
+-- producer defect, never a partially composed message.
+local function __declaredParameterNames(arm)
+  local names = {}
+  local count = 0
+  for entry in string.gmatch(arm.k or "", "[^,]+") do
+    local eq = string.find(entry, "=", 1, true)
+    local name = eq ~= nil and string.sub(entry, 1, eq - 1) or entry
+    if name ~= "" then
+      names[name] = true
+      count = count + 1
+    end
+  end
+  return names, count
+end
+local function __parametersText(arm)
+  local parts = {}
+  for entry in string.gmatch(arm.k or "", "[^,]+") do
+    local eq = string.find(entry, "=", 1, true)
+    if eq ~= nil then
+      parts[#parts + 1] = string.sub(entry, 1, eq - 1)
+    end
+  end
+  return table.concat(parts, ",")
+end
 local function __renderTemplate(id, values)
   local arm = __arms[id]
   if arm == nil then
     error("unknown failure arm '"..tostring(id).."' (producer defect)", 0)
+  end
+  local declared, count = __declaredParameterNames(arm)
+  local supplied = 0
+  if values ~= nil then
+    for k in pairs(values) do
+      if not declared[k] then
+        error("failure arm '"..id.."' declares the parameters ["..__parametersText(arm)
+          .."] but the render supplied the extra parameter '"..tostring(k)
+          .."' (producer defect)", 0)
+      end
+      supplied = supplied + 1
+    end
+  end
+  if supplied ~= count then
+    error("failure arm '"..id.."' declares the parameters ["..__parametersText(arm)
+      .."] but the render supplied "..supplied.." (producer defect)", 0)
   end
   local msg = arm.t
   if values ~= nil then

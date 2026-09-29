@@ -91,6 +91,8 @@ public class FailureArmAuthorityTest {
         testIntLadderWrongKindCell();
         testBoundsAndBytesArms();
         testDeclaredFieldShapeNegatives();
+        testHostInnerReasonDescriptorValidation();
+        testEmittedParameterContract();
         testNegativeSingleSourceControl();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -1389,7 +1391,76 @@ public class FailureArmAuthorityTest {
     }
 
     // =========================================================================
-    // 12. The negative single-source control
+    // 13. The host inner-reason descriptor validation and the emitted
+    //     parameter contract
+    // =========================================================================
+
+    /**
+     * The host inner reason is never derived from an unvalidated descriptor
+     * string: the descriptor-kind render decodes the text through the closed
+     * descriptor grammar and projects its closed kind, so an unknown
+     * descriptor is a fail-closed producer defect and every canonical
+     * spelling projects its kind ({@code [int]} to {@code array},
+     * {@code (int)->int} to {@code function}, {@code ?string} to
+     * {@code string}, {@code @…} to {@code class instance}).
+     */
+    static void testHostInnerReasonDescriptorValidation() {
+        System.out.println("-- the host inner-reason descriptor validation --");
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.kindReason("bogus"),
+            "an unknown host descriptor fails closed in the descriptor-kind reason");
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.kindReason(""),
+            "an empty host descriptor fails closed in the descriptor-kind reason");
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.kindReason("[bogus]"),
+            "a descriptor whose element kind is unknown fails closed");
+        checkEq("expected int", deal.codegen.jvm.JvmRuntime.kindReason("int"),
+            "a primitive descriptor projects its own kind text");
+        checkEq("expected array", deal.codegen.jvm.JvmRuntime.kindReason("[int]"),
+            "the canonical array descriptor projects the array kind text");
+        checkEq("expected function",
+            deal.codegen.jvm.JvmRuntime.kindReason("(int)->int"),
+            "the canonical function descriptor projects the function kind text");
+        checkEq("expected string", deal.codegen.jvm.JvmRuntime.kindReason("?string"),
+            "a nullable descriptor projects its inner descriptor's kind text");
+        checkEq("expected class instance",
+            deal.codegen.jvm.JvmRuntime.kindReason("@$external/host/cfg/ServerConfig"),
+            "a class descriptor projects the class kind text");
+    }
+
+    /**
+     * The emitted prelude's arm render supplies exactly the arm's declared
+     * parameters (its serialized parameter sources): an extra parameter, a
+     * missing parameter, and a parameter on a parameterless render are
+     * producer defects, while the arm's own declaration stays green.
+     */
+    static void testEmittedParameterContract() throws Exception {
+        System.out.println("-- the emitted arm parameter contract --");
+        List<String> rows = runPreludeProbe("""
+            local ok = pcall(__arm, "INT32_RANGE", {extra = "x"}, "-", nil, nil)
+            print("extra-parameter|" .. tostring(ok))
+            ok = pcall(__arm, "TYPED_BOUNDARY_KIND", {}, "-", "int", "string")
+            print("missing-parameter|" .. tostring(ok))
+            ok = pcall(__renderTemplate, "JSON_TO_WALK",
+              {fieldPath = "a", actual = "table", extra = "x"})
+            print("walk-extra-parameter|" .. tostring(ok))
+            ok = pcall(__renderTemplate, "HOST_STRING_INVALID_UTF8", {})
+            print("parameterless-control|" .. tostring(ok))
+            local value = __arm("INT32_RANGE", nil, "-", nil, nil)
+            print("fieldless-control|" .. value.code .. "|" .. value.m)
+            """, "parameter-contract-probe", 5);
+        checkEq("extra-parameter|false", rows.get(0),
+            "an extra parameter on a parameterless arm fails closed");
+        checkEq("missing-parameter|false", rows.get(1),
+            "a missing declared parameter fails closed");
+        checkEq("walk-extra-parameter|false", rows.get(2),
+            "an extra parameter on the walk arm fails closed");
+        checkEq("parameterless-control|true", rows.get(3),
+            "a parameterless inner arm renders with no parameters (the control)");
+        checkEq("fieldless-control|E8004|int out of safe range", rows.get(4),
+            "the parameterless arm's own render stays green (the control)");
+    }
+
+    // =========================================================================
+    // The negative single-source control
     // =========================================================================
 
     /**

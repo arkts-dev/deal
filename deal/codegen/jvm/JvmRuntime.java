@@ -861,12 +861,14 @@ public final class JvmRuntime {
      * The descriptor-kind inner reason of the host arms (P2 item 3): the
      * typed-boundary kind arm's own template instantiated with the closed
      * kind text — the single source of the host inner-reason vocabulary's
-     * descriptor entries.
+     * descriptor entries. The descriptor text is validated against the
+     * closed descriptor grammar (canonical text or the emitters' internal
+     * dialect) and its closed kind vocabulary before the arm is rendered:
+     * an unknown descriptor is a fail-closed producer defect, never a
+     * composed fallback reason.
      */
     public static String kindReason(String desc) {
-        return deal.semantic.ir.FailureContractRegistry
-            .arm(deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND).template()
-            .replace("{kind}", kindTextOf(desc));
+        return deal.semantic.ir.FailureContractRegistry.descriptorKindReason(desc);
     }
 
     /**

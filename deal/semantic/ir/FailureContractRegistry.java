@@ -1288,6 +1288,62 @@ public final class FailureContractRegistry {
     }
 
     /**
+     * The descriptor-kind inner reason of one descriptor <em>text</em>
+     * (P2 item 3): the typed-boundary kind arm's own text with the text's
+     * closed kind. The text must be a closed descriptor spelling — the
+     * canonical grammar decoded by the one decoder, or the emitters'
+     * internal dialect ({@code array(…)}/… ) — and its kind must be one of
+     * the closed typed-boundary kind texts: an unknown descriptor is a
+     * fail-closed producer defect, so a host inner reason is never derived
+     * from an unvalidated string.
+     *
+     * @param descriptorText the descriptor text; must not be null
+     * @return the kind arm's text for the descriptor's closed kind
+     * @throws BoundaryExecutor.Defect if the text is not a closed descriptor
+     */
+    public static String descriptorKindReason(String descriptorText) {
+        Objects.requireNonNull(descriptorText, "descriptorText must not be null");
+        String kindText;
+        try {
+            kindText = FailureProjections.kindText(
+                RuntimeDescriptor.parseCanonicalText(descriptorText));
+        } catch (RuntimeException canonicalDecodeFailure) {
+            if (!isDialectDescriptorText(descriptorText)) {
+                throw new BoundaryExecutor.Defect("the host inner-reason render supplied "
+                    + "\"" + descriptorText + "\", which is not a closed descriptor "
+                    + "text (a producer defect; no inner reason is composed from it)");
+            }
+            kindText = dialectKindText(descriptorText);
+        }
+        if (!KIND_TEXTS.contains(kindText)) {
+            throw new BoundaryExecutor.Defect("the host inner-reason render supplied "
+                + "\"" + descriptorText + "\", whose kind \"" + kindText
+                + "\" is outside the closed typed-boundary kind texts " + KIND_TEXTS
+                + " (a producer defect)");
+        }
+        return arm(FailureArmId.TYPED_BOUNDARY_KIND).template()
+            .replace("{kind}", kindText);
+    }
+
+    /** The closed kind text of one emitters'-dialect descriptor text. */
+    private static String dialectKindText(String text) {
+        if (text.startsWith("?")) {
+            return dialectKindText(text.substring(1));
+        }
+        if (text.startsWith("nullable(")) {
+            return dialectKindText(text.substring(9, text.length() - 1));
+        }
+        if (text.startsWith("[") || text.startsWith("array(")) {
+            return "array";
+        }
+        if (text.startsWith("(") || text.startsWith("async(")
+                || text.startsWith("function(")) {
+            return "function";
+        }
+        return text;
+    }
+
+    /**
      * The failure's metadata map: the arm's pinned metadata keys (its row's
      * {@code metadataKeys}) that the render supplied — the field texts
      * ({@code expected}, {@code actual}) stay the failure's own fields and
