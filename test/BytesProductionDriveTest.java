@@ -15,8 +15,11 @@ import deal.lexer.Lexer;
 import deal.module.CompilationOrchestrator;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
+import deal.project.ExternalEntry;
+import deal.project.ProjectContext;
 import deal.project.ProjectLocator;
 import deal.semantic.CheckedProjectBuildResult;
+import deal.semantic.ClassRegistrationSeeds;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
 import deal.semantic.ReleaseConfiguration;
@@ -26,6 +29,7 @@ import deal.semantic.SemanticOracle;
 import deal.semantic.SemanticRuntimeModel;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.ClassFactoryRegistry;
+import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
@@ -75,8 +79,11 @@ import java.util.stream.Stream;
  *       declaration under {@code bindings/} and the corpus C FFI
  *       declarations with the corpus's {@code nativeLibrary} wiring, plus
  *       one generated {@code deal.json} ({@code moduleRoots},
- *       {@code output}, {@code backend}, {@code externals}). No
- *       {@code app.deal} shim exists.</li>
+ *       {@code output}, {@code backend}, {@code externals}) whose raw
+ *       host keys resolve the declaration files while the compile
+ *       context carries the dotted typing name first (the JVM lane's
+ *       externals-identity convention). No {@code app.deal} shim
+ *       exists.</li>
  *   <li><b>The compile criterion.</b> Every in-scope fixture compiles on
  *       {@link Backend#LUAJIT} and {@link Backend#JVM} under the
  *       release-owned production invocation with zero E6005
@@ -169,6 +176,14 @@ public class BytesProductionDriveTest {
     private static final String FFI_DIR = "backend-runtime/ffi";
     private static final String FFI_BYTES =
         FFI_DIR + "/016-ffi-bytes-pointer-length";
+
+    /**
+     * The class-carrying host fixture of the externals-identity-convention
+     * regression: its declared classes carry the canonical externals
+     * identity the corpus host implementation tags.
+     */
+    private static final String CLASS_HOST_FIXTURE =
+        "backend-runtime/host-abi/host-class-export";
 
     /** The target of one measured leg. */
     private enum Target {
@@ -630,7 +645,8 @@ public class BytesProductionDriveTest {
             return false;
         }
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            located.context(), project.entryFile(), false, false, false, false,
+            withDottedHostIdentities(located.context(), project),
+            project.entryFile(), false, false, false, false,
             null, productionInvocation());
         boolean compiled = orchestrator.compile();
         for (CompilerDiagnostic diagnostic : orchestrator.diagnostics()) {
@@ -641,6 +657,49 @@ public class BytesProductionDriveTest {
             }
         }
         return compiled;
+    }
+
+    /**
+     * The corpus conformance externals-identity convention (the JVM
+     * lane's rule): a host module's class identities project through its
+     * dotted typing name ({@code @$external/host.cfg/...}), while import
+     * resolution keys on the raw specifier ({@code host/cfg}) the
+     * generated {@code deal.json} wires. The manifest carries the single
+     * valid raw-key entry (ProjectLocator rejects two externals entries
+     * declaring the same file); the compile context is rebuilt with the
+     * dotted entry inserted first, the documented first-entry rule of
+     * ModuleIdentityResolver's file-keyed externals classification, so
+     * the declaration module classifies under the dotted identity the
+     * lanes and the corpus host implementations use.
+     */
+    private static ProjectContext withDottedHostIdentities(ProjectContext context,
+            Project project) {
+        if (project.hostNames().isEmpty()) {
+            return context;
+        }
+        Map<String, ExternalEntry> externals = new LinkedHashMap<>();
+        for (String hostName : project.hostNames()) {
+            String rawKey = "host/" + hostName;
+            ExternalEntry rawEntry = context.externals().get(rawKey);
+            if (rawEntry == null) {
+                continue;
+            }
+            String dottedKey = "host." + hostName;
+            externals.put(dottedKey, new ExternalEntry(dottedKey,
+                rawEntry.declarationPath(), rawEntry.nativeLibrary(),
+                rawEntry.sourceRange()));
+            externals.put(rawKey, rawEntry);
+        }
+        for (Map.Entry<String, ExternalEntry> entry
+                : context.externals().entrySet()) {
+            externals.putIfAbsent(entry.getKey(), entry.getValue());
+        }
+        return new ProjectContext(context.manifestPath(), context.projectRoot(),
+            context.manifestDirectory(), context.languageVersion(),
+            context.configuredModuleRoots(), context.outputPath(),
+            context.backend(), externals, context.stdlibVersion(),
+            context.stdlibSurfacePath(), context.stdlibDeclarationFiles(),
+            context.projectDeploymentIdentity());
     }
 
     /** The emitted artifact path of one compiled project and target. */
@@ -1181,6 +1240,7 @@ public class BytesProductionDriveTest {
     private record Lowered(ExecutableLoweredProject project,
                            Map<ModuleId, StructuredBodyTable> tables,
                            Map<ModuleId, ClassFactoryRegistry> registries,
+                           ClassRegistrationSeeds seeds,
                            ModuleId entryModule, LoweredModuleUnit entryUnit) {
     }
 
@@ -1193,9 +1253,16 @@ public class BytesProductionDriveTest {
     private static Lowered lower(String label, Project project, Path entry,
             Path outputRoot) throws Exception {
         Map<String, String> externals = new LinkedHashMap<>();
+        for (String hostName : project.hostNames()) {
+            String registration = project.rawToDeclaration().get("host/" + hostName);
+            if (registration != null) {
+                externals.put("host." + hostName, project.root()
+                    .resolve(registration).toAbsolutePath().normalize().toString());
+            }
+        }
         for (Map.Entry<String, String> registration
                 : project.rawToDeclaration().entrySet()) {
-            externals.put(registration.getKey(),
+            externals.putIfAbsent(registration.getKey(),
                 project.root().resolve(registration.getValue())
                     .toAbsolutePath().normalize().toString());
         }
@@ -1224,8 +1291,9 @@ public class BytesProductionDriveTest {
         for (ModuleId declaration
                 : orchestrator.hostDeclarationSurface().moduleIds()) {
             String raw = rawSpecifierOf(project, declaration.path());
+            String identity = declarationIdentityOf(raw);
             identities.put(declaration,
-                new CanonicalModuleIdentity.ExternalModule(raw));
+                new CanonicalModuleIdentity.ExternalModule(identity));
             if (CorpusFfi.isFfiImport(CONFORMANCE, raw)) {
                 CorpusFfi.Module module = CorpusFfi.module(CONFORMANCE, raw,
                     SemanticProfile.DEAL_V1_2_INT32);
@@ -1249,7 +1317,8 @@ public class BytesProductionDriveTest {
         }
         ModuleId entryModule = result.project().entryModule();
         return new Lowered(result.project(), result.tables(), result.registries(),
-            entryModule, result.project().modules().get(entryModule));
+            result.seeds(), entryModule,
+            result.project().modules().get(entryModule));
     }
 
     /**
@@ -1589,6 +1658,93 @@ public class BytesProductionDriveTest {
             }
         }
         return null;
+    }
+
+    // =========================================================================
+    // 6b. The externals-identity convention (the dotted host typing name)
+    // =========================================================================
+
+    /**
+     * The corpus externals-identity convention, driven end to end: a host
+     * declaration's class identities project through its dotted typing
+     * name ({@code @$external/host.cfg/...}) — the JVM lane's rebuild rule
+     * and the spelling the corpus host implementation tags
+     * ({@code host-fixtures/cfg.lua}) — while import resolution keys on
+     * the raw specifier the generated {@code deal.json} wires. The bytes
+     * slate's own host import is class-free, so this focused regression
+     * drives a class-carrying host declaration through the same
+     * materialization, compile, and deferred-entry path: under a
+     * raw-externals-only context the emitted class atoms carry the raw
+     * spelling and the deployed host implementation's class-identity
+     * check fails (E8011); with the dotted-first context the leg
+     * reproduces the fixture's sidecar.
+     */
+    private static void testExternalsIdentityConvention() throws Exception {
+        System.out.println("-- the externals-identity convention: the dotted "
+            + "host typing name --");
+        Map<Target, Project> projects = new LinkedHashMap<>();
+        try {
+            for (Target target : Target.values()) {
+                Project project = materialize(CLASS_HOST_FIXTURE, target);
+                projects.put(target, project);
+                List<String> diagnostics = new ArrayList<>();
+                boolean compiled = compile(project, CLASS_HOST_FIXTURE, target,
+                    diagnostics);
+                check(compiled, CLASS_HOST_FIXTURE + " [" + target.laneName()
+                    + "]: the class-carrying host declaration compiles through "
+                    + "the release-owned production invocation: " + diagnostics);
+                Path artifact = artifactOf(project, target);
+                check(Files.isRegularFile(artifact), CLASS_HOST_FIXTURE + " ["
+                    + target.laneName() + "]: the artifact publishes");
+                if (!compiled || !Files.isRegularFile(artifact)) {
+                    continue;
+                }
+                String source = Files.readString(artifact, StandardCharsets.UTF_8);
+                check(source.contains("@$external/host.cfg/ServerConfig"),
+                    CLASS_HOST_FIXTURE + " [" + target.laneName()
+                        + "]: the emitted class identity carries the dotted "
+                        + "host typing name");
+                check(!source.contains("@$external/host/cfg/"),
+                    CLASS_HOST_FIXTURE + " [" + target.laneName()
+                        + "]: the emitted class identity carries no raw "
+                        + "externals spelling");
+            }
+            Project luaProject = projects.get(Target.LUAJIT);
+            if (luaProject == null) {
+                return;
+            }
+            // The oracle leg's declaration identity map: the lowered
+            // closure's declared-class registration must carry the dotted
+            // typing name (@$external/host.cfg/ServerConfig), never the raw
+            // externals spelling.
+            Lowered oracle = lower(CLASS_HOST_FIXTURE + " (identity oracle)",
+                luaProject, luaProject.entryFile(),
+                luaProject.root().resolve("out-oracle-identity"));
+            check(oracle != null, CLASS_HOST_FIXTURE
+                + " [oracle]: the class-carrying host declaration lowers");
+            if (oracle != null) {
+                check(oracle.seeds().registrations().keySet().contains(
+                        new ClassId("$external/host.cfg", "ServerConfig")),
+                    CLASS_HOST_FIXTURE + " [oracle]: the declaration identity "
+                        + "map carries the dotted host typing name: "
+                        + oracle.seeds().registrations().keySet());
+                check(oracle.seeds().registrations().keySet().stream()
+                        .noneMatch(id -> id.text().contains("$external/host/cfg")),
+                    CLASS_HOST_FIXTURE + " [oracle]: the declaration identity "
+                        + "map carries no raw externals spelling");
+            }
+            List<Export> exports = exportsOf(luaProject.entryModule().source(),
+                luaProject.entryFile().toString());
+            Leg leg = driveLeg(CLASS_HOST_FIXTURE, luaProject, Target.LUAJIT,
+                exports, null);
+            checkEq("pin-exact", leg.outcome(), CLASS_HOST_FIXTURE
+                + " [luajit]: the deployed corpus host implementation's "
+                + "class-identity check passes against the dotted typing name");
+        } finally {
+            for (Project project : projects.values()) {
+                deleteRecursively(project.root());
+            }
+        }
     }
 
     // =========================================================================
@@ -2013,8 +2169,7 @@ public class BytesProductionDriveTest {
 
     /**
      * The raw externals specifier of one resolved declaration module path
-     * (the identity text the production lane-equivalent compile
-     * classifies it with).
+     * (the registration key of the generated {@code deal.json}).
      */
     private static String rawSpecifierOf(Project project, String modulePath) {
         for (String raw : project.rawToDeclaration().keySet()) {
@@ -2024,6 +2179,19 @@ public class BytesProductionDriveTest {
             }
         }
         return modulePath;
+    }
+
+    /**
+     * The canonical external identity text of one declaration's raw
+     * specifier (the production lane-equivalent classification): a host
+     * declaration projects its dotted typing name
+     * ({@code host.cfg}) — the corpus externals-identity convention the
+     * lanes, the class atoms, and the corpus host implementations share —
+     * while an extern-C declaration keeps its raw externals key.
+     */
+    private static String declarationIdentityOf(String raw) {
+        return raw.startsWith("host/") || raw.startsWith("host.")
+            ? raw.replace('/', '.') : raw;
     }
 
     /**
@@ -2197,6 +2365,7 @@ public class BytesProductionDriveTest {
             + "(ISSUE-0707) ===");
         testCorpusInventory();
         testProductionDrive();
+        testExternalsIdentityConvention();
         testBaseline();
         testOracleAgreement();
         testInvariants();
