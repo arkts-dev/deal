@@ -88,11 +88,13 @@ TEST_MAINS=(
   # three-consumer tuple identity over the closed corpus fixture list; the
   # closed arm table's renderer identity and field-shape fail-closed
   # controls; the FOR_EACH terminal check over a deleted array-element slot
-  # at the op's own origin; the row/arm completeness negatives; the
-  # negative single-source control reported by field name; and the
-  # unchanged-surface accounting (the dispatched corpus count, the sidecar
-  # schema, the landed comparison contract, and the JSON_TO_ERROR /
-  # INT32_RESULT row data).
+  # at the op's own origin; the host-driven callback entry slot's
+  # HOST_TO_DEAL parameter boundaries asserted against the invoking unit's
+  # program span in the lowering and in the three consumers' render; the
+  # row/arm completeness negatives; the negative single-source control
+  # reported by field name; and the unchanged-surface accounting (the
+  # dispatched corpus count, the sidecar schema, the landed comparison
+  # contract, and the JSON_TO_ERROR / INT32_RESULT row data).
   'fg|=== Running Canonical Projection Parity Tests (ISSUE-0705) ===|java -ea -cp build deal.test.CanonicalProjectionParityTest'
   'fg|=== Running Canonical JSON / Snapshot Digest Tests (ISSUE-0283) ===|java -ea -cp build deal.test.CanonicalJsonTest'
   'fg|=== Running Semantic IR Validator Tests (ISSUE-0286) ===|java -ea -cp build deal.test.SemanticIrValidatorTest'

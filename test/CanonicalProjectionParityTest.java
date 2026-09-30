@@ -111,6 +111,13 @@ import java.util.stream.Stream;
  *       arm rendered top-level, a {@code SIBLING_OWNED} arm rendered by a
  *       production consumer, and a deliberately composing consumer
  *       reported as {@code message}/{@code span}).</li>
+ *   <li><b>The origin cells.</b> The pinned span group is asserted for
+ *       every pinned fixture, and the unpinned {@code MODULE_EXPORT} cell
+ *       and the host-driven callback entry slot ({@code HOST_TO_DEAL}
+ *       under {@code CALLBACK_INVOKE}) are asserted against their landed
+ *       emission: the export publication and the callback's parameter
+ *       slots carry the invoking unit's program span in the lowering and
+ *       in the three consumers' render.</li>
  *   <li><b>The unchanged surfaces.</b> The corpus membership/count (the
  *       dispatched runtime-classified 390), the sidecar schema (version
  *       and the landed three backends), the comparison contract (mandatory
@@ -1099,6 +1106,202 @@ public class CanonicalProjectionParityTest {
     }
 
     // =========================================================================
+    // 2c. The callback entry slot's landed emission (an unpinned origin cell)
+    // =========================================================================
+
+    /**
+     * The callback entry slot's source (P3's unpinned cell): an exported
+     * callback with two declared parameters, so the one lowering records
+     * the {@code CALLBACK_INVOKE} op, one {@code HOST_TO_DEAL} parameter
+     * slot per declared parameter, and the single {@code DEAL_TO_HOST}
+     * return cell.
+     */
+    private static final String CALLBACK_ENTRY_SOURCE = """
+        // The callback-entry drive: the first statement starts after this
+        // comment, so the program span is distinguishable from a fabricated
+        // default span.
+        export function cb(x: int, s: string): int {
+          if (s === "boom") {
+            return x + 1;
+          }
+          return x + 2;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * One in-memory callback-entry seed: the executable project lowered
+     * with the scenario's callback export set.
+     */
+    private record CallbackSeed(ExecutableLoweredProject project,
+                                Map<ModuleId, StructuredBodyTable> tables,
+                                deal.semantic.CheckedModuleInput input) {
+    }
+
+    /**
+     * The callback-entry seed's production chain: {@link #checkedSeed}
+     * under the release-owned invocation plus the one project lowering
+     * with the callback export set, so the unit carries the
+     * {@code CALLBACK_INVOKE} record the origin cell lives on.
+     */
+    private static CallbackSeed lowerCallbackSeed(String source, String what,
+            Set<String> callbackExports) {
+        CompilerInvocation invocation = productionInvocation();
+        CheckedSeed seed = checkedSeed(source, what, invocation);
+        if (seed == null) {
+            return null;
+        }
+        SemanticLowerer.ProjectLoweringResult lowering = SemanticLowerer.lowerProject(
+            invocation, seed.built().input(), seed.built().index(),
+            seed.manifests().manifests(), new HostDeclarationSurface(Map.of()),
+            Map.of(), Map.of(), BuiltinErrorDeclaration.synthesized(
+                seed.input().ast().span()),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
+            callbackExports);
+        if (lowering == null || lowering.hasErrors() || lowering.project() == null) {
+            fail(what + ": the production project lowering fails: "
+                + (lowering == null ? "null" : lowering.diagnostics()));
+            return null;
+        }
+        return new CallbackSeed(lowering.project(), lowering.tables(),
+            seed.input());
+    }
+
+    /**
+     * Asserts one op's origin is the invoking unit's program span: the
+     * same span the {@code MODULE_EXPORT} cell carries, selected by the
+     * one lowering for the callback op and each of its parameter slots.
+     */
+    private static void assertProgramSpan(String what,
+            deal.semantic.ir.SourceOrigin origin, deal.ast.Span programSpan) {
+        checkEq(MATRIX_SOURCE_ID, origin.sourceId(),
+            what + ": the origin names the invoking unit's file");
+        checkEq(Integer.valueOf(programSpan.startLine()),
+            Integer.valueOf(origin.span().startLine()),
+            what + ": the origin starts on the program span's start line");
+        checkEq(Integer.valueOf(programSpan.startColumn()),
+            Integer.valueOf(origin.span().startColumn()),
+            what + ": the origin starts on the program span's start column");
+        checkEq(Integer.valueOf(programSpan.endLine()),
+            Integer.valueOf(origin.span().endLine()),
+            what + ": the origin ends on the program span's end line");
+        checkEq(Integer.valueOf(programSpan.endColumn()),
+            Integer.valueOf(origin.span().endColumn()),
+            what + ": the origin ends on the program span's end column");
+    }
+
+    /**
+     * <b>The callback entry slot (P3, unpinned).</b> The one lowering
+     * selects the invoking unit's program span for the
+     * {@code CALLBACK_INVOKE} op and for each of its {@code HOST_TO_DEAL}
+     * parameter boundaries; the three consumers render that origin (the
+     * failing slot on a host-driven callback invocation publishes the
+     * program span with the closed kind arm's tuple).
+     */
+    private static void testCallbackEntrySlot() throws Exception {
+        System.out.println("-- the callback entry slot's landed emission (P3): the "
+            + "HOST_TO_DEAL parameter boundaries under CALLBACK_INVOKE carry the "
+            + "invoking unit's program span --");
+        CallbackSeed seed = lowerCallbackSeed(CALLBACK_ENTRY_SOURCE,
+            "the callback-entry seed", Set.of("cb"));
+        if (seed == null) {
+            return;
+        }
+        deal.semantic.ir.LoweredModuleUnit unit = seed.project().modules()
+            .get(MATRIX_MODULE);
+        check(unit != null, "the callback-entry seed lowers the entry unit");
+        if (unit == null) {
+            return;
+        }
+        deal.ast.Span programSpan = seed.input().ast().span();
+        deal.semantic.ir.SemanticOp callback = null;
+        Map<deal.semantic.ir.OpId, deal.semantic.ir.SemanticOp> byId = new LinkedHashMap<>();
+        for (deal.semantic.ir.SemanticOp op : unit.ops()) {
+            byId.put(op.opId(), op);
+            if (op.kind() == deal.semantic.ir.SemanticOpKind.CALLBACK_INVOKE) {
+                callback = op;
+            }
+        }
+        check(callback != null, "the callback-entry seed records the CALLBACK_INVOKE "
+            + "op of the callback export");
+        if (callback == null) {
+            return;
+        }
+        assertProgramSpan("the callback entry slot (the CALLBACK_INVOKE op)",
+            callback.origin(), programSpan);
+        deal.semantic.ir.KindPayload.CallbackInvokePayload payload =
+            (deal.semantic.ir.KindPayload.CallbackInvokePayload) callback.payload();
+        checkEq(2, payload.parameterBoundaryOpIds().size(),
+            "the callback entry carries one HOST_TO_DEAL parameter slot per "
+                + "declared parameter");
+        for (int index = 0; index < payload.parameterBoundaryOpIds().size(); index++) {
+            deal.semantic.ir.OpId boundaryId = payload.parameterBoundaryOpIds().get(index);
+            deal.semantic.ir.SemanticOp boundary = byId.get(boundaryId);
+            String slot = "the callback entry slot " + (index + 1);
+            check(boundary != null && boundary.kind() == deal.semantic.ir.SemanticOpKind.BOUNDARY,
+                slot + ": the payload names a boundary op");
+            if (boundary == null || boundary.kind() != deal.semantic.ir.SemanticOpKind.BOUNDARY) {
+                continue;
+            }
+            deal.semantic.ir.KindPayload.BoundaryPayload cell =
+                (deal.semantic.ir.KindPayload.BoundaryPayload) boundary.payload();
+            checkEq(deal.semantic.ir.BoundaryKind.HOST_TO_DEAL, cell.kind(),
+                slot + ": the boundary kind is HOST_TO_DEAL");
+            checkEq(payload.descriptor().paramTypes().get(index), cell.descriptor(),
+                slot + ": the boundary carries the declared parameter descriptor");
+            checkEq(callback.opId(), boundary.origin().parentOpId(),
+                slot + ": the boundary nests under the CALLBACK_INVOKE op");
+            assertProgramSpan(slot, boundary.origin(), programSpan);
+        }
+        Path workspace = Files.createTempDirectory("projection-callback");
+        try {
+            String origin = MATRIX_SOURCE_ID + ":" + programSpan.startLine()
+                + ":" + programSpan.startColumn();
+            SemanticDifferentialHarness.Verdict verdict =
+                SemanticDifferentialHarness.runCallback(unit,
+                    seed.tables().get(MATRIX_MODULE), payload.function(),
+                    List.of(new SemanticDifferentialHarness.CallbackArg.Str("nope"),
+                        new SemanticDifferentialHarness.CallbackArg.Str("ok")),
+                    SemanticDifferentialHarness.Expectation.failure(
+                        "the callback entry slot", List.of(), "E8001", origin),
+                    workspace);
+            checkEq(3, verdict.runs().size(), "the callback-entry drive produced the "
+                + "three consumers: " + verdict.failures());
+            check(verdict.pass(), "the callback-entry three-consumer verdict passes "
+                + "with the program-span origin: " + verdict.failures() + "\n"
+                + verdict.report());
+            for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+                check(run.terminal()
+                        instanceof SemanticRuntimeModel.Terminal.DealFailure,
+                    run.consumer() + ": the callback-entry drive fails: "
+                        + run.terminal());
+                if (!(run.terminal()
+                        instanceof SemanticRuntimeModel.Terminal.DealFailure failure)) {
+                    continue;
+                }
+                SemanticRuntimeModel.ErrorSnapshot error = failure.error();
+                System.out.println("   " + run.consumer() + ": " + error.code()
+                    + " | " + error.message() + " | " + error.origin() + " | "
+                    + error.expected() + " | " + error.actual());
+                checkEq("expected int", error.message(), run.consumer()
+                    + ": the callback slot renders the kind arm's suffix-less text");
+                checkEq("int", error.expected(), run.consumer()
+                    + ": the callback slot's expected token");
+                checkEq("string", error.actual(), run.consumer()
+                    + ": the callback slot's actual token");
+                checkEq(origin, error.origin(), run.consumer()
+                    + ": the callback slot's origin is the invoking unit's program "
+                    + "span");
+            }
+        } finally {
+            deleteRecursively(workspace);
+        }
+    }
+
+    // =========================================================================
     // 3. The closed arm table through the serialized renderer and the runtime
     // =========================================================================
 
@@ -1986,12 +2189,18 @@ public class CanonicalProjectionParityTest {
                         StructuredBodyTable table) {
     }
 
+    /** One in-memory front-end seed: the checked project and its manifests. */
+    private record CheckedSeed(deal.semantic.CheckedModuleInput input,
+                               CheckedProjectBuildResult built,
+                               RequirementManifestResult manifests) {
+    }
+
     /**
-     * The matrix case's in-memory production chain: lexer → parser →
-     * resolver → checker → checked project → manifests → the full-program
-     * lowering with the closed validators.
+     * The in-memory front end both lowering drives share: lexer → parser
+     * → resolver → checker → checked project → manifests.
      */
-    private static Seed lowerSeed(String source, String what) {
+    private static CheckedSeed checkedSeed(String source, String what,
+            CompilerInvocation invocation) {
         deal.lexer.LexResult lexed = new deal.lexer.Lexer(source, MATRIX_SOURCE_ID)
             .tokenize();
         deal.parser.ParseResult parsed = new deal.parser.Parser(lexed.tokens(),
@@ -2032,16 +2241,20 @@ public class CanonicalProjectionParityTest {
         if (!checks.diagnostics().isEmpty()) {
             return null;
         }
-        CompilerInvocation invocation = CompilerProfileProvider.resolveCommonShadow(
-            deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32,
-            deal.semantic.ir.ReleaseState.V1_2_ACTIVE,
-            deal.semantic.CapabilityRegistry.releaseRegistry());
+        deal.module.ExportExtractor exportExtractor =
+            new deal.module.ExportExtractor(MATRIX_MODULE.path(), false);
+        Map<String, deal.types.Type> exports = exportExtractor.extract(parsed.program());
+        check(exportExtractor.diagnostics().isEmpty(),
+            what + ": the exports extract: " + exportExtractor.diagnostics());
+        if (!exportExtractor.diagnostics().isEmpty()) {
+            return null;
+        }
         deal.semantic.CheckedModuleInput input = new deal.semantic.CheckedModuleInput(
             MATRIX_MODULE, MATRIX_SOURCE_ID, Path.of(MATRIX_SOURCE_ID),
             parsed.program(), checks, List.of(), List.of(),
             deal.semantic.CheckedModuleKind.IMPLEMENTATION);
         deal.semantic.ModuleFact fact = new deal.semantic.ModuleFact(MATRIX_SOURCE_ID,
-            MATRIX_MODULE, false, false, parsed.program(), Map.of(), symbols, checks,
+            MATRIX_MODULE, false, false, parsed.program(), exports, symbols, checks,
             List.of());
         CheckedProjectBuildResult built = deal.semantic.CheckedProjectBuilder.build(
             invocation, MATRIX_MODULE, List.of(fact));
@@ -2058,13 +2271,30 @@ public class CanonicalProjectionParityTest {
         if (manifests == null || !manifests.diagnostics().isEmpty()) {
             return null;
         }
+        return new CheckedSeed(input, built, manifests);
+    }
+
+    /**
+     * The matrix case's in-memory production chain: {@link #checkedSeed}
+     * plus the full-program lowering with the closed validators.
+     */
+    private static Seed lowerSeed(String source, String what) {
+        CompilerInvocation invocation = CompilerProfileProvider.resolveCommonShadow(
+            deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32,
+            deal.semantic.ir.ReleaseState.V1_2_ACTIVE,
+            deal.semantic.CapabilityRegistry.releaseRegistry());
+        CheckedSeed seed = checkedSeed(source, what, invocation);
+        if (seed == null) {
+            return null;
+        }
         String registryHash = deal.semantic.CapabilityRegistry.releaseRegistry()
             .capabilityRegistryHash();
-        ProjectInterfaceIndex index = built.index();
+        ProjectInterfaceIndex index = seed.built().index();
         SemanticLowerer.LoweringResult lowering = SemanticLowerer.lowerModuleFullProgram(
-            input, deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32,
-            manifests.manifests().get(0).constructCoverage(), index.interfaceIndexDigest(),
-            registryHash, deal.semantic.ir.SemanticIdAllocator.over(List.of(MATRIX_MODULE)));
+            seed.input(), deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32,
+            seed.manifests().manifests().get(0).constructCoverage(),
+            index.interfaceIndexDigest(), registryHash,
+            deal.semantic.ir.SemanticIdAllocator.over(List.of(MATRIX_MODULE)));
         check(lowering != null && !lowering.hasErrors() && lowering.unit() != null,
             what + ": the full-program lowering passes the closed validators: "
                 + (lowering == null ? "null" : lowering.diagnostics()));
@@ -2291,6 +2521,7 @@ public class CanonicalProjectionParityTest {
         System.out.println("=== Canonical Projection Parity Tests (ISSUE-0705) ===");
         testNamedDivergences();
         testArmFamilies();
+        testCallbackEntrySlot();
         testMissingDeclaredAnnotationFailsClosed();
         testSerializedArmTableIdentity();
         testMarkedArmsAndFieldShapes();
