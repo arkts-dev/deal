@@ -1454,6 +1454,40 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # module/class on the two production artifacts) — compiles, lowers, and
   # validates, with no fixture skipped by any drive.
   'fg|=== Running Bytes Coverage and Element Contract Tests (ISSUE-0626) ===|java -ea -cp build deal.test.BytesCoverageTest'
+  # ISSUE-0707 (the lane-equivalent bytes production drive and its
+  # baseline measurement; design source bytes-value-semantics-production-
+  # realization B1, the bytes production drive contract, and the
+  # preserved-invariant contract; conformance-corpus-disposition-and-
+  # profile-repin CD2/CD5; luajit-jvm-single-lowering-production-cutover
+  # C1/C2/C7/C8; dispatched-corpus-production-realization R1): one
+  # registered drive materializes every in-scope bytes fixture as the entry
+  # module of a lane-equivalent temp project (the entry-directory-relative
+  # compilation set, the host declarations under bindings/, the corpus FFI
+  # declarations with their nativeLibrary wiring, and one generated
+  # deal.json), compiles it on LuaJIT and JVM under the release-owned
+  # production invocation with zero E6005 CONSTRUCT_UNLOWERED/
+  # RETAINED_ABI_DEFERRED/SHARED_EMITTER_COVERAGE (ffi/016 reproduces its
+  # pinned JVM E6006 compile-reject with no published artifact), drives each
+  # staged artifact with the deferred-entry probe (the deferred module-init
+  # entry, then the entry surface's ordered zero-arity exports; the async
+  # host fixture through its recorded entry with the deployed corpus host
+  # implementation; ffi/016 against the bootstrapped corpus FFI library),
+  # projects the capture to code/message/span/expected/actual with the
+  # stripped-header rebase, compares it sidecar-authoritatively (a
+  # divergence names fixture, target, field, captured, and pinned), captures
+  # the oracle terminal for every fixture, publishes one outcome per fixture
+  # and target over the 39-fixture scope (one compile-reject leg, the
+  # measured pin-exact and divergent legs, and the two dual-mechanism
+  # fixtures reported delegated with their RESIDUAL boundary contract, never
+  # skipped and never passed), and asserts the preserved invariants (the
+  # dispatched count pin, the sidecar schema, the fixture inventory, the
+  # 27-member BoundaryKind set with its two reserved names, the untouched
+  # BytesCoverageTest drives and JS lane, the byte-identical repeated
+  # emission, and the atomic staging of a failing compile) with the
+  # negative controls (the guard seed, a perturbed field, a removed row, a
+  # greenwashed divergence, a delegated fixture treated as passed, and an
+  # ffi/016 leg that reports a published artifact).
+  'fg|=== Running the Lane-Equivalent Bytes Production Drive (ISSUE-0707) ===|java -ea -cp build deal.test.BytesProductionDriveTest'
   # ISSUE-0701 (the closure capture resolution and the per-iteration
   # incarnations; design source dispatched-corpus-production-realization R4
   # item 5, R7, and the capture contract; luajit-jvm-single-lowering-
