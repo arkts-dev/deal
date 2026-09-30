@@ -11570,14 +11570,18 @@ public final class SemanticLowerer {
          * The shared {@code ASYNC_START}+{@code AWAIT} emission over the
          * resolved binding: the parameter-boundary cells per the closed
          * table, one token per call, and exactly one
-         * {@code ASYNC_COMPLETION} boundary at the await site.
+         * {@code ASYNC_COMPLETION} boundary at the await site. The
+         * arguments lower through {@link #lowerCallArgument}: a declared
+         * callee's parameter cell performs the contextual member read's
+         * kind check at its own origin, exactly as the synchronous
+         * declared-callee arms do.
          */
         private ValueId lowerAsyncStart(CallExpr call, ValueId slot, Span awaitSpan,
                                         FunctionExecutionBinding binding, boolean nested) {
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
             for (ExpressionNode argument : call.args()) {
-                args.add(lowerExpression(argument));
+                args.add(lowerCallArgument(argument));
                 argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
                     checkedType(argument)));
             }
@@ -11680,10 +11684,18 @@ public final class SemanticLowerer {
                             + " parameters (the checker admits exact arity only)");
                     }
                     for (int i = 0; i < args.size(); i++) {
+                        // The cross-module declared callee's own parameter
+                        // annotation, in the callee's file (P3) — the same
+                        // declaration-owned origin the synchronous
+                        // import-call arm resolves.
+                        DeclaredParameterOrigin declared = declaredParameterOrigin(
+                            external.moduleId(), external.exportName(), args.size(), i);
                         SemanticOp boundary = buildChildBoundary(
                             BoundaryKind.EXTERNAL_PARAMETER,
                             external.descriptor().paramTypes().get(i), args.get(i),
-                            call.span(), startOpId);
+                            declared != null ? declared.span() : call.span(),
+                            declared != null ? declared.sourceId() : null,
+                            startOpId);
                         parameterBoundaryOps.add(boundary);
                         parameterBoundaryIds.add(boundary.opId());
                     }

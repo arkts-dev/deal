@@ -6493,11 +6493,31 @@ public final class JvmSemanticEmitter {
                         (KindPayload.BoundaryPayload) boundary.payload();
                     emitBoundaryStart(boundary, slot(boundaryPayload.input()),
                         boundaryPayload.descriptor(), indent);
+                    // The declared parameter cell's own failure: the
+                    // boundary FAILURE (and the owning ASYNC_START's)
+                    // publishes at the boundary's origin and the error
+                    // re-originates there — identical to the oracle's
+                    // boundary-child pair and the Lua prelude's arm.
                     String checked = "__sa_" + boundary.opId().id();
                     out.append(indent(indent)).append("Object ").append(checked)
-                        .append(" = ")
+                        .append(";\n");
+                    out.append(indent(indent)).append("try {\n");
+                    out.append(indent(indent + 1)).append(checked).append(" = ")
                         .append(bcheckArgs(boundaryPayload.descriptor(),
                             slot(boundaryPayload.input()))).append(";\n");
+                    out.append(indent(indent))
+                        .append("} catch (JvmRuntime.DealError __be) {\n");
+                    out.append(indent(indent + 1))
+                        .append("JvmRuntime.DealError __bre = new "
+                            + "JvmRuntime.DealError(__be.code, __be.msg, ")
+                        .append(javaString(originOf(boundary)))
+                        .append(", __be.expected, __be.actual, __be.frames, null);\n");
+                    emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
+                        "JvmRuntime.errtext(__bre)", indent + 1);
+                    emitFailureEvent(op.opId(), op.kind().name(), op,
+                        "JvmRuntime.errtext(__bre)", indent + 1);
+                    out.append(indent(indent + 1)).append("throw __bre;\n");
+                    out.append(indent(indent)).append("}\n");
                     emitBoundarySuccess(boundary, checked,
                         boundaryPayload.descriptor(), indent);
                     args.add(checked);

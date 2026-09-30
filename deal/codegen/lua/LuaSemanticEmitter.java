@@ -6153,7 +6153,10 @@ public final class LuaSemanticEmitter {
             emitStart(op);
             // The argument carrier: the boundary-checked values (RUN) or
             // the raw operand values (ELIDED_BY_ADAPTER) — a fresh table
-            // per execution, captured by the task record.
+            // per execution, captured by the task record. Each declared
+            // parameter cell publishes its own FAILURE (with the owning
+            // ASYNC_START's) at the boundary's origin before the error
+            // propagates, exactly the oracle's boundary-child pair.
             if (payload.parameterBoundaryMode() == ParameterBoundaryMode.RUN) {
                 out.append("S.__sa").append(op.opId().id()).append(" = {}\n");
                 for (OpId boundaryId : payload.parameterBoundaryOpIds()) {
@@ -6162,14 +6165,23 @@ public final class LuaSemanticEmitter {
                         (KindPayload.BoundaryPayload) boundary.payload();
                     emitBoundaryStart(boundary, slot(boundaryPayload.input()),
                         boundaryPayload.descriptor());
-                    out.append("__chk = ")
-                        .append(bcheckExpr(boundaryPayload.descriptor(),
+                    out.append("__okB, __chkB = pcall(__bcheck, ")
+                        .append(bcheckArgs(boundaryPayload.descriptor(),
                             slot(boundaryPayload.input())))
+                        .append(")\n");
+                    out.append("if not __okB then\n");
+                    out.append("  __chkB.o = ").append(luaString(originOf(boundary)))
                         .append("\n");
-                    emitBoundarySuccess(boundary, "__chk", boundaryPayload.descriptor());
+                    emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
+                        "__errtext(__chkB)");
+                    emitFailureEvent(op.opId(), op.kind().name(), op,
+                        "__errtext(__chkB)");
+                    out.append("  error(__chkB, 0)\n");
+                    out.append("end\n");
+                    emitBoundarySuccess(boundary, "__chkB", boundaryPayload.descriptor());
                     out.append("S.__sa").append(op.opId().id())
                         .append("[#S.__sa").append(op.opId().id())
-                        .append(" + 1] = __chk\n");
+                        .append(" + 1] = __chkB\n");
                 }
             } else {
                 out.append("S.__sa").append(op.opId().id()).append(" = {");

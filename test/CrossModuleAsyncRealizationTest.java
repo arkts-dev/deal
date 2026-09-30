@@ -85,6 +85,13 @@ import java.util.Map;
  *       project trace artifact carries the callee module on the callee
  *       entry and body events while the caller's events keep the caller's
  *       module;</li>
+ *   <li>the awaited declared callee's parameter cell carries the callee's
+ *       declared parameter type-annotation span in the callee's file
+ *       (canonical failure projection authority P3) — same unit and cross
+ *       module alike: the contextual argument read defers its kind check
+ *       to that cell, and the oracle and both production artifacts
+ *       publish the identical {@code (code, message, origin, expected,
+ *       actual)} tuple;</li>
  *   <li>the fail-closed seeds (an async start without its link, an entry
  *       reference that resolves to no emitted entry) are rejected by both
  *       production emitters, and the production arm emits and stages the
@@ -183,6 +190,52 @@ public class CrossModuleAsyncRealizationTest {
 
         export function main(): null {
           return null;
+        }
+        """;
+
+    /**
+     * The async declared-parameter-origin fixture (the canonical failure
+     * projection authority P3): the awaited imported callee's parameter
+     * cell carries the callee's declared annotation, in the callee's file.
+     */
+    private static final String ASYNC_PARAM_PROBE = "test_async_param_origin";
+
+    private static final String LIB_PARAM_SOURCE = """
+        export async function needInt(x: int): int {
+          return x;
+        }
+        """;
+
+    private static final String APP_PARAM_SOURCE = """
+        import * as lib from "./lib"
+
+        export async function test_async_param_origin(): int {
+          let t: table = { value: "abc" }
+          let x: int = await lib.needInt(t.value)
+          return x
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
+    /** The same-unit declared async callee of the parameter-origin drive. */
+    private static final String SAME_UNIT_PARAM_PROBE = "test_local_async_param";
+
+    private static final String APP_LOCAL_PARAM_SOURCE = """
+        async function needIntLocal(x: int): int {
+          return x
+        }
+
+        export async function test_local_async_param(): int {
+          let t: table = { value: "abc" }
+          let x: int = await needIntLocal(t.value)
+          return x
+        }
+
+        export function main(): null {
+          return null
         }
         """;
 
@@ -729,6 +782,303 @@ public class CrossModuleAsyncRealizationTest {
         } finally {
             deleteRecursively(fixture.root());
         }
+    }
+
+    // =========================================================================
+    // 4b. The awaited declared parameter cells' declaration-owned origins
+    // =========================================================================
+
+    /**
+     * The awaited imported declared callee's parameter cell (canonical
+     * failure projection authority P3): `await lib.needInt(t.value)` lowers
+     * its `EXTERNAL_PARAMETER` cell with the callee's declared parameter
+     * type-annotation span in the callee's file (never the call site), the
+     * contextual argument read defers its kind check to that cell, and the
+     * oracle and both production artifacts publish one identical
+     * `(code, message, origin, expected, actual)` tuple.
+     */
+    private static void testAsyncDeclaredParameterOrigin() throws Exception {
+        System.out.println("-- the awaited cross-module declared callee's parameter "
+            + "cell: the callee's declared annotation span on the oracle and both "
+            + "production artifacts (the argument read defers its kind check) --");
+        Fixture fixture = materialize("async-param-origin",
+            Map.of("lib", LIB_PARAM_SOURCE, "app", APP_PARAM_SOURCE),
+            "app", List.of("lib"));
+        Path workspace = Files.createTempDirectory("cross-module-async-param");
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+            check(result.project() != null && !result.hasErrors(),
+                "the async parameter-origin probe lowers through the one project "
+                    + "entry: " + result.diagnostics());
+            if (result.project() == null) {
+                return;
+            }
+            ExecutableLoweredProject project = result.project();
+            LoweredModuleUnit appUnit = project.modules().get(APP);
+            String libLine = LIB_PARAM_SOURCE.lines().findFirst().orElseThrow();
+            int column = annotationColumn(libLine, "the companion fixture");
+            SemanticOp parameterCell = declaredParameterCell(appUnit,
+                BoundaryKind.EXTERNAL_PARAMETER);
+            if (parameterCell == null) {
+                return;
+            }
+            Path libFile = fixture.moduleRoot().resolve("lib.deal").toAbsolutePath();
+            assertDeclaredParameterOrigin(parameterCell, libFile.toString(), 1,
+                column, "the companion's parameter cell");
+            assertDeferredArgumentRead(appUnit, "the awaited imported call");
+            String expectedOrigin = libFile + ":1:" + column;
+            driveAsyncParameterCell(workspace, fixture, result, project,
+                parameterCell, ASYNC_PARAM_PROBE, expectedOrigin,
+                "the awaited cross-module declared parameter cell");
+        } finally {
+            deleteRecursively(workspace);
+            deleteRecursively(fixture.root());
+        }
+    }
+
+    /**
+     * The awaited same-unit declared callee's parameter cell: the callee's
+     * declared annotation span in the same file, the contextual argument
+     * read's kind check deferred to that cell, and the oracle and both
+     * production artifacts publishing the identical tuple (the
+     * {@code FUNCTION_PARAMETER} arm of the closed table).
+     */
+    private static void testSameUnitAsyncDeclaredParameterOrigin() throws Exception {
+        System.out.println("-- the awaited same-unit declared callee's parameter "
+            + "cell: the callee's declared annotation span on the oracle and both "
+            + "production artifacts (the argument read defers its kind check) --");
+        Fixture fixture = materialize("async-param-same-unit",
+            Map.of("app", APP_LOCAL_PARAM_SOURCE), "app", List.of());
+        Path workspace = Files.createTempDirectory("same-unit-async-param");
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+            check(result.project() != null && !result.hasErrors(),
+                "the same-unit async parameter-origin probe lowers through the one "
+                    + "project entry: " + result.diagnostics());
+            if (result.project() == null) {
+                return;
+            }
+            ExecutableLoweredProject project = result.project();
+            LoweredModuleUnit appUnit = project.modules().get(APP);
+            String annotationLine = APP_LOCAL_PARAM_SOURCE.lines()
+                .findFirst().orElseThrow();
+            int annotationColumn = annotationColumn(annotationLine,
+                "the same-unit fixture");
+            SemanticOp parameterCell = declaredParameterCell(appUnit,
+                BoundaryKind.FUNCTION_PARAMETER);
+            if (parameterCell == null) {
+                return;
+            }
+            Path appFile = fixture.moduleRoot().resolve("app.deal").toAbsolutePath();
+            assertDeclaredParameterOrigin(parameterCell, appFile.toString(), 1,
+                annotationColumn, "the same-unit parameter cell");
+            assertDeferredArgumentRead(appUnit, "the same-unit awaited call");
+            String expectedOrigin = appFile + ":1:" + annotationColumn;
+            driveAsyncParameterCell(workspace, fixture, result, project,
+                parameterCell, SAME_UNIT_PARAM_PROBE, expectedOrigin,
+                "the awaited same-unit declared parameter cell");
+        } finally {
+            deleteRecursively(workspace);
+            deleteRecursively(fixture.root());
+        }
+    }
+
+    /**
+     * Drives one declared-parameter-cell failure through the three-consumer
+     * async-entry matrix (the oracle plus the two conformance artifacts) and
+     * both production artifacts under the real toolchains: the pinned
+     * {@code (code, message, origin, expected, actual)} tuple at the cell's
+     * declared origin on every consumer, with the cell's own boundary FAILURE
+     * event asserted in the matrix traces.
+     */
+    private static void driveAsyncParameterCell(Path workspace, Fixture fixture,
+            SemanticLowerer.ProjectLoweringResult result,
+            ExecutableLoweredProject project, SemanticOp parameterCell,
+            String probeName, String expectedOrigin, String what) throws Exception {
+        // The three-consumer async-entry matrix: the pinned code at the
+        // declared origin, the tuple asserted by field name on every consumer.
+        SemanticDifferentialHarness.Verdict verdict =
+            SemanticDifferentialHarness.runAsyncEntry(project, result.tables(),
+                probeName, List.of(),
+                SemanticDifferentialHarness.Expectation.failure(what, List.of(),
+                    "E8001", expectedOrigin),
+                workspace.resolve("matrix"), null);
+        checkEq(3, verdict.runs().size(), what + ": the async-entry matrix "
+            + "produced the three consumers: " + verdict.failures());
+        check(verdict.pass(), what + ": the three-consumer async-entry verdict "
+            + "passes (the pinned code at the declared annotation span, the "
+            + "traces event-for-event): " + verdict.failures());
+        for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+            assertAsyncParameterTuple(run.consumer() + " (async-entry matrix)",
+                expectedOrigin, run.terminal());
+            assertAsyncParameterFailureEvent(run.consumer() + " (async-entry "
+                + "matrix)", expectedOrigin, run, parameterCell.opId());
+        }
+
+        // The production artifacts under the real toolchains.
+        ModuleId entryModule = new ModuleId(fixture.entryName());
+        Path luaArtifact = workspace.resolve("project.lua");
+        Files.writeString(luaArtifact, LuaSemanticEmitter.emitProductionProject(
+            project, result.tables(), result.registries(), fixture.surface()),
+            StandardCharsets.UTF_8);
+        deployRuntime(workspace);
+        Path luaProbe = workspace.resolve("param-probe.lua");
+        Files.writeString(luaProbe,
+            luaAsyncEntryDriver(luaArtifact, entryModule, probeName),
+            StandardCharsets.UTF_8);
+        Outcome luaOutcome = runLua(luaProbe, workspace);
+        checkEq(0, luaOutcome.exitCode(), what + " (LuaJIT): the production "
+            + "parameter drive exits 0: " + luaOutcome.stderr());
+        assertAsyncParameterErrtext(what + " (LuaJIT production artifact)",
+            expectedOrigin, luaOutcome.stderr());
+
+        String className = JvmBackend.classNameFor(project.entryModule().path());
+        JvmSemanticEmitter.EmissionResult emission =
+            JvmSemanticEmitter.emitProductionProject(project, result.tables(),
+                result.registries(), className, fixture.surface());
+        Files.writeString(workspace.resolve(className + ".java"),
+            emission.source(), StandardCharsets.UTF_8);
+        OpId paramEntry = asyncEntryOf(project, entryModule, probeName);
+        Files.writeString(workspace.resolve("AsyncParamDriver.java"),
+            jvmAsyncEntryDriver("AsyncParamDriver", className, paramEntry),
+            StandardCharsets.UTF_8);
+        Path classes = workspace.resolve("classes");
+        Files.createDirectories(classes);
+        String classpath = absoluteClasspath();
+        Outcome javacRun = runProcess(List.of("javac", "--release", "25",
+            "-proc:none", "-cp", classpath, "-d", classes.toString(),
+            workspace.resolve(className + ".java").toAbsolutePath().toString(),
+            workspace.resolve("AsyncParamDriver.java").toAbsolutePath().toString()),
+            workspace);
+        checkEq(0, javacRun.exitCode(), what + " (JVM): the production parameter "
+            + "artifact compiles: " + javacRun.stdout() + javacRun.stderr());
+        if (javacRun.exitCode() == 0) {
+            Outcome jvmOutcome = runProcess(List.of("java", "-cp",
+                classpath + java.io.File.pathSeparator + classes,
+                "AsyncParamDriver"), workspace);
+            checkEq(0, jvmOutcome.exitCode(), what + " (JVM): the production "
+                + "parameter drive exits 0: " + jvmOutcome.stderr());
+            assertAsyncParameterErrtext(what + " (JVM production artifact)",
+                expectedOrigin, jvmOutcome.stderr());
+        }
+    }
+
+    /** The one declared parameter cell of the given boundary kind in a unit. */
+    private static SemanticOp declaredParameterCell(LoweredModuleUnit unit,
+            BoundaryKind kind) {
+        SemanticOp cell = null;
+        for (SemanticOp op : ofKind(unit, SemanticOpKind.BOUNDARY)) {
+            if (((KindPayload.BoundaryPayload) op.payload()).kind() == kind) {
+                check(cell == null, "exactly one " + kind + " cell in the "
+                    + "awaited call's unit");
+                cell = op;
+            }
+        }
+        check(cell != null, "the awaited declared call lowers its " + kind
+            + " cell");
+        return cell;
+    }
+
+    /** The declared parameter annotation's column in its own source line. */
+    private static int annotationColumn(String sourceLine, String what) {
+        int column = sourceLine.indexOf("int", sourceLine.indexOf("x:")) + 1;
+        check(column > 0 && sourceLine.substring(column - 1).startsWith("int"),
+            what + ": the declared parameter annotation is locatable in its "
+                + "source line: " + sourceLine);
+        return column;
+    }
+
+    /** The cell's origin is the declared annotation span of the given file. */
+    private static void assertDeclaredParameterOrigin(SemanticOp cell,
+            String expectedSourceId, int line, int column, String what) {
+        checkEq(expectedSourceId, cell.origin().sourceId(), what + ": the cell's "
+            + "origin source is the declaring file (never the call site's)");
+        checkEq(line + ":" + column, cell.origin().span().startLine() + ":"
+            + cell.origin().span().startColumn(), what + ": the cell's origin "
+            + "span is the declared parameter annotation");
+    }
+
+    /** The contextual argument read composes no boundary of its own. */
+    private static void assertDeferredArgumentRead(LoweredModuleUnit unit,
+            String what) {
+        int contextualReads = 0;
+        for (SemanticOp op : ofKind(unit, SemanticOpKind.BOUNDARY)) {
+            if (((KindPayload.BoundaryPayload) op.payload()).kind()
+                    == BoundaryKind.CONTEXTUAL_TABLE_READ) {
+                contextualReads++;
+            }
+        }
+        checkEq(0, contextualReads, what + ": the contextual argument read defers "
+            + "its kind check to the declared parameter cell (the read composes "
+            + "no boundary of its own)");
+    }
+
+    /** The pinned async parameter-cell tuple of one terminal record. */
+    private static void assertAsyncParameterTuple(String consumer, String origin,
+            SemanticRuntimeModel.Terminal terminal) {
+        check(terminal instanceof SemanticRuntimeModel.Terminal.DealFailure,
+            consumer + ": the terminal is the declared parameter cell's failure: "
+                + terminal);
+        if (!(terminal instanceof SemanticRuntimeModel.Terminal.DealFailure failure)) {
+            return;
+        }
+        SemanticRuntimeModel.ErrorSnapshot error = failure.error();
+        checkEq("E8001", error.code(), consumer + ": the pinned code");
+        checkEq("expected int", error.message(), consumer + ": the pinned message");
+        checkEq(origin, error.origin(), consumer + ": the declared parameter "
+            + "annotation span in the declaring file");
+        checkEq("int", error.expected(), consumer + ": the pinned expected token");
+        checkEq("string", error.actual(), consumer + ": the pinned actual token");
+    }
+
+    /** The parameter cell's own FAILURE event of one matrix consumer run. */
+    private static void assertAsyncParameterFailureEvent(String consumer, String origin,
+            SemanticRuntimeModel.ConsumerRun run, OpId parameterCell) {
+        int count = 0;
+        for (SemanticRuntimeModel.TraceEvent event : run.trace()) {
+            if (!event.op().equals(parameterCell)
+                    || event.phase() != SemanticRuntimeModel.Phase.FAILURE) {
+                continue;
+            }
+            count++;
+            check(event.error() != null && "E8001".equals(event.error().code())
+                    && "expected int".equals(event.error().message())
+                    && origin.equals(event.error().origin())
+                    && "int".equals(event.error().expected())
+                    && "string".equals(event.error().actual()),
+                consumer + ": the parameter cell's FAILURE event is the pinned "
+                    + "row at the declared annotation span: " + event);
+        }
+        checkEq(1, count, consumer + ": exactly one FAILURE terminal for the "
+            + "parameter cell");
+    }
+
+    /** The pinned tuple of one production artifact's {@code R|failure|} line. */
+    private static void assertAsyncParameterErrtext(String consumer, String origin,
+            String stderr) {
+        String errtext = null;
+        for (String line : stderr.split("\n", -1)) {
+            if (line.startsWith("R|failure|")) {
+                errtext = line.substring("R|failure|".length());
+            }
+        }
+        check(errtext != null, consumer + ": the artifact publishes its failure "
+            + "terminal: " + stderr);
+        if (errtext == null) {
+            return;
+        }
+        String[] fields = errtext.split(";", -1);
+        checkEq("E8001", fields.length > 0 ? fields[0] : null,
+            consumer + ": the pinned code");
+        checkEq("expected int", fields.length > 1 ? fields[1] : null,
+            consumer + ": the pinned message");
+        checkEq(origin, fields.length > 2 ? fields[2] : null,
+            consumer + ": the declared parameter annotation span in the "
+                + "declaring file");
+        checkEq("int", fields.length > 3 ? fields[3] : null,
+            consumer + ": the pinned expected token");
+        checkEq("string", fields.length > 4 ? fields[4] : null,
+            consumer + ": the pinned actual token");
     }
 
     /**
@@ -1329,6 +1679,8 @@ public class CrossModuleAsyncRealizationTest {
         testEmissionSurface();
         testProductionDrives();
         testDifferentialParityAndModuleContext();
+        testAsyncDeclaredParameterOrigin();
+        testSameUnitAsyncDeclaredParameterOrigin();
         testFailClosedSeeds();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);

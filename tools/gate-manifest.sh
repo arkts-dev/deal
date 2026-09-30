@@ -72,7 +72,12 @@ TEST_MAINS=(
   # token used as a kind text — never derives a DEAL-visible token); the
   # declared-parameter origin index fails closed on a same-unit declared callee
   # without a recorded annotation (MaterializationSiteOriginTest's doctored-AST
-  # negative drives the production entry to its E6005).
+  # negative drives the production entry to its E6005); the awaited
+  # cross-module and same-unit declared callees' parameter cells carry the
+  # declared annotation span in the declaring file with the argument read's
+  # kind check deferred to that cell, asserted on the oracle and both
+  # production artifacts (CrossModuleAsyncRealizationTest's
+  # testAsyncDeclaredParameterOrigin / testSameUnitAsyncDeclaredParameterOrigin).
   'fg|=== Running Failure Arm Authority Tests (ISSUE-0704) ===|java -ea -cp build deal.test.FailureArmAuthorityTest'
   'fg|=== Running Canonical JSON / Snapshot Digest Tests (ISSUE-0283) ===|java -ea -cp build deal.test.CanonicalJsonTest'
   'fg|=== Running Semantic IR Validator Tests (ISSUE-0286) ===|java -ea -cp build deal.test.SemanticIrValidatorTest'
