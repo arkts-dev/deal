@@ -3902,6 +3902,22 @@ public final class SemanticLowerer {
         private final java.util.LinkedHashMap<BlockId, Boolean> blockTerminated =
             new java.util.LinkedHashMap<>();
         /**
+         * The closed per-block exit states of the terminator analysis
+         * ({@code residual-carrier-shapes-production-realization} D3):
+         * the state the three implicit-return sites consume and the
+         * composite arms mark from their sub-blocks. A block is
+         * {@code OPEN} while it can complete normally,
+         * {@code RETURN_OR_THROW} when it cannot and every non-completing
+         * path exits by {@code return}/{@code throw}, and
+         * {@code TRANSFER} when it cannot and at least one path exits by
+         * {@code break}/{@code continue}. Absent = {@code OPEN}. One
+         * body's blocks are disjoint from a nested declared/closure
+         * body's blocks, so a nested transfer never contributes to an
+         * enclosing loop's state.
+         */
+        private final java.util.LinkedHashMap<BlockId, BlockExitState> blockExitStates =
+            new java.util.LinkedHashMap<>();
+        /**
          * The enclosing address-chain parents (A-D2): the innermost chain
          * op currently being built. Every op emitted while a chain is
          * active records that chain as its {@code parentOpId} — chain
@@ -5095,12 +5111,98 @@ public final class SemanticLowerer {
         }
 
         /**
+         * The closed three-member per-block exit state of the terminator
+         * analysis ({@code residual-carrier-shapes-production-realization}
+         * D3): {@code OPEN} (the block can complete normally),
+         * {@code RETURN_OR_THROW} (it cannot; every non-completing path
+         * exits by {@code return}/{@code throw}), and {@code TRANSFER} (it
+         * cannot; at least one path exits by {@code break}/{@code
+         * continue}).
+         */
+        private enum BlockExitState {
+            OPEN,
+            RETURN_OR_THROW,
+            TRANSFER
+        }
+
+        /**
          * Marks the current emission block terminated after a
-         * {@code THROW}/{@code BREAK}/{@code CONTINUE} emission (C-D2
-         * dominance: no op may follow a terminator in its block).
+         * {@code RETURN}/{@code THROW} emission (C-D2 dominance: no op
+         * may follow a terminator in its block) and records the leaf
+         * transfer's closed exit state
+         * ({@link BlockExitState#RETURN_OR_THROW}).
          */
         private void terminateBlock() {
             blockTerminated.put(blockStack.peek(), true);
+            markExit(blockStack.peek(), BlockExitState.RETURN_OR_THROW);
+        }
+
+        /**
+         * Marks the current emission block terminated after a
+         * {@code BREAK}/{@code CONTINUE} emission and records the leaf
+         * transfer's closed exit state ({@link BlockExitState#TRANSFER}) —
+         * the loop transfer leaves the block without completing normally,
+         * and the block can still leave its enclosing loop normally.
+         */
+        private void transferBlock() {
+            blockTerminated.put(blockStack.peek(), true);
+            markExit(blockStack.peek(), BlockExitState.TRANSFER);
+        }
+
+        /**
+         * The closed exit state of one block; an unmarked (or absent)
+         * block is {@code OPEN}.
+         */
+        private BlockExitState exitStateOf(BlockId block) {
+            return blockExitStates.getOrDefault(block, BlockExitState.OPEN);
+        }
+
+        /**
+         * Marks one block non-{@code OPEN} from a leaf transfer or a
+         * composite's sub-block states. The marking is monotone: a block
+         * leaves {@code OPEN} exactly once, a second marking is a no-op,
+         * and a later unreachable statement neither clears nor changes
+         * the state.
+         */
+        private void markExit(BlockId block, BlockExitState state) {
+            if (state == BlockExitState.OPEN
+                    || exitStateOf(block) != BlockExitState.OPEN) {
+                return;
+            }
+            blockExitStates.put(block, state);
+        }
+
+        /**
+         * The branch-state combination of one composite (the AND on the
+         * return/throw facet): {@code OPEN} when either sub-block can
+         * complete normally (the composite has a normal-exit path);
+         * {@code RETURN_OR_THROW} only when both sub-blocks cannot and
+         * neither carries a break/continue path; {@code TRANSFER}
+         * otherwise (a break/continue path of either sub-block).
+         */
+        private static BlockExitState combineExits(BlockExitState left,
+                                                   BlockExitState right) {
+            if (left == BlockExitState.OPEN || right == BlockExitState.OPEN) {
+                return BlockExitState.OPEN;
+            }
+            return left == BlockExitState.RETURN_OR_THROW
+                    && right == BlockExitState.RETURN_OR_THROW
+                ? BlockExitState.RETURN_OR_THROW
+                : BlockExitState.TRANSFER;
+        }
+
+        /**
+         * Whether one expression is the literal boolean {@code true} —
+         * the source {@code while (true)} and {@code for (; true; …)}
+         * condition of the closed terminator analysis. A test-less
+         * {@code for (;;)} carries no condition expression; its synthetic
+         * {@code CONST true} production makes it literal-true by
+         * construction (see {@link #lowerForStatement}).
+         */
+        private static boolean isLiteralTrue(ExpressionNode expression) {
+            return expression instanceof LiteralExpr literal
+                && literal.value() instanceof LiteralValue.BooleanLiteral bool
+                && bool.value();
         }
 
         /**
@@ -7326,8 +7428,14 @@ public final class SemanticLowerer {
                             // The implicit trailing return of an
                             // unterminated null-returning body ("a
                             // function with return type null returns the
-                            // null value through the boundary").
-                            if (!Boolean.TRUE.equals(blockTerminated.get(bodyBlock))) {
+                            // null value through the boundary"). The
+                            // closed terminator analysis decides: a body
+                            // whose block is not OPEN (a leaf transfer or a
+                            // terminating composite) carries no implicit
+                            // return and never fails closed; only a
+                            // genuinely unterminated non-null body keeps
+                            // the fail-closed arm.
+                            if (exitStateOf(bodyBlock) == BlockExitState.OPEN) {
                                 if (!(reservedContext.signature.returnType()
                                         instanceof RuntimeDescriptor.Null)) {
                                     throw new ConstructUnlowered("function '"
@@ -7486,10 +7594,13 @@ public final class SemanticLowerer {
                     } finally {
                         if (reservedContext != null) {
                             if (bodyComplete
-                                    && !Boolean.TRUE.equals(
-                                        blockTerminated.get(bodyBlock))) {
+                                    && exitStateOf(bodyBlock)
+                                        == BlockExitState.OPEN) {
                                 // The implicit trailing return of an
-                                // unterminated null-returning member body.
+                                // unterminated null-returning member body
+                                // (the closed terminator analysis decides:
+                                // a non-OPEN body carries no implicit
+                                // return and never fails closed).
                                 if (!(reservedContext.signature.returnType()
                                         instanceof RuntimeDescriptor.Null)) {
                                     throw new ConstructUnlowered("group member '"
@@ -7727,12 +7838,23 @@ public final class SemanticLowerer {
                 new KindPayload.BindingInitPayload(counter, 1L, carry),
                 decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
             statementWalk.walk(statement.body().statements(), false);
+            // The composite marking of the for-let loop arm (D3): a
+            // literal-true condition whose body exits only by
+            // return/throw makes the loop non-completing, exactly like the
+            // plain for/while arms (the body block's state is read before
+            // the pops; the enclosing block is marked after).
+            BlockExitState forLetBodyExit = exitStateOf(bodyBlock);
+            boolean forLetLiteralTrue = isLiteralTrue(statement.condition().get());
             if (forLetLoopOpId != null) {
                 popLoopTarget();
             }
             popBindingFrame();
             checkerScopeNodes.pop();
             blockStack.pop();
+            if (forLetLiteralTrue
+                    && forLetBodyExit == BlockExitState.RETURN_OR_THROW) {
+                markExit(currentBlock(), BlockExitState.RETURN_OR_THROW);
+            }
             // Update block: the update's assignment chain, then the
             // condition re-production (update-block members — C-D4;
             // both reference the generation-0 counter).
@@ -12863,7 +12985,14 @@ public final class SemanticLowerer {
          * {@code else if} chain nests its {@code BRANCH} op there); an
          * absent {@code else} produces {@code alternateBlock = null};
          * SUCCESS publishes no result. Block ops record the
-         * {@code BRANCH} as {@code parentOpId}.
+         * {@code BRANCH} as {@code parentOpId}. The closed terminator
+         * analysis marks the enclosing block after both sub-block walks:
+         * an {@code if}/{@code else} whose both branches cannot complete
+         * normally terminates it (the branches combine by AND on the
+         * return/throw facet, so a break/continue path of either branch
+         * yields {@code TRANSFER}); an {@code else if} chain composes
+         * through the nested {@code BRANCH}'s marking of
+         * {@code alternateBlock}.
          */
         private void lowerIfStatement(IfStatement statement) {
             ValueId condition = lowerExpression(statement.condition());
@@ -12897,6 +13026,10 @@ public final class SemanticLowerer {
                 } finally {
                     popBlock();
                 }
+                // The composite marking (D3): both branches cannot
+                // complete normally, so neither can the enclosing block.
+                markExit(currentBlock(), combineExits(exitStateOf(selectedBlock),
+                    exitStateOf(alternateBlock)));
             }
             popBlockParent();
         }
@@ -12935,6 +13068,15 @@ public final class SemanticLowerer {
             } finally {
                 popLoopTarget();
                 popBlock();
+            }
+            // The composite marking (D3): a literal-true loop whose body
+            // cannot complete normally and has no break/continue path
+            // exits only by return/throw, so it cannot complete normally
+            // either. A TRANSFER body leaves the loop able to exit
+            // normally (the enclosing block stays OPEN).
+            if (isLiteralTrue(statement.condition())
+                    && exitStateOf(bodyBlock) == BlockExitState.RETURN_OR_THROW) {
+                markExit(currentBlock(), BlockExitState.RETURN_OR_THROW);
             }
             popBlockParent();
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(statement.span()),
@@ -13012,6 +13154,16 @@ public final class SemanticLowerer {
                 popLoopTarget();
                 popBlock();
             }
+            // The composite marking (D3): a literal-true loop (a source
+            // `true` condition or the test-less row's synthetic CONST
+            // true) whose body exits only by return/throw cannot complete
+            // normally; a TRANSFER body (a break path) leaves the loop
+            // able to exit normally, so the enclosing block stays OPEN.
+            if ((statement.condition().isEmpty()
+                    || isLiteralTrue(statement.condition().get()))
+                    && exitStateOf(bodyBlock) == BlockExitState.RETURN_OR_THROW) {
+                markExit(currentBlock(), BlockExitState.RETURN_OR_THROW);
+            }
             pushBlock(updateBlock);
             try {
                 statement.update().ifPresent(update -> lowerExpression(update));
@@ -13049,7 +13201,13 @@ public final class SemanticLowerer {
          * carrying the catch binding with the pinned initial
          * generation. The {@code TRY_CATCH} op precedes its child block
          * ops in the unit list (payload order: try, catch). Block ops
-         * record the {@code TRY_CATCH} as {@code parentOpId}.
+         * record the {@code TRY_CATCH} as {@code parentOpId}. The closed
+         * terminator analysis marks the enclosing block after the
+         * sub-block walks: a {@code try} whose protected block and catch
+         * block both cannot complete normally terminates it (the two
+         * blocks combine by AND on the return/throw facet, exactly like
+         * the {@code if}/{@code else} arm; one catch block per
+         * {@code TRY_CATCH}).
          */
         private void lowerTryCatch(TryStatement statement) {
             BlockId tryBlock = allocateBlock();
@@ -13088,6 +13246,11 @@ public final class SemanticLowerer {
                 popBlock();
                 catchFrames.remove(0);
             }
+            // The composite marking (D3): both the protected block and
+            // the catch block cannot complete normally, so neither can
+            // the enclosing block.
+            markExit(currentBlock(), combineExits(exitStateOf(tryBlock),
+                exitStateOf(catchBlock)));
             popBlockParent();
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(statement.span()),
                 SourceOriginKind.USER, anchor, currentParent());
@@ -13134,7 +13297,7 @@ public final class SemanticLowerer {
             emitNullOp(SemanticOpKind.BREAK,
                 new KindPayload.BreakPayload(target), statement.span(),
                 FailurePolicyId.NO_DEAL_FAILURE, SourceOriginKind.USER, currentParent());
-            terminateBlock();
+            transferBlock();
         }
 
         /**
@@ -13157,7 +13320,7 @@ public final class SemanticLowerer {
             emitNullOp(SemanticOpKind.CONTINUE,
                 new KindPayload.ContinuePayload(target), statement.span(),
                 FailurePolicyId.NO_DEAL_FAILURE, SourceOriginKind.USER, currentParent());
-            terminateBlock();
+            transferBlock();
         }
 
         /**
@@ -13549,7 +13712,12 @@ public final class SemanticLowerer {
                 } finally {
                     if (reservedClosureContext != null) {
                         if (closureBodyComplete
-                                && !Boolean.TRUE.equals(blockTerminated.get(bodyBlock))) {
+                                && exitStateOf(bodyBlock) == BlockExitState.OPEN) {
+                            // The implicit trailing return of an
+                            // unterminated null-returning closure body (the
+                            // closed terminator analysis decides: a
+                            // non-OPEN body carries no implicit return and
+                            // never fails closed).
                             if (!(signature.returnType()
                                     instanceof RuntimeDescriptor.Null)) {
                                 throw new ConstructUnlowered("closure body is not "
