@@ -31,6 +31,8 @@ import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ExecutableLoweredProject;
+import deal.semantic.ir.FailureArmId;
+import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
@@ -128,6 +130,20 @@ import java.util.stream.Stream;
  *       fixture (through a driver-entry lowering for the sync exports and
  *       the fixture's own async entry for the async export) and compared
  *       with the artifacts' projected tuple.</li>
+ *   <li><b>The JSON stringify bytes carrier arm (ISSUE-0708).</b> The
+ *       emitted walk's table branch carries the bytes carrier arm, so a
+ *       stringified bytes value at any reachable nesting depth renders the
+ *       pinned {@code unsupported type for JSON encoding: bytes} tuple at
+ *       the {@code json.stringify} call origin on LuaJIT exactly as the
+ *       oracle and the JVM already do. One focused section drives the
+ *       three bytes nesting shapes (a top-level table member, a
+ *       {@code bytes[]} element, and a leaf four tables deep) and the
+ *       class-instance carrier-kind control through a scratch entry module
+ *       on both targets and through the oracle, drives the corpus
+ *       function-value and runtime-ok round-trip controls, and asserts
+ *       over the staged LuaJIT artifact that the walk renders the closed
+ *       arm row (the serialized expected text and the carrier-kind
+ *       projected actual), never a site-held text.</li>
  *   <li><b>The preserved invariants.</b> The dispatched corpus count, the
  *       sidecar schema, the fixture inventory, the 27-member
  *       {@code BoundaryKind} set with its two reserved names, the green
@@ -1748,6 +1764,343 @@ public class BytesProductionDriveTest {
     }
 
     // =========================================================================
+    // 6c. The JSON stringify bytes carrier arm (ISSUE-0708)
+    // =========================================================================
+
+    /** The arm's pinned expected text (the serialized row's own field). */
+    private static final String JSON_STRINGIFY_EXPECTED_TEXT =
+        "string, number, boolean, or table";
+
+    /**
+     * The emitted bytes carrier arm of the JSON_STRINGIFY walk: a bytes
+     * value renders the arm's own carrier-kind projection through the same
+     * {@code sfFail} render as every other carrier kind, before the
+     * generic table fallback.
+     */
+    private static final String JSON_STRINGIFY_BYTES_ARM =
+        "if v.__kind == \"bytes\" then sfFail(v); return end";
+
+    /**
+     * One scratch shape of the arm's direct drive: the entry source, its
+     * pinned {@code json.stringify} call-expression span, and the pinned
+     * arm tuple.
+     */
+    private record StringifyShape(String label, String stem, String source,
+                                  int line, int column, String message,
+                                  String actual) {
+    }
+
+    /** The bytes value at the top level of the stringified table. */
+    private static final String STRINGIFY_BYTES_TOP_SOURCE = """
+        import * as json from "std/json";
+
+        export function test_json_stringify_bytes_top(): string {
+          let b: bytes = bytes(2);
+          b[0] = 65;
+          let t: table = { payload: b };
+          return json.stringify(t);
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /** The bytes value as an element of a {@code bytes[]} table member. */
+    private static final String STRINGIFY_BYTES_ARRAY_SOURCE = """
+        import * as json from "std/json";
+
+        export function test_json_stringify_bytes_array(): string {
+          let b: bytes = bytes(1);
+          b[0] = 65;
+          let arr: bytes[] = [b];
+          let t: table = { bucket: arr };
+          return json.stringify(t);
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /** The bytes value as a leaf four tables deep. */
+    private static final String STRINGIFY_BYTES_DEEP_SOURCE = """
+        import * as json from "std/json";
+
+        export function test_json_stringify_bytes_deep(): string {
+          let b: bytes = bytes(1);
+          b[0] = 65;
+          let outer: table = { level1: {} };
+          let level1: table = outer.level1;
+          let level2: table = {};
+          level1.level2 = level2;
+          let level3: table = {};
+          level2.level3 = level3;
+          level3.bucket = b;
+          return json.stringify(outer);
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /** The class-instance carrier-kind control (the landed table token). */
+    private static final String STRINGIFY_CLASS_SOURCE = """
+        import * as json from "std/json";
+
+        class Box { value: int = 0; }
+
+        export function test_json_stringify_class_control(): string {
+          let b: Box = { value: 1 };
+          let t: table = { box: b };
+          return json.stringify(t);
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The four scratch shapes: the three reachable bytes nesting shapes
+     * (the top-level table member, the {@code bytes[]} element, and the
+     * leaf four tables deep) and the class-instance carrier-kind control.
+     * Every shape pins its own {@code json.stringify} call-expression span
+     * and the arm's tuple.
+     */
+    private static final List<StringifyShape> JSON_STRINGIFY_SHAPES = List.of(
+        new StringifyShape("the top-level table member",
+            "json_stringify_bytes_top", STRINGIFY_BYTES_TOP_SOURCE, 7, 10,
+            "unsupported type for JSON encoding: bytes", "bytes"),
+        new StringifyShape("the bytes[] element",
+            "json_stringify_bytes_array", STRINGIFY_BYTES_ARRAY_SOURCE, 8, 10,
+            "unsupported type for JSON encoding: bytes", "bytes"),
+        new StringifyShape("the four-tables-deep leaf",
+            "json_stringify_bytes_deep", STRINGIFY_BYTES_DEEP_SOURCE, 13, 10,
+            "unsupported type for JSON encoding: bytes", "bytes"),
+        new StringifyShape("the class-instance member",
+            "json_stringify_class_control", STRINGIFY_CLASS_SOURCE, 8, 10,
+            "unsupported type for JSON encoding: table", "table"));
+
+    /**
+     * The direct drive of the JSON_STRINGIFY bytes carrier arm (ISSUE-0708,
+     * {@code bytes-value-semantics-production-realization} B2 and
+     * Verification 2): every bytes nesting shape raises the pinned tuple at
+     * the {@code json.stringify} call origin on the oracle, the LuaJIT
+     * artifact, and the JVM artifact; the class-instance and function
+     * carrier kinds keep their landed tokens; the runtime-ok round trip
+     * stays green; and the emitted walk renders the closed arm row rather
+     * than a site-held text.
+     */
+    private static void testJsonStringifyBytesArm() throws Exception {
+        System.out.println("-- the JSON_STRINGIFY bytes carrier arm: the three "
+            + "nesting shapes, the carrier-kind controls, and the rendered row --");
+        checkEq(FailureContractRegistry.arm(FailureArmId.JSON_STRINGIFY_UNSUPPORTED)
+                .pinnedExpectedText(), JSON_STRINGIFY_EXPECTED_TEXT,
+            "the pinned expected text is the JSON_STRINGIFY_UNSUPPORTED row's "
+                + "own field, never a re-literalled site text");
+        for (StringifyShape shape : JSON_STRINGIFY_SHAPES) {
+            Map<Target, Project> projects = new LinkedHashMap<>();
+            try {
+                Map<Target, Capture> captures = new LinkedHashMap<>();
+                for (Target target : Target.values()) {
+                    Project project = materializeScratch(shape.stem(),
+                        shape.source(), target);
+                    projects.put(target, project);
+                    List<Export> exports = exportsOf(
+                        project.entryModule().source(),
+                        project.entryFile().toString());
+                    Capture capture = driveShape(shape.label(), project, target,
+                        exports);
+                    captures.put(target, capture);
+                    checkShapeTuple(shape, target, capture);
+                }
+                Project luajitProject = projects.get(Target.LUAJIT);
+                List<Export> exports = exportsOf(
+                    luajitProject.entryModule().source(),
+                    luajitProject.entryFile().toString());
+                OracleOutcome oracle = oracleLeg(shape.label(), luajitProject,
+                    exports, null);
+                check(oracle != null && !oracle.success(), shape.label()
+                    + " [oracle]: the shared model raises the rejection: " + oracle);
+                if (oracle != null) {
+                    for (Target target : Target.values()) {
+                        check(oracle.agreesWith(captures.get(target)), shape.label()
+                            + " [" + target.laneName() + "]: the oracle terminal "
+                            + "agrees with the artifact tuple");
+                    }
+                }
+                checkEmittedStringifyArm(shape.label(), luajitProject);
+            } finally {
+                for (Project project : projects.values()) {
+                    deleteRecursively(project.root());
+                }
+            }
+        }
+        // The production-pipeline carrier-kind controls: the function member
+        // keeps its landed token, and the runtime-ok round trip stays green.
+        for (String fixture : List.of(
+                "backend-runtime/runtime-errors/json-stringify-function-e8001",
+                "backend-runtime/stdlib/json/json-stringify-roundtrip")) {
+            Map<Target, Project> projects = new LinkedHashMap<>();
+            try {
+                for (Target target : Target.values()) {
+                    Project project = materialize(fixture, target);
+                    projects.put(target, project);
+                    List<Export> exports = exportsOf(
+                        project.entryModule().source(),
+                        project.entryFile().toString());
+                    Leg leg = driveLeg(fixture, project, target, exports, null);
+                    checkEq("pin-exact", leg.outcome(), fixture + " ["
+                        + target.laneName() + "]: the carrier-kind control "
+                        + "reproduces its sidecar pins");
+                    if (fixture.endsWith("json-stringify-function-e8001")
+                            && leg.capture() != null) {
+                        checkEq("function", leg.capture().actual(), fixture + " ["
+                            + target.laneName() + "]: the function member keeps "
+                            + "its landed token");
+                        checkEq("unsupported type for JSON encoding: function",
+                            leg.capture().message(), fixture + " ["
+                                + target.laneName() + "]: the function member "
+                                + "renders the landed token");
+                    }
+                }
+            } finally {
+                for (Project project : projects.values()) {
+                    deleteRecursively(project.root());
+                }
+            }
+        }
+    }
+
+    /**
+     * Materializes one scratch entry module exactly as the lane does: the
+     * source is the entry module of the temp project (no companion, no
+     * declaration), and one generated {@code deal.json} wires the module
+     * root and the target backend.
+     */
+    private static Project materializeScratch(String stem, String source,
+            Target target) throws Exception {
+        Path root = Files.createTempDirectory("bytes-prod-scratch-");
+        Path srcRoot = root.resolve("src");
+        Files.createDirectories(srcRoot);
+        Path entry = srcRoot.resolve(stem + ".deal");
+        Files.writeString(entry, source, StandardCharsets.UTF_8);
+        Map<String, Materialized> modules = new LinkedHashMap<>();
+        modules.put(entry.toAbsolutePath().normalize().toString(),
+            new Materialized("scratch/" + stem + ".deal", source, 0));
+        Files.writeString(root.resolve("deal.json"),
+            "{\n  \"languageVersion\": \"1.2\",\n"
+                + "  \"moduleRoots\": [\"src\"],\n"
+                + "  \"output\": \"out\",\n"
+                + "  \"backend\": \""
+                + (target == Target.JVM ? "jvm" : "luajit") + "\"\n}\n");
+        return new Project(root, srcRoot, entry, stem, modules, Map.of(),
+            List.of(), List.of(), root.resolve("out"));
+    }
+
+    /**
+     * Compiles and drives one scratch shape through the release-owned
+     * production invocation on one target; the projected capture is null
+     * only when the compile or the publish failed (already reported).
+     */
+    private static Capture driveShape(String label, Project project, Target target,
+            List<Export> exports) throws Exception {
+        List<String> diagnostics = new ArrayList<>();
+        boolean compiled = compile(project, label, target, diagnostics);
+        check(compiled, label + " [" + target.laneName() + "]: the scratch entry "
+            + "compiles through the release-owned production invocation: "
+            + diagnostics);
+        check(diagnostics.isEmpty(), label + " [" + target.laneName() + "]: the "
+            + "scratch compile carries no diagnostic: " + diagnostics);
+        Path artifact = artifactOf(project, target);
+        check(Files.isRegularFile(artifact), label + " [" + target.laneName()
+            + "]: the artifact publishes at " + artifact);
+        if (!compiled || !Files.isRegularFile(artifact)) {
+            return null;
+        }
+        Execution execution = execute(project, exports, null, target);
+        check(!execution.probeDefect(), label + " [" + target.laneName()
+            + "]: the probe reaches the failing export: "
+            + (execution.capture() == null ? ""
+                : String.valueOf(execution.capture().message())));
+        checkEq(1, execution.exitCode(), label + " [" + target.laneName()
+            + "]: the failing artifact run exits 1");
+        check(execution.stdout().isEmpty() && execution.stderr().isEmpty(), label
+            + " [" + target.laneName() + "]: the probe projects the tuple through "
+            + "its transport, not its streams (stdout " + execution.stdout()
+            + "; stderr " + execution.stderr() + ")");
+        return normalize(project, execution.capture());
+    }
+
+    /** The pinned arm tuple of one scratch shape on one target. */
+    private static void checkShapeTuple(StringifyShape shape, Target target,
+            Capture capture) {
+        String label = shape.label() + " [" + target.laneName() + "]";
+        check(capture != null, label + ": the artifact drive captures the tuple");
+        if (capture == null) {
+            return;
+        }
+        checkEq("E8001", capture.code(), label + ": the pinned code");
+        checkEq(shape.message(), capture.message(), label + ": the pinned message");
+        checkEq(JSON_STRINGIFY_EXPECTED_TEXT, capture.expected(), label
+            + ": the arm row's own pinned expected text");
+        checkEq(shape.actual(), capture.actual(), label
+            + ": the pinned carrier-kind token");
+        checkEq(shape.line(), capture.line(), label
+            + ": the json.stringify call-expression line");
+        checkEq(shape.column(), capture.column(), label
+            + ": the json.stringify call-expression column");
+    }
+
+    /**
+     * The emitted walk's own render, asserted over the staged LuaJIT
+     * artifact: the bytes carrier arm sits in the table branch with the
+     * other carrier-kind arms and before the generic table fallback, the
+     * actual token comes from the closed std/json carrier-kind projection,
+     * and the message and expected text come from the serialized arm row —
+     * the failure site holds no composed text of its own.
+     */
+    private static void checkEmittedStringifyArm(String label, Project luajitProject)
+            throws Exception {
+        String emitted = Files.readString(artifactOf(luajitProject, Target.LUAJIT),
+            StandardCharsets.UTF_8);
+        int start = emitted.indexOf("elseif fn == \"JSON_STRINGIFY\" then");
+        int end = emitted.indexOf("elseif fn == \"MATH_FLOOR\" then");
+        check(start >= 0 && end > start, label + " [luajit]: the emitted chunk "
+            + "carries the JSON_STRINGIFY walk");
+        if (start < 0 || end <= start) {
+            return;
+        }
+        String walk = emitted.substring(start, end);
+        int arm = walk.indexOf(JSON_STRINGIFY_BYTES_ARM);
+        int functionArm = walk.indexOf("if v.__fn ~= nil or v.__f or "
+            + "v.__kind == \"function\" then");
+        int fallback = walk.indexOf("        sfFail(v)\n        return\n      end");
+        check(arm >= 0, label + " [luajit]: the walk's table branch carries the "
+            + "bytes carrier arm: " + JSON_STRINGIFY_BYTES_ARM);
+        check(functionArm >= 0 && arm > functionArm && fallback > arm, label
+            + " [luajit]: the bytes arm is ordered with the other carrier-kind "
+            + "arms and before the generic table fallback (arm " + arm
+            + ", function " + functionArm + ", fallback " + fallback + ")");
+        check(walk.contains("local actual = __stdJsonKind(v)"), label
+            + " [luajit]: the actual token is the closed std/json carrier-kind "
+            + "projection");
+        check(walk.contains("__sfail(\"JSON_STRINGIFY_UNSUPPORTED\""), label
+            + " [luajit]: the arm renders through the closed row");
+        check(walk.contains("__arms.JSON_STRINGIFY_UNSUPPORTED.p"), label
+            + " [luajit]: the expected text is the serialized row's own field");
+        check(!walk.contains("unsupported type for JSON encoding"), label
+            + " [luajit]: the failure site holds no composed message text");
+        check(walk.contains("if v.__c or v.__d then sfFail(v); return end"), label
+            + " [luajit]: the class-instance carrier arm stays landed beside the "
+            + "bytes arm");
+        check(walk.contains("if v.__t then"), label + " [luajit]: the shared "
+            + "table carrier arm stays landed");
+    }
+
+    // =========================================================================
     // 7. The baseline record
     // =========================================================================
 
@@ -2366,6 +2719,7 @@ public class BytesProductionDriveTest {
         testCorpusInventory();
         testProductionDrive();
         testExternalsIdentityConvention();
+        testJsonStringifyBytesArm();
         testBaseline();
         testOracleAgreement();
         testInvariants();

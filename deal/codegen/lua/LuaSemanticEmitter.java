@@ -10830,6 +10830,11 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
         if v.__fn ~= nil or v.__f or v.__kind == "function" then
           sfFail(v); return
         end
+        -- The bytes carrier keeps its own closed kind: a stringified
+        -- bytes value renders the pinned rejection (the std/json
+        -- carrier-kind projection's bytes member) through the same sfFail
+        -- render, never the generic table fallback.
+        if v.__kind == "bytes" then sfFail(v); return end
         sfFail(v)
         return
       end
