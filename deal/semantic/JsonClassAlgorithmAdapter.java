@@ -2,6 +2,7 @@ package deal.semantic;
 
 import deal.semantic.ir.ActualKind;
 import deal.semantic.ir.ClassOpsExecutor;
+import deal.semantic.ir.FailureProjections;
 import deal.semantic.ir.SemanticArray;
 import deal.semantic.ir.SemanticTable;
 import deal.semantic.ir.SourceOrigin;
@@ -135,13 +136,12 @@ public final class JsonClassAlgorithmAdapter {
         Objects.requireNonNull(fieldPathPrefix, "fieldPathPrefix must not be null");
         FirstFailure first = firstFailure(value);
         if (first != null && first.cycle()) {
-            // A cyclic container: the pinned failure is the re-entering
-            // container's own canonical token at its pinned path, and
-            // the mapping cannot represent the cycle — the pre-walk is
-            // the sole authority (the fixture delegate's identical
-            // walk pins the same row).
+            // A cyclic container: the needle's own fact selects the walk
+            // family's cycle arm, and the mapping cannot represent the
+            // cycle — the pre-walk is the sole authority (the fixture
+            // delegate's identical walk pins the same arm).
             return new ClassOpsExecutor.JsonStringify.Failure(
-                fieldPathPrefix + first.pinnedPath(), first.actual());
+                fieldPathPrefix + first.pinnedPath(), first.actual(), true);
         }
         SharedStdlibSemantics.Value mapped = toStdlib(value);
         if (mapped instanceof SharedStdlibSemantics.Value.Table table) {
@@ -237,8 +237,8 @@ public final class JsonClassAlgorithmAdapter {
      * array-nested) runtime value may contain map to E8's projections
      * instead of throwing: a function, a class instance, and the
      * internal missing view become E8's {@code Value.Other} carriers
-     * with their canonical actual kinds (a class carries the canonical
-     * {@code class:<ClassId>} atom text), and an invalid-scalar string
+     * with their canonical actual kinds (the closed typed-boundary
+     * projection's own classification), and an invalid-scalar string
      * maps with its classification preserved — E8's stringify walk then
      * projects each as the pinned {@code JSON_TO_ERROR} failure via the
      * seam's {@code Failure(fieldPath, actual)} terminal. Only clean
@@ -307,10 +307,11 @@ public final class JsonClassAlgorithmAdapter {
      * stringify rows: {@code pinnedPath} in the pinned
      * {@code JSON_TO_CLASS} segment convention relative to the walked
      * root, {@code e8Path} in E8's own dot-joined spelling,
-     * {@code actual} the canonical actual-kind token of the offending
+     * {@code actual} the closed typed-boundary token of the offending
      * value, and {@code cycle} true exactly when the failure is an
      * identity-based container re-entry (the mapping cannot represent
-     * that value, so the pre-walk is the sole authority).
+     * that value, so the pre-walk is the sole authority and its own
+     * closed marker selects the walk family's cycle arm).
      */
     private static final class FirstFailure extends RuntimeException {
 
@@ -392,19 +393,22 @@ public final class JsonClassAlgorithmAdapter {
             case ClassOpsExecutor.Value.Number number -> {
                 if (!Double.isFinite(number.value())) {
                     throw new FirstFailure(pinnedPath, e8Path,
-                        ActualKind.canonicalToken(ActualKind.NUMBER, null), false);
+                        FailureProjections.typedBoundaryToken(ActualKind.NUMBER, null),
+                        false);
                 }
             }
             case ClassOpsExecutor.Value.String string -> {
                 if (!(string.scalar() instanceof UnicodeScalars.Valid)) {
                     throw new FirstFailure(pinnedPath, e8Path,
-                        ActualKind.canonicalToken(ActualKind.INVALID_UNICODE, null), false);
+                        FailureProjections.typedBoundaryToken(
+                            ActualKind.INVALID_UNICODE, null), false);
                 }
             }
             case ClassOpsExecutor.Value.Table table -> {
                 if (!path.add(table.table())) {
                     throw new FirstFailure(pinnedPath, e8Path,
-                        ActualKind.canonicalToken(ActualKind.TABLE, null), true);
+                        FailureProjections.typedBoundaryToken(ActualKind.TABLE, null),
+                        true);
                 }
                 try {
                     for (String key : table.table().keys()) {
@@ -426,7 +430,8 @@ public final class JsonClassAlgorithmAdapter {
             case ClassOpsExecutor.Value.Array array -> {
                 if (!path.add(array.array())) {
                     throw new FirstFailure(pinnedPath, e8Path,
-                        ActualKind.canonicalToken(ActualKind.ARRAY, null), true);
+                        FailureProjections.typedBoundaryToken(ActualKind.ARRAY, null),
+                        true);
                 }
                 try {
                     for (int i = 0; i < array.array().size(); i++) {
@@ -441,17 +446,18 @@ public final class JsonClassAlgorithmAdapter {
             }
             case ClassOpsExecutor.Value.Function ignored -> throw new FirstFailure(
                 pinnedPath, e8Path,
-                ActualKind.canonicalToken(ActualKind.FUNCTION, null), false);
+                FailureProjections.typedBoundaryToken(ActualKind.FUNCTION, null), false);
             case ClassOpsExecutor.Value.Bytes ignored -> throw new FirstFailure(
                 pinnedPath, e8Path,
-                ActualKind.canonicalToken(ActualKind.BYTES, null), false);
+                FailureProjections.typedBoundaryToken(ActualKind.BYTES, null), false);
             case ClassOpsExecutor.Value.Class instance -> throw new FirstFailure(
                 pinnedPath, e8Path,
-                ActualKind.canonicalToken(ActualKind.CLASS, instance.classId().text()),
+                FailureProjections.typedBoundaryToken(ActualKind.CLASS,
+                    instance.classId().text()),
                 false);
             case ClassOpsExecutor.Value.Missing ignored -> throw new FirstFailure(
                 pinnedPath, e8Path,
-                ActualKind.canonicalToken(ActualKind.MISSING, null), false);
+                FailureProjections.typedBoundaryToken(ActualKind.MISSING, null), false);
         }
     }
 }

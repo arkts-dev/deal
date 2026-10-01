@@ -73,14 +73,6 @@ public enum FailureArmId {
     JSON_PARSE_ERROR,
     JSON_TO_WALK,
     JSON_STRINGIFY_UNSUPPORTED,
+    JSON_TO_WALK_CYCLE,
     SQRT_NEGATIVE;
-
-    /**
-     * The single arm whose projection binding is sibling-owned (declared
-     * here so the {@code JSON_TO_ERROR} row's first retained template has a
-     * bound arm; the {@code @jsonable} sibling binds its projection and its
-     * origin cell). A production consumer rendering it is a fail-closed
-     * producer defect.
-     */
-    public static final FailureArmId SIBLING_OWNED_ARM = JSON_TO_WALK;
 }

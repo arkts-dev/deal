@@ -219,16 +219,20 @@ public final class FailureContractRegistry {
             "any syntax, unknown-key, descriptor, default, or field failure returns language "
                 + "null; no partial instance is visible"));
 
-        // Two projections share the row: template 0 is the @jsonable
+        // Three projections share the row: template 0 is the @jsonable
         // C$toJson walk's first declaration-order failure (the generated
         // body's pinned fieldPath spelling), template 1 is the
         // STDLIB_CALL(JSON_STRINGIFY) rejection aligned to the corpus
         // pins (the canonical actual-kind token; the walker's fieldPath
-        // stays internal metadata, never part of the visible projection).
+        // stays internal metadata, never part of the visible projection),
+        // and template 2 is the walk family's cycle arm, appended together
+        // with its declaration so the row/arm consistency invariant holds
+        // at every merge boundary (jsonable-tojson-walk-arm-binding W4).
         rows.put(FailurePolicyId.JSON_TO_ERROR, makeRow(FailurePolicyId.JSON_TO_ERROR,
             DiagnosticCode.E8001,
             List.of("value at {fieldPath} is not JSON serializable: {actual}",
-                "unsupported type for JSON encoding: {actual}"),
+                "unsupported type for JSON encoding: {actual}",
+                "cyclic value cannot be encoded as JSON"),
             List.of("fieldPath", "actual"),
             "call origin", CAUSE_NONE, FRAMES_ACTIVE,
             "first declaration-order unsupported value, wrong identity, cycle, missing "
@@ -498,16 +502,25 @@ public final class FailureContractRegistry {
             "reason", FailureArm.ParameterSource.REASON));
         declared.add(arm(FailureArmId.JSON_TO_WALK, FailurePolicyId.JSON_TO_ERROR, 0,
             FailureArm.ExpectedSource.NONE, null,
-            FailureArm.ActualProjection.SIBLING_OWNED,
-            FailureArm.OriginConvention.SIBLING_OWNED, FailureArm.RenderScope.TOP_LEVEL,
+            FailureArm.ActualProjection.TYPED_BOUNDARY,
+            FailureArm.OriginConvention.CALL_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL,
             "fieldPath", FailureArm.ParameterSource.FIELD_PATH,
-            "actual", FailureArm.ParameterSource.SIBLING_OWNED_ACTUAL));
+            "actual", FailureArm.ParameterSource.TYPED_BOUNDARY_ACTUAL));
         declared.add(arm(FailureArmId.JSON_STRINGIFY_UNSUPPORTED,
             FailurePolicyId.JSON_TO_ERROR, 1,
             FailureArm.ExpectedSource.PINNED_TEXT, "string, number, boolean, or table",
             FailureArm.ActualProjection.CARRIER_KIND,
             FailureArm.OriginConvention.CALL_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL,
             "actual", FailureArm.ParameterSource.CARRIER_KIND_ACTUAL));
+        // The walk family's cycle arm lands together with its appended row
+        // template (jsonable-tojson-walk-arm-binding W4): template index 2
+        // keeps the walk arm at 0 and the std/json arm at 1, so the
+        // row/arm consistency invariant holds at every merge boundary.
+        declared.add(arm(FailureArmId.JSON_TO_WALK_CYCLE,
+            FailurePolicyId.JSON_TO_ERROR, 2,
+            FailureArm.ExpectedSource.NONE, null,
+            FailureArm.ActualProjection.NONE,
+            FailureArm.OriginConvention.CALL_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));
         declared.add(arm(FailureArmId.SQRT_NEGATIVE, FailurePolicyId.SQRT_NEGATIVE, 0,
             FailureArm.ExpectedSource.NONE, null,
             FailureArm.ActualProjection.CANONICAL_VALUE_TEXT,
@@ -615,6 +628,12 @@ public final class FailureContractRegistry {
             Objects.requireNonNull(arm, "an arm must not be null");
             if (!seen.add(arm.id())) {
                 throw new IllegalStateException("duplicate arm binding for " + arm.id());
+            }
+            if (arm.hasSiblingOwnedBindingSlot()) {
+                throw new IllegalStateException("arm " + arm.id() + " carries a "
+                    + "sibling-owned marker in its projection binding, its origin "
+                    + "convention, or its parameter sources; no declared arm may "
+                    + "carry one (jsonable-tojson-walk-arm-binding W5)");
             }
             FailurePolicyRow row = rows.get(arm.policy());
             if (row == null) {
@@ -751,9 +770,9 @@ public final class FailureContractRegistry {
      * {@code actual} fields. The arm's fields are exactly its declaration:
      * a missing value for a declared field, a value for an undeclared
      * field, a missing or extra named parameter, a render of an
-     * {@code INNER_ONLY} arm, or a production render of the sibling-owned
-     * arm fails closed as a producer defect — never a fallback text, never
-     * a composed suffix.
+     * {@code INNER_ONLY} arm, or the retained sibling-owned guard of a
+     * marked arm fails closed as a producer defect — never a fallback text,
+     * never a composed suffix.
      *
      */
     public static BoundaryFailure render(FailureArmId id, Map<String, String> parameters,
@@ -775,6 +794,33 @@ public final class FailureContractRegistry {
             actual, metadataOf(arm, parameters), cause);
     }
 
+    /**
+     * One arm render addressed by its retained template position — the
+     * legacy {@code (policy, templateIndex, fields)} entry point. The bound
+     * arm's own template, its own code, and its declared field contract are
+     * the render: a caller cannot instantiate a retained row template behind
+     * its arm's back, so the arm's declared expected/actual shapes, its
+     * parameters, and its render scope can never be bypassed in production.
+     * The supplied metadata map is the render's metadata verbatim (the walk's
+     * internal position keys included) — it is never re-derived here.
+     *
+     * <p>No declared arm carries a sibling-owned binding slot, so this entry
+     * point resolves the bound arm's own declaration for every retained
+     * template; the marker's render-time guards stay as the closed backstop
+     * for a hand-built marked arm ({@link #render}, {@link #checkActualShape},
+     * {@code FailureProjections.actualFor}).</p>
+     *
+     * @param policy        the row's policy; must not be null
+     * @param templateIndex the retained template index; must be in range
+     * @param expected      the expected field, or {@code null} exactly when
+     *                      the arm declares none
+     * @param actual        the actual field, or {@code null} exactly when the
+     *                      arm declares none
+     * @param metadata      the render's metadata; may be empty, never null
+     * @param cause         the leaf failure where the row pins one, else null
+     * @return the rendered boundary failure
+     * @throws BoundaryExecutor.Defect if the render is not the arm's own
+     */
     public static BoundaryFailure renderAtTemplate(FailurePolicyId policy, int templateIndex,
                                                    String expected, String actual,
                                                    Map<String, String> metadata,
@@ -783,13 +829,6 @@ public final class FailureContractRegistry {
         FailureArm arm = armForTemplate(policy, templateIndex);
         Map<String, String> supplied = metadata == null
             ? new LinkedHashMap<>() : metadata;
-        if (arm.isSiblingOwned()) {
-
-            String message = instantiate(row(policy).templates().get(templateIndex), expected,
-                actual, supplied);
-            return new BoundaryFailure(policy, codeOfArm(arm), message, expected, actual,
-                supplied, cause);
-        }
         Map<String, String> parameters = new LinkedHashMap<>();
         for (String parameter : arm.parameters()) {
             // The parameter value comes from the declared source: an
@@ -1062,27 +1101,6 @@ public final class FailureContractRegistry {
         return new BoundaryExecutor.Defect("arm " + arm.id() + " declares its " + field
             + " as " + declared + "; the render supplied \"" + value + "\" (a token "
             + "outside the arm's declared shape is a producer defect)");
-    }
-
-    /** Instantiates one row template from the legacy field surface (walk render). */
-    private static String instantiate(String template, String expected, String actual,
-                                      Map<String, String> metadata) {
-        String message = template;
-        if (expected != null) {
-            message = message.replace("{expected}", expected);
-        }
-        if (actual != null) {
-            message = message.replace("{actual}", actual);
-        }
-        for (Map.Entry<String, String> entry : metadata.entrySet()) {
-            message = message.replace("{" + entry.getKey() + "}", entry.getValue());
-        }
-        if (message.indexOf('{') >= 0 || message.indexOf('}') >= 0) {
-            throw new BoundaryExecutor.Defect(
-                "an uninstantiated placeholder remains in the pinned template: \""
-                    + message + "\"");
-        }
-        return message;
     }
 
     /**

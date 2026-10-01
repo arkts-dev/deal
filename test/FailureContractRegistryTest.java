@@ -300,7 +300,8 @@ public class FailureContractRegistryTest {
 
         expectRow(FailurePolicyId.JSON_TO_ERROR, "E8001", "RUNTIME",
             List.of("value at {fieldPath} is not JSON serializable: {actual}",
-                "unsupported type for JSON encoding: {actual}"),
+                "unsupported type for JSON encoding: {actual}",
+                "cyclic value cannot be encoded as JSON"),
             List.of("fieldPath", "actual"),
             "call origin", none, frames,
             "first declaration-order unsupported value, wrong identity, cycle, missing "

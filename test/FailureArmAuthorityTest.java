@@ -8,13 +8,17 @@ import deal.semantic.ir.BoundaryExecutor;
 import deal.semantic.ir.BoundaryFailure;
 import deal.semantic.ir.BoundaryOutcome;
 import deal.semantic.ir.BoundaryValueView;
+import deal.semantic.ir.ClassOpsExecutor;
 import deal.semantic.ir.FailureArm;
 import deal.semantic.ir.FailureArmId;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FailurePolicyRow;
 import deal.semantic.ir.FailureProjections;
+import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.RuntimeDescriptor;
+import deal.semantic.ir.SemanticArray;
+import deal.semantic.ir.SemanticTable;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -94,6 +98,8 @@ public class FailureArmAuthorityTest {
         testHostInnerReasonDescriptorValidation();
         testEmittedParameterContract();
         testNegativeSingleSourceControl();
+        testWalkArmThreeConsumerDrive();
+        testMovedElementCell();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -149,6 +155,19 @@ public class FailureArmAuthorityTest {
             return fail.failure();
         }
         throw new IllegalStateException(what + " did not fail: " + outcome);
+    }
+
+    /**
+     * The declared arm list with one hand-built arm substituted for the
+     * declared arm of the same id — the data-driven completeness subject of
+     * the retargeted marker negative (W5).
+     */
+    private static List<FailureArm> markedArms(FailureArm replacement) {
+        List<FailureArm> arms = new ArrayList<>();
+        for (FailureArm declared : FailureContractRegistry.arms().values()) {
+            arms.add(declared.id() == replacement.id() ? replacement : declared);
+        }
+        return arms;
     }
 
     /** The JVM runtime's failure of one check, or {@code null} when it passed. */
@@ -265,18 +284,63 @@ public class FailureArmAuthorityTest {
                 .equals(List.of("host async function must return an async operation, "
                     + "got {actual}")),
             "ASYNC_OPERATION_HANDLE renders the async-shape arm");
-        check(FailureContractRegistry.arm(FailureArmId.JSON_TO_WALK).policy()
-                    == FailurePolicyId.JSON_TO_ERROR
-                && FailureContractRegistry.arm(FailureArmId.JSON_TO_WALK).template()
+        // The walk arm's binding (jsonable-tojson-walk-arm-binding W1/W2):
+        // the closed typed-boundary projection, the closed call-expression
+        // origin convention, and the typed-boundary actual source; the
+        // marker is gone from the declared table.
+        FailureArm walk = FailureContractRegistry.arm(FailureArmId.JSON_TO_WALK);
+        check(walk.policy() == FailurePolicyId.JSON_TO_ERROR
+                && walk.templateIndex() == 0
+                && walk.template()
                     .equals("value at {fieldPath} is not JSON serializable: {actual}")
-                && FailureContractRegistry.arm(FailureArmId.JSON_TO_WALK).isSiblingOwned(),
-            "the JSON_TO_ERROR walk template is bound to its declared sibling-owned arm");
+                && walk.parameters().equals(List.of("fieldPath", "actual"))
+                && walk.parameterSources().equals(Map.of(
+                    "fieldPath", FailureArm.ParameterSource.FIELD_PATH,
+                    "actual", FailureArm.ParameterSource.TYPED_BOUNDARY_ACTUAL))
+                && walk.expectedSource() == FailureArm.ExpectedSource.NONE
+                && walk.actualProjection() == FailureArm.ActualProjection.TYPED_BOUNDARY
+                && walk.origin() == FailureArm.OriginConvention.CALL_EXPRESSION
+                && walk.scope() == FailureArm.RenderScope.TOP_LEVEL
+                && !walk.isSiblingOwned(),
+            "the JSON_TO_WALK arm is bound: TYPED_BOUNDARY actual, the "
+                + "TYPED_BOUNDARY_ACTUAL source for {actual}, CALL_EXPRESSION, TOP_LEVEL, "
+                + "not sibling-owned");
+        check(FailureContractRegistry.arms().values().stream()
+                .noneMatch(FailureArm::hasSiblingOwnedBindingSlot),
+            "no declared arm carries a sibling-owned marker in its projection binding, "
+                + "its origin convention, or its parameter sources");
+        // The cycle arm's declaration (W4): the appended row template, no
+        // parameters, no expected/actual, the call-expression origin.
+        FailureArm cycle = FailureContractRegistry.arm(FailureArmId.JSON_TO_WALK_CYCLE);
+        check(cycle.policy() == FailurePolicyId.JSON_TO_ERROR
+                && cycle.templateIndex() == 2
+                && cycle.template().equals("cyclic value cannot be encoded as JSON")
+                && cycle.parameters().isEmpty()
+                && cycle.parameterSources().isEmpty()
+                && cycle.expectedSource() == FailureArm.ExpectedSource.NONE
+                && cycle.pinnedExpectedText() == null
+                && cycle.actualProjection() == FailureArm.ActualProjection.NONE
+                && cycle.origin() == FailureArm.OriginConvention.CALL_EXPRESSION
+                && cycle.scope() == FailureArm.RenderScope.TOP_LEVEL,
+            "the JSON_TO_WALK_CYCLE arm declares the pinned cycle text with no "
+                + "parameters, no expected/actual, CALL_EXPRESSION, TOP_LEVEL");
         check(FailureContractRegistry.row(FailurePolicyId.JSON_TO_ERROR).templates()
                 .equals(List.of("value at {fieldPath} is not JSON serializable: {actual}",
-                    "unsupported type for JSON encoding: {actual}"))
+                    "unsupported type for JSON encoding: {actual}",
+                    "cyclic value cannot be encoded as JSON"))
+                && FailureContractRegistry.armForTemplate(
+                    FailurePolicyId.JSON_TO_ERROR, 0).id() == FailureArmId.JSON_TO_WALK
+                && FailureContractRegistry.armForTemplate(
+                    FailurePolicyId.JSON_TO_ERROR, 1).id()
+                    == FailureArmId.JSON_STRINGIFY_UNSUPPORTED
+                && FailureContractRegistry.armForTemplate(
+                    FailurePolicyId.JSON_TO_ERROR, 2).id()
+                    == FailureArmId.JSON_TO_WALK_CYCLE
                 && FailureContractRegistry.row(FailurePolicyId.INT32_RESULT).templates()
                     .equals(List.of("int out of safe range")),
-            "the JSON_TO_ERROR and INT32_RESULT row data stay as landed");
+            "the JSON_TO_ERROR row carries the three templates with the walk template "
+                + "first, the std/json template second, and the cycle template third; "
+                + "the INT32_RESULT row data stays as landed");
     }
 
     // =========================================================================
@@ -352,9 +416,48 @@ public class FailureArmAuthorityTest {
         expectDefect(() -> FailureContractRegistry.renderInner(
                 FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", "int")),
             "a top-level arm rendered as an inner reason fails closed");
-        expectDefect(() -> FailureContractRegistry.render(FailureArmId.JSON_TO_WALK,
-                Map.of("fieldPath", "a", "actual", "table"), null, "table", null),
-            "a production render of the SIBLING_OWNED arm fails closed");
+        // The retargeted marker negative (W5): the only remaining entry
+        // that can receive a hand-built marked arm is the data-driven
+        // completeness check, and the constructed marked arms fail closed
+        // in each marked binding slot.
+        FailureArm markedProjection = new FailureArm(FailureArmId.TYPED_BOUNDARY_KIND,
+            FailurePolicyId.TYPE_DESCRIPTOR, 0, "expected {kind}",
+            List.of("kind"), Map.of("kind", FailureArm.ParameterSource.KIND_TEXT),
+            FailureArm.ExpectedSource.KIND_TOKEN, null,
+            FailureArm.ActualProjection.SIBLING_OWNED,
+            FailureArm.OriginConvention.BOUNDARY_CELL, FailureArm.RenderScope.TOP_LEVEL,
+            null);
+        expectIllegalState(() -> FailureContractRegistry.checkArmConsistency(
+                FailureContractRegistry.rows(),
+                markedArms(markedProjection)),
+            "a hand-built arm whose projection binding is SIBLING_OWNED fails the "
+                + "completeness check closed");
+        FailureArm markedOrigin = new FailureArm(FailureArmId.JSON_TO_WALK,
+            FailurePolicyId.JSON_TO_ERROR, 0, "value at {fieldPath} is not JSON "
+                + "serializable: {actual}", List.of("fieldPath", "actual"),
+            Map.of("fieldPath", FailureArm.ParameterSource.FIELD_PATH, "actual",
+                FailureArm.ParameterSource.TYPED_BOUNDARY_ACTUAL),
+            FailureArm.ExpectedSource.NONE, null,
+            FailureArm.ActualProjection.TYPED_BOUNDARY,
+            FailureArm.OriginConvention.SIBLING_OWNED, FailureArm.RenderScope.TOP_LEVEL,
+            null);
+        expectIllegalState(() -> FailureContractRegistry.checkArmConsistency(
+                FailureContractRegistry.rows(), markedArms(markedOrigin)),
+            "a hand-built arm whose origin convention is SIBLING_OWNED fails the "
+                + "completeness check closed");
+        FailureArm markedSource = new FailureArm(FailureArmId.JSON_TO_WALK,
+            FailurePolicyId.JSON_TO_ERROR, 0, "value at {fieldPath} is not JSON "
+                + "serializable: {actual}", List.of("fieldPath", "actual"),
+            Map.of("fieldPath", FailureArm.ParameterSource.FIELD_PATH, "actual",
+                FailureArm.ParameterSource.SIBLING_OWNED_ACTUAL),
+            FailureArm.ExpectedSource.NONE, null,
+            FailureArm.ActualProjection.TYPED_BOUNDARY,
+            FailureArm.OriginConvention.CALL_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL,
+            null);
+        expectIllegalState(() -> FailureContractRegistry.checkArmConsistency(
+                FailureContractRegistry.rows(), markedArms(markedSource)),
+            "a hand-built arm whose parameter source is SIBLING_OWNED_ACTUAL fails the "
+                + "completeness check closed");
         expectDefect(() -> FailureContractRegistry.render(FailureArmId.INT32_RANGE,
                 Map.of(), "int", null, null),
             "a supplied expected field on a field-less arm fails closed");
@@ -430,6 +533,11 @@ public class FailureArmAuthorityTest {
             "the JVM host inner-reason helpers resolve the registry's own texts "
                 + "(the int refinement, the surrogate string-carrier arm, the "
                 + "signed32-range pass-through)");
+    }
+
+    /** One Lua double-quoted string literal (the same escaping as the artifacts). */
+    private static String luaString(String text) {
+        return quote(text);
     }
 
     private static String quote(String text) {
@@ -656,15 +764,27 @@ public class FailureArmAuthorityTest {
      */
     private static List<String> runPreludeProbe(String body, String probeName, int minRows)
             throws Exception {
+        return runProbe(emittedArmsChunk(), "arms", body, probeName, minRows);
+    }
+
+    /**
+     * Runs one probe body against one emitted production chunk under
+     * {@code luajit}: the chunk (up to its surface return) plus the standard
+     * {@code row(label, ok, value)} helper and the caller's body. Returns the
+     * printed rows.
+     */
+    private static List<String> runProbe(String chunk, String modulePath, String body,
+                                         String probeName, int minRows)
+            throws Exception {
         Path workspace = Files.createTempDirectory("failure-arm-" + probeName);
         try {
-            Path artifact = workspace.resolve("arms.lua");
-            Files.writeString(artifact, emittedArmsChunk(), StandardCharsets.UTF_8);
+            Path artifact = workspace.resolve(modulePath + ".lua");
+            Files.writeString(artifact, chunk, StandardCharsets.UTF_8);
             Path probe = workspace.resolve(probeName + ".lua");
             Files.writeString(probe, """
                 local text = io.open("%s"):read("*a")
                 text = text:gsub("%%s*$", "")
-                local tail = 'return __exportSurfaces["arms"]'
+                local tail = 'return __exportSurfaces["%s"]'
                 assert(text:sub(-#tail) == tail, "the artifact tail is the surface return")
                 local row = [==[
                 local function row(label, ok, value)
@@ -676,10 +796,15 @@ public class FailureArmAuthorityTest {
                 ]==]
                 local chunk = assert(load(text:sub(1, #text - #tail) .. row, "%s"))
                 chunk()
-                """.formatted(artifact.toAbsolutePath().toString(), body, probeName),
+                """.formatted(artifact.toAbsolutePath().toString(), modulePath, body,
+                    probeName),
                 StandardCharsets.UTF_8);
             ProcessBuilder builder = new ProcessBuilder("luajit", probeName + ".lua");
             builder.directory(workspace.toFile());
+            // The probe drives the emitted helpers directly: the deferred-main
+            // flag keeps the chunk's module-init walk (which the drive does
+            // not need) out of the load path.
+            builder.environment().put("DEAL_DEFER_MAIN", "1");
             builder.redirectErrorStream(true);
             Process process = builder.start();
             String output = new String(process.getInputStream().readAllBytes(),
@@ -968,6 +1093,14 @@ public class FailureArmAuthorityTest {
     private static Tuple luaTuple(String row, String span) {
         String[] parts = row.split("\\|", -1);
         return new Tuple(parts[1], parts[4], span, parts[2], parts[3]);
+    }
+
+    /** One walk-probe row's tuple: an empty field is an absent (null) field. */
+    private static Tuple walkLuaTuple(String row) {
+        String[] parts = row.split("\\|", -1);
+        return new Tuple(parts[1], parts[4], WALK_SPAN,
+            parts[2].isEmpty() ? null : parts[2],
+            parts[3].isEmpty() ? null : parts[3]);
     }
 
     // =========================================================================
@@ -1434,6 +1567,638 @@ public class FailureArmAuthorityTest {
             "a parameterless inner arm renders with no parameters (the control)");
         checkEq("fieldless-control|E8004|int out of safe range", rows.get(4),
             "the parameterless arm's own render stays green (the control)");
+    }
+
+
+    // =========================================================================
+    // 14. The walk arm's three-consumer drive
+    //     (jsonable-tojson-walk-arm-binding V2-V5)
+    // =========================================================================
+
+    /** The walk drive's class identity. */
+    private static final deal.semantic.ir.ClassId WALK_ID =
+        new deal.semantic.ir.ClassId("arm/walk", "Walk");
+
+    /** The executing op's own source span (the emitted and driven origin). */
+    private static final String WALK_SPAN = "arm-walk.deal:2:8";
+
+    /** The walk drive's layout (the same declaration order on every consumer). */
+    private static deal.semantic.ir.ClassLayout walkLayout() {
+        return new deal.semantic.ir.ClassLayout(WALK_ID, List.of(
+            new deal.semantic.ir.ClassLayout.FieldLayout("name",
+                RuntimeDescriptor.String.INSTANCE, true,
+                deal.semantic.ir.DefaultOwner.LOCAL),
+            new deal.semantic.ir.ClassLayout.FieldLayout("age",
+                RuntimeDescriptor.Int.INSTANCE, true,
+                deal.semantic.ir.DefaultOwner.LOCAL),
+            new deal.semantic.ir.ClassLayout.FieldLayout("ratio",
+                RuntimeDescriptor.Number.INSTANCE, true,
+                deal.semantic.ir.DefaultOwner.LOCAL),
+            new deal.semantic.ir.ClassLayout.FieldLayout("data",
+                RuntimeDescriptor.Table.INSTANCE, true,
+                deal.semantic.ir.DefaultOwner.LOCAL),
+            new deal.semantic.ir.ClassLayout.FieldLayout("tags",
+                new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE), true,
+                deal.semantic.ir.DefaultOwner.LOCAL)));
+    }
+
+    /** One drive case: the same failing value on the three consumers. */
+    private record WalkCase(String label, String arm, String fieldPath, String actual,
+                            deal.semantic.ir.ClassOpsExecutor.Value oracleValue,
+                            String luaRoot,
+                            deal.codegen.jvm.JvmRuntime.ClassInstance jvmRoot) {
+
+        /** The arm's own instantiated message for this case. */
+        String message() {
+            return FailureArmId.JSON_TO_WALK_CYCLE.name().equals(arm)
+                ? "cyclic value cannot be encoded as JSON"
+                : "value at " + fieldPath + " is not JSON serializable: " + actual;
+        }
+    }
+
+    /** The walk drive's cases: the admission positions every named consumer fails. */
+    private static List<WalkCase> walkCases() {
+        List<WalkCase> cases = new ArrayList<>();
+        // A fractional value at an int-typed declared field: number by the
+        // value's own variant, never the declared int text.
+        cases.add(walkCase("fractional-int-field", "JSON_TO_WALK", "age", "number",
+            Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(3.5),
+                "ratio", new ClassOpsExecutor.Value.Number(0.5),
+                "data", walkEmptyTable(), "tags", walkIntArray(1)),
+            Map.of("name", luaString("n"), "age", "3.5", "ratio", "0.5",
+                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}"),
+            Map.of("name", "n", "age", 3.5, "ratio", 0.5, "data",
+                new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
+        // A nonfinite value at an array(int) element: number.
+        cases.add(walkCase("array-element-nonfinite", "JSON_TO_WALK", "tags[1]", "number",
+            Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Int(1),
+                "ratio", new ClassOpsExecutor.Value.Number(0.5),
+                "data", walkEmptyTable(),
+                "tags", walkIntThenNonfiniteArray()),
+            Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
+                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 2, [1] = 1, [2] = math.huge}"),
+            Map.of("name", "n", "age", 1L, "ratio", 0.5, "data",
+                new deal.codegen.jvm.JvmRuntime.Table(), "tags",
+                jvmNumberArray(1L, Double.POSITIVE_INFINITY))));
+        // A nonfinite value at a number-typed declared field: number.
+        cases.add(walkCase("nonfinite-number-field", "JSON_TO_WALK", "ratio", "number",
+            Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Int(1),
+                "ratio", new ClassOpsExecutor.Value.Number(Double.NaN),
+                "data", walkEmptyTable(), "tags", walkIntArray(1)),
+            Map.of("name", luaString("n"), "age", "1", "ratio", "0/0",
+                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}"),
+            Map.of("name", "n", "age", 1L, "ratio", Double.NaN, "data",
+                new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
+        // A table value at a string-typed declared field: its closed kind.
+        cases.add(walkCase("wrong-kind-at-string-field", "JSON_TO_WALK", "name", "table",
+            Map.of("name", walkEmptyTable(), "age", new ClassOpsExecutor.Value.Int(1),
+                "ratio", new ClassOpsExecutor.Value.Number(0.5),
+                "data", walkEmptyTable(), "tags", walkIntArray(1)),
+            Map.of("name", LUA_TABLE_CARRIER, "age", "1", "ratio", "0.5",
+                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}"),
+            Map.of("name", new deal.codegen.jvm.JvmRuntime.Table(), "age", 1L,
+                "ratio", 0.5, "data", new deal.codegen.jvm.JvmRuntime.Table(), "tags",
+                jvmIntArray(1L))));
+        // An absent required value: the typed-boundary nil token.
+        cases.add(walkCase("missing-required-field", "JSON_TO_WALK", "age", "nil",
+            Map.of("name", walkString("n"), "ratio", new ClassOpsExecutor.Value.Number(0.5),
+                "data", walkEmptyTable(), "tags", walkIntArray(1)),
+            Map.of("name", luaString("n"), "ratio", "0.5",
+                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}"),
+            Map.of("name", "n", "ratio", 0.5, "data",
+                new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
+        // A present null on a non-nullable field: the null token.
+        cases.add(walkCase("present-null-non-nullable", "JSON_TO_WALK", "name", "null",
+            Map.of("name", ClassOpsExecutor.Value.Null.INSTANCE,
+                "age", new ClassOpsExecutor.Value.Int(1),
+                "ratio", new ClassOpsExecutor.Value.Number(0.5),
+                "data", walkEmptyTable(), "tags", walkIntArray(1)),
+            Map.of("name", "__NULL", "age", "1", "ratio", "0.5",
+                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}"),
+            walkNullField("name")));
+        // An invalid Unicode scalar sequence: invalid-unicode.
+        cases.add(walkCase("invalid-scalar-string", "JSON_TO_WALK", "name",
+            "invalid-unicode",
+            Map.of("name", walkString("\uD800"), "age", new ClassOpsExecutor.Value.Int(1),
+                "ratio", new ClassOpsExecutor.Value.Number(0.5),
+                "data", walkEmptyTable(), "tags", walkIntArray(1)),
+            Map.of("name", "\"\\237\\160\\128\"", "age", "1", "ratio", "0.5",
+                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}"),
+            Map.of("name", "\uD800", "age", 1L, "ratio", 0.5, "data",
+                new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
+        // A path-local table re-entry: the cycle arm, no expected/actual.
+        cases.add(walkCase("cyclic-table-field", "JSON_TO_WALK_CYCLE", null, null,
+            Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Int(1),
+                "ratio", new ClassOpsExecutor.Value.Number(0.5),
+                "data", walkCyclicTable(), "tags", walkIntArray(1)),
+            Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
+                "data", "cyc", "tags", "{__a = true, __n = 1, [1] = 1}"),
+            Map.of("name", "n", "age", 1L, "ratio", 0.5, "data", jvmCyclicTable(),
+                "tags", jvmIntArray(1L))));
+        return cases;
+    }
+
+    /**
+     * The walk arm's three-consumer drive: for each case the oracle's class
+     * walk (the production stringify adapter), the emitted Lua walk machinery
+     * under real luajit, and the emitted JVM walk machinery select the same
+     * closed arm and publish the identical
+     * {@code (code, message, origin, expected, actual)} tuple. The drive
+     * fails if the authority slice is broken (a changed template or field
+     * shape) or if the binding is absent (a marked arm fails closed at the
+     * render).
+     */
+    static void testWalkArmThreeConsumerDrive() throws Exception {
+        System.out.println("-- the walk arm's three-consumer drive --");
+        List<WalkCase> cases = walkCases();
+
+        // The emitted artifacts: the walk's call sites render the arm the walk
+        // selects, through the one arm renderer, at the executing op's own
+        // SourceOrigin.
+        String lua = emittedWalkChunk();
+        check(lua.contains("__eT = __arm(__jarmT, __jcparT, \"" + WALK_SPAN
+                + "\", nil, __jfactT)"),
+            "the emitted Lua walk site renders the selected arm through the one arm "
+                + "renderer at the op's own SourceOrigin");
+        check(!lua.contains("__failExpr(\"E8001\", __renderTemplate(\"JSON_TO_WALK\""),
+            "the emitted Lua walk site composes no message of its own");
+        String jvm = emittedWalkJvm();
+        check(jvm.contains("JvmRuntime.arm(deal.semantic.ir.FailureArmId.JSON_TO_WALK, "
+                + "java.util.Map.of(\"fieldPath\", projection.fieldPath, \"actual\", "
+                + "projection.actual), \"" + WALK_SPAN + "\", null, projection.actual)"),
+            "the emitted JVM catch site renders the walk arm at the op's own SourceOrigin");
+        check(jvm.contains("JvmRuntime.arm(deal.semantic.ir.FailureArmId.JSON_TO_WALK_CYCLE, "
+                + "java.util.Map.of(), \"" + WALK_SPAN + "\", null, null)"),
+            "the emitted JVM catch site renders the cycle arm with no parameters");
+        check(!jvm.contains("value at \" + projection.fieldPath"),
+            "the emitted JVM catch site composes no message of its own");
+
+        // The oracle leg (the class walk with a supplied call origin = the
+        // executing op's own SourceOrigin) and the emitted Lua leg.
+        deal.semantic.ir.SemanticOp op = walkJsonOp();
+        Map<deal.semantic.ir.ClassId, deal.semantic.ir.ClassLayout> layouts =
+            Map.of(WALK_ID, walkLayout());
+        deal.semantic.ir.SourceOrigin opOrigin = op.origin();
+        String opOriginText = opOrigin.sourceId() + ":" + opOrigin.span().startLine()
+            + ":" + opOrigin.span().startColumn();
+        checkEq(WALK_SPAN, opOriginText,
+            "the drive's op carries the pinned origin span");
+        List<String> luaRows = runWalkProbe(cases);
+        deal.codegen.jvm.JvmJson.Plan plan = walkPlan();
+        for (int i = 0; i < cases.size(); i++) {
+            WalkCase drive = cases.get(i);
+            // The oracle leg: the class walk driven with the executing op's
+            // own origin.
+            Map<deal.semantic.ir.ValueId, ClassOpsExecutor.Value> values = new LinkedHashMap<>();
+            values.put(((deal.semantic.ir.KindPayload.JsonToClassPayload) op.payload())
+                .classValue(), drive.oracleValue());
+            ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome =
+                ClassOpsExecutor.executeJsonToClass(op, values, layouts,
+                    deal.semantic.JsonClassAlgorithmAdapter.stringifier(), opOrigin);
+            check(outcome instanceof ClassOpsExecutor.Outcome.Failure<
+                    ClassOpsExecutor.Value> failure,
+                drive.label() + ": the oracle's class walk fails the value");
+            if (!(outcome instanceof ClassOpsExecutor.Outcome.Failure<
+                    ClassOpsExecutor.Value> failure)) {
+                continue;
+            }
+            BoundaryFailure rendered = failure.failure().failure();
+            Tuple oracle = tupleOf(rendered, failure.failure().origin().sourceId() + ":"
+                + failure.failure().origin().span().startLine() + ":"
+                + failure.failure().origin().span().startColumn());
+            checkEq(new Tuple("E8001", drive.message(), WALK_SPAN,
+                    null, drive.actual()), oracle,
+                drive.label() + ": the oracle renders the bound walk arm's tuple");
+            checkEq(failure.failure().origin(), opOrigin,
+                drive.label() + ": the class walk renders the operand it was given");
+
+            // The emitted Lua leg, under real luajit.
+            Tuple luaTuple = walkLuaTuple(luaRows.get(i));
+            checkEq(null, firstDifferingField(oracle, luaTuple),
+                drive.label() + ": the emitted Lua walk machinery renders the "
+                    + "oracle's identical tuple");
+
+            // The emitted JVM leg (the shared walk machinery the artifact
+            // links), rendered exactly like the emitted catch site.
+            deal.codegen.jvm.JvmJson.Projection projection = null;
+            try {
+                deal.codegen.jvm.JvmJson.toClass(plan, drive.jvmRoot());
+            } catch (deal.codegen.jvm.JvmJson.Projection caught) {
+                projection = caught;
+            }
+            check(projection != null,
+                drive.label() + ": the JVM walk machinery fails the value");
+            if (projection == null) {
+                continue;
+            }
+            deal.codegen.jvm.JvmRuntime.DealError jvmError = projection.cycle
+                ? deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK_CYCLE,
+                    Map.of(), WALK_SPAN, null, null)
+                : deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
+                    Map.of("fieldPath", projection.fieldPath, "actual",
+                        projection.actual), WALK_SPAN, null, projection.actual);
+            checkEq(null, firstDifferingField(oracle, new Tuple(jvmError.code,
+                    jvmError.msg, WALK_SPAN, jvmError.expected, jvmError.actual)),
+                drive.label() + ": the JVM walk machinery renders the oracle's "
+                    + "identical tuple");
+            checkEq(drive.arm().equals("JSON_TO_WALK_CYCLE"), projection.cycle,
+                drive.label() + ": the JVM walk selects the same closed arm");
+        }
+
+        // The emitted __arm guard (W5's artifact-surface subject): a marked
+        // entry injected into the chunk-level arm table is rejected.
+        List<String> markedRows = runPreludeProbe("""
+            __arms["MARKED_PROBE"] = {c = "E8001", t = "marked", e = "NONE",
+              a = "SIBLING_OWNED", s = "TOP_LEVEL", o = "CALL_EXPRESSION", k = ""}
+            local ok = pcall(__arm, "MARKED_PROBE", nil, "-", nil, nil)
+            print("marked-entry|" .. tostring(ok))
+            """, "marked-entry-probe", 1);
+        checkEq("marked-entry|false", markedRows.get(0),
+            "the emitted __arm rejects a marked entry injected into the chunk-level "
+                + "arm table");
+
+        // The origin operand negative: a walk failure renders the operand its
+        // consumer received, and a consumer-derived span is reported by field.
+        Tuple reference = tupleOf(FailureContractRegistry.render(
+            FailureArmId.JSON_TO_WALK, Map.of("fieldPath", "age", "actual", "number"),
+            null, "number", null), WALK_SPAN);
+        checkEq("span", firstDifferingField(reference, new Tuple(reference.code(),
+                reference.message(), "consumer-anchor.deal:1:1", reference.expected(),
+                reference.actual())),
+            "a consumer-derived span is reported by field name span");
+        checkEq("actual", firstDifferingField(reference, new Tuple(reference.code(),
+                reference.message(), reference.span(), reference.expected(),
+                "class:arm/walk/Walk")),
+            "the superseded class: IR spelling is reported by field name actual");
+        checkEq("message", firstDifferingField(reference, new Tuple(reference.code(),
+                "walk: value at age is not JSON serializable: number", reference.span(),
+                reference.expected(), reference.actual())),
+            "a consumer-composed walk text is reported by field name message");
+        // A cycle rendered under the walk arm with a table token instead of
+        // the cycle arm's own text is reported by field name message.
+        Tuple cycle = tupleOf(FailureContractRegistry.render(
+            FailureArmId.JSON_TO_WALK_CYCLE, Map.of(), null, null, null), WALK_SPAN);
+        checkEq("cyclic value cannot be encoded as JSON", cycle.message(),
+            "the cycle arm renders the pinned cycle text with no fields");
+        checkEq("message", firstDifferingField(cycle, new Tuple(cycle.code(),
+                "value at data.self is not JSON serializable: table", cycle.span(), null,
+                "table")),
+            "a cycle rendered under the walk arm with a table token is reported by "
+                + "field name message");
+        // A projection caller that keys the numeric token on the declared int
+        // text publishes "int" where the value-derived rule publishes
+        // "number"; the comparison reports the field it changed.
+        Tuple declaredKeyed = tupleOf(FailureContractRegistry.render(
+            FailureArmId.JSON_TO_WALK, Map.of("fieldPath", "age", "actual", "int"),
+            null, "int", null), WALK_SPAN);
+        checkEq("int", declaredKeyed.actual(),
+            "the declared-text-keyed projection publishes the wrong numeric token");
+        checkEq("actual", firstDifferingField(reference, new Tuple(reference.code(),
+                reference.message(), reference.span(), reference.expected(),
+                declaredKeyed.actual())),
+            "a projection caller keying the numeric token on the declared int text is "
+                + "reported by field name actual");
+    }
+
+    /** A one-field drive case of the walk's three-consumer comparison. */
+    private static WalkCase walkCase(String label, String arm, String fieldPath,
+                                     String actual,
+                                     Map<String, ClassOpsExecutor.Value> oracleFields,
+                                     Map<String, String> luaFields,
+                                     Map<String, Object> jvmFields) {
+        return new WalkCase(label, arm, fieldPath, actual,
+            walkOracleInstance(oracleFields), walkLuaRoot(luaFields),
+            walkJvmInstance(jvmFields));
+    }
+
+    /** One oracle walk instance of the drive's layout (declaration order). */
+    private static ClassOpsExecutor.Value walkOracleInstance(
+            Map<String, ClassOpsExecutor.Value> fields) {
+        List<ClassOpsExecutor.FieldState> states = new ArrayList<>();
+        for (deal.semantic.ir.ClassLayout.FieldLayout field : walkLayout().fields()) {
+            ClassOpsExecutor.Value value = fields.get(field.name());
+            states.add(value == null ? ClassOpsExecutor.FieldState.Missing.INSTANCE
+                : new ClassOpsExecutor.FieldState.Present(value));
+        }
+        return new ClassOpsExecutor.Value.Class(WALK_ID, List.copyOf(states));
+    }
+
+    /** One emitted-Lua walk instance of the drive's layout (the carrier shape). */
+    private static String walkLuaRoot(Map<String, String> fields) {
+        StringBuilder present = new StringBuilder();
+        StringBuilder values = new StringBuilder();
+        for (Map.Entry<String, String> entry : fields.entrySet()) {
+            if (present.length() > 0) {
+                present.append(", ");
+                values.append(", ");
+            }
+            present.append(entry.getKey()).append(" = true");
+            values.append(entry.getKey()).append(" = ").append(entry.getValue());
+        }
+        return "{__c = true, __id = " + quote(WALK_ID.text()) + ", __p = {" + present
+            + "}, __f = {" + values + "}}";
+    }
+
+    /** One JVM walk instance of the drive's layout (the generated carrier shape). */
+    private static deal.codegen.jvm.JvmRuntime.ClassInstance walkJvmInstance(
+            Map<String, Object> fields) {
+        return new WalkInstance(WALK_ID.text(), fields);
+    }
+
+    /** A null-valued field map (present null, distinct from the absent field). */
+    private static Map<String, Object> walkNullField(String name) {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("name", null);
+        fields.put("age", 1L);
+        fields.put("ratio", 0.5);
+        fields.put("data", new deal.codegen.jvm.JvmRuntime.Table());
+        fields.put("tags", jvmIntArray(1L));
+        return fields;
+    }
+
+    private static ClassOpsExecutor.Value walkString(String carrier) {
+        return ClassOpsExecutor.Value.string(carrier);
+    }
+
+    private static ClassOpsExecutor.Value walkEmptyTable() {
+        return new ClassOpsExecutor.Value.Table(new deal.semantic.ir.SemanticTable<>());
+    }
+
+    private static ClassOpsExecutor.Value walkIntArray(int... values) {
+        List<ClassOpsExecutor.Value> elements = new ArrayList<>();
+        for (int value : values) {
+            elements.add(new ClassOpsExecutor.Value.Int(value));
+        }
+        return new ClassOpsExecutor.Value.Array(
+            deal.semantic.ir.SemanticArray.of(elements));
+    }
+
+    /** The drive's array(int) value with an integral first element and a nonfinite second. */
+    private static ClassOpsExecutor.Value walkIntThenNonfiniteArray() {
+        return new ClassOpsExecutor.Value.Array(deal.semantic.ir.SemanticArray.of(
+            List.of(new ClassOpsExecutor.Value.Int(1),
+                new ClassOpsExecutor.Value.Number(Double.POSITIVE_INFINITY))));
+    }
+
+    private static ClassOpsExecutor.Value walkCyclicTable() {
+        deal.semantic.ir.SemanticTable<ClassOpsExecutor.Value> table =
+            new deal.semantic.ir.SemanticTable<>();
+        ClassOpsExecutor.Value carrier = new ClassOpsExecutor.Value.Table(table);
+        table.put("self", carrier);
+        return carrier;
+    }
+
+    private static deal.codegen.jvm.JvmRuntime.Array jvmIntArray(long... values) {
+        deal.codegen.jvm.JvmRuntime.Array array =
+            new deal.codegen.jvm.JvmRuntime.Array(values.length);
+        for (long value : values) {
+            array.elements.add(value);
+        }
+        return array;
+    }
+
+    private static deal.codegen.jvm.JvmRuntime.Array jvmNumberArray(long first,
+                                                                     double second) {
+        deal.codegen.jvm.JvmRuntime.Array array =
+            new deal.codegen.jvm.JvmRuntime.Array(2);
+        array.elements.add(first);
+        array.elements.add(second);
+        return array;
+    }
+
+    private static deal.codegen.jvm.JvmRuntime.Table jvmCyclicTable() {
+        deal.codegen.jvm.JvmRuntime.Table table = new deal.codegen.jvm.JvmRuntime.Table();
+        table.write("self", table);
+        return table;
+    }
+
+    private static final String LUA_TABLE_CARRIER = "{__t = true, __keys = {}}";
+
+    /** The JVM walk plan of the drive's layout. */
+    private static deal.codegen.jvm.JvmJson.Plan walkPlan() {
+        return new deal.codegen.jvm.JvmJson.Plan(WALK_ID.text(),
+            new deal.codegen.jvm.JvmJson.Field[] {
+                new deal.codegen.jvm.JvmJson.Field("name", "string", false, "string"),
+                new deal.codegen.jvm.JvmJson.Field("age", "int", false, "int"),
+                new deal.codegen.jvm.JvmJson.Field("ratio", "number", false, "number"),
+                new deal.codegen.jvm.JvmJson.Field("data", "table", false, "table"),
+                new deal.codegen.jvm.JvmJson.Field("tags", "array(int)", false, "int"),
+            }, null);
+    }
+
+    /**
+     * The emitted Lua probe's rows (one row per drive case): the walk's own
+     * {@code __jsonToClassOp} result rendered through the prelude's arm
+     * renderer at the op's origin.
+     */
+    private static List<String> runWalkProbe(List<WalkCase> cases) throws Exception {
+        StringBuilder body = new StringBuilder();
+        body.append("local cyc = {__t = true, __keys = {self = true}}\n");
+        body.append("cyc[\"self\"] = cyc\n");
+        body.append("local cases = {\n");
+        for (WalkCase drive : cases) {
+            body.append("  {label = ").append(quote(drive.label())).append(", root = ")
+                .append(drive.luaRoot()).append("},\n");
+        }
+        body.append("}\n");
+        body.append("for i = 1, #cases do\n");
+        body.append("  local c = cases[i]\n");
+        body.append("  local ok, text, arm, params, actual = "
+            + "__jsonToClassOp(\"").append(WALK_ID.text()).append("\", c.root)\n");
+        body.append("  if ok then print(c.label .. \"|OK|\") return end\n");
+        body.append("  local value = __arm(arm, params, \"")
+            .append(WALK_SPAN).append("\", nil, actual)\n");
+        body.append("  print(c.label .. \"|\" .. value.code .. \"|\" .. "
+            + "(value.e == nil and \"\" or value.e) .. \"|\" .. "
+            + "(value.a == nil and \"\" or value.a) .. \"|\" .. value.m)\n");
+        body.append("end\n");
+        return runProbe(emittedWalkChunk(), "arm-walk", body.toString(), "walk-probe",
+            cases.size());
+    }
+
+    /** A minimal generated-class carrier for the JVM walk drive. */
+    private static final class WalkInstance
+            implements deal.codegen.jvm.JvmRuntime.ClassInstance {
+
+        private final String classId;
+        private final Map<String, Object> values;
+        private final java.util.Set<String> present = new java.util.LinkedHashSet<>();
+
+        WalkInstance(String classId, Map<String, Object> values) {
+            this.classId = classId;
+            this.values = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> entry : values.entrySet()) {
+                this.values.put(entry.getKey(), entry.getValue());
+                this.present.add(entry.getKey());
+            }
+        }
+
+        @Override
+        public String classIdText() {
+            return classId;
+        }
+
+        @Override
+        public boolean isPresent(String field) {
+            return present.contains(field);
+        }
+
+        @Override
+        public Object read(String field) {
+            return present.contains(field) ? values.get(field)
+                : deal.codegen.jvm.JvmRuntime.MISSING;
+        }
+
+        @Override
+        public void write(String field, Object value) {
+            throw new UnsupportedOperationException("the walk drive never writes");
+        }
+
+        @Override
+        public void delete(String field) {
+            throw new UnsupportedOperationException("the walk drive never deletes");
+        }
+    }
+
+    /** The JSON_TO_CLASS op of the walk drive (the generated body's op shape). */
+    private static deal.semantic.ir.SemanticOp walkJsonOp() {
+        deal.semantic.ir.ModuleId module = new deal.semantic.ir.ModuleId("arm-walk");
+        deal.semantic.ir.SourceSpan span = new deal.semantic.ir.SourceSpan(
+            "arm-walk.deal", 2, 8, 2, 18);
+        deal.semantic.ir.SourceOrigin origin = new deal.semantic.ir.SourceOrigin(
+            "arm-walk.deal", span, deal.semantic.ir.SourceOriginKind.SYNTHETIC,
+            new deal.semantic.ir.AnchorId(0), null);
+        deal.semantic.ir.ValueId classValue = new deal.semantic.ir.ValueId(1);
+        KindPayload.JsonToClassPayload payload =
+            new KindPayload.JsonToClassPayload(classValue, walkLayout());
+        deal.semantic.ir.OpResultType resultType = RuntimeDescriptor.String.INSTANCE;
+        deal.semantic.ir.OperationContractSnapshot contract =
+            new deal.semantic.ir.OperationContractSnapshot(
+                deal.semantic.ir.OperationContractSnapshot.VERSION,
+                deal.semantic.ir.SemanticOpKind.JSON_TO_CLASS, resultType,
+                List.of(new RuntimeDescriptor.Class(WALK_ID)), null, payload,
+                FailurePolicyId.JSON_TO_ERROR, List.of(), "placeholder");
+        contract = new deal.semantic.ir.OperationContractSnapshot(
+            deal.semantic.ir.OperationContractSnapshot.VERSION,
+            deal.semantic.ir.SemanticOpKind.JSON_TO_CLASS, resultType,
+            List.of(new RuntimeDescriptor.Class(WALK_ID)), null, payload,
+            FailurePolicyId.JSON_TO_ERROR, List.of(),
+            deal.semantic.ir.ContractSnapshotCanonicalizer.digest(contract));
+        return new deal.semantic.ir.SemanticOp(new deal.semantic.ir.OpId(module, 3),
+            deal.semantic.ir.SemanticOpKind.JSON_TO_CLASS, origin,
+            new deal.semantic.ir.ValueId(4), resultType, List.of(classValue),
+            List.of(new RuntimeDescriptor.Class(WALK_ID)), payload,
+            FailurePolicyId.JSON_TO_ERROR, contract);
+    }
+
+    /** The walk drive's module unit (its own class layout and JSON walk call site). */
+    private static deal.semantic.ir.ExecutableLoweredProject walkProject() {
+        deal.semantic.ir.ModuleId entry = new deal.semantic.ir.ModuleId("arm-walk");
+        deal.semantic.ir.SemanticOp op = walkJsonOp();
+        deal.semantic.ir.BlockId initBlock = new deal.semantic.ir.BlockId(0);
+        deal.semantic.ir.LoweredModuleUnit unit =
+            new deal.semantic.ir.LoweredModuleUnit(
+                deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
+                deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32, entry, "hash",
+                "context", java.util.Set.of(), Map.of(), Map.of(WALK_ID, walkLayout()),
+                Map.of(), new deal.semantic.ir.ModuleInitPlan(List.of(), initBlock),
+                new deal.semantic.ir.ExportPlan(List.of()), Map.of(), List.of(op));
+        Map<deal.semantic.ir.ModuleId, deal.semantic.ir.LoweredModuleUnit> modules =
+            new LinkedHashMap<>();
+        modules.put(entry, unit);
+        deal.semantic.ir.ProjectInterfaceIndex index =
+            new deal.semantic.ir.ProjectInterfaceIndex(
+                deal.semantic.ir.ProjectInterfaceIndex.FORMAT_VERSION,
+                Map.of(entry, new deal.semantic.ir.ExternalModuleInterface(entry,
+                    deal.semantic.ir.ExternalModuleKind.IMPLEMENTATION, List.of(),
+                    List.of(), List.of(),
+                    deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
+        return new deal.semantic.ir.ExecutableLoweredProject(
+            deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32, index, modules, entry);
+    }
+
+    /** The walk chunk's table (the JSON walk op in the module-init block). */
+    private static Map<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>
+            walkTables() {
+        deal.semantic.ir.ModuleId entry = new deal.semantic.ir.ModuleId("arm-walk");
+        deal.semantic.ir.SemanticOp op = walkJsonOp();
+        Map<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable> tables =
+            new LinkedHashMap<>();
+        tables.put(entry, new deal.semantic.ir.StructuredBodyTable(
+            Map.of(new deal.semantic.ir.BlockId(0), List.of(op.opId())),
+            Map.of(op.opId(), new deal.semantic.ir.BlockId(0))));
+        return tables;
+    }
+
+    /** The production Lua chunk of the walk drive project. */
+    private static String emittedWalkChunk() {
+        return LuaSemanticEmitter.emitProductionProject(walkProject(), walkTables(),
+            Map.of(), emptySurface());
+    }
+
+    /** The production JVM source of the walk drive project. */
+    private static String emittedWalkJvm() {
+        deal.codegen.jvm.JvmSemanticEmitter.EmissionResult emission =
+            deal.codegen.jvm.JvmSemanticEmitter.emitProductionProject(walkProject(),
+                walkTables(), Map.of(new deal.semantic.ir.ModuleId("arm-walk"),
+                    new deal.semantic.ir.ClassFactoryRegistry(Map.of())),
+                "ArmWalk", emptySurface());
+        return emission.source();
+    }
+
+
+    // =========================================================================
+    // 15. The moved cell: a fractional array(int) element at the boundary
+    // =========================================================================
+
+    /**
+     * The moved cell (jsonable-tojson-walk-arm-binding W6): the numeric
+     * classification's only ripple. A fractional {@code array(int)} element —
+     * a position the emitted Lua walk never fails — is classified at the
+     * boundary-check site on all three consumers: the emitted {@code __bcheck}
+     * array element arm, the oracle's per-element int rule, and the JVM's
+     * array element arm each publish the value-derived {@code number} token,
+     * never the declared {@code int} text beside the position.
+     */
+    static void testMovedElementCell() throws Exception {
+        System.out.println("-- the moved cell: a fractional array(int) element --");
+        String origin = "moved-cell.deal:3:12";
+        RuntimeDescriptor intArray =
+            new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE);
+        Tuple oracle = tupleOf(oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.TYPE_DESCRIPTOR, intArray,
+            BoundaryValueView.ofArray(BoundaryValueView.ofNumber(3.5)),
+            BoundaryContext.none()), "the array(int) element cell"), origin);
+        checkEq(new Tuple("E8003", "array element 1 type mismatch", origin, "int",
+                "number"), oracle,
+            "the oracle classifies the fractional array(int) element by its value");
+        // The JVM leg (the shared array element arm the artifact links).
+        deal.codegen.jvm.JvmRuntime.Array jvmArray =
+            new deal.codegen.jvm.JvmRuntime.Array(1);
+        jvmArray.elements.add(3.5);
+        deal.codegen.jvm.JvmRuntime.DealError jvm = jvmFailure(
+            () -> deal.codegen.jvm.JvmRuntime.bcheck("array(int)", "array", jvmArray));
+        check(jvm != null, "the JVM array element arm fails the fractional element");
+        if (jvm != null) {
+            checkEq(null, firstDifferingField(oracle,
+                new Tuple(jvm.code, jvm.msg, origin, jvm.expected, jvm.actual)),
+                "the JVM array element arm renders the oracle's identical tuple");
+        }
+        // The emitted prelude leg (the moved cell), under real luajit.
+        List<String> rows = runPreludeProbe("""
+            local ok, value = pcall(__bcheck, "array(int)", "array",
+              {__a = true, __n = 1, [1] = 3.5})
+            row("element", ok, value)
+            """, "moved-cell-probe", 1);
+        checkEq("element|E8003|int|number|array element 1 type mismatch", rows.get(0),
+            "the emitted __bcheck array element arm classifies the element by its value");
+        checkEq(null, firstDifferingField(oracle, luaTuple(rows.get(0), origin)),
+            "the emitted prelude renders the oracle's identical element tuple");
+        // The negative: a cell keying the token on the declared int text
+        // publishes "int" and is reported by field name actual.
+        checkEq("actual", firstDifferingField(oracle, new Tuple(oracle.code(),
+                oracle.message(), oracle.span(), oracle.expected(), "int")),
+            "a declared-text-keyed element arm is reported by field name actual");
     }
 
     // =========================================================================

@@ -555,7 +555,7 @@ public class JsonClassExecutorTest {
                 return new JsonStringify.Success(valid);
             } catch (StringifyFailure failure) {
                 return new JsonStringify.Failure(prefix + failure.relativePath,
-                    failure.actual);
+                    failure.actual, failure.cycle);
             }
         }
 
@@ -565,11 +565,17 @@ public class JsonClassExecutorTest {
 
             final String relativePath;
             final String actual;
+            final boolean cycle;
 
             StringifyFailure(String relativePath, String actual) {
+                this(relativePath, actual, false);
+            }
+
+            StringifyFailure(String relativePath, String actual, boolean cycle) {
                 super("value at " + relativePath + " is not JSON serializable: " + actual);
                 this.relativePath = relativePath;
                 this.actual = actual;
+                this.cycle = cycle;
             }
         }
 
@@ -588,21 +594,24 @@ public class JsonClassExecutorTest {
                 case Value.Number number -> {
                     if (!Double.isFinite(number.value())) {
                         throw new StringifyFailure(relativePath,
-                            ActualKind.canonicalToken(ActualKind.NUMBER, null));
+                            deal.semantic.ir.FailureProjections.typedBoundaryToken(
+                                ActualKind.NUMBER, null));
                     }
                     return Double.toString(number.value());
                 }
                 case Value.String string -> {
                     if (!(string.scalar() instanceof UnicodeScalars.Valid valid)) {
                         throw new StringifyFailure(relativePath,
-                            ActualKind.canonicalToken(ActualKind.INVALID_UNICODE, null));
+                            deal.semantic.ir.FailureProjections.typedBoundaryToken(
+                                ActualKind.INVALID_UNICODE, null));
                     }
                     return escape(valid.carrier());
                 }
                 case Value.Table table -> {
                     if (!path.add(table.table())) {
                         throw new StringifyFailure(relativePath,
-                            ActualKind.canonicalToken(ActualKind.TABLE, null));
+                            deal.semantic.ir.FailureProjections.typedBoundaryToken(
+                                ActualKind.TABLE, null), true);
                     }
                     try {
                         StringBuilder out = new StringBuilder();
@@ -630,7 +639,8 @@ public class JsonClassExecutorTest {
                 case Value.Array array -> {
                     if (!path.add(array.array())) {
                         throw new StringifyFailure(relativePath,
-                            ActualKind.canonicalToken(ActualKind.ARRAY, null));
+                            deal.semantic.ir.FailureProjections.typedBoundaryToken(
+                                ActualKind.ARRAY, null), true);
                     }
                     try {
                         StringBuilder out = new StringBuilder();
@@ -649,13 +659,17 @@ public class JsonClassExecutorTest {
                     }
                 }
                 case Value.Bytes ignored -> throw new StringifyFailure(relativePath,
-                    ActualKind.canonicalToken(ActualKind.BYTES, null));
+                    deal.semantic.ir.FailureProjections.typedBoundaryToken(
+                        ActualKind.BYTES, null));
                 case Value.Class classValue -> throw new StringifyFailure(relativePath,
-                    ActualKind.canonicalToken(ActualKind.CLASS, classValue.classId().text()));
+                    deal.semantic.ir.FailureProjections.typedBoundaryToken(
+                        ActualKind.CLASS, classValue.classId().text()));
                 case Value.Function ignored -> throw new StringifyFailure(relativePath,
-                    ActualKind.canonicalToken(ActualKind.FUNCTION, null));
+                    deal.semantic.ir.FailureProjections.typedBoundaryToken(
+                        ActualKind.FUNCTION, null));
                 case Value.Missing ignored -> throw new StringifyFailure(relativePath,
-                    ActualKind.canonicalToken(ActualKind.MISSING, null));
+                    deal.semantic.ir.FailureProjections.typedBoundaryToken(
+                        ActualKind.MISSING, null));
             }
         }
 
@@ -889,7 +903,8 @@ public class JsonClassExecutorTest {
         SemanticTable<Value> classTable = new SemanticTable<>();
         classTable.put("k", instanceOf(layoutOf(POINT, field("x", INT, true)),
             Map.of("x", new Value.Int(1))));
-        String classToken = ActualKind.canonicalToken(ActualKind.CLASS, POINT.text());
+        String classToken = deal.semantic.ir.FailureProjections.typedBoundaryToken(
+            ActualKind.CLASS, POINT.text());
         JsonStringify fixtureClass = FixtureJson.stringify(
             new Value.Table(classTable), "data");
         JsonStringify adapterClass = adapterStringifier.stringify(
@@ -930,14 +945,16 @@ public class JsonClassExecutorTest {
             new Value.Table(missingTable), "data");
         check(fixtureMissing instanceof JsonStringify.Failure failure
                 && failure.fieldPath().equals("data.k")
-                && failure.actual().equals(ActualKind.MISSING.token()),
+                && failure.actual().equals(deal.semantic.ir.FailureProjections
+                    .typedBoundaryToken(ActualKind.MISSING, null)),
             "the fixture fails the internal missing view inside a table at data.k with "
-                + "the missing token");
+                + "the typed-boundary nil token");
         check(adapterMissing instanceof JsonStringify.Failure failure
                 && failure.fieldPath().equals("data.k")
-                && failure.actual().equals(ActualKind.MISSING.token()),
+                && failure.actual().equals(deal.semantic.ir.FailureProjections
+                    .typedBoundaryToken(ActualKind.MISSING, null)),
             "the adapter fails the internal missing view inside a table at data.k with "
-                + "the missing token");
+                + "the typed-boundary nil token");
 
         // Dotted table keys: E8's dot-joined failure path is ambiguous
         // (a table key is never re-escaped there, so "a.0" may be the
@@ -1010,9 +1027,10 @@ public class JsonClassExecutorTest {
 
         // Cyclic containers through the production adapter: the
         // pre-walk short-circuits the re-entry before the mapping (the
-        // mapping cannot represent a cycle) and projects the pinned
-        // terminal — the re-entering container's own canonical token at
-        // its pinned path — identical to the fixture's walk.
+        // mapping cannot represent a cycle) and carries the closed cycle
+        // selection at the re-entering container's pinned path — the
+        // needle's own marker selects the walk family's cycle arm, never
+        // a token comparison (jsonable-tojson-walk-arm-binding W3).
         SemanticTable<Value> selfTable = new SemanticTable<>();
         selfTable.put("self", new Value.Table(selfTable));
         JsonStringify fixtureSelfCycle = FixtureJson.stringify(
@@ -1021,16 +1039,17 @@ public class JsonClassExecutorTest {
             new Value.Table(selfTable), "data");
         check(fixtureSelfCycle instanceof JsonStringify.Failure failure
                 && failure.fieldPath().equals("data.self")
-                && failure.actual().equals(ActualKind.TABLE.token()),
-            "the fixture fails a self-referential table at data.self with the table token");
+                && failure.cycle(),
+            "the fixture fails a self-referential table at data.self with the closed "
+                + "cycle selection");
         check(adapterSelfCycle instanceof JsonStringify.Failure failure
                 && failure.fieldPath().equals("data.self")
-                && failure.actual().equals(ActualKind.TABLE.token()),
-            "the adapter fails a self-referential table at data.self with the table "
-                + "token (never a producer crash)");
+                && failure.cycle(),
+            "the adapter fails a self-referential table at data.self with the closed "
+                + "cycle selection (never a producer crash)");
 
-        // A table/array cycle: the re-entering table reports its token
-        // at the pinned mixed path .a[0].
+        // A table/array cycle: the re-entering table reports its closed
+        // cycle selection at the pinned mixed path .a[0].
         SemanticTable<Value> cycleTable = new SemanticTable<>();
         SemanticArray<Value> cycleArray = SemanticArray.of(List.of(
             new Value.Table(cycleTable)));
@@ -1041,13 +1060,14 @@ public class JsonClassExecutorTest {
             new Value.Table(cycleTable), "data");
         check(fixtureMixedCycle instanceof JsonStringify.Failure failure
                 && failure.fieldPath().equals("data.a[0]")
-                && failure.actual().equals(ActualKind.TABLE.token()),
-            "the fixture fails a table/array cycle at data.a[0] with the table token");
+                && failure.cycle(),
+            "the fixture fails a table/array cycle at data.a[0] with the closed cycle "
+                + "selection");
         check(adapterMixedCycle instanceof JsonStringify.Failure failure
                 && failure.fieldPath().equals("data.a[0]")
-                && failure.actual().equals(ActualKind.TABLE.token()),
-            "the adapter fails a table/array cycle at data.a[0] with the table token "
-                + "(never a producer crash)");
+                && failure.cycle(),
+            "the adapter fails a table/array cycle at data.a[0] with the closed cycle "
+                + "selection (never a producer crash)");
     }
 
     /** The carrier text of one valid-scalar string view (test-local). */
@@ -1659,7 +1679,7 @@ public class JsonClassExecutorTest {
             Map.of(classId, wrongNested), layouts, FixtureJson.stringifier(), callOrigin);
         check(nestedFailure instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
-                    "value at home is not JSON serializable: class:@" + MOD.path()
+                    "value at home is not JSON serializable: @" + MOD.path()
                         + "/Other")
                 && failure.failure().origin().equals(callOrigin),
             "a nested wrong identity fails with the exact template at path 'home' and "
@@ -1725,11 +1745,11 @@ public class JsonClassExecutorTest {
             JsonClassAlgorithmAdapter.stringifier(), callOrigin);
         check(productionClassFailure instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
-                    "value at data.k is not JSON serializable: class:@" + MOD.path()
+                    "value at data.k is not JSON serializable: @" + MOD.path()
                         + "/Other")
                 && failure.failure().origin().equals(callOrigin),
             "the production adapter's walk projects the class-in-table failure at data.k "
-                + "with the class token and the call origin");
+                + "with the carried canonical class atom and the call origin");
 
         SemanticTable<Value> badInvalidData = new SemanticTable<>();
         badInvalidData.put("k", Value.string("\uD800"));
@@ -1762,10 +1782,10 @@ public class JsonClassExecutorTest {
             JsonClassAlgorithmAdapter.stringifier(), callOrigin);
         check(productionMissingFailure instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
-                    "value at data.k is not JSON serializable: missing")
+                    "value at data.k is not JSON serializable: nil")
                 && failure.failure().origin().equals(callOrigin),
             "the production adapter's walk projects the missing-in-table failure at "
-                + "data.k with the missing token and the call origin");
+                + "data.k with the typed-boundary nil token and the call origin");
 
         // A dotted table key: E8's dot-joined failure path is ambiguous
         // ({"a": [1], "a.0": <function>} reports "a.0", which is the
@@ -1855,7 +1875,7 @@ public class JsonClassExecutorTest {
             Map.of(classId, foreignRoot), layouts, FixtureJson.stringifier(), callOrigin);
         check(rootFailure instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
-                    "value at  is not JSON serializable: class:@" + MOD.path()
+                    "value at  is not JSON serializable: @" + MOD.path()
                         + "/Other")
                 && failure.failure().origin().equals(callOrigin)
                 && !failure.failure().origin().equals(op.origin()),
@@ -1896,8 +1916,8 @@ public class JsonClassExecutorTest {
             callOrigin);
         check(missingFailure instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
-                    "value at name is not JSON serializable: missing"),
-            "a missing required field fails with the missing token");
+                    "value at name is not JSON serializable: nil"),
+            "a missing required field fails with the typed-boundary nil token");
 
         // A null on a non-nullable field: actual null.
         Value.Class nullRequired = instanceOf(point, Map.of(
@@ -1965,21 +1985,29 @@ public class JsonClassExecutorTest {
             FixtureJson.stringifier(), nextOrigin(null));
         check(tableCycleFailure instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
-                    "value at data.self is not JSON serializable: table"),
-            "a cyclic table fails at the f.k path with the table token");
+                    "cyclic value cannot be encoded as JSON")
+                && failure.failure().failure().code() == DiagnosticCode.E8001
+                && failure.failure().failure().expected() == null
+                && failure.failure().failure().actual() == null,
+            "a cyclic table fails the walk family's cycle arm (E8001, the pinned cycle "
+                + "text, no expected/actual)");
 
         // The production adapter over the same cyclic table: the
         // pre-walk short-circuits the re-entry before any mapping, so
-        // the generated C$toJson production walk projects the pinned
-        // failure (never a producer crash).
+        // the generated C$toJson production walk selects the same cycle
+        // arm (never a producer crash), and the walk's internal position
+        // stays its own metadata.
         Outcome<Value> tableCycleAdapter = ClassOpsExecutor.executeJsonToClass(
             tableCycleOp, Map.of(tableClassId, tableCycle), Map.of(POINT, withTable),
             JsonClassAlgorithmAdapter.stringifier(), nextOrigin(null));
         check(tableCycleAdapter instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
-                    "value at data.self is not JSON serializable: table"),
-            "the production adapter fails the cyclic table at the pinned f.k path with "
-                + "the table token (never a producer crash)");
+                    "cyclic value cannot be encoded as JSON")
+                && failure.failure().failure().code() == DiagnosticCode.E8001
+                && failure.failure().failure().expected() == null
+                && failure.failure().failure().actual() == null,
+            "the production adapter fails the cyclic table on the cycle arm (never a "
+                + "producer crash)");
 
         // The depth bound: a 513-deep class nesting fails; 512 decodes.
         ValueId deepClassId = nextValue();

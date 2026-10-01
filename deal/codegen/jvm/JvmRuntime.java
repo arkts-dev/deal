@@ -870,8 +870,12 @@ public final class JvmRuntime {
         if (v instanceof Double) {
             return "number";
         }
-        if (v instanceof String) {
-            return "string";
+        if (v instanceof String string) {
+            // The typed-boundary projection classifies a string carrier by
+            // its contents: a sequence that is not valid Unicode scalar
+            // text projects invalid-unicode, exactly as the oracle and the
+            // emitted Lua prelude's projection do.
+            return JvmJson.validScalars(string) ? "string" : "invalid-unicode";
         }
         if (v instanceof Table) {
             return "table";

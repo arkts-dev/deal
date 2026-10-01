@@ -73,7 +73,8 @@ public final class LuaSemanticEmitter {
         "__chk, __rvT, __rvcT, __okT, __resT, __terrT, "
             + "__cerrT, __wrappedT, __itT, __itnT, __elemT, __okB, __chkB, "
             + "__okD, __chkD, "
-            + "__instT, __fT, __eT, __jokT, __jresT, __jpathT, __jactT, __hbT, "
+            + "__instT, __fT, __eT, __jokT, __jresT, __jarmT, __jcparT, __jfactT, "
+            + "__hbT, "
             + "__dynC, __dynK, __dynM, __dynS, __dynSK, __dynA, __dynE, "
             + "__tA, __okH, __errH, __oA";
 
@@ -6148,14 +6149,19 @@ public final class LuaSemanticEmitter {
             KindPayload.JsonToClassPayload payload =
                 (KindPayload.JsonToClassPayload) op.payload();
             emitStart(op);
-            out.append("__jokT, __jresT, __jpathT, __jactT = __jsonToClassOp(")
+            // The walk's closed arm selection renders through the one
+            // arm renderer (jsonable-tojson-walk-arm-binding W6): the walk
+            // arm with its {fieldPath}/{actual} parameters, or the cycle
+            // arm with none — the call site composes no message, no token,
+            // and no span of its own, and the origin operand stays the
+            // executing op's own SourceOrigin.
+            out.append("__jokT, __jresT, __jarmT, __jcparT, __jfactT = "
+                + "__jsonToClassOp(")
                 .append(luaString(payload.layout().classId().text())).append(", ")
                 .append(slot(payload.classValue())).append(")\n");
             out.append("if not __jokT then\n");
-            out.append("__eT = __failExpr(\"E8001\", "
-                + "__renderTemplate(\"JSON_TO_WALK\", ")
-                .append("{fieldPath = __jpathT, actual = __jactT}), ")
-                .append(luaString(originOf(op))).append(", nil, nil)\n");
+            out.append("__eT = __arm(__jarmT, __jcparT, ")
+                .append(luaString(originOf(op))).append(", nil, __jfactT)\n");
             emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__eT)");
             out.append("error(__eT, 0)\n");
             out.append("end\n");
@@ -6256,6 +6262,21 @@ public final class LuaSemanticEmitter {
     // The Lua runtime prelude (byte-identical protocol output)
     // =========================================================================
 
+    /**
+     * The shared JSON algorithm realization (E7/K-D8/K-D10) of the
+     * {@code JSON_FROM_CLASS}/{@code JSON_TO_CLASS} arms: the closed E8
+     * RFC-8259 parse and canonical text algorithms plus the class walk
+     * over the per-class plans the session records in {@code __plans}
+     * (classId → plan: declaration-order fields with descriptor,
+     * optionality, default-child metadata, and the owner factory
+     * metadata of the nested-decode seam). The walk runs zero boundary
+     * children; the class-default/class-factory events carry the plan's
+     * recorded keys and digests. All syntax/decode/shape failures return
+     * language null (the {@code JSON_FROM_NULL} projection); the
+     * to-json walk returns the closed arm selection of its first
+     * declaration-order failure ({@code armId, parameters, actual}) for
+     * the walk family's {@code JSON_TO_ERROR} arms.
+     */
     private static final String JSON_PRELUDE = """
 -- ==== shared JSON algorithm (E7/K-D8/K-D10 realization) ====
 -- The closed E8 RFC-8259 parse and canonical text algorithms plus the
@@ -6294,37 +6315,6 @@ local function __jsonUtf8(cp)
   return string.char(0xF0 + math.floor(cp / 0x40000),
     0x80 + math.floor(cp / 0x1000) % 0x40,
     0x80 + math.floor(cp / 0x40) % 0x40, 0x80 + cp % 0x40)
-end
-local function __jsonValidUtf8(s)
-  local i = 1
-  local n = #s
-  while i <= n do
-    local b = string.byte(s, i)
-    local len
-    if b < 0x80 then len = 1
-    elseif b >= 0xC2 and b <= 0xDF then len = 2
-    elseif b >= 0xE0 and b <= 0xEF then len = 3
-    elseif b >= 0xF0 and b <= 0xF4 then len = 4
-    else return false end
-    if i + len - 1 > n then return false end
-    local cp
-    if len == 1 then cp = b
-    elseif len == 2 then cp = b - 0xC0
-    elseif len == 3 then cp = b - 0xE0
-    else cp = b - 0xF0 end
-    for k = 1, len - 1 do
-      local c = string.byte(s, i + k)
-      if c < 0x80 or c > 0xBF then return false end
-      cp = cp * 0x40 + (c - 0x80)
-    end
-    if len == 2 and cp < 0x80 then return false end
-    if len == 3 and cp < 0x800 then return false end
-    if len == 4 and cp < 0x10000 then return false end
-    if cp > 0x10FFFF then return false end
-    if cp >= 0xD800 and cp <= 0xDFFF then return false end
-    i = i + len
-  end
-  return true
 end
 -- The E8 parse: every number carries its per-occurrence lexical variant
 -- in the container's __jnum set — a digits-only in-range integer form is
@@ -6801,43 +6791,45 @@ local function __jsonFromClassOp(planName, text)
   end
   return __jsonInstanceOf(plan, fields, provided, values)
 end
--- The JSON_TO_CLASS walk: (true, text) or (false, nil, fieldPath,
--- actual) for the JSON_TO_ERROR projection. Table fields serialize
--- their present keys in ascending key order (the shared Lua table
--- carrier records key presence, not insertion order).
+-- The JSON_TO_CLASS walk: (true, text) or (false, nil, armId,
+-- parameters, actual) for the JSON_TO_ERROR projection. Table fields
+-- serialize their present keys in ascending key order (the shared Lua
+-- table carrier records key presence, not insertion order).
 local function __jsonToClassOp(planName, root)
   local plan = __plans[planName]
   if plan == nil then
     error("JSON_TO_CLASS has no plan " .. planName .. " (producer defect)", 0)
   end
-  local failurePath = nil
+  local failureArm = nil
+  local failureParams = nil
   local failureActual = nil
-  local function fail(path, actual)
-    failurePath = path
+  -- The walk's closed arm selection (jsonable-tojson-walk-arm-binding W3):
+  -- the walk arm at the walk's own checks, the cycle arm at a path-local
+  -- container re-entry needle. The needle's own closed marker selects the
+  -- arm, never a token comparison, and every token comes from the prelude's
+  -- typed-boundary projection implementation — this walk composes no text,
+  -- no token, and no span of its own.
+  local function failure()
+    return false, nil, failureArm, failureParams, failureActual
+  end
+  local function fail(path, v)
+    local actual = __typedBoundaryKind("", v)
+    failureArm = "JSON_TO_WALK"
+    failureParams = {fieldPath = path, actual = actual}
     failureActual = actual
+    return nil
+  end
+  local function cycle()
+    failureArm = "JSON_TO_WALK_CYCLE"
+    failureParams = nil
+    failureActual = nil
     return nil
   end
   local encodeField
   local encodeTableValue
   local encodeArrayValue
-  local function actualOf(v)
-    if v == nil then return "null" end
-    local t = type(v)
-    if t == "boolean" then return "boolean" end
-    if t == "number" then return "number" end
-    if t == "string" then
-      if not __jsonValidUtf8(v) then return "invalid-unicode" end
-      return "string"
-    end
-    if t == "table" then
-      if v.__a then return "array" end
-      if v.__c then return "class:" .. v.__id end
-      return "table"
-    end
-    return t
-  end
   encodeTableValue = function(tv, tpath, visited)
-    if visited[tv] then return fail(tpath, "table") end
+    if visited[tv] then return cycle() end
     visited[tv] = true
     local keys = {}
     for k, _ in pairs(tv.__keys) do keys[#keys + 1] = k end
@@ -6854,11 +6846,11 @@ local function __jsonToClassOp(planName, root)
       elseif type(element) == "boolean" then out[#out + 1] = tostring(element)
       elseif type(element) == "number" then
         local text = __jsonNumText(element)
-        if text == nil then return fail(elementPath, "number") end
+        if text == nil then return fail(elementPath, element) end
         out[#out + 1] = text
       elseif type(element) == "string" then
         if not __jsonValidUtf8(element) then
-          return fail(elementPath, "invalid-unicode")
+          return fail(elementPath, element)
         end
         out[#out + 1] = __QT .. __jsonEscapeString(element) .. __QT
       elseif type(element) == "table" then
@@ -6871,10 +6863,10 @@ local function __jsonToClassOp(planName, root)
           if nested == nil then return nil end
           out[#out + 1] = nested
         else
-          return fail(elementPath, actualOf(element))
+          return fail(elementPath, element)
         end
       else
-        return fail(elementPath, actualOf(element))
+        return fail(elementPath, element)
       end
     end
     visited[tv] = nil
@@ -6882,7 +6874,7 @@ local function __jsonToClassOp(planName, root)
     return table.concat(out)
   end
   encodeArrayValue = function(av, apath, visited)
-    if visited[av] then return fail(apath, "array") end
+    if visited[av] then return cycle() end
     visited[av] = true
     local out = {"["}
     for i = 1, av.__n do
@@ -6894,11 +6886,11 @@ local function __jsonToClassOp(planName, root)
       elseif type(element) == "boolean" then out[#out + 1] = tostring(element)
       elseif type(element) == "number" then
         local text = __jsonNumText(element)
-        if text == nil then return fail(elementPath, "number") end
+        if text == nil then return fail(elementPath, element) end
         out[#out + 1] = text
       elseif type(element) == "string" then
         if not __jsonValidUtf8(element) then
-          return fail(elementPath, "invalid-unicode")
+          return fail(elementPath, element)
         end
         out[#out + 1] = __QT .. __jsonEscapeString(element) .. __QT
       elseif type(element) == "table" then
@@ -6911,10 +6903,10 @@ local function __jsonToClassOp(planName, root)
           if nested == nil then return nil end
           out[#out + 1] = nested
         else
-          return fail(elementPath, actualOf(element))
+          return fail(elementPath, element)
         end
       else
-        return fail(elementPath, actualOf(element))
+        return fail(elementPath, element)
       end
     end
     visited[av] = nil
@@ -6925,42 +6917,43 @@ local function __jsonToClassOp(planName, root)
     local kind, inner = __jsonKindOf(desc)
     if kind == "null" then
       if v == nil then return "null" end
-      return fail(path, actualOf(v))
+      return fail(path, v)
     elseif kind == "boolean" then
       if type(v) == "boolean" then return tostring(v) end
-      return fail(path, actualOf(v))
+      return fail(path, v)
     elseif kind == "int" then
       if type(v) == "number" and v == math.floor(v) then return tostring(v) end
-      return fail(path, actualOf(v))
+      return fail(path, v)
     elseif kind == "number" then
       if type(v) == "number" then
         local text = __jsonNumText(v)
-        if text == nil then return fail(path, "number") end
+        if text == nil then return fail(path, v) end
         return text
       end
-      return fail(path, actualOf(v))
+      return fail(path, v)
     elseif kind == "string" then
-      if type(v) ~= "string" then return fail(path, actualOf(v)) end
-      if not __jsonValidUtf8(v) then return fail(path, "invalid-unicode") end
+      if type(v) ~= "string" then return fail(path, v) end
+      if not __jsonValidUtf8(v) then return fail(path, v) end
       return __QT .. __jsonEscapeString(v) .. __QT
     elseif kind == "nullable" then
       if v == nil then return "null" end
       return encodeField(inner, v, path, visited)
     elseif kind == "table" then
-      if type(v) ~= "table" or v.__t ~= true then return fail(path, actualOf(v)) end
+      if type(v) ~= "table" or v.__t ~= true then return fail(path, v) end
       return encodeTableValue(v, path, visited)
     elseif kind == "array" then
-      if type(v) ~= "table" or v.__a ~= true then return fail(path, actualOf(v)) end
+      if type(v) ~= "table" or v.__a ~= true then return fail(path, v) end
       return encodeArrayValue(v, path, visited)
     elseif kind == "class" then
       error("a nested @jsonable class field (" .. desc .. ") has no shared JSON walk "
         .. "in this slice (producer defect, the nested shape is not emitted)", 0)
     end
-    return fail(path, actualOf(v))
+    return fail(path, v)
   end
   if root == nil or type(root) ~= "table" or root.__c ~= true
       or root.__id ~= plan.classId then
-    return false, nil, "", "shape"
+    fail("", root)
+    return failure()
   end
   local visited = {[root] = true}
   local fields = plan.fields
@@ -6970,15 +6963,19 @@ local function __jsonToClassOp(planName, root)
     local f = fields[i]
     if not root.__p[f.name] then
       if not f.optional then
-        local path = f.name
-        return false, nil, path, "missing"
+        fail(f.name, __MISSING)
+        return failure()
       end
     else
       local raw = root.__f[f.name]
-      local value = (raw == __NULL) and nil or raw
-      local encoded = encodeField(f.desc, value, f.name, visited)
+      -- A present null is the __NULL sentinel: it unwraps to the language
+      -- null before the declared-descriptor check (the same read the JVM
+      -- walk's present-null slot performs), so a nullable field serializes
+      -- JSON null and a non-nullable one projects the null token.
+      if raw == __NULL then raw = nil end
+      local encoded = encodeField(f.desc, raw, f.name, visited)
       if encoded == nil then
-        return false, nil, failurePath, failureActual
+        return failure()
       end
       if not first then out[#out + 1] = "," end
       first = false
@@ -6987,7 +6984,7 @@ local function __jsonToClassOp(planName, root)
     end
   end
   out[#out + 1] = "}"
-  return true, table.concat(out), nil, nil
+  return true, table.concat(out), nil, nil, nil
 end
 """;
 
@@ -8109,25 +8106,66 @@ local function __innerArm(id, values)
   end
   return __renderTemplate(id, values)
 end
+-- The Unicode-scalar validity of one string carrier (the typed-boundary
+-- projection's invalid-scalar classification): a sequence that is not a
+-- valid Unicode scalar sequence projects "invalid-unicode". Declared here
+-- (before the projections that use it) rather than in the JSON prelude,
+-- which is emitted later and whose locals are not lexically visible here.
+local function __jsonValidUtf8(s)
+  local i = 1
+  local n = #s
+  while i <= n do
+    local b = string.byte(s, i)
+    local len
+    if b < 0x80 then len = 1
+    elseif b >= 0xC2 and b <= 0xDF then len = 2
+    elseif b >= 0xE0 and b <= 0xEF then len = 3
+    elseif b >= 0xF0 and b <= 0xF4 then len = 4
+    else return false end
+    if i + len - 1 > n then return false end
+    local cp
+    if len == 1 then cp = b
+    elseif len == 2 then cp = b - 0xC0
+    elseif len == 3 then cp = b - 0xE0
+    else cp = b - 0xF0 end
+    for k = 1, len - 1 do
+      local c = string.byte(s, i + k)
+      if c < 0x80 or c > 0xBF then return false end
+      cp = cp * 0x40 + (c - 0x80)
+    end
+    if len == 2 and cp < 0x80 then return false end
+    if len == 3 and cp < 0x800 then return false end
+    if len == 4 and cp < 0x10000 then return false end
+    if cp > 0x10FFFF then return false end
+    if cp >= 0xD800 and cp <= 0xDFFF then return false end
+    i = i + len
+  end
+  return true
+end
 -- The typed-boundary projection (P2 item 1): the closed token of the
 -- failing value — the absent marker is nil, the language-null sentinel
 -- null, and a class instance its carried canonical class atom (never a
 -- target class name, never the class: IR/trace spelling).
 local function __typedBoundaryKind(staticKind, v)
   if v == __MISSING then return "nil" end
-  if v == nil then return "null" end
+  if v == nil or v == __NULL then return "null" end
   if type(v) == "table" and v.__jn then return v.k end
   local t = type(v)
   if t == "boolean" then return "boolean" end
   if t == "number" then
-    local inner = staticKind
-    if string.sub(staticKind, 1, 9) == "nullable:" then inner = string.sub(staticKind, 10) end
-    if inner == "int" then return "int" end
-    if inner == "number" then return "number" end
+    -- The value-derived numeric classification: a numeric failing value
+    -- projects by its own variant — an integral finite value is the int
+    -- carrier, a fractional or nonfinite value the number carrier — never
+    -- by the declared descriptor text beside the position.
     if v % 1 == 0 then return "int" end
     return "number"
   end
-  if t == "string" then return "string" end
+  if t == "string" then
+    -- The invalid-scalar classification: a string carrier that is not a
+    -- valid Unicode scalar sequence projects invalid-unicode.
+    if not __jsonValidUtf8(v) then return "invalid-unicode" end
+    return "string"
+  end
   if t == "table" then
     -- The bytes carrier keeps its own closed kind: a bytes value never
     -- projects the table spelling, so a non-bytes typed boundary rejects

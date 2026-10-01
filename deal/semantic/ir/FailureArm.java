@@ -89,9 +89,10 @@ public record FailureArm(
         /** The carried canonical signature text. */
         CARRIED_SIGNATURE,
         /**
-         * The {@code @jsonable} {@code C$toJson} walk's projection binding:
-         * declared here, bound by the sibling that realizes the family. A
-         * production consumer rendering the arm is a producer defect.
+         * The retained sibling-owned marker of the closed vocabulary: no
+         * declared arm carries it after the {@code @jsonable} walk arm's
+         * binding (the completeness invariant's terminal condition), and
+         * every render-time guard rejects a hand-built marked arm.
          */
         SIBLING_OWNED
     }
@@ -114,7 +115,11 @@ public record FailureArm(
         CARRIED_CLASS_ATOM,
         /** The carried canonical class atom or the typed-boundary kind token. */
         CARRIED_OR_TYPED_KIND,
-        /** The sibling-owned walk projection's actual text. */
+        /**
+         * The retained sibling-owned walk projection's actual source: no
+         * declared arm carries it after the binding; a hand-built marked arm
+         * fails the completeness invariant and the render-time guards.
+         */
         SIBLING_OWNED_ACTUAL,
         /** The one-based parameter index. */
         PARAMETER_INDEX,
@@ -179,8 +184,9 @@ public record FailureArm(
         /** The exporting/invoking unit's program span. */
         PROGRAM_SPAN,
         /**
-         * The {@code @jsonable} helper cells: sibling-owned until the
-         * family is realized.
+         * The retained sibling-owned origin convention of the closed
+         * vocabulary: no declared arm carries it after the {@code @jsonable}
+         * walk arm's binding, and a hand-built marked arm fails closed.
          */
         SIBLING_OWNED
     }
@@ -216,6 +222,20 @@ public record FailureArm(
     /** True iff the arm's projection binding is sibling-owned. */
     public boolean isSiblingOwned() {
         return actualProjection == ActualProjection.SIBLING_OWNED;
+    }
+
+    /**
+     * True iff any binding slot of the arm carries a sibling-owned marker:
+     * its projection binding (P1/P7), its origin convention, or one of its
+     * parameter sources. No declared arm may carry one (the completeness
+     * invariant's terminal condition); a hand-built marked arm fails
+     * {@code checkArmConsistency} closed, and the marker's render-time
+     * guards stay as the closed backstop for any other entry.
+     */
+    public boolean hasSiblingOwnedBindingSlot() {
+        return actualProjection == ActualProjection.SIBLING_OWNED
+            || origin == OriginConvention.SIBLING_OWNED
+            || parameterSources.containsValue(ParameterSource.SIBLING_OWNED_ACTUAL);
     }
 
     /** True iff the arm is rendered only as another arm's inner reason. */

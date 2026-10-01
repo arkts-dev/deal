@@ -889,18 +889,24 @@ public class BoundaryExecutorTest {
             null, "function", Map.of("fieldPath", "f"), null,
             "function value at f");
 
+        // The absent marker projects the typed-boundary projection's own
+        // nil token (jsonable-tojson-walk-arm-binding W1): the bound
+        // JSON_TO_WALK arm's actual and its {actual} parameter are one
+        // closed token.
         expectFail(checkCell(FailurePolicyId.JSON_TO_ERROR, NUMBER,
                 BoundaryValueView.of(ActualKind.MISSING), BoundaryContext.jsonField("f")),
             FailurePolicyId.JSON_TO_ERROR, DiagnosticCode.E8001,
-            "value at f is not JSON serializable: missing",
-            null, "missing", Map.of("fieldPath", "f"), null,
+            "value at f is not JSON serializable: nil",
+            null, "nil", Map.of("fieldPath", "f"), null,
             "missing required value at f");
 
+        // A wrong class identity projects the carried canonical class atom
+        // (never the class:<ClassId> IR spelling).
         expectFail(checkCell(FailurePolicyId.JSON_TO_ERROR, USER,
                 BoundaryValueView.ofClass("@src/app/Admin"), BoundaryContext.jsonField("u")),
             FailurePolicyId.JSON_TO_ERROR, DiagnosticCode.E8001,
-            "value at u is not JSON serializable: class:@src/app/Admin",
-            null, "class:@src/app/Admin", Map.of("fieldPath", "u"), null,
+            "value at u is not JSON serializable: @src/app/Admin",
+            null, "@src/app/Admin", Map.of("fieldPath", "u"), null,
             "wrong class identity at u");
 
         // Arrays fail at the first declaration-order element.

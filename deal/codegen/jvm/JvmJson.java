@@ -71,15 +71,36 @@ public final class JvmJson {
         }
     }
 
-    /** The first declaration-order to-json failure (the JSON_TO_ERROR projection). */
+    /**
+     * The first declaration-order to-json failure (the {@code JSON_TO_ERROR}
+     * projection): the failing position, the failing value's closed
+     * typed-boundary token, and the closed arm selection — {@code cycle} is
+     * true exactly for a path-local container re-entry, which selects the
+     * walk family's cycle arm. The walk selects the arm by its own closed
+     * marker, never by a token comparison
+     * (jsonable-tojson-walk-arm-binding W3).
+     */
     public static final class Projection extends RuntimeException {
         public final String fieldPath;
         public final String actual;
+        public final boolean cycle;
 
         Projection(String fieldPath, String actual) {
-            super("value at " + fieldPath + " is not JSON serializable: " + actual);
+            this(fieldPath, actual, false);
+        }
+
+        Projection(String fieldPath, String actual, boolean cycle) {
+            super(cycle
+                ? "cyclic value cannot be encoded as JSON"
+                : "value at " + fieldPath + " is not JSON serializable: " + actual);
             this.fieldPath = fieldPath;
             this.actual = actual;
+            this.cycle = cycle;
+        }
+
+        /** The path-local container re-entry needle's failure (the cycle arm). */
+        static Projection cycle(String fieldPath) {
+            return new Projection(fieldPath, null, true);
         }
     }
 
@@ -679,7 +700,7 @@ public final class JvmJson {
             throw new Projection(path, actualToken(value));
         }
         if (visited.put(value, Boolean.TRUE) != null) {
-            throw new Projection(path, actualToken(value));
+            throw Projection.cycle(path);
         }
         try {
             StringBuilder out = new StringBuilder("{");
@@ -689,7 +710,7 @@ public final class JvmJson {
                     if (!field.optional) {
                         throw new Projection(
                             path.isEmpty() ? field.name : path + "." + field.name,
-                            "missing");
+                            actualToken(JvmRuntime.MISSING));
                     }
                     continue;
                 }
@@ -725,7 +746,7 @@ public final class JvmJson {
                 throw new Projection(path, actualToken(value));
             }
             if (visited.put(value, Boolean.TRUE) != null) {
-                throw new Projection(path, "array");
+                throw Projection.cycle(path);
             }
             try {
                 String inner = descriptor.substring("array(".length(),
@@ -776,7 +797,7 @@ public final class JvmJson {
                     throw new Projection(path, actualToken(value));
                 }
                 if (!Double.isFinite(number)) {
-                    throw new Projection(path, "number");
+                    throw new Projection(path, actualToken(number));
                 }
                 yield Double.toString(number);
             }
@@ -786,7 +807,7 @@ public final class JvmJson {
                 }
                 String escaped = escapeString(string);
                 if (escaped == null) {
-                    throw new Projection(path, "invalid-unicode");
+                    throw new Projection(path, actualToken(string));
                 }
                 yield "\"" + escaped + "\"";
             }
@@ -803,7 +824,7 @@ public final class JvmJson {
     private static String encodeTable(JvmRuntime.Table table, String path,
                                       java.util.IdentityHashMap<Object, Boolean> visited) {
         if (visited.put(table, Boolean.TRUE) != null) {
-            throw new Projection(path, "table");
+            throw Projection.cycle(path);
         }
         try {
             Set<String> keys = new TreeSet<>(table.keys);
@@ -812,7 +833,7 @@ public final class JvmJson {
             for (String key : keys) {
                 String escapedKey = escapeString(key);
                 if (escapedKey == null) {
-                    throw new Projection(path, "shape");
+                    throw new Projection(path, actualToken(key));
                 }
                 if (!first) {
                     out.append(',');
@@ -844,14 +865,14 @@ public final class JvmJson {
         }
         if (value instanceof Double number) {
             if (!Double.isFinite(number)) {
-                throw new Projection(path, "number");
+                throw new Projection(path, actualToken(number));
             }
             return Double.toString(number);
         }
         if (value instanceof String string) {
             String escaped = escapeString(string);
             if (escaped == null) {
-                throw new Projection(path, "invalid-unicode");
+                throw new Projection(path, actualToken(string));
             }
             return "\"" + escaped + "\"";
         }
@@ -860,7 +881,7 @@ public final class JvmJson {
         }
         if (value instanceof JvmRuntime.Array array) {
             if (visited.put(array, Boolean.TRUE) != null) {
-                throw new Projection(path, "array");
+                throw Projection.cycle(path);
             }
             try {
                 StringBuilder out = new StringBuilder("[");
@@ -880,11 +901,14 @@ public final class JvmJson {
         throw new Projection(path, actualToken(value));
     }
 
-    /** The canonical actual-kind token of one value (classes render their identity). */
+    /**
+     * The closed typed-boundary token of one failing walk value (the bound
+     * {@code JSON_TO_WALK} arm's actual): the target's projection
+     * implementation ({@link JvmRuntime#actualOf}) — a class instance
+     * projects its carried canonical class atom, never the
+     * {@code class:<ClassId>} IR spelling.
+     */
     private static String actualToken(Object value) {
-        if (value instanceof JvmRuntime.ClassInstance instance) {
-            return "class:" + instance.classIdText();
-        }
         return JvmRuntime.actualOf("ref", value);
     }
 }

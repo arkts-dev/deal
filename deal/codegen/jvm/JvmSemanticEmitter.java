@@ -982,10 +982,23 @@ public final class JvmSemanticEmitter {
                 .append(planName(payload.layout().classId())).append(", ")
                 .append(slot(payload.classValue())).append(");\n");
             out.append(indent(indent)).append("} catch (JvmJson.Projection projection) {\n");
+            // The walk's closed arm selection renders through the authority
+            // (jsonable-tojson-walk-arm-binding W6): the walk arm with its
+            // {fieldPath}/{actual} parameters, or the cycle arm with none —
+            // the catch site composes no text, no token, and no span of its
+            // own, and the origin operand stays the executing op's own
+            // SourceOrigin.
             out.append(indent(indent + 1)).append("JvmRuntime.DealError __jsonErr = "
-                + "JvmRuntime.fail(\"E8001\", \"value at \" + projection.fieldPath + "
-                + "\" is not JSON serializable: \" + projection.actual, ")
-                .append(javaString(originOf(op))).append(", null, null);\n");
+                + "projection.cycle\n");
+            out.append(indent(indent + 2)).append("? JvmRuntime.arm("
+                + "deal.semantic.ir.FailureArmId.JSON_TO_WALK_CYCLE, "
+                + "java.util.Map.of(), ")
+                .append(javaString(originOf(op))).append(", null, null)\n");
+            out.append(indent(indent + 2)).append(": JvmRuntime.arm("
+                + "deal.semantic.ir.FailureArmId.JSON_TO_WALK, "
+                + "java.util.Map.of(\"fieldPath\", projection.fieldPath, "
+                + "\"actual\", projection.actual), ")
+                .append(javaString(originOf(op))).append(", null, projection.actual);\n");
             emitFailureEvent(op.opId(), op.kind().name(), op,
                 "JvmRuntime.errtext(__jsonErr)", indent + 1);
             out.append(indent(indent + 1)).append("throw __jsonErr;\n");

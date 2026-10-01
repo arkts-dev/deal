@@ -1627,13 +1627,21 @@ public final class ClassOpsExecutor {
          * The first declaration-order failure: {@code fieldPath} is the
          * full pinned-convention path (the caller's prefix plus the
          * seam's relative segments), {@code actual} is the offending
-         * value's canonical actual-kind token.
+         * value's closed typed-boundary token, and {@code cycle} is the
+         * seam's closed arm selection — true exactly for a path-local
+         * container re-entry, which selects the cycle arm; the walk
+         * never infers an arm from a token.
          */
-        record Failure(String fieldPath, String actual) implements JsonStringify {
+        record Failure(String fieldPath, String actual, boolean cycle)
+                implements JsonStringify {
 
             public Failure {
                 Objects.requireNonNull(fieldPath, "fieldPath must not be null");
                 Objects.requireNonNull(actual, "actual must not be null");
+            }
+
+            public Failure(String fieldPath, String actual) {
+                this(fieldPath, actual, false);
             }
         }
     }
@@ -1779,13 +1787,21 @@ public final class ClassOpsExecutor {
                 entered, 0, "");
             return new Outcome.Success<Value>(Value.string(text));
         } catch (JsonToFailure failure) {
-            // The first declaration-order failure: the registry row's
-            // exact template, projected at the call origin (never the
-            // generated body's synthetic anchor) with no cause.
-            BoundaryFailure row = BoundaryFailure.fromRow(
-                FailureContractRegistry.row(FailurePolicyId.JSON_TO_ERROR), 0, null, null,
-                metadataOf("fieldPath", failure.fieldPath, "actual", failure.actual),
-                null);
+            // The first declaration-order failure: the closed arm the
+            // walk selected (the walk arm with {fieldPath}/{actual}, or
+            // the cycle arm with no parameters) rendered by the
+            // authority at the call origin (never the generated body's
+            // synthetic anchor) with no cause. The walk composes no
+            // text, no token, and no span of its own.
+            BoundaryFailure row = switch (failure.arm) {
+                case JSON_TO_WALK_CYCLE -> FailureContractRegistry.render(
+                    FailureArmId.JSON_TO_WALK_CYCLE, Map.of(), null, null, null);
+                default -> FailureContractRegistry.render(
+                    FailureArmId.JSON_TO_WALK,
+                    parametersOf("fieldPath", failure.fieldPath, "actual",
+                        failure.actual),
+                    null, failure.actual, null);
+            };
             return new Outcome.Failure<Value>(new OpFailure(row, callOrigin));
         }
     }
@@ -1808,23 +1824,39 @@ public final class ClassOpsExecutor {
     }
 
     /**
-     * The internal failure of the {@code JSON_TO_CLASS} walk: the first
-     * declaration-order failing position's pinned fieldPath and the
-     * offending value's canonical actual-kind token — the carrier
-     * {@link #executeJsonToClass} projects as the
-     * {@code JSON_TO_ERROR} row at the call origin.
+     * The internal failure of the {@code JSON_TO_CLASS} walk: the closed arm
+     * selection (the walk arm at the walk's own checks, the cycle arm at the
+     * path-local container re-entry needle), the first declaration-order
+     * failing position's pinned fieldPath, and the offending value's closed
+     * typed-boundary token — the carrier {@link #executeJsonToClass} renders
+     * through the authority at the call origin
+     * (jsonable-tojson-walk-arm-binding W3). The arm is selected by the
+     * walk's own closed marker, never by a token comparison.
      */
     private static final class JsonToFailure extends RuntimeException {
 
         private static final long serialVersionUID = 1L;
 
+        final FailureArmId arm;
         final String fieldPath;
         final String actual;
 
         JsonToFailure(String fieldPath, String actual) {
-            super("value at " + fieldPath + " is not JSON serializable: " + actual);
+            this(FailureArmId.JSON_TO_WALK, fieldPath, actual);
+        }
+
+        JsonToFailure(FailureArmId arm, String fieldPath, String actual) {
+            super(arm == FailureArmId.JSON_TO_WALK_CYCLE
+                ? "cyclic value cannot be encoded as JSON"
+                : "value at " + fieldPath + " is not JSON serializable: " + actual);
+            this.arm = arm;
             this.fieldPath = fieldPath;
             this.actual = actual;
+        }
+
+        /** The path-local container re-entry needle's failure (the cycle arm). */
+        static JsonToFailure cycle() {
+            return new JsonToFailure(FailureArmId.JSON_TO_WALK_CYCLE, null, null);
         }
     }
 
@@ -2153,7 +2185,10 @@ public final class ClassOpsExecutor {
         if (depth > JSON_MAX_DEPTH) {
             throw new JsonToFailure(fieldPath, actualTokenOf(value));
         }
-
+        // The root identity check (K-D10 step 1): the value must be an
+        // instance of exactly layout.classId — a wrong identity fails
+        // with the carried canonical class atom, any other kind with its
+        // own closed typed-boundary token.
         if (!(value instanceof Value.Class instance)) {
             throw new JsonToFailure(fieldPath, actualTokenOf(value));
         }
@@ -2167,9 +2202,11 @@ public final class ClassOpsExecutor {
                 + " fields: the pinned instance shape matches its layout's declaration "
                 + "order — a count mismatch is a producer defect, never executed");
         }
-        // The path-local cycle check over entered class instances.
+        // The path-local cycle check over entered class instances: the
+        // needle's own fact selects the cycle arm (never a token
+        // comparison).
         if (!entered.add(instance)) {
-            throw new JsonToFailure(fieldPath, actualTokenOf(instance));
+            throw JsonToFailure.cycle();
         }
         try {
             StringBuilder out = new StringBuilder();
@@ -2184,7 +2221,8 @@ public final class ClassOpsExecutor {
                     // skipped.
                     if (field.required()) {
                         throw new JsonToFailure(fieldPathOf(fieldPath, field.name()),
-                            ActualKind.canonicalToken(ActualKind.MISSING, null));
+                            FailureProjections.typedBoundaryToken(ActualKind.MISSING,
+                                null));
                     }
                     continue;
                 }
@@ -2247,7 +2285,8 @@ public final class ClassOpsExecutor {
                 }
                 if (!(string.scalar() instanceof UnicodeScalars.Valid)) {
                     throw new JsonToFailure(fieldPath,
-                        ActualKind.canonicalToken(ActualKind.INVALID_UNICODE, null));
+                        FailureProjections.typedBoundaryToken(
+                            ActualKind.INVALID_UNICODE, null));
                 }
                 yield seamText(op, stringifier, value, fieldPath);
             }
@@ -2337,17 +2376,24 @@ public final class ClassOpsExecutor {
         JsonStringify rendered = stringifier.stringify(value, fieldPath);
         return switch (rendered) {
             case JsonStringify.Success success -> success.text().carrier();
-            case JsonStringify.Failure failure ->
-                throw new JsonToFailure(failure.fieldPath(), failure.actual());
+            case JsonStringify.Failure failure -> throw failure.cycle()
+                ? JsonToFailure.cycle()
+                : new JsonToFailure(failure.fieldPath(), failure.actual());
         };
     }
 
-    /** The canonical actual-kind token of one value (class values render {@code class:<ClassId>}). */
+    /**
+     * The closed typed-boundary token of one walk value (the bound
+     * {@code JSON_TO_WALK} arm's actual): a class instance projects its
+     * carried canonical class atom — never the {@code class:<ClassId>}
+     * IR spelling — and every other kind its closed token.
+     */
     private static String actualTokenOf(Value value) {
         if (value instanceof Value.Class instance) {
-            return ActualKind.canonicalToken(ActualKind.CLASS, instance.classId().text());
+            return FailureProjections.typedBoundaryToken(ActualKind.CLASS,
+                instance.classId().text());
         }
-        return ActualKind.canonicalToken(value.actualKind(), null);
+        return FailureProjections.typedBoundaryToken(value.actualKind(), null);
     }
 
     private static void requireDescriptorConforming(SemanticOp op,
@@ -2973,15 +3019,6 @@ public final class ClassOpsExecutor {
             }
         }
         return null;
-    }
-
-    /** A deterministic insertion-ordered metadata map (the row's pinned keys). */
-    private static Map<String, String> metadataOf(String key1, String value1,
-                                                  String key2, String value2) {
-        Map<String, String> metadata = new LinkedHashMap<>();
-        metadata.put(key1, value1);
-        metadata.put(key2, value2);
-        return metadata;
     }
 
     /** The named-parameter values of one two-parameter arm render. */

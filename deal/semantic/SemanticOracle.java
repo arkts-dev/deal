@@ -5292,7 +5292,13 @@ public final class SemanticOracle {
                 case Value.BoolValue ignored -> "boolean";
                 case Value.IntValue ignored -> "int";
                 case Value.NumValue ignored -> "number";
-                case Value.StrValue ignored -> "string";
+                // The closed typed-boundary projection's invalid-scalar
+                // classification (the same viewOfValue classification the
+                // boundary cells project): a string carrier that is not a
+                // valid Unicode scalar sequence projects invalid-unicode.
+                case Value.StrValue str -> UnicodeScalars.validate(str.value())
+                        instanceof UnicodeScalars.Valid
+                    ? "string" : "invalid-unicode";
                 case Value.TableValue ignored -> "table";
                 case Value.ArrayValue ignored -> "array";
                 case Value.BytesValue ignored -> "bytes";

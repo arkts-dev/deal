@@ -410,6 +410,14 @@ public final class BoundaryExecutor {
         };
     }
 
+    /**
+     * JSON_TO_ERROR: the first declaration-order unsupported value projects
+     * E8001 through the bound {@code JSON_TO_WALK} arm
+     * (jsonable-tojson-walk-arm-binding W1): the arm's own template with
+     * {@code {fieldPath}} and {@code {actual}}, the closed typed-boundary
+     * projection as the {@code actual} field, and no composed token or
+     * suffix of this cell's own.
+     */
     private static BoundaryOutcome checkJsonToError(RuntimeDescriptor descriptor,
                                                     BoundaryValueView view,
                                                     BoundaryContext context) {
@@ -419,9 +427,18 @@ public final class BoundaryExecutor {
         if (failing == null) {
             return new BoundaryOutcome.Pass(view);
         }
-        return new BoundaryOutcome.Fail(BoundaryFailure.fromRow(
-            FailureContractRegistry.row(FailurePolicyId.JSON_TO_ERROR), 0,
-            null, failing, metadataOf("fieldPath", fieldPath), null));
+        return new BoundaryOutcome.Fail(FailureContractRegistry.render(
+            FailureArmId.JSON_TO_WALK, parametersOf("fieldPath", fieldPath,
+                "actual", failing), null, failing, null));
+    }
+
+    /** The named-parameter values of one two-parameter arm render. */
+    private static Map<String, String> parametersOf(String key1, String value1,
+                                                    String key2, String value2) {
+        Map<String, String> parameters = new LinkedHashMap<>();
+        parameters.put(key1, value1);
+        parameters.put(key2, value2);
+        return parameters;
     }
 
     // =========================================================================
@@ -779,17 +796,26 @@ public final class BoundaryExecutor {
      */
     private static String jsonFailure(RuntimeDescriptor descriptor, BoundaryValueView view) {
         return switch (view.kind()) {
-            case MISSING -> "missing";
-            case FUNCTION -> "function";
-            case ASYNC_OPERATION -> "async-operation";
-            case INVALID_UNICODE -> "invalid-unicode";
+            case MISSING, FUNCTION, ASYNC_OPERATION, INVALID_UNICODE ->
+                FailureProjections.typedBoundaryToken(view.kind(), view.classId());
             case NUMBER -> {
                 double value = view.numberValue();
                 yield Double.isNaN(value) || Double.isInfinite(value)
-                    ? "number" : jsonShape(descriptor, view);
+                    ? FailureProjections.typedBoundaryToken(ActualKind.NUMBER, null)
+                    : jsonShape(descriptor, view);
             }
             default -> jsonShape(descriptor, view);
         };
+    }
+
+    /**
+     * The typed-boundary token of one value whose shape does not match the
+     * declared descriptor (the bound {@code JSON_TO_WALK} arm's actual):
+     * the closed projection's own token, never the {@code class:} IR
+     * spelling and never a composed spelling of this cell's.
+     */
+    private static String jsonToken(BoundaryValueView view) {
+        return FailureProjections.typedBoundaryToken(view.kind(), view.classId());
     }
 
     private static String jsonShape(RuntimeDescriptor descriptor, BoundaryValueView view) {
@@ -797,12 +823,12 @@ public final class BoundaryExecutor {
             case RuntimeDescriptor.Class cls ->
                 view.kind() == ActualKind.CLASS
                         && cls.classId().text().equals(view.classId())
-                    ? null : ActualKind.canonicalToken(view.kind(), view.classId());
+                    ? null : jsonToken(view);
             case RuntimeDescriptor.Nullable nullable ->
                 view.kind() == ActualKind.NULL ? null : jsonFailure(nullable.inner(), view);
             case RuntimeDescriptor.Array array -> {
                 if (view.kind() != ActualKind.ARRAY) {
-                    yield ActualKind.canonicalToken(view.kind(), view.classId());
+                    yield jsonToken(view);
                 }
                 String first = null;
                 for (BoundaryValueView element : view.elements()) {
@@ -820,45 +846,38 @@ public final class BoundaryExecutor {
                     yield Double.isNaN(value) || Double.isInfinite(value)
                             || value != Math.rint(value)
                             || value < -2147483648d || value > 2147483647d
-                        ? "number" : null;
+                        ? FailureProjections.typedBoundaryToken(ActualKind.NUMBER, null)
+                        : null;
                 }
-                default -> ActualKind.canonicalToken(view.kind(), view.classId());
+                default -> jsonToken(view);
             };
             case RuntimeDescriptor.Number ignored ->
                 view.kind() == ActualKind.NUMBER || view.kind() == ActualKind.INT
-                    ? null : ActualKind.canonicalToken(view.kind(), view.classId());
+                    ? null : jsonToken(view);
             case RuntimeDescriptor.Null ignored ->
                 view.kind() == ActualKind.NULL
-                    ? null : ActualKind.canonicalToken(view.kind(), view.classId());
+                    ? null : jsonToken(view);
             case RuntimeDescriptor.Boolean ignored ->
                 view.kind() == ActualKind.BOOLEAN
-                    ? null : ActualKind.canonicalToken(view.kind(), view.classId());
+                    ? null : jsonToken(view);
             case RuntimeDescriptor.String ignored ->
                 view.kind() == ActualKind.STRING
-                    ? null : ActualKind.canonicalToken(view.kind(), view.classId());
+                    ? null : jsonToken(view);
             case RuntimeDescriptor.Table ignored ->
                 view.kind() == ActualKind.TABLE
-                    ? null : ActualKind.canonicalToken(view.kind(), view.classId());
+                    ? null : jsonToken(view);
             case RuntimeDescriptor.Bytes ignored -> throw new Defect(
                 "a bytes descriptor reached the closed JSON-serializability projection: "
                     + "the closed boundary-assignment table has no bytes-descriptor JSON "
                     + "cell (bytes are non-jsonable and a bytes-typed @jsonable field is "
                     + "the checker's E4007 rejection) — never a BOUNDARY op");
-            case RuntimeDescriptor.Func ignored ->
-                ActualKind.canonicalToken(view.kind(), view.classId());
+            case RuntimeDescriptor.Func ignored -> jsonToken(view);
         };
     }
 
     // =========================================================================
     // Shared helpers
     // =========================================================================
-
-    /** A deterministic single-entry metadata map (pinned placeholder order). */
-    private static Map<String, String> metadataOf(String key, String value) {
-        Map<String, String> metadata = new LinkedHashMap<>();
-        metadata.put(key, value);
-        return metadata;
-    }
 
     /** A context-bearing cell executed without its named context is a producer defect. */
     private static <T> T requireContextField(T field, String fieldName, String cell) {
