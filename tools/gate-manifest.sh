@@ -1571,4 +1571,28 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # compiles and the oracle's normal-completion path stays unreachable on
   # the same traces.
   'fg|=== Running Closed Composite Terminator Analysis Tests (ISSUE-0712) ===|java -ea -cp build deal.test.CompositeTerminatorAnalysisTest'
+  # ISSUE-0714 (the truncating int32 remainder in the LuaJIT production
+  # prelude; design source residual-carrier-shapes-production-realization
+  # D4; luajit-jvm-single-lowering-production-cutover C2 and the production
+  # LuaJIT emission contract): the emitted production chunk's __arith
+  # INT32_MOD_TRUNC arm computes the quotient truncated toward zero with
+  # the landed INT32_DIV_TRUNC arm's own three lines and the remainder
+  # l - t * r (never Lua's floor %), asserted on the emitted arm text and
+  # on the executed artifact; the five sign/boundary cases (-5 % 2 == -1,
+  # 5 % -2 == 1, -5 % -2 == -1, 5 % 2 == 1, INT_MIN % -1 == 0) are driven
+  # through the emitted LuaJIT artifact under real luajit and the emitted
+  # JVM artifact under javac --release 25 -proc:none plus java, each equal
+  # to the semantic oracle's INT32_MOD_TRUNC results and to
+  # JvmRuntime.arith("INT32_MOD_TRUNC", …); the unchanged zero-divisor arm
+  # raises the landed INT32_DIVISION_BY_ZERO projection (E8005, integer
+  # division by zero at the operation origin) identically on the oracle,
+  # the LuaJIT artifact, the JVM artifact, the JVM runtime, and the closed
+  # arm table; and arithmetic/int32-div-rem-boundaries compiles through the
+  # release-owned production invocation on LuaJIT and JVM with zero
+  # diagnostics (no CONSTRUCT_UNLOWERED/RETAINED_ABI_DEFERRED/
+  # SHARED_EMITTER_COVERAGE), stages exactly one project artifact with no
+  # retained emission, and executes on both real toolchains and through the
+  # oracle with its pinned runtime-ok sidecar outcome (exit 0, empty
+  # stdout/stderr).
+  'fg|=== Running the Truncating Int32 Remainder Prelude Tests (ISSUE-0714) ===|java -ea -cp build deal.test.Int32ModTruncPreludeTest'
 )

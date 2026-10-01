@@ -9695,7 +9695,14 @@ local function __arith(selector, l, r, opKey, digest, parent, origin)
       __ev(opKey, "FAILURE", "BINARY", digest, parent, {}, nil, __errtext(e))
       error(e, 0)
     end
-    return rng(l % r)
+    -- The truncated remainder: the quotient truncates toward zero with
+    -- the same computation the INT32_DIV_TRUNC arm uses, so the
+    -- remainder's sign follows the dividend (Lua's floor % follows the
+    -- divisor). The remainder is always inside the int32 range.
+    local q = l / r
+    local t = math.floor(math.abs(q))
+    if q < 0 then t = -t end
+    return rng(l - t * r)
   end
   if selector == "INT32_POW" then
     if r < 0 then
