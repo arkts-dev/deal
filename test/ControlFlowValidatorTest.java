@@ -684,24 +684,61 @@ public class ControlFlowValidatorTest {
                 "references block BlockId(77) which is not a block of the table");
         }
 
-        // An op after RETURN / BREAK / CONTINUE / THROW in a block.
+        // The represented unreachable tail: an op after
+        // RETURN / THROW / BREAK / CONTINUE in the same block is a member
+        // of that block behind the terminator and validates (the dominance
+        // clause is removed; ISSUE-0713).
         {
-            SemanticOp[] terminators = {
-                returnOp(MAIN),
-                breakOp(nextOpId()),
-                continueOp(nextOpId()),
-                throwOp()
-            };
-            for (SemanticOp terminator : terminators) {
+            // RETURN and THROW terminate the function body block itself.
+            for (SemanticOp terminator : new SemanticOp[] {
+                    returnOp(MAIN), throwOp()}) {
                 SemanticOp after = constInt();
                 LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)),
                     List.of(terminator, after));
                 StructuredBodyTable table = tableOf(Map.ofEntries(
                     Map.entry(INIT, List.<SemanticOp>of()),
                     Map.entry(B0, List.of(terminator, after))));
-                assertE6005(ControlFlowValidator.validate(unit, table),
-                    ControlFlowValidator.CONTROL_BLOCK_TREE, "after a terminator");
+                assertPass(ControlFlowValidator.validate(unit, table),
+                    "an op after " + terminator.kind() + " in its block");
             }
+            // BREAK and CONTINUE terminate the enclosing loop's body block;
+            // the loop op is a member of the module-init block and the
+            // transfer block is the body block it references.
+            for (SemanticOp terminator : new SemanticOp[] {
+                    breakOp(nextOpId()), continueOp(nextOpId())}) {
+                SemanticOp loop = loopOp(ControlSelector.FOR, null, b(2), null);
+                SemanticOp withLoopId = terminator.kind() == SemanticOpKind.BREAK
+                    ? breakOp(loop.opId()) : continueOp(loop.opId());
+                SemanticOp after = constInt();
+                LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)),
+                    List.of(loop, withLoopId, after));
+                StructuredBodyTable table = tableOf(Map.ofEntries(
+                    Map.entry(INIT, List.of(loop)),
+                    Map.entry(B0, List.<SemanticOp>of()),
+                    Map.entry(b(2), List.of(withLoopId, after))));
+                assertPass(ControlFlowValidator.validate(unit, table),
+                    "an op after " + terminator.kind() + " in its block");
+            }
+        }
+
+        // The retargeted live negative: the same tail shape on a corrupted
+        // unit — the tail op is listed twice in its block — still fails
+        // closed with CONTROL_BLOCK_TREE (the retained single-membership
+        // rule).
+        {
+            SemanticOp terminator = returnOp(MAIN);
+            SemanticOp after = constInt();
+            LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)),
+                List.of(terminator, after));
+            Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
+            blockOps.put(INIT, List.of());
+            blockOps.put(B0, List.of(terminator.opId(), after.opId(), after.opId()));
+            Map<OpId, BlockId> opBlocks = new LinkedHashMap<>();
+            opBlocks.put(terminator.opId(), B0);
+            opBlocks.put(after.opId(), B0);
+            assertE6005(ControlFlowValidator.validate(unit,
+                    new StructuredBodyTable(blockOps, opBlocks)),
+                ControlFlowValidator.CONTROL_BLOCK_TREE, "listed twice in one block");
         }
 
         // A root block referenced by a control payload position.
