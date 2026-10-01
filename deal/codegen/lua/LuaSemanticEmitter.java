@@ -129,6 +129,21 @@ public final class LuaSemanticEmitter {
             + "__tA, __okH, __errH, __oA";
 
     /**
+     * The chunk's one factory store: every function factory
+     * ({@code __factories.F<id>}), detached class-default function
+     * ({@code __factories.D<opId>}), and adapter thunk re-executor
+     * ({@code __factories.T<opId>}) is a field of this single chunk-level
+     * local table. LuaJIT bounds one function at 200 locals, so the
+     * factories MUST NOT be pre-declared as one chunk local per factory:
+     * a growing program would cross the limit (the skill example already
+     * does). The table is declared before every assignment and every
+     * reference, so a body emitted before a factory's assignment still
+     * resolves the field at call time — never a nil global — and each
+     * body captures the one table instead of one upvalue per factory.
+     */
+    private static final String FACTORY_TABLE = "__factories";
+
+    /**
      * The number of state slots one emitted save/restore statement
      * carries. LuaJIT rejects a single multi-assignment with more than 200
      * variable names and an over-long expression, so a body with hundreds
@@ -654,7 +669,7 @@ public final class LuaSemanticEmitter {
         }
 
         String fnFactory(FunctionId id) {
-            return "F" + id.id();
+            return FACTORY_TABLE + ".F" + id.id();
         }
 
         String returnLabel(FunctionId id) {
@@ -910,37 +925,17 @@ public final class LuaSemanticEmitter {
             // 60-upvalue limit binds a large body otherwise).
             out.append("local ").append(HOISTED_TEMPS).append("\n");
 
-            // Function factories first (capture cells are factory
-            // arguments); the local names are pre-declared so bodies can
-            // reference factories declared later in source order. The
-            // detached class-default functions are pre-declared the same
-            // way: a DEAL function body (or a re-executed thunk body)
-            // reaches its CLASS_DEFAULT functions from the construction
-            // sites emitted inside the factories, so a `local function`
-            // declaration placed after the factories would leave every
-            // such reference a nil global.
-            List<String> factoryNames = new ArrayList<>();
-            for (LoweredModuleUnit moduleUnit : units.values()) {
-                for (LoweredFunction function : moduleUnit.functions().values()) {
-                    factoryNames.add(fnFactory(function.functionId()));
-                }
-            }
-            List<String> defaultNames = new ArrayList<>();
-            for (LoweredModuleUnit moduleUnit : units.values()) {
-                for (SemanticOp op : moduleUnit.ops()) {
-                    if (op.kind() == SemanticOpKind.CLASS_DEFAULT) {
-                        defaultNames.add(defaultFn(op.opId()));
-                    }
-                }
-            }
-            if (!factoryNames.isEmpty()) {
-                out.append("local ").append(String.join(", ", factoryNames))
-                    .append("\n");
-            }
-            if (!defaultNames.isEmpty()) {
-                out.append("local ").append(String.join(", ", defaultNames))
-                    .append("\n");
-            }
+            // The one factory store (LuaJIT bounds one function at 200
+            // locals): the function factories, the detached class-default
+            // functions, and the adapter thunk re-executors are fields of
+            // this single local table, never one pre-declared chunk local
+            // per factory. A body emitted before a later factory's
+            // assignment still references the field, which resolves at
+            // call time from the one table (a per-factory pre-declaration
+            // was only needed to keep such a reference off the globals);
+            // the same table keeps every body's capture set at one
+            // upvalue instead of one per referenced factory.
+            out.append("local ").append(FACTORY_TABLE).append(" = {}\n");
             for (LoweredModuleUnit moduleUnit : units.values()) {
                 for (LoweredFunction function : moduleUnit.functions().values()) {
                     emitFunctionFactory(function);
@@ -980,12 +975,12 @@ public final class LuaSemanticEmitter {
             // itself skipped) re-execute per invocation, returning the
             // block's final producing value (the op's result slot), so
             // every triggering construction gets a fresh default
-            // (mutable defaults allocate freshly per attempt). The names
-            // are the chunk-level locals pre-declared with the factory
-            // names above: a construction inside a function body (or a
-            // re-executed thunk body) emits its `pcall(D<opId>)` call into
-            // the factory emitted before this block, so the assignment
-            // form keeps that reference bound to the chunk-level local
+            // (mutable defaults allocate freshly per attempt). Each name
+            // is a field of the chunk-level factory store declared above:
+            // a construction inside a function body (or a re-executed
+            // thunk body) emits its `pcall(__factories.D<opId>)` call into
+            // the factory emitted before this block, so the field
+            // assignment keeps that reference resolvable at call time
             // instead of a nil global.
             for (LoweredModuleUnit moduleUnit : units.values()) {
                 for (SemanticOp op : moduleUnit.ops()) {
@@ -1290,10 +1285,10 @@ public final class LuaSemanticEmitter {
          * Emits one detached class-default function: the default block's
          * ops in order (the CLASS_DEFAULT op itself skipped — its own
          * events are the triggering CLASS_NEW/CLASS_FACTORY arm's) and
-         * the final producing value returned. The name is a pre-declared
-         * chunk-level local (see the preamble): the assignment form keeps
-         * the function reachable from every factory/construction body
-         * emitted before this statement.
+         * the final producing value returned. The name is a field of the
+         * chunk-level factory store (see the preamble): the assignment
+         * form keeps the function reachable from every factory/
+         * construction body emitted before this statement.
          */
         private void emitClassDefaultFunction(SemanticOp defaultOp) {
             KindPayload.ClassDefaultPayload payload =
@@ -1320,9 +1315,9 @@ public final class LuaSemanticEmitter {
             out.append("end\n");
         }
 
-        /** One detached class-default function name of a CLASS_DEFAULT op. */
+        /** One detached class-default function field of a CLASS_DEFAULT op. */
         private String defaultFn(OpId defaultOp) {
-            return "D" + defaultOp.id();
+            return FACTORY_TABLE + ".D" + defaultOp.id();
         }
 
         /**
@@ -1339,7 +1334,7 @@ public final class LuaSemanticEmitter {
                 throw new IllegalStateException("the adapter thunk block " + block
                     + " has no membership row (producer defect)");
             }
-            out.append("local function ").append(thunkFn(adaptOp.opId())).append("()\n");
+            out.append(thunkFn(adaptOp.opId())).append(" = function()\n");
             emitBlockOps(block);
             ValueId produced = null;
             for (int i = ops.size() - 1; i >= 0; i--) {
@@ -1361,9 +1356,9 @@ public final class LuaSemanticEmitter {
             out.append("end\n");
         }
 
-        /** One thunk re-executor name of an adapter op. */
+        /** One thunk re-executor field of an adapter op. */
         private String thunkFn(OpId adaptOp) {
-            return "T" + adaptOp.id();
+            return FACTORY_TABLE + ".T" + adaptOp.id();
         }
 
         /**

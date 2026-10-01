@@ -532,50 +532,41 @@ public class LuaProductionProjectEmissionTest {
             check(libWalk > walksAt && appWalk > libWalk,
                 "the module walks run in dependency order under their own __module tag");
 
-            // The whole closure is present: every module's factories before the
-            // walks, and every detached class-default function of the closure —
-            // a pre-declared chunk-level local assigned in the preamble (the
-            // pre-declaration precedes the factories, so a construction inside a
-            // function body resolves the local instead of a nil global).
-            List<String> defaultNames = new ArrayList<>();
-            for (ModuleId moduleId : project.modules().keySet()) {
-                for (SemanticOp op : project.modules().get(moduleId).ops()) {
-                    if (op.kind() == SemanticOpKind.CLASS_DEFAULT) {
-                        defaultNames.add("D" + op.opId().id());
-                    }
-                }
-            }
-            String predeclaration = "local " + String.join(", ", defaultNames)
-                + "\n";
-            int predeclarationAt = defaultNames.isEmpty() ? -1
-                : lua.indexOf(predeclaration);
-            if (!defaultNames.isEmpty()) {
-                check(predeclarationAt >= 0 && predeclarationAt < walksAt,
-                    "the chunk pre-declares the detached class-default locals before "
-                        + "the walks: " + predeclaration.trim());
-            }
+            // The whole closure is present: every module's factories and
+            // every detached class-default function of the closure are
+            // fields of the one bounded chunk-level factory store (never
+            // one pre-declared chunk local per factory — LuaJIT bounds one
+            // function at 200 locals), assigned before the walks, so a
+            // construction inside a function body resolves the field from
+            // the one store instead of a nil global.
+            int storeAt = lua.indexOf("local __factories = {}");
+            check(storeAt >= 0 && storeAt < walksAt,
+                "the chunk declares the one bounded factory store before the "
+                    + "walks");
             int classDefaults = 0;
             for (ModuleId moduleId : project.modules().keySet()) {
                 LoweredModuleUnit unit = project.modules().get(moduleId);
                 for (deal.semantic.ir.LoweredFunction function
                         : unit.functions().values()) {
-                    String factory = "F" + function.functionId().id() + " = function(";
+                    String factory = "__factories.F" + function.functionId().id()
+                        + " = function(";
                     int factoryAt = lua.indexOf(factory);
-                    check(factoryAt >= 0 && factoryAt < walksAt,
+                    check(factoryAt > storeAt && factoryAt < walksAt,
                         "the closure carries the factory of " + moduleId.path() + "#"
-                            + function.functionId());
+                            + function.functionId() + " as a store field");
                 }
                 for (SemanticOp op : unit.ops()) {
                     if (op.kind() != SemanticOpKind.CLASS_DEFAULT) {
                         continue;
                     }
                     classDefaults++;
-                    String defaultFn = "D" + op.opId().id() + " = function()";
+                    String defaultFn = "__factories.D" + op.opId().id()
+                        + " = function()";
                     int defaultAt = lua.indexOf(defaultFn);
-                    check(defaultAt > predeclarationAt && defaultAt < walksAt,
+                    check(defaultAt > storeAt && defaultAt < walksAt,
                         "the closure carries the detached class-default function "
-                            + defaultFn + " assigned after its pre-declaration and "
-                            + "before the walks");
+                            + defaultFn + " assigned after the store declaration "
+                            + "and before the walks");
                 }
             }
             check(classDefaults > 0,

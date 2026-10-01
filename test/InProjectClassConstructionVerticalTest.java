@@ -117,14 +117,16 @@ import java.util.TreeMap;
  *       and {@code javac --release 25 -proc:none} + {@code java} does the
  *       same for the class;</li>
  *   <li><b>the drive's seam repair belongs to the emitter.</b> The LuaJIT
- *       emitter pre-declares the detached class-default locals beside the
- *       factory names and assigns them instead of re-declaring them with
- *       {@code local function}: a construction inside a function body (or
- *       a re-executed thunk body) reaches its {@code CLASS_DEFAULT}
- *       functions from the sites emitted inside the factories, so the
- *       earlier declaration form left every such reference a nil global
- *       at the call. The structural assertions pin the pre-declaration
- *       before every reference and its assignment; no second fact
+ *       emitter stores the detached class-default functions as fields of
+ *       the one bounded chunk-level factory store instead of re-declaring
+ *       them with {@code local function} and instead of one pre-declared
+ *       chunk local per factory ({@code luajit} bounds one function at 200
+ *       locals): a construction inside a function body (or a re-executed
+ *       thunk body) reaches its {@code CLASS_DEFAULT} functions from the
+ *       sites emitted inside the factories, so the earlier declaration
+ *       form left every such reference a nil global at the call. The
+ *       structural assertions pin the store declaration before every
+ *       reference and each function's field assignment; no second fact
  *       producer and no imported-class-specific emission arm is added;</li>
  *   <li><b>the conventional root/module layout resolves through the same
  *       chain.</b> The oracle and both emitters resolve a
@@ -808,38 +810,34 @@ public class InProjectClassConstructionVerticalTest {
             String luaArtifact = Files.readString(luaOut.resolve("app.lua"),
                 StandardCharsets.UTF_8);
 
-            // The detached class-default functions are chunk-level locals
-            // pre-declared beside the factory names and assigned afterwards:
-            // the construction sites emitted inside the factories reference
-            // the pre-declared local, so no body ever calls a nil global.
+            // The detached class-default functions are fields of the one
+            // bounded chunk-level factory store (never one pre-declared
+            // chunk local per factory — LuaJIT bounds one function at 200
+            // locals) assigned after the store declaration: the
+            // construction sites emitted inside the factories reference
+            // the store field, so no body ever calls a nil global.
             List<SemanticOp> classDefaults = new ArrayList<>();
             for (LoweredModuleUnit moduleUnit : result.project().modules().values()) {
                 classDefaults.addAll(ofKind(moduleUnit, SemanticOpKind.CLASS_DEFAULT));
             }
             check(!classDefaults.isEmpty(),
                 "the probe closure carries the detached class-default functions");
-            List<String> defaultNames = classDefaults.stream()
-                .map(op -> "D" + op.opId().id()).toList();
-            String predeclaration = "local " + String.join(", ", defaultNames)
-                + "\n";
-            int predeclarationAt = luaArtifact.indexOf(predeclaration);
-            check(predeclarationAt >= 0,
-                "the emitted chunk pre-declares every detached class-default "
-                    + "local: " + predeclaration.trim());
+            int storeAt = luaArtifact.indexOf("local __factories = {}");
+            check(storeAt >= 0,
+                "the emitted chunk declares the one bounded factory store");
             int walksAt = luaArtifact.indexOf("__dealMain = function()");
-            check(predeclarationAt >= 0 && walksAt > predeclarationAt,
-                "the module walks follow the class-default pre-declaration");
+            check(storeAt >= 0 && walksAt > storeAt,
+                "the module walks follow the factory store declaration");
             for (SemanticOp defaultOp : classDefaults) {
-                String name = "D" + defaultOp.opId().id();
+                String name = "__factories.D" + defaultOp.opId().id();
                 int assignmentAt = luaArtifact.indexOf(name + " = function()");
-                check(assignmentAt > predeclarationAt && assignmentAt < walksAt,
+                check(assignmentAt > storeAt && assignmentAt < walksAt,
                     "the detached class-default function " + name + " is "
-                        + "pre-declared and assigned before the module walks");
+                        + "assigned as a store field before the module walks");
                 int referenceAt = luaArtifact.indexOf("pcall(" + name + ")");
-                check(referenceAt < 0
-                        || (predeclarationAt >= 0 && predeclarationAt < referenceAt),
-                    "every construction site references " + name + " through its "
-                        + "pre-declared chunk-level local");
+                check(referenceAt < 0 || storeAt < referenceAt,
+                    "every construction site references " + name + " through the "
+                        + "bounded chunk-level store");
             }
 
             writeFileIn(luaOut, "vertical_probe.lua", LUA_DRIVER);

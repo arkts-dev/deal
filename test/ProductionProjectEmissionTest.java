@@ -830,7 +830,7 @@ public class ProductionProjectEmissionTest {
                     .orElseThrow().content(), StandardCharsets.UTF_8);
                 check(chunk.contains("__module = \"lib\"")
                         && chunk.contains("__modStack[#__modStack + 1] = __module")
-                        && chunk.contains("pcall(F")
+                        && chunk.contains("pcall(__factories.F")
                         && !chunk.contains("SharedM"),
                     "the staged chunk runs the callee unit's entry under the "
                         + "callee module context and references no per-module "

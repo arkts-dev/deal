@@ -1525,15 +1525,15 @@ public class ClosureCaptureResolutionTest {
             check(luaArtifact != null,
                 "the cross-module drive stages the LuaJIT project artifact");
             if (luaArtifact != null && callee != null) {
-                String empty = "F" + callee.functionId().id() + "()";
+                String empty = "__factories.F" + callee.functionId().id() + "()";
                 String luaLine = lineContaining(luaArtifact,
-                    "pcall(F" + callee.functionId().id() + "(");
+                    "pcall(__factories.F" + callee.functionId().id() + "(");
                 check(luaLine != null, "the LuaJIT artifact emits the capturing "
                     + "body's direct invocation from the non-entry module");
                 check(luaLine != null && !luaLine.contains(empty),
                     "the LuaJIT invocation passes the callee's captures (never an "
                         + "empty argument list): " + luaLine);
-                check(luaArtifact.contains("F" + callee.functionId().id()
+                check(luaArtifact.contains("__factories.F" + callee.functionId().id()
                         + " = function(c"), "the LuaJIT factory declares its capture "
                     + "parameter: " + callee.functionId());
             }

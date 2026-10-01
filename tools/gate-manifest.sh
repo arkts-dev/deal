@@ -576,12 +576,14 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # owner's factory and their field reads observe the constructed values
   # under the real toolchains (luajit; javac --release 25 -proc:none +
   # java). The emitter seam the drive exposed is repaired at its root: the
-  # LuaJIT chunk pre-declares the detached class-default locals beside the
-  # factory names and assigns them (instead of declaring them with
-  # `local function` after the factories that reference them), and no
-  # second fact producer or imported-class-specific emission arm is
-  # added. The SHARED_FACTORY owner resolution is the delivered per-module
-  # class-factory registry fact (the unique module whose registry binds the
+  # LuaJIT chunk stores the detached class-default functions as fields of
+  # the one bounded chunk-level factory store (instead of declaring them
+  # with `local function` after the factories that reference them, and
+  # never as one pre-declared chunk local per factory -- LuaJIT bounds one
+  # function at 200 locals), and no second fact producer or
+  # imported-class-specific emission arm is added. The SHARED_FACTORY
+  # owner resolution is the delivered per-module class-factory registry
+  # fact (the unique module whose registry binds the
   # construction entry), never the class descriptor namespace, so the
   # conventional root/module layout (root `src`, modules
   # `owner.deal`/`app.deal`) constructs through the owner's factory end to
@@ -1595,4 +1597,21 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # oracle with its pinned runtime-ok sidecar outcome (exit 0, empty
   # stdout/stderr).
   'fg|=== Running the Truncating Int32 Remainder Prelude Tests (ISSUE-0714) ===|java -ea -cp build deal.test.Int32ModTruncPreludeTest'
+  # ISSUE-0716 registration: the LuaJIT production chunk's bounded factory
+  # storage (luajit-v1.2-emitter-and-lowering; the production LuaJIT
+  # emission contract): the chunk stores every function factory, detached
+  # class-default function, and adapter thunk re-executor as a field of one
+  # chunk-level local table, never as one pre-declared chunk local per
+  # factory, so LuaJIT's 200-local per-function limit no longer scales with
+  # the program's factory count (a body also captures the one table, never
+  # one upvalue per factory); the growing-factory fixture (300 exported
+  # functions, ten calling groups, one default producer, and a 150-field
+  # defaulted class — more than 450 factories) and the unchanged skill
+  # example (skills/write-deal/examples/src/main.deal) both compile through
+  # the release-owned production invocation, carry no per-factory chunk
+  # local, and execute under real luajit (the fixture's marker and the
+  # example's silent, check-guarded completion); both probes fail on the
+  # pre-fix emitter at load time with LuaJIT's "main function has more than
+  # 200 local variables".
+  'fg|=== Running LuaJIT Chunk Local Bound Tests (ISSUE-0716) ===|java -ea -cp build deal.test.LuaJitChunkLocalBoundTest'
 )
