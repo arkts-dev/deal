@@ -1194,18 +1194,37 @@ public final class JvmSemanticEmitter {
             };
         }
 
-        /** Whether the emitted Java of one block's last op can complete normally. */
+        /**
+         * Whether the emitted Java of one block can complete normally:
+         * the block's reachable prefix is walked exactly like the
+         * emission walk (the non-owned, non-skipped ops in order) and the
+         * walk stops at the first op whose statement cannot complete
+         * normally, because every op behind it is unreachable in the
+         * emitted Java (JLS §14.21) and is skipped. Reading the raw block
+         * tail would answer for a represented source tail that is never
+         * emitted (a statement behind a terminator, or behind a composite
+         * whose every path transfers), so a block whose reachable prefix
+         * ends in a transfer would be misreported as completing.
+         */
         private boolean blockCompletesNormally(BlockId block) {
             StructuredBodyTable ownerTable = blockTableOf.get(block);
             if (ownerTable == null) {
                 ownerTable = table;
             }
             java.util.List<OpId> ops = ownerTable.blockOps().get(block);
-            if (ops == null || ops.isEmpty()) {
+            if (ops == null) {
                 return true;
             }
-            SemanticOp last = opsById.get(ops.get(ops.size() - 1));
-            return last == null || completesNormally(last);
+            for (OpId opId : ops) {
+                if (ownedChildren.contains(opId) || skippedOps.contains(opId)) {
+                    continue;
+                }
+                SemanticOp op = opsById.get(opId);
+                if (op != null && !completesNormally(op)) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         /**

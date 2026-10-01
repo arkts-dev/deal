@@ -31,6 +31,7 @@ import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticOracle;
 import deal.semantic.SemanticRuntimeModel;
+import deal.semantic.ir.BlockId;
 import deal.semantic.ir.ChainOperandCompletion;
 import deal.semantic.ir.ConstructKind;
 import deal.semantic.ir.ExecutableLoweredProject;
@@ -43,6 +44,7 @@ import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.OpId;
 import deal.semantic.ir.ProjectInterfaceIndex;
+import deal.semantic.ir.ScalarValue;
 import deal.semantic.ir.SemanticIdAllocator;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
@@ -90,7 +92,14 @@ import java.util.stream.Stream;
  *       {@code // unreachable:} marker directly follows the terminator's
  *       statement with no trailing statement emitted — and compiles under
  *       {@code javac --release 25 -proc:none}. The artifact text is tied to
- *       the lowered unit's op ids and origins, not to a copy.</li>
+ *       the lowered unit's op ids and origins, not to a copy. The same
+ *       rule holds when the terminator is a composite whose every path
+ *       transfers and whose sub-blocks carry the tail (an {@code if}/{@code
+ *       else} with both branches returning, a {@code try}/{@code catch}
+ *       whose protected and catch blocks both return): the JVM
+ *       block-completion query walks the same reachable prefix the
+ *       emission walks, so the composite is not misreported as completing
+ *       and no unreachable trailing statement is emitted.</li>
  *   <li><b>The fixture drive.</b> The two tail fixtures
  *       ({@code async-await/async-error-propagation} and
  *       {@code async-await/async-throw-catch}) compile through the
@@ -438,9 +447,28 @@ public class UnreachableTailProductionTest {
 
     private static LoweredProject lowerFixture(String stem, Path entry,
             CliOverrides overrides) throws Exception {
+        LoweredProject lowered = lowerProgram(stem, entry, overrides);
+        if (lowered == null) {
+            return null;
+        }
+        Long asyncEntryId = asyncEntryIdOf(
+            lowered.project().modules().get(lowered.entry()), asyncExportOf(stem));
+        check(asyncEntryId != null, stem + ": the unit records the async export's "
+            + "EXTERNAL_ENTRY");
+        return new LoweredProject(lowered.project(), lowered.tables(),
+            lowered.entry(), lowered.entryTable(), asyncEntryId);
+    }
+
+    /**
+     * Lowers one generated temp project through the project entry with the
+     * same release-owned inputs {@link #lowerFixture} uses; a program
+     * without an async export carries no async entry id.
+     */
+    private static LoweredProject lowerProgram(String name, Path entry,
+            CliOverrides overrides) throws Exception {
         ProjectLocator.LocateResult located = ProjectLocator.locate(
             entry.toString(), overrides);
-        check(located.context() != null, stem + ": the generated deal.json "
+        check(located.context() != null, name + ": the generated deal.json "
             + "locates strictly");
         if (located.context() == null) {
             return null;
@@ -455,7 +483,7 @@ public class UnreachableTailProductionTest {
                 && !built.hasErrors() && manifests != null
                 && manifests.manifests() != null
                 && orchestrator.hostDeclarationSurface() != null,
-            stem + ": the oracle closure compiles: "
+            name + ": the oracle closure compiles: "
                 + (built == null ? "no checked project" : built.diagnostics()));
         if (built == null || built.input() == null || built.index() == null
                 || built.hasErrors() || manifests == null
@@ -471,18 +499,14 @@ public class UnreachableTailProductionTest {
                 built.input().modules().get(0).ast().span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             Set.of());
-        check(result.project() != null, stem + ": the oracle closure lowers with "
+        check(result.project() != null, name + ": the oracle closure lowers with "
             + "zero diagnostics: " + result.diagnostics());
         if (result.project() == null) {
             return null;
         }
         ModuleId entryModule = result.project().entryModule();
-        Long asyncEntryId = asyncEntryIdOf(result.project().modules().get(entryModule),
-            asyncExportOf(stem));
-        check(asyncEntryId != null, stem + ": the unit records the async export's "
-            + "EXTERNAL_ENTRY");
         return new LoweredProject(result.project(), result.tables(), entryModule,
-            result.tables().get(entryModule), asyncEntryId);
+            result.tables().get(entryModule), null);
     }
 
     private static Long asyncEntryIdOf(LoweredModuleUnit unit, String export) {
@@ -768,6 +792,329 @@ public class UnreachableTailProductionTest {
             + " stdout=\"" + stdout + "\" stderr=\"" + stderr + "\"");
     }
 
+    // =========================================================================
+    // 4. The composite-block regression: a composite whose every path
+    //    transfers and whose sub-blocks carry a represented tail
+    // =========================================================================
+
+    /**
+     * One composite shape carrying a represented tail in each of its
+     * sub-blocks. The marker expression statements make the tail's
+     * emission observable in the emitted Lua text and its absence
+     * observable in the emitted Java (the JLS &sect;14.21 skip); the
+     * trailing {@code return} behind the composite is the statement a raw
+     * block-tail completion read would wrongly emit as unreachable Java.
+     */
+    private record CompositeCase(String name, String source,
+                                 List<String> tailMarkers) {
+    }
+
+    /** One represented tail statement: its marker op, its text, and the
+     *  terminator op it sits behind in its block. */
+    private record TailMarker(OpId op, String text, OpId terminator) {
+    }
+
+    private static final String IF_ELSE_TAIL_SOURCE = """
+        export function f(): int {
+          if (true) {
+            return 1;
+            "ifElseTailMarker";
+            let ifTail: int = 2;
+          } else {
+            return 3;
+            "elseTailMarker";
+            let elseTail: int = 4;
+          }
+          return 5;
+        }
+
+        export function main(): null {
+          let value: int = f();
+          if (value !== 1) {
+            throw { code: "TEST_FAIL", message: "f returned the wrong value" };
+          }
+          return null;
+        }
+        """;
+
+    private static final String TRY_CATCH_TAIL_SOURCE = """
+        export function g(): int {
+          try {
+            return 1;
+            "tryTailMarker";
+            let tryTail: int = 2;
+          } catch (err) {
+            return 3;
+            "catchTailMarker";
+            let catchTail: int = 4;
+          }
+          return 5;
+        }
+
+        export function main(): null {
+          let value: int = g();
+          if (value !== 1) {
+            throw { code: "TEST_FAIL", message: "g returned the wrong value" };
+          }
+          return null;
+        }
+        """;
+
+    private static final List<CompositeCase> COMPOSITE_CASES = List.of(
+        new CompositeCase("if-else", IF_ELSE_TAIL_SOURCE,
+            List.of("ifElseTailMarker", "elseTailMarker")),
+        new CompositeCase("try-catch", TRY_CATCH_TAIL_SOURCE,
+            List.of("tryTailMarker", "catchTailMarker")));
+
+    private static void testCompositeBlockTails() throws Exception {
+        System.out.println("-- The composite-block tail: real-javac regression --");
+        for (CompositeCase composite : COMPOSITE_CASES) {
+            testCompositeCase(composite);
+        }
+    }
+
+    private static void testCompositeCase(CompositeCase composite) throws Exception {
+        Path project = Files.createTempDirectory(
+            "deal-unreachable-tail-" + composite.name() + "-");
+        try {
+            Path src = project.resolve("src");
+            Files.createDirectories(src);
+            Files.writeString(src.resolve("main.deal"), composite.source(),
+                StandardCharsets.UTF_8);
+            Files.writeString(project.resolve("deal.json"), DEAL_JSON,
+                StandardCharsets.UTF_8);
+            Path entry = src.resolve("main.deal");
+
+            LoweredProject lowered = lowerProgram(composite.name(), entry,
+                new CliOverrides("jvm",
+                    project.resolve("out-oracle").toString()));
+            if (lowered == null) {
+                return;
+            }
+            LoweredModuleUnit unit = lowered.project().modules().get(lowered.entry());
+            Map<OpId, SemanticOp> byId = new LinkedHashMap<>();
+            for (SemanticOp op : unit.ops()) {
+                byId.put(op.opId(), op);
+            }
+            List<TailMarker> markers = new ArrayList<>();
+            for (String marker : composite.tailMarkers()) {
+                SemanticOp markerOp = opWithString(unit.ops(), marker);
+                check(markerOp != null, composite.name() + ": the tail statement '"
+                    + marker + "' is represented in the lowered unit");
+                if (markerOp == null) {
+                    continue;
+                }
+                BlockId owner = lowered.entryTable().opBlocks().get(markerOp.opId());
+                check(owner != null, composite.name() + ": the tail op of '" + marker
+                    + "' is a member of its block");
+                if (owner == null) {
+                    continue;
+                }
+                List<OpId> members = lowered.entryTable().blockOps().get(owner);
+                int index = members.indexOf(markerOp.opId());
+                OpId terminator = null;
+                for (int i = 0; i < index; i++) {
+                    SemanticOp candidate = byId.get(members.get(i));
+                    if (candidate != null && isTerminator(candidate.kind())) {
+                        terminator = candidate.opId();
+                    }
+                }
+                check(terminator != null, composite.name() + ": the tail statement '"
+                    + marker + "' follows a terminator in its block");
+                markers.add(new TailMarker(markerOp.opId(), marker, terminator));
+            }
+
+            // The oracle runs main and never executes a tail statement.
+            SemanticRuntimeModel.ConsumerRun run = SemanticOracle.execute(
+                lowered.project(), lowered.tables(),
+                new SemanticOracle.HostResponder() {
+                });
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                composite.name() + ": the oracle completes main: " + run.terminal());
+            for (TailMarker marker : markers) {
+                check(run.trace().stream().noneMatch(
+                        event -> event.op().equals(marker.op())),
+                    composite.name() + ": the oracle emits no event for the tail op "
+                        + marker.op());
+            }
+
+            compositeJvmDrive(composite, project, entry);
+            compositeLuaDrive(composite, markers, project, entry);
+        } finally {
+            deleteRecursively(project);
+        }
+    }
+
+    private static SemanticOp opWithString(List<SemanticOp> ops, String value) {
+        for (SemanticOp op : ops) {
+            if (op.kind() == SemanticOpKind.CONST
+                    && op.payload() instanceof KindPayload.ConstPayload payload
+                    && payload.value() instanceof ScalarValue.String text
+                    && text.value().equals(value)) {
+                return op;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The JVM leg: the project artifact keeps the reachability skip with no
+     * tail statement emitted, compiles under
+     * {@code javac --release 25 -proc:none}, and executes with the pinned
+     * outcome.
+     */
+    private static void compositeJvmDrive(CompositeCase composite, Path project,
+                                          Path entry) throws Exception {
+        Path out = project.resolve("out-jvm");
+        ProjectLocator.LocateResult located = ProjectLocator.locate(entry.toString(),
+            new CliOverrides("jvm", out.toString()));
+        check(located.context() != null, composite.name() + " [jvm]: the "
+            + "generated deal.json locates strictly");
+        if (located.context() == null) {
+            return;
+        }
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            located.context(), entry, false, false, false, false, null,
+            productionInvocation());
+        boolean compiled = orchestrator.compile();
+        List<String> errors = orchestrator.diagnostics().stream()
+            .filter(diagnostic -> "error".equals(diagnostic.severity()))
+            .map(CompilerDiagnostic::message).toList();
+        check(compiled && errors.isEmpty(), composite.name() + " [jvm]: zero E6005 "
+            + "over the release-owned production invocation: " + errors);
+        check(orchestrator.semanticEmissionCount() == 1
+                && orchestrator.retainedEmissionCount() == 0,
+            composite.name() + " [jvm]: exactly one project artifact and no "
+                + "retained emission: semantic="
+                + orchestrator.semanticEmissionCount() + " retained="
+                + orchestrator.retainedEmissionCount());
+        if (!compiled) {
+            return;
+        }
+        Path artifact = out.resolve(JvmBackend.classNameFor("main") + ".java");
+        check(Files.isRegularFile(artifact), composite.name() + " [jvm]: the "
+            + "project artifact is staged: " + artifact);
+        if (!Files.isRegularFile(artifact)) {
+            return;
+        }
+        String text = Files.readString(artifact, StandardCharsets.UTF_8);
+        for (String marker : composite.tailMarkers()) {
+            check(!text.contains(marker), composite.name() + " [jvm]: the tail "
+                + "statement '" + marker + "' is skipped from the emitted Java");
+        }
+        check(text.contains("// unreachable: the preceding statement cannot"
+                + " complete normally"), composite.name() + " [jvm]: the artifact "
+            + "keeps the JLS \u00a714.21 reachability skip marker");
+
+        Path classes = out.resolve("classes");
+        Files.createDirectories(classes);
+        String classpath = absoluteClasspath();
+        ProcessBuilder javac = new ProcessBuilder("javac", "--release", "25",
+            "-proc:none", "-cp", classpath, "-d", classes.toString(),
+            artifact.toString());
+        javac.directory(out.toFile());
+        javac.redirectErrorStream(true);
+        Process compile = javac.start();
+        String compileOut = new String(compile.getInputStream().readAllBytes(),
+            StandardCharsets.UTF_8);
+        int compileExit = compile.waitFor();
+        check(compileExit == 0, composite.name() + " [jvm]: the artifact compiles "
+            + "under javac --release 25 -proc:none: " + compileOut);
+        if (compileExit != 0) {
+            return;
+        }
+        ProcessBuilder runner = new ProcessBuilder("java", "-cp",
+            classpath + File.pathSeparator + classes, "Main");
+        runner.directory(out.toFile());
+        Process process = runner.start();
+        String stdout = new String(process.getInputStream().readAllBytes(),
+            StandardCharsets.UTF_8);
+        String stderr = new String(process.getErrorStream().readAllBytes(),
+            StandardCharsets.UTF_8);
+        int exit = process.waitFor();
+        check(exit == 0 && stdout.isEmpty() && stderr.isEmpty(), composite.name()
+            + " [jvm]: the artifact executes with exit 0 and an empty transcript: "
+            + "exit=" + exit + " stdout=\"" + stdout + "\" stderr=\"" + stderr
+            + "\"");
+    }
+
+    /**
+     * The LuaJIT leg: the production chunk emits each tail statement behind
+     * its terminator in block order and executes with the pinned outcome
+     * (the tail never runs).
+     */
+    private static void compositeLuaDrive(CompositeCase composite,
+                                          List<TailMarker> markers, Path project,
+                                          Path entry) throws Exception {
+        Path out = project.resolve("out-luajit");
+        ProjectLocator.LocateResult located = ProjectLocator.locate(entry.toString(),
+            new CliOverrides("luajit", out.toString()));
+        check(located.context() != null, composite.name() + " [luajit]: the "
+            + "generated deal.json locates strictly");
+        if (located.context() == null) {
+            return;
+        }
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            located.context(), entry, false, false, false, false, null,
+            productionInvocation());
+        boolean compiled = orchestrator.compile();
+        List<String> errors = orchestrator.diagnostics().stream()
+            .filter(diagnostic -> "error".equals(diagnostic.severity()))
+            .map(CompilerDiagnostic::message).toList();
+        check(compiled && errors.isEmpty(), composite.name() + " [luajit]: zero "
+            + "E6005 over the release-owned production invocation: " + errors);
+        check(orchestrator.semanticEmissionCount() == 1
+                && orchestrator.retainedEmissionCount() == 0,
+            composite.name() + " [luajit]: exactly one project artifact and no "
+                + "retained emission: semantic="
+                + orchestrator.semanticEmissionCount() + " retained="
+                + orchestrator.retainedEmissionCount());
+        if (!compiled) {
+            return;
+        }
+        Path chunk = out.resolve("main.lua");
+        check(Files.isRegularFile(chunk), composite.name() + " [luajit]: the "
+            + "project artifact is staged: " + chunk);
+        if (!Files.isRegularFile(chunk)) {
+            return;
+        }
+        String text = Files.readString(chunk, StandardCharsets.UTF_8);
+        for (TailMarker marker : markers) {
+            check(text.contains(marker.text()), composite.name() + " [luajit]: "
+                + "the emitted chunk carries the tail statement '" + marker.text()
+                + "'");
+            if (marker.terminator() != null) {
+                int tailAt = text.indexOf(quotedOpId(marker.op()));
+                int terminatorAt = text.lastIndexOf(
+                    quotedOpId(marker.terminator()), tailAt);
+                check(tailAt >= 0 && terminatorAt >= 0 && terminatorAt < tailAt,
+                    composite.name() + " [luajit]: the emitted chunk places the "
+                    + "tail op " + marker.op() + " behind " + marker.terminator()
+                    + " in block order");
+            }
+        }
+        Path probe = out.resolve("__probe.lua");
+        Files.writeString(probe, "dofile(\""
+            + chunk.toAbsolutePath().normalize() + "\")\n"
+            + "local __ok, __err = __dealMain()\n"
+            + "if not __ok then os.exit(1) end\n"
+            + "os.exit(0)\n", StandardCharsets.UTF_8);
+        ProcessBuilder builder = new ProcessBuilder("luajit",
+            probe.toAbsolutePath().toString());
+        builder.directory(out.toFile());
+        builder.environment().put("DEAL_DEFER_MAIN", "1");
+        Process process = builder.start();
+        String stdout = new String(process.getInputStream().readAllBytes(),
+            StandardCharsets.UTF_8);
+        String stderr = new String(process.getErrorStream().readAllBytes(),
+            StandardCharsets.UTF_8);
+        int exit = process.waitFor();
+        check(exit == 0 && stdout.isEmpty() && stderr.isEmpty(), composite.name()
+            + " [luajit]: the artifact executes with exit 0 and an empty "
+            + "transcript: exit=" + exit + " stdout=\"" + stdout + "\" stderr=\""
+            + stderr + "\"");
+    }
+
     private static String absoluteClasspath() {
         StringBuilder resolved = new StringBuilder();
         for (String entry : System.getProperty("java.class.path", "")
@@ -810,6 +1157,7 @@ public class UnreachableTailProductionTest {
         for (String stem : TAIL_FIXTURES) {
             testFixture(stem);
         }
+        testCompositeBlockTails();
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
             System.exit(1);
