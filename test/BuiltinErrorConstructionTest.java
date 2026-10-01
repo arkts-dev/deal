@@ -586,11 +586,11 @@ public class BuiltinErrorConstructionTest {
         checkExportedFixture("rethrow-preserves-code.deal", rethrow,
             "test_rethrow_preserves_code", "USER_RETHROW");
 
-        // rtc-015-error-default-code and error-roundtrip carry later-slice
-        // shapes the shared slice does not admit yet (an exported function
-        // called from source spans two invocation shapes; a non-null
-        // return type without a trailing return needs the non-null implicit
-        // return) — they stay fail-closed until their owning children land.
+        // rtc-015-error-default-code and error-roundtrip were this
+        // battery's earlier fail-closed shapes; both are admitted now
+        // (the composite terminator analysis consumes the try/catch and
+        // if/else implicit-return arms; ISSUE-0712 drives error-roundtrip
+        // end to end in CompositeTerminatorAnalysisTest).
     }
 
     /**

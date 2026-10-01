@@ -5663,7 +5663,21 @@ public final class JvmSemanticEmitter {
                         out.append(indent(indent)).append("}");
                     }
                     out.append("\n");
-                    emitPlainSuccess(op, indent);
+                    if (payload.alternateBlock() == null
+                            || blockCompletesNormally(payload.selectedBlock())
+                            || blockCompletesNormally(payload.alternateBlock())) {
+                        emitPlainSuccess(op, indent);
+                    } else {
+                        // JLS §14.21: the emitted if/else cannot complete
+                        // normally (both branches end in a transfer), so its
+                        // normal-completion SUCCESS event is unreachable —
+                        // javac rejects a plain statement here, and the
+                        // oracle's normal-completion path is unreachable on
+                        // the same traces. The transfer closures emit the
+                        // closed-success line on every transfer path.
+                        out.append(indent(indent)).append("// unreachable: the preceding"
+                            + " statement cannot complete normally\n");
+                    }
                 }
                 case LOGICAL_AND, LOGICAL_OR -> {
                     String target = slot((ValueId) op.result());

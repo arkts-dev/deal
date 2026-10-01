@@ -1534,4 +1534,39 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # own function record, so the emitted factory receives its captures and
   # the cross-module guard executes under both real toolchains.
   'fg|=== Running Closure Capture Resolution Tests (ISSUE-0701) ===|java -ea -cp build deal.test.ClosureCaptureResolutionTest'
+  # ISSUE-0712 registration (the closed composite terminator analysis of
+  # residual-carrier-shapes-production-realization D1/D3, the terminator-
+  # and-unreachable-tail contract, dispatched-corpus-production-realization
+  # R4 item 2, and luajit-jvm-single-lowering-production-cutover C1/C2/C10):
+  # the unit battery through the release-owned project entry — both-branch
+  # returns, an else-if chain (which composes through the nested BRANCH's
+  # marking of the alternate block), try/catch both returning, and the
+  # literal-true loop's three condition forms plus the for-let true form all
+  # mark their body non-OPEN (the body block carries no implicit trailing
+  # synthetic null return), while the negative controls (an if without else,
+  # an if/else with one non-returning branch, a try with a non-returning
+  # catch, and a literal-true loop with a break or continue path, whose
+  # TRANSFER state leaves the enclosing block OPEN) keep the pinned implicit
+  # null return; a nested declared/closure body's blocks stay disjoint from
+  # the enclosing body's blocks; and a genuinely unterminated non-null body
+  # still fails closed with the landed arm (at the session level, since the
+  # checker's E5002 rejects the shape before the project entry). The four
+  # named fixtures (async-await/async-if-branching,
+  # control-flow/return-inside-try,
+  # descriptors/canonical-class-atom-error-roundtrip,
+  # error-handling/error-roundtrip) compile through the release-owned
+  # production invocation on LuaJIT and JVM with zero E6005, stage one
+  # project artifact with no retained emission, and execute on the real
+  # toolchains (luajit; javac --release 25 -proc:none + java) with their
+  # pinned runtime-ok sidecar transcripts and their exported probes
+  # exercised; the differential matrix (semantic oracle + shared LuaJIT +
+  # shared JVM) runs each probe event-for-event (the sync fixtures through a
+  # driver entry module asserting the pinned value, the async fixture
+  # through its recorded async entry). The JVM trace-mode BRANCH arm keeps
+  # the JLS §14.21 rule the TRY_CATCH arm already applies: an if/else whose
+  # both branches cannot complete normally emits the unreachable marker
+  # instead of its normal-completion SUCCESS event, so the emitted artifact
+  # compiles and the oracle's normal-completion path stays unreachable on
+  # the same traces.
+  'fg|=== Running Closed Composite Terminator Analysis Tests (ISSUE-0712) ===|java -ea -cp build deal.test.CompositeTerminatorAnalysisTest'
 )
