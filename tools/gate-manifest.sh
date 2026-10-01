@@ -79,6 +79,23 @@ TEST_MAINS=(
   # production artifacts (CrossModuleAsyncRealizationTest's
   # testAsyncDeclaredParameterOrigin / testSameUnitAsyncDeclaredParameterOrigin).
   'fg|=== Running Failure Arm Authority Tests (ISSUE-0704) ===|java -ea -cp build deal.test.FailureArmAuthorityTest'
+  # ISSUE-0705 registration: the canonical-projection parity verification
+  # (canonical-failure-projection-authority Verification 1-6): the named
+  # canonical divergences byte-exact through the release-owned production
+  # invocation with the lane-equivalent materialization and the span rebase
+  # on the oracle, the LuaJIT artifact under luajit, and the JVM artifact
+  # under javac --release 25 -proc:none plus java; the per-arm-family
+  # three-consumer tuple identity over the closed corpus fixture list; the
+  # closed arm table's renderer identity and field-shape fail-closed
+  # controls; the FOR_EACH terminal check over a deleted array-element slot
+  # at the op's own origin; the host-driven callback entry slot's
+  # HOST_TO_DEAL parameter boundaries asserted against the invoking unit's
+  # program span in the lowering and in the three consumers' render; the
+  # row/arm completeness negatives; the negative single-source control
+  # reported by field name; and the unchanged-surface accounting (the
+  # dispatched corpus count, the sidecar schema, the landed comparison
+  # contract, and the JSON_TO_ERROR / INT32_RESULT row data).
+  'fg|=== Running Canonical Projection Parity Tests (ISSUE-0705) ===|java -ea -cp build deal.test.CanonicalProjectionParityTest'
   'fg|=== Running Canonical JSON / Snapshot Digest Tests (ISSUE-0283) ===|java -ea -cp build deal.test.CanonicalJsonTest'
   'fg|=== Running Semantic IR Validator Tests (ISSUE-0286) ===|java -ea -cp build deal.test.SemanticIrValidatorTest'
   'fg|=== Running Dynamic Resolution IR Tests (ISSUE-0531) ===|java -ea -cp build deal.test.DynamicResolutionIrTest'
