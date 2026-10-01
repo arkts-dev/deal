@@ -157,6 +157,9 @@ WARNING: node not found, skipping standard library JS tests'
   # named producer defect.
   'fg|=== Running the @jsonable Helper Production Drive (ISSUE-0698) ===|java -ea -cp build deal.test.JsonableHelperProductionDriveTest'
   'fg|=== Running Closed Composite Terminator Analysis Tests (ISSUE-0712) ===|java -ea -cp build deal.test.CompositeTerminatorAnalysisTest'
+  # ISSUE-0694: the cutover acceptance audits (HR4(b) lane identity guard,
+  # C10/K12 body-invocation identity, produced-project accessor).
+  'fg|=== Running Cutover Acceptance Audit Tests (ISSUE-0694) ===|java -ea -cp build deal.test.CutoverAcceptanceAuditTest'
   'fg|=== Running the Truncating Int32 Remainder Prelude Tests (ISSUE-0714) ===|java -ea -cp build deal.test.Int32ModTruncPreludeTest'
   'fg|=== Running LuaJIT Chunk Local Bound Tests (ISSUE-0716) ===|java -ea -cp build deal.test.LuaJitChunkLocalBoundTest'
   'fg|=== Running Unreachable Tail Production Tests (ISSUE-0713) ===|java -ea -cp build deal.test.UnreachableTailProductionTest'

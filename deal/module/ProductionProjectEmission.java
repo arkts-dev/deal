@@ -86,14 +86,15 @@ public final class ProductionProjectEmission {
 
     /**
      * The outcome of one production arm run: {@link Outcome#EMITTED} with
-     * the one staged project artifact's relative path and no diagnostic,
-     * or {@link Outcome#FAILED} with exactly the first diagnostic and no
-     * staged artifact.
+     * the one staged project artifact's relative path, the produced
+     * project, and no diagnostic, or {@link Outcome#FAILED} with exactly
+     * the first diagnostic, no produced project, and no staged artifact.
      *
      */
     public record Result(
             Outcome outcome,
             List<CompilerDiagnostic> diagnostics,
+            ExecutableLoweredProject producedProject,
             String artifactRelativePath) {
 
         public Result {
@@ -101,16 +102,18 @@ public final class ProductionProjectEmission {
             Objects.requireNonNull(diagnostics, "diagnostics must not be null");
             diagnostics = List.copyOf(diagnostics);
             if (outcome == Outcome.EMITTED
-                    && (!diagnostics.isEmpty() || artifactRelativePath == null)) {
+                    && (!diagnostics.isEmpty() || artifactRelativePath == null
+                        || producedProject == null)) {
                 throw new IllegalArgumentException(
                     "an emitted production run carries the one project artifact"
-                        + " path and no diagnostic");
+                        + " path, its produced project, and no diagnostic");
             }
             if (outcome == Outcome.FAILED
-                    && (diagnostics.isEmpty() || artifactRelativePath != null)) {
+                    && (diagnostics.isEmpty() || artifactRelativePath != null
+                        || producedProject != null)) {
                 throw new IllegalArgumentException(
-                    "a failed production run carries at least one diagnostic and"
-                        + " no artifact path");
+                    "a failed production run carries at least one diagnostic,"
+                        + " no produced project, and no artifact path");
             }
         }
 
@@ -187,7 +190,7 @@ public final class ProductionProjectEmission {
         Optional<CompilerDiagnostic> hostImport =
             hostImportGuard(checkedProject, declarationSurface, invocation);
         if (hostImport.isPresent()) {
-            return new Result(Outcome.FAILED, List.of(hostImport.get()), null);
+            return new Result(Outcome.FAILED, List.of(hostImport.get()), null, null);
         }
 
         // (3) The one project lowering over the compile's declared inputs.
@@ -198,7 +201,7 @@ public final class ProductionProjectEmission {
             declarationSurface, declarationModuleIdentities, externCModules,
             builtinError, conversionIntrinsics, callbackExports);
         if (lowering.hasErrors()) {
-            return new Result(Outcome.FAILED, lowering.diagnostics(), null);
+            return new Result(Outcome.FAILED, lowering.diagnostics(), null, null);
         }
         ExecutableLoweredProject project = lowering.project();
 
@@ -217,7 +220,7 @@ public final class ProductionProjectEmission {
             } catch (IllegalStateException emitterGap) {
                 return new Result(Outcome.FAILED,
                     List.of(sharedEmitterCoverage(project.entryModule().path(),
-                        emitterGap, invocation)), null);
+                        emitterGap, invocation)), null, null);
             }
             artifactRelativePath = className + ".java";
             artifactSource = emission.source();
@@ -231,7 +234,7 @@ public final class ProductionProjectEmission {
             } catch (IllegalStateException emitterGap) {
                 return new Result(Outcome.FAILED,
                     List.of(sharedEmitterCoverage(project.entryModule().path(),
-                        emitterGap, invocation)), null);
+                        emitterGap, invocation)), null, null);
             }
             artifactRelativePath =
                 project.entryModule().path().replace('.', '/') + ".lua";
@@ -250,7 +253,7 @@ public final class ProductionProjectEmission {
                 stager.stageRuntimeCopy(RUNTIME_LUA, distributionHome);
             if (runtime.isEmpty()) {
                 return new Result(Outcome.FAILED,
-                    List.of(runtimeLibraryMissing()), null);
+                    List.of(runtimeLibraryMissing()), null, null);
             }
             for (String stdlibModule : StdlibModuleResolver.SPEC_STDLIB_MODULES) {
                 stager.stageStdlibCopy(
@@ -258,7 +261,8 @@ public final class ProductionProjectEmission {
                     distributionHome);
             }
         }
-        return new Result(Outcome.EMITTED, List.of(), artifactRelativePath);
+        return new Result(Outcome.EMITTED, List.of(), project,
+            artifactRelativePath);
     }
 
     private static Optional<CompilerDiagnostic> hostImportGuard(
