@@ -95,4 +95,49 @@ WARNING: node not found, skipping standard library JS tests'
   'fg|=== Running LuaJIT Chunk Local Bound Tests (ISSUE-0716) ===|java -ea -cp build deal.test.LuaJitChunkLocalBoundTest'
   'fg|=== Running Unreachable Tail Production Tests (ISSUE-0713) ===|java -ea -cp build deal.test.UnreachableTailProductionTest'
   'fg|=== Running Legacy Backend Retirement Audit Tests (ISSUE-0688) ===|java -ea -cp build deal.test.LegacyBackendRetirementTest'
+  # ISSUE-0715 registration (the registered residual-carrier union acceptance
+  # drive and the joint BYTES dual-mechanism acceptance; design source
+  # residual-carrier-shapes-production-realization D1/D2/D3/D4 and the
+  # acceptance; dispatched-corpus-production-realization R4;
+  # luajit-jvm-single-lowering-production-cutover C1/C2/C7/C8;
+  # dispatched-corpus-production-acceptance A1-A4;
+  # bytes-value-semantics-production-realization B5): the eleven owned
+  # residual fixtures (functions/direct-recursion,
+  # functions/nested-scope-recursion, async-await/async-await-statement,
+  # async-await/async-error-propagation, async-await/async-if-branching,
+  # async-await/async-throw-catch, control-flow/return-in-try,
+  # control-flow/return-inside-try, arithmetic/int32-div-rem-boundaries,
+  # descriptors/canonical-class-atom-error-roundtrip,
+  # error-handling/error-roundtrip) and the two dual-mechanism bytes fixtures
+  # (bytes/bytes-boundary-order, bytes/bytes-async-closure) are enumerated on
+  # both targets and skipped nowhere: each compiles through the release-owned
+  # production invocation with zero E6005 CONSTRUCT_UNLOWERED/
+  # RETAINED_ABI_DEFERRED/SHARED_EMITTER_COVERAGE, stages exactly one project
+  # artifact with no retained emission and no route plan, stages byte-identical
+  # artifact bytes on a repeated compile, and executes the staged artifact on
+  # the real toolchain (luajit; javac --release 25 -proc:none plus java) with
+  # the fixture's exported probe exercised — the sync and main probes called
+  # directly, the async probes through the recorded async dispatch entry —
+  # against the sidecar-pinned runtime-ok outcome (exit 0, both empty
+  # transcripts), while the semantic oracle drives the same probes
+  # event-for-event through the differential matrix (sync exports through a
+  # driver entry asserting the pinned value, main through the project run,
+  # async exports through the recorded async entry) with no divergence. The
+  # two dual-mechanism fixtures are accepted jointly with landed BYTES: their
+  # lowered units carry the nested declared bodies (the boundary-order write's
+  # target/index/value operands) and the nested async declaration awaited in
+  # place (bytes-async-closure's counter) together with the bytes element
+  # contract, so a broken bytes realization or a broken residual mechanism
+  # fails the same drive. The represented-tail monotonicity is asserted on the
+  # union: the two tail fixtures keep their marked block non-OPEN with the tail
+  # represented as a block member after the terminator and no implicit return
+  # fabricated, and a unit-level both-branch-return body with a following
+  # unreachable statement emits the tail only in the Lua artifact, keeps the
+  # JVM reachability skip (compiling under javac), and never executes it. The
+  # union invariants are asserted with the drive: the sidecars and fixture
+  # sources are read and never written (byte-identical before and after), the
+  # dispatched corpus count pin (390) stays landed, the three guard
+  # identifiers stay landed, the retargeted control-flow pin files stay
+  # present, and this drive is a foreground record of this manifest.
+  'fg|=== Running Residual Carrier Shapes Acceptance Tests (ISSUE-0715) ===|java -ea -cp build deal.test.ResidualCarrierShapesAcceptanceTest'
 )
