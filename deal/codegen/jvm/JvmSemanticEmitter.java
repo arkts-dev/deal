@@ -2810,13 +2810,18 @@ public final class JvmSemanticEmitter {
                     emitOp(child, indent + 1);
                 }
             }
+            // The chain's published value lives in the child-local scope
+            // the chain declared (a chain child's result slot is a local
+            // inside this try block); the ASSIGN's own SUCCESS atom must
+            // read it here, before the block closes and the name falls
+            // back to the class-field slot the chain never wrote.
+            emitResultSuccess(op, slot((ValueId) op.result()),
+                producerResultType(op.result()), indent + 1);
             out.append(indent(indent)).append("} catch (JvmRuntime.DealError __e) {\n");
             emitFailureEvent(op.opId(), op.kind().name(), op, "JvmRuntime.errtext(__e)",
                 indent + 1);
             out.append(indent(indent)).append("  throw __e;\n");
             out.append(indent(indent)).append("}\n");
-            emitResultSuccess(op, slot((ValueId) op.result()),
-                producerResultType(op.result()), indent);
         }
 
         private void emitDelete(SemanticOp op, int indent) {
