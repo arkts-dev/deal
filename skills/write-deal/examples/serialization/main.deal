@@ -1,0 +1,22 @@
+import * as settings from "./settings";
+
+export function main(): null {
+  let value: settings.Settings | null = settings.Settings$fromJson("{\"title\":\"Tools\",\"note\":null}");
+  if (value !== null) {
+    if (!value.enabled || value.title !== "Tools" || !has(value.note)) {
+      throw { code: "EXAMPLE_FAILED", message: "JSON defaults and presence" };
+    }
+    let encoded: string = settings.Settings$toJson(value);
+    let restored: settings.Settings | null = settings.Settings$fromJson(encoded);
+    if (restored === null) {
+      throw { code: "EXAMPLE_FAILED", message: "record reparsing" };
+    }
+  } else {
+    throw { code: "EXAMPLE_FAILED", message: "record parsing" };
+  }
+  let invalid: settings.Settings | null = settings.Settings$fromJson("{\"extra\":true}");
+  if (invalid !== null) {
+    throw { code: "EXAMPLE_FAILED", message: "extra JSON key accepted" };
+  }
+  return null;
+}

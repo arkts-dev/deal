@@ -1,0 +1,36 @@
+import * as check from "./check";
+
+class Contact {
+  name: string = "";
+  nick?: string;
+  active: boolean = true;
+}
+
+function displayName(contact: Contact): string {
+  let nick: string | null = contact.nick;
+  if (nick !== null) {
+    return nick;
+  }
+  return contact.name;
+}
+
+function activeNames(contacts: Contact[]): string[] {
+  let names: string[] = [];
+  for (let contact: Contact of contacts) {
+    if (contact.active) {
+      names[names.length] = displayName(contact);
+    }
+  }
+  return names;
+}
+
+export function exercise(): null {
+  let ada: Contact = { name: "Ada", nick: "countess" };
+  let grace: Contact = { name: "Grace" };
+  let inactive: Contact = { name: "Inactive", active: false };
+  let contacts: Contact[] = [ada, grace, inactive];
+  let names: string[] = activeNames(contacts);
+  check.require(names.length === 2, "active contact count");
+  check.require(names[0] === "countess" && names[1] === "Grace", "display names");
+  return null;
+}

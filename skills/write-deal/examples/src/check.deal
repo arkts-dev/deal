@@ -1,0 +1,6 @@
+export function require(condition: boolean, message: string): null {
+  if (!condition) {
+    throw { code: "EXAMPLE_FAILED", message: message };
+  }
+  return null;
+}

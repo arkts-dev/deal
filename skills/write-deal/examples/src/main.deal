@@ -1,0 +1,18 @@
+import * as contacts from "./contacts";
+import * as profiles from "./profiles";
+import * as buffers from "./buffers";
+import * as numbers from "./numbers";
+import * as functions from "./functions";
+import * as data from "./data";
+import * as strings from "./strings";
+
+export function main(): null {
+  contacts.exercise();
+  profiles.exercise();
+  buffers.exercise();
+  numbers.exercise();
+  functions.exercise();
+  data.exercise();
+  strings.exercise();
+  return null;
+}

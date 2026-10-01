@@ -1,0 +1,9 @@
+import * as store from "host/store";
+
+export async function loadTitle(key: string): string {
+  let title: string | null = await store.read(key);
+  if (title !== null) {
+    return title;
+  }
+  return "untitled";
+}

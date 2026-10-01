@@ -1,0 +1,30 @@
+import * as check from "./check";
+
+class Profile {
+  nick?: string | null;
+}
+
+function nickState(profile: Profile): string {
+  if (!has(profile.nick)) {
+    return "missing";
+  }
+  let nick: string | null = profile.nick;
+  if (nick !== null) {
+    return nick;
+  }
+  return "null";
+}
+
+export function exercise(): null {
+  let missing: Profile = {};
+  let explicitNull: Profile = { nick: null };
+  let named: Profile = { nick: "Ada" };
+  check.require(nickState(missing) === "missing", "missing optional field");
+  check.require(nickState(explicitNull) === "null", "present null field");
+  check.require(nickState(named) === "Ada", "present value field");
+  delete named.nick;
+  check.require(nickState(named) === "missing", "deleted optional field");
+  named.nick = "Grace";
+  check.require(nickState(named) === "Grace", "restored optional field");
+  return null;
+}

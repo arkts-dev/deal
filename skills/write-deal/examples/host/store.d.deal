@@ -1,0 +1,1 @@
+export async function read(key: string): string | null;

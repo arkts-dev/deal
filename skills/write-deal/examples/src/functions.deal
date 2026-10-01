@@ -1,0 +1,24 @@
+import * as check from "./check";
+
+function makeCounter(start: int): () => int {
+  let current: int = start;
+  return function(): int {
+    current = current + 1;
+    return current;
+  };
+}
+
+function applyTwice(value: int, transform: (value: int) => int): int {
+  return transform(transform(value));
+}
+
+export function exercise(): null {
+  let next: () => int = makeCounter(10);
+  check.require(next() === 11, "first closure call");
+  check.require(next() === 12, "captured binding persists");
+  let double: (value: int) => int = function(value: int): int {
+    return value * 2;
+  };
+  check.require(applyTwice(3, double) === 12, "typed callback");
+  return null;
+}

@@ -1,0 +1,54 @@
+import * as check from "./check";
+
+function sum(values: int[]): int {
+  let total: int = 0;
+  for (let value: int of values) {
+    total = total + value;
+  }
+  return total;
+}
+
+function rangeWriteRejected(buffer: bytes): boolean {
+  try {
+    buffer[0] = 256;
+  } catch (e) {
+    return e.code === "E8013";
+  }
+  return false;
+}
+
+function boundsWriteRejected(buffer: bytes): boolean {
+  try {
+    buffer[buffer.length] = 1;
+  } catch (e) {
+    return e.code === "E8012";
+  }
+  return false;
+}
+
+function copyBytes(source: bytes): bytes {
+  let copy: bytes = bytes(source.length);
+  for (let i: int = 0; i < source.length; i = i + 1) {
+    copy[i] = source[i];
+  }
+  return copy;
+}
+
+export function exercise(): null {
+  let values: int[] = [2, 3];
+  values[values.length] = 5;
+  check.require(sum(values) === 10, "array append and sum");
+  let buffer: bytes = bytes(2);
+  check.require(buffer[0] === 0 && buffer[1] === 0, "byte zero fill");
+  let alias: bytes = buffer;
+  alias[0] = 255;
+  check.require(buffer[0] === 255, "byte alias mutation");
+  check.require(rangeWriteRejected(buffer), "byte range rejection");
+  check.require(boundsWriteRejected(buffer), "byte bounds rejection");
+  check.require(buffer[0] === 255 && buffer[1] === 0 && buffer.length === 2,
+    "failed byte write mutated buffer");
+  let copy: bytes = copyBytes(buffer);
+  copy[0] = 7;
+  check.require(buffer[0] === 255 && copy[0] === 7, "independent byte copy");
+  return null;
+}

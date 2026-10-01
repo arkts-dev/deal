@@ -1,0 +1,8 @@
+{
+  "languageVersion": "1.2",
+  "moduleRoots": ["."],
+  "backend": "luajit",
+  "externals": {
+    "host/store": { "declaration": "store.d.deal" }
+  }
+}

@@ -1,0 +1,27 @@
+import * as check from "./check";
+import * as strings from "std/string";
+
+function csvLabels(text: string): string[] {
+  let result: string[] = [];
+  let parts: string[] = strings.split(text, ",");
+  for (let part: string of parts) {
+    let label: string = strings.trim(part);
+    if (label !== "") {
+      result[result.length] = `item: ${label}`;
+    }
+  }
+  return result;
+}
+
+export function exercise(): null {
+  let labels: string[] = csvLabels(" Ada, , Grace ");
+  check.require(labels.length === 2, "empty labels removed");
+  check.require(labels[0] === "item: Ada" && labels[1] === "item: Grace", "string interpolation");
+  let initials: string = "";
+  for (let character: string of "AG") {
+    initials = initials + character;
+  }
+  check.require(initials === "AG", "string iteration");
+  check.require(strings.length("Ada") === 3, "string module length");
+  return null;
+}

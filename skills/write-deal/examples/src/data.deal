@@ -1,0 +1,36 @@
+import * as check from "./check";
+import * as json from "std/json";
+
+function readCount(data: table): int {
+  let count: int = data.count;
+  if (count < 0) {
+    throw { code: "NEGATIVE_COUNT", message: "count must be nonnegative" };
+  }
+  return count;
+}
+
+function wrongTypeRejected(): boolean {
+  let data: table = { count: "three" };
+  try {
+    readCount(data);
+  } catch (e) {
+    return e.code === "E8001";
+  }
+  return false;
+}
+
+export function exercise(): null {
+  check.require(wrongTypeRejected(), "table read validates type");
+  let data: table = json.parse("{\"name\":\"Ada\",\"count\":3}");
+  let name: string = data.name;
+  check.require(name === "Ada", "typed JSON field");
+  check.require(readCount(data) === 3, "typed count read");
+  data.enabled = true;
+  let encoded: string = json.stringify(data);
+  let restored: table = json.parse(encoded);
+  let enabled: boolean = restored.enabled;
+  check.require(enabled, "table JSON roundtrip");
+  data.note = null;
+  delete data.note;
+  return null;
+}
