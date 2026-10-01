@@ -60,6 +60,80 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
+/**
+ * The canonical-projection parity verification
+ * ({@code canonical-failure-projection-authority} Verification 1-6): the
+ * named canonical divergences byte-exact through the release-owned
+ * production pipeline on the oracle, the LuaJIT artifact under
+ * {@code luajit}, and the JVM artifact under {@code javac --release 25
+ * -proc:none} plus {@code java}; the per-arm three-consumer tuple
+ * identity; the {@code FOR_EACH} terminal check over a deleted
+ * array-element slot; the row/arm completeness and single-source
+ * negatives; and the unchanged-surface accounting.
+ *
+ * <ol>
+ *   <li><b>The named divergences.</b> Five corpus fixtures compile
+ *       through the release-owned production invocation with the
+ *       lane-equivalent materialization (the corpus-relative mirror, the
+ *       header-stripped compilation set, the host declaration files and
+ *       the corpus externals map with the dotted class-identity key
+ *       first, and the drive's own entry module for a probe export) and
+ *       every capture is rebased onto raw corpus coordinates. Each of the
+ *       three consumers reproduces its sidecar's pinned {@code code},
+ *       {@code message}, span group, {@code expected}, and {@code actual}
+ *       byte-exact, and the three tuples are identical.</li>
+ *   <li><b>The arm families through the production pipeline.</b> A closed
+ *       fixture list covers the reachable typed-boundary, class,
+ *       array-element, signature, int-ladder, signed32-range, conversion,
+ *       {@code std/json}, host parameter/return/nothing/string-carrier,
+ *       async-shape, completion, class-construction, and host-load
+ *       families; each drive asserts the sidecar pins per consumer and the
+ *       three-consumer tuple identity. Where the oracle's host seam cannot
+ *       carry the value the corpus host returns (the non-operation async
+ *       handle), the oracle leg renders the same closed arm.</li>
+ *   <li><b>The closed arm table's renderer identity.</b> Every declared
+ *       arm renders its own template with the same named parameters,
+ *       expected token, and actual token from the registry renderer, the
+ *       emitted Lua prelude under {@code luajit}, and the JVM runtime
+ *       renderer; the field shapes fail closed, the two inner-only string
+ *       carriers never render at a boundary site, and the bound walk arm
+ *       (the typed-boundary projection at the call origin, ISSUE-0711)
+ *       renders through the same closed table. The host inner-reason
+ *       vocabulary and its pass-throughs are driven through the oracle's
+ *       host cells, the JVM runtime's own producers, and the deployed
+ *       matcher under {@code luajit}.</li>
+ *   <li><b>The {@code FOR_EACH} terminal check.</b> A deleted
+ *       array-element slot inside a typed for-of publishes the kind arm's
+ *       suffix-less text with expected {@code int} and actual {@code nil}
+ *       at the op's own origin on all three consumers.</li>
+ *   <li><b>The negatives.</b> The row/arm completeness invariants and the
+ *       single-source control fail by name (an unbound retained template,
+ *       a foreign template, a duplicate binding, an {@code INNER_ONLY}
+ *       arm rendered top-level, a hand-built arm whose binding slot is
+ *       {@code SIBLING_OWNED} fed to the completeness check, and a
+ *       deliberately composing consumer reported as {@code message}/{@code
+ *       span}).</li>
+ *   <li><b>The origin cells.</b> The pinned span group is asserted for
+ *       every pinned fixture, and the unpinned {@code MODULE_EXPORT} cell
+ *       and the host-driven callback entry slot ({@code HOST_TO_DEAL}
+ *       under {@code CALLBACK_INVOKE}) are asserted against their landed
+ *       emission: the export publication and the callback's parameter
+ *       slots carry the invoking unit's program span in the lowering and
+ *       in the three consumers' render.</li>
+ *   <li><b>The unchanged surfaces.</b> The corpus membership/count (the
+ *       dispatched runtime-classified 390), the sidecar schema (version
+ *       and the landed three backends), the comparison contract (mandatory
+ *       {@code code}/{@code message}; the span group and optional fields
+ *       only when pinned; a pinned field the capture lacks fails; nothing
+ *       fabricated), and the landed {@code INT32_RESULT} row data stays as
+ *       landed while the {@code JSON_TO_ERROR} row carries the appended
+ *       cycle template bound to its own arm.</li>
+ * </ol>
+ *
+ * <p>Every assertion reports the fixture, the consumer, and the field it
+ * compared; the drive is read-only over the corpus (a temp mirror per
+ * fixture, deleted on completion) and stages no repository artifact.</p>
+ */
 public class CanonicalProjectionParityTest {
 
     private static int passed = 0;
@@ -1298,8 +1372,11 @@ public class CanonicalProjectionParityTest {
             "classId", "@$external/host.presence/Config"),
         render(FailureArmId.JSON_PARSE_ERROR, null, null,
             "oneBasedByteOffset", "3", "reason", "unexpected character"),
+        render(FailureArmId.JSON_TO_WALK, null, "table",
+            "fieldPath", "age", "actual", "table"),
         render(FailureArmId.JSON_STRINGIFY_UNSUPPORTED,
             "string, number, boolean, or table", "function", "actual", "function"),
+        render(FailureArmId.JSON_TO_WALK_CYCLE, null, null),
         render(FailureArmId.SQRT_NEGATIVE, null, "-2.0"));
 
     /** One row of one renderer's output: {@code id|code|message|origin|e|a}. */
@@ -1326,7 +1403,7 @@ public class CanonicalProjectionParityTest {
             + "prelude, and the JVM runtime renderer --");
         String origin = "parity.deal:3:7";
         Map<String, String> lua = luaArmRows(origin);
-        checkEq(FailureArmId.values().length - 3, ARM_RENDERS.size(),
+        checkEq(FailureArmId.values().length - 2, ARM_RENDERS.size(),
             "every declared top-level arm outside the two INNER_ONLY carriers is "
                 + "driven with representative values");
         for (Render row : ARM_RENDERS) {
@@ -1762,9 +1839,10 @@ public class CanonicalProjectionParityTest {
                   "HOST_STRING_INVALID_UTF8", {}))
                 print("ROW|HOST_STRING_SURROGATE|" .. __innerArm(
                   "HOST_STRING_SURROGATE", {}))
-                local ok, err = pcall(function() error(__arm("JSON_TO_WALK",
-                  {fieldPath = "a", actual = "table"}, "-", nil, "table"), 0) end)
-                print("ROW|JSON_TO_WALK|" .. (ok and "RENDERED" or "DEFECT"))
+                __arms["MARKED_PROBE"] = {c = "E8001", t = "marked", e = "NONE",
+                  a = "SIBLING_OWNED", s = "TOP_LEVEL", o = "CALL_EXPRESSION", k = ""}
+                local ok, err = pcall(__arm, "MARKED_PROBE", nil, "-", nil, nil)
+                print("ROW|MARKED_PROBE|" .. (ok and "RENDERED" or "DEFECT"))
                 local ok2, err2 = pcall(function() error(__arm("HOST_STRING_SURROGATE",
                   {}, "-", nil, nil), 0) end)
                 print("ROW|HOST_STRING_TOP_LEVEL|" .. (ok2 and "RENDERED" or "DEFECT"))
@@ -1868,7 +1946,7 @@ public class CanonicalProjectionParityTest {
     }
 
     private static void testMarkedArmsAndFieldShapes() throws Exception {
-        System.out.println("-- the inner-only arms, the sibling-owned arm, and the "
+        System.out.println("-- the inner-only arms, the marked-arm guard, and the "
             + "declared field shapes fail closed --");
         Map<String, String> inner = luaInnerArmRows();
         for (FailureArmId id : List.of(FailureArmId.HOST_STRING_INVALID_UTF8,
@@ -1884,17 +1962,37 @@ public class CanonicalProjectionParityTest {
             expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(id, Map.of(), "-",
                 null, null), id + " rendered top-level by the JVM runtime");
         }
-        check(inner.getOrDefault("JSON_TO_WALK", "").startsWith("DEFECT"),
-            "the emitted prelude refuses the SIBLING_OWNED walk arm: " + inner);
+        check(inner.getOrDefault("MARKED_PROBE", "").startsWith("DEFECT"),
+            "the emitted prelude refuses a SIBLING_OWNED entry injected into the "
+                + "chunk-level arm table: " + inner);
         check(inner.getOrDefault("HOST_STRING_TOP_LEVEL", "").startsWith("DEFECT"),
             "the emitted prelude refuses an INNER_ONLY arm rendered top-level: "
                 + inner);
-        expectDefect(() -> FailureContractRegistry.render(FailureArmId.JSON_TO_WALK,
-            Map.of("fieldPath", "a", "actual", "table"), "a", "table", null),
-            "the SIBLING_OWNED arm rendered by a production consumer");
-        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
-            Map.of("fieldPath", "a", "actual", "table"), "-", "a", "table"),
-            "the SIBLING_OWNED arm rendered by the JVM runtime");
+        // The walk arm is bound (ISSUE-0711): the production consumers render
+        // its declared fields, and the marker's remaining fail-closed subject
+        // is a hand-built marked arm fed to the data-driven completeness check.
+        BoundaryFailure walk = FailureContractRegistry.render(
+            FailureArmId.JSON_TO_WALK, Map.of("fieldPath", "a", "actual", "table"),
+            null, "table", null);
+        checkEq("value at a is not JSON serializable: table", walk.message(),
+            "the bound walk arm renders its own template through the registry");
+        deal.codegen.jvm.JvmRuntime.DealError walkJvm =
+            deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
+                Map.of("fieldPath", "a", "actual", "table"), "-", null, "table");
+        checkEq(walk.message(), walkJvm.msg,
+            "the JVM runtime renders the bound walk arm's identical message");
+        FailureArm walkArm = FailureContractRegistry.arm(FailureArmId.JSON_TO_WALK);
+        List<FailureArm> marked = new ArrayList<>(
+            FailureContractRegistry.arms().values());
+        marked.set(marked.indexOf(walkArm), new FailureArm(walkArm.id(),
+            walkArm.policy(), walkArm.templateIndex(), walkArm.template(),
+            walkArm.parameters(), walkArm.parameterSources(), walkArm.expectedSource(),
+            null, FailureArm.ActualProjection.SIBLING_OWNED, walkArm.origin(),
+            walkArm.scope(), walkArm.code()));
+        expectDefect(() -> FailureContractRegistry.checkArmConsistency(
+            FailureContractRegistry.rows(), marked),
+            "a hand-built arm whose projection binding is SIBLING_OWNED fails the "
+                + "completeness check");
         expectDefect(() -> FailureContractRegistry.render(
             FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", "int", "extra", "x"),
             "int", "string", null), "an extra named parameter");
@@ -2395,10 +2493,15 @@ public class CanonicalProjectionParityTest {
             expectation, executed(framing(spanless))).isPresent(),
             "a pinned span group the capture lacks fails the comparison");
 
+        // The landed INT32_RESULT row data, and the JSON_TO_ERROR row's
+        // appended cycle template (ISSUE-0711 W4: the template and its arm
+        // land together; the walk template stays index 0 and the std/json
+        // template index 1).
         checkEq(List.of("value at {fieldPath} is not JSON serializable: {actual}",
-            "unsupported type for JSON encoding: {actual}"),
+            "unsupported type for JSON encoding: {actual}",
+            "cyclic value cannot be encoded as JSON"),
             FailureContractRegistry.row(FailurePolicyId.JSON_TO_ERROR).templates(),
-            "the JSON_TO_ERROR row data stays as landed");
+            "the JSON_TO_ERROR row carries the appended cycle template");
         checkEq(List.of("int out of safe range"),
             FailureContractRegistry.row(FailurePolicyId.INT32_RESULT).templates(),
             "the INT32_RESULT row data stays as landed");
