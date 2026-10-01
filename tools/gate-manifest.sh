@@ -163,6 +163,8 @@ TEST_MAINS=(
   'fg|=== Running Lexer Tests ===|java -ea -cp build deal.test.LexerTest'
   'fg|=== Running Parser Tests ===|java -ea -cp build deal.test.ParserTest'
   'fg|=== Running Checker Tests ===|java -ea -cp build deal.test.CheckerTest'
+  'fg|=== Running Amend Workspace Tests ===|java -ea -cp build deal.test.AmendWorkspaceTest'
+  'fg|=== Running Repair Workspace Tests ===|java -ea -cp build deal.test.RepairWorkspaceTest'
   'fg|=== Running IR Dumper Tests ===|java -ea -cp build deal.test.IrDumperTest'
   'fg|=== Running IR Golden Tests ===|java -ea -cp build deal.test.IrGoldenTest'
   'fg|=== Running Type Descriptor Tests ===|java -ea -cp build deal.test.TypeDescriptorTest'

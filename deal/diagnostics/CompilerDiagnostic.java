@@ -11,7 +11,8 @@ import java.util.List;
  *
  * <p>Carrier contract (D1):
  * {@code CompilerDiagnostic(code, severity, message, range, notes,
- * diagnosticCode)}. The compatibility accessors {@link #file()},
+ * diagnosticCode, missingSymbols)}. The six-argument constructor remains compatible
+ * and supplies an empty missing-symbol list. The compatibility accessors {@link #file()},
  * {@link #line()}, and {@link #column()} derive from the range start;
  * {@link #code()}, {@link #severity()}, {@link #message()}, and
  * {@link #diagnosticCode()} are the record components.
@@ -54,10 +55,30 @@ public record CompilerDiagnostic(
     String message,
     DiagnosticRange range,
     List<DiagnosticNote> notes,
-    DiagnosticCode diagnosticCode
+    DiagnosticCode diagnosticCode,
+    List<MissingSymbol> missingSymbols
 ) {
+    public record MissingSymbol(String kind, String name, String namespace, List<String> constraints) {
+        public MissingSymbol {
+            if (kind == null || kind.isBlank() || name == null || name.isBlank() || namespace == null)
+                throw new IllegalArgumentException("Missing-symbol facts require kind, name and namespace");
+            constraints = List.copyOf(constraints);
+        }
+    }
+
+    public CompilerDiagnostic(String code, String severity, String message, DiagnosticRange range,
+                              List<DiagnosticNote> notes, DiagnosticCode diagnosticCode) {
+        this(code, severity, message, range, notes, diagnosticCode, List.of());
+    }
+
+    public CompilerDiagnostic withMissingSymbol(String kind, String name, String namespace, List<String> constraints) {
+        var facts = new ArrayList<>(missingSymbols);
+        facts.add(new MissingSymbol(kind, name, namespace, constraints));
+        return new CompilerDiagnostic(code, severity, message, range, notes, diagnosticCode, facts);
+    }
 
     public CompilerDiagnostic {
+        missingSymbols = List.copyOf(missingSymbols);
         if (code == null || code.isEmpty()) {
             throw new IllegalArgumentException("code must not be null or empty");
         }
