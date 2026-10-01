@@ -6968,12 +6968,15 @@ local function __jsonToClassOp(planName, root)
       end
     else
       local raw = root.__f[f.name]
-      -- A present null is the __NULL sentinel: it unwraps to the language
-      -- null before the declared-descriptor check (the same read the JVM
-      -- walk's present-null slot performs), so a nullable field serializes
-      -- JSON null and a non-nullable one projects the null token.
-      if raw == __NULL then raw = nil end
-      local encoded = encodeField(f.desc, raw, f.name, visited)
+      -- The landed present-null read, kept verbatim: the admission checks
+      -- are landed and this binding does not rebuild them, so the __NULL
+      -- sentinel reaches the declared-descriptor check unchanged (the
+      -- retained expression is the landed operand, whose and/or fallback
+      -- yields the sentinel itself) and the typed-boundary projection
+      -- classifies it as "null". A nullable-admission correction belongs to
+      -- the follow-up slice that owns the walk's check sets.
+      local value = (raw == __NULL) and nil or raw
+      local encoded = encodeField(f.desc, value, f.name, visited)
       if encoded == nil then
         return failure()
       end

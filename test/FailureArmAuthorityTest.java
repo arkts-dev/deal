@@ -99,6 +99,8 @@ public class FailureArmAuthorityTest {
         testEmittedParameterContract();
         testNegativeSingleSourceControl();
         testWalkArmThreeConsumerDrive();
+        testLandedPresentNullRead();
+        testWalkOracleNumericPositions();
         testMovedElementCell();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -1095,12 +1097,23 @@ public class FailureArmAuthorityTest {
         return new Tuple(parts[1], parts[4], span, parts[2], parts[3]);
     }
 
-    /** One walk-probe row's tuple: an empty field is an absent (null) field. */
+    /**
+     * One walk-probe row's tuple ({@code label|code|expected|actual|message|
+     * origin}): an empty field is an absent (null) field, and the span is the
+     * row's own rendered origin — never a test constant, so an absent or
+     * substituted consumer origin fails the drive's comparison by field name.
+     */
     private static Tuple walkLuaTuple(String row) {
         String[] parts = row.split("\\|", -1);
-        return new Tuple(parts[1], parts[4], WALK_SPAN,
+        return new Tuple(parts[1], parts[4], parts[5],
             parts[2].isEmpty() ? null : parts[2],
             parts[3].isEmpty() ? null : parts[3]);
+    }
+
+    /** One walk-probe row with its rendered origin replaced (the origin negative). */
+    private static String withOrigin(String row, String origin) {
+        int cut = row.lastIndexOf('|');
+        return row.substring(0, cut + 1) + origin;
     }
 
     // =========================================================================
@@ -1599,6 +1612,12 @@ public class FailureArmAuthorityTest {
                 deal.semantic.ir.DefaultOwner.LOCAL),
             new deal.semantic.ir.ClassLayout.FieldLayout("tags",
                 new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE), true,
+                deal.semantic.ir.DefaultOwner.LOCAL),
+            // The nullable optional field of the landed present-null read
+            // (testLandedPresentNullRead): its presence pin is the exact
+            // trigger of the walk's landed admission check.
+            new deal.semantic.ir.ClassLayout.FieldLayout("note",
+                new RuntimeDescriptor.Nullable(RuntimeDescriptor.String.INSTANCE), false,
                 deal.semantic.ir.DefaultOwner.LOCAL)));
     }
 
@@ -1745,6 +1764,7 @@ public class FailureArmAuthorityTest {
             "the drive's op carries the pinned origin span");
         List<String> luaRows = runWalkProbe(cases);
         deal.codegen.jvm.JvmJson.Plan plan = walkPlan();
+        Tuple firstOracle = null;
         for (int i = 0; i < cases.size(); i++) {
             WalkCase drive = cases.get(i);
             // The oracle leg: the class walk driven with the executing op's
@@ -1772,11 +1792,16 @@ public class FailureArmAuthorityTest {
             checkEq(failure.failure().origin(), opOrigin,
                 drive.label() + ": the class walk renders the operand it was given");
 
-            // The emitted Lua leg, under real luajit.
+            // The emitted Lua leg, under real luajit. The tuple's origin is
+            // the row's own rendered origin (never a test constant), so an
+            // absent or substituted span fails the comparison by field.
             Tuple luaTuple = walkLuaTuple(luaRows.get(i));
             checkEq(null, firstDifferingField(oracle, luaTuple),
                 drive.label() + ": the emitted Lua walk machinery renders the "
                     + "oracle's identical tuple");
+            checkEq(WALK_SPAN, luaTuple.span(),
+                drive.label() + ": the emitted __arm renders the origin operand the "
+                    + "call site carries");
 
             // The emitted JVM leg (the shared walk machinery the artifact
             // links), rendered exactly like the emitted catch site.
@@ -1797,13 +1822,41 @@ public class FailureArmAuthorityTest {
                 : deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
                     Map.of("fieldPath", projection.fieldPath, "actual",
                         projection.actual), WALK_SPAN, null, projection.actual);
+            // The JVM leg's origin is the rendered DealError's own origin
+            // (never a test constant).
             checkEq(null, firstDifferingField(oracle, new Tuple(jvmError.code,
-                    jvmError.msg, WALK_SPAN, jvmError.expected, jvmError.actual)),
+                    jvmError.msg, jvmError.origin, jvmError.expected, jvmError.actual)),
                 drive.label() + ": the JVM walk machinery renders the oracle's "
                     + "identical tuple");
+            checkEq(WALK_SPAN, jvmError.origin,
+                drive.label() + ": the JVM arm render carries the origin operand the "
+                    + "catch site carries");
             checkEq(drive.arm().equals("JSON_TO_WALK_CYCLE"), projection.cycle,
                 drive.label() + ": the JVM walk selects the same closed arm");
+            if (i == 0) {
+                firstOracle = oracle;
+            }
         }
+
+        // The origin negatives (executable on the drive's own comparisons):
+        // the emitted row's origin and the JVM render's origin are
+        // load-bearing, so a consumer that renders a span other than the
+        // operand it received is reported by field name span. The negative
+        // mutates the rendered origin itself, not a hand-built tuple.
+        check(firstOracle != null, "the drive produced its reference tuple");
+        checkEq("span", firstDifferingField(firstOracle, walkLuaTuple(
+                withOrigin(luaRows.get(0), "consumer-anchor.deal:1:1"))),
+            "a substituted emitted Lua origin is reported by field name span");
+        WalkCase firstCase = cases.get(0);
+        deal.codegen.jvm.JvmRuntime.DealError substitutedOrigin =
+            deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
+                Map.of("fieldPath", firstCase.fieldPath(), "actual",
+                    firstCase.actual()), "consumer-anchor.deal:1:1", null,
+                firstCase.actual());
+        checkEq("span", firstDifferingField(firstOracle, new Tuple(
+                substitutedOrigin.code, substitutedOrigin.msg, substitutedOrigin.origin,
+                substitutedOrigin.expected, substitutedOrigin.actual)),
+            "a consumer-derived JVM origin is reported by field name span");
 
         // The emitted __arm guard (W5's artifact-surface subject): a marked
         // entry injected into the chunk-level arm table is rejected.
@@ -1858,6 +1911,160 @@ public class FailureArmAuthorityTest {
                 declaredKeyed.actual())),
             "a projection caller keying the numeric token on the declared int text is "
                 + "reported by field name actual");
+    }
+
+    /**
+     * The landed present-null read of the emitted Lua walk (the review
+     * correction of the binding): the walk's admission checks are landed and
+     * this binding does not rebuild them, so the emitted walk keeps its
+     * landed {@code (raw == __NULL) and nil or raw} operand — the
+     * {@code __NULL} sentinel reaches the declared-descriptor check and the
+     * bound typed-boundary projection classifies it as "null". The oracle
+     * and the JVM walk admit the sentinel as the language null and serialize
+     * JSON null at this position (their landed check sets, pinned by
+     * {@code ClassConstructionIntegrationTailTest}'s present-null row); the
+     * nullable-admission correction and its success regression belong to the
+     * follow-up slice that owns the walk's check sets, so this drive pins the
+     * landed Lua failure — the exact trigger of the recorded
+     * rejection-to-success finding — without claiming the correction.
+     */
+    static void testLandedPresentNullRead() throws Exception {
+        System.out.println("-- the landed present-null read on a nullable field --");
+        Map<String, ClassOpsExecutor.Value> oracleFields = new LinkedHashMap<>();
+        oracleFields.put("name", walkString("n"));
+        oracleFields.put("age", new ClassOpsExecutor.Value.Int(1));
+        oracleFields.put("ratio", new ClassOpsExecutor.Value.Number(0.5));
+        oracleFields.put("data", walkEmptyTable());
+        oracleFields.put("tags", walkIntArray(1));
+        oracleFields.put("note", ClassOpsExecutor.Value.Null.INSTANCE);
+        Map<String, String> luaFields = new LinkedHashMap<>();
+        luaFields.put("name", luaString("n"));
+        luaFields.put("age", "1");
+        luaFields.put("ratio", "0.5");
+        luaFields.put("data", LUA_TABLE_CARRIER);
+        luaFields.put("tags", "{__a = true, __n = 1, [1] = 1}");
+        luaFields.put("note", "__NULL");
+        Map<String, Object> jvmFields = new LinkedHashMap<>();
+        jvmFields.put("name", "n");
+        jvmFields.put("age", 1L);
+        jvmFields.put("ratio", 0.5);
+        jvmFields.put("data", new deal.codegen.jvm.JvmRuntime.Table());
+        jvmFields.put("tags", jvmIntArray(1L));
+        jvmFields.put("note", null);
+        String expectedText = "{\"name\":\"n\",\"age\":1,\"ratio\":0.5,"
+            + "\"data\":{},\"tags\":[1],\"note\":null}";
+
+        // The emitted Lua leg under real luajit: the landed read leaves the
+        // sentinel in place, so the walk fails the position and the bound
+        // projection renders its closed null token.
+        List<String> rows = runWalkProbe(List.of(walkCase("present-null-nullable",
+            "JSON_TO_WALK", "note", "null", oracleFields, luaFields, jvmFields)));
+        checkEq(new Tuple("E8001",
+                "value at note is not JSON serializable: null", WALK_SPAN, null, "null"),
+            walkLuaTuple(rows.get(0)),
+            "the emitted Lua walk keeps the landed present-null read: the __NULL "
+                + "sentinel reaches the declared-descriptor check and the bound "
+                + "projection classifies it as null");
+
+        // The oracle's and the JVM's own landed check sets admit the sentinel
+        // and serialize JSON null (the per-target difference the follow-up
+        // slice's nullable-admission correction owns).
+        deal.semantic.ir.SemanticOp op = walkJsonOp();
+        ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> oracleOutcome =
+            ClassOpsExecutor.executeJsonToClass(op,
+                Map.of(((KindPayload.JsonToClassPayload) op.payload()).classValue(),
+                    walkOracleInstance(oracleFields)),
+                Map.of(WALK_ID, walkLayout()),
+                deal.semantic.JsonClassAlgorithmAdapter.stringifier(), op.origin());
+        check(oracleOutcome instanceof ClassOpsExecutor.Outcome.Success<
+                ClassOpsExecutor.Value> success
+                && success.value() instanceof ClassOpsExecutor.Value.String text
+                && text.scalar() instanceof deal.semantic.ir.UnicodeScalars.Valid valid
+                && valid.carrier().equals(expectedText),
+            "the oracle's landed check set admits the present null on the nullable "
+                + "field and serializes JSON null; got " + oracleOutcome);
+        String jvmText = deal.codegen.jvm.JvmJson.toClass(walkPlan(),
+            walkJvmInstance(jvmFields));
+        checkEq(expectedText, jvmText,
+            "the JVM walk's landed check set admits the present null on the nullable "
+                + "field and serializes JSON null");
+    }
+
+    /**
+     * The walk arm's oracle-only numeric decomposition (V2): the two numeric
+     * positions the oracle's landed check set fails while the emitted Lua
+     * walk's landed check set admits them (the landed per-target check sets)
+     * are asserted on the oracle alone — a nonfinite value at an int-typed
+     * declared field and a fractional value at an {@code array(int)} element,
+     * each projecting the value's own variant ({@code number}), never the
+     * declared {@code int} text beside the position, at the call origin the
+     * drive supplied.
+     */
+    static void testWalkOracleNumericPositions() {
+        System.out.println("-- the walk arm's oracle-only numeric positions --");
+        deal.semantic.ir.SemanticOp op = walkJsonOp();
+        Map<deal.semantic.ir.ClassId, deal.semantic.ir.ClassLayout> layouts =
+            Map.of(WALK_ID, walkLayout());
+        deal.semantic.ir.SourceOrigin callOrigin = new deal.semantic.ir.SourceOrigin(
+            "arm-walk.deal",
+            new deal.semantic.ir.SourceSpan("arm-walk.deal", 7, 4, 7, 12),
+            deal.semantic.ir.SourceOriginKind.USER, new deal.semantic.ir.AnchorId(0),
+            null);
+        String callOriginText = callOrigin.sourceId() + ":"
+            + callOrigin.span().startLine() + ":" + callOrigin.span().startColumn();
+
+        Map<String, ClassOpsExecutor.Value> nonfiniteIntField = new LinkedHashMap<>();
+        nonfiniteIntField.put("name", walkString("n"));
+        nonfiniteIntField.put("age",
+            new ClassOpsExecutor.Value.Number(Double.POSITIVE_INFINITY));
+        nonfiniteIntField.put("ratio", new ClassOpsExecutor.Value.Number(0.5));
+        nonfiniteIntField.put("data", walkEmptyTable());
+        nonfiniteIntField.put("tags", walkIntArray(1));
+        checkWalkOracleTuple(op, layouts, callOrigin, callOriginText,
+            "nonfinite-int-field", nonfiniteIntField, "age");
+
+        Map<String, ClassOpsExecutor.Value> fractionalElement = new LinkedHashMap<>();
+        fractionalElement.put("name", walkString("n"));
+        fractionalElement.put("age", new ClassOpsExecutor.Value.Int(1));
+        fractionalElement.put("ratio", new ClassOpsExecutor.Value.Number(0.5));
+        fractionalElement.put("data", walkEmptyTable());
+        fractionalElement.put("tags", new ClassOpsExecutor.Value.Array(
+            deal.semantic.ir.SemanticArray.of(
+                List.of(new ClassOpsExecutor.Value.Number(0.25)))));
+        checkWalkOracleTuple(op, layouts, callOrigin, callOriginText,
+            "fractional-array-int-element", fractionalElement, "tags[0]");
+    }
+
+    /** One oracle-only walk position's full tuple at the supplied call origin. */
+    private static void checkWalkOracleTuple(
+            deal.semantic.ir.SemanticOp op,
+            Map<deal.semantic.ir.ClassId, deal.semantic.ir.ClassLayout> layouts,
+            deal.semantic.ir.SourceOrigin callOrigin, String callOriginText,
+            String label, Map<String, ClassOpsExecutor.Value> fields, String fieldPath) {
+        Map<deal.semantic.ir.ValueId, ClassOpsExecutor.Value> values =
+            new LinkedHashMap<>();
+        values.put(((deal.semantic.ir.KindPayload.JsonToClassPayload) op.payload())
+            .classValue(), walkOracleInstance(fields));
+        ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome =
+            ClassOpsExecutor.executeJsonToClass(op, values, layouts,
+                deal.semantic.JsonClassAlgorithmAdapter.stringifier(), callOrigin);
+        check(outcome instanceof ClassOpsExecutor.Outcome.Failure<
+                ClassOpsExecutor.Value> failure,
+            label + ": the oracle's class walk fails the value");
+        if (!(outcome instanceof ClassOpsExecutor.Outcome.Failure<
+                ClassOpsExecutor.Value> failure)) {
+            return;
+        }
+        checkEq(new Tuple("E8001",
+                "value at " + fieldPath + " is not JSON serializable: number",
+                callOriginText, null, "number"),
+            tupleOf(failure.failure().failure(), callOriginText),
+            label + ": the oracle renders the walk arm's tuple with the value-derived "
+                + "number token, never the declared int text beside the position");
+        checkEq(callOrigin, failure.failure().origin(),
+            label + ": the walk renders the supplied call origin");
+        check(!failure.failure().origin().equals(op.origin()),
+            label + ": the walk never substitutes the op's own synthetic anchor");
     }
 
     /** A one-field drive case of the walk's three-consumer comparison. */
@@ -1983,6 +2190,8 @@ public class FailureArmAuthorityTest {
                 new deal.codegen.jvm.JvmJson.Field("ratio", "number", false, "number"),
                 new deal.codegen.jvm.JvmJson.Field("data", "table", false, "table"),
                 new deal.codegen.jvm.JvmJson.Field("tags", "array(int)", false, "int"),
+                new deal.codegen.jvm.JvmJson.Field("note", "nullable:string", true,
+                    "string"),
             }, null);
     }
 
@@ -2010,7 +2219,8 @@ public class FailureArmAuthorityTest {
             .append(WALK_SPAN).append("\", nil, actual)\n");
         body.append("  print(c.label .. \"|\" .. value.code .. \"|\" .. "
             + "(value.e == nil and \"\" or value.e) .. \"|\" .. "
-            + "(value.a == nil and \"\" or value.a) .. \"|\" .. value.m)\n");
+            + "(value.a == nil and \"\" or value.a) .. \"|\" .. value.m .. \"|\" .. "
+            + "tostring(value.o))\n");
         body.append("end\n");
         return runProbe(emittedWalkChunk(), "arm-walk", body.toString(), "walk-probe",
             cases.size());

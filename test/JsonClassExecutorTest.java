@@ -2017,11 +2017,23 @@ public class JsonClassExecutorTest {
             deepInstance = new Value.Class(INNER,
                 List.of(new FieldState.Present(deepInstance)));
         }
+        SourceOrigin depthCallOrigin = nextOrigin(null);
         Outcome<Value> overflow = ClassOpsExecutor.executeJsonToClass(deepOp,
             Map.of(deepClassId, deepInstance), layouts, FixtureJson.stringifier(),
-            nextOrigin(null));
-        check(overflow instanceof Outcome.Failure<Value>,
-            "a 513-deep class nesting fails the depth bound");
+            depthCallOrigin);
+        String depthOverflowPath = "next" + ".next".repeat(512);
+        check(overflow instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().code() == DiagnosticCode.E8001
+                && failure.failure().failure().message().equals("value at "
+                    + depthOverflowPath + " is not JSON serializable: " + INNER.text())
+                && failure.failure().origin().equals(depthCallOrigin)
+                && !failure.failure().origin().equals(deepOp.origin())
+                && failure.failure().failure().expected() == null
+                && failure.failure().failure().actual().equals(INNER.text()),
+            "a 513-deep class nesting fails the walk arm at the exceeding container's "
+                + "path with the carried canonical class atom, no expected field, and "
+                + "the supplied call origin (never the generated body's synthetic "
+                + "anchor)");
         Value.Class boundedInstance = emptyNode();
         for (int i = 0; i < 512; i++) {
             boundedInstance = new Value.Class(INNER,

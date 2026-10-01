@@ -1831,7 +1831,10 @@ public final class ClassOpsExecutor {
      * typed-boundary token — the carrier {@link #executeJsonToClass} renders
      * through the authority at the call origin
      * (jsonable-tojson-walk-arm-binding W3). The arm is selected by the
-     * walk's own closed marker, never by a token comparison.
+     * walk's own closed marker, never by a token comparison. The carrier is
+     * data-only: {@link #executeJsonToClass} renders the arm through
+     * {@code FailureContractRegistry.render}, which is the only producer of
+     * the product text, so no product message is composed here.
      */
     private static final class JsonToFailure extends RuntimeException {
 
@@ -1846,9 +1849,7 @@ public final class ClassOpsExecutor {
         }
 
         JsonToFailure(FailureArmId arm, String fieldPath, String actual) {
-            super(arm == FailureArmId.JSON_TO_WALK_CYCLE
-                ? "cyclic value cannot be encoded as JSON"
-                : "value at " + fieldPath + " is not JSON serializable: " + actual);
+            super(null, null);
             this.arm = arm;
             this.fieldPath = fieldPath;
             this.actual = actual;

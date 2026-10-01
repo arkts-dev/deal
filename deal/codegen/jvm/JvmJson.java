@@ -78,7 +78,10 @@ public final class JvmJson {
      * true exactly for a path-local container re-entry, which selects the
      * walk family's cycle arm. The walk selects the arm by its own closed
      * marker, never by a token comparison
-     * (jsonable-tojson-walk-arm-binding W3).
+     * (jsonable-tojson-walk-arm-binding W3). The carrier is data-only: the
+     * catch site renders the arm through {@link JvmRuntime#arm}, which is
+     * the only producer of the product text, so no product message is
+     * composed here.
      */
     public static final class Projection extends RuntimeException {
         public final String fieldPath;
@@ -90,9 +93,7 @@ public final class JvmJson {
         }
 
         Projection(String fieldPath, String actual, boolean cycle) {
-            super(cycle
-                ? "cyclic value cannot be encoded as JSON"
-                : "value at " + fieldPath + " is not JSON serializable: " + actual);
+            super(null, null);
             this.fieldPath = fieldPath;
             this.actual = actual;
             this.cycle = cycle;
