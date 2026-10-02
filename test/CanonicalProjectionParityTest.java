@@ -121,7 +121,7 @@ import java.util.stream.Stream;
  *       slots carry the invoking unit's program span in the lowering and
  *       in the three consumers' render.</li>
  *   <li><b>The unchanged surfaces.</b> The corpus membership/count (the
- *       dispatched runtime-classified 395), the sidecar schema (version
+ *       dispatched runtime-classified 398), the sidecar schema (version
  *       and the landed three backends), the comparison contract (mandatory
  *       {@code code}/{@code message}; the span group and optional fields
  *       only when pinned; a pinned field the capture lacks fails; nothing
@@ -2494,8 +2494,8 @@ public class CanonicalProjectionParityTest {
                 dispatched++;
             }
         }
-        checkEq(395, dispatched, "the dispatched runtime-classified corpus count "
-            + "stays the pinned 395");
+        checkEq(398, dispatched, "the dispatched runtime-classified corpus count "
+            + "stays the pinned 398");
         for (Case spec : NAMED) {
             String raw = Files.readString(CONFORMANCE.resolve(spec.sidecarFile()),
                 StandardCharsets.UTF_8);

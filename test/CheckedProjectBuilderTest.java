@@ -308,7 +308,7 @@ public class CheckedProjectBuilderTest {
             Path src = tmp.resolve("src");
             Files.createDirectories(src);
             Files.writeString(src.resolve("main.deal"),
-                "import * as time from \"std/time\"\n"
+                "import * as time from \"std/time\";\n"
                     + "export function main(): null { return null; }\n");
             Path entry = src.resolve("main.deal").toAbsolutePath();
             Path output = tmp.resolve("build");
@@ -785,7 +785,7 @@ public class CheckedProjectBuilderTest {
                     + "export class B { y: string; opt?: int; note: string | null; "
                     + "count: int = 1; }\n");
             Files.writeString(src.resolve("main.deal"),
-                "import * as lib from \"host/lib\"\n"
+                "import * as lib from \"host/lib\";\n"
                     + "export class C { v: int = 0; }\n"
                     + "export class D { w: boolean = false; }\n"
                     + "export function main(): null { return null; }\n");
@@ -899,8 +899,8 @@ public class CheckedProjectBuilderTest {
         Files.writeString(src.resolve("lib.d.deal"),
             "export function declaredAdd(a: int, b: int): int;\n");
         Files.writeString(src.resolve("main.deal"),
-            "import * as lib from \"host/lib\"\n"
-                + "import * as time from \"std/time\"\n"
+            "import * as lib from \"host/lib\";\n"
+                + "import * as time from \"std/time\";\n"
                 + "export function main(): null { return null; }\n");
         Files.writeString(dir.resolve("deal.json"),
             "{\n  \"languageVersion\": \"1.2\",\n"
@@ -1057,7 +1057,7 @@ public class CheckedProjectBuilderTest {
             "export class A { x: int; }\n"
                 + "export class B { y: string; }\n");
         Files.writeString(src.resolve("entry.deal"),
-            "import * as lib from \"host/lib\"\n"
+            "import * as lib from \"host/lib\";\n"
                 + "export class C { v: int = 0; }\n"
                 + "export function main(): null { return null; }\n");
         Files.writeString(tmp.resolve("deal.json"),

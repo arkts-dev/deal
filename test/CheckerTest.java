@@ -256,6 +256,10 @@ public class CheckerTest {
         testLocalNullableClassMemberAccessRejected();
         testLocalNullableClassMemberAccessNarrowedOk();
         testNestedClass();
+        // ISSUE-0717 (defect snippet 47): a nested class that shadows an
+        // enclosing class of the same name collides in the canonical
+        // identity (module + name); the shadowing declaration is E2013.
+        testNestedClassShadowingRejected();
         testErrorClassConstruction();
         // F9: Class field default values type-checked
         testClassDefaultValueTypeError();
@@ -1504,6 +1508,23 @@ public class CheckerTest {
             "}"
         );
         assertNoErrors(out, "narrowed local nullable class member access");
+    }
+
+    /** ISSUE-0717: a nested class shadowing an enclosing class is E2013. */
+    static void testNestedClassShadowingRejected() {
+        System.out.println("-- Nested class shadowing an enclosing class -> E2013 --");
+        CheckerOutput out = checkProgram(
+            "class A { n: int = 0; }\n" +
+            "export function f(): null {\n" +
+            "  {\n" +
+            "    class A { n: int = 0; }\n" +
+            "    let b: A = {};\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(out, "E2013",
+            "nested class shadowing an enclosing class must be E2013");
     }
 
     // F3: Nested class declarations
@@ -3219,7 +3240,7 @@ public class CheckerTest {
             Files.writeString(root.resolve("src/z.deal"),
                 "export function f(): int { return 1.0; }\n");
             Files.writeString(root.resolve("src/a.deal"),
-                "import * as z from \"./z\"\n"
+                "import * as z from \"./z\";\n"
                     + "export function main(): null { return null; }\n"
                     + "function g(): int { return 1.0; }\n");
             Path entry = root.resolve("src/a.deal").toAbsolutePath();

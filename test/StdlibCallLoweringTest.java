@@ -391,7 +391,7 @@ public class StdlibCallLoweringTest {
                     import * as time from "std/time"
 
                     function run(): null {
-                      console.log("log")
+                      console.log("log");
                       console.error("error")
                       let n1: int = str.length("abc")
                       let s2: string = str.substring("abc", 1, 2)
@@ -822,7 +822,7 @@ public class StdlibCallLoweringTest {
                     import * as console from "std/console"
 
                     function run(): null {
-                      let g: (x: string) => null = console.log
+                      let g: (x: string) => null = console.log;
                       g("x")
                       return null
                     }

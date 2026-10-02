@@ -4739,6 +4739,12 @@ public final class SemanticLowerer {
                 }
                 default -> throw new IllegalStateException("unreachable mode " + mode);
             }
+            // The binding enters the walk's environment after the
+            // initializer's own lowering, exactly like the direct arm
+            // (the checker's non-hoisting rule): the adapted declaration
+            // must register its name too, so every later reference to it
+            // resolves (ISSUE-0717 regression fix).
+            registerBinding(decl.name(), binding, incarnation);
             EmittedAdapter adapter = emitFunctionAdapt(mode, sourceRef, sourceSignature,
                 targetSignature, payloadProof, operands, operandTypes, decl.span());
             ValueId adapterIdentity = adapter.identity();

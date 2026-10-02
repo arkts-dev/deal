@@ -1279,7 +1279,7 @@ public class SharedStdlibSemanticsTest {
                     import * as time from "std/time"
 
                     function run(): null {
-                      console.log("log")
+                      console.log("log");
                       console.error("error")
                       let n1: int = str.length("abc")
                       let s2: string = str.substring("abc", 1, 2)

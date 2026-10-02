@@ -1,0 +1,12 @@
+// @spec: Control flow — Statements after a terminator
+// @description: A statement after a break is unreachable and is dropped (v1.2 defect snippet 38)
+// @expected: compile-ok
+// @features: control-flow, break, reachability, v1.2
+
+export function main(): null {
+  while (true) {
+    break;
+    let unreachable: int = 1;
+  }
+  return null;
+}

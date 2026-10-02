@@ -601,12 +601,16 @@ public class BindingsValidationTest {
     private static void testSourceLevelPositives() {
         System.out.println("-- source-level positive corpus (each must validate) --");
 
-        // (a) The store-to-pre-init shape: stores are exempt from
-        // INIT_DOMINATES_LOAD — the store commits the assigned value and
-        // the INIT then commits the initializer's result; no uninitialized
-        // read occurs.
-        testCellKindInvariant(validatedResult("let x: int = (x = 1);",
-            "(a) the checker-admitted store-to-pre-init shape"));
+        // (a) ISSUE-0717 (defect snippets 21/22): the store-to-pre-init
+        // shape `let x: int = (x = 1);` no longer reaches the validator —
+        // the assignment target inside the declaration's own initializer
+        // resolves against the enclosing scope (none here) under the
+        // non-hoisting rule, so the checker rejects the declaration with
+        // E2001. The validator's store exemption (the rule covers loads
+        // only) keeps its IR-level coverage through the stale-store
+        // negative below.
+        checkerRejects("let x: int = (x = 1);", "E2001",
+            "(a) the store-to-pre-init shape");
 
         // (b) Size-1 self-recursion: the own-name arm (INIT is the
         // immediate commit after CLOSURE_NEW).
@@ -742,12 +746,33 @@ public class BindingsValidationTest {
     // =========================================================================
 
     private static void testSourceLevelNegatives() {
-        System.out.println("-- source-level negatives (each fails with E6005 naming the rule) --");
+        System.out.println("-- source-level negatives (the checker is the rejecting "
+            + "authority) --");
 
-        // The checker-admitted self-read: the load is dominated only by
-        // the producing ALLOC — an uninitialized cell read.
-        assertE6005(lowerSlice("let x: int = x;"), "INIT_DOMINATES_LOAD",
+        // ISSUE-0717 (defect snippet 22): the self-read is rejected by the
+        // checker's non-hoisting rule before the binding validator ever
+        // sees it — the reference inside `let x: int = x;` resolves
+        // against the enclosing scope (none here), so the declaration is
+        // E2001 and the INIT_DOMINATES_LOAD source shape is unreachable
+        // through the production entry. The IR-level
+        // {@link #testInitDominatesLoadNegative()} keeps the validator
+        // arm's direct coverage.
+        checkerRejects("let x: int = x;", "E2001",
             "the self-read let x: int = x;");
+    }
+
+    /** One source the real checker must reject with the exact code. */
+    private static void checkerRejects(String source, String code, String what) {
+        LexResult lex = new Lexer(source, SOURCE_ID).tokenize();
+        ParseResult parse = new Parser(lex.tokens(), SOURCE_ID,
+            lex.directiveEvents()).parse();
+        NameResolver nr = new NameResolver(SOURCE_ID, null);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check(SOURCE_ID, symTable, nr, parse.program());
+        boolean found = result.diagnostics().stream()
+            .anyMatch(diagnostic -> code.equals(diagnostic.code()));
+        check(found, what + " is rejected by the checker with " + code + ": "
+            + result.diagnostics());
     }
 
     // =========================================================================

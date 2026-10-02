@@ -927,17 +927,18 @@ public class CompositeTerminatorAnalysisTest {
     }
 
     /**
-     * The literal-true loop on a non-null body at the unit level: the
-     * checker's conservative loop analysis (E5002) makes the shape
-     * unreachable through the project entry, so the loop rule's non-null
-     * arm is exercised through the registered full-program session — the
-     * body is terminated, carries no implicit return, and produces no
-     * diagnostic.
+     * The literal-true loop on a non-null body at the unit level: since
+     * ISSUE-0717 (defect snippets 28/29) the checker's definite-return
+     * analysis admits the shape — "loops are not assumed to return unless
+     * they contain an unconditional return before any possible break" —
+     * so the project entry reaches the loop rule too; the unit-level drive
+     * keeps exercising the closed analysis directly: the body is
+     * terminated, carries no implicit return, and produces no diagnostic.
      */
     static void testLiteralTrueLoopOnNonNullBodyAtUnitLevel() throws Exception {
         System.out.println("-- the literal-true loop on a non-null body at the unit "
-            + "level (the checker's E5002 rejection makes it unreachable through the "
-            + "project entry) --");
+            + "level (the checker admits the unconditional-return shape since "
+            + "ISSUE-0717) --");
         record NonNullLoop(String name, String source) {
         }
         List<NonNullLoop> cases = List.of(
@@ -962,9 +963,10 @@ public class CompositeTerminatorAnalysisTest {
                     checkerRejects = true;
                 }
             }
-            check(checkerRejects, nonNull.name() + ": the checker's conservative "
-                + "loop analysis rejects the shape with E5002 (the project entry "
-                + "never reaches the rule)");
+            check(!checkerRejects, nonNull.name() + ": the checker's definite-return "
+                + "analysis admits the unconditional return before any possible "
+                + "break (ISSUE-0717) — the diagnostics are "
+                + session.checks().diagnostics());
             check(!session.result().hasErrors() && session.result().unit() != null,
                 nonNull.name() + ": the closed analysis finds the body terminated "
                     + "(no fail-closed arm): " + session.result().diagnostics());

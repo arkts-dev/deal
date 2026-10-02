@@ -2410,10 +2410,10 @@ public class DefaultSemanticSerializerTest {
         System.out.println("-- Reentrant digest demand fails closed"
             + " (never a hang, never a placeholder) --");
         ProgramNode programA = parseProgram(
-            "import * as L from \"./lib\"\n"
+            "import * as L from \"./lib\";\n"
                 + "class A { b: L.B = {}; }\n");
         ProgramNode programB = parseProgram(
-            "import * as M from \"./main\"\n"
+            "import * as M from \"./main\";\n"
                 + "class B { a: M.A = {}; }\n");
         ClassDeclaration cdA = classOf(programA, "A");
         ClassDeclaration cdB = classOf(programB, "B");

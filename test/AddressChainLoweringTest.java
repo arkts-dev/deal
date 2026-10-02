@@ -1122,7 +1122,7 @@ public class AddressChainLoweringTest {
         // t[0] = 1: the checker rejects with E3018 at the index span before
         // any lowering; the write-context checkIndex gate fires identically
         // for the delete form.
-        CheckedSlice writeSlice = checkSlice("let t = {x: 1}\nt[0] = 1\n");
+        CheckedSlice writeSlice = checkSlice("let t = {x: 1};\nt[0] = 1\n");
         if (writeSlice != null) {
             check(writeSlice.checks().hasErrors()
                     && writeSlice.checks().diagnostics().stream()
@@ -1147,7 +1147,7 @@ public class AddressChainLoweringTest {
 
         // t["k"] = 1 and delete t["k"]: checker-clean, and the assignment
         // arm lowers with the total string key (TableSlot {key: "k"}).
-        CheckedSlice stringKeySlice = checkSlice("let t = {x: 1}\nt[\"k\"] = 1\n");
+        CheckedSlice stringKeySlice = checkSlice("let t = {x: 1};\nt[\"k\"] = 1\n");
         if (stringKeySlice != null) {
             check(!stringKeySlice.checks().hasErrors(),
                 "t[\"k\"] = 1 checks cleanly (static string key)");
@@ -1217,7 +1217,7 @@ public class AddressChainLoweringTest {
 
         // .length assignment never reaches lowering (E3017 frontend
         // rejection).
-        CheckedSlice lengthSlice = checkSlice("let xs: int[] = [1]\nxs.length = 2\n");
+        CheckedSlice lengthSlice = checkSlice("let xs: int[] = [1];\nxs.length = 2\n");
         if (lengthSlice != null) {
             check(lengthSlice.checks().hasErrors()
                     && lengthSlice.checks().diagnostics().stream()

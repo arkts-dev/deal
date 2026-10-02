@@ -1,0 +1,13 @@
+// @spec: Functions — Definite return analysis
+// @description: A literal-true while loop with an unconditional return before any possible break directly returns (v1.2 defect snippet 28)
+// @expected: compile-ok
+// @features: functions, return, loops, v1.2
+
+function value(): int {
+  while (true) { return 7; }
+}
+
+export function main(): null {
+  let n: int = value();
+  return null;
+}

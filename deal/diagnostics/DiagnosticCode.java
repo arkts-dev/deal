@@ -191,6 +191,15 @@ public enum DiagnosticCode {
 
     E2012(Phase.FRONTEND, "Entry module must export 'main'"),
 
+    /**
+     * A nested class declaration shadows an enclosing class of the same
+     * name (ISSUE-0717, defect snippet 47): the canonical class identity
+     * is (module identity, class name), so two distinct declared class
+     * symbols under one module would share one identity and one runtime
+     * descriptor. The shadowing declaration is rejected instead.
+     */
+    E2013(Phase.FRONTEND, "Class declaration shadows an enclosing class of the same name"),
+
     // =========================================================================
     // E3xxx — type checking (FRONTEND)
     // =========================================================================

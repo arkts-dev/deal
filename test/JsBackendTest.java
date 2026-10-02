@@ -2359,7 +2359,7 @@ public class JsBackendTest {
         writeFile("js_int32_proj/src/app/lib.deal",
             "export function ping(): string { return \"pong\"; }");
         writeFile("js_int32_proj/src/app/main.deal",
-            "import * as lib from \"./lib\"\n"
+            "import * as lib from \"./lib\";\n"
                 + "export function main(): null {\n"
                 + "  if (lib.ping() === \"pong\") { return null; }\n"
                 + "  return null;\n"
@@ -4954,7 +4954,7 @@ public class JsBackendTest {
                 StandardCharsets.UTF_8);
             Path entry = projectDir.resolve("main.deal");
             Files.writeString(entry,
-                "import * as c from \"std/console\";\n\n"
+                "import * as c from \"std/console\";\n;\n"
                     + "export function main(): null {\n"
                     + "  c.log(\"deploy\");\n"
                     + "  return null;\n"
@@ -5017,7 +5017,7 @@ public class JsBackendTest {
                 StandardCharsets.UTF_8);
             Path entry = projectDir.resolve("main.deal");
             Files.writeString(entry,
-                "import * as ffi from \"ffi\";\n\n"
+                "import * as ffi from \"ffi\";\n;\n"
                     + "export function main(): null {\n"
                     + "  let v: int = ffi.cFn(1);\n"
                     + "  return null;\n"

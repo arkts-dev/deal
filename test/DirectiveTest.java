@@ -717,7 +717,7 @@ public class DirectiveTest {
                     + " \"externals\": {\"ffi\": {\"declaration\":"
                     + " \"ffi_math.d.deal\", \"nativeLibrary\": \"math\"}}}\n");
             Files.writeString(entry,
-                "import * as ffi from \"ffi\";\n\n"
+                "import * as ffi from \"ffi\";\n;\n"
                     + "export function test_ffi_add(): int {\n"
                     + "  return ffi.add(1, 2);\n"
                     + "}\n\n"

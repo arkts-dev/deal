@@ -1,0 +1,12 @@
+// @spec: Control flow — Statements after a terminator
+// @description: A statement after a continue is unreachable and is dropped (v1.2 defect snippet 39)
+// @expected: compile-ok
+// @features: control-flow, continue, reachability, v1.2
+
+export function main(): null {
+  for (let i: int = 0; i < 1; i = i + 1) {
+    continue;
+    let unreachable: int = 1;
+  }
+  return null;
+}

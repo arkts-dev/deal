@@ -512,19 +512,30 @@ public final class TypeChecker {
         Type exprType = checkExpression(vd.initializer());
         expectedType = savedExpected;
 
-        if (exprType == Type.Error.INSTANCE) return;
-        if (targetType == null) {
-            targetType = inferTypeFromExpression(vd.initializer(), exprType);
-            if (targetType == null) return;
-            // Update the symbol table with the inferred type
-            Symbol sym = currentScope.resolve(vd.name());
-            if (sym instanceof Symbol.VariableSymbol vs && vs.type() == null) {
-                currentScope.defineReplace(vd.name(),
-                    new Symbol.VariableSymbol(vd.name(), targetType, false));
+        // A rejected initializer (an error-recovery type) or an
+        // un-inferable declaration skips the assignment gate — but the
+        // declaration still happened: the name becomes visible to the
+        // following statements of its block and the assignment
+        // bookkeeping runs, so a later reference resolves to this
+        // declaration instead of escaping the pending scope or an
+        // enclosing binding (ISSUE-0717: the recoverable E3013 async
+        // intrinsic site keeps its loadable type facts).
+        if (exprType != Type.Error.INSTANCE) {
+            if (targetType == null) {
+                targetType = inferTypeFromExpression(vd.initializer(), exprType);
+                if (targetType != null) {
+                    // Update the symbol table with the inferred type
+                    Symbol sym = currentScope.resolve(vd.name());
+                    if (sym instanceof Symbol.VariableSymbol vs && vs.type() == null) {
+                        currentScope.defineReplace(vd.name(),
+                            new Symbol.VariableSymbol(vd.name(), targetType, false));
+                    }
+                }
+            }
+            if (targetType != null) {
+                checkAssignment(targetType, exprType, vd.initializer().span());
             }
         }
-
-        checkAssignment(targetType, exprType, vd.initializer().span());
 
         // The declaration is complete: the name is now visible to the
         // following statements of its block.
@@ -594,7 +605,17 @@ public final class TypeChecker {
         narrowing = savedNarrowing;
         loopDepth = savedLoopDepth;
 
-        if (funcType != null) {
+        if (funcType != null && !fd.isExternal()) {
+            // ISSUE-0717: the definite-return analysis walks the block
+            // in reachability order (a return-terminated block and a
+            // literal-true loop with an unconditional return both
+            // satisfy the rule), so a non-null-returning body the older
+            // last-statement-only walk rejected now passes. The
+            // null-returning body keeps the landed fall-off tolerance:
+            // the strict "must not fall off" reading of the spec's
+            // return-type requirements (defect snippets 25/26) would
+            // reject every empty `: null` body, and the repository's
+            // established null-return shape relies on the tolerance.
             Type retType = funcType.returnType();
             if (!Types.isNull(retType)
                     && !ReturnAnalysis.definitelyReturns(fd.body())) {
@@ -1332,23 +1353,26 @@ public final class TypeChecker {
         }
 
         // Class field access (including built-in Error class).
-        // A member access through a nullable class reference (a: C | null)
-        // reads the declared field of the inner class: the runtime guard
-        // (e.g. `if (a.p !== null)`) protects the dereference, mirroring
-        // the field-type shapes the defining module generates.
         //
-        // This unwrap is restricted to cross-module classes (the
-        // conformance-gap-02 seam: a foreign companion's field type, e.g.
-        // `child?: Child | null`, resolves through the owning module with no
-        // property-path narrowing). Member access on a LOCAL nullable class
-        // reference keeps the baseline E3003 rejection -- local accesses are
-        // variable-narrowed before use, and silently widening them would
-        // change DEAL acceptance semantics.
+        // ISSUE-0717 (defect snippet 30): a nullable-typed receiver must
+        // be narrowed before its fields are read. A plain identifier
+        // receiver is narrowed by the null-narrowing analysis itself (the
+        // declared type is nullable, an unguarded read stays E3003). A
+        // member-path receiver (the conformance-gap-02 seam: a foreign
+        // companion's field path, e.g. `child?: Child | null`, resolves
+        // through the owning module with no variable narrowing) is
+        // admitted only when the exact receiver path carries a non-null
+        // guard in the current flow position (`if (value.child !== null)`),
+        // never silently unwrapped.
         Type classTarget = objType;
         if (classTarget instanceof Type.Nullable nullable
                 && nullable.inner() instanceof Type.Class inner
                 && !sameModule(inner)) {
-            classTarget = nullable.inner();
+            String path = NullNarrowing.pathOf(mae.object());
+            if (path != null && !(mae.object() instanceof IdentifierExpr)
+                    && narrowing.isPathGuarded(path)) {
+                classTarget = nullable.inner();
+            }
         }
         if (classTarget instanceof Type.Class cls) {
             Symbol sym = currentScope.resolve(cls.name());
@@ -1688,6 +1712,9 @@ public final class TypeChecker {
         narrowing = savedNarrowing;
         loopDepth = savedLoopDepth;
 
+        // ISSUE-0717: the reachability-ordered walk (the null-returning
+        // expression keeps the landed fall-off tolerance; see
+        // checkFunctionDeclaration).
         if (!Types.isNull(returnType)
                 && !ReturnAnalysis.definitelyReturns(fe.body())) {
             error(DiagnosticCode.E5002,

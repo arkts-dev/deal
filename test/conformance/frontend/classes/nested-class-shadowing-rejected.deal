@@ -1,0 +1,16 @@
+// @spec: Classes — Class identity
+// @description: A nested class shadowing an enclosing class of the same name collides in the canonical identity (v1.2 defect snippet 47)
+// @expected: compile-error E2013
+// @features: classes, identity, diagnostics, v1.2
+
+class A { n: int = 0; }
+
+export function main(): null {
+  let a: A = {};
+  {
+    class A { n: int = 0; }
+    let b: A = {};
+    a = b;
+  }
+  return null;
+}

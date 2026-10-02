@@ -1,0 +1,14 @@
+// @spec: Functions — Definite return analysis
+// @description: A block whose final reachable statement returns satisfies the rule; the unreachable tail is dropped (v1.2 defect snippet 27)
+// @expected: compile-ok
+// @features: functions, return, reachability, v1.2
+
+function value(): int {
+  return 1;
+  let unreachable: int = 2;
+}
+
+export function main(): null {
+  let n: int = value();
+  return null;
+}

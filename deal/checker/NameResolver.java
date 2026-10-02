@@ -643,6 +643,21 @@ public final class NameResolver {
         }
 
         if (!currentScope.containsLocally(name)) {
+            // ISSUE-0717 (defect snippet 47): a nested class whose name an
+            // enclosing scope already declares would collide with that
+            // class in the canonical identity (module identity + class
+            // name) — two distinct class symbols, one identity and one
+            // runtime descriptor. The shadowing declaration is rejected.
+            for (SymbolTable scope = currentScope.parent(); scope != null;
+                    scope = scope.parent()) {
+                if (scope.resolveLocal(name) instanceof Symbol.ClassSymbol) {
+                    error(DiagnosticCode.E2013,
+                        "Class '" + name + "' shadows an enclosing class of "
+                            + "the same name (the canonical class identity is "
+                            + "module + name)", cd.span());
+                    return;
+                }
+            }
             // Not already hoisted (nested class inside a function/block)
             currentScope.define(name,
                 new Symbol.ClassSymbol(name, cd.fields(), modulePath,

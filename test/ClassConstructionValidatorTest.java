@@ -314,8 +314,8 @@ public class ClassConstructionValidatorTest {
             // @jsonable
             export class Holder { home: Point; opt?: Inner; }
             let p: Point = {x: 1}
-            let q: Point = {}
-            p.x = 9
+            let q: Point = {};
+            p.x = 9;
             p.note = "a"
             delete p.note
             let hasNote: boolean = has(p.note)
@@ -617,7 +617,7 @@ public class ClassConstructionValidatorTest {
               y?: int = 0;
             }
             let p: Point = {x: 1}
-            let v: int | null = p.y
+            let v: int | null = p.y;
             p.x = 9
             delete p.y
             """;
@@ -960,7 +960,7 @@ public class ClassConstructionValidatorTest {
               tag: string = "p";
               note?: string;
             }
-            let p: Point = {x: 1}
+            let p: Point = {x: 1};
             p.x = 9
             let v: string | null = p.note
             let hasNote: boolean = has(p.note)

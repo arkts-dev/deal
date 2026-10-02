@@ -478,8 +478,8 @@ public class FieldOpsLoweringTest {
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
             class Point { x: int; y?: int = 0; }
-            let p: Point = {x: 1}
-            p.x = 9
+            let p: Point = {x: 1};
+            p.x = 9;
             p.y = 3
             """);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
@@ -720,7 +720,7 @@ public class FieldOpsLoweringTest {
             let xv: int = p.x
             let hasTag: boolean = has(p.tag)
             delete p.tag
-            let hasTag2: boolean = has(p.tag)
+            let hasTag2: boolean = has(p.tag);
             p.x = 99
             let xv2: int = p.x
             """);
@@ -1015,7 +1015,7 @@ public class FieldOpsLoweringTest {
             export class Line { a: int = 1; b?: string; }
             class Point { x: int = 2; y?: int = 0; }
             let p: Point = {x: 1}
-            let xv: int = p.x
+            let xv: int = p.x;
             p.y = 3
             let b: boolean = has(p.y)
             delete p.y

@@ -1,0 +1,9 @@
+// @spec: Control flow — Statements after a terminator
+// @description: A statement after a return is unreachable and is dropped by the frontend and lowering (v1.2 defect snippet 37)
+// @expected: compile-ok
+// @features: control-flow, return, reachability, v1.2
+
+export function main(): null {
+  return null;
+  let unreachable: int = 1;
+}

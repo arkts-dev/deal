@@ -303,7 +303,7 @@ public class PublicationStagerTest {
         Path out = base.resolve("out");
         try {
             writeText(src.resolve("main.deal"),
-                "import * as lib from \"./lib\"\n"
+                "import * as lib from \"./lib\";\n"
                     + "export function main(): null { return null; }\n"
                     + "export function run(): int { return lib.one(); }\n");
             writeText(src.resolve("lib.deal"),
@@ -323,7 +323,7 @@ public class PublicationStagerTest {
             writeText(src.resolve("ffi.d.deal"),
                 "// @extern-c\nexport function cFn(x: int): int;\n");
             writeText(src.resolve("lib.deal"),
-                "import * as ffi from \"./ffi\"\n"
+                "import * as ffi from \"./ffi\";\n"
                     + "export function one(): int { return ffi.cFn(1); }\n");
             boolean second = compileProject(src, out, Backend.JS,
                 false, false, null);
@@ -353,7 +353,7 @@ public class PublicationStagerTest {
         Path out = base.resolve("build/lua");
         try {
             writeText(src.resolve("main.deal"),
-                "import * as lib from \"./lib\"\n"
+                "import * as lib from \"./lib\";\n"
                     + "export function main(): null { return null; }\n");
             writeText(src.resolve("lib.deal"),
                 "export function value(): int { return 7; }\n");
@@ -633,7 +633,7 @@ public class PublicationStagerTest {
             Path src = base.resolve("src");
             Path out = base.resolve("out");
             writeText(src.resolve("main.deal"),
-                "import * as lib from \"./lib\"\n"
+                "import * as lib from \"./lib\";\n"
                     + "export function main(): null { return null; }\n");
             writeText(src.resolve("lib.deal"),
                 "export function value(): int { return 7; }\n");

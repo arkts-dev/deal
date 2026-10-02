@@ -102,7 +102,7 @@ public final class DefaultIrRecorderTest {
 
         RecorderRun(String fieldDecl, String defaultSource,
                      Type fieldType, Type literalType) {
-            String source = "import * as L from \"./lib\"\n"
+            String source = "import * as L from \"./lib\";\n"
                 + "class Outer {\n"
                 + "  " + fieldDecl + " = " + defaultSource + ";\n"
                 + "}\n";

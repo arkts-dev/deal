@@ -1,0 +1,18 @@
+// @spec: Async/Await — Async errors
+// @description: A caught async throw with an unreachable statement after it returns the caught arm's value (v1.2 defect snippet 73)
+// @expected: runtime-ok
+// @features: async-await, error-handling, reachability, v1.2
+
+export async function check(): int {
+  let n: int = 0;
+  try {
+    throw { code: "X", message: "same async catch" };
+    n = 99;
+  } catch (e) {
+    if (e.code !== "X") { throw e; }
+    n = 7;
+  }
+  return n;
+}
+
+export function main(): null { return null; }

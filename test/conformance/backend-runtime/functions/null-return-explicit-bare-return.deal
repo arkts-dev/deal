@@ -1,0 +1,11 @@
+// @spec: Functions — Return type requirements
+// @description: A bare return satisfies a null-returning body (the explicit null-return exception; v1.2 defect snippet 49)
+// @expected: runtime-ok
+// @features: functions, return, v1.2
+
+function empty(): null { return; }
+
+export function main(): null {
+  empty();
+  return null;
+}

@@ -27,12 +27,21 @@ public final class NullNarrowing {
     /** Maps variable name → narrowed type. */
     private final Map<String, Type> narrowed = new HashMap<>();
 
+    /**
+     * Member-path guard set (ISSUE-0717): the dotted receiver paths a
+     * preceding {@code path !== null} test guards non-null in this flow
+     * position (the guarded member read of a nullable-typed member path,
+     * e.g. {@code if (value.child !== null) { value.child.value }}).
+     */
+    private final Set<String> guardedPaths = new HashSet<>();
+
     /** Creates an empty narrowing state. */
     public NullNarrowing() {}
 
     /** Copy constructor for branching. */
     private NullNarrowing(NullNarrowing other) {
         this.narrowed.putAll(other.narrowed);
+        this.guardedPaths.addAll(other.guardedPaths);
     }
 
     /**
@@ -61,6 +70,7 @@ public final class NullNarrowing {
                             narrowed.put(var, Type.Null.INSTANCE);
                         }
                     }
+                    guardMemberPath(bin.left(), enterTrueBranch);
                     return;
                 }
                 if (bin.op() == BinaryOp.NEQ && isNullLiteral(bin.right())) {
@@ -73,6 +83,7 @@ public final class NullNarrowing {
                             narrowToNonNull(var, declaredTypeOf);
                         }
                     }
+                    guardMemberPath(bin.left(), !enterTrueBranch);
                     return;
                 }
             }
@@ -91,6 +102,7 @@ public final class NullNarrowing {
                     narrowed.put(var, Type.Null.INSTANCE);
                 }
             }
+            guardMemberPath(bin.left(), enterTrueBranch);
         } else if (bin.op() == BinaryOp.EQ && isNullLiteral(bin.right())) {
             // x === null
             String var = extractVarName(bin.left());
@@ -101,7 +113,49 @@ public final class NullNarrowing {
                     narrowToNonNull(var, declaredTypeOf);
                 }
             }
+            guardMemberPath(bin.left(), !enterTrueBranch);
         }
+    }
+
+    /**
+     * Records the member path of a {@code path !== null} test as guarded
+     * non-null in the branch that observes the non-null arm (the variable
+     * arm is handled by the identifier narrowing above; the member-path
+     * arm feeds {@link #isPathGuarded}).
+     */
+    private void guardMemberPath(ExpressionNode operand, boolean nonNullBranch) {
+        if (!nonNullBranch) {
+            return;
+        }
+        String path = pathOf(operand);
+        if (path != null && !(operand instanceof IdentifierExpr)) {
+            guardedPaths.add(path);
+        }
+    }
+
+    /**
+     * Whether a member path (a dotted identifier-rooted receiver, e.g.
+     * {@code value.child}) is guarded non-null at the current flow
+     * position.
+     */
+    public boolean isPathGuarded(String path) {
+        return guardedPaths.contains(path);
+    }
+
+    /**
+     * The dotted path of a member-access chain rooted at an identifier
+     * ({@code a.b.c}), or {@code null} when the expression is not a plain
+     * identifier-rooted member chain.
+     */
+    public static String pathOf(ExpressionNode expr) {
+        if (expr instanceof IdentifierExpr id) {
+            return id.name();
+        }
+        if (expr instanceof MemberAccessExpr mae) {
+            String base = pathOf(mae.object());
+            return base == null ? null : base + "." + mae.field();
+        }
+        return null;
     }
 
     private void narrowToNonNull(String varName, Function<String, Type> declaredTypeOf) {
@@ -158,6 +212,7 @@ public final class NullNarrowing {
      */
     public void invalidateAll() {
         narrowed.clear();
+        guardedPaths.clear();
     }
 
     /**
@@ -175,6 +230,7 @@ public final class NullNarrowing {
         for (String name : toRemove) {
             narrowed.remove(name);
         }
+        guardedPaths.retainAll(other.guardedPaths);
     }
 
     public Set<String> narrowedVariableNames() {

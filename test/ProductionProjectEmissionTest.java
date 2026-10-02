@@ -318,7 +318,7 @@ public class ProductionProjectEmissionTest {
 
     private static final String ADAPTER_SOURCE_APP_SOURCE = """
         export function main(): null {
-          let f: (a: int, b: int) => int = one
+          let f: (a: int, b: int) => int = one;
           f(1, 2)
           return null
         }

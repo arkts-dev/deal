@@ -435,6 +435,16 @@ public final class LuaSemanticEmitter {
             return "Y" + loopOp.id();
         }
 
+        /**
+         * The emitted function-factory reference (ISSUE-0717, defect
+         * snippets 31/71): the factories live as fields of the one
+         * chunk-local factory store ({@link #FACTORY_TABLE}) keyed by
+         * function id — a module with hundreds of functions keeps one
+         * active chunk local instead of one per function (LuaJIT's
+         * 200-local chunk limit), and a body that calls many factories
+         * captures the table once instead of one upvalue per referenced
+         * factory (LuaJIT's 60-upvalue limit).
+         */
         String fnFactory(FunctionId id) {
             return FACTORY_TABLE + ".F" + id.id();
         }
@@ -4839,16 +4849,31 @@ public final class LuaSemanticEmitter {
                     out.append("end\n");
                 }
                 case STRING_SCALARS -> {
+                    // ISSUE-0717 (defect snippet 34): one iteration per
+                    // Unicode scalar, never per byte — the cell carries
+                    // the scalar's whole byte sequence, so a multi-byte
+                    // scalar counts once and the concatenation of the
+                    // cells rebuilds the iterable (the semantic oracle
+                    // iterates code point values). The scalar length comes
+                    // from the lead byte through the string.byte global
+                    // (no new chunk-upvalue reference beside __u8sub).
                     String iterable = slot(payload.iterable());
                     String cellName = cell(payload.binding(), payload.generation());
                     String cont = loopCont(op.opId());
                     out.append("do\n");
-                    out.append("  __itT = ").append(iterable).append("\n");
-                    out.append("  for __i = 1, #__itT do\n");
+                    out.append("  local __sitT = ").append(iterable).append("\n");
+                    out.append("  local __siT = 1\n");
+                    out.append("  while __siT <= #__sitT do\n");
+                    out.append("    local __sbT = string.byte(__sitT, __siT)\n");
+                    out.append("    local __slnT = 1\n");
+                    out.append("    if __sbT >= 240 then __slnT = 4\n");
+                    out.append("    elseif __sbT >= 224 then __slnT = 3\n");
+                    out.append("    elseif __sbT >= 192 then __slnT = 2 end\n");
                     out.append("    ").append(cellName)
-                        .append(" = {__u8sub(__itT, __i, __i)}\n");
+                        .append(" = {__u8sub(__sitT, __siT, __siT + __slnT - 1)}\n");
                     emitLabeledBlock(payload.body());
                     out.append("    ::").append(cont).append("::\n");
+                    out.append("    __siT = __siT + __slnT\n");
                     out.append("  end\n");
                     out.append("  ::").append(exit).append("::\n");
                     out.append("end\n");

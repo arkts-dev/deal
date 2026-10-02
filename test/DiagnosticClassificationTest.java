@@ -292,6 +292,9 @@ public class DiagnosticClassificationTest {
             + "(public class identity)");
         coverage.put("E2011", "ModuleSystemTest (entry main wrong signature)");
         coverage.put("E2012", "ModuleSystemTest (entry module missing main)");
+        coverage.put("E2013",
+            "CheckerTest (nested class shadowing an enclosing class — the "
+            + "canonical class identity is module + name)");
 
         coverage.put("E3001", "CheckerTest (type mismatch)");
         coverage.put("E3002", "CheckerTest (empty literal inference)");

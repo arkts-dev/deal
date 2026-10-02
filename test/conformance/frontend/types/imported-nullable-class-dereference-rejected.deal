@@ -1,0 +1,12 @@
+// @spec: Classes — Nullable semantics
+// @description: An imported nullable class reference must be narrowed before its fields are read (v1.2 defect snippet 30)
+// @expected: compile-error E3003
+// @features: classes, nullable, imports, diagnostics, v1.2
+
+import * as models from "./support/nullable_class_lib";
+
+export function main(): null {
+  let b: models.Box | null = null;
+  let n: int = b.n;
+  return null;
+}

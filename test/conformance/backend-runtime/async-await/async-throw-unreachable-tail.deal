@@ -1,0 +1,19 @@
+// @spec: Async/Await — Async errors
+// @description: An async body may carry an unreachable statement after its throw; the tail is dropped (v1.2 defect snippet 42)
+// @expected: runtime-ok
+// @features: async-await, error-handling, reachability, v1.2
+
+async function fail(): int {
+  throw { code: "X", message: "async failure" };
+  return 99;
+}
+
+export async function check(): int {
+  try { return await fail(); }
+  catch (e) {
+    if (e.code !== "X") { throw e; }
+    return 7;
+  }
+}
+
+export function main(): null { return null; }
