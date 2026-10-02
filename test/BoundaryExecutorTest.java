@@ -477,6 +477,37 @@ public class BoundaryExecutorTest {
             Map.of("oneBasedIndex", "2"), leafNonIntegral,
             "[[int]] vs [[3], [1.5]]");
 
+        // The decoded-array mark (B3): an element carrying the std/json
+        // decode mark renders its reference value-model kind `table`, while
+        // an unmarked array carrier keeps the refined `array` token above.
+        // The descriptor, the one-based index, the leaf cause, the code,
+        // and the span are unchanged.
+        BoundaryValueView markedNested = BoundaryValueView.ofArray(
+            BoundaryValueView.ofArray(BoundaryValueView.ofInt(3)),
+            BoundaryValueView.ofDecodedArray(BoundaryValueView.ofNumber(1.5)));
+        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NESTED_INT_ARRAY,
+                markedNested),
+            FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
+            "array element 2 type mismatch", "[int]", "table",
+            Map.of("oneBasedIndex", "2"), leafNonIntegral,
+            "[[int]] vs [[3], decoded [1.5]]");
+
+        // The mark is inert on every other value: a decoded array is still
+        // admissible at an array descriptor and still rejected at a table
+        // descriptor with the landed actual token.
+        BoundaryValueView decodedOk = BoundaryValueView.ofDecodedArray(
+            BoundaryValueView.ofInt(3));
+        BoundaryOutcome decodedOkOutcome = checkCell(FailurePolicyId.TYPE_DESCRIPTOR,
+            INT_ARRAY, decodedOk);
+        expectPass(decodedOkOutcome, "[int] vs decoded [3]");
+        check(((BoundaryOutcome.Pass) decodedOkOutcome).value() == decodedOk,
+            "the decoded array passes its array descriptor unchanged");
+        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, TABLE,
+                BoundaryValueView.ofDecodedArray()),
+            FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
+            "expected table", "table", "array", new LinkedHashMap<>(), null,
+            "table descriptor vs a decoded array (admission unchanged)");
+
         // A leaf E8004 travels inside the cause with its code and template.
         BoundaryValueView rangeLeaf = BoundaryValueView.ofArray(
             BoundaryValueView.ofNumber(3000000000.0));
@@ -729,6 +760,19 @@ public class BoundaryExecutorTest {
             Map.of("oneBasedIndex", "1"),
             expectedKindMismatch("[int]", "number"),
             "nested array element vs [1.5]");
+
+        // The decoded-array mark (B3) at this cell too: the reported
+        // element's reference kind is `table`; the descriptor, the context
+        // element index, the leaf cause, the code, and the span are
+        // unchanged.
+        expectFail(checkCell(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, NESTED_INT_ARRAY,
+                BoundaryValueView.ofDecodedArray(BoundaryValueView.ofNumber(1.5)),
+                BoundaryContext.element(1)),
+            FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
+            "array element 1 type mismatch", "[[int]]", "table",
+            Map.of("oneBasedIndex", "1"),
+            expectedKindMismatch("[int]", "number"),
+            "decoded nested array element vs [1.5]");
 
         BoundaryValueView ok = BoundaryValueView.ofInt(2);
         BoundaryOutcome okOutcome = checkCell(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, INT, ok,
@@ -1180,22 +1224,34 @@ public class BoundaryExecutorTest {
         expectIllegalArgument(() -> BoundaryValueView.of(ActualKind.ARRAY),
             "an ARRAY view without its elements");
         expectIllegalArgument(() -> new BoundaryValueView(ActualKind.NUMBER, null, null,
-                null, null),
+                null, null, false),
             "a NUMBER view with a null numberValue");
         expectIllegalArgument(() -> new BoundaryValueView(ActualKind.CLASS, "", null, null,
-                null),
+                null, false),
             "a CLASS view with an empty class id");
         expectIllegalArgument(() -> new BoundaryValueView(ActualKind.STRING, "@x/Y", null,
-                null, null),
+                null, null, false),
             "a non-class kind carrying a class id");
         expectIllegalArgument(() -> BoundaryValueView.ofInt(2147483648L),
             "an INT view outside signed32");
         expectIllegalArgument(() -> new BoundaryValueView(ActualKind.INT, null, 3.5, null,
-                null),
+                null, false),
             "an INT view with a non-integral value");
         expectIllegalArgument(() -> new BoundaryValueView(ActualKind.INT, null,
-                Double.POSITIVE_INFINITY, null, null),
+                Double.POSITIVE_INFINITY, null, null, false),
             "an INT view with an infinite value");
+        expectIllegalArgument(() -> new BoundaryValueView(ActualKind.TABLE, null, null,
+                null, null, true),
+            "a decoded-array mark on a non-ARRAY view");
+
+        // The decoded-array mark is ARRAY-only and legal there: a decoded
+        // array view carries it, an unmarked array view does not.
+        check(BoundaryValueView.ofDecodedArray(BoundaryValueView.ofInt(1))
+                .decodedArrayMark(),
+            "a decoded array view carries the mark");
+        check(!BoundaryValueView.ofArray(BoundaryValueView.ofInt(1))
+                .decodedArrayMark(),
+            "an unmarked array view carries no mark");
 
         check(BoundaryValueView.of(ActualKind.INT).kind() == ActualKind.INT
                 && BoundaryValueView.of(ActualKind.INT).numberValue() == null,

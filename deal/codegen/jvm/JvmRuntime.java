@@ -203,6 +203,15 @@ public final class JvmRuntime {
     public static final class Array {
         public final List<Object> elements = new ArrayList<>();
         public int length;
+        /**
+         * The decoded-array mark (B3): set only by the stdlib JSON reader
+         * ({@link JsonReader#parseArray}) at every decoded nesting depth.
+         * The mark renders the reference value-model kind {@code table} at
+         * the array-element failure projection and is inert everywhere
+         * else (admission, {@link #actualOf}, the container/table ops,
+         * identity, length, indexing, and stringify are unchanged).
+         */
+        public boolean decodedArray;
 
         public Array(int length) {
             this.length = length;
@@ -901,6 +910,22 @@ public final class JvmRuntime {
     }
 
     /**
+     * The array-element arm's reference-kind projection (the decoded-array
+     * mark, B3): the reported element's reference kind — an element
+     * carrying the std/json decode mark renders {@code table} (the
+     * reference value model's kind for a decoded array), every other
+     * element keeps the landed refined token ({@code array} for a real
+     * array carrier). The mark is read here and nowhere else in the
+     * runtime.
+     */
+    public static String elementActualOf(String staticKind, Object v) {
+        if (v instanceof Array array && array.decodedArray) {
+            return "table";
+        }
+        return actualOf(staticKind, v);
+    }
+
+    /**
      * The completion cell's actual kind (the {@code ASYNC_COMPLETION}
      * boundary at an {@code AWAIT}): the pinned corpus projection of the
      * cell has one numeric kind, so every numeric carrier — the shared int
@@ -1101,7 +1126,7 @@ public final class JvmRuntime {
                         throw arm(deal.semantic.ir.FailureArmId.ARRAY_ELEMENT_KIND,
                             java.util.Map.of("oneBasedIndex", Integer.toString(i + 1)),
                             "-", innerCanonical != null ? innerCanonical : inner,
-                            actualOf(elem == MISSING ? "missing" : inner, elem));
+                            elementActualOf(elem == MISSING ? "missing" : inner, elem));
                     }
                 }
                 return v;
@@ -2320,6 +2345,10 @@ public final class JvmRuntime {
         Array parseArray() {
             advance(); // '['
             Array array = new Array(0);
+            // The decoded-array mark (B3): the std/json parse realization is
+            // the only producer of the mark; a nested decoded array carries
+            // it too (this reader recurses through parseValue).
+            array.decodedArray = true;
             skipWs();
             if (!atEnd() && peek() == ']') {
                 advance();

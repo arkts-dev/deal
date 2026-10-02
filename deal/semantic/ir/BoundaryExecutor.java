@@ -284,7 +284,7 @@ public final class BoundaryExecutor {
                     FailureArmId.ARRAY_ELEMENT_KIND, parameters,
                     FailureProjections.expectedFor(arm, descriptor, descriptor),
                     FailureProjections.actualFor(arm,
-                        FailureProjections.typedBoundaryToken(view.kind(), view.classId()),
+                        elementReferenceToken(view),
                         null, null, null, null),
                     project(tdProjection(), leaf)));
             }
@@ -594,11 +594,26 @@ public final class BoundaryExecutor {
                 CoreFail leaf = elementFail.caseKind() == FailureCase.ELEMENT
                     ? elementFail.cause() : elementFail;
                 return new CoreFail(FailureCase.ELEMENT, descriptor.element(),
-                    FailureProjections.typedBoundaryToken(element.kind(), element.classId()),
+                    elementReferenceToken(element),
                     i + 1, leaf);
             }
         }
         return pass(view);
+    }
+
+    /**
+     * The array-element arm's reference-kind projection (the decoded-array
+     * mark, B3): the reported element's reference kind — an element carrying
+     * the std/json decode mark renders {@code table} (the reference value
+     * model's kind for a decoded array), every other element keeps the
+     * landed refined typed-boundary token ({@code array} for a real array
+     * carrier). The mark is read here and nowhere else in the executor.
+     */
+    private static String elementReferenceToken(BoundaryValueView element) {
+        if (element.kind() == ActualKind.ARRAY && element.decodedArrayMark()) {
+            return "table";
+        }
+        return FailureProjections.typedBoundaryToken(element.kind(), element.classId());
     }
 
     /** Nullable: language null passes; the inner failure propagates unchanged. */

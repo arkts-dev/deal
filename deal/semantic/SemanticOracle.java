@@ -464,9 +464,16 @@ public final class SemanticOracle {
         record TableValue(LinkedHashMap<String, Value> entries) implements Value {
         }
 
-        /** A dense array; deleted slots hold {@link MissingValue}. */
-        record ArrayValue(List<Value> elements, RuntimeDescriptor elementDescriptor)
-            implements Value {
+        /**
+         * A dense array; deleted slots hold {@link MissingValue}. The
+         * {@code decodedArray} mark is the closed ARRAY-only provenance fact
+         * of the stdlib JSON decode sites (the {@code JSON_PARSE} result
+         * projection): a decoded array renders its reference value-model
+         * kind ({@code table}) in the array-element failure projection,
+         * every other array renders the refined {@code array} token.
+         */
+        record ArrayValue(List<Value> elements, RuntimeDescriptor elementDescriptor,
+                          boolean decodedArray) implements Value {
         }
 
         /**
@@ -1780,7 +1787,8 @@ public final class SemanticOracle {
                     BoundaryContext.element(i + 1));
                 elements.add(checked);
             }
-            return publish(op, new Value.ArrayValue(elements, payload.elementDescriptor()));
+            return publish(op, new Value.ArrayValue(elements,
+                payload.elementDescriptor(), false));
         }
 
         private String executeTableNew(SemanticOp op) {
@@ -2697,7 +2705,7 @@ public final class SemanticOracle {
                     // only), so a construction-crossed array carries the
                     // neutral descriptor.
                     yield new Value.ArrayValue(elements,
-                        RuntimeDescriptor.String.INSTANCE);
+                        RuntimeDescriptor.String.INSTANCE, false);
                 }
                 case ClassOpsExecutor.Value.Bytes bytes -> bytesValueOf(bytes);
                 case ClassOpsExecutor.Value.Function function ->
@@ -3341,7 +3349,9 @@ public final class SemanticOracle {
                     for (Value element : array.elements()) {
                         elements.add(viewOfValue(element));
                     }
-                    yield BoundaryValueView.ofArray(elements);
+                    yield array.decodedArray()
+                        ? BoundaryValueView.ofDecodedArray(elements)
+                        : BoundaryValueView.ofArray(elements);
                 }
                 case Value.ClassValue classValue ->
                     BoundaryValueView.ofClass(classValue.classId().text());
@@ -4099,7 +4109,8 @@ public final class SemanticOracle {
                     sink, ORACLE_CLOCK);
             return switch (outcome) {
                 case SharedStdlibSemantics.Outcome.Success<SharedStdlibSemantics.Value>
-                        success -> stdlibResultOf(success.value());
+                        success -> stdlibResultOf(success.value(),
+                            row.function() == StdlibFunctionId.JSON_PARSE);
                 case SharedStdlibSemantics.Outcome.Failure<SharedStdlibSemantics.Value>
                         failure -> {
                     SharedStdlibSemantics.StdlibFailure stdlibFailure = failure.failure();
@@ -5352,7 +5363,8 @@ public final class SemanticOracle {
             return switch (outcome) {
                 case SharedStdlibSemantics.Outcome.Success<SharedStdlibSemantics.Value>
                         success -> {
-                    Value result = stdlibResultOf(success.value());
+                    Value result = stdlibResultOf(success.value(),
+                        payload.function() == StdlibFunctionId.JSON_PARSE);
                     // Step 3 — the single STDLIB_RETURN boundary run by
                     // the call op after the algorithm result
                     // (descriptor-kind rule); a successful parse whose
@@ -5480,8 +5492,15 @@ public final class SemanticOracle {
          * (recursive for the JSON data shapes the stringify/parse
          * algorithms publish: null/boolean/int/number/string leaves,
          * first-insertion-order tables, index-order arrays).
+         *
+         * <p>{@code decodedArrays} is the closed stdlib JSON decode fact
+         * (B3): only the {@code JSON_PARSE} result projection marks every
+         * array of the decoded tree with the decoded-array mark — the
+         * {@code TABLE_KEYS}/{@code STRING_SPLIT} array results are
+         * unmarked, and no other producer exists.</p>
          */
-        private Value stdlibResultOf(SharedStdlibSemantics.Value value) {
+        private Value stdlibResultOf(SharedStdlibSemantics.Value value,
+                boolean decodedArrays) {
             return switch (value) {
                 case SharedStdlibSemantics.Value.Null ignored ->
                     Value.NullValue.INSTANCE;
@@ -5499,9 +5518,9 @@ public final class SemanticOracle {
                     yield new Value.StrValue(valid.carrier());
                 }
                 case SharedStdlibSemantics.Value.Table table ->
-                    stdlibResultTableOf(table.table());
+                    stdlibResultTableOf(table.table(), decodedArrays);
                 case SharedStdlibSemantics.Value.Array array ->
-                    stdlibResultArrayOf(array.elements());
+                    stdlibResultArrayOf(array.elements(), decodedArrays);
                 case SharedStdlibSemantics.Value.Other other ->
                     throw new IllegalStateException(
                         "a stdlib algorithm result never carries an unsupported value: "
@@ -5511,7 +5530,8 @@ public final class SemanticOracle {
 
         /** One closed stdlib table → the oracle table value (first-insertion order). */
         private Value.TableValue stdlibResultTableOf(
-                SemanticTable<SharedStdlibSemantics.Value> table) {
+                SemanticTable<SharedStdlibSemantics.Value> table,
+                boolean decodedArrays) {
             LinkedHashMap<String, Value> entries = new LinkedHashMap<>();
             for (String key : table.keys()) {
                 SemanticTable.Lookup<SharedStdlibSemantics.Value> lookup = table.get(key);
@@ -5521,19 +5541,21 @@ public final class SemanticOracle {
                     throw new IllegalStateException(
                         "a table key returned by keys() is always present");
                 }
-                entries.put(key, stdlibResultOf(present.value()));
+                entries.put(key, stdlibResultOf(present.value(), decodedArrays));
             }
             return new Value.TableValue(entries);
         }
 
         /** One closed stdlib array → the oracle array value (index order). */
         private Value.ArrayValue stdlibResultArrayOf(
-                SemanticArray<SharedStdlibSemantics.Value> elements) {
+                SemanticArray<SharedStdlibSemantics.Value> elements,
+                boolean decodedArray) {
             List<Value> result = new ArrayList<>();
             for (int i = 0; i < elements.size(); i++) {
-                result.add(stdlibResultOf(elements.elementAt(i)));
+                result.add(stdlibResultOf(elements.elementAt(i), decodedArray));
             }
-            return new Value.ArrayValue(result, JSON_CARRIER_ELEMENT_DESCRIPTOR);
+            return new Value.ArrayValue(result, JSON_CARRIER_ELEMENT_DESCRIPTOR,
+                decodedArray);
         }
 
         /**

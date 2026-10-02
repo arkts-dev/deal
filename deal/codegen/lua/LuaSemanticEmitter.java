@@ -8243,6 +8243,15 @@ local function __typedBoundaryKind(staticKind, v)
   if t == "function" then return "function" end
   return staticKind
 end
+-- The array-element arm's reference-kind projection (the decoded-array
+-- mark, B3): an element carrying the std/json decode mark renders its
+-- reference value-model kind (table), every other element keeps the
+-- landed refined typed-boundary token (array for a real array carrier).
+-- The mark is read here and nowhere else in the emitted prelude.
+local function __elemRefKind(staticKind, v)
+  if type(v) == "table" and v.__a and v.__da then return "table" end
+  return __typedBoundaryKind(staticKind, v)
+end
 -- The completion variant (P2 item 4): every numeric carrier is the single
 -- number kind.
 local function __completionBoundaryKind(staticKind, v)
@@ -8448,7 +8457,7 @@ local function __bcheck(desc, staticKind, v, csig, completion)
         local ok, checked = pcall(__bcheck, inner,
           (elem == __MISSING) and "missing" or inner, elem, innerSig)
         if not ok then
-          local actualKind = __typedBoundaryKind(
+          local actualKind = __elemRefKind(
             (elem == __MISSING) and "missing" or inner, elem)
           return error(__arm("ARRAY_ELEMENT_KIND", {oneBasedIndex = i}, "-",
             innerExpected, actualKind), 0)
@@ -9525,7 +9534,10 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     end
     local function parseArray()
       advance()
-      local a = {__a = true, __n = 0}
+      -- The decoded-array mark (B3): this realization is the std/json
+      -- decode site, so every array it produces — at every nesting depth —
+      -- carries the mark; nothing else in the artifact sets it.
+      local a = {__a = true, __n = 0, __da = true}
       skipWs()
       if not atEnd() and peek() == 93 then advance(); return a end
       while true do

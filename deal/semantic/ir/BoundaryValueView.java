@@ -8,7 +8,8 @@ public record BoundaryValueView(
     String classId,
     Double numberValue,
     RuntimeDescriptor.Func functionSignature,
-    List<BoundaryValueView> elements
+    List<BoundaryValueView> elements,
+    boolean decodedArrayMark
 ) {
 
     public BoundaryValueView {
@@ -73,6 +74,11 @@ public record BoundaryValueView(
         if (kind != ActualKind.ARRAY && elements != null) {
             throw new IllegalArgumentException("only an ARRAY view carries element views");
         }
+        if (decodedArrayMark && kind != ActualKind.ARRAY) {
+            throw new IllegalArgumentException(
+                "the decoded-array mark is legal only on an ARRAY view (a "
+                    + "non-ARRAY view carrying it is a fail-closed producer defect)");
+        }
         if (elements != null) {
             elements = List.copyOf(elements);
         }
@@ -86,11 +92,46 @@ public record BoundaryValueView(
         return switch (kind) {
             case NULL, MISSING, BOOLEAN, INT, STRING, BYTES, TABLE, ASYNC_OPERATION,
                  NOTHING, INVALID_UNICODE ->
-                new BoundaryValueView(kind, null, null, null, null);
+                new BoundaryValueView(kind, null, null, null, null, false);
             case CLASS, NUMBER, FUNCTION, ARRAY ->
                 throw new IllegalArgumentException(kind
                     + " carries a payload; use the payload-bearing factory");
         };
+    }
+
+    /**
+     * An unmarked {@code ARRAY} view carrying its element views in index
+     * order (a DEAL array literal, an array produced by any other op, or a
+     * host-returned array).
+     */
+    public static BoundaryValueView ofArray(BoundaryValueView... elements) {
+        Objects.requireNonNull(elements, "elements must not be null");
+        return ofArray(List.of(elements));
+    }
+
+    /** {@link #ofArray(BoundaryValueView...)} over a list. */
+    public static BoundaryValueView ofArray(List<BoundaryValueView> elements) {
+        Objects.requireNonNull(elements, "elements must not be null");
+        return new BoundaryValueView(ActualKind.ARRAY, null, null, null,
+            List.copyOf(elements), false);
+    }
+
+    /**
+     * A <em>decoded</em> {@code ARRAY} view (B3): the closed provenance mark
+     * of the stdlib JSON decode sites. Its element views carry their own
+     * marks, so every array of a decoded tree is marked at every depth.
+     */
+    public static BoundaryValueView ofDecodedArray(BoundaryValueView... elements) {
+        Objects.requireNonNull(elements, "elements must not be null");
+        return ofDecodedArray(List.of(elements));
+    }
+
+    /** {@link #ofDecodedArray(BoundaryValueView...)} over a list. */
+    public static BoundaryValueView ofDecodedArray(
+            List<BoundaryValueView> elements) {
+        Objects.requireNonNull(elements, "elements must not be null");
+        return new BoundaryValueView(ActualKind.ARRAY, null, null, null,
+            List.copyOf(elements), true);
     }
 
     /** An {@code INT} view carrying its exact signed32 value. */
@@ -99,12 +140,13 @@ public record BoundaryValueView(
             throw new IllegalArgumentException(
                 "an INT view value must be signed32, got " + value);
         }
-        return new BoundaryValueView(ActualKind.INT, null, (double) value, null, null);
+        return new BoundaryValueView(ActualKind.INT, null, (double) value, null, null,
+            false);
     }
 
     /** A {@code NUMBER} view carrying its IEEE-754 value (NaN/infinity included). */
     public static BoundaryValueView ofNumber(double value) {
-        return new BoundaryValueView(ActualKind.NUMBER, null, value, null, null);
+        return new BoundaryValueView(ActualKind.NUMBER, null, value, null, null, false);
     }
 
     /** A {@code CLASS} view carrying the canonical {@code @modulePath/ClassName} atom text. */
@@ -113,26 +155,14 @@ public record BoundaryValueView(
         if (classId.isEmpty()) {
             throw new IllegalArgumentException("classId must not be empty");
         }
-        return new BoundaryValueView(ActualKind.CLASS, classId, null, null, null);
+        return new BoundaryValueView(ActualKind.CLASS, classId, null, null, null, false);
     }
 
     /** A {@code FUNCTION} view carrying the value's actual signature. */
     public static BoundaryValueView ofFunction(RuntimeDescriptor.Func signature) {
         Objects.requireNonNull(signature, "signature must not be null");
-        return new BoundaryValueView(ActualKind.FUNCTION, null, null, signature, null);
-    }
-
-    /** An {@code ARRAY} view carrying its element views in index order. */
-    public static BoundaryValueView ofArray(BoundaryValueView... elements) {
-        Objects.requireNonNull(elements, "elements must not be null");
-        return ofArray(List.of(elements));
-    }
-
-    /** An {@code ARRAY} view carrying its element views in index order. */
-    public static BoundaryValueView ofArray(List<BoundaryValueView> elements) {
-        Objects.requireNonNull(elements, "elements must not be null");
-        return new BoundaryValueView(ActualKind.ARRAY, null, null, null,
-            List.copyOf(elements));
+        return new BoundaryValueView(ActualKind.FUNCTION, null, null, signature, null,
+            false);
     }
 
     /** The language-null view ({@code ActualKind.NULL}). */
