@@ -1705,6 +1705,21 @@ public class FailureArmAuthorityTest {
                 "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}"),
             Map.of("name", "\uD800", "age", 1L, "ratio", 0.5, "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
+        // A host-ABI function wrapper ({__kind = "function"}: the emitted
+        // export-surface entry and host-crossing carrier shape) at a failing
+        // declared field: the closed function token on every consumer, never
+        // the table spelling.
+        cases.add(walkCase("function-wrapper-at-string-field", "JSON_TO_WALK",
+            "name", "function",
+            Map.of("name", walkFunction(), "age", new ClassOpsExecutor.Value.Int(1),
+                "ratio", new ClassOpsExecutor.Value.Number(0.5),
+                "data", walkEmptyTable(), "tags", walkIntArray(1)),
+            Map.of("name", "{__kind = \"function\", sig = \"()->number\", "
+                    + "f = function() end}",
+                "age", "1", "ratio", "0.5", "data", LUA_TABLE_CARRIER,
+                "tags", "{__a = true, __n = 1, [1] = 1}"),
+            Map.of("name", walkJvmFunction(), "age", 1L, "ratio", 0.5, "data",
+                new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
         // A path-local table re-entry: the cycle arm, no expected/actual.
         cases.add(walkCase("cyclic-table-field", "JSON_TO_WALK_CYCLE", null, null,
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Int(1),
@@ -2125,6 +2140,17 @@ public class FailureArmAuthorityTest {
 
     private static ClassOpsExecutor.Value walkString(String carrier) {
         return ClassOpsExecutor.Value.string(carrier);
+    }
+
+    /** The oracle's function carrier (the wrapper's value on the oracle leg). */
+    private static ClassOpsExecutor.Value walkFunction() {
+        return new ClassOpsExecutor.Value.Function(new RuntimeDescriptor.Func(
+            List.of(), RuntimeDescriptor.Null.INSTANCE, false));
+    }
+
+    /** The JVM's function carrier (the wrapper's value on the JVM leg). */
+    private static deal.codegen.jvm.JvmRuntime.FunctionValue walkJvmFunction() {
+        return new deal.codegen.jvm.JvmRuntime.FunctionValue(args -> null, "()->number");
     }
 
     private static ClassOpsExecutor.Value walkEmptyTable() {

@@ -8178,7 +8178,15 @@ local function __typedBoundaryKind(staticKind, v)
     if v.__c then return v.__id end
     if v.__d then return "class:@builtin/Error" end
     if v.__t then return "table" end
-    if v.__fn ~= nil or v.__f then return "function" end
+    -- Every function-shaped carrier projects the closed function token:
+    -- the __fn protocol carriers (closures, adapters, intrinsic and
+    -- stdlib callables), the __f mark, and the host ABI/export wrapper's
+    -- own __kind mark (the mark __bcheck and __stdJsonKind already
+    -- recognize). The wrapper is a required carrier classification here,
+    -- never the table spelling.
+    if v.__fn ~= nil or v.__f or v.__kind == "function" then
+      return "function"
+    end
     if staticKind == "err" then return "class:@builtin/Error" end
     if staticKind == "table" then return "table" end
     if staticKind == "array" then return "array" end
