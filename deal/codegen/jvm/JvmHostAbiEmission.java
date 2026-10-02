@@ -1353,7 +1353,13 @@ final class JvmHostAbiEmission {
         out.append("    }\n");
         out.append("    if (d.equals(\"number\")) { if (v instanceof java.lang.Double || v instanceof java.lang.Long) return v; throw __hostFail(JvmRuntime.kindReason(\"number\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.equals(\"string\")) { if (v instanceof java.lang.String __s) { java.lang.String __r = __hostStringReason(__s); if (__r != null) throw __hostFail(__r, d, v, oFile, oLine, oCol); return v; } throw __hostFail(JvmRuntime.kindReason(\"string\"), d, v, oFile, oLine, oCol); }\n");
-        out.append("    if (d.equals(\"bytes\")) { if (v instanceof $DealRt.Bytes) return v; throw __hostFail(JvmRuntime.kindReason(\"bytes\"), d, v, oFile, oLine, oCol); }\n");
+        // The bytes cell admits both representations of one buffer (K6
+        // item 13 / H7): the production carrier `JvmRuntime.BytesValue`
+        // the DEAL-side parameter cell checks before the host-facing
+        // projection, and the synthesized `$DealRt.Bytes` view the
+        // emitted wrapper re-checks after it. `__hostBytesToHost` /
+        // `__hostBytesToDeal` keep an out-and-back buffer one buffer.
+        out.append("    if (d.equals(\"bytes\")) { if (v instanceof $DealRt.Bytes || v instanceof JvmRuntime.BytesValue) return v; throw __hostFail(JvmRuntime.kindReason(\"bytes\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.equals(\"table\")) { if (v instanceof JvmRuntime.Table) return v; throw __hostFail(JvmRuntime.kindReason(\"table\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.startsWith(\"[\")) { return __hostCheckArray(d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.startsWith(\"(\") || d.startsWith(\"async(\")) {\n");
