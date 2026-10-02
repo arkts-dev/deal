@@ -1223,6 +1223,70 @@ public class JsonableHelperProductionDriveTest {
         }
     }
 
+    // =========================================================================
+    // 8. Determinism and the verbatim export key
+    // =========================================================================
+
+    /**
+     * Repeated lowering and emission of the same fixture are byte-identical
+     * (two compiles of one lane-equivalent project emit the identical
+     * artifact for each target), and the emitted helper publication carries
+     * the DEAL helper name verbatim as its key on both targets (the
+     * {@code $}-only-in-quoted-keys invariant: the Lua surface keys the
+     * helper by a quoted string, the JVM surface by the same string).
+     */
+    private static void testDeterminismAndExportKey() throws Exception {
+        System.out.println("-- determinism and the verbatim export key --");
+        List<String> fixtures = List.of(
+            FAMILY_DIR + "/jsonable-helper-exports",
+            FAMILY_DIR + "/jsonable-cross-module-nested-class-array");
+        List<String> keys = List.of("User$fromJson", "Parent$fromJson");
+        for (int index = 0; index < fixtures.size(); index++) {
+            String fixtureRel = fixtures.get(index);
+            String helper = keys.get(index);
+            for (Target target : Target.values()) {
+                Project project = materialize(fixtureRel, target);
+                try {
+                    List<String> firstDiagnostics = new ArrayList<>();
+                    List<String> secondDiagnostics = new ArrayList<>();
+                    boolean firstCompiled = compile(project, fixtureRel, target,
+                        firstDiagnostics);
+                    String first = firstCompiled
+                        ? Files.readString(artifactOf(project, target)) : null;
+                    boolean secondCompiled = compile(project, fixtureRel, target,
+                        secondDiagnostics);
+                    String second = secondCompiled
+                        ? Files.readString(artifactOf(project, target)) : null;
+                    check(firstCompiled && secondCompiled, fixtureRel + " ["
+                        + target.laneName() + "]: both drives compile: "
+                        + firstDiagnostics + " " + secondDiagnostics);
+                    if (firstCompiled && secondCompiled) {
+                        checkEq(first, second, fixtureRel + " ["
+                            + target.laneName() + "]: repeated lowering and "
+                            + "emission are byte-identical");
+                        checkEq(firstDiagnostics, secondDiagnostics, fixtureRel
+                            + " [" + target.laneName() + "]: repeated lowering "
+                            + "carries no diagnostic");
+                    }
+                    if (first == null) {
+                        continue;
+                    }
+                    // The publication's key is the DEAL helper name verbatim:
+                    // the emitted Lua surface keys it as a quoted string, the
+                    // emitted JVM surface writes the same string.
+                    String publication = target == Target.LUAJIT
+                        ? "[\"" + helper + "\"] = {__kind = \"function\""
+                        : ".write(\"" + helper + "\", ";
+                    check(first.contains(publication), fixtureRel + " ["
+                        + target.laneName() + "]: the emitted helper publication "
+                        + "keys the DEAL name verbatim (" + publication + ")");
+                } finally {
+                    deleteRecursively(project.root());
+                }
+            }
+        }
+    }
+
     private static void deleteRecursively(Path dir) throws Exception {
         if (dir == null || !Files.exists(dir)) {
             return;
@@ -1240,6 +1304,7 @@ public class JsonableHelperProductionDriveTest {
         testOracleAgreement();
         testHelperSurface();
         testNegatives();
+        testDeterminismAndExportKey();
         System.out.println("");
         System.out.println("Jsonable helper production drive: " + passed
             + " passed, " + failed + " failed");
