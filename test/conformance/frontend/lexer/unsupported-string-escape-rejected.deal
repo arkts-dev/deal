@@ -1,0 +1,9 @@
+// @spec: Lexical elements — String escapes and Unicode
+// @description: Octal, hexadecimal, Unicode, and carriage-return escapes are not in the escape table (v1.2 defect snippet 57)
+// @expected: compile-error E1052
+// @features: lexer, strings, escapes
+
+export function main(): null {
+  let hex: string = "\x41";
+  return null;
+}

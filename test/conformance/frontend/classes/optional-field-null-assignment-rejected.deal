@@ -1,0 +1,11 @@
+// @spec: Classes — Optional fields
+// @description: An optional non-nullable field cannot store null (v1.2 defect snippet 11)
+// @expected: compile-error E3001
+// @features: classes, optional-field, assignment
+
+class Box { nick?: string; }
+export function main(): null {
+  let b: Box = {};
+  b.nick = null;
+  return null;
+}

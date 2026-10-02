@@ -1,0 +1,13 @@
+// @spec: Variables — Null narrowing
+// @description: A function expression captures the declared type, never a narrowed refinement (v1.2 defect snippet 06)
+// @expected: compile-error E5003
+// @features: variables, narrowing, closures
+
+export function main(): null {
+  let x: string | null = "a";
+  if (x !== null) {
+    let f: () => string = function(): string { return x; };
+    let s: string = f();
+  }
+  return null;
+}

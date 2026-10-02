@@ -609,10 +609,15 @@ public final class NameResolver {
                 return;
             }
         }
-        currentScope.define(name, new Symbol.VariableSymbol(name, type, false));
-
+        // v1.2 declaration order: `let` declarations are not hoisted and
+        // are visible only after their declaration, so the initializer is
+        // resolved before the name is defined (a forward reference is
+        // E2001; a self reference resolves against an enclosing binding,
+        // never against the declaration being initialized).
         // F1: Walk the initializer expression to find any FunctionExpr nodes
         walkExpression(vd.initializer());
+
+        currentScope.define(name, new Symbol.VariableSymbol(name, type, false));
     }
 
     /**

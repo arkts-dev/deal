@@ -1,0 +1,9 @@
+// @spec: Variables — Declaration order
+// @description: A let declaration is not visible inside its own initializer: a self reference is E2001 (v1.2 defect snippet 22)
+// @expected: compile-error E2001
+// @features: variables, declaration-order, name-resolution
+
+export function main(): null {
+  let x: int = x;
+  return null;
+}

@@ -1,0 +1,10 @@
+// @spec: Classes — Contextual construction
+// @description: An object literal constructs the class inside a nullable class context (v1.2 defect snippet 18)
+// @expected: compile-ok
+// @features: classes, nullable, contextual-typing
+
+class Box { n: int = 0; }
+export function main(): null {
+  let b: Box | null = { n: 2 };
+  return null;
+}

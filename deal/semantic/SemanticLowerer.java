@@ -4525,7 +4525,10 @@ public final class SemanticLowerer {
             BindingCoreIncarnation incarnation = new BindingCoreIncarnation(
                 INITIAL_LOOP_GENERATION, currentBlock(), BindingCellKind.DIRECT,
                 true, BindingProducer.BINDING_ALLOC, false);
-            registerBinding(decl.name(), binding, incarnation);
+            // v1.2 declaration order: the initializer is lowered before
+            // the binding is registered, so a self/forward reference
+            // resolves against the enclosing binding (never against the
+            // cell being initialized) — the checker's non-hoisting rule.
             emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
                 new KindPayload.BindingAllocPayload(binding, currentBlock(), true,
                     cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
@@ -4547,6 +4550,7 @@ public final class SemanticLowerer {
                 }
             }
             ValueId value = lowerExpression(decl.initializer());
+            registerBinding(decl.name(), binding, incarnation);
             OpId declarationBoundary = null;
             if (decl.typeAnnotation().isPresent()) {
                 RuntimeDescriptor descriptor =
@@ -6098,6 +6102,26 @@ public final class SemanticLowerer {
             return checks.scopeMap().get(checkerScopeNodes.peek());
         }
 
+        /**
+         * The declared type of one identifier assignment target: resolved
+         * from the checker's scope table (never the flow-narrowed
+         * refinement) so the assignment boundary checks the value against
+         * the declared type, exactly as the checker's assignment gate
+         * does (v1.2: assigning null to a `T | null` binding inside a
+         * narrowed block is legal).
+         */
+        private Type declaredTargetTypeOf(IdentifierExpr target) {
+            SymbolTable scope = currentCheckerScope();
+            if (scope != null) {
+                Symbol symbol = scope.resolve(target.name());
+                if (symbol instanceof Symbol.VariableSymbol variable
+                        && variable.type() != null) {
+                    return variable.type();
+                }
+            }
+            return checkedType(target);
+        }
+
         /** The block identity binding ALLOCs in the current site carry as their scope. */
         private BlockId currentBlock() {
             return blockStack.peek();
@@ -6765,7 +6789,7 @@ public final class SemanticLowerer {
                 resolution.entry().cell().id, resolution.entry().incarnation().generation(),
                 null);
             RuntimeDescriptor targetDescriptor =
-                ContainerPayloadDescriptors.resultDescriptorOf(checkedType(target));
+                ContainerPayloadDescriptors.resultDescriptorOf(declaredTargetTypeOf(target));
             if (targetDescriptor instanceof RuntimeDescriptor.Func) {
                 functionIdentity.put(resolution.entry().incarnation(), value);
             }
@@ -6795,7 +6819,7 @@ public final class SemanticLowerer {
                 // position relative to an adaptation site).
                 assignmentAnalysis.recordAssignment(target.name(), binding, generation);
             }
-            Type targetType = checkedType(target);
+            Type targetType = declaredTargetTypeOf(target);
             if ((shapeMapAnalysis || e7Calls) && targetType instanceof Type.Func) {
                 Type sourceType = checkedType(assignment.value());
                 if (AdapterCreationRule.variableDisposition(sourceType, targetType)
@@ -9864,7 +9888,14 @@ public final class SemanticLowerer {
                     continue;
                 }
                 if (statement instanceof Block block) {
+                    // A nested block is its own lexical scope: pushing the
+                    // block's checker scope node keeps declared-type
+                    // resolution (the boundary descriptors of shadowing
+                    // declarations) inside the block, never against the
+                    // enclosing scope.
+                    checkerScopeNodes.push(block);
                     statementWalk.walk(block.statements(), false);
+                    checkerScopeNodes.pop();
                     continue;
                 }
                 if (statement instanceof IfStatement ifStatement) {
@@ -10353,7 +10384,14 @@ public final class SemanticLowerer {
                     continue;
                 }
                 if (statement instanceof Block block) {
+                    // A nested block is its own lexical scope: pushing the
+                    // block's checker scope node keeps declared-type
+                    // resolution (the boundary descriptors of shadowing
+                    // declarations) inside the block, never against the
+                    // enclosing scope.
+                    checkerScopeNodes.push(block);
                     statementWalk.walk(block.statements(), false);
+                    checkerScopeNodes.pop();
                     continue;
                 }
                 if (statement instanceof IfStatement ifStatement) {
@@ -10397,6 +10435,22 @@ public final class SemanticLowerer {
         // ---------------------------------------------------------------------
 
         /**
+         * Walks one control-flow body block with the block's own checker
+         * scope pushed: declared-type resolution of shadowing declarations
+         * inside the body must never resolve against the enclosing scope
+         * (the boundary descriptor of a block-local declaration is the
+         * block-local declared type).
+         */
+        private void walkScopedBody(Block body) {
+            checkerScopeNodes.push(body);
+            try {
+                statementWalk.walk(body.statements(), false);
+            } finally {
+                checkerScopeNodes.pop();
+            }
+        }
+
+        /**
          * {@code BRANCH(IF)} — the if-statement arm (C-D3): the
          * condition's producing ops complete in the enclosing block
          * before the {@code BRANCH} op; exactly one of
@@ -10433,7 +10487,7 @@ public final class SemanticLowerer {
             pushBlockParent(opId);
             pushBlock(selectedBlock);
             try {
-                statementWalk.walk(statement.thenBlock().statements(), false);
+                walkScopedBody(statement.thenBlock());
             } finally {
                 popBlock();
             }
@@ -10444,7 +10498,7 @@ public final class SemanticLowerer {
                         case Either.Left<IfStatement, Block> left ->
                             lowerIfStatement(left.value());
                         case Either.Right<IfStatement, Block> right ->
-                            statementWalk.walk(right.value().statements(), false);
+                            walkScopedBody(right.value());
                     }
                 } finally {
                     popBlock();
@@ -10496,7 +10550,7 @@ public final class SemanticLowerer {
             pushBlock(bodyBlock);
             pushLoopTarget(opId);
             try {
-                statementWalk.walk(statement.body().statements(), false);
+                walkScopedBody(statement.body());
             } finally {
                 popLoopTarget();
                 popBlock();
@@ -10581,7 +10635,7 @@ public final class SemanticLowerer {
             pushBlock(bodyBlock);
             pushLoopTarget(opId);
             try {
-                statementWalk.walk(statement.body().statements(), false);
+                walkScopedBody(statement.body());
             } finally {
                 popLoopTarget();
                 popBlock();
@@ -10627,7 +10681,7 @@ public final class SemanticLowerer {
             pushBlockParent(opId);
             pushBlock(tryBlock);
             try {
-                statementWalk.walk(statement.tryBlock().statements(), false);
+                walkScopedBody(statement.tryBlock());
             } finally {
                 popBlock();
             }
@@ -10643,7 +10697,7 @@ public final class SemanticLowerer {
                         cellKinds.cellKindOf(catchIncarnation), INITIAL_LOOP_GENERATION),
                     statement.span(), FailurePolicyId.NO_DEAL_FAILURE,
                     SourceOriginKind.SYNTHETIC, currentParent());
-                statementWalk.walk(statement.catchBlock().statements(), false);
+                walkScopedBody(statement.catchBlock());
             } finally {
                 popBlock();
                 catchFrames.remove(0);

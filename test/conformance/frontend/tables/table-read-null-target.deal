@@ -1,0 +1,10 @@
+// @spec: Tables — Reading table fields
+// @description: A table field read in a null context is a permitted target context (v1.2 defect snippet 03)
+// @expected: compile-ok
+// @features: tables, dynamic-read, contextual-target
+
+export function main(): null {
+  let t: table = { x: null };
+  let n: null = t.x;
+  return null;
+}

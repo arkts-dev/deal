@@ -1,0 +1,17 @@
+// @spec: Variables — Null narrowing invalidation
+// @description: An assignment inside a loop body invalidates the narrowing after the loop (v1.2 defect snippet 10)
+// @expected: compile-error E3001
+// @features: variables, narrowing, loops
+
+export function main(): null {
+  let x: string | null = "a";
+  if (x !== null) {
+    while (true) {
+      let y: string | null = null;
+      x = y;
+      break;
+    }
+    let s: string = x;
+  }
+  return null;
+}

@@ -1,0 +1,11 @@
+// @spec: Tables — Reading table fields
+// @description: A computed table key holding a Unicode scalar value is a static string key (v1.2 defect snippet 02)
+// @expected: compile-ok
+// @features: tables, dynamic-read, unicode
+
+export function main(): null {
+  let t: table = {};
+  t["😀"] = 7;
+  let n: int = t["😀"];
+  return null;
+}

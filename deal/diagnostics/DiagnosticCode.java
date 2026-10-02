@@ -135,6 +135,30 @@ public enum DiagnosticCode {
     /** Bodyless (external) function declaration in an implementation file. */
     E1051(Phase.FRONTEND, "Function declarations in implementation files must have a body"),
 
+    /**
+     * String escape outside the normative five-entry escape table
+     * (v1.2 has no octal, hexadecimal, or Unicode escape sequences).
+     */
+    E1052(Phase.FRONTEND, "Unsupported string escape"),
+
+    /**
+     * Statement not terminated: no {@code ;} was consumed and the next
+     * token is outside the normative semicolon-boundary whitelist.
+     */
+    E1053(Phase.FRONTEND, "Missing statement terminator"),
+
+    /** Trailing comma in a parameter list (the grammar carries none). */
+    E1054(Phase.FRONTEND, "Trailing comma in parameter list"),
+
+    /** Trailing comma in an argument list (the grammar carries none). */
+    E1055(Phase.FRONTEND, "Trailing comma in argument list"),
+
+    /**
+     * Chained relational/equality comparison: the v1.2 grammar makes both
+     * comparison groups non-associative (no chaining without parentheses).
+     */
+    E1056(Phase.FRONTEND, "Chained comparison is not allowed"),
+
     // =========================================================================
     // E2xxx — name resolution, module resolution, and project configuration (FRONTEND)
     // =========================================================================

@@ -1,0 +1,10 @@
+// @spec: Syntactic grammar — ArgumentList
+// @description: An argument list carries no trailing comma (v1.2 defect snippet 61)
+// @expected: compile-error E1055
+// @features: parser, arguments, trailing-comma
+
+function one(x: int): int { return x; }
+export function main(): null {
+  let n: int = one(1,);
+  return null;
+}

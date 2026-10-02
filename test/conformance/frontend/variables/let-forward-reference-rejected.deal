@@ -1,0 +1,10 @@
+// @spec: Variables — Declaration order
+// @description: A let declaration is not hoisted: a forward reference is E2001 (v1.2 defect snippet 21)
+// @expected: compile-error E2001
+// @features: variables, declaration-order, name-resolution
+
+export function main(): null {
+  let y: int = x;
+  let x: int = 1;
+  return null;
+}

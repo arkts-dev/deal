@@ -1,0 +1,10 @@
+// @spec: Tables — Reading table fields
+// @description: A computed table read with a static string key takes the contextual target type (v1.2 defect snippet 01)
+// @expected: compile-ok
+// @features: tables, dynamic-read, computed-key
+
+export function main(): null {
+  let t: table = { x: 7 };
+  let n: int = t["x"];
+  return null;
+}

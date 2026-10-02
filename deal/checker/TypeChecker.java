@@ -54,6 +54,34 @@ public final class TypeChecker {
     // -- Loop depth for break/continue validation (F8) --
     private int loopDepth = 0;
 
+    // -- Variables assigned inside the innermost loop body: the loop
+    //    back-edge invalidates their narrowed types after the loop (v1.2
+    //    "narrowing does not cross loop back-edges") --
+    private final Deque<Set<String>> loopAssignments = new ArrayDeque<>();
+
+    // -- Narrowed entries removed by a shadowing declaration; restored
+    //    when the declaring block exits (a block-local declaration must
+    //    not inherit the outer binding's narrowing, and must not destroy
+    //    the outer binding's narrowing for the enclosing scope) --
+    private final Deque<List<Map.Entry<String, Type>>> shadowedByDeclaration =
+        new ArrayDeque<>();
+
+    // -- Non-hoisting let visibility (v1.2 declaration order): one frame
+    //    per open block scope, holding the block's own let-declared names
+    //    that have not been reached yet. A reference to such a name
+    //    resolves against the enclosing scopes until its declaration is
+    //    walked. --
+    private static final class PendingScope {
+        final SymbolTable scope;
+        final Set<String> remaining;
+        PendingScope(SymbolTable scope, Set<String> remaining) {
+            this.scope = scope;
+            this.remaining = remaining;
+        }
+    }
+
+    private final ArrayDeque<PendingScope> pendingScopes = new ArrayDeque<>();
+
     // -- Write-context flag: when true, table member/index access is
     //    treated as a write target (no contextual typing required) --
     private boolean assignmentTargetMode = false;
@@ -89,6 +117,9 @@ public final class TypeChecker {
         Map<StatementNode, SymbolTable> scopeMap = nameResolver.scopeMap();
         TypeChecker checker = new TypeChecker(modulePath, symbolTable,
             nameResolver, scopeMap);
+        // The module scope is a block scope for the non-hoisting rule: a
+        // module-level let is visible only after its declaration.
+        checker.pushPendingScope(program.statements(), symbolTable);
         checker.walkStatements(program.statements());
         checker.detectJsonableCycles();
         return new CheckResult(
@@ -133,9 +164,15 @@ public final class TypeChecker {
     }
 
     private void walkStatement(StatementNode stmt) {
+        // A block introduces a lexical scope: narrowing entries removed by
+        // block-local declarations are restored when the block exits.
+        boolean blockScope = stmt instanceof Block;
+        if (blockScope) shadowedByDeclaration.push(new ArrayList<>());
+
         // Check for scope change
         SymbolTable savedScope = currentScope;
         SymbolTable stmtScope = scopeMap.get(stmt);
+        if (blockScope) pushPendingScope((Block) stmt, stmtScope);
         if (stmtScope != null) {
             currentScope = stmtScope;
 
@@ -165,6 +202,32 @@ public final class TypeChecker {
 
         currentScope = savedScope;
         nameResolver.setCurrentScope(savedScope);
+
+        if (blockScope) {
+            for (Map.Entry<String, Type> entry : shadowedByDeclaration.pop()) {
+                narrowing.restore(entry.getKey(), entry.getValue());
+            }
+            pendingScopes.pop();
+        }
+    }
+
+    /** Pushes one block scope's not-yet-declared let names. */
+    private void pushPendingScope(Block block, SymbolTable scope) {
+        pushPendingScope(block.statements(), scope);
+    }
+
+    /** Pushes one statement list's not-yet-declared let names. */
+    private void pushPendingScope(List<StatementNode> statements, SymbolTable scope) {
+        Set<String> names = new LinkedHashSet<>();
+        if (scope != null) {
+            for (StatementNode child : statements) {
+                if (child instanceof VariableDeclaration vd
+                        && scope.containsLocally(vd.name())) {
+                    names.add(vd.name());
+                }
+            }
+        }
+        pendingScopes.push(new PendingScope(scope, names));
     }
 
     // =======================================================================
@@ -424,6 +487,19 @@ public final class TypeChecker {
     // =======================================================================
 
     private void checkVariableDeclaration(VariableDeclaration vd) {
+        // A block-local declaration shadows any outer binding of the same
+        // name: the outer binding's narrowing must not apply to the new
+        // symbol. The entry is remembered so the declaring block's exit
+        // restores it for the enclosing scope.
+        Type outerNarrowed = narrowing.getNarrowedType(vd.name());
+        if (outerNarrowed != null) {
+            narrowing.onAssignment(vd.name());
+            if (!shadowedByDeclaration.isEmpty()) {
+                shadowedByDeclaration.peek().add(
+                    Map.entry(vd.name(), outerNarrowed));
+            }
+        }
+
         Type targetType;
         if (vd.typeAnnotation().isPresent()) {
             targetType = nameResolver.resolveTypeNode(vd.typeAnnotation().get());
@@ -450,9 +526,28 @@ public final class TypeChecker {
 
         checkAssignment(targetType, exprType, vd.initializer().span());
 
-        narrowing.onAssignment(vd.name());
+        // The declaration is complete: the name is now visible to the
+        // following statements of its block.
+        for (PendingScope ps : pendingScopes) {
+            ps.remaining.remove(vd.name());
+        }
+
+        recordAssignment(vd.name());
+    }
+
+    /**
+     * Assignment bookkeeping shared by declarations and assignment
+     * expressions: the narrowed entry is cleared immediately, and the
+     * name is recorded for the enclosing loop (a loop back-edge
+     * invalidates the entry for the code after the loop).
+     */
+    private void recordAssignment(String varName) {
+        narrowing.onAssignment(varName);
         if (insideTry) {
-            varsAssignedInTry.add(vd.name());
+            varsAssignedInTry.add(varName);
+        }
+        if (!loopAssignments.isEmpty()) {
+            loopAssignments.peek().add(varName);
         }
     }
 
@@ -487,7 +582,17 @@ public final class TypeChecker {
 
         // F1: Use walkStatement(fd.body()) instead of walkStatements(fd.body().statements())
         // so that the Block's scope (containing let-declared variables) is entered.
+        //
+        // Narrowed flow types are not captured and do not cross function
+        // boundaries (v1.2 narrowing invalidation); break/continue bind
+        // only to loops of the same function body.
+        NullNarrowing savedNarrowing = narrowing;
+        narrowing = new NullNarrowing();
+        int savedLoopDepth = loopDepth;
+        loopDepth = 0;
         walkStatement(fd.body());
+        narrowing = savedNarrowing;
+        loopDepth = savedLoopDepth;
 
         if (funcType != null) {
             Type retType = funcType.returnType();
@@ -602,8 +707,18 @@ public final class TypeChecker {
         NullNarrowing savedNarrowing = narrowing;
         narrowing = new NullNarrowing();
         loopDepth++;
+        loopAssignments.push(new LinkedHashSet<>());
         walkStatement(ws.body());
+        // The loop back-edge invalidates every variable assigned in the
+        // body (v1.2 narrowing does not cross loop back-edges).
+        Set<String> assigned = loopAssignments.pop();
         loopDepth--;
+        if (!loopAssignments.isEmpty()) {
+            loopAssignments.peek().addAll(assigned);
+        }
+        for (String name : assigned) {
+            savedNarrowing.invalidate(name);
+        }
         narrowing = savedNarrowing;
     }
 
@@ -637,8 +752,16 @@ public final class TypeChecker {
         NullNarrowing savedNarrowing = narrowing;
         narrowing = new NullNarrowing();
         loopDepth++;
+        loopAssignments.push(new LinkedHashSet<>());
         walkStatement(fs.body());
+        Set<String> assigned = loopAssignments.pop();
         loopDepth--;
+        if (!loopAssignments.isEmpty()) {
+            loopAssignments.peek().addAll(assigned);
+        }
+        for (String name : assigned) {
+            savedNarrowing.invalidate(name);
+        }
         narrowing = savedNarrowing;
     }
 
@@ -918,6 +1041,19 @@ public final class TypeChecker {
 
     private Type checkIdentifier(IdentifierExpr id) {
         Symbol sym = currentScope.resolve(id.name());
+        // v1.2 declaration order: a let declaration is visible only after
+        // its declaration, so a reference from inside the declaring
+        // block's earlier statements (a forward or self reference)
+        // resolves against the enclosing scopes.
+        for (PendingScope ps : pendingScopes) {
+            if (ps.remaining.contains(id.name()) && sym != null
+                    && ps.scope != null
+                    && ps.scope.resolveLocal(id.name()) == sym) {
+                sym = ps.scope.parent() != null
+                    ? ps.scope.parent().resolve(id.name()) : null;
+                break;
+            }
+        }
         if (sym == null) {
             error(DiagnosticCode.E2001, "Undeclared identifier '" + id.name() + "'", id.span());
             return Type.Error.INSTANCE;
@@ -1225,7 +1361,9 @@ public final class TypeChecker {
                 ClassField cf = IntrinsicResolvers.findField(cs.fields(), field);
                 if (cf != null) {
                     Type fieldType = resolveFieldTypeInClassModule(cs, cf.type());
-                    if (cf.optional() && !cf.nullable()) {
+                    if (cf.optional() && !cf.nullable() && !assignmentTargetMode) {
+                        // A read of an omitted optional field yields null;
+                        // a write target keeps the declared field type.
                         try {
                             fieldType = Types.nullable(fieldType);
                         } catch (IllegalArgumentException e) { /* already nullable */ }
@@ -1246,7 +1384,7 @@ public final class TypeChecker {
             if (assignmentTargetMode) {
                 return Type.Table.INSTANCE;
             }
-            if (expectedType != null && !Types.isNull(expectedType)) {
+            if (expectedType != null) {
                 return expectedType;
             }
             error(DiagnosticCode.E3003,
@@ -1269,13 +1407,34 @@ public final class TypeChecker {
         if (arrayType == Type.Error.INSTANCE || indexType == Type.Error.INSTANCE)
             return Type.Error.INSTANCE;
 
-        if (arrayType instanceof Type.Table && assignmentTargetMode) {
-            if (indexType instanceof Type.String) {
-                return Type.Table.INSTANCE;
+        // A-D10 (assignment-delete-address-chains): table index
+        // write/delete keys must have static type string (spec v1.2
+        // table writes). The F5 "allow any index type and skip further
+        // checks" skip is superseded by the static string-key gate.
+        if (arrayType instanceof Type.Table) {
+            if (assignmentTargetMode) {
+                if (indexType instanceof Type.String) {
+                    return Type.Table.INSTANCE;
+                }
+                error(DiagnosticCode.E3018,
+                    "Table index key must have static type string, got "
+                    + typeName(indexType), idx.index().span());
+                return Type.Error.INSTANCE;
             }
-            error(DiagnosticCode.E3018,
-                "Table index key must have static type string, got "
-                + typeName(indexType), idx.index().span());
+            // A computed table read takes the contextual target type the
+            // surrounding expression supplies (the same algorithm as a
+            // table member read); its key must have static type string.
+            if (!(indexType instanceof Type.String)) {
+                error(DiagnosticCode.E3007,
+                    "Array index must be int, got " + typeName(indexType),
+                    idx.index().span());
+                return Type.Error.INSTANCE;
+            }
+            if (expectedType != null) {
+                return expectedType;
+            }
+            error(DiagnosticCode.E3003,
+                "Table field read requires contextual target type", idx.span());
             return Type.Error.INSTANCE;
         }
 
@@ -1306,11 +1465,45 @@ public final class TypeChecker {
     // =======================================================================
 
     private Type checkArrayLiteral(ArrayLiteralExpr arr) {
+        // The contextual element type: an array-typed expectation, or the
+        // array inside a nullable expectation (e.g. int[] | null).
+        Type elementContext = null;
+        if (expectedType instanceof Type.Array expectedArr) {
+            elementContext = expectedArr.element();
+        } else if (expectedType instanceof Type.Nullable ne
+                && ne.inner() instanceof Type.Array innerArr) {
+            elementContext = innerArr.element();
+        }
+
         List<ExpressionNode> elements = arr.elements();
         if (elements.isEmpty()) {
-            if (expectedType instanceof Type.Array expectedArr) return expectedArr;
+            if (elementContext != null) return Types.array(elementContext);
             error(DiagnosticCode.E3002, "Cannot infer type of empty array literal", arr.span());
             return Type.Error.INSTANCE;
+        }
+
+        if (elementContext != null) {
+            // Contextual element checking: every element is checked against
+            // the contextual element type and admitted when assignable
+            // (int and null both fit (int | null)[]), so the literal has
+            // the expected array type.
+            boolean ok = true;
+            for (ExpressionNode elem : elements) {
+                Type savedExpected = expectedType;
+                expectedType = elementContext;
+                Type elemType = checkExpression(elem);
+                expectedType = savedExpected;
+                if (elemType == Type.Error.INSTANCE) { ok = false; continue; }
+                if (!isAssignable(elementContext, elemType)) {
+                    error(DiagnosticCode.E3011,
+                        "Mixed types in array literal: " + typeName(elementContext)
+                        + " and " + typeName(elemType),
+                        elem.span());
+                    ok = false;
+                }
+            }
+            if (!ok) return Type.Error.INSTANCE;
+            return Types.array(elementContext);
         }
 
         Type firstType = null;
@@ -1338,6 +1531,14 @@ public final class TypeChecker {
     private Type checkObjectLiteral(ObjectLiteralExpr obj) {
         if (expectedType instanceof Type.Class cls) {
             return checkClassConstruction(obj, cls);
+        }
+        // A nullable class expectation admits the construction (v1.2: the
+        // object literal is a class instance; null is the other arm).
+        if (expectedType instanceof Type.Nullable ne
+                && ne.inner() instanceof Type.Class cls) {
+            Type constructed = checkClassConstruction(obj, cls);
+            if (constructed == Type.Error.INSTANCE) return constructed;
+            return constructed;
         }
         for (Property prop : obj.properties()) {
             checkExpression(prop.value());
@@ -1476,8 +1677,16 @@ public final class TypeChecker {
         insideAsyncFunction = fe.isAsync();
 
         // F1: Use walkStatement(fe.body()) instead of walkStatements(fe.body().statements())
-        // so that the Block's scope is entered.
+        // so that the Block's scope is entered. A function expression body
+        // sees only declared types (no captured narrowing) and no
+        // enclosing loop context.
+        NullNarrowing savedNarrowing = narrowing;
+        narrowing = new NullNarrowing();
+        int savedLoopDepth = loopDepth;
+        loopDepth = 0;
         walkStatement(fe.body());
+        narrowing = savedNarrowing;
+        loopDepth = savedLoopDepth;
 
         if (!Types.isNull(returnType)
                 && !ReturnAnalysis.definitelyReturns(fe.body())) {
@@ -1548,6 +1757,24 @@ public final class TypeChecker {
         Type targetType = checkExpression(assign.target());
         assignmentTargetMode = savedMode;
 
+        // The assignment gate is the declared type of the target, never a
+        // flow-narrowed refinement (v1.2: `x = null` where x: T | null is
+        // legal inside a narrowed block; the narrowing is invalidated by
+        // the assignment instead).
+        Type declaredTarget = targetType;
+        if (assign.target() instanceof IdentifierExpr targetId) {
+            Type declared = declaredTypeOf(targetId.name());
+            if (declared != null && declared != Type.Error.INSTANCE) {
+                declaredTarget = declared;
+                // The target's recorded type is the declared type, never
+                // the flow-narrowed refinement: the assignment gate and
+                // every backend's assignment-site boundary check the
+                // declared type (v1.2: `x = null` on a `T | null` binding
+                // is legal inside a narrowed block).
+                typeMap.put(targetId, declared);
+            }
+        }
+
         // D3 (typed-boundary-enforcement): array .length is read-only.
         // The target is a MemberAccessExpr with field "length" on an
         // Array-typed object. The append idiom xs[xs.length] = v has an
@@ -1576,9 +1803,9 @@ public final class TypeChecker {
 
         // F3: Use the target type as contextual expected type for the value
         Type savedExpected = expectedType;
-        if (targetType != null && targetType != Type.Error.INSTANCE
-                && !(targetType instanceof Type.Table)) {
-            expectedType = targetType;
+        if (declaredTarget != null && declaredTarget != Type.Error.INSTANCE
+                && !(declaredTarget instanceof Type.Table)) {
+            expectedType = declaredTarget;
         }
         Type valueType = checkExpression(assign.value());
         expectedType = savedExpected;
@@ -1587,16 +1814,19 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
 
-        // For table write targets, no type checking needed (writes are unchecked)
-        if (targetType instanceof Type.Table) {
+        // A table write through a member/index target is unchecked (no
+        // field schema). A table VARIABLE target is an ordinary typed
+        // assignment: only a table value is assignable to it.
+        boolean uncheckedTableFieldWrite = targetType instanceof Type.Table
+            && !(assign.target() instanceof IdentifierExpr);
+        if (uncheckedTableFieldWrite) {
             // Table write — always allowed
-        } else if (!isAssignable(targetType, valueType)) {
-            reportAssignabilityError(targetType, valueType, assign.span());
+        } else if (!isAssignable(declaredTarget, valueType)) {
+            reportAssignabilityError(declaredTarget, valueType, assign.span());
         }
 
         if (assign.target() instanceof IdentifierExpr id) {
-            narrowing.onAssignment(id.name());
-            if (insideTry) varsAssignedInTry.add(id.name());
+            recordAssignment(id.name());
         }
 
         // Normal target/value checking ran above (typeMap stays populated);

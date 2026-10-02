@@ -1,0 +1,16 @@
+// @spec: Variables — Null narrowing invalidation
+// @description: Assigning null inside a narrowed block is legal and invalidates the narrowing (v1.2 defect snippet 05)
+// @expected: runtime-ok
+// @features: variables, narrowing, assignment
+
+export function test_assignment_declared_type(): boolean {
+  let x: string | null = "a";
+  if (x !== null) {
+    x = null;
+  }
+  return x === null;
+}
+
+export function main(): null {
+  return null;
+}

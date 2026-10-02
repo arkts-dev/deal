@@ -1,0 +1,12 @@
+// @spec: Variables — Declaration order
+// @description: A shadowing initializer resolves against the enclosing binding, not the declaration (v1.2 defect snippet 65)
+// @expected: compile-ok
+// @features: variables, declaration-order, shadowing
+
+export function main(): null {
+  let x: int = 3;
+  {
+    let x: int = x;
+  }
+  return null;
+}

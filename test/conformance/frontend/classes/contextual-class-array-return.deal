@@ -1,0 +1,11 @@
+// @spec: Classes — Contextual construction
+// @description: An array literal of class literals takes the declared return class element type (v1.2 defect snippet 16)
+// @expected: compile-ok
+// @features: classes, arrays, contextual-typing
+
+class Box { n: int = 0; }
+function make(): Box[] { return [{ n: 2 }]; }
+export function main(): null {
+  let a: Box[] = make();
+  return null;
+}

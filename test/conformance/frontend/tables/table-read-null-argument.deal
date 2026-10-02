@@ -1,0 +1,11 @@
+// @spec: Tables — Reading table fields
+// @description: A table field read as a null-typed call argument is a permitted target context (v1.2 defect snippet 04)
+// @expected: compile-ok
+// @features: tables, dynamic-read, contextual-target
+
+function takeNull(x: null): null { return null; }
+export function main(): null {
+  let t: table = { x: null };
+  takeNull(t.x);
+  return null;
+}

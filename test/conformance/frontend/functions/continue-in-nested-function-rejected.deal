@@ -1,0 +1,11 @@
+// @spec: Functions — Loop transfer statements
+// @description: A nested function cannot continue a caller's loop (v1.2 defect snippet 24)
+// @expected: compile-error E2000
+// @features: functions, continue, control-flow
+
+export function main(): null {
+  while (false) {
+    function f(): null { continue; return null; }
+  }
+  return null;
+}

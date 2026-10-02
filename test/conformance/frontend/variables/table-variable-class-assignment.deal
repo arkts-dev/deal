@@ -1,0 +1,12 @@
+// @spec: Tables — Class vs table
+// @description: A class instance is not assignable to a table variable (v1.2 defect snippet 13)
+// @expected: compile-error E3001
+// @features: tables, assignment, type-system
+
+class Box { n: int = 0; }
+export function main(): null {
+  let t: table = {};
+  let b: Box = {};
+  t = b;
+  return null;
+}

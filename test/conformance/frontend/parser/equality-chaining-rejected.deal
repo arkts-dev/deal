@@ -1,0 +1,9 @@
+// @spec: Syntactic grammar — Operator precedence
+// @description: Equality comparison is non-associative: chaining requires parentheses (v1.2 defect snippet 59)
+// @expected: compile-error E1056
+// @features: parser, equality, non-associative
+
+export function main(): null {
+  let b: boolean = true === true === true;
+  return null;
+}

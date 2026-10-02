@@ -1,0 +1,18 @@
+// @spec: Variables — Null narrowing
+// @description: A block-local binding shadows without inheriting the outer narrowing (v1.2 defect snippet 08)
+// @expected: runtime-ok
+// @features: variables, narrowing, shadowing
+
+export function test_block_shadow(): int {
+  let x: string | null = "a";
+  let n: int = 0;
+  if (x !== null) {
+    let x: int = 4;
+    n = x;
+  }
+  return n;
+}
+
+export function main(): null {
+  return null;
+}

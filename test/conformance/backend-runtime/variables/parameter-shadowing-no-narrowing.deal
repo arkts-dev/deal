@@ -1,0 +1,14 @@
+// @spec: Variables — Null narrowing
+// @description: A parameter shadows without inheriting the outer narrowing (v1.2 defect snippet 09)
+// @expected: runtime-ok
+// @features: variables, narrowing, parameters
+
+export function test_parameter_shadow(): int {
+  let x: string | null = "a";
+  let f: (x: int) => int = function(x: int): int { return x; };
+  return f(4);
+}
+
+export function main(): null {
+  return null;
+}

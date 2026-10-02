@@ -127,6 +127,22 @@ public final class NullNarrowing {
     }
 
     /**
+     * Restores a narrowed entry removed by a shadowing block-local
+     * declaration when the declaring block exits.
+     */
+    public void restore(String varName, Type type) {
+        narrowed.put(varName, type);
+    }
+
+    /**
+     * Drops one variable's narrowed entry (the loop back-edge rule: an
+     * assignment inside a loop body invalidates the entry after the loop).
+     */
+    public void invalidate(String varName) {
+        narrowed.remove(varName);
+    }
+
+    /**
      * Reverts all narrowed entries for variables in the given set (used
      * after try/catch).
      */

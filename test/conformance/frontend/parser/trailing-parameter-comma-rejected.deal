@@ -1,0 +1,10 @@
+// @spec: Syntactic grammar — ParameterList
+// @description: A parameter list carries no trailing comma (v1.2 defect snippet 60)
+// @expected: compile-error E1054
+// @features: parser, parameters, trailing-comma
+
+function one(x: int,): int { return x; }
+export function main(): null {
+  let n: int = one(1);
+  return null;
+}

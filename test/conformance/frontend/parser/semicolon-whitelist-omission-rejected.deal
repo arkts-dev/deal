@@ -1,0 +1,14 @@
+// @spec: Syntactic grammar — Semicolon rules
+// @description: A statement may omit its semicolon only before a whitelisted boundary token (v1.2 defect snippet 48)
+// @expected: compile-error E1053
+// @features: parser, semicolon, statement-boundary
+
+export function main(): null {
+  let n: int = 1
+  try {} catch (e) {}
+  let m: int = 2
+  one(m);
+  return null;
+}
+
+function one(x: int): int { return x; }

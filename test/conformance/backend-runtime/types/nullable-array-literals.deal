@@ -1,0 +1,31 @@
+// @spec: Type system — Array literals
+// @description: Empty and mixed nullable element array literals take the contextual nullable array type (v1.2 defect snippets 19 and 20)
+// @expected: runtime-ok
+// @features: types, arrays, nullable
+
+export function test_empty_nullable_array(): int {
+  let a: int[] | null = [];
+  if (a === null) {
+    return -1;
+  } else {
+    return a.length;
+  }
+}
+
+export function test_parenthesized_nullable_array(): int {
+  let a: (int | null)[] = [1, null, 3];
+  let count: int = 0;
+  for (let i: int = 0; i < a.length; i = i + 1) {
+    let v: int | null = a[i];
+    if (v === null) {
+      count = count + 1;
+    } else {
+      count = count + v;
+    }
+  }
+  return count;
+}
+
+export function main(): null {
+  return null;
+}

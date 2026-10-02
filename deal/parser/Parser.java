@@ -173,8 +173,10 @@ public final class Parser {
         List<StatementNode> statements = new ArrayList<>();
 
         while (!isAtEnd()) {
+            int diagCountBefore = diagnostics.size();
             StatementNode stmt = parseStatement();
             if (stmt != null) {
+                checkStatementTerminator(stmt, diagCountBefore);
                 statements.add(stmt);
             }
         }
@@ -470,8 +472,12 @@ public final class Parser {
 
         List<StatementNode> statements = new ArrayList<>();
         while (!isAtEnd() && peek().type() != TokenType.RBRACE) {
+            int diagCountBefore = diagnostics.size();
             StatementNode stmt = parseStatement();
-            if (stmt != null) statements.add(stmt);
+            if (stmt != null) {
+                checkStatementTerminator(stmt, diagCountBefore);
+                statements.add(stmt);
+            }
         }
 
         Token rbrace;
@@ -935,7 +941,13 @@ public final class Parser {
                 FunctionTypeParam first = parseFunctionTypeParam();
                 if (first != null) params.add(first);
 
-                while (match(TokenType.COMMA) && peek().type() != TokenType.RPAREN) {
+                while (match(TokenType.COMMA)) {
+                    if (peek().type() == TokenType.RPAREN) {
+                        // FunctionTypeParams carries no trailing comma.
+                        error(DiagnosticCode.E1054,
+                            "Trailing comma in parameter list is not allowed", peek());
+                        break;
+                    }
                     if (peek().type() == TokenType.ELLIPSIS) {
                         error(DiagnosticCode.E1047,
                             "Rest parameters are not supported in DEAL v1.2 (function types carry no rest arm)",
@@ -1044,6 +1056,20 @@ public final class Parser {
     private TypeNode parsePrimaryType() {
         TokenType tt = peek().type();
 
+        // Parenthesized type: the v1.2 surface admits a parenthesized
+        // nullable array element type, e.g. (int | null)[] (the spec's
+        // nullable-array example). Function types are consumed by
+        // tryParseFunctionType before this arm is reached.
+        if (tt == TokenType.LPAREN) {
+            Token lparen = advance();
+            TypeNode inner = parseType();
+            if (inner == null) return null;
+            if (!match(TokenType.RPAREN)) {
+                error(DiagnosticCode.E1015, "Expected ')' after type", peek());
+            }
+            return inner;
+        }
+
         // 'null' keyword
         if (tt == TokenType.NULL) {
             Token t = advance();
@@ -1134,7 +1160,12 @@ public final class Parser {
         if (first != null) params.add(first);
 
         while (match(TokenType.COMMA)) {
-            if (peek().type() == TokenType.RPAREN) break;
+            if (peek().type() == TokenType.RPAREN) {
+                // ParameterList carries no trailing comma (v1.2 grammar).
+                error(DiagnosticCode.E1054,
+                    "Trailing comma in parameter list is not allowed", peek());
+                break;
+            }
             if (peek().type() == TokenType.ELLIPSIS) {
                 error(DiagnosticCode.E1047,
                     "Rest parameters are not supported in DEAL v1.2", peek());
@@ -1220,6 +1251,15 @@ public final class Parser {
             BinaryOp binaryOp = tokenToBinaryOp(op.type());
             Span sp = spanBetween(left.span(), right.span());
             left = new BinaryExpr(sp, left, binaryOp, right);
+
+            // Comparison groups are non-associative (v1.2 grammar): a second
+            // comparison operator at the same precedence requires parentheses.
+            if ((prec == PREC_EQUALITY || prec == PREC_RELATIONAL)
+                    && getBinaryPrecedence(peek().type()) == prec) {
+                error(DiagnosticCode.E1056,
+                    "Chained comparison is not allowed; parenthesize the operands",
+                    peek());
+            }
         }
 
         return left;
@@ -1300,7 +1340,12 @@ public final class Parser {
                     ExpressionNode first = parseExpression();
                     if (first != null) args.add(first);
                     while (match(TokenType.COMMA)) {
-                        if (peek().type() == TokenType.RPAREN) break;
+                        if (peek().type() == TokenType.RPAREN) {
+                            // ArgumentList carries no trailing comma (v1.2 grammar).
+                            error(DiagnosticCode.E1055,
+                                "Trailing comma in argument list is not allowed", peek());
+                            break;
+                        }
                         ExpressionNode arg = parseExpression();
                         if (arg != null) args.add(arg);
                         else break;
@@ -2219,6 +2264,53 @@ public final class Parser {
 
     private void optionalSemicolon() {
         match(TokenType.SEMICOLON);
+    }
+
+    /**
+     * Statement kinds whose grammar carries an optional trailing
+     * {@code ;} — the only statements the v1.2 semicolon-boundary
+     * whitelist governs. Block-bodied statements (blocks, if/while/for,
+     * try, class/function declarations) end with {@code }} and need no
+     * terminator.
+     */
+    private static boolean requiresTerminator(StatementNode stmt) {
+        return switch (stmt) {
+            case VariableDeclaration ignored -> true;
+            case ReturnStatement ignored -> true;
+            case BreakStatement ignored -> true;
+            case ContinueStatement ignored -> true;
+            case ExpressionStatement ignored -> true;
+            case DeleteStatement ignored -> true;
+            case ThrowStatement ignored -> true;
+            case ImportDeclaration ignored -> true;
+            default -> false;
+        };
+    }
+
+    /**
+     * The normative semicolon-boundary whitelist: a statement may end
+     * without {@code ;} only when the next token is one of these.
+     */
+    private static boolean isSemicolonWhitelistFollower(TokenType type) {
+        return switch (type) {
+            case EOF, RBRACE, SEMICOLON, LET, CLASS, FUNCTION, RETURN, IF,
+                 WHILE, FOR, BREAK, CONTINUE, IMPORT, EXPORT, DELETE -> true;
+            default -> false;
+        };
+    }
+
+    /**
+     * Enforces the v1.2 semicolon-boundary whitelist for the statement
+     * that just ended. Suppressed when the statement itself already
+     * reported a diagnostic, so recovery does not cascade.
+     */
+    private void checkStatementTerminator(StatementNode stmt, int diagCountBefore) {
+        if (!requiresTerminator(stmt)) return;
+        if (diagnostics.size() > diagCountBefore) return;
+        if (pos > 0 && tokens.get(pos - 1).type() == TokenType.SEMICOLON) return;
+        if (isSemicolonWhitelistFollower(peek().type())) return;
+        error(DiagnosticCode.E1053,
+            "Missing ';' before '" + peek().lexeme() + "'", peek());
     }
 
     // =======================================================================

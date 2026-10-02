@@ -263,6 +263,19 @@ public class DiagnosticClassificationTest {
         coverage.put("E1049", "ModuleSystemTest (top-level statement)");
         coverage.put("E1050", "ModuleSystemTest (nested import/export)");
         coverage.put("E1051", "ModuleSystemTest (bodyless declaration in .deal)");
+        coverage.put("E1052",
+            "ConformanceTest frontend/lexer/unsupported-string-escape-rejected "
+            + "(the five-entry escape table)");
+        coverage.put("E1053",
+            "ConformanceTest frontend/parser/semicolon-whitelist-omission-rejected "
+            + "(the v1.2 semicolon-boundary whitelist)");
+        coverage.put("E1054",
+            "ConformanceTest frontend/parser/trailing-parameter-comma-rejected");
+        coverage.put("E1055",
+            "ConformanceTest frontend/parser/trailing-argument-comma-rejected");
+        coverage.put("E1056",
+            "ConformanceTest frontend/parser/equality-chaining-rejected "
+            + "(non-associative comparison groups)");
 
         coverage.put("E2000", "CheckerTest (break/continue)");
         coverage.put("E2001", "CheckerTest (undeclared identifier)");

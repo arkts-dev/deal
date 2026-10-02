@@ -1,0 +1,11 @@
+// @spec: Functions — Loop transfer statements
+// @description: A nested function cannot break a caller's loop (v1.2 defect snippet 23)
+// @expected: compile-error E2000
+// @features: functions, break, control-flow
+
+export function main(): null {
+  while (false) {
+    let f: () => null = function(): null { break; };
+  }
+  return null;
+}

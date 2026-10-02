@@ -1,0 +1,42 @@
+// @spec: Classes — Contextual construction
+// @description: Class literals inside array contexts construct the contextual class element type (v1.2 defect snippets 14-18)
+// @expected: runtime-ok
+// @features: classes, arrays, contextual-typing
+
+class Box { n: int = 0; }
+class Container { children: Box[] = []; }
+
+function take(a: Box[]): int { return a[0].n; }
+function make(): Box[] { return [{ n: 2 }]; }
+
+export function test_contextual_variable(): int {
+  let a: Box[] = [{ n: 2 }, {}];
+  return a[0].n;
+}
+
+export function test_contextual_argument(): int {
+  return take([{ n: 2 }]);
+}
+
+export function test_contextual_return(): int {
+  let a: Box[] = make();
+  return a[0].n;
+}
+
+export function test_contextual_field(): int {
+  let c: Container = { children: [{ n: 2 }] };
+  return c.children[0].n;
+}
+
+export function test_nullable_construction(): int {
+  let b: Box | null = { n: 2 };
+  if (b === null) {
+    return -1;
+  } else {
+    return b.n;
+  }
+}
+
+export function main(): null {
+  return null;
+}

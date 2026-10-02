@@ -1,0 +1,9 @@
+// @spec: Type system — Array literals
+// @description: An empty array literal takes the array element type from a nullable array context (v1.2 defect snippet 19)
+// @expected: compile-ok
+// @features: types, arrays, nullable
+
+export function main(): null {
+  let a: int[] | null = [];
+  return null;
+}

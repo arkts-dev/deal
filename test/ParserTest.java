@@ -1150,12 +1150,16 @@ public class ParserTest {
             check(call.callee() instanceof IdentifierExpr, "callee is ident");
         }
 
-        // Trailing comma
+        // Trailing comma is outside the v1.2 ArgumentList grammar (E1055);
+        // the single argument still parses so recovery keeps the call shape.
         r = parse("f(1,);");
-        assertNoParseErrors(r, "call trailing comma");
-        es = (ExpressionStatement) r.program().statements().get(0);
-        call = assertExprInstance(es.expr(), CallExpr.class, "call trailing comma");
-        if (call != null) check(call.args().size() == 1, "1 arg with trailing comma");
+        check(r.diagnostics().stream().anyMatch(d -> d.code().equals("E1055")),
+            "call trailing comma -> E1055");
+        if (!r.program().statements().isEmpty()) {
+            es = (ExpressionStatement) r.program().statements().get(0);
+            call = assertExprInstance(es.expr(), CallExpr.class, "call trailing comma");
+            if (call != null) check(call.args().size() == 1, "1 arg with trailing comma");
+        }
     }
 
     static void testMemberAccessExpression() {
