@@ -816,8 +816,10 @@ public final class Parser {
                 "Expected module path string literal after 'from'");
         if (pathToken == null) { synchronize(); return null; }
 
-        String raw = pathToken.lexeme();
-        String modulePath = raw.substring(1, raw.length() - 1);
+        // The module path is the string literal's decoded value: the
+        // escape table applies exactly as it does to every other string
+        // literal (a path carrying a backslash is spelled `\\`).
+        String modulePath = unescapeString(pathToken.lexeme());
 
         optionalSemicolon();
         Span sp = spanBetween(importToken, previousOrCurrent());

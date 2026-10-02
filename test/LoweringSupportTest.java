@@ -126,7 +126,7 @@ public class LoweringSupportTest {
                 import * as time from "std/time"
 
                 export function main(): null {
-                  time.nowMillis()
+                  time.nowMillis();
                   return null
                 }
                 """), "main.deal",
@@ -317,7 +317,7 @@ public class LoweringSupportTest {
                     import * as time from "std/time"
 
                     export function main(): null {
-                      time.nowMillis()
+                      time.nowMillis();
                       return null
                     }
                     """), "main.deal");
@@ -351,8 +351,8 @@ public class LoweringSupportTest {
                     import * as time from "std/time"
 
                     export function main(): null {
-                      let f: () => int = time.nowMillis
-                      f()
+                      let f: () => int = time.nowMillis;
+                      f();
                       return null
                     }
                     """), "main.deal");
@@ -382,9 +382,9 @@ public class LoweringSupportTest {
                     import * as time from "std/time"
 
                     export function main(): null {
-                      let t = time
-                      let g: () => int = t.nowMillis
-                      g()
+                      let t = time;
+                      let g: () => int = t.nowMillis;
+                      g();
                       return null
                     }
                     """), "main.deal");
@@ -414,8 +414,8 @@ public class LoweringSupportTest {
                     }
 
                     export function main(): null {
-                      let g: () => int = pick(time)
-                      g()
+                      let g: () => int = pick(time);
+                      g();
                       return null
                     }
                     """), "main.deal");
@@ -451,9 +451,9 @@ public class LoweringSupportTest {
                     import * as a from "./a"
 
                     export function main(): null {
-                      let t: table = a.getTime()
-                      let g: () => int = t.nowMillis
-                      g()
+                      let t: table = a.getTime();
+                      let g: () => int = t.nowMillis;
+                      g();
                       return null
                     }
                     """), "main.deal");
@@ -496,9 +496,9 @@ public class LoweringSupportTest {
                     import * as b from "./b"
 
                     export function main(): null {
-                      let t: table = b.getTime2()
-                      let g: () => int = t.nowMillis
-                      g()
+                      let t: table = b.getTime2();
+                      let g: () => int = t.nowMillis;
+                      g();
                       return null
                     }
                     """), "main.deal");
@@ -538,8 +538,8 @@ public class LoweringSupportTest {
                     import * as a from "./a"
 
                     export function main(): null {
-                      let g: () => int = a.getNow()
-                      g()
+                      let g: () => int = a.getNow();
+                      g();
                       return null
                     }
                     """), "main.deal");
@@ -583,8 +583,8 @@ public class LoweringSupportTest {
                     import * as b from "./b"
 
                     export function main(): null {
-                      let g: () => int = b.getNow2()
-                      g()
+                      let g: () => int = b.getNow2();
+                      g();
                       return null
                     }
                     """), "main.deal");
@@ -648,7 +648,7 @@ public class LoweringSupportTest {
                         import * as time from "./other"
 
                         export function main(): null {
-                          time.nowMillis()
+                          time.nowMillis();
                           return null
                         }
                         """), "main.deal");
@@ -693,9 +693,9 @@ public class LoweringSupportTest {
                     }
 
                     export function main(): null {
-                      let t: table = unrelated()
-                      let g: () => int = t.nowMillis
-                      g()
+                      let t: table = unrelated();
+                      let g: () => int = t.nowMillis;
+                      g();
                       return null
                     }
                     """), "main.deal");
@@ -729,9 +729,9 @@ public class LoweringSupportTest {
                     import * as a from "./a"
 
                     export function main(): null {
-                      let t: table = a.getTable()
-                      let g: () => int = t.nowMillis
-                      g()
+                      let t: table = a.getTable();
+                      let g: () => int = t.nowMillis;
+                      g();
                       return null
                     }
                     """), "main.deal");
@@ -1034,33 +1034,33 @@ public class LoweringSupportTest {
                     }
                     """,
                 "main.deal", """
-                    import * as time from "std/time"
+                    import * as time from "std/time";
                     import * as helper from "./helper"
 
                     export class Point {
-                      x: int = 1
+                      x: int = 1;
                       y?: int
                     }
 
                     async function asyncOne(): int { return 1 }
 
                     export async function compute(a: int[]): int {
-                      let sum: int = 0
-                      let n: number = 1.5
-                      let s: string = "a" + "b"
-                      let t: string = `v${s}`
-                      let neg: int = -sum
-                      let eq: boolean = sum === 0 && n > 1.0
-                      let arr: int[] = [1, 2]
+                      let sum: int = 0;
+                      let n: number = 1.5;
+                      let s: string = "a" + "b";
+                      let t: string = `v${s}`;
+                      let neg: int = -sum;
+                      let eq: boolean = sum === 0 && n > 1.0;
+                      let arr: int[] = [1, 2];
                       let obj: table = { k: 1 }
-                      let p: Point = { x: 2, y: 4 }
-                      p.y = 3
-                      delete obj.k
+                      let p: Point = { x: 2, y: 4 };
+                      p.y = 3;
+                      delete obj.k;
                       if (has(p.y)) { sum = 1 } else { sum = 2 }
-                      let i: int = 0
+                      let i: int = 0;
                       while (i < a.length) {
                         if (i > 5) { break }
-                        sum = sum + a[i]
+                        sum = sum + a[i];
                         i = i + 1
                       }
                       for (let j: int = 0; j < 2; j = j + 1) {
@@ -1069,12 +1069,12 @@ public class LoweringSupportTest {
                       }
                       for (let v: int of a) { sum = sum + v }
                       let f: () => int = function(): int { return 1 }
-                      let g: () => int = f
-                      g()
-                      sum = sum + g()
-                      sum = sum + await asyncOne()
-                      sum = sum + helper.helperFn()
-                      let now: int = time.nowMillis()
+                      let g: () => int = f;
+                      g();
+                      sum = sum + g();
+                      sum = sum + await asyncOne();
+                      sum = sum + helper.helperFn();
+                      let now: int = time.nowMillis();
                       try {
                         if (now < 0) { throw { code: "E", message: "x" } }
                       } catch (e) {
@@ -1311,14 +1311,14 @@ public class LoweringSupportTest {
                 import * as time from "std/time"
 
                 export class Point {
-                  x: int = 1
+                  x: int = 1;
                   y?: int
                 }
 
                 export function main(): null {
                   let p: Point = { x: 2, y: 3 }
-                  let g: () => int = time.nowMillis
-                  g()
+                  let g: () => int = time.nowMillis;
+                  g();
                   return null
                 }
                 """;
@@ -1478,8 +1478,8 @@ public class LoweringSupportTest {
             RequirementManifestResult result = compileAndCompute(tmp,
                 Map.of("main.deal", """
                     export function main(): null {
-                      let f: () => int = function(): int { return 1 }
-                      f()
+                      let f: () => int = function(): int { return 1 };
+                      f();
                       return null
                     }
                     """), "main.deal");
@@ -1509,7 +1509,7 @@ public class LoweringSupportTest {
                         if (n === 0) { return 0; }
                         return down(n - 1);
                       }
-                      down(2)
+                      down(2);
                       return null
                     }
                     """), "main.deal");
@@ -1534,8 +1534,8 @@ public class LoweringSupportTest {
             RequirementManifestResult result = compileAndCompute(tmp,
                 Map.of("main.deal", """
                     export function main(): null {
-                      let f: (a: int, b: int) => int = one
-                      f(1, 2)
+                      let f: (a: int, b: int) => int = one;
+                      f(1, 2);
                       return null
                     }
                     function one(x: int): int {
@@ -1583,7 +1583,7 @@ public class LoweringSupportTest {
                     }
 
                     export function main(): null {
-                      helper(1)
+                      helper(1);
                       return null
                     }
                     """), "main.deal");
@@ -1598,7 +1598,7 @@ public class LoweringSupportTest {
                 compileAndCompute(tmp.resolve("called-main-first"),
                 Map.of("main.deal", """
                     export function main(): null {
-                      helper(1)
+                      helper(1);
                       return null
                     }
 
@@ -1643,7 +1643,7 @@ public class LoweringSupportTest {
             RequirementManifestResult arrayElement = compileAndCompute(
                 tmp.resolve("array"), Map.of("main.deal", """
                     export function main(): null {
-                      let fs: (() => int)[] = [function(): int { return 7 }]
+                      let fs: (() => int)[] = [function(): int { return 7 }];
                       return null
                     }
                     """), "main.deal");
@@ -1675,7 +1675,7 @@ public class LoweringSupportTest {
             RequirementManifestResult iife = compileAndCompute(
                 tmp.resolve("iife"), Map.of("main.deal", """
                     export function main(): null {
-                      let x: int = (function(): int { return 7 })()
+                      let x: int = (function(): int { return 7 })();
                       return null
                     }
                     """), "main.deal");
