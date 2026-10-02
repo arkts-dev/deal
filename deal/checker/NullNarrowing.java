@@ -128,7 +128,7 @@ public final class NullNarrowing {
             return;
         }
         String path = pathOf(operand);
-        if (path != null && !(operand instanceof IdentifierExpr)) {
+        if (path != null) {
             guardedPaths.add(path);
         }
     }
@@ -140,6 +140,16 @@ public final class NullNarrowing {
      */
     public boolean isPathGuarded(String path) {
         return guardedPaths.contains(path);
+    }
+
+    /**
+     * Adopts the null guards of a branch state without its type
+     * narrowing: the guard-only merge used when a then-branch cannot
+     * complete normally (the false arm's guards survive the if; the
+     * declared types stay visible to the comparison rules).
+     */
+    public void adoptGuards(NullNarrowing branch) {
+        guardedPaths.addAll(branch.guardedPaths);
     }
 
     /**

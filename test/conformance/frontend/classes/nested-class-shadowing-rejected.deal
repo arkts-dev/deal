@@ -1,6 +1,6 @@
 // @spec: Classes — Class identity
-// @description: A nested class shadowing an enclosing class of the same name collides in the canonical identity (v1.2 defect snippet 47)
-// @expected: compile-error E2013
+// @description: A value of a nested class declaration cannot be assigned to a binding of the enclosing same-named class declaration (v1.2 defect snippet 47)
+// @expected: compile-error E3019
 // @features: classes, identity, diagnostics, v1.2
 
 class A { n: int = 0; }

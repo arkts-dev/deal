@@ -21,8 +21,22 @@ public sealed interface Symbol
 
     String name();
 
-    /** A local variable or parameter, carrying its declared type. */
-    record VariableSymbol(String name, Type type, boolean isParameter) implements Symbol {}
+    /**
+     * A local variable or parameter, carrying its declared type and —
+     * for a class-typed binding — the exact {@link ClassSymbol} its
+     * annotation resolved to. Two same-named class declarations in one
+     * module share the canonical identity (module + name) but stay
+     * distinct declarations; the assignment gate uses the recorded
+     * declaration to reject a value that crosses them (ISSUE-0717
+     * defect snippet 47).
+     */
+    record VariableSymbol(String name, Type type, boolean isParameter,
+                          ClassSymbol declaredClass) implements Symbol {
+        /** The declaration-provenance-free symbol (intrinsics, inference, tests). */
+        public VariableSymbol(String name, Type type, boolean isParameter) {
+            this(name, type, isParameter, null);
+        }
+    }
 
     /** A function declaration, carrying its function type. */
     record FunctionSymbol(String name, Type.Func funcType) implements Symbol {}

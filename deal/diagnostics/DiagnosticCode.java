@@ -242,6 +242,13 @@ public enum DiagnosticCode {
     E3018(Phase.FRONTEND, "Table index key must have static type string"),
 
     /**
+     * Assignment crosses two distinct declarations of a same-named class
+     * (both share the canonical identity module + name, but each declaration
+     * owns its own runtime layout).
+     */
+    E3019(Phase.FRONTEND, "Class assignment across distinct declarations"),
+
+    /**
      * 'await' at evaluator scope in a class default (defaults are
      * synchronous per-construction evaluators; the planner's sync gate,
      * {@code provider-versioned-default-plans} D2 — the registration

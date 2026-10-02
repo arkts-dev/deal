@@ -528,7 +528,8 @@ public final class TypeChecker {
                     Symbol sym = currentScope.resolve(vd.name());
                     if (sym instanceof Symbol.VariableSymbol vs && vs.type() == null) {
                         currentScope.defineReplace(vd.name(),
-                            new Symbol.VariableSymbol(vd.name(), targetType, false));
+                            new Symbol.VariableSymbol(vd.name(), targetType, false,
+                                vs.declaredClass()));
                     }
                 }
             }
@@ -702,6 +703,17 @@ public final class TypeChecker {
         elseNarrowing = narrowing;
 
         if (is.elseBranch().isEmpty()) {
+            // A then-branch that cannot complete normally (it returns,
+            // throws, or transfers out of the loop) leaves only the
+            // condition's false arm reaching the code after the if. The
+            // false arm's null guards persist (a guarded member path stays
+            // dereferenceable); the arm's *type* narrowing does not — the
+            // declaration type stays visible to the comparison rules, so a
+            // later `x === null` over the declared `T | null` keeps its
+            // admission (ISSUE-0717 regression guard).
+            if (ReturnAnalysis.cannotCompleteNormally(is.thenBlock())) {
+                savedNarrowing.adoptGuards(elseNarrowing);
+            }
             narrowing = savedNarrowing;
         } else {
             thenNarrowing.merge(elseNarrowing);
@@ -1355,22 +1367,20 @@ public final class TypeChecker {
         // Class field access (including built-in Error class).
         //
         // ISSUE-0717 (defect snippet 30): a nullable-typed receiver must
-        // be narrowed before its fields are read. A plain identifier
-        // receiver is narrowed by the null-narrowing analysis itself (the
-        // declared type is nullable, an unguarded read stays E3003). A
-        // member-path receiver (the conformance-gap-02 seam: a foreign
-        // companion's field path, e.g. `child?: Child | null`, resolves
-        // through the owning module with no variable narrowing) is
-        // admitted only when the exact receiver path carries a non-null
-        // guard in the current flow position (`if (value.child !== null)`),
-        // never silently unwrapped.
+        // be guarded before its fields are read. A plain identifier
+        // receiver is narrowed by the null-narrowing analysis inside its
+        // guarded branch (the declared type is nullable, an unguarded read
+        // stays E3003). A member-path receiver (the conformance-gap-02
+        // seam: a foreign companion's field path, e.g. `child?: Child |
+        // null`, resolves through the owning module with no variable
+        // narrowing) is admitted only when the exact receiver path carries
+        // a non-null guard in the current flow position (the guard set
+        // persists past a returning then-branch), never silently unwrapped.
         Type classTarget = objType;
         if (classTarget instanceof Type.Nullable nullable
-                && nullable.inner() instanceof Type.Class inner
-                && !sameModule(inner)) {
+                && nullable.inner() instanceof Type.Class) {
             String path = NullNarrowing.pathOf(mae.object());
-            if (path != null && !(mae.object() instanceof IdentifierExpr)
-                    && narrowing.isPathGuarded(path)) {
+            if (path != null && narrowing.isPathGuarded(path)) {
                 classTarget = nullable.inner();
             }
         }
@@ -1691,7 +1701,8 @@ public final class TypeChecker {
                 }
                 paramNames.add(p.name());
                 Type pt = nameResolver.resolveTypeNode(p.type());
-                currentScope.define(p.name(), new Symbol.VariableSymbol(p.name(), pt, true));
+                currentScope.define(p.name(), new Symbol.VariableSymbol(p.name(), pt,
+                    true, nameResolver.declaredClassSymbolOf(p.type())));
             }
         }
 
@@ -1852,6 +1863,26 @@ public final class TypeChecker {
             reportAssignabilityError(declaredTarget, valueType, assign.span());
         }
 
+        // ISSUE-0717 (defect snippet 47): two same-named class declarations
+        // in one module share the canonical identity (module + name) yet own
+        // distinct declarations and runtime layouts. An assignment that
+        // crosses the two declarations is rejected at the frontend — never
+        // left to the backends' duplicate-layout failure.
+        if (declaredTarget instanceof Type.Class targetClass
+                && valueType instanceof Type.Class valueClass
+                && Types.equals(targetClass, valueClass)) {
+            Symbol.ClassSymbol targetDecl = declaredClassOf(assign.target());
+            Symbol.ClassSymbol valueDecl = declaredClassOf(assign.value());
+            if (targetDecl != null && valueDecl != null
+                    && targetDecl != valueDecl) {
+                error(DiagnosticCode.E3019,
+                    "Cannot assign class '" + targetClass.name()
+                        + "' across its distinct declarations of the same "
+                        + "canonical identity (module + name)",
+                    assign.span());
+            }
+        }
+
         if (assign.target() instanceof IdentifierExpr id) {
             recordAssignment(id.name());
         }
@@ -1875,6 +1906,21 @@ public final class TypeChecker {
         if (!isAssignable(targetType, exprType)) {
             reportAssignabilityError(targetType, exprType, span);
         }
+    }
+
+    /**
+     * The class declaration a value expression was declared with, when the
+     * expression names a class-typed binding: the provenance the E3019
+     * cross-declaration gate compares (ISSUE-0717 defect snippet 47).
+     */
+    private Symbol.ClassSymbol declaredClassOf(ExpressionNode expr) {
+        if (expr instanceof IdentifierExpr id) {
+            Symbol sym = currentScope.resolve(id.name());
+            if (sym instanceof Symbol.VariableSymbol vs) {
+                return vs.declaredClass();
+            }
+        }
+        return null;
     }
 
     /**

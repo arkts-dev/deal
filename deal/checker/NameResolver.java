@@ -595,6 +595,8 @@ public final class NameResolver {
         checkNoDollar(name, vd.span());
 
         Type type = vd.typeAnnotation().map(this::resolveTypeNode).orElse(null);
+        Symbol.ClassSymbol declaredClass =
+            vd.typeAnnotation().map(this::declaredClassSymbolOf).orElse(null);
         if (currentScope.containsLocally(name)) {
             if (currentScope == root && isShadowableIntrinsic(name)) {
                 // A module-level let named `bytes` shadows the
@@ -617,7 +619,29 @@ public final class NameResolver {
         // F1: Walk the initializer expression to find any FunctionExpr nodes
         walkExpression(vd.initializer());
 
-        currentScope.define(name, new Symbol.VariableSymbol(name, type, false));
+        currentScope.define(name,
+            new Symbol.VariableSymbol(name, type, false, declaredClass));
+    }
+
+    /**
+     * The local class declaration a type annotation names, or
+     * {@code null} when the annotation does not pin one (primitives,
+     * imported classes, function types). The pin travels on the declared
+     * variable so the assignment gate can tell two same-named class
+     * declarations of one module apart (ISSUE-0717 defect snippet 47).
+     */
+    public Symbol.ClassSymbol declaredClassSymbolOf(TypeNode tn) {
+        if (tn instanceof NamedType nt) {
+            Symbol sym = currentScope.resolve(nt.name());
+            if (sym instanceof Symbol.ClassSymbol cs) {
+                return cs;
+            }
+            return null;
+        }
+        if (tn instanceof NullableType nt) {
+            return declaredClassSymbolOf(nt.innerType());
+        }
+        return null;
     }
 
     /**
@@ -643,22 +667,13 @@ public final class NameResolver {
         }
 
         if (!currentScope.containsLocally(name)) {
-            // ISSUE-0717 (defect snippet 47): a nested class whose name an
-            // enclosing scope already declares would collide with that
-            // class in the canonical identity (module identity + class
-            // name) — two distinct class symbols, one identity and one
-            // runtime descriptor. The shadowing declaration is rejected.
-            for (SymbolTable scope = currentScope.parent(); scope != null;
-                    scope = scope.parent()) {
-                if (scope.resolveLocal(name) instanceof Symbol.ClassSymbol) {
-                    error(DiagnosticCode.E2013,
-                        "Class '" + name + "' shadows an enclosing class of "
-                            + "the same name (the canonical class identity is "
-                            + "module + name)", cd.span());
-                    return;
-                }
-            }
-            // Not already hoisted (nested class inside a function/block)
+            // Not already hoisted (nested class inside a function/block).
+            // ISSUE-0717 (defect snippet 47): a nested class may shadow an
+            // enclosing class of the same name (the JS scope-local
+            // predeclare/assign shape and the declaration-keyed plans rely
+            // on it); the two declarations stay distinct symbols. The
+            // cross-declaration value assignment is rejected at the
+            // assignment gate (E3019), never the declaration.
             currentScope.define(name,
                 new Symbol.ClassSymbol(name, cd.fields(), modulePath,
                     classIdentityFor(modulePath, name)));
@@ -731,7 +746,8 @@ public final class NameResolver {
             }
             paramNames.add(name);
             Type paramType = resolveTypeNode(p.type());
-            currentScope.define(name, new Symbol.VariableSymbol(name, paramType, true));
+            currentScope.define(name, new Symbol.VariableSymbol(name, paramType,
+                true, declaredClassSymbolOf(p.type())));
         }
     }
 
@@ -777,7 +793,10 @@ public final class NameResolver {
                 checkNoDollar(name, decl.span());
 
                 Type type = decl.typeAnnotation().map(this::resolveTypeNode).orElse(null);
-                currentScope.define(name, new Symbol.VariableSymbol(name, type, false));
+                Symbol.ClassSymbol declaredClass = decl.typeAnnotation()
+                    .map(this::declaredClassSymbolOf).orElse(null);
+                currentScope.define(name,
+                    new Symbol.VariableSymbol(name, type, false, declaredClass));
                 // F1: Walk init expression
                 walkExpression(decl.initializer());
             } else if (init instanceof ForInit.AssignExpr ae) {
@@ -807,6 +826,7 @@ public final class NameResolver {
         walkExpression(fos.iterable());
         // Resolve var type in PARENT scope
         Type varType = resolveTypeNode(fos.varType());
+        Symbol.ClassSymbol varDeclaredClass = declaredClassSymbolOf(fos.varType());
 
         // Check for $ in for-of loop variable name (E2008)
         checkNoDollar(fos.varName(), fos.span());
@@ -819,7 +839,8 @@ public final class NameResolver {
 
         // Define the loop variable in the new scope
         currentScope.define(fos.varName(),
-            new Symbol.VariableSymbol(fos.varName(), varType, false));
+            new Symbol.VariableSymbol(fos.varName(), varType, false,
+                varDeclaredClass));
 
         loopDepth++;
         walkBlock(fos.body()); // Creates block scope, records in scopeMap

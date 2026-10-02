@@ -375,13 +375,14 @@ public class FieldOpsLoweringTest {
     }
 
     // =========================================================================
-    // (c) the cross-module nullable class read
+    // (c) the cross-module class read
     // =========================================================================
 
     private static void testCrossModuleNullableReadArm() {
-        System.out.println("-- cross-module nullable class read: the receiver lowers as "
-            + "checked (nullable), the UNTYPED_CLASS_INPUT boundary is the runtime null "
-            + "guard --");
+        System.out.println("-- cross-module class read: the receiver lowers as the "
+            + "declared class descriptor and the UNTYPED_CLASS_INPUT boundary is the "
+            + "runtime class guard (an unguarded nullable dereference is the frontend "
+            + "E3003 rejection) --");
 
         final String lib = "./jsonable_batch2_lib";
         TypingResolver resolver = new TypingResolver(lib);
@@ -403,12 +404,13 @@ public class FieldOpsLoweringTest {
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
             import * as Lib from "./jsonable_batch2_lib"
             class Point { x: int; }
-            let u: Lib.Parent | null = null;
-            let children: Lib.Child[] = u.children;
+            class Holder { parts: Lib.Parent[] = []; }
+            let h: Holder = {};
+            let children: Lib.Child[] = h.parts[0].children;
             """, resolver);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null,
-            "the cross-module nullable-read slice lowers to a validated unit: "
+            "the cross-module class-read slice lowers to a validated unit: "
                 + (result == null || result.lowering() == null ? "null"
                     : result.lowering().diagnostics()));
         if (result == null || result.lowering() == null
@@ -416,30 +418,37 @@ public class FieldOpsLoweringTest {
             return;
         }
         LoweredModuleUnit unit = result.lowering().unit();
-        List<SemanticOp> reads = ofKind(unit.ops(), SemanticOpKind.FIELD_READ);
-        check(reads.size() == 1, "exactly one FIELD_READ op; got " + reads.size());
+        ClassId parentId = new ClassId(lib, "Parent");
+        List<SemanticOp> reads = new ArrayList<>();
+        for (SemanticOp op : ofKind(unit.ops(), SemanticOpKind.FIELD_READ)) {
+            if (op.payload() instanceof KindPayload.FieldReadPayload fp
+                    && fp.classId().equals(parentId)
+                    && fp.field().equals("children")) {
+                reads.add(op);
+            }
+        }
+        check(reads.size() == 1,
+            "exactly one Parent.children FIELD_READ op; got " + reads.size());
         if (reads.size() != 1) {
             return;
         }
         SemanticOp read = reads.get(0);
-        ClassId parentId = new ClassId(lib, "Parent");
         KindPayload.FieldReadPayload payload = (KindPayload.FieldReadPayload) read.payload();
         check(payload.classId().equals(parentId) && payload.field().equals("children"),
             "the payload names the foreign class identity and the field; got "
                 + payload.classId() + "." + payload.field());
 
-        // The receiver lowers as checked: its single producing op
-        // publishes the nullable class descriptor.
+        // The receiver lowers as the checked foreign class: its single
+        // producing op publishes the class descriptor the boundary guards.
         List<SemanticOp> receivers = producersOf(unit, payload.classValue());
         check(receivers.size() == 1,
             "the receiver ValueId has exactly one producing op; got " + receivers.size());
         if (receivers.size() == 1) {
             SemanticOp receiverOp = receivers.get(0);
-            check(receiverOp.resultType() instanceof RuntimeDescriptor.Nullable nullable
-                    && nullable.inner() instanceof RuntimeDescriptor.Class inner
-                    && inner.classId().equals(parentId),
-                "the receiver's producing op publishes the checked nullable descriptor "
-                    + "?@lib/Parent; got " + receiverOp.resultType());
+            check(receiverOp.resultType() instanceof RuntimeDescriptor.Class receiverClass
+                    && receiverClass.classId().equals(parentId),
+                "the receiver's producing op publishes the checked class descriptor "
+                    + "@lib/Parent; got " + receiverOp.resultType());
         }
         List<SemanticOp> children = childrenOf(unit, read);
         check(children.size() == 2,

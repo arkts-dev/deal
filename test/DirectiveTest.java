@@ -596,10 +596,10 @@ public class DirectiveTest {
         check(DiagnosticCode.fromCode("E1045") != null, "E1045 registered");
         check(DiagnosticCode.fromCode("E1046") != null, "E1046 registered");
         check(DiagnosticCode.fromCode("E7002") != null, "E7002 registered");
-        check(DiagnosticCode.fromCode("E1052") == null, "E1052 retired");
-        check(DiagnosticCode.fromCode("E1053") == null, "E1053 retired");
-        check(DiagnosticCode.fromCode("E1054") == null, "E1054 retired");
-        check(DiagnosticCode.fromCode("E1055") == null, "E1055 retired");
+        check(DiagnosticCode.fromCode("E1052") != null, "E1052 registered");
+        check(DiagnosticCode.fromCode("E1053") != null, "E1053 registered");
+        check(DiagnosticCode.fromCode("E1054") != null, "E1054 registered");
+        check(DiagnosticCode.fromCode("E1055") != null, "E1055 registered");
         check(DiagnosticCode.E1043.phase() == DiagnosticCode.Phase.FRONTEND
                 && DiagnosticCode.E1044.phase() == DiagnosticCode.Phase.FRONTEND
                 && DiagnosticCode.E1045.phase() == DiagnosticCode.Phase.FRONTEND

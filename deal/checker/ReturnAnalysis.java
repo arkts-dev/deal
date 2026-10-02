@@ -116,10 +116,14 @@ public final class ReturnAnalysis {
     }
 
     /**
-     * Checks whether a statement cannot complete normally (control never
-     * reaches the statement that follows it).
+     * Whether a statement cannot complete normally (control never reaches
+     * the statement that follows it): a return, throw, break, or continue,
+     * or a composite statement every one of whose paths is non-completing.
+     * The null-narrowing guard merge uses this; the definite-return rule
+     * additionally requires the non-completing paths to exit by
+     * return/throw ({@link #returnsOnAllPaths}).
      */
-    private static boolean cannotCompleteNormally(StatementNode stmt) {
+    public static boolean cannotCompleteNormally(StatementNode stmt) {
         if (stmt instanceof ReturnStatement) return true;
         if (stmt instanceof ThrowStatement) return true;
         if (stmt instanceof BreakStatement) return true;

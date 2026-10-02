@@ -2297,6 +2297,29 @@ public final class Parser {
         return switch (type) {
             case EOF, RBRACE, SEMICOLON, LET, CLASS, FUNCTION, RETURN, IF,
                  WHILE, FOR, BREAK, CONTINUE, IMPORT, EXPORT, DELETE -> true;
+            // The `function` whitelist entry covers the async function
+            // declaration form; its first token is the `async` contextual
+            // keyword.
+            case ASYNC -> true;
+            default -> false;
+        };
+    }
+
+    /**
+     * Whether a token can begin a statement (the explicit statement
+     * keywords plus the expression-statement starters). The semicolon
+     * boundary rule only speaks about a real next statement: a token
+     * that cannot start one is a recovery artifact (e.g. the {@code :}
+     * after a malformed statement), so the missing-terminator diagnostic
+     * is suppressed there and the recovery diagnostics stand alone.
+     */
+    private static boolean canStartStatement(TokenType type) {
+        return switch (type) {
+            case LBRACE, CLASS, FUNCTION, ASYNC, LET, RETURN, IF, WHILE, FOR,
+                 BREAK, CONTINUE, IMPORT, EXPORT, DELETE, TRY, THROW,
+                 IDENTIFIER, INT_LITERAL, NUMBER_LITERAL, STRING_LITERAL,
+                 TEMPLATE_LITERAL, TRUE, FALSE, NULL, BANG, MINUS, PLUS,
+                 LPAREN, LBRACKET, AWAIT, HAS -> true;
             default -> false;
         };
     }
@@ -2311,6 +2334,7 @@ public final class Parser {
         if (diagnostics.size() > diagCountBefore) return;
         if (pos > 0 && tokens.get(pos - 1).type() == TokenType.SEMICOLON) return;
         if (isSemicolonWhitelistFollower(peek().type())) return;
+        if (!canStartStatement(peek().type())) return;
         error(DiagnosticCode.E1053,
             "Missing ';' before '" + peek().lexeme() + "'", peek());
     }

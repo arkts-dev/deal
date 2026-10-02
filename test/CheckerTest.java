@@ -257,8 +257,8 @@ public class CheckerTest {
         testLocalNullableClassMemberAccessNarrowedOk();
         testNestedClass();
         // ISSUE-0717 (defect snippet 47): a nested class that shadows an
-        // enclosing class of the same name collides in the canonical
-        // identity (module + name); the shadowing declaration is E2013.
+        // enclosing class of the same name stays a distinct declaration;
+        // the cross-declaration assignment is E3019.
         testNestedClassShadowingRejected();
         testErrorClassConstruction();
         // F9: Class field default values type-checked
@@ -1510,10 +1510,18 @@ public class CheckerTest {
         assertNoErrors(out, "narrowed local nullable class member access");
     }
 
-    /** ISSUE-0717: a nested class shadowing an enclosing class is E2013. */
+    /**
+     * ISSUE-0717 (defect snippet 47): a nested class may shadow an
+     * enclosing class of the same name (the JS scope-local shape and the
+     * declaration-keyed plans rely on it), but assigning a value of the
+     * nested declaration to a binding of the enclosing declaration is
+     * rejected (E3019) — the two declarations share the canonical
+     * identity (module + name) yet own distinct runtime layouts.
+     */
     static void testNestedClassShadowingRejected() {
-        System.out.println("-- Nested class shadowing an enclosing class -> E2013 --");
-        CheckerOutput out = checkProgram(
+        System.out.println("-- Nested class shadowing: declaration legal, "
+            + "cross-declaration assignment -> E3019 --");
+        CheckerOutput shadow = checkProgram(
             "class A { n: int = 0; }\n" +
             "export function f(): null {\n" +
             "  {\n" +
@@ -1523,8 +1531,23 @@ public class CheckerTest {
             "  return null;\n" +
             "}"
         );
-        assertError(out, "E2013",
-            "nested class shadowing an enclosing class must be E2013");
+        assertNoErrors(shadow,
+            "a nested class shadowing an enclosing class declares cleanly");
+        CheckerOutput out = checkProgram(
+            "class A { n: int = 0; }\n" +
+            "export function f(): null {\n" +
+            "  let a: A = {};\n" +
+            "  {\n" +
+            "    class A { n: int = 0; }\n" +
+            "    let b: A = {};\n" +
+            "    a = b;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(out, "E3019",
+            "assigning across two declarations of a same-named class "
+                + "must be E3019");
     }
 
     // F3: Nested class declarations

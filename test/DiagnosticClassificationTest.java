@@ -293,8 +293,8 @@ public class DiagnosticClassificationTest {
         coverage.put("E2011", "ModuleSystemTest (entry main wrong signature)");
         coverage.put("E2012", "ModuleSystemTest (entry module missing main)");
         coverage.put("E2013",
-            "CheckerTest (nested class shadowing an enclosing class — the "
-            + "canonical class identity is module + name)");
+            "(retired) the former nested-class-shadowing rejection; the "
+            + "cross-declaration assignment is E3019");
 
         coverage.put("E3001", "CheckerTest (type mismatch)");
         coverage.put("E3002", "CheckerTest (empty literal inference)");
@@ -315,6 +315,10 @@ public class DiagnosticClassificationTest {
         coverage.put("E3017", "CheckerTest (array length read-only)");
         coverage.put("E3018",
             "CheckerTest (table index write/delete key static string gate)");
+        coverage.put("E3019",
+            "CheckerTest / ConformanceTest "
+            + "frontend/classes/nested-class-shadowing-rejected "
+            + "(cross-declaration class assignment)");
         coverage.put("E3020",
             "DefaultSemanticPlannerTest (evaluator-scope await in a class"
             + " default — the planner's sync gate)");
