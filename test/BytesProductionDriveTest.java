@@ -2291,14 +2291,23 @@ public class BytesProductionDriveTest {
         check(checkedClasses.size() >= 50, "the registered test sweep covers "
             + "the gate manifest: " + checkedClasses.size() + " classes");
 
-        // The JS lane and the corpus membership are untouched by this drive.
-        for (String jsFile : List.of("deal/runtime.js", "std/json.js",
-                "test/conformance/JsLane.java")) {
-            check(Files.isRegularFile(Path.of(jsFile)),
-                "the unchanged JS lane file " + jsFile + " stays in the tree");
+        // The JS lane, the lanes' comparison/honesty surfaces, and the
+        // corpus membership are untouched by this drive: the lane and
+        // comparison files stay in the tree and the shared transcript
+        // framing the comparison contract pins keeps its exact text.
+        for (String surface : List.of("deal/runtime.js", "deal/runtime.lua",
+                "std/json.js", "std/json.lua", "test/conformance/JsLane.java",
+                "test/conformance/LuaLane.java", "test/conformance/JvmLane.java",
+                "test/conformance/ErrorSnapshot.java",
+                "test/conformance/SidecarExpectations.java",
+                "test/conformance/StructuredExpectationComparator.java")) {
+            check(Files.isRegularFile(Path.of(surface)),
+                "the unchanged lane file " + surface + " stays in the tree");
         }
-        check(Files.isRegularFile(Path.of("std", "json.lua")),
-            "the unchanged std/json.lua stays in the tree");
+        checkEq("DEAL_ERROR_CODE: ", ErrorSnapshot.CODE_LINE_PREFIX,
+            "the comparison surface's code-line framing is unchanged");
+        checkEq("DEAL_ERROR_SNAPSHOT: ", ErrorSnapshot.SNAPSHOT_LINE_PREFIX,
+            "the comparison surface's snapshot-line framing is unchanged");
 
         // The post-state: no test-side residue in the corpus (every file of
         // an in-scope directory is a fixture or a sidecar) and the drive's
