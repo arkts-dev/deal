@@ -33,9 +33,9 @@ import java.util.stream.Stream;
  * <ol>
  *   <li><b>Stage.</b> Every output byte of one compilation is written
  *       into a fresh staging tree
- *       {@code S = <root>.deal-stage-<pid>-<nonce>} — a sibling of the
+ *       {@code S = <root>.deal-stage-<nonce>} — a sibling of the
  *       publication root on the same filesystem — where the nonce is a
- *       per-invocation unique suffix (process id plus random UUID) that
+ *       per-invocation unique suffix (random UUID) that
  *       exists in on-disk tree names only, never in any artifact
  *       content. Nothing is written into the live root except the
  *       publish step. The exclusive per-root lock
@@ -226,8 +226,7 @@ public final class PublicationStager implements AutoCloseable {
 
     private PublicationStager(Path root) {
         this.root = root;
-        this.nonce = "pid" + ProcessHandle.current().pid() + "-"
-            + UUID.randomUUID();
+        this.nonce = UUID.randomUUID().toString();
     }
 
     /**
@@ -579,7 +578,7 @@ public final class PublicationStager implements AutoCloseable {
     // Internal helpers
     // =========================================================================
 
-    /** The per-invocation retired sibling ({@code <root>.deal-retired-<pid>-<nonce>}). */
+    /** The per-invocation retired sibling ({@code <root>.deal-retired-<nonce>}). */
     private Path retiredSibling() {
         return root.resolveSibling(
             root.getFileName() + RETIRED_TREE_MARKER + nonce);
