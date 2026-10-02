@@ -723,6 +723,22 @@ public final class JvmRuntime {
     }
 
     /**
+     * The origins of the active DEAL-body calls, innermost last (the
+     * {@code JSON_TO_ERROR} projection renders the invoking call
+     * expression: the generated {@code C$toJson} walk reads the origin of
+     * the call that invoked it, never the generated body's synthetic
+     * anchor).
+     */
+    public static final java.util.ArrayDeque<String> callOrigins =
+        new java.util.ArrayDeque<>();
+
+    /** The innermost active call's origin, or the fallback. */
+    public static String callOrigin(String fallback) {
+        String origin = callOrigins.peek();
+        return origin != null ? origin : fallback;
+    }
+
+    /**
      * One closed failure arm rendered on the JVM target (canonical
      * failure-projection authority P4 item 3): the arm's own template with
      * its named parameters and the arm's declared expected/actual fields —

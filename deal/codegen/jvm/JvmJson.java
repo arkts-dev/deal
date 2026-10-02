@@ -68,7 +68,20 @@ public final class JvmJson {
             this.classIdText = classIdText;
             this.fields = fields;
             this.instanceSupplier = instanceSupplier;
+            // The nested @jsonable class walk resolves a nested class's
+            // own plan by its canonical class identity (the same identity
+            // the field descriptor text carries).
+            PLANS.put(classIdText, this);
         }
+    }
+
+    /** The session's class plans by canonical class identity text. */
+    private static final java.util.Map<String, Plan> PLANS =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** The plan of one declared class identity, or {@code null}. */
+    private static Plan planOf(String classIdText) {
+        return PLANS.get(classIdText);
     }
 
     /**
@@ -581,9 +594,21 @@ public final class JvmJson {
             return out;
         }
         if (descriptor.startsWith("@")) {
-            throw new IllegalStateException("a nested @jsonable class field ("
-                + descriptor + ") has no shared JSON walk in this slice "
-                + "(producer defect, the nested shape is not emitted)");
+            // The nested @jsonable class decode (K-D8 step 6): the nested
+            // class's own plan drives the same phase order, its omitted
+            // required-present defaults run their recorded CLASS_DEFAULT
+            // thunks, and the decoded document collapses [] to the empty
+            // object exactly like the top-level gate.
+            JvmRuntime.Table document;
+            if (raw instanceof JvmRuntime.Table table) {
+                document = table;
+            } else if (raw instanceof JvmRuntime.Array empty && empty.length == 0) {
+                document = new JvmRuntime.Table();
+            } else {
+                return FAIL;
+            }
+            Object nested = decodeNestedClass(descriptor, document, depth + 1);
+            return nested == null ? FAIL : nested;
         }
         switch (descriptor) {
             case "null" -> {
@@ -654,6 +679,78 @@ public final class JvmJson {
         return out;
     }
 
+    /**
+     * The nested @jsonable class decode of one JSON object (K-D8 step 6,
+     * the same phase order as the top walk): the nested extra-key gate,
+     * provided decode in declaration order, the nested plan's recorded
+     * defaults for omitted required-present fields (skip-provided), the
+     * final descriptor validation, and the tagged instance. Returns
+     * {@code null} on any walk failure (language null), a producer defect
+     * when no plan resolves for the declared identity.
+     */
+    private static Object decodeNestedClass(String classIdText,
+                                            JvmRuntime.Table table, int depth) {
+        if (depth > MAX_DEPTH) {
+            return null;
+        }
+        Plan nested = planOf(classIdText);
+        if (nested == null) {
+            throw new IllegalStateException("JSON_FROM_CLASS has no plan "
+                + classIdText + " for a nested @jsonable class field "
+                + "(producer defect)");
+        }
+        for (String key : table.keys) {
+            if (fieldOf(nested, key) == null) {
+                return null;
+            }
+        }
+        Map<String, Object> values = new LinkedHashMap<>();
+        Set<String> present = new LinkedHashSet<>();
+        for (Field field : nested.fields) {
+            if (!table.keys.contains(field.name)) {
+                continue;
+            }
+            Object decoded = decodeRaw(field.descriptor,
+                table.entries.get(field.name), depth);
+            if (decoded == FAIL) {
+                return null;
+            }
+            values.put(field.name, decoded);
+            present.add(field.name);
+        }
+        for (Field field : nested.fields) {
+            if (present.contains(field.name) || field.optional) {
+                continue;
+            }
+            if (field.defaultThunk == null) {
+                return null;
+            }
+            Object produced;
+            try {
+                produced = runDefault(field);
+            } catch (DefaultFailure failure) {
+                return null;
+            }
+            values.put(field.name, produced);
+            present.add(field.name);
+        }
+        for (Field field : nested.fields) {
+            if (!present.contains(field.name)) {
+                continue;
+            }
+            if (!conforms(field.descriptor, values.get(field.name))) {
+                return null;
+            }
+        }
+        JvmRuntime.ClassInstance instance = nested.instanceSupplier.get();
+        for (Field field : nested.fields) {
+            if (present.contains(field.name)) {
+                instance.write(field.name, values.get(field.name));
+            }
+        }
+        return instance;
+    }
+
     private static boolean conforms(String descriptor, Object value) {
         if (descriptor.startsWith("nullable:")) {
             if (value == null) {
@@ -674,6 +771,12 @@ public final class JvmJson {
             }
             return true;
         }
+        if (descriptor.startsWith("@")) {
+            // The nested class conformance check: the tagged instance of
+            // exactly the declared class identity.
+            return value instanceof JvmRuntime.ClassInstance instance
+                && instance.classIdText().equals(descriptor);
+        }
         return switch (descriptor) {
             case "null" -> value == null;
             case "boolean" -> value instanceof Boolean;
@@ -681,7 +784,7 @@ public final class JvmJson {
             case "number" -> value instanceof Double || value instanceof Long;
             case "string" -> value instanceof String string && validScalars(string);
             case "table" -> value instanceof JvmRuntime.Table;
-            default -> !descriptor.startsWith("@");
+            default -> true;
         };
     }
 
@@ -767,9 +870,13 @@ public final class JvmJson {
             }
         }
         if (descriptor.startsWith("@")) {
-            throw new IllegalStateException("a nested @jsonable class field ("
-                + descriptor + ") has no shared JSON walk in this slice "
-                + "(producer defect, the nested shape is not emitted)");
+            Plan nested = planOf(descriptor);
+            if (nested == null) {
+                throw new IllegalStateException("JSON_TO_CLASS has no plan "
+                    + descriptor + " for a nested @jsonable class field "
+                    + "(producer defect)");
+            }
+            return encodeInstance(nested, value, path, visited);
         }
         return switch (descriptor) {
             case "null" -> {

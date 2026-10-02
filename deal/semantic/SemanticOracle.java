@@ -914,6 +914,13 @@ public final class SemanticOracle {
         final List<SemanticRuntimeModel.TraceEvent> trace = new ArrayList<>();
         final List<SemanticRuntimeModel.EffectEvent> effects = new ArrayList<>();
         final List<FunctionId> frames = new ArrayList<>();
+        /**
+         * The origins of the active calls, innermost last (the
+         * {@code JSON_TO_ERROR} projection renders the invoking call
+         * expression, so the generated body's walk reads the innermost
+         * active call's origin).
+         */
+        final ArrayDeque<SourceOrigin> activeCallOrigins = new ArrayDeque<>();
         long sequence = 0;
         String entryResultAtom = null;
         /**
@@ -2132,7 +2139,7 @@ public final class SemanticOracle {
                 executorValueOf(valueOf(payload.classValue())));
             ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome =
                 ClassOpsExecutor.executeJsonToClass(op, priorValues, classLayouts,
-                    JsonClassAlgorithmAdapter.stringifier(), op.origin());
+                    JsonClassAlgorithmAdapter.stringifier(), activeCallOriginOf(op));
             return switch (outcome) {
                 case ClassOpsExecutor.Outcome.Success<ClassOpsExecutor.Value> success ->
                     publish(op, oracleValueOf(success.value()));
@@ -2878,11 +2885,14 @@ public final class SemanticOracle {
             switch (op.payload()) {
                 case KindPayload.MemberWritePayload payload -> {
                     Value.TableValue table = (Value.TableValue) valueOf(payload.table());
-                    table.entries().put(payload.key(), valueOf(payload.value()));
+                    Value stored = valueOf(payload.value());
+                    table.entries().put(payload.key(), stored);
+                    mirrorTableWrite(table, payload.key(), stored);
                 }
                 case KindPayload.MemberDeletePayload payload -> {
                     Value.TableValue table = (Value.TableValue) valueOf(payload.table());
                     table.entries().remove(payload.key());
+                    mirrorTableDelete(table, payload.key());
                 }
                 case KindPayload.IndexWritePayload payload -> {
                     Value container = valueOf(payload.container());
@@ -2919,6 +2929,32 @@ public final class SemanticOracle {
                     "commit op payload " + op.payload().getClass().getSimpleName());
             }
             return null;
+        }
+
+        /**
+         * The committed-mutation mirror of the two value models (the
+         * in-place commit discipline): a carrier table and its converted
+         * class-construction view share the entries the consumer observes,
+         * so a mutation committed through the carrier — a
+         * {@code MEMBER_WRITE}/{@code MEMBER_DELETE} or an index write on a
+         * table container — is applied to the cached view the committed
+         * instance's field states hold. Without the mirror a class-field-held
+         * table would be a stale snapshot of the commit (the artifact
+         * carriers mutate one table by identity). The reverse direction
+         * never occurs: the class walk only reads table contents.
+         */
+        private void mirrorTableWrite(Value.TableValue carrier, String key, Value value) {
+            ClassOpsExecutor.Value view = executorViews.get(carrier);
+            if (view instanceof ClassOpsExecutor.Value.Table table) {
+                table.table().put(key, executorValueOf(value));
+            }
+        }
+
+        private void mirrorTableDelete(Value.TableValue carrier, String key) {
+            ClassOpsExecutor.Value view = executorViews.get(carrier);
+            if (view instanceof ClassOpsExecutor.Value.Table table) {
+                table.table().remove(key);
+            }
         }
 
         /**
@@ -3178,8 +3214,11 @@ public final class SemanticOracle {
                     }
                     target.write(bytes.index(), (int) written);
                 }
-                case NormalizedSlot.TableSlot table ->
-                    ((Value.TableValue) container).entries().put(table.key(), value);
+                case NormalizedSlot.TableSlot table -> {
+                    Value.TableValue carrier = (Value.TableValue) container;
+                    carrier.entries().put(table.key(), value);
+                    mirrorTableWrite(carrier, table.key(), value);
+                }
             }
         }
 
@@ -3196,8 +3235,11 @@ public final class SemanticOracle {
                 case NormalizedSlot.BytesSlot ignored -> throw new IllegalStateException(
                     "a bytes slot never carries a delete (delete b[i] is the "
                         + "checker's E3007 rejection) — a producer defect, never executed");
-                case NormalizedSlot.TableSlot table ->
-                    ((Value.TableValue) container).entries().remove(table.key());
+                case NormalizedSlot.TableSlot table -> {
+                    Value.TableValue carrier = (Value.TableValue) container;
+                    carrier.entries().remove(table.key());
+                    mirrorTableDelete(carrier, table.key());
+                }
             }
         }
 
@@ -3825,9 +3867,12 @@ public final class SemanticOracle {
                 case KindPayload.CallCallee.Dynamic dynamic ->
                     valueOf(dynamic.callee());
             };
-            Value returned = payload.callee() instanceof KindPayload.CallCallee.Dynamic
-                ? executeDynamicCall(op, payload, binding, checkedArgs, calleeValue)
-                : switch (binding) {
+            Value returned;
+            activeCallOrigins.addLast(op.origin());
+            try {
+                returned = payload.callee() instanceof KindPayload.CallCallee.Dynamic
+                    ? executeDynamicCall(op, payload, binding, checkedArgs, calleeValue)
+                    : switch (binding) {
                     case FunctionExecutionBinding.LoweredBody body ->
                         invokeLoweredBody(op, payload, body, checkedArgs, calleeValue);
                     case FunctionExecutionBinding.AdapterBinding adapter ->
@@ -3850,9 +3895,37 @@ public final class SemanticOracle {
                     case FunctionExecutionBinding.DynamicFunctionValue dynamic ->
                         throw dynamicFunctionValueDefect(dynamic);
                 };
+            } finally {
+                activeCallOrigins.removeLast();
+            }
             return publish(op, returned);
         }
 
+        /**
+         * The origin of the innermost active call, or the op's own origin
+         * when the op executes outside a call (the generated
+         * {@code C$toJson} walk's {@code JSON_TO_ERROR} projection renders
+         * the invoking call expression; the generated body's synthetic
+         * anchor is never the projection origin).
+         */
+        private SourceOrigin activeCallOriginOf(SemanticOp op) {
+            SourceOrigin active = activeCallOrigins.peekLast();
+            return active != null ? active : op.origin();
+        }
+
+        /**
+         * The one conversion ladder at an intrinsic value call (ISSUE-0679;
+         * design source {@code conversion-intrinsic-function-values} J4): the
+         * closed kind's conversion runs through the landed
+         * {@link #convertInt}/{@link #convertNumber} arms — the same algorithm
+         * authority the direct {@code INTRINSIC_CALL} arm runs — with the
+         * invoking op's own origin, so the pinned texts and the FAILURE event
+         * carry the invoking op (the direct arm keeps {@code INTRINSIC_CALL}).
+         * The argument domain is the recorded parameter cells': the value
+         * handed over is the cell-admitted one, so a null or wrong-kind
+         * argument is a parameter-cell projection and never reaches the
+         * ladder.
+         */
         private Value invokeIntrinsicValue(SemanticOp op,
                 FunctionExecutionBinding.IntrinsicFunction intrinsic,
                 List<Value> checkedArgs) {

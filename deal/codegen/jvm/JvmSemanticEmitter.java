@@ -993,12 +993,14 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent + 2)).append("? JvmRuntime.arm("
                 + "deal.semantic.ir.FailureArmId.JSON_TO_WALK_CYCLE, "
                 + "java.util.Map.of(), ")
-                .append(javaString(originOf(op))).append(", null, null)\n");
+                .append("JvmRuntime.callOrigin(").append(javaString(originOf(op)))
+                .append(")").append(", null, null)\n");
             out.append(indent(indent + 2)).append(": JvmRuntime.arm("
                 + "deal.semantic.ir.FailureArmId.JSON_TO_WALK, "
                 + "java.util.Map.of(\"fieldPath\", projection.fieldPath, "
                 + "\"actual\", projection.actual), ")
-                .append(javaString(originOf(op))).append(", null, projection.actual);\n");
+                .append("JvmRuntime.callOrigin(").append(javaString(originOf(op)))
+                .append(")").append(", null, projection.actual);\n");
             emitFailureEvent(op.opId(), op.kind().name(), op,
                 "JvmRuntime.errtext(__jsonErr)", indent + 1);
             out.append(indent(indent + 1)).append("throw __jsonErr;\n");
@@ -3068,6 +3070,12 @@ public final class JvmSemanticEmitter {
                     out.append(indent(indent)).append("try {\n");
                     out.append(indent(indent + 1)).append("JvmRuntime.pushFrame(")
                         .append(javaString(String.valueOf(callee.id()))).append(");\n");
+                    // The invoking call's origin: a failure inside the body
+                    // whose arm renders the call origin (the @jsonable toJson
+                    // walk) reads the innermost active call.
+                    out.append(indent(indent + 1))
+                        .append("JvmRuntime.callOrigins.push(")
+                        .append(javaString(originOf(op))).append(");\n");
                     out.append(indent(indent + 1)).append("try {\n");
                     out.append(indent(indent + 1)).append("  ")
                         .append(resultLocal)
@@ -3114,6 +3122,8 @@ public final class JvmSemanticEmitter {
                         "JvmRuntime.errtext(__e)", indent + 2);
                     out.append(indent(indent + 1)).append("  throw __e;\n");
                     out.append(indent(indent + 1)).append("} finally {\n");
+                    out.append(indent(indent + 1))
+                        .append("  JvmRuntime.callOrigins.pop();\n");
                     out.append(indent(indent + 1)).append("  JvmRuntime.popFrame();\n");
                     out.append(indent(indent + 1)).append("}\n");
                     out.append(indent(indent)).append("} finally {\n");
@@ -3281,10 +3291,20 @@ public final class JvmSemanticEmitter {
                 .append(");\n");
             out.append(indent(indent + 2)).append("try {\n");
             out.append(indent(indent + 3)).append("try {\n");
-            out.append(indent(indent + 4)).append(resultLocal)
+            // The invoking call's origin: a failure inside the entry body
+            // whose arm renders the call origin (the @jsonable toJson walk)
+            // reads the innermost active call.
+            out.append(indent(indent + 3)).append("  JvmRuntime.callOrigins.push(")
+                .append(javaString(originOf(op))).append(");\n");
+            out.append(indent(indent + 3)).append("  try {\n");
+            out.append(indent(indent + 4)).append("  ").append(resultLocal)
                 .append(" = ").append(fnFactory(entryPayload.function()))
                 .append("(").append(caps).append(").fn.invoke(new Object[]{")
                 .append(args).append("});\n");
+            out.append(indent(indent + 3)).append("  } finally {\n");
+            out.append(indent(indent + 3))
+                .append("    JvmRuntime.callOrigins.pop();\n");
+            out.append(indent(indent + 3)).append("  }\n");
             out.append(indent(indent + 3))
                 .append("} catch (JvmRuntime.DealError __ex) {\n");
             if (trace) {

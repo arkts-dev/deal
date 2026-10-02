@@ -1263,6 +1263,21 @@ public final class SemanticLowerer {
                     byName.computeIfAbsent(function.name(), ignored -> new ArrayList<>())
                         .add(ModuleLowerer.parameterTypeSpans(function.params()));
                 }
+                if (declaration instanceof ClassDeclaration classDeclaration
+                        && classDeclaration.isJsonable()) {
+                    // The generated @jsonable helper declarations (R3):
+                    // a cross-module helper call's declared-parameter
+                    // cell is declaration-owned like any declared
+                    // callee's. The helper has exactly one generated
+                    // parameter, and its declaration site is the class
+                    // declaration's own span, so the index records that
+                    // span — never the invoking call site.
+                    for (String helper : List.of(classDeclaration.name() + "$fromJson",
+                            classDeclaration.name() + "$toJson")) {
+                        byName.computeIfAbsent(helper, ignored -> new ArrayList<>())
+                            .add(List.of(classDeclaration.span()));
+                    }
+                }
             }
             index.put(module.moduleId(),
                 new DeclaredParameterAnnotations(module.sourceId(), byName));
@@ -3654,6 +3669,104 @@ public final class SemanticLowerer {
                         importDecl.span(), FailurePolicyId.NO_DEAL_FAILURE);
                 }
             }
+            // The generated @jsonable helper names (R3): the declaring
+            // module's exported helpers are module-level functions of the
+            // module surface, so their names hoist exactly like declared
+            // module-level functions — one binding cell at module-init
+            // top, one pre-allocated closure identity, one reserved
+            // invocation context — and the class-declaration walk reuses
+            // them (the declaration-position CLOSURE_NEW + BINDING_INIT).
+            // This pass runs only in the production project session (the
+            // class-core-only seam keeps its landed three-op generated
+            // bodies).
+            if (fullProgram && classCore && e7Calls) {
+                hoistJsonHelperAllocs(statements);
+            }
+        }
+
+        /**
+         * Hoists the generated {@code C$fromJson}/{@code C$toJson} names
+         * of every module-level {@code @jsonable} class declaration (the
+         * helper-family realization): the helper is a module-level export
+         * function, so its name resolves through the same binding
+         * environment a declared module function uses — the module-init
+         * {@code BINDING_ALLOC}, the pre-allocated closure identity
+         * ({@code functionIdentity}), the reserved body context
+         * ({@code moduleFunctionContexts}) with its single return
+         * boundary and call-site identity, the exported helper's
+         * {@code EXTERNAL_ENTRY} shape, and the recorded module function
+         * identity the E7 publication reads. A reference before the class
+         * declaration therefore resolves, and the declaration-position
+         * walk publishes the one identity the registration names (never a
+         * second closure for one class).
+         *
+         * <p>The generated signatures flow from the checker's synthetic
+         * {@code C$fromJson}/{@code C$toJson} root-scope function symbols
+         * through the single {@code DescriptorService} producer. A
+         * {@code @jsonable} class without the synthetic symbols is a
+         * fact defect. The helper's declaration-owned parameter origin is
+         * the class declaration's own span (the generated declaration's
+         * site), recorded on the context so a caller's declared-parameter
+         * cell reads a declaration-owned span, never the call site.</p>
+         */
+        private void hoistJsonHelperAllocs(List<StatementNode> statements) {
+            SymbolTable scope = currentCheckerScope();
+            for (StatementNode statement : statements) {
+                StatementNode declaration = statement instanceof ExportDeclaration export
+                    ? export.declaration() : statement;
+                if (!(declaration instanceof ClassDeclaration classDeclaration)
+                        || !classDeclaration.isJsonable()) {
+                    continue;
+                }
+                for (boolean fromJson : new boolean[] {true, false}) {
+                    String name = classDeclaration.name()
+                        + (fromJson ? "$fromJson" : "$toJson");
+                    Symbol symbol = scope == null ? null : scope.resolve(name);
+                    if (!(symbol instanceof Symbol.FunctionSymbol functionSymbol)) {
+                        throw new ConstructUnlowered("the @jsonable class '"
+                            + classDeclaration.name() + "' has no checked " + name
+                            + " function symbol (the checker defines the synthetic"
+                            + " symbols for every @jsonable class — a fact defect)");
+                    }
+                    RuntimeDescriptor.Func signature = (RuntimeDescriptor.Func)
+                        ContainerPayloadDescriptors.resultDescriptorOf(
+                            functionSymbol.funcType());
+                    BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
+                    BindingCoreIncarnation incarnation = new BindingCoreIncarnation(
+                        INITIAL_LOOP_GENERATION, moduleInitBlock, BindingCellKind.DIRECT,
+                        true, BindingProducer.BINDING_ALLOC, false);
+                    registerBinding(name, binding, incarnation);
+                    FunctionId functionId = ids.nextFunctionId(module, nextOrdinal++, 0);
+                    BlockId bodyBlock = allocateBlock();
+                    OpId returnBoundaryOpId = ids.nextOpId(module, nextOrdinal++, 0);
+                    OpId callSiteOpId = ids.nextOpId(module, nextOrdinal++, 0);
+                    FunctionContext context = new FunctionContext(functionId, bodyBlock,
+                        signature, returnBoundaryOpId, callSiteOpId,
+                        List.of(classDeclaration.span()));
+                    if (isExported(name)) {
+                        // The exported helper's invocation shape is the
+                        // module surface's EXTERNAL_ENTRY (R3(a)): a
+                        // cross-module reference and a same-module
+                        // reference alike realize the closed
+                        // CALL(EXTERNAL) SHARED_BODY cell through the
+                        // callee's recorded entry.
+                        OpId shapeOpId = ids.nextOpId(module, nextOrdinal++, 0);
+                        context.assignShape(InvocationShape.EXTERNAL_ENTRY_SHAPE,
+                            shapeOpId);
+                    }
+                    functionContexts.put(incarnation, context);
+                    moduleFunctionContexts.put(name, context);
+                    contextsByBindingId.put(binding, context);
+                    contextsByFunctionId.put(functionId, context);
+                    ValueId closureIdentity = ids.nextValueId(module, nextOrdinal++, 0);
+                    functionIdentity.put(incarnation, closureIdentity);
+                    moduleFunctionIdentities.put(name, closureIdentity);
+                    emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
+                        new KindPayload.BindingAllocPayload(binding, moduleInitBlock, true,
+                            cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
+                        classDeclaration.span(), FailurePolicyId.NO_DEAL_FAILURE);
+                }
+            }
         }
 
         private void lowerBindingStatements(List<StatementNode> statements,
@@ -3974,7 +4087,9 @@ public final class SemanticLowerer {
          * Emits one generated {@code @jsonable} function: the body block
          * (parameter {@code BINDING_ALLOC}, parameter {@code
          * BINDING_LOAD}, the single JSON op — the parameter load
-         * result wired as the JSON payload's operand), then the
+         * result wired as the JSON payload's operand — and, in the
+         * production project session, the body's single {@code RETURN}
+         * of the JSON op's result with its return boundary), then the
          * {@code CLOSURE_NEW} op publishing the fresh function identity
          * with the {@code LoweredFunction} record and the
          * {@code LoweredBody} registration through the registry seam,
@@ -3982,6 +4097,17 @@ public final class SemanticLowerer {
          * (the closure-expression precedent's pinned unit order). The
          * JSON op's id is returned (the {@code JsonDefaultChildTable}
          * key of the {@code fromJson} arm).
+         *
+         * <p><b>The production session reuses the hoisted helper
+         * context (R3).</b> When the class walk runs inside the
+         * production project session, the helper name was hoisted
+         * ({@link #hoistJsonHelperAllocs}): the body block, the function
+         * id, the closure identity, the single return boundary, and the
+         * reserved invocation identity come from that hoist, so the
+         * declaration position publishes exactly one closure identity
+         * per class and a reference resolves the same body. The
+         * class-core-only seam keeps its landed generated shape (a fresh
+         * identity and the three-op body).</p>
          */
         private OpId lowerJsonFunction(ClassDeclaration declaration,
                                        deal.semantic.ir.ClassLayout layout,
@@ -3990,9 +4116,32 @@ public final class SemanticLowerer {
                                        RuntimeDescriptor jsonResultType,
                                        FailurePolicyId jsonPolicy,
                                        boolean fromJson) {
-            BlockId bodyBlock = allocateBlock();
-            FunctionId functionId = ids.nextFunctionId(module, nextOrdinal++, 0);
-            ValueId closureIdentity = ids.nextValueId(module, nextOrdinal++, 0);
+            String helperName = declaration.name()
+                + (fromJson ? "$fromJson" : "$toJson");
+            FunctionContext helperContext = fullProgram && classCore && e7Calls
+                ? moduleFunctionContexts.get(helperName) : null;
+            BlockId bodyBlock = helperContext != null
+                ? helperContext.bodyBlock : allocateBlock();
+            FunctionId functionId = helperContext != null
+                ? helperContext.functionId : ids.nextFunctionId(module, nextOrdinal++, 0);
+            ValueId closureIdentity;
+            BindingId helperBinding = null;
+            if (helperContext != null) {
+                FrameEntry hoisted = frameEntryOf(helperName);
+                if (hoisted == null) {
+                    throw new IllegalStateException("hoisted @jsonable helper "
+                        + "registration missing for '" + helperName
+                        + "' (producer defect)");
+                }
+                helperBinding = hoisted.cell().id;
+                closureIdentity = functionIdentity.get(hoisted.incarnation());
+                if (closureIdentity == null) {
+                    throw new IllegalStateException("pre-assigned @jsonable helper "
+                        + "identity missing for '" + helperName + "' (producer defect)");
+                }
+            } else {
+                closureIdentity = ids.nextValueId(module, nextOrdinal++, 0);
+            }
             List<SemanticOp> bodyOps = new ArrayList<>();
             emitTargets.push(bodyOps);
             blockStack.push(bodyBlock);
@@ -4046,6 +4195,27 @@ public final class SemanticLowerer {
                 emit(buildOp(jsonOpId,
                     fromJson ? SemanticOpKind.JSON_FROM_CLASS : SemanticOpKind.JSON_TO_CLASS,
                     payload, jsonResult, jsonResultType, jsonPolicy, jsonOrigin));
+
+                if (helperContext != null) {
+                    // The generated body's single transfer of the JSON
+                    // op's result through its declaration-owned return
+                    // boundary (R3): the helper's JSON result is the
+                    // function's returned value, so a caller observes the
+                    // landed JSON_FROM_CLASS/JSON_TO_CLASS semantics.
+                    AnchorId returnAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+                    OpId returnOpId = ids.nextOpId(module, nextOrdinal++, 0);
+                    SourceOrigin returnOrigin = new SourceOrigin(sourceId,
+                        toSourceSpan(declaration.span()), SourceOriginKind.SYNTHETIC,
+                        returnAnchor, null);
+                    ensureReturnBoundary(helperContext, jsonResult, declaration.span(),
+                        returnOpId);
+                    emit(buildOp(returnOpId, SemanticOpKind.RETURN,
+                        new KindPayload.ReturnPayload(jsonResult,
+                            helperContext.functionId, helperContext.invocationOpId(),
+                            helperContext.returnBoundaryOpId),
+                        null, null, FailurePolicyId.NO_DEAL_FAILURE, returnOrigin));
+                    terminateBlock();
+                }
             } finally {
                 blockStack.pop();
                 emitTargets.pop();
@@ -4065,6 +4235,16 @@ public final class SemanticLowerer {
                 new KindPayload.ClosureNewPayload(functionId, signature, List.of(), binding),
                 closureIdentity, signature, FailurePolicyId.NO_DEAL_FAILURE,
                 closureOrigin));
+            if (helperBinding != null) {
+                // The declaration-position initialization of the hoisted
+                // helper binding (the module-function shape): the closure
+                // identity is the cell's value from here on, and the E7
+                // publication publishes exactly that identity.
+                emitUserNullOp(SemanticOpKind.BINDING_INIT,
+                    new KindPayload.BindingInitPayload(helperBinding,
+                        INITIAL_LOOP_GENERATION, closureIdentity),
+                    declaration.span(), FailurePolicyId.NO_DEAL_FAILURE);
+            }
             functions.put(functionId, new LoweredFunction(functionId, signature, List.of(),
                 bodyBlock));
             registry.registerClosure(new FunctionAllocationIdentity(closureIdentity.id()),

@@ -84,6 +84,29 @@ WARNING: node not found, skipping standard library JS tests'
   'fg|=== Running Cross-Module Call Realization Tests (ISSUE-0654) ===|java -ea -cp build deal.test.CrossModuleCallRealizationTest'
   'fg|=== Running FFI Plan Projection Oracle Tests (ISSUE-0667) ===|java -ea -cp build deal.test.FfiPlanProjectionOracleTest'
   'fg|=== Running Bytes Coverage and Element Contract Tests (ISSUE-0626) ===|java -ea -cp build deal.test.BytesCoverageTest'
+  # ISSUE-0698 (the @jsonable helper operations on the one-lowering
+  # production path; design source dispatched-corpus-production-realization
+  # R3 and the helper contract, luajit-jvm-single-lowering-production-
+  # cutover C1/C2/C4): the family production drive — every fixture of the
+  # family (the 30 sidecar fixtures of backend-runtime/jsonable/**, the
+  # near-collision and helper-export-keys structural fixtures, and the
+  # pinned compile-error fixture) compiles through the release-owned
+  # production invocation on LuaJIT and JVM with zero E6005, publishes its
+  # artifact, and executes under the real toolchain with the sidecar
+  # byte-exact (the runtime-ok transcripts and exit codes; the cyclic-table
+  # failure's code/message/span/expected/actual at the raw corpus
+  # coordinates). The helper surface is pinned in the produced unit: exactly
+  # one generated closure and one LoweredBody binding per class helper, one
+  # EXPORT_PUBLISH and one recorded EXTERNAL_ENTRY per helper export, the
+  # same-module and cross-module call shapes (EXPORT_READ plus the closed
+  # ExternalFunction SHARED_BODY binding over the callee's recorded entry),
+  # the near-collision identifier changing no outcome, and a non-@jsonable
+  # class gaining no helper. The combined dependency step runs the oracle
+  # over the same closures: the cross-module helper call succeeds and the
+  # pinned helper JSON failure renders the cycle tuple at the invoking call
+  # expression, so the drive fails if the canonical failure projection
+  # authority is broken.
+  'fg|=== Running the @jsonable Helper Production Drive (ISSUE-0698) ===|java -ea -cp build deal.test.JsonableHelperProductionDriveTest'
   'fg|=== Running Closed Composite Terminator Analysis Tests (ISSUE-0712) ===|java -ea -cp build deal.test.CompositeTerminatorAnalysisTest'
   'fg|=== Running the Truncating Int32 Remainder Prelude Tests (ISSUE-0714) ===|java -ea -cp build deal.test.Int32ModTruncPreludeTest'
   'fg|=== Running LuaJIT Chunk Local Bound Tests (ISSUE-0716) ===|java -ea -cp build deal.test.LuaJitChunkLocalBoundTest'

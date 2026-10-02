@@ -527,7 +527,12 @@ public final class LuaSemanticEmitter {
             // execution per run. __module stays chunk-local (every chunk
             // names its own module in its events).
             out.append("__frames = __frames or {}\n");
-
+            // The innermost active call's origin (the JSON_TO_ERROR
+            // projection renders the invoking call expression: the
+            // generated C$toJson body's walk reads the origin of the call
+            // that invoked it, never the generated body's synthetic
+            // anchor). Chunk-global like the frame state.
+            out.append("__callOrigins = __callOrigins or {}\n");
             out.append("__fnModules = __fnModules or {}\n");
             out.append("__seq = __seq or 0\n");
             out.append("local __module\n");
@@ -2850,6 +2855,11 @@ public final class LuaSemanticEmitter {
                     String savedState = emitInvocationStateSave(callee, op.opId());
                     out.append("table.insert(__frames, 1, ")
                         .append(luaString(String.valueOf(callee.id()))).append(")\n");
+                    // The invoking call's origin: a failure inside the body
+                    // whose arm renders the call origin (the @jsonable
+                    // toJson walk) reads the innermost active call.
+                    out.append("__callOrigins[#__callOrigins + 1] = ")
+                        .append(luaString(originOf(op))).append("\n");
                     out.append("__okT, __resT = pcall(");
                     if (payload.callee()
                             instanceof KindPayload.CallCallee.Indirect indirect) {
@@ -2882,6 +2892,7 @@ public final class LuaSemanticEmitter {
                             .input()));
                     }
                     out.append(")\n");
+                    out.append("__callOrigins[#__callOrigins] = nil\n");
                     out.append("table.remove(__frames, 1)\n");
                     emitInvocationStateRestore(callee, savedState);
                     out.append("if not __okT then\n");
@@ -2975,6 +2986,8 @@ public final class LuaSemanticEmitter {
             out.append("table.insert(__frames, 1, ")
                 .append(luaString(String.valueOf(entryPayload.function().id())))
                 .append(")\n");
+            out.append("__callOrigins[#__callOrigins + 1] = ")
+                .append(luaString(originOf(op))).append("\n");
             out.append("__okT, __resT = pcall(")
                 .append(fnFactory(entryPayload.function())).append("(");
             List<BindingGeneration> captures = calleeFunction.captures();
@@ -2991,6 +3004,7 @@ public final class LuaSemanticEmitter {
                     ((KindPayload.BoundaryPayload) boundary.payload()).input()));
             }
             out.append(")\n");
+            out.append("__callOrigins[#__callOrigins] = nil\n");
             out.append("table.remove(__frames, 1)\n");
             emitInvocationStateRestore(entryPayload.function(), savedState);
             out.append("if not __okT then\n");
@@ -6378,15 +6392,16 @@ public final class LuaSemanticEmitter {
             // arm renderer (jsonable-tojson-walk-arm-binding W6): the walk
             // arm with its {fieldPath}/{actual} parameters, or the cycle
             // arm with none — the call site composes no message, no token,
-            // and no span of its own, and the origin operand stays the
-            // executing op's own SourceOrigin.
+            // and no span of its own, and the origin operand is the
+            // invoking call expression (the generated body's synthetic
+            // anchor is never the projection origin).
             out.append("__jokT, __jresT, __jarmT, __jcparT, __jfactT = "
                 + "__jsonToClassOp(")
                 .append(luaString(payload.layout().classId().text())).append(", ")
                 .append(slot(payload.classValue())).append(")\n");
             out.append("if not __jokT then\n");
-            out.append("__eT = __arm(__jarmT, __jcparT, ")
-                .append(luaString(originOf(op))).append(", nil, __jfactT)\n");
+            out.append("__eT = __arm(__jarmT, __jcparT, __callOrigin(")
+                .append(luaString(originOf(op))).append("), nil, __jfactT)\n");
             emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__eT)");
             out.append("error(__eT, 0)\n");
             out.append("end\n");
@@ -6901,7 +6916,12 @@ local function __jsonConforms(desc, v)
     if v == nil then return true end
     return __jsonConforms(inner, v)
   end
-  return kind ~= "class"
+  if kind == "class" then
+    -- A nested @jsonable class value: the tagged instance of exactly
+    -- the declared class identity (the canonical nominal check).
+    return type(v) == "table" and v.__c == true and v.__id == inner
+  end
+  return true
 end
 -- The provided-field decode of one declared descriptor (K-D8 step 4).
 -- The fourth argument is the raw value's own number variant (the
@@ -6911,7 +6931,9 @@ end
 -- and publishes the number variant (its Int case converts exactly) —
 -- so every decoded scalar keeps its own variant, and the decoded
 -- container carriers record their slots' variants for the
--- read/write/JSON_STRINGIFY consumers.
+-- read/write/JSON_STRINGIFY consumers. The nested @jsonable class arm
+-- decodes through the nested class's own plan (the same phase order).
+local __jsonDecodeClass
 local function __jsonDecodeRaw(desc, v, depth, numberVariant)
   if depth > __JSON_MAX_DEPTH then return false end
   local kind, inner = __jsonKindOf(desc)
@@ -6954,8 +6976,20 @@ local function __jsonDecodeRaw(desc, v, depth, numberVariant)
     if v == __JNULL then return true, nil end
     return __jsonDecodeRaw(inner, v, depth, numberVariant)
   elseif kind == "class" then
-    error("a nested @jsonable class field (" .. desc .. ") has no shared JSON walk "
-      .. "in this slice (producer defect, the nested shape is not emitted)", 0)
+    -- The nested @jsonable class decode (K-D8 step 6): the nested
+    -- class's own plan drives the same phase order, and its omitted
+    -- required-present defaults run their recorded CLASS_DEFAULT
+    -- functions. An unresolvable nested plan is a producer defect.
+    local nested = __plans[inner]
+    if nested == nil then
+      error("JSON_FROM_CLASS has no plan " .. inner .. " for a nested @jsonable "
+        .. "class field (producer defect)", 0)
+    end
+    if __jsonIsArray(v) and v.__n == 0 then v = __jsonEmptyObject() end
+    if not __jsonIsObject(v) then return false end
+    local ok, inst = __jsonDecodeClass(nested, v, depth + 1)
+    if not ok then return false end
+    return true, inst
   end
   return false
 end
@@ -6971,6 +7005,48 @@ local function __jsonInstanceOf(plan, fields, present, values)
   end
   return inst
 end
+-- The class decode of one JSON object (K-D8): the extra-key gate in
+-- document order, the provided-field decode in declaration order, the
+-- omitted required-present defaults (their recorded CLASS_DEFAULT
+-- functions), the final descriptor validation, and the tagged
+-- instance. Shared by the top-level walk and the nested @jsonable class
+-- field decode (the nested plan's own walk).
+__jsonDecodeClass = function(plan, doc, depth)
+  if depth > __JSON_MAX_DEPTH then return false end
+  local fields = plan.fields
+  for i = 1, #doc.__jkeys do
+    if not __jsonKnownField(plan, doc.__jkeys[i]) then return false end
+  end
+  local values = {}
+  local provided = {}
+  for i = 1, #fields do
+    local f = fields[i]
+    if doc[f.name] ~= nil then
+      local ok, decoded = __jsonDecodeRaw(f.desc, doc[f.name], depth,
+        doc.__jnum[f.name] == true)
+      if not ok then return false end
+      values[f.name] = decoded
+      provided[f.name] = true
+    end
+  end
+  for i = 1, #fields do
+    local f = fields[i]
+    if not provided[f.name] and not f.optional then
+      if f.dfn == nil then return false end
+      local ok, produced = __jsonDefaultRun(f)
+      if not ok then return false end
+      values[f.name] = produced
+      provided[f.name] = true
+    end
+  end
+  for i = 1, #fields do
+    local f = fields[i]
+    if provided[f.name] and not __jsonConforms(f.desc, values[f.name]) then
+      return false
+    end
+  end
+  return true, __jsonInstanceOf(plan, fields, provided, values)
+end
 -- The JSON_FROM_CLASS walk: the tagged instance, or language null on
 -- every listed failure (the JSON_FROM_NULL projection).
 local function __jsonFromClassOp(planName, text)
@@ -6982,44 +7058,21 @@ local function __jsonFromClassOp(planName, text)
   if doc == __JSONSYNTAX or doc == __JNULL then return nil end
   if __jsonIsArray(doc) and doc.__n == 0 then doc = __jsonEmptyObject() end
   if not __jsonIsObject(doc) then return nil end
-  local fields = plan.fields
-  for i = 1, #doc.__jkeys do
-    if not __jsonKnownField(plan, doc.__jkeys[i]) then return nil end
-  end
-  local values = {}
-  local provided = {}
-  for i = 1, #fields do
-    local f = fields[i]
-    if doc[f.name] ~= nil then
-      local ok, decoded = __jsonDecodeRaw(f.desc, doc[f.name], 0,
-        doc.__jnum[f.name] == true)
-      if not ok then return nil end
-      values[f.name] = decoded
-      provided[f.name] = true
-    end
-  end
-  for i = 1, #fields do
-    local f = fields[i]
-    if not provided[f.name] and not f.optional then
-      if f.dfn == nil then return nil end
-      local ok, produced = __jsonDefaultRun(f)
-      if not ok then return nil end
-      values[f.name] = produced
-      provided[f.name] = true
-    end
-  end
-  for i = 1, #fields do
-    local f = fields[i]
-    if provided[f.name] and not __jsonConforms(f.desc, values[f.name]) then
-      return nil
-    end
-  end
-  return __jsonInstanceOf(plan, fields, provided, values)
+  local ok, inst = __jsonDecodeClass(plan, doc, 0)
+  if not ok then return nil end
+  return inst
 end
 -- The JSON_TO_CLASS walk: (true, text) or (false, nil, armId,
 -- parameters, actual) for the JSON_TO_ERROR projection. Table fields
 -- serialize their present keys in ascending key order (the shared Lua
 -- table carrier records key presence, not insertion order).
+-- The innermost active call's origin, or the fallback: the generated
+-- C$toJson body's JSON_TO_ERROR projection renders the call that
+-- invoked it, never the generated body's synthetic anchor.
+local function __callOrigin(fallback)
+  if #__callOrigins > 0 then return __callOrigins[#__callOrigins] end
+  return fallback
+end
 local function __jsonToClassOp(planName, root)
   local plan = __plans[planName]
   if plan == nil then
@@ -7053,6 +7106,10 @@ local function __jsonToClassOp(planName, root)
   local encodeField
   local encodeTableValue
   local encodeArrayValue
+  local encodeField
+  local encodeTableValue
+  local encodeArrayValue
+  local encodeClass
   encodeTableValue = function(tv, tpath, visited)
     if visited[tv] then return cycle() end
     visited[tv] = true
@@ -7098,7 +7155,7 @@ local function __jsonToClassOp(planName, root)
     out[#out + 1] = "}"
     return table.concat(out)
   end
-  encodeArrayValue = function(av, apath, visited)
+  encodeArrayValue = function(av, apath, visited, edesc)
     if visited[av] then return cycle() end
     visited[av] = true
     local out = {"["}
@@ -7107,7 +7164,16 @@ local function __jsonToClassOp(planName, root)
       if element == __NULL then element = nil end
       local elementPath = apath .. "[" .. (i - 1) .. "]"
       if i > 1 then out[#out + 1] = "," end
-      if element == nil then out[#out + 1] = "null"
+      if edesc ~= nil then
+        -- A declared array descriptor walks its elements through the
+        -- declared element descriptor (the oracle's per-element rule):
+        -- an int element spells its integer text, a nested array
+        -- recurses the element descriptor, and a class element walks
+        -- its class plan.
+        local encoded = encodeField(edesc, element, elementPath, visited)
+        if encoded == nil then return nil end
+        out[#out + 1] = encoded
+      elseif element == nil then out[#out + 1] = "null"
       elseif type(element) == "boolean" then out[#out + 1] = tostring(element)
       elseif type(element) == "number" then
         local text = __jsonNumText(element)
@@ -7127,6 +7193,13 @@ local function __jsonToClassOp(planName, root)
           local nested = encodeTableValue(element, elementPath, visited)
           if nested == nil then return nil end
           out[#out + 1] = nested
+        elseif element.__c then
+          -- A class-instance element serializes through its own class
+          -- plan (the nested class walk: the element's carried
+          -- identity drives the declared-field walk).
+          local nested = encodeClass(element, element.__id, elementPath, visited)
+          if nested == nil then return nil end
+          out[#out + 1] = nested
         else
           return fail(elementPath, element)
         end
@@ -7136,6 +7209,50 @@ local function __jsonToClassOp(planName, root)
     end
     visited[av] = nil
     out[#out + 1] = "]"
+    return table.concat(out)
+  end
+  -- The class walk shared by the root and every nested @jsonable class
+  -- field (K-D10): the declared fields in declaration order, omitted
+  -- optionals skipped, a missing required field failing, present null
+  -- spelled as JSON null, and every present field encoded per its
+  -- declared descriptor. The class instance enters the path-local
+  -- visited set, so a class re-entry on the path is the cycle needle.
+  encodeClass = function(instance, classId, cpath, visited)
+    if type(instance) ~= "table" or instance.__c ~= true
+        or instance.__id ~= classId then
+      return fail(cpath, instance)
+    end
+    local cplan = __plans[classId]
+    if cplan == nil then
+      error("JSON_TO_CLASS has no plan " .. classId .. " for a nested @jsonable "
+        .. "class field (producer defect)", 0)
+    end
+    if visited[instance] then return cycle() end
+    visited[instance] = true
+    local fields = cplan.fields
+    local out = {"{"}
+    local first = true
+    for i = 1, #fields do
+      local f = fields[i]
+      local fieldPath = (cpath == "") and f.name or (cpath .. "." .. f.name)
+      if not instance.__p[f.name] then
+        if not f.optional then
+          fail(fieldPath, __MISSING)
+          return failure()
+        end
+      else
+        local value = instance.__f[f.name]
+        if value == __NULL then value = nil end
+        local encoded = encodeField(f.desc, value, fieldPath, visited)
+        if encoded == nil then return nil end
+        if not first then out[#out + 1] = "," end
+        first = false
+        out[#out + 1] = __QT .. __jsonEscapeString(f.name) .. __QT .. ":"
+        out[#out + 1] = encoded
+      end
+    end
+    visited[instance] = nil
+    out[#out + 1] = "}"
     return table.concat(out)
   end
   encodeField = function(desc, v, path, visited)
@@ -7168,10 +7285,9 @@ local function __jsonToClassOp(planName, root)
       return encodeTableValue(v, path, visited)
     elseif kind == "array" then
       if type(v) ~= "table" or v.__a ~= true then return fail(path, v) end
-      return encodeArrayValue(v, path, visited)
+      return encodeArrayValue(v, path, visited, inner)
     elseif kind == "class" then
-      error("a nested @jsonable class field (" .. desc .. ") has no shared JSON walk "
-        .. "in this slice (producer defect, the nested shape is not emitted)", 0)
+      return encodeClass(v, inner, path, visited)
     end
     return fail(path, v)
   end
@@ -7180,39 +7296,11 @@ local function __jsonToClassOp(planName, root)
     fail("", root)
     return failure()
   end
-  local visited = {[root] = true}
-  local fields = plan.fields
-  local out = {"{"}
-  local first = true
-  for i = 1, #fields do
-    local f = fields[i]
-    if not root.__p[f.name] then
-      if not f.optional then
-        fail(f.name, __MISSING)
-        return failure()
-      end
-    else
-      local raw = root.__f[f.name]
-      -- The landed present-null read, kept verbatim: the admission checks
-      -- are landed and this binding does not rebuild them, so the __NULL
-      -- sentinel reaches the declared-descriptor check unchanged (the
-      -- retained expression is the landed operand, whose and/or fallback
-      -- yields the sentinel itself) and the typed-boundary projection
-      -- classifies it as "null". A nullable-admission correction belongs to
-      -- the follow-up slice that owns the walk's check sets.
-      local value = (raw == __NULL) and nil or raw
-      local encoded = encodeField(f.desc, value, f.name, visited)
-      if encoded == nil then
-        return failure()
-      end
-      if not first then out[#out + 1] = "," end
-      first = false
-      out[#out + 1] = __QT .. __jsonEscapeString(f.name) .. __QT .. ":"
-      out[#out + 1] = encoded
-    end
+  local encodedRoot = encodeClass(root, plan.classId, "", {})
+  if encodedRoot == nil then
+    return failure()
   end
-  out[#out + 1] = "}"
-  return true, table.concat(out), nil, nil, nil
+  return true, encodedRoot, nil, nil, nil
 end
 """;
 
