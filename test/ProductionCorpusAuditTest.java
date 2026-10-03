@@ -109,7 +109,32 @@ import java.util.stream.Stream;
  *   <li><b>The negative control.</b> A corrupted staged artifact fails
  *       the audit by name (the capture criterion is not vacuous), and a
  *       hand-built guard diagnostic is reported by the guard detector
- *       (the compile criterion is not vacuous).</li>
+ *       (the compile criterion is not vacuous). The acceptance policy's
+ *       truth table is asserted directly, so the fatality rule itself is
+ *       not vacuous.</li>
+ *   <li><b>The acceptance verdicts and the pre-precondition rule.</b> The
+ *       run computes the three acceptance verdicts — zero
+ *       {@code CONSTRUCT_UNLOWERED}, zero {@code RETAINED_ABI_DEFERRED}/
+ *       {@code SHARED_EMITTER_COVERAGE}, and byte-exact captures on the
+ *       producible set — and reports each. While the dispatched corpus
+ *       still carries a checker-valid {@code CONSTRUCT_UNLOWERED} deficit
+ *       (the sibling-owned realization work has not landed), the audit
+ *       runs in its <em>pre-precondition reporting mode</em>: every
+ *       failing leg is named by fixture and target and the run exits
+ *       zero, exactly as
+ *       {@code conformance-cutover-guards-pins-and-production-source-removal}
+ *       HR4(a) and {@code dispatched-corpus-production-acceptance} A5 and
+ *       CD5 prescribe ("before it, the corpus run reports the residual
+ *       failures per fixture and never skips"). As soon as the compile
+ *       criterion is met (zero {@code CONSTRUCT_UNLOWERED} legs), the
+ *       audit engages its <em>strict acceptance mode</em>: every
+ *       non-pin-exact capture leg fails the audit by fixture and field —
+ *       the combined-with-dependencies step. {@code RETAINED_ABI_DEFERRED}
+ *       and {@code SHARED_EMITTER_COVERAGE} legs, non-guard compile
+ *       failures, pinned-rejection mismatches, and the audit-input defects
+ *       (an unresolvable declaration wiring, a missing sidecar, a missing
+ *       host implementation) are fatal in both modes; nothing is skipped,
+ *       excluded, or fabricated in either mode.</li>
  *   <li><b>The materialization fidelity.</b> The declaration wiring is
  *       load-bearing: a probe that omits the host/FFI declaration
  *       externals reproduces the frontend E2003 gap, while the audit's
@@ -143,25 +168,71 @@ public class ProductionCorpusAuditTest {
     private static final long SUBPROCESS_TIMEOUT_SECONDS = 120;
 
     private static final AtomicInteger passed = new AtomicInteger();
-    private static final AtomicInteger failed = new AtomicInteger();
+    private static final AtomicInteger fatalCount = new AtomicInteger();
     private static final AtomicInteger compileLegs = new AtomicInteger();
     private static final AtomicInteger rejectLegs = new AtomicInteger();
     private static final AtomicInteger captureLegs = new AtomicInteger();
-    private static final List<String> failureLines =
+    private static final List<String> fatalLines =
         Collections.synchronizedList(new ArrayList<>());
+    private static final List<Leg> legs =
+        Collections.synchronizedList(new ArrayList<>());
+
+    /**
+     * One measured cell's class. The class decides whether the cell's verdict
+     * is fatal or reported: the pre-precondition rule (HR4(a), A5, CD5) keeps
+     * the sibling-owned construct and capture deficit visible but non-fatal
+     * until the compile criterion is met, after which every non-pass leg is
+     * fatal.
+     */
+    enum LegClass {
+        /** The cell reproduced its pin (or its sanctioned compile-reject pin). */
+        PASS,
+        /** A checker-valid E6005 {@code CONSTRUCT_UNLOWERED} leg. */
+        CONSTRUCT_DEFICIT,
+        /** A pinned-field mismatch, or a production drive/load/emission failure. */
+        CAPTURE_DEFICIT,
+        /** A {@code RETAINED_ABI_DEFERRED}/{@code SHARED_EMITTER_COVERAGE} leg. */
+        ARCHITECTURAL_GUARD,
+        /** A non-guard compile failure or a pinned-rejection mismatch. */
+        DEFECT
+    }
+
+    /** One measured cell: its target, its class, and its reported line. */
+    record Leg(Target target, LegClass clazz, String line) {
+    }
+
+    /** True iff a leg's class is fatal under the given acceptance mode. */
+    static boolean isFatal(LegClass clazz, boolean acceptanceMode) {
+        return switch (clazz) {
+            case PASS -> false;
+            case ARCHITECTURAL_GUARD, DEFECT -> true;
+            case CONSTRUCT_DEFICIT, CAPTURE_DEFICIT -> acceptanceMode;
+        };
+    }
 
     private static void check(boolean condition, String message) {
         if (condition) {
             passed.incrementAndGet();
         } else {
-            fail(message);
+            fatal(message);
         }
     }
 
-    private static void fail(String message) {
-        failed.incrementAndGet();
-        failureLines.add(message);
+    private static void fatal(String message) {
+        fatalCount.incrementAndGet();
+        fatalLines.add(message);
         System.err.println("FAIL: " + message);
+    }
+
+    /**
+     * A corpus-input defect (an unresolvable declaration wiring, a missing
+     * host implementation): an audit-input defect, never a construct gap, and
+     * fatal in every mode (the audit contract's fail-closed rule).
+     */
+    static final class AuditInputException extends RuntimeException {
+        AuditInputException(String message) {
+            super(message);
+        }
     }
 
     private static void checkEq(Object expected, Object actual, String message) {
@@ -439,7 +510,7 @@ public class ProductionCorpusAuditTest {
             for (String hostName : hostNames) {
                 Path declaration = HOST_FIXTURES.resolve(hostName + ".d.deal");
                 if (!Files.isRegularFile(declaration)) {
-                    throw new IllegalStateException(fixtureRel
+                    throw new AuditInputException(fixtureRel
                         + ": the host declaration " + declaration + " is missing");
                 }
                 Files.writeString(bindings.resolve(hostName + ".d.deal"),
@@ -452,13 +523,13 @@ public class ProductionCorpusAuditTest {
             for (String raw : ffiImports) {
                 CorpusFfi.Wiring wiring = CorpusFfi.wiringFor(CONFORMANCE, raw);
                 if (wiring == null) {
-                    throw new IllegalStateException(fixtureRel
+                    throw new AuditInputException(fixtureRel
                         + ": no corpus FFI wiring for " + raw);
                 }
                 Path declaration = CONFORMANCE.resolve(CorpusFfi.FFI_DIR)
                     .resolve(wiring.declarationCorpusPath());
                 if (!Files.isRegularFile(declaration)) {
-                    throw new IllegalStateException(fixtureRel
+                    throw new AuditInputException(fixtureRel
                         + ": the corpus FFI declaration " + declaration
                         + " is missing");
                 }
@@ -677,7 +748,7 @@ public class ProductionCorpusAuditTest {
         for (String hostName : project.hostNames()) {
             Path hostLua = HOST_FIXTURES.resolve(hostName + ".lua");
             if (!Files.isRegularFile(hostLua)) {
-                throw new IllegalStateException(project.modulePath()
+                throw new AuditInputException(project.modulePath()
                     + " [luajit]: the host implementation " + hostLua
                     + " is missing");
             }
@@ -804,7 +875,7 @@ public class ProductionCorpusAuditTest {
         for (String hostName : project.hostNames()) {
             Path hostFile = HOST_FIXTURES.resolve(hostName + ".java");
             if (!Files.isRegularFile(hostFile)) {
-                throw new IllegalStateException(project.modulePath()
+                throw new AuditInputException(project.modulePath()
                     + " [jvm]: the host implementation " + hostFile
                     + " is missing");
             }
@@ -1228,30 +1299,48 @@ public class ProductionCorpusAuditTest {
     // The per-cell verdicts
     // =========================================================================
 
-    /** One fixture/target cell's verdict and its reported line. */
-    record CellVerdict(boolean pass, String line) {
+    /** One fixture/target cell's verdict, its class, and its reported line. */
+    record CellVerdict(boolean pass, LegClass clazz, String line) {
+    }
+
+    /** True iff the outcome carries a RETAINED_ABI_DEFERRED/SHARED_EMITTER_COVERAGE error. */
+    static boolean architecturalGuardFired(CompileOutcome outcome) {
+        return outcome.errors().stream().anyMatch(diagnostic -> {
+            String message = diagnostic.message() == null ? ""
+                : diagnostic.message();
+            return message.contains(SemanticLowerer.RETAINED_ABI_DEFERRED)
+                || message.contains(
+                    ProductionProjectEmission.SHARED_EMITTER_COVERAGE);
+        });
     }
 
     /**
      * The compile criterion of one cell: a compile with zero guard rules; on
      * the JVM the extern-C group's pinned rejection is the sanctioned
      * outcome. The declaration-import group is measured by this same
-     * materializing drive.
+     * materializing drive. A checker-valid guard leg is classed as the
+     * sibling-owned construct deficit (reported before the precondition,
+     * fatal once the compile criterion is met); the two architectural guards,
+     * a non-guard compile failure, and a pinned-rejection mismatch are always
+     * fatal.
      */
     static CellVerdict compileVerdict(String fixtureLabel, Target target,
             CompileOutcome outcome,
             SidecarExpectations.RuntimeExpectation expectation) {
         if (outcome.guardFired()) {
-            return new CellVerdict(false, fixtureLabel + " [" + target.laneName()
-                + "] compile E6005 guard: " + outcome.firstErrorDetail());
+            LegClass clazz = architecturalGuardFired(outcome)
+                ? LegClass.ARCHITECTURAL_GUARD : LegClass.CONSTRUCT_DEFICIT;
+            return new CellVerdict(false, clazz, fixtureLabel + " ["
+                + target.laneName() + "] compile E6005 guard: "
+                + outcome.firstErrorDetail());
         }
         if (expectation instanceof SidecarExpectations.RuntimeExpectation.Rejected
                 rejected) {
             if (outcome.compiled()) {
-                return new CellVerdict(false, fixtureLabel + " ["
-                    + target.laneName() + "] the sidecar pins compile rejection "
-                    + rejected.code() + " but the production compile emitted "
-                    + "an artifact");
+                return new CellVerdict(false, LegClass.DEFECT, fixtureLabel
+                    + " [" + target.laneName() + "] the sidecar pins compile "
+                    + "rejection " + rejected.code() + " but the production "
+                    + "compile emitted an artifact");
             }
             Optional<GateMismatch> mismatch = StructuredExpectationComparator
                 .compare(target.laneName(), expectation,
@@ -1267,23 +1356,24 @@ public class ProductionCorpusAuditTest {
                                 : outcome.errors().get(0).column())
                             : OptionalInt.empty()));
             if (mismatch.isPresent()) {
-                return new CellVerdict(false, fixtureLabel + " ["
-                    + target.laneName() + "] " + mismatch.get().clazz() + ": "
-                    + mismatch.get().detail());
+                return new CellVerdict(false, LegClass.DEFECT, fixtureLabel
+                    + " [" + target.laneName() + "] " + mismatch.get().clazz()
+                    + ": " + mismatch.get().detail());
             }
-            return new CellVerdict(true, fixtureLabel + " [" + target.laneName()
-                + "] PASS compile-reject " + rejected.code());
+            return new CellVerdict(true, LegClass.PASS, fixtureLabel + " ["
+                + target.laneName() + "] PASS compile-reject "
+                + rejected.code());
         }
         if (!outcome.compiled()) {
             String rule = outcome.errors().stream().map(CompilerDiagnostic::code)
                 .filter(code -> "E6005".equals(code)).findFirst().orElse(null);
-            return new CellVerdict(false, fixtureLabel + " [" + target.laneName()
-                + "] compile FAILED"
+            return new CellVerdict(false, LegClass.DEFECT, fixtureLabel + " ["
+                + target.laneName() + "] compile FAILED"
                 + (rule == null ? "" : " E6005")
                 + ": " + outcome.firstErrorDetail());
         }
-        return new CellVerdict(true, fixtureLabel + " [" + target.laneName()
-            + "] PASS compile");
+        return new CellVerdict(true, LegClass.PASS, fixtureLabel + " ["
+            + target.laneName() + "] PASS compile");
     }
 
     // =========================================================================
@@ -1322,7 +1412,7 @@ public class ProductionCorpusAuditTest {
             if (failure.isEmpty()) {
                 validated++;
             } else {
-                fail(fixture.corpusPath() + ": the sidecar does not validate: "
+                fatal(fixture.corpusPath() + ": the sidecar does not validate: "
                     + failure.get().message());
             }
             SidecarExpectations.StructuredExpectationSidecar sidecar =
@@ -1350,7 +1440,7 @@ public class ProductionCorpusAuditTest {
         try {
             exports = exportsOf(fixture.source(), fixture.corpusPath());
         } catch (RuntimeException e) {
-            fail(label + ": the entry module does not parse for the export "
+            fatal(label + ": the entry module does not parse for the export "
                 + "drive: " + e);
             return;
         }
@@ -1375,14 +1465,10 @@ public class ProductionCorpusAuditTest {
                 expectationOf(fixture, target);
             CellVerdict compileLeg = compileVerdict(label, target, outcome,
                 expectation);
-            synchronized (report) {
-                report.add(compileLeg.line());
-            }
+            record(compileLeg, target, report);
             if (!compileLeg.pass()) {
-                fail(compileLeg.line());
                 return;
             }
-            passed.incrementAndGet();
             if (expectation
                     instanceof SidecarExpectations.RuntimeExpectation.Rejected) {
                 // The sanctioned extern-C rejection leg: the compile criterion
@@ -1394,35 +1480,50 @@ public class ProductionCorpusAuditTest {
             Execution execution;
             try {
                 execution = execute(project, exports, target);
+            } catch (AuditInputException e) {
+                // A missing host implementation is an audit-input defect,
+                // never a construct gap; it is fatal in every mode.
+                fatal(label + " [" + target.laneName() + "] audit input: " + e);
+                return;
             } catch (Exception e) {
-                fail(label + " [" + target.laneName() + "]: the drive failed: "
-                    + e);
+                record(new CellVerdict(false, LegClass.CAPTURE_DEFICIT, label
+                    + " [" + target.laneName() + "]: the drive failed: " + e),
+                    target, report);
                 return;
             }
             captureLegs.incrementAndGet();
             Capture normalized = normalize(project, execution.capture());
             Optional<String> mismatch = compareCell(label, target, normalized,
                 execution, expectation);
-            String line = mismatch.orElse(label + " [" + target.laneName()
-                + "] PASS capture");
-            synchronized (report) {
-                report.add(line);
+            if (mismatch.isEmpty()) {
+                record(new CellVerdict(true, LegClass.PASS, label + " ["
+                    + target.laneName() + "] PASS capture"), target, report);
+                return;
             }
-            if (mismatch.isPresent()) {
-                if ((expectation
-                        instanceof SidecarExpectations.RuntimeExpectation.Executed
-                            executed) && executed.isRuntimeError()) {
-                    fail(mismatch.get() + " — " + captureDetail(normalized,
-                        executed.error()));
-                } else {
-                    fail(mismatch.get());
-                }
-            } else {
-                passed.incrementAndGet();
+            String detail = mismatch.get();
+            if ((expectation
+                    instanceof SidecarExpectations.RuntimeExpectation.Executed
+                        executed) && executed.isRuntimeError()) {
+                detail = detail + " - " + captureDetail(normalized,
+                    executed.error());
             }
+            record(new CellVerdict(false, LegClass.CAPTURE_DEFICIT, detail),
+                target, report);
         } finally {
             deleteRecursively(project.root());
         }
+    }
+
+    /** Records one cell: the ordered report line, the pass tally, and the leg. */
+    private static void record(CellVerdict verdict, Target target,
+            List<String> report) {
+        synchronized (report) {
+            report.add(verdict.line());
+        }
+        if (verdict.pass()) {
+            passed.incrementAndGet();
+        }
+        legs.add(new Leg(target, verdict.clazz(), verdict.line()));
     }
 
     // =========================================================================
@@ -1503,6 +1604,28 @@ public class ProductionCorpusAuditTest {
             check(isGuardDiagnostic(guard),
                 "the guard detector reports a hand-built CONSTRUCT_UNLOWERED "
                     + "E6005");
+
+            // The acceptance policy's truth table is not vacuous: the
+            // pre-precondition rule reports the construct and capture deficit
+            // while the compile criterion is unmet, and the strict acceptance
+            // mode makes every non-pass leg fatal once it is met.
+            check(!isFatal(LegClass.CONSTRUCT_DEFICIT, false)
+                    && !isFatal(LegClass.CAPTURE_DEFICIT, false),
+                "the pre-precondition reporting rule makes the construct and "
+                    + "capture deficit non-fatal while the compile criterion "
+                    + "is unmet");
+            check(isFatal(LegClass.CONSTRUCT_DEFICIT, true)
+                    && isFatal(LegClass.CAPTURE_DEFICIT, true),
+                "the strict acceptance mode makes every non-pass leg fatal");
+            check(isFatal(LegClass.ARCHITECTURAL_GUARD, false)
+                    && isFatal(LegClass.ARCHITECTURAL_GUARD, true)
+                    && isFatal(LegClass.DEFECT, false)
+                    && isFatal(LegClass.DEFECT, true),
+                "architectural-guard legs and non-guard defects are fatal in "
+                    + "both modes");
+            check(!isFatal(LegClass.PASS, false)
+                    && !isFatal(LegClass.PASS, true),
+                "a pin-exact leg is never fatal");
         } finally {
             deleteRecursively(project.root());
         }
@@ -1675,7 +1798,10 @@ public class ProductionCorpusAuditTest {
                     try {
                         testFixture(fixture, report, declarationImports);
                     } catch (Exception e) {
-                        fail(fixture.corpusPath() + ": the drive failed: " + e);
+                        // An audit-input defect (an unresolvable declaration
+                        // wiring, a missing sidecar, a missing host
+                        // implementation): fatal, never a construct gap.
+                        fatal(fixture.corpusPath() + ": audit input: " + e);
                     }
                 }));
             }
@@ -1708,11 +1834,76 @@ public class ProductionCorpusAuditTest {
             + " (the pinned extern-C E6006)");
         System.out.println("capture legs: " + captureLegs.get()
             + " driven on the producible set");
-        System.out.println("passed: " + passed.get() + ", failed: " + failed.get());
-        if (failed.get() > 0) {
+        for (Target target : Target.values()) {
+            long targetPass = legs.stream().filter(leg ->
+                leg.target() == target && leg.clazz() == LegClass.PASS).count();
+            long targetFail = legs.stream().filter(leg ->
+                leg.target() == target && leg.clazz() != LegClass.PASS).count();
+            System.out.println("  " + target.laneName() + ": " + targetPass
+                + " pass / " + targetFail + " fail");
+        }
+
+        // The acceptance verdicts and the pre-precondition rule (HR4(a), A5,
+        // CD5): while the dispatched set still carries a checker-valid
+        // CONSTRUCT_UNLOWERED deficit the corpus run reports the residual
+        // failures per fixture and never skips; once the compile criterion is
+        // met the strict acceptance gate engages and every non-pin-exact
+        // capture leg is fatal.
+        boolean acceptanceMode = legs.stream().noneMatch(leg ->
+            leg.clazz() == LegClass.CONSTRUCT_DEFICIT);
+        long constructDeficit = legs.stream().filter(leg ->
+            leg.clazz() == LegClass.CONSTRUCT_DEFICIT).count();
+        long architecturalDeficit = legs.stream().filter(leg ->
+            leg.clazz() == LegClass.ARCHITECTURAL_GUARD).count();
+        long captureDeficit = legs.stream().filter(leg ->
+            leg.clazz() == LegClass.CAPTURE_DEFICIT).count();
+        long defects = legs.stream().filter(leg ->
+            leg.clazz() == LegClass.DEFECT).count();
+        List<String> deficits = new ArrayList<>();
+        for (Leg leg : legs) {
+            if (leg.clazz() == LegClass.PASS) {
+                continue;
+            }
+            if (isFatal(leg.clazz(), acceptanceMode)) {
+                fatal(leg.line());
+            } else {
+                deficits.add(leg.line());
+            }
+        }
+        System.out.println();
+        System.out.println("-- the acceptance verdicts --");
+        System.out.println("zero CONSTRUCT_UNLOWERED over the dispatched set: "
+            + (constructDeficit == 0 ? "PASS"
+                : "FAIL (" + constructDeficit + " legs)"));
+        System.out.println("zero RETAINED_ABI_DEFERRED / SHARED_EMITTER_COVERAGE: "
+            + (architecturalDeficit == 0 ? "PASS"
+                : "FAIL (" + architecturalDeficit + " legs)"));
+        System.out.println("byte-exact captures on the producible set: "
+            + (captureDeficit == 0 ? "PASS"
+                : "FAIL (" + captureDeficit + " legs)"));
+        System.out.println("non-guard compile failures and pinned-rejection "
+            + "mismatches: " + (defects == 0 ? "none"
+                : defects + " legs"));
+        System.out.println("strict acceptance mode: " + (acceptanceMode
+            ? "ENGAGED (every non-pin-exact capture leg is fatal)"
+            : "DISENGAGED (the pre-precondition reporting rule: the "
+                + "CONSTRUCT_UNLOWERED deficit is reported per fixture, "
+                + "never skipped)"));
+        if (!deficits.isEmpty()) {
             System.out.println();
-            System.out.println("Audit failures:");
-            for (String line : failureLines) {
+            System.out.println("Acceptance deficit (reported, non-fatal under "
+                + "the pre-precondition rule):");
+            for (String line : deficits) {
+                System.out.println("  " + line);
+            }
+        }
+        System.out.println();
+        System.out.println("passed: " + passed.get() + ", fatal: "
+            + fatalCount.get() + ", reported deficit: " + deficits.size());
+        if (fatalCount.get() > 0) {
+            System.out.println();
+            System.out.println("Fatal audit failures:");
+            for (String line : fatalLines) {
                 System.out.println("  " + line);
             }
             System.exit(1);
