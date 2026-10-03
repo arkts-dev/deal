@@ -1,0 +1,21 @@
+// @spec: Error handling — Error values
+// @description: A thrown Error caught and returned through an Error-typed return keeps its fields (v1.2 defect snippet 72)
+// @expected: runtime-ok
+// @features: error-handling, return, v1.2
+
+function produce(): Error {
+  try { throw { code: "ROUND", message: "roundtrip" }; }
+  catch (e) { return e; }
+}
+
+export function test_error_return_roundtrip(): null {
+  let e: Error = produce();
+  if (e.code !== "ROUND" || e.message !== "roundtrip") {
+    throw { code: "TEST_FAIL", message: "Error roundtrip lost fields" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

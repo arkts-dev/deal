@@ -1,0 +1,18 @@
+// @spec: Bytes — Recursive array/nullable closure
+// @description: An async closure captures a bytes buffer, writes through it, and completes with the observed byte (v1.2 defect snippet 69)
+// @expected: runtime-ok
+// @features: bytes, async, closures, capture, v1.2
+
+export async function check(): int {
+  let b: bytes = bytes(1);
+  let set: async (n: int) => null = async function(n: int): null {
+    b[0] = n;
+    return null;
+  };
+  await set(255);
+  return b[0];
+}
+
+export function main(): null {
+  return null;
+}

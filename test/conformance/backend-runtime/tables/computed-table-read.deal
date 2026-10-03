@@ -1,0 +1,19 @@
+// @spec: Tables — Reading table fields
+// @description: A computed string-key table read (t["x"], including a supplementary-plane key) takes the contextual target type and executes through the same read shape as a member read (v1.2 defect snippets 01/02)
+// @expected: runtime-ok
+// @features: tables, computed-key, containers, unicode, v1.2
+
+export function test_computed_table_read(): null {
+  let t: table = { x: 7 };
+  let n: int = t["x"];
+  if (n !== 7) { throw { code: "TEST_FAIL", message: "computed table read" }; }
+  let u: table = {};
+  u["😀"] = 7;
+  let m: int = u["😀"];
+  if (m !== 7) { throw { code: "TEST_FAIL", message: "Unicode table key" }; }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

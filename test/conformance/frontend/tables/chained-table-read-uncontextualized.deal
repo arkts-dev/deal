@@ -1,0 +1,10 @@
+// @spec: Tables — Reading table fields
+// @description: A chained table read with no contextual target type is E3003 (v1.2 defect snippet 56, a retained negative regression)
+// @expected: compile-error E3003
+// @features: tables, dynamic-read, chaining
+
+export function main(): null {
+  let t: table = { child: { x: 7 } };
+  let n: int = t.child.x;
+  return null;
+}

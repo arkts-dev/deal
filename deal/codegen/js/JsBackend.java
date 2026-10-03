@@ -1592,6 +1592,24 @@ public final class JsBackend {
     private String jsonFieldsArray(List<ClassField> fields,
                                    CompilerClassDefaultPlan plan,
                                    String planBinding) {
+        return jsonFieldsArray(fields, plan, planBinding, false);
+    }
+
+    /**
+     * The field-descriptor array with the nested reference option: a
+     * nested array emitted inside another class's descriptor array must
+     * not read the nested class's plan binding at load time (the
+     * declaration order of two classes needs not match their reference
+     * order), so its per-entry evaluator is emitted as a lazy
+     * {@code () => <C>$plan[i].evaluator()} thunk that resolves the
+     * plan at decode time (ISSUE-0717, defect snippet 44: a nested
+     * class's omitted required-present defaults run during the parent's
+     * decode exactly like a top-level decode's).
+     */
+    private String jsonFieldsArray(List<ClassField> fields,
+                                   CompilerClassDefaultPlan plan,
+                                   String planBinding,
+                                   boolean lazyEvaluators) {
         StringBuilder sb = new StringBuilder("[");
         for (int i = 0; i < fields.size(); i++) {
             if (i > 0) sb.append(", ");
@@ -1599,7 +1617,46 @@ public final class JsBackend {
                 ? null : plan.orderedFields().get(i);
             sb.append(jsonFieldEntry(fields.get(i), planEntry,
                 planBinding, i, plan == null ? null
-                    : identityText(plan.classIdentity())));
+                    : identityText(plan.classIdentity()), lazyEvaluators));
+        }
+        return sb.append("]").toString();
+    }
+
+    /**
+     * The same-module nested field-descriptor array in the plan-less
+     * per-module compilation (ISSUE-0717, defect snippet 44): every
+     * required-present field carries a lazy
+     * {@code () => <C>$plan[i].evaluator()} thunk resolved at decode
+     * time against the class's synthesized plan (the plan index equals
+     * the declaration field index in both the published and synthesized
+     * plan lists), so a nested class's omitted required-present defaults
+     * run during the parent's decode on every entry point.
+     */
+    private String jsonFieldsArrayWithLazyEvaluators(List<ClassField> fields,
+                                                     String planBinding) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < fields.size(); i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            ClassField cf = fields.get(i);
+            TypeNode base = cf.type();
+            if (base instanceof NullableType nt) {
+                base = nt.innerType();
+            }
+            String jtype = jsonJType(base);
+            sb.append("{ name: ").append(jsStringLiteral(cf.name()))
+                .append(", jtype: ").append(jsStringLiteral(jtype));
+            appendJsonSubShape(sb, jtype, base);
+            sb.append(", optional: ").append(cf.optional())
+                .append(", nullable: ").append(cf.nullable())
+                .append(", hasDefault: ").append(cf.defaultExpr().isPresent());
+            if (!cf.optional()) {
+                sb.append(", evaluator: /* nested default evaluator */ () => ")
+                    .append(planBinding).append("[").append(i)
+                    .append("].evaluator()");
+            }
+            sb.append(" }");
         }
         return sb.append("]").toString();
     }
@@ -1608,6 +1665,15 @@ public final class JsBackend {
                                   CompilerClassDefaultEntry planEntry,
                                   String planBinding, int planIndex,
                                   String planIdentityText) {
+        return jsonFieldEntry(cf, planEntry, planBinding, planIndex,
+            planIdentityText, false);
+    }
+
+    private String jsonFieldEntry(ClassField cf,
+                                  CompilerClassDefaultEntry planEntry,
+                                  String planBinding, int planIndex,
+                                  String planIdentityText,
+                                  boolean lazyEvaluator) {
         TypeNode base = cf.type();
         if (base instanceof NullableType nt) {
             base = nt.innerType();
@@ -1624,9 +1690,15 @@ public final class JsBackend {
             String label = RuntimeDefaultPlanLowering.labelOf(
                 planIdentityText, cf.name(),
                 planEntry.defaultExpression().semanticDigest());
-            sb.append(", evaluator: /* default evaluator ")
-                .append(label).append(" */ ").append(planBinding)
-                .append("[").append(planIndex).append("].evaluator");
+            if (lazyEvaluator) {
+                sb.append(", evaluator: /* default evaluator ")
+                    .append(label).append(" */ () => ").append(planBinding)
+                    .append("[").append(planIndex).append("].evaluator()");
+            } else {
+                sb.append(", evaluator: /* default evaluator ")
+                    .append(label).append(" */ ").append(planBinding)
+                    .append("[").append(planIndex).append("].evaluator");
+            }
         }
         return sb.append(" }").toString();
     }
@@ -1729,7 +1801,25 @@ public final class JsBackend {
         if (isIntrinsicError(cls) || isDeclaredInThisModule(cls)) {
             Symbol sym = symbols.resolve(cls.name());
             if (sym instanceof Symbol.ClassSymbol cs) {
-                return jsonFieldsArray(cs.fields(), null, null);
+                // A same-module class's nested descriptor array carries
+                // the class's own published-plan evaluators lazily
+                // (ISSUE-0717, defect snippet 44) so an omitted required
+                // nested default runs; a class without a published plan
+                // keeps the plan-less inline array.
+                CompilerClassDefaultPlan nestedPlan =
+                    publishedPlanForName(cls.name());
+                if (nestedPlan != null) {
+                    return jsonFieldsArray(cs.fields(), nestedPlan,
+                        cls.name() + "$plan", true);
+                }
+                // The plan-less per-module path (the standalone entry
+                // points and the conformance lane's per-module
+                // compilation): the class's synthesized <C>$plan still
+                // carries one labelled evaluator per required-present
+                // field, so the nested array keeps its lazy evaluator
+                // references against that plan.
+                return jsonFieldsArrayWithLazyEvaluators(cs.fields(),
+                    cls.name() + "$plan");
             }
             return "[]";
         }
@@ -1884,6 +1974,25 @@ public final class JsBackend {
                             == cd.span().startLine()
                         && declaration.span().startColumn()
                             == cd.span().startColumn())) {
+                return planned.plan();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The published plan of the named class declaration when this module
+     * declares it (the nested field-descriptor reference's evaluator
+     * lookup, ISSUE-0717 defect snippet 44); {@code null} when no plan
+     * was published for that name.
+     */
+    private CompilerClassDefaultPlan publishedPlanForName(String className) {
+        List<PlannedDefaultClass> plans = plansByModulePath.get(modulePath);
+        if (plans == null) {
+            return null;
+        }
+        for (PlannedDefaultClass planned : plans) {
+            if (planned.declaration().name().equals(className)) {
                 return planned.plan();
             }
         }

@@ -619,6 +619,46 @@ public class LuaProductionProjectEmissionTest {
             deleteRecursively(quietWorkspace);
         }
 
+        // (b2) The chunk-local growth probe (ISSUE-0717, defect snippet
+        //      31): a 201-export module must load and run under real
+        //      luajit — the emitted function-factory table keeps the
+        //      chunk under LuaJIT's 200-local limit.
+        StringBuilder growthSource = new StringBuilder();
+        for (int i = 0; i < 201; i++) {
+            growthSource.append("export function f")
+                .append(String.format("%03d", i))
+                .append("(): null { return null; }\n");
+        }
+        growthSource.append("export function main(): null { f000(); f100();"
+            + " f200(); return null; }\n");
+        Fixture growth = compileProject(growthSource.toString());
+        Path growthWorkspace = Files.createTempDirectory("lua-production-project-growth");
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(growth);
+            if (result.project() == null) {
+                fail("the chunk-local growth fixture lowers: " + result.diagnostics());
+                return;
+            }
+            Path artifact = growthWorkspace.resolve("project.lua");
+            Files.writeString(artifact, LuaSemanticEmitter.emitProductionProject(
+                result.project(), result.tables(), result.registries(),
+                growth.surface()),
+                StandardCharsets.UTF_8);
+            deployRuntime(growthWorkspace);
+            ProcessOutcome run = runProcess(List.of("luajit",
+                artifact.toAbsolutePath().toString()), growthWorkspace);
+            checkEq(0, run.exitCode(),
+                "the chunk-local growth fixture loads and exits 0 under luajit: "
+                    + "stdout=" + escaped(run.stdout()) + " stderr="
+                    + escaped(run.stderr()));
+            checkEq("", run.stderr(),
+                "the chunk-local growth fixture publishes no trace protocol "
+                    + "on stderr");
+        } finally {
+            deleteRecursively(growthWorkspace);
+            deleteRecursively(growth.root());
+        }
+
         // (c) The conversion-overflow fixture: exit 1, DEAL_ERROR_CODE: E8004
         //     on stdout (never a trace terminal).
         Fixture overflow = compileProject(OVERFLOW_APP_SOURCE);

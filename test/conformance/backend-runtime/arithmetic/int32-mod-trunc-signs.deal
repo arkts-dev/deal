@@ -1,0 +1,16 @@
+// @spec: Lexical elements — Numeric overflow, NaN, and Infinity
+// @description: int32 remainder truncates toward zero for both operand signs: -5 % 2 = -1 and 5 % -2 = 1 (v1.2 defect snippets 32/33)
+// @expected: runtime-ok
+// @features: runtime, int, modulo, boundary, v1.2
+
+export function test_int32_mod_trunc_signs(): null {
+  let a: int = -5 % 2;
+  if (a !== -1) { throw { code: "TEST_FAIL", message: "negative dividend remainder" }; }
+  let b: int = 5 % -2;
+  if (b !== 1) { throw { code: "TEST_FAIL", message: "negative divisor remainder" }; }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

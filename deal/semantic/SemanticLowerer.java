@@ -11256,6 +11256,9 @@ public final class SemanticLowerer {
             if (objectType instanceof Type.Bytes) {
                 return lowerBytesIndexRead(index, slot);
             }
+            if (objectType instanceof Type.Table) {
+                return lowerTableIndexRead(index, slot);
+            }
             if (!(objectType instanceof Type.Array)) {
                 throw new ConstructUnlowered("index read on " + typeName(objectType)
                     + " (the carrier slice lowers array index reads; table index reads "
@@ -11469,13 +11472,51 @@ public final class SemanticLowerer {
         }
 
         private ValueId lowerMemberRead(MemberAccessExpr access, ValueId slot) {
-            Type contextualType = checkedType(access);
+            return lowerTableRead(lowerExpression(access.object()), access.field(),
+                access.span(), checkedType(access), slot, access);
+        }
+
+        /**
+         * The computed table read ({@code t["key"]}) — the shared
+         * contextual-read form over the same {@code MEMBER_READ} shape
+         * the static member read uses (a table's string keys are the
+         * same keys in both spellings; the checker's context algorithm
+         * admits both forms identically). The literal string key is
+         * carried as the read's key (an interpreter-invisible
+         * difference from {@code t.key}); no call-argument deferral
+         * applies (that seam is the static member read's).
+         */
+        private ValueId lowerTableIndexRead(IndexExpr index, ValueId slot) {
+            if (!(index.index() instanceof LiteralExpr literal)
+                    || !(literal.value()
+                        instanceof LiteralValue.StringLiteral stringLiteral)) {
+                throw new ConstructUnlowered("table index read with a non-literal key "
+                    + "(the computed table read carries a literal string key; a "
+                    + "dynamic table key is not admitted by this arm)");
+            }
+            return lowerTableRead(lowerExpression(index.array()), stringLiteral.value(),
+                index.span(), checkedType(index), slot, null);
+        }
+
+        /**
+         * The shared {@code MEMBER_READ} emission of a table read: the
+         * static member access ({@code t.key}) and the computed index
+         * read ({@code t["key"]}) converge here.
+         *
+         * @param callArgumentAccess the static member-access node when
+         *                           the read sits directly on a declared
+         *                           callee's argument (the parameter
+         *                           cell owns the kind check), or
+         *                           {@code null} otherwise
+         */
+        private ValueId lowerTableRead(ValueId receiver, String key, Span readSpan,
+                                       Type contextualType, ValueId slot,
+                                       MemberAccessExpr callArgumentAccess) {
             RuntimeDescriptor resultType =
                 ContainerPayloadDescriptors.resultDescriptorOf(contextualType);
-            ValueId receiver = lowerExpression(access.object());
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
-            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(access.span()),
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(readSpan),
                 SourceOriginKind.USER, anchor, currentParent());
             FailurePolicyId childPolicy = resultType instanceof RuntimeDescriptor.Func
                 ? FailurePolicyId.FUNCTION_SIGNATURE : FailurePolicyId.TYPE_DESCRIPTOR;
@@ -11493,7 +11534,7 @@ public final class SemanticLowerer {
                     ContainerPayloadDescriptors.resultDescriptorOf(nullable.inner());
                 ValueId readResult = ids.nextValueId(module, nextOrdinal++, 0);
                 emit(buildOp(opId, SemanticOpKind.MEMBER_READ,
-                    new KindPayload.MemberReadPayload(receiver, access.field()),
+                    new KindPayload.MemberReadPayload(receiver, key),
                     readResult, InternalResultType.INTERNAL_MISSING,
                     FailurePolicyId.NO_DEAL_FAILURE, origin));
                 ValueId result = slot != null ? slot
@@ -11501,7 +11542,7 @@ public final class SemanticLowerer {
                 AnchorId optionalAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
                 OpId optionalOpId = ids.nextOpId(module, nextOrdinal++, 0);
                 SourceOrigin optionalOrigin = new SourceOrigin(sourceId,
-                    toSourceSpan(access.span()), SourceOriginKind.USER, optionalAnchor,
+                    toSourceSpan(readSpan), SourceOriginKind.USER, optionalAnchor,
                     currentParent());
                 SemanticOp optionalRead = buildOp(optionalOpId,
                     SemanticOpKind.OPTIONAL_READ,
@@ -11514,7 +11555,7 @@ public final class SemanticLowerer {
                         resultType, result,
                         new BoundaryRealization.RuntimeValidation(
                             CANONICAL_RUNTIME_VALIDATION_ID)),
-                    access.span(), childPolicy, SourceOriginKind.SYNTHETIC, optionalOpId);
+                    readSpan, childPolicy, SourceOriginKind.SYNTHETIC, optionalOpId);
                 if (creationRuleAnalysis && resultType instanceof RuntimeDescriptor.Func) {
                     recordBoundaryClassification(BoundaryKind.CONTEXTUAL_TABLE_READ,
                         contextualType, contextualType);
@@ -11524,9 +11565,10 @@ public final class SemanticLowerer {
             ValueId readResult = slot != null ? slot
                 : ids.nextValueId(module, nextOrdinal++, 0);
             emit(buildOp(opId, SemanticOpKind.MEMBER_READ,
-                new KindPayload.MemberReadPayload(receiver, access.field()),
+                new KindPayload.MemberReadPayload(receiver, key),
                 readResult, resultType, FailurePolicyId.NO_DEAL_FAILURE, origin));
-            if (callArgumentReads.contains(access)
+            if (callArgumentAccess != null
+                    && callArgumentReads.contains(callArgumentAccess)
                     && consumingCellOwnsKindCheck(resultType)) {
                 // The declared callee's parameter cell performs the check at
                 // the declaration-owned annotation origin (the unchanged
@@ -11539,7 +11581,7 @@ public final class SemanticLowerer {
                     resultType, readResult,
                     new BoundaryRealization.RuntimeValidation(
                         CANONICAL_RUNTIME_VALIDATION_ID)),
-                access.span(), childPolicy, SourceOriginKind.SYNTHETIC, opId);
+                readSpan, childPolicy, SourceOriginKind.SYNTHETIC, opId);
             if (creationRuleAnalysis && resultType instanceof RuntimeDescriptor.Func) {
                 // A function-typed contextual table read: a typed
                 // boundary position never adapts (B6) — the read's

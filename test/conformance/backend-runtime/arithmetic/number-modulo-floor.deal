@@ -1,0 +1,14 @@
+// @spec: Lexical elements — Operators
+// @description: number remainder keeps the floor-style result -5.0 % 2.0 = 1.0 (v1.2 defect snippet 53 — no alternative behavior is prescribed)
+// @expected: runtime-ok
+// @features: runtime, number, modulo, v1.2
+
+export function test_number_modulo_floor(): null {
+  let n: number = -5.0 % 2.0;
+  if (n !== 1.0) { throw { code: "FLOOR_MOD_CHANGED", message: "number modulo" }; }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

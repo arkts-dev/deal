@@ -1,0 +1,44 @@
+// @spec: Runtime execution model — Lua backend ABI — function upvalue lowering
+// @description: A module with 30 chunk-level functions called from one body loads and executes within Luajit's 60-upvalue limit (v1.2 defect snippet 71)
+// @expected: runtime-ok
+// @features: lua-abi, upvalues, modules, v1.2
+
+function f00(): null { return null; }
+function f01(): null { return null; }
+function f02(): null { return null; }
+function f03(): null { return null; }
+function f04(): null { return null; }
+function f05(): null { return null; }
+function f06(): null { return null; }
+function f07(): null { return null; }
+function f08(): null { return null; }
+function f09(): null { return null; }
+function f10(): null { return null; }
+function f11(): null { return null; }
+function f12(): null { return null; }
+function f13(): null { return null; }
+function f14(): null { return null; }
+function f15(): null { return null; }
+function f16(): null { return null; }
+function f17(): null { return null; }
+function f18(): null { return null; }
+function f19(): null { return null; }
+function f20(): null { return null; }
+function f21(): null { return null; }
+function f22(): null { return null; }
+function f23(): null { return null; }
+function f24(): null { return null; }
+function f25(): null { return null; }
+function f26(): null { return null; }
+function f27(): null { return null; }
+function f28(): null { return null; }
+function f29(): null { return null; }
+
+export function test_function_upvalue_growth(): null {
+  f00(); f01(); f02(); f03(); f04(); f05(); f06(); f07(); f08(); f09();
+  f10(); f11(); f12(); f13(); f14(); f15(); f16(); f17(); f18(); f19();
+  f20(); f21(); f22(); f23(); f24(); f25(); f26(); f27(); f28(); f29();
+  return null;
+}
+
+export function main(): null { return null; }
