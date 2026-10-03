@@ -1214,8 +1214,9 @@ public class JsonableHelperProductionDriveTest {
                 diagnostics);
             check(!compiled, "a helper reference on a non-@jsonable class fails closed: "
                 + diagnostics);
-            check(!diagnostics.isEmpty(), "the missing-helper reference reports a "
-                + "diagnostic");
+            check(diagnostics.stream().anyMatch(d -> d.startsWith("E2004 ")),
+                "the missing-helper reference fails closed with the checker's "
+                    + "missing-export rule (E2004): " + diagnostics);
             check(!Files.exists(artifactOf(project, Target.LUAJIT)),
                 "nothing stages for the missing-helper reference");
         } finally {
