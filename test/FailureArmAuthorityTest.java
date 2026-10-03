@@ -6,6 +6,7 @@ import deal.semantic.ir.ActualKind;
 import deal.semantic.ir.BoundaryContext;
 import deal.semantic.ir.BoundaryExecutor;
 import deal.semantic.ir.BoundaryFailure;
+import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.BoundaryOutcome;
 import deal.semantic.ir.BoundaryValueView;
 import deal.semantic.ir.ClassOpsExecutor;
@@ -17,6 +18,7 @@ import deal.semantic.ir.FailurePolicyRow;
 import deal.semantic.ir.FailureProjections;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.RuntimeDescriptor;
+import deal.semantic.ir.ScalarValue;
 import deal.semantic.ir.SemanticArray;
 import deal.semantic.ir.SemanticTable;
 
@@ -99,9 +101,11 @@ public class FailureArmAuthorityTest {
         testEmittedParameterContract();
         testNegativeSingleSourceControl();
         testWalkArmThreeConsumerDrive();
+        testWalkArmOracleDispatchLeg();
         testLandedPresentNullRead();
         testWalkOracleNumericPositions();
         testMovedElementCell();
+        testRuntimeCarrierProjection();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -778,8 +782,27 @@ public class FailureArmAuthorityTest {
     private static List<String> runProbe(String chunk, String modulePath, String body,
                                          String probeName, int minRows)
             throws Exception {
+        return runProbe(chunk, modulePath, body, probeName, minRows, false);
+    }
+
+    /**
+     * The probe runner with an option to stage the deployed runtime beside
+     * the artifact: a probe that drives a runtime-produced carrier (the
+     * async handle, the runtime class representation) loads
+     * {@code deal/runtime.lua} through {@code require("deal.runtime")},
+     * exactly like the emitted artifacts of a chunk that binds the host or
+     * bytes surface.
+     */
+    private static List<String> runProbe(String chunk, String modulePath, String body,
+                                         String probeName, int minRows, boolean bindRuntime)
+            throws Exception {
         Path workspace = Files.createTempDirectory("failure-arm-" + probeName);
         try {
+            if (bindRuntime) {
+                Path runtimeTarget = workspace.resolve("deal").resolve("runtime.lua");
+                Files.createDirectories(runtimeTarget.getParent());
+                Files.copy(Path.of("deal", "runtime.lua"), runtimeTarget);
+            }
             Path artifact = workspace.resolve(modulePath + ".lua");
             Files.writeString(artifact, chunk, StandardCharsets.UTF_8);
             Path probe = workspace.resolve(probeName + ".lua");
@@ -2298,13 +2321,21 @@ public class FailureArmAuthorityTest {
 
     /** The JSON_TO_CLASS op of the walk drive (the generated body's op shape). */
     private static deal.semantic.ir.SemanticOp walkJsonOp() {
-        deal.semantic.ir.ModuleId module = new deal.semantic.ir.ModuleId("arm-walk");
+        return walkJsonOp(new deal.semantic.ir.OpId(
+                new deal.semantic.ir.ModuleId("arm-walk"), 3),
+            new deal.semantic.ir.ValueId(1), new deal.semantic.ir.ValueId(4));
+    }
+
+    /** The same op shape over one produced class-value operand and its own ids. */
+    private static deal.semantic.ir.SemanticOp walkJsonOp(
+            deal.semantic.ir.OpId opId, deal.semantic.ir.ValueId classValue,
+            deal.semantic.ir.ValueId result) {
+        deal.semantic.ir.ModuleId module = opId.module();
         deal.semantic.ir.SourceSpan span = new deal.semantic.ir.SourceSpan(
             "arm-walk.deal", 2, 8, 2, 18);
         deal.semantic.ir.SourceOrigin origin = new deal.semantic.ir.SourceOrigin(
             "arm-walk.deal", span, deal.semantic.ir.SourceOriginKind.SYNTHETIC,
             new deal.semantic.ir.AnchorId(0), null);
-        deal.semantic.ir.ValueId classValue = new deal.semantic.ir.ValueId(1);
         KindPayload.JsonToClassPayload payload =
             new KindPayload.JsonToClassPayload(classValue, walkLayout());
         deal.semantic.ir.OpResultType resultType = RuntimeDescriptor.String.INSTANCE;
@@ -2320,9 +2351,9 @@ public class FailureArmAuthorityTest {
             List.of(new RuntimeDescriptor.Class(WALK_ID)), null, payload,
             FailurePolicyId.JSON_TO_ERROR, List.of(),
             deal.semantic.ir.ContractSnapshotCanonicalizer.digest(contract));
-        return new deal.semantic.ir.SemanticOp(new deal.semantic.ir.OpId(module, 3),
+        return new deal.semantic.ir.SemanticOp(opId,
             deal.semantic.ir.SemanticOpKind.JSON_TO_CLASS, origin,
-            new deal.semantic.ir.ValueId(4), resultType, List.of(classValue),
+            result, resultType, List.of(classValue),
             List.of(new RuntimeDescriptor.Class(WALK_ID)), payload,
             FailurePolicyId.JSON_TO_ERROR, contract);
     }
@@ -2478,5 +2509,527 @@ public class FailureArmAuthorityTest {
         checkEq("span", firstDifferingField(kind, new Tuple(kind.code(), kind.message(),
             "type-mismatch-e8001.deal:9:10", kind.expected(), kind.actual())),
             "a call-site span for a declaration-owned arm is caught by field name span");
+    }
+
+    // =========================================================================
+    // 16. The landed runtime carriers on the emitted walk
+    // =========================================================================
+
+    /** The foreign class identity of the runtime-carrier and dispatch drives. */
+    private static final deal.semantic.ir.ClassId FOREIGN_ID =
+        new deal.semantic.ir.ClassId("host/runtime", "Foreign");
+
+    /**
+     * The landed runtime/host ABI carrier projections (the review
+     * correction of the binding): the deployed runtime's async handle
+     * ({@code deal/runtime.lua}'s {@code async_create}) projects the closed
+     * {@code async-operation} token and its class representation
+     * ({@code class_}) projects the carried canonical class atom at a
+     * failing walk position — never the table spelling. The async handle
+     * has no oracle or JVM carrier shape, so its regression is the emitted
+     * walk's own; the class carrier's tuple is additionally asserted
+     * identical on the oracle's class walk and the JVM walk machinery.
+     */
+    static void testRuntimeCarrierProjection() throws Exception {
+        System.out.println("-- the landed runtime carriers on the emitted walk --");
+        String foreign = FOREIGN_ID.text();
+        String body = "local rt = require(\"deal.runtime\")\n"
+            + "local carriers = {\n"
+            + "  {label = \"runtime-async-handle-at-string-field\", root = {__c = true, "
+            + "__id = " + quote(WALK_ID.text()) + ", __p = {name = true, age = true, "
+            + "ratio = true, data = true, tags = true}, __f = {name = "
+            + "rt.async_create(function() return \"x\" end), age = 1, ratio = 0.5, "
+            + "data = " + LUA_TABLE_CARRIER + ", tags = {__a = true, __n = 1, "
+            + "[1] = 1}}}},\n"
+            + "  {label = \"runtime-class-root\", root = rt.class_(" + quote(foreign)
+            + ", {}, {})},\n"
+            + "}\n"
+            + "for i = 1, #carriers do\n"
+            + "  local c = carriers[i]\n"
+            + "  local ok, text, arm, params, actual = __jsonToClassOp("
+            + quote(WALK_ID.text()) + ", c.root)\n"
+            + "  if ok then print(c.label .. \"|OK|\") return end\n"
+            + "  local value = __arm(arm, params, " + quote(WALK_SPAN)
+            + ", nil, actual)\n"
+            + "  print(c.label .. \"|\" .. value.code .. \"|\" .. "
+            + "(value.e == nil and \"\" or value.e) .. \"|\" .. "
+            + "(value.a == nil and \"\" or value.a) .. \"|\" .. value.m .. \"|\" .. "
+            + "tostring(value.o))\n"
+            + "end\n";
+        List<String> rows = runProbe(emittedWalkChunk(), "arm-walk", body,
+            "walk-runtime-carriers", 2, true);
+
+        Tuple asyncTuple = walkLuaTuple(rows.get(0));
+        checkEq(new Tuple("E8001",
+                "value at name is not JSON serializable: async-operation", WALK_SPAN,
+                null, "async-operation"), asyncTuple,
+            "the emitted walk projects the runtime async handle as async-operation at "
+                + "the failing declared field");
+
+        Tuple classTuple = walkLuaTuple(rows.get(1));
+        checkEq(new Tuple("E8001",
+                "value at  is not JSON serializable: " + foreign, WALK_SPAN, null,
+                foreign), classTuple,
+            "the emitted walk projects the runtime class representation as its carried "
+                + "canonical class atom");
+
+        // The oracle's typed-boundary projection publishes the same async
+        // token for the same walk position (the JSON_TO_FIELD cell's check).
+        Tuple oracleAsync = tupleOf(oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.JSON_TO_ERROR, RuntimeDescriptor.String.INSTANCE,
+            BoundaryValueView.of(ActualKind.ASYNC_OPERATION),
+            BoundaryContext.jsonField("name")), "the JSON_TO_FIELD async carrier"),
+            WALK_SPAN);
+        checkEq(null, firstDifferingField(asyncTuple, oracleAsync),
+            "the oracle's typed-boundary projection publishes the emitted walk's "
+                + "identical async tuple");
+
+        // The class carrier on the two other consumers: the oracle's class
+        // walk over a foreign carried atom and the JVM walk machinery over
+        // the same identity.
+        deal.semantic.ir.SemanticOp op = walkJsonOp();
+        Map<deal.semantic.ir.ValueId, ClassOpsExecutor.Value> values =
+            new LinkedHashMap<>();
+        values.put(((KindPayload.JsonToClassPayload) op.payload()).classValue(),
+            new ClassOpsExecutor.Value.Class(FOREIGN_ID, List.of()));
+        ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome =
+            ClassOpsExecutor.executeJsonToClass(op, values,
+                Map.of(WALK_ID, walkLayout()),
+                deal.semantic.JsonClassAlgorithmAdapter.stringifier(), op.origin());
+        check(outcome instanceof ClassOpsExecutor.Outcome.Failure<
+                ClassOpsExecutor.Value> failure,
+            "the oracle's class walk fails the foreign class carrier");
+        if (outcome instanceof ClassOpsExecutor.Outcome.Failure<
+                ClassOpsExecutor.Value> failure) {
+            Tuple oracleClass = tupleOf(failure.failure().failure(), WALK_SPAN);
+            checkEq(null, firstDifferingField(classTuple, oracleClass),
+                "the oracle's class walk publishes the emitted walk's identical class "
+                    + "tuple");
+            checkEq(op.origin(), failure.failure().origin(),
+                "the oracle's class walk renders the operand it was given");
+        }
+        deal.codegen.jvm.JvmJson.Projection projection = null;
+        try {
+            deal.codegen.jvm.JvmJson.toClass(walkPlan(),
+                new WalkInstance(foreign, Map.of()));
+        } catch (deal.codegen.jvm.JvmJson.Projection caught) {
+            projection = caught;
+        }
+        check(projection != null,
+            "the JVM walk machinery fails the foreign class carrier");
+        if (projection != null) {
+            deal.codegen.jvm.JvmRuntime.DealError jvmError = projection.cycle
+                ? deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK_CYCLE,
+                    Map.of(), WALK_SPAN, null, null)
+                : deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
+                    Map.of("fieldPath", projection.fieldPath, "actual",
+                        projection.actual), WALK_SPAN, null, projection.actual);
+            checkEq(null, firstDifferingField(classTuple, new Tuple(jvmError.code,
+                    jvmError.msg, jvmError.origin, jvmError.expected, jvmError.actual)),
+                "the JVM walk machinery publishes the emitted walk's identical class "
+                    + "tuple");
+        }
+    }
+
+    // =========================================================================
+    // 17. The walk arm's oracle-dispatch leg (the executable IR drive)
+    // =========================================================================
+
+    /** One dispatch case: the executable unit and the two artifact legs. */
+    private record DispatchCase(String label, String fieldPath, String actual,
+                                DispatchUnit unit, String luaRoot,
+                                deal.codegen.jvm.JvmRuntime.ClassInstance jvmRoot) {
+
+        String message() {
+            return "value at " + fieldPath + " is not JSON serializable: " + actual;
+        }
+    }
+
+    /** One built dispatch unit: the project, its table, and the walk op's origin. */
+    private record DispatchUnit(deal.semantic.ir.ExecutableLoweredProject project,
+                                Map<deal.semantic.ir.ModuleId,
+                                    deal.semantic.ir.StructuredBodyTable> tables,
+                                deal.semantic.ir.SourceOrigin walkOrigin) {
+    }
+
+    /** The producer kinds of one dispatch construction. */
+    private enum DispatchValue { STRING, INT, NUMBER, TABLE, ARRAY }
+
+    /** The produced ops and the class-value result of one construction. */
+    private record DispatchConstruction(List<deal.semantic.ir.SemanticOp> ops,
+                                        deal.semantic.ir.ValueId instance) {
+    }
+
+    /** The monotonically increasing IR ids of one dispatch unit. */
+    private static final class DispatchIds {
+
+        private final deal.semantic.ir.ModuleId module =
+            new deal.semantic.ir.ModuleId("arm-walk");
+        private int opOrdinal = 0;
+        private int valueOrdinal = 100;
+        private int anchorOrdinal = 0;
+
+        deal.semantic.ir.ModuleId module() {
+            return module;
+        }
+
+        deal.semantic.ir.OpId op() {
+            return new deal.semantic.ir.OpId(module, opOrdinal++);
+        }
+
+        deal.semantic.ir.ValueId value() {
+            return new deal.semantic.ir.ValueId(valueOrdinal++);
+        }
+
+        deal.semantic.ir.AnchorId anchor() {
+            return new deal.semantic.ir.AnchorId(anchorOrdinal++);
+        }
+    }
+
+    /**
+     * The oracle-dispatch leg of the walk arm's comparison (Verification
+     * 3/4): an executable lowered project whose module-init block produces
+     * the class value with producer ops (CONST/TABLE_NEW/ARRAY_NEW, the
+     * pinned {@code CLASS_LITERAL_FIELD} boundary children, and the
+     * {@code CLASS_NEW} construction) and feeds it to the JSON_TO_CLASS op.
+     * The oracle's dispatch supplies the executing op's own
+     * {@code SourceOrigin} to the walk; the snapshot's
+     * {@code (code, message, origin, expected, actual)} tuple equals the
+     * emitted Lua and JVM consumers' renders for the same failing value.
+     * The separate direct-executor drives keep the positions a construction
+     * cannot produce (a fractional value at an int-typed field, a nonfinite
+     * array element) with a supplied origin distinct from the op's
+     * synthetic anchor; this leg makes the dispatch's operand selection and
+     * walk-failure handling load-bearing.
+     */
+    static void testWalkArmOracleDispatchLeg() throws Exception {
+        System.out.println("-- the walk arm's oracle-dispatch leg --");
+        List<DispatchCase> cases = new ArrayList<>();
+
+        // (1) A nonfinite value at the number-typed declared field: the
+        // construction's number boundary admits it, the walk fails it.
+        {
+            DispatchIds ids = new DispatchIds();
+            Map<String, DispatchValue> present = new LinkedHashMap<>();
+            present.put("name", DispatchValue.STRING);
+            present.put("age", DispatchValue.INT);
+            present.put("ratio", DispatchValue.NUMBER);
+            present.put("data", DispatchValue.TABLE);
+            present.put("tags", DispatchValue.ARRAY);
+            cases.add(dispatchCase("dispatch-nonfinite-number-field", "ratio",
+                "number", ids, WALK_ID, walkLayout(), present,
+                Map.of(WALK_ID, walkLayout()),
+                "{__c = true, __id = " + quote(WALK_ID.text()) + ", __p = {name = true, "
+                    + "age = true, ratio = true, data = true, tags = true}, __f = "
+                    + "{name = " + luaString("n") + ", age = 1, ratio = 0/0, data = "
+                    + LUA_TABLE_CARRIER + ", tags = {__a = true, __n = 1, [1] = 1}}}",
+                walkJvmInstance(Map.of("name", "n", "age", 1L, "ratio", Double.NaN,
+                    "data", new deal.codegen.jvm.JvmRuntime.Table(), "tags",
+                    jvmIntArray(1L)))));
+        }
+
+        // (2) An omitted required field with no declared default: the
+        // construction publishes the instance with the missing field state,
+        // the walk fails the first missing required field declaration-order.
+        {
+            DispatchIds ids = new DispatchIds();
+            Map<String, DispatchValue> present = new LinkedHashMap<>();
+            present.put("name", DispatchValue.STRING);
+            present.put("ratio", DispatchValue.NUMBER);
+            present.put("data", DispatchValue.TABLE);
+            present.put("tags", DispatchValue.ARRAY);
+            cases.add(dispatchCase("dispatch-missing-required-field", "age", "nil",
+                ids, WALK_ID, walkLayout(), present, Map.of(WALK_ID, walkLayout()),
+                "{__c = true, __id = " + quote(WALK_ID.text()) + ", __p = {name = true, "
+                    + "ratio = true, data = true, tags = true}, __f = {name = "
+                    + luaString("n") + ", ratio = 0.5, data = " + LUA_TABLE_CARRIER
+                    + ", tags = {__a = true, __n = 1, [1] = 1}}}",
+                walkJvmInstance(Map.of("name", "n", "ratio", 0.5, "data",
+                    new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L)))));
+        }
+
+        // (3) A produced instance of another class: the walk's own root
+        // identity check selects the walk arm with the carried atom.
+        {
+            DispatchIds ids = new DispatchIds();
+            Map<String, DispatchValue> present = new LinkedHashMap<>();
+            present.put("x", DispatchValue.INT);
+            cases.add(dispatchCase("dispatch-foreign-class-root", "",
+                FOREIGN_ID.text(), ids, FOREIGN_ID, foreignLayout(), present,
+                Map.of(WALK_ID, walkLayout(), FOREIGN_ID, foreignLayout()),
+                "{__c = true, __id = " + quote(FOREIGN_ID.text())
+                    + ", __p = {x = true}, __f = {x = 1}}",
+                new WalkInstance(FOREIGN_ID.text(), Map.of("x", 1L))));
+        }
+
+        // The emitted Lua leg for the same failing values (the production
+        // chunk's own walk machinery under real luajit).
+        List<WalkCase> luaCases = new ArrayList<>();
+        for (DispatchCase drive : cases) {
+            luaCases.add(new WalkCase(drive.label(), "JSON_TO_WALK",
+                drive.fieldPath(), drive.actual(), null, drive.luaRoot(), null));
+        }
+        List<String> luaRows = runWalkProbe(luaCases);
+
+        for (int i = 0; i < cases.size(); i++) {
+            DispatchCase drive = cases.get(i);
+            deal.semantic.SemanticRuntimeModel.ConsumerRun run =
+                deal.semantic.SemanticOracle.executeProjectInits(
+                    drive.unit().project(), drive.unit().tables(), Map.of(), null);
+            check(run.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal
+                    .DealFailure,
+                drive.label() + ": the oracle dispatch terminates with the walk's DEAL "
+                    + "failure; got " + run.terminal());
+            if (!(run.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal
+                    .DealFailure failure)) {
+                continue;
+            }
+            deal.semantic.SemanticRuntimeModel.ErrorSnapshot error = failure.error();
+            Tuple dispatch = new Tuple(error.code(), error.message(), error.origin(),
+                error.expected(), error.actual());
+            Tuple reference = new Tuple("E8001", drive.message(), WALK_SPAN, null,
+                drive.actual());
+            checkEq(null, firstDifferingField(reference, dispatch),
+                drive.label() + ": the oracle dispatch renders the bound walk arm's "
+                    + "tuple at the executing op's own SourceOrigin");
+            String walkOriginText = drive.unit().walkOrigin().sourceId() + ":"
+                + drive.unit().walkOrigin().span().startLine() + ":"
+                + drive.unit().walkOrigin().span().startColumn();
+            checkEq(WALK_SPAN, walkOriginText,
+                drive.label() + ": the executing JSON_TO_CLASS op carries the pinned "
+                    + "span");
+            checkEq(walkOriginText, dispatch.span(),
+                drive.label() + ": the dispatch supplies the executing op's own "
+                    + "SourceOrigin to the walk");
+
+            // The emitted Lua leg: the rendered origin field is the row's own
+            // (never a test constant), so a substituted dispatch span fails
+            // the comparison by field.
+            Tuple luaTuple = walkLuaTuple(luaRows.get(i));
+            checkEq(null, firstDifferingField(dispatch, luaTuple),
+                drive.label() + ": the emitted Lua walk machinery renders the "
+                    + "dispatch's identical tuple");
+
+            // The emitted JVM leg (the shared walk machinery the artifact
+            // links), rendered exactly like the emitted catch site.
+            deal.codegen.jvm.JvmJson.Projection projection = null;
+            try {
+                deal.codegen.jvm.JvmJson.toClass(walkPlan(), drive.jvmRoot());
+            } catch (deal.codegen.jvm.JvmJson.Projection caught) {
+                projection = caught;
+            }
+            check(projection != null,
+                drive.label() + ": the JVM walk machinery fails the value");
+            if (projection == null) {
+                continue;
+            }
+            deal.codegen.jvm.JvmRuntime.DealError jvmError = projection.cycle
+                ? deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK_CYCLE,
+                    Map.of(), WALK_SPAN, null, null)
+                : deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
+                    Map.of("fieldPath", projection.fieldPath, "actual",
+                        projection.actual), WALK_SPAN, null, projection.actual);
+            checkEq(null, firstDifferingField(dispatch, new Tuple(jvmError.code,
+                    jvmError.msg, jvmError.origin, jvmError.expected, jvmError.actual)),
+                drive.label() + ": the JVM walk machinery renders the dispatch's "
+                    + "identical tuple");
+        }
+    }
+
+    /** One dispatch construction with its producer ops and the walk op. */
+    private static DispatchCase dispatchCase(String label, String fieldPath,
+            String actual, DispatchIds ids, deal.semantic.ir.ClassId classId,
+            deal.semantic.ir.ClassLayout layout,
+            Map<String, DispatchValue> present,
+            Map<deal.semantic.ir.ClassId, deal.semantic.ir.ClassLayout> layouts,
+            String luaRoot, deal.codegen.jvm.JvmRuntime.ClassInstance jvmRoot) {
+        DispatchConstruction construction = buildDispatchConstruction(ids, classId,
+            layout, present);
+        return new DispatchCase(label, fieldPath, actual,
+            dispatchUnit(ids, construction, layouts), luaRoot, jvmRoot);
+    }
+
+
+    /** The dispatch drive's foreign class layout (one provided int field). */
+    private static deal.semantic.ir.ClassLayout foreignLayout() {
+        return new deal.semantic.ir.ClassLayout(FOREIGN_ID, List.of(
+            new deal.semantic.ir.ClassLayout.FieldLayout("x",
+                RuntimeDescriptor.Int.INSTANCE, true,
+                deal.semantic.ir.DefaultOwner.LOCAL)));
+    }
+
+    /**
+     * One executable construction: the producer ops of the provided fields
+     * (in declaration order), the pinned {@code CLASS_LITERAL_FIELD}
+     * boundary children (in declaration order), and the {@code CLASS_NEW}
+     * op (LOCAL owner, no defaults, no factory).
+     */
+    private static DispatchConstruction buildDispatchConstruction(DispatchIds ids,
+            deal.semantic.ir.ClassId classId, deal.semantic.ir.ClassLayout layout,
+            Map<String, DispatchValue> present) {
+        deal.semantic.ir.OpId classNewOp = ids.op();
+        List<deal.semantic.ir.SemanticOp> ops = new ArrayList<>();
+        List<KindPayload.ProvidedField> provided = new ArrayList<>();
+        Map<String, deal.semantic.ir.ValueId> values = new LinkedHashMap<>();
+        for (deal.semantic.ir.ClassLayout.FieldLayout field : layout.fields()) {
+            DispatchValue kind = present.get(field.name());
+            if (kind == null) {
+                continue;
+            }
+            deal.semantic.ir.ValueId value = ids.value();
+            ops.add(dispatchProducer(ids, value, kind));
+            provided.add(new KindPayload.ProvidedField(field.name(), value));
+            values.put(field.name(), value);
+        }
+        List<KindPayload.FieldBoundary> boundaries = new ArrayList<>();
+        for (deal.semantic.ir.ClassLayout.FieldLayout field : layout.fields()) {
+            deal.semantic.ir.ValueId value = values.get(field.name());
+            if (value == null) {
+                continue;
+            }
+            deal.semantic.ir.OpId boundaryOp = ids.op();
+            ops.add(dispatchBoundary(ids, boundaryOp, field.descriptor(), value,
+                classNewOp));
+            boundaries.add(new KindPayload.FieldBoundary(field.name(),
+                BoundaryKind.CLASS_LITERAL_FIELD, boundaryOp));
+        }
+        deal.semantic.ir.ValueId instance = ids.value();
+        ops.add(dispatchOp(classNewOp, deal.semantic.ir.SemanticOpKind.CLASS_NEW,
+            new KindPayload.ClassNewPayload(classId, layout, provided,
+                deal.semantic.ir.DefaultOwner.LOCAL, List.of(), null, boundaries),
+            instance, new RuntimeDescriptor.Class(classId),
+            FailurePolicyId.CLASS_CONSTRUCTION, dispatchOrigin(ids, null)));
+        return new DispatchConstruction(ops, instance);
+    }
+
+    /** One provided-field producer of the dispatch construction. */
+    private static deal.semantic.ir.SemanticOp dispatchProducer(DispatchIds ids,
+            deal.semantic.ir.ValueId result, DispatchValue kind) {
+        KindPayload payload;
+        deal.semantic.ir.SemanticOpKind opKind;
+        deal.semantic.ir.OpResultType resultType;
+        switch (kind) {
+            case STRING -> {
+                payload = new KindPayload.ConstPayload(new ScalarValue.String("n"));
+                opKind = deal.semantic.ir.SemanticOpKind.CONST;
+                resultType = RuntimeDescriptor.String.INSTANCE;
+            }
+            case INT -> {
+                payload = new KindPayload.ConstPayload(new ScalarValue.Int(1));
+                opKind = deal.semantic.ir.SemanticOpKind.CONST;
+                resultType = RuntimeDescriptor.Int.INSTANCE;
+            }
+            case NUMBER -> {
+                payload = new KindPayload.ConstPayload(
+                    new ScalarValue.Number(Double.NaN));
+                opKind = deal.semantic.ir.SemanticOpKind.CONST;
+                resultType = RuntimeDescriptor.Number.INSTANCE;
+            }
+            case TABLE -> {
+                payload = new KindPayload.TableNewPayload(List.of());
+                opKind = deal.semantic.ir.SemanticOpKind.TABLE_NEW;
+                resultType = RuntimeDescriptor.Table.INSTANCE;
+            }
+            case ARRAY -> {
+                payload = new KindPayload.ArrayNewPayload(RuntimeDescriptor.Int.INSTANCE,
+                    List.of(), List.of());
+                opKind = deal.semantic.ir.SemanticOpKind.ARRAY_NEW;
+                resultType = new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE);
+            }
+            default -> throw new IllegalStateException("unknown dispatch producer "
+                + kind);
+        }
+        return dispatchOp(ids.op(), opKind, payload, result, resultType,
+            FailurePolicyId.NO_DEAL_FAILURE, dispatchOrigin(ids, null));
+    }
+
+    /** One pinned {@code CLASS_LITERAL_FIELD} boundary child of the construction. */
+    private static deal.semantic.ir.SemanticOp dispatchBoundary(DispatchIds ids,
+            deal.semantic.ir.OpId opId, RuntimeDescriptor descriptor,
+            deal.semantic.ir.ValueId input, deal.semantic.ir.OpId parent) {
+        return dispatchOp(opId, deal.semantic.ir.SemanticOpKind.BOUNDARY,
+            new KindPayload.BoundaryPayload(BoundaryKind.CLASS_LITERAL_FIELD,
+                descriptor, input, new deal.semantic.ir.BoundaryRealization
+                    .RuntimeValidation(
+                        deal.semantic.SemanticLowerer.CANONICAL_RUNTIME_VALIDATION_ID)),
+            null, null,
+            descriptor instanceof RuntimeDescriptor.Func
+                ? FailurePolicyId.FUNCTION_SIGNATURE
+                : FailurePolicyId.TYPE_DESCRIPTOR,
+            dispatchOrigin(ids, parent));
+    }
+
+    /** One contract-complete op of the dispatch unit. */
+    private static deal.semantic.ir.SemanticOp dispatchOp(deal.semantic.ir.OpId id,
+            deal.semantic.ir.SemanticOpKind kind, KindPayload payload,
+            deal.semantic.ir.SemanticValue result,
+            deal.semantic.ir.OpResultType resultType, FailurePolicyId policy,
+            deal.semantic.ir.SourceOrigin origin) {
+        deal.semantic.ir.ClosedSelector selector =
+            payload instanceof KindPayload.SelectorCarrying carrying
+                ? carrying.selector() : null;
+        deal.semantic.ir.OperationContractSnapshot contract =
+            new deal.semantic.ir.OperationContractSnapshot(
+                deal.semantic.ir.OperationContractSnapshot.VERSION, kind, resultType,
+                List.of(), selector, payload, policy, List.of(), "placeholder");
+        contract = new deal.semantic.ir.OperationContractSnapshot(
+            deal.semantic.ir.OperationContractSnapshot.VERSION, kind, resultType,
+            List.of(), selector, payload, policy, List.of(),
+            deal.semantic.ir.ContractSnapshotCanonicalizer.digest(contract));
+        return new deal.semantic.ir.SemanticOp(id, kind, origin, result, resultType,
+            List.of(), List.of(), payload, policy, contract);
+    }
+
+    /** One synthetic origin of the dispatch unit (the walk op's own span). */
+    private static deal.semantic.ir.SourceOrigin dispatchOrigin(DispatchIds ids,
+            deal.semantic.ir.OpId parent) {
+        return new deal.semantic.ir.SourceOrigin("arm-walk.deal",
+            new deal.semantic.ir.SourceSpan("arm-walk.deal", 2, 8, 2, 18),
+            deal.semantic.ir.SourceOriginKind.SYNTHETIC, ids.anchor(), parent);
+    }
+
+    /**
+     * The dispatch project of one construction: the produced ops, the
+     * JSON_TO_CLASS op over the construction's result, and the module-init
+     * table that runs them in order.
+     */
+    private static DispatchUnit dispatchUnit(DispatchIds ids,
+            DispatchConstruction construction,
+            Map<deal.semantic.ir.ClassId, deal.semantic.ir.ClassLayout> layouts) {
+        deal.semantic.ir.ModuleId entry = ids.module();
+        deal.semantic.ir.SemanticOp json = walkJsonOp(ids.op(),
+            construction.instance(), ids.value());
+        List<deal.semantic.ir.SemanticOp> ops = new ArrayList<>(construction.ops());
+        ops.add(json);
+        deal.semantic.ir.BlockId initBlock = new deal.semantic.ir.BlockId(0);
+        List<deal.semantic.ir.OpId> members = new ArrayList<>();
+        Map<deal.semantic.ir.OpId, deal.semantic.ir.BlockId> membership =
+            new LinkedHashMap<>();
+        for (deal.semantic.ir.SemanticOp op : ops) {
+            members.add(op.opId());
+            membership.put(op.opId(), initBlock);
+        }
+        deal.semantic.ir.StructuredBodyTable table =
+            new deal.semantic.ir.StructuredBodyTable(Map.of(initBlock, members),
+                membership);
+        deal.semantic.ir.LoweredModuleUnit unit =
+            new deal.semantic.ir.LoweredModuleUnit(
+                deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
+                deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32, entry, "hash",
+                "context", java.util.Set.of(), Map.of(), layouts, Map.of(),
+                new deal.semantic.ir.ModuleInitPlan(List.of(), initBlock),
+                deal.semantic.ir.ExportPlan.empty(), Map.of(), ops);
+        deal.semantic.ir.ProjectInterfaceIndex index =
+            new deal.semantic.ir.ProjectInterfaceIndex(
+                deal.semantic.ir.ProjectInterfaceIndex.FORMAT_VERSION,
+                Map.of(entry, new deal.semantic.ir.ExternalModuleInterface(entry,
+                    deal.semantic.ir.ExternalModuleKind.IMPLEMENTATION, List.of(),
+                    List.of(), List.of(),
+                    deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
+        deal.semantic.ir.ExecutableLoweredProject project =
+            new deal.semantic.ir.ExecutableLoweredProject(
+                deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32, index,
+                Map.of(entry, unit), entry);
+        return new DispatchUnit(project, Map.of(entry, table), json.origin());
     }
 }

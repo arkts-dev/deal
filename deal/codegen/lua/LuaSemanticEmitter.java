@@ -8174,6 +8174,21 @@ local function __typedBoundaryKind(staticKind, v)
     -- projects the table spelling, so a non-bytes typed boundary rejects
     -- it instead of admitting it.
     if v.__kind == "bytes" then return "bytes" end
+    -- The landed runtime/host ABI carriers (the runtime's own produced
+    -- shapes, W1/W6): the async handle deal/runtime.lua's async_create
+    -- builds projects the closed async token, and the runtime class
+    -- representation class_ builds projects its carried canonical class
+    -- atom — never the table spelling. The chunk's own class carrier
+    -- (__c/__id) is classified by the next branch; a class carrier
+    -- without its atom fails closed exactly like the oracle's projection.
+    if v.__kind == "async" then return "async-operation" end
+    if v.__kind == "class" then
+      if v.__classname == nil then
+        error("a class instance without its carried canonical class atom has "
+          .. "no typed-boundary token (producer defect)", 0)
+      end
+      return v.__classname
+    end
     if v.__a then return "array" end
     if v.__c then return v.__id end
     if v.__d then return "class:@builtin/Error" end
