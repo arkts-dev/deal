@@ -1107,6 +1107,10 @@ module.exports = {
             CheckResult result = TypeChecker.check(filename, symTable, nr,
                 parseResult.program());
             all.addAll(result.diagnostics());
+            // ISSUE-0717 defect snippets 25/26: the null-return fall-off
+            // gate (see NullReturnFallOff).
+            all.addAll(deal.checker.NullReturnFallOff.diagnostics(
+                parseResult.program()));
 
             for (StatementNode stmt
                     : parseResult.program().statements()) {

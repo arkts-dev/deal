@@ -1,0 +1,11 @@
+// @spec: Functions — Return type requirements
+// @description: A null-returning function body must not fall off without a return (v1.2 defect snippet 25)
+// @expected: compile-error E5002
+// @features: functions, return, diagnostics, v1.2
+
+function empty(): null {}
+
+export function main(): null {
+  empty();
+  return null;
+}

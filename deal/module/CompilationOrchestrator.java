@@ -1901,6 +1901,26 @@ public final class CompilationOrchestrator {
             log("  Checked: " + sourcePath + " (" + modElapsed + "ms)");
         }
 
+        // The public compile surface's null-return fall-off gate
+        // (ISSUE-0717 defect snippets 25/26): the release-owned public
+        // build rejects a : null body that can complete normally on
+        // every backend. The harness invocations keep the established
+        // implicit-null-return tolerance the composite-terminator
+        // window lowerings rely on (see NullReturnFallOff).
+        if (invocation.purpose() == deal.semantic.ir.InvocationPurpose.PUBLIC_BUILD) {
+            for (ModuleInfo info : modules.values()) {
+                if (info.isDeclarationFile || info.rawAst == null) {
+                    continue;
+                }
+                List<CompilerDiagnostic> fallOff =
+                    NullReturnFallOff.diagnostics(info.rawAst);
+                if (!fallOff.isEmpty()) {
+                    diagnostics.addAll(fallOff);
+                    hasErrors = true;
+                }
+            }
+        }
+
         long phaseElapsed = System.currentTimeMillis() - phaseStart;
         if (verbose) {
             System.out.println("  Phase 3 total: " + phaseElapsed + "ms");

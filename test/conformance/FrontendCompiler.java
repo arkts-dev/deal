@@ -116,6 +116,10 @@ public final class FrontendCompiler {
         CheckResult result = TypeChecker.check(filename, symTable, nr,
             parseResult.program());
         collectErrors(result.diagnostics(), errors);
+        // ISSUE-0717 defect snippets 25/26: the null-return fall-off gate
+        // of the public frontend surface (see NullReturnFallOff).
+        collectErrors(deal.checker.NullReturnFallOff.diagnostics(
+            parseResult.program()), errors);
 
         if (resolver instanceof CorpusFrontendResolver corpusResolver) {
             collectErrors(corpusResolver.ffiDiagnostics(), errors);

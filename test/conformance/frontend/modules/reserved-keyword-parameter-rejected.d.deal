@@ -1,0 +1,6 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A declaration file rejects a reserved keyword as a parameter name (v1.2 defect snippet 50)
+// @expected: compile-error E1010
+// @features: declarations, parameters, diagnostics, v1.2
+
+export function replace(s: string, from: string, to: string): string;

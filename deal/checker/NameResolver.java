@@ -426,8 +426,15 @@ public final class NameResolver {
     private void hoistFunction(FunctionDeclaration fd) {
         String name = fd.name();
 
-        // Check for $ in function name (E2008)
-        checkNoDollar(name, fd.span());
+        // Check for $ in function name (E2008). A declaration file may
+        // explicitly declare the generated @jsonable helper signatures
+        // (spec §Declaration-file format: "Declaration files may
+        // explicitly declare compatible C$fromJson and C$toJson
+        // functions") — the reserved sigil is legitimate exactly there
+        // (ISSUE-0717 defect snippet 51).
+        if (!(isDeclarationFile() && isJsonHelperFunctionName(name))) {
+            checkNoDollar(name, fd.span());
+        }
 
         if (root.containsLocally(name)) {
             if (isShadowableIntrinsic(name)) {
@@ -886,6 +893,39 @@ public final class NameResolver {
         if (name.indexOf('$') >= 0) {
             error(DiagnosticCode.E2008, "Identifier '" + name + "' must not contain '$'", span);
         }
+    }
+
+    /** Whether this module is a {@code .d.deal} declaration file. */
+    private boolean isDeclarationFile() {
+        return modulePath != null && modulePath.endsWith(".d.deal");
+    }
+
+    /**
+     * Whether one declared function name is the generated
+     * {@code C$fromJson}/{@code C$toJson} helper form of a declaration
+     * file (a plain identifier class part plus the reserved helper
+     * suffix).
+     */
+    private static boolean isJsonHelperFunctionName(String name) {
+        int sigil = name.lastIndexOf('$');
+        if (sigil <= 0 || sigil == name.length() - 1) {
+            return false;
+        }
+        String suffix = name.substring(sigil + 1);
+        if (!suffix.equals("fromJson") && !suffix.equals("toJson")) {
+            return false;
+        }
+        char first = name.charAt(0);
+        if (!Character.isLetter(first) && first != '_') {
+            return false;
+        }
+        for (int i = 1; i < sigil; i++) {
+            char c = name.charAt(i);
+            if (!Character.isLetterOrDigit(c) && c != '_') {
+                return false;
+            }
+        }
+        return true;
     }
 
     // =======================================================================

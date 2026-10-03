@@ -1,0 +1,8 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A declaration file may explicitly declare the generated C$fromJson/C$toJson helper signatures (v1.2 defect snippet 51)
+// @expected: compile-ok
+// @features: declarations, jsonable, v1.2
+
+export class Model { n: int = 0; }
+export function Model$fromJson(s: string): Model | null;
+export function Model$toJson(v: Model): string;
