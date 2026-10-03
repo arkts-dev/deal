@@ -322,6 +322,20 @@ public class ProductionCorpusAuditTest {
     private static Project materialize(String fixtureRel, Target target,
             boolean wireDeclarations) throws Exception {
         Path root = Files.createTempDirectory("production-corpus-audit-");
+        try {
+            return materializeInto(root, fixtureRel, target, wireDeclarations);
+        } catch (Exception | Error e) {
+            // The post-state rule holds on the failure paths too: a
+            // materialization that cannot resolve a declaration (the
+            // fail-closed audit-input defect) removes its temp project.
+            deleteRecursively(root);
+            throw e;
+        }
+    }
+
+    /** The materialization body; {@code root} is owned by the caller. */
+    private static Project materializeInto(Path root, String fixtureRel,
+            Target target, boolean wireDeclarations) throws Exception {
         Path srcRoot = root.resolve("src");
         Files.createDirectories(srcRoot);
         Path bindings = root.resolve("bindings");
