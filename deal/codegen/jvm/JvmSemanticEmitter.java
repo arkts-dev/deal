@@ -5151,10 +5151,11 @@ public final class JvmSemanticEmitter {
         }
 
         /** The transfer dispatch: each distinct BREAK/CONTINUE/RETURN of the
-         *  block re-applies after emitting the TRY_CATCH SUCCESS. */
+         *  block's emitted reachable prefix re-applies after emitting the
+         *  TRY_CATCH SUCCESS. */
         private void emitJvmTransferDispatch(SemanticOp tryOp, BlockId block, int indent) {
             List<SemanticOp> transfers = new ArrayList<>();
-            collectTransfers(block, transfers);
+            collectReachableTransfers(block, transfers);
             for (SemanticOp transfer : transfers) {
                 switch (transfer.kind()) {
                     case BREAK -> {
@@ -5200,6 +5201,81 @@ public final class JvmSemanticEmitter {
                     }
                     default -> {
                     }
+                }
+            }
+        }
+
+
+        /**
+         * The reachable transfer ops of one block: the same walk the
+         * emission applies (the non-owned, non-skipped members in order,
+         * entering each op's structure payloads), stopping at the first op
+         * whose emitted statement cannot complete normally. Every op behind
+         * that one is unreachable Java (JLS &sect;14.21) and is skipped by
+         * the block walk, so its transfers are never signalled and their
+         * target labels are not in scope at the dispatch site — collecting
+         * them would emit a jump to a label the skipped subtree never
+         * defines. The raw structural walk
+         * ({@link EmitterSessionBase#collectTransfers}) is used by the Lua
+         * target, which emits every tail op; this reachability-aware form is
+         * the JVM target's dispatch collection.
+         */
+        private void collectReachableTransfers(BlockId block, List<SemanticOp> transfers) {
+            StructuredBodyTable ownerTable = blockTableOf.get(block);
+            if (ownerTable == null) {
+                ownerTable = table;
+            }
+            List<OpId> memberOps = ownerTable.blockOps().get(block);
+            if (memberOps == null) {
+                throw new IllegalStateException("block " + block
+                    + " has no membership row in its owning unit's table (a malformed"
+                    + " table — the production validator rejects this)");
+            }
+            for (OpId opId : memberOps) {
+                if (ownedChildren.contains(opId) || skippedOps.contains(opId)) {
+                    continue;
+                }
+                SemanticOp op = opsById.get(opId);
+                if (op == null) {
+                    continue;
+                }
+                switch (op.kind()) {
+                    case BREAK, CONTINUE, RETURN -> transfers.add(op);
+                    case BRANCH -> {
+                        KindPayload.BranchPayload payload =
+                            (KindPayload.BranchPayload) op.payload();
+                        collectReachableTransfers(payload.selectedBlock(), transfers);
+                        if (payload.alternateBlock() != null) {
+                            collectReachableTransfers(payload.alternateBlock(), transfers);
+                        }
+                    }
+                    case LOOP -> {
+                        KindPayload.LoopPayload payload =
+                            (KindPayload.LoopPayload) op.payload();
+                        if (payload.initBlock() != null) {
+                            collectReachableTransfers(payload.initBlock(), transfers);
+                        }
+                        collectReachableTransfers(payload.bodyBlock(), transfers);
+                        if (payload.updateBlock() != null) {
+                            collectReachableTransfers(payload.updateBlock(), transfers);
+                        }
+                    }
+                    case FOR_EACH -> {
+                        KindPayload.ForEachPayload payload =
+                            (KindPayload.ForEachPayload) op.payload();
+                        collectReachableTransfers(payload.body(), transfers);
+                    }
+                    case TRY_CATCH -> {
+                        KindPayload.TryCatchPayload payload =
+                            (KindPayload.TryCatchPayload) op.payload();
+                        collectReachableTransfers(payload.tryBlock(), transfers);
+                        collectReachableTransfers(payload.catchBlock(), transfers);
+                    }
+                    default -> {
+                    }
+                }
+                if (!completesNormally(op)) {
+                    return;
                 }
             }
         }

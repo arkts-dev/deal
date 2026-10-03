@@ -1115,6 +1115,303 @@ public class UnreachableTailProductionTest {
             + stderr + "\"");
     }
 
+    // =========================================================================
+    // 5. The unreachable loop tail: the JVM dispatch excludes skipped transfers
+    // =========================================================================
+
+    /**
+     * The review's reproduction: a protected block whose tail is a loop
+     * carrying a {@code break}/{@code continue}. The loop sits behind the
+     * {@code throw}, so the JVM emission skips it (JLS &sect;14.21) and the
+     * label its transfer would jump to is never defined. The enclosing
+     * transfer dispatch must collect only the transfers of the emitted
+     * reachable prefix; a raw structural collection emits a jump to the
+     * undefined label and javac rejects the artifact.
+     */
+    private record LoopTransferCase(String name, String source,
+                                    SemanticOpKind transferKind) {
+    }
+
+    private static final String UNREACHABLE_BREAK_LOOP_SOURCE = """
+        export function main(): null {
+          try {
+            throw { code: "EXPECTED", message: "expected" };
+            for (;;) {
+              break;
+            }
+          } catch (e) {
+          }
+          return null;
+        }
+        """;
+
+    private static final String UNREACHABLE_CONTINUE_LOOP_SOURCE = """
+        export function main(): null {
+          try {
+            throw { code: "EXPECTED", message: "expected" };
+            for (;;) {
+              continue;
+            }
+          } catch (e) {
+          }
+          return null;
+        }
+        """;
+
+    private static final List<LoopTransferCase> LOOP_TRANSFER_CASES = List.of(
+        new LoopTransferCase("unreachable-break-loop",
+            UNREACHABLE_BREAK_LOOP_SOURCE, SemanticOpKind.BREAK),
+        new LoopTransferCase("unreachable-continue-loop",
+            UNREACHABLE_CONTINUE_LOOP_SOURCE, SemanticOpKind.CONTINUE));
+
+    private static void testUnreachableLoopTransferDispatch() throws Exception {
+        System.out.println("-- The unreachable loop tail: real-javac dispatch "
+            + "regression --");
+        for (LoopTransferCase loopCase : LOOP_TRANSFER_CASES) {
+            testLoopTransferCase(loopCase);
+        }
+    }
+
+    private static OpId loopIdOf(SemanticOp transfer) {
+        return switch (transfer.kind()) {
+            case BREAK -> ((KindPayload.BreakPayload) transfer.payload()).loopId();
+            case CONTINUE ->
+                ((KindPayload.ContinuePayload) transfer.payload()).loopId();
+            default -> null;
+        };
+    }
+
+    private static void testLoopTransferCase(LoopTransferCase loopCase)
+            throws Exception {
+        Path project = Files.createTempDirectory("deal-unreachable-tail-"
+            + loopCase.name() + "-");
+        try {
+            Path src = project.resolve("src");
+            Files.createDirectories(src);
+            Files.writeString(src.resolve("main.deal"), loopCase.source(),
+                StandardCharsets.UTF_8);
+            Files.writeString(project.resolve("deal.json"), DEAL_JSON,
+                StandardCharsets.UTF_8);
+            Path entry = src.resolve("main.deal");
+
+            LoweredProject lowered = lowerProgram(loopCase.name(), entry,
+                new CliOverrides("jvm", project.resolve("out-oracle").toString()));
+            if (lowered == null) {
+                return;
+            }
+            LoweredModuleUnit unit = lowered.project().modules().get(lowered.entry());
+            Map<OpId, SemanticOp> byId = new LinkedHashMap<>();
+            for (SemanticOp op : unit.ops()) {
+                byId.put(op.opId(), op);
+            }
+            SemanticOp transfer = unit.ops().stream()
+                .filter(op -> op.kind() == loopCase.transferKind())
+                .findFirst().orElse(null);
+            check(transfer != null, loopCase.name() + ": the tail "
+                + loopCase.transferKind() + " op is represented in the lowered "
+                + "unit");
+            if (transfer == null) {
+                return;
+            }
+            OpId loopId = loopIdOf(transfer);
+            SemanticOp loop = loopId == null ? null : byId.get(loopId);
+            check(loop != null && loop.kind() == SemanticOpKind.LOOP, loopCase.name()
+                + ": the tail transfer targets its loop op");
+            if (loopId == null || loop == null) {
+                return;
+            }
+            // The tail loop is a member of the try block behind the throw.
+            BlockId owner = lowered.entryTable().opBlocks().get(loopId);
+            check(owner != null, loopCase.name() + ": the tail loop is a member of "
+                + "its block");
+            if (owner == null) {
+                return;
+            }
+            List<OpId> members = lowered.entryTable().blockOps().get(owner);
+            int index = members.indexOf(loopId);
+            OpId terminator = null;
+            for (int i = 0; i < index; i++) {
+                SemanticOp candidate = byId.get(members.get(i));
+                if (candidate != null && isTerminator(candidate.kind())) {
+                    terminator = candidate.opId();
+                }
+            }
+            check(index > 0 && terminator != null, loopCase.name() + ": the tail "
+                + "loop sits behind a terminator in its block");
+
+            // The oracle runs the throw/catch path and never reaches the tail.
+            SemanticRuntimeModel.ConsumerRun run = SemanticOracle.execute(
+                lowered.project(), lowered.tables(),
+                new SemanticOracle.HostResponder() {
+                });
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                loopCase.name() + ": the oracle completes main: " + run.terminal());
+            check(run.trace().stream().noneMatch(event ->
+                    event.op().equals(loopId) || event.op().equals(transfer.opId())),
+                loopCase.name() + ": the oracle emits no event for the skipped tail "
+                + "loop or its transfer");
+
+            loopTransferJvmDrive(loopCase, loopId, project, entry);
+            loopTransferLuaDrive(loopCase, loopId, transfer.opId(), project, entry);
+        } finally {
+            deleteRecursively(project);
+        }
+    }
+
+    /**
+     * The JVM leg: the artifact keeps the reachability skip and defines no
+     * label for the skipped tail loop (the dispatch never jumps to it),
+     * compiles under {@code javac --release 25 -proc:none}, and executes
+     * with the pinned outcome.
+     */
+    private static void loopTransferJvmDrive(LoopTransferCase loopCase, OpId loopId,
+                                             Path project, Path entry)
+            throws Exception {
+        String name = loopCase.name();
+        Path out = project.resolve("out-jvm");
+        ProjectLocator.LocateResult located = ProjectLocator.locate(entry.toString(),
+            new CliOverrides("jvm", out.toString()));
+        check(located.context() != null, name + " [jvm]: the generated deal.json "
+            + "locates strictly");
+        if (located.context() == null) {
+            return;
+        }
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            located.context(), entry, false, false, false, false, null,
+            productionInvocation());
+        boolean compiled = orchestrator.compile();
+        List<String> errors = orchestrator.diagnostics().stream()
+            .filter(diagnostic -> "error".equals(diagnostic.severity()))
+            .map(CompilerDiagnostic::message).toList();
+        check(compiled && errors.isEmpty(), name + " [jvm]: zero E6005 over the "
+            + "release-owned production invocation: " + errors);
+        check(orchestrator.semanticEmissionCount() == 1
+                && orchestrator.retainedEmissionCount() == 0,
+            name + " [jvm]: exactly one project artifact and no retained "
+                + "emission: semantic=" + orchestrator.semanticEmissionCount()
+                + " retained=" + orchestrator.retainedEmissionCount());
+        if (!compiled) {
+            return;
+        }
+        Path artifact = out.resolve(JvmBackend.classNameFor("main") + ".java");
+        check(Files.isRegularFile(artifact), name + " [jvm]: the project artifact "
+            + "is staged: " + artifact);
+        if (!Files.isRegularFile(artifact)) {
+            return;
+        }
+        String text = Files.readString(artifact, StandardCharsets.UTF_8);
+        check(text.contains("// unreachable: the preceding statement cannot"
+                + " complete normally"), name + " [jvm]: the artifact keeps the "
+            + "JLS \u00a714.21 reachability skip marker");
+        long id = loopId.id();
+        check(!text.contains("LOOP" + id + ":")
+                && !text.contains("LOOP" + id + ";")
+                && !text.contains("CONT" + id + ";"),
+            name + " [jvm]: the transfer dispatch emits no arm for the skipped "
+                + "tail loop " + loopId);
+
+        Path classes = out.resolve("classes");
+        Files.createDirectories(classes);
+        String classpath = absoluteClasspath();
+        ProcessBuilder javac = new ProcessBuilder("javac", "--release", "25",
+            "-proc:none", "-cp", classpath, "-d", classes.toString(),
+            artifact.toString());
+        javac.directory(out.toFile());
+        javac.redirectErrorStream(true);
+        Process compile = javac.start();
+        String compileOut = new String(compile.getInputStream().readAllBytes(),
+            StandardCharsets.UTF_8);
+        int compileExit = compile.waitFor();
+        check(compileExit == 0, name + " [jvm]: the artifact compiles under "
+            + "javac --release 25 -proc:none: " + compileOut);
+        if (compileExit != 0) {
+            return;
+        }
+        ProcessBuilder runner = new ProcessBuilder("java", "-cp",
+            classpath + File.pathSeparator + classes, "Main");
+        runner.directory(out.toFile());
+        Process process = runner.start();
+        String stdout = new String(process.getInputStream().readAllBytes(),
+            StandardCharsets.UTF_8);
+        String stderr = new String(process.getErrorStream().readAllBytes(),
+            StandardCharsets.UTF_8);
+        int exit = process.waitFor();
+        check(exit == 0 && stdout.isEmpty() && stderr.isEmpty(), name
+            + " [jvm]: the artifact executes with exit 0 and an empty transcript: "
+            + "exit=" + exit + " stdout=\"" + stdout + "\" stderr=\""
+            + stderr + "\"");
+    }
+
+    /**
+     * The LuaJIT leg: the chunk carries the tail loop and its transfer behind
+     * the terminator, and executes with the pinned outcome (the tail never
+     * runs).
+     */
+    private static void loopTransferLuaDrive(LoopTransferCase loopCase, OpId loopId,
+                                             OpId transferId, Path project, Path entry)
+            throws Exception {
+        String name = loopCase.name();
+        Path out = project.resolve("out-luajit");
+        ProjectLocator.LocateResult located = ProjectLocator.locate(entry.toString(),
+            new CliOverrides("luajit", out.toString()));
+        check(located.context() != null, name + " [luajit]: the generated deal.json "
+            + "locates strictly");
+        if (located.context() == null) {
+            return;
+        }
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            located.context(), entry, false, false, false, false, null,
+            productionInvocation());
+        boolean compiled = orchestrator.compile();
+        List<String> errors = orchestrator.diagnostics().stream()
+            .filter(diagnostic -> "error".equals(diagnostic.severity()))
+            .map(CompilerDiagnostic::message).toList();
+        check(compiled && errors.isEmpty(), name + " [luajit]: zero E6005 over the "
+            + "release-owned production invocation: " + errors);
+        check(orchestrator.semanticEmissionCount() == 1
+                && orchestrator.retainedEmissionCount() == 0,
+            name + " [luajit]: exactly one project artifact and no retained "
+                + "emission: semantic=" + orchestrator.semanticEmissionCount()
+                + " retained=" + orchestrator.retainedEmissionCount());
+        if (!compiled) {
+            return;
+        }
+        Path chunk = out.resolve("main.lua");
+        check(Files.isRegularFile(chunk), name + " [luajit]: the project artifact "
+            + "is staged: " + chunk);
+        if (!Files.isRegularFile(chunk)) {
+            return;
+        }
+        String text = Files.readString(chunk, StandardCharsets.UTF_8);
+        check(text.contains(quotedOpId(loopId)), name + " [luajit]: the emitted "
+            + "chunk carries the tail loop " + loopId);
+        check(text.contains(quotedOpId(transferId)), name + " [luajit]: the "
+            + "emitted chunk carries the tail transfer " + transferId);
+        check(text.indexOf(quotedOpId(transferId)) > text.indexOf(quotedOpId(loopId)),
+            name + " [luajit]: the emitted chunk places the tail transfer behind "
+                + "its loop op");
+        Path probe = out.resolve("__probe.lua");
+        Files.writeString(probe, "dofile(\""
+            + chunk.toAbsolutePath().normalize() + "\")\n"
+            + "local __ok, __err = __dealMain()\n"
+            + "if not __ok then os.exit(1) end\n"
+            + "os.exit(0)\n", StandardCharsets.UTF_8);
+        ProcessBuilder builder = new ProcessBuilder("luajit",
+            probe.toAbsolutePath().toString());
+        builder.directory(out.toFile());
+        builder.environment().put("DEAL_DEFER_MAIN", "1");
+        Process process = builder.start();
+        String stdout = new String(process.getInputStream().readAllBytes(),
+            StandardCharsets.UTF_8);
+        String stderr = new String(process.getErrorStream().readAllBytes(),
+            StandardCharsets.UTF_8);
+        int exit = process.waitFor();
+        check(exit == 0 && stdout.isEmpty() && stderr.isEmpty(), name
+            + " [luajit]: the artifact executes with exit 0 and an empty "
+            + "transcript: exit=" + exit + " stdout=\"" + stdout + "\" stderr=\""
+            + stderr + "\"");
+    }
+
     private static String absoluteClasspath() {
         StringBuilder resolved = new StringBuilder();
         for (String entry : System.getProperty("java.class.path", "")
@@ -1158,6 +1455,7 @@ public class UnreachableTailProductionTest {
             testFixture(stem);
         }
         testCompositeBlockTails();
+        testUnreachableLoopTransferDispatch();
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
             System.exit(1);
