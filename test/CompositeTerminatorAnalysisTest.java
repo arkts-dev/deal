@@ -336,26 +336,44 @@ public class CompositeTerminatorAnalysisTest {
     }
 
     private static Lowered lowerProbe(String name, String source) throws Exception {
+        return lowerProbe(name, source, productionInvocation());
+    }
+
+    /**
+     * One probe lowered through the named invocation. The negative
+     * controls drive the harness invocation, whose implicit-null-return
+     * tolerance keeps the closed analysis's {@code OPEN} marking
+     * observable ({@link deal.checker.NullReturnFallOff} is the public
+     * build's gate); the public build's rejection of the same program is
+     * pinned in the negative section.
+     */
+    private static Lowered lowerProbe(String name, String source,
+            CompilerInvocation invocation) throws Exception {
         Path root = Files.createTempDirectory("composite-terminator-");
         try {
             write(root, "src/app.deal", source);
-            return lowerProjectRoot(root, "src/app.deal");
+            return lowerProjectRoot(root, "src/app.deal", invocation);
         } finally {
             deleteRecursively(root);
         }
     }
 
-    /**
-     * The production compile plus the release-owned one project lowering
-     * of one project root whose entry module is {@code src/app.deal}.
-     */
     private static Lowered lowerProjectRoot(Path root, String entryRelative)
             throws Exception {
-        CompilationOrchestrator orchestrator = productionCompile(root.resolve("src"),
-            root.resolve(entryRelative), Backend.LUAJIT);
+        return lowerProjectRoot(root, entryRelative, productionInvocation());
+    }
+
+    /**
+     * The compile plus the one project lowering of one project root whose
+     * entry module is {@code src/app.deal} through the named invocation.
+     */
+    private static Lowered lowerProjectRoot(Path root, String entryRelative,
+            CompilerInvocation invocation) throws Exception {
+        CompilationOrchestrator orchestrator = compile(root.resolve("src"),
+            root.resolve(entryRelative), Backend.LUAJIT, invocation);
         check(orchestrator.diagnostics().isEmpty(),
-            "the project compiles through the release-owned production invocation: "
-                + orchestrator.diagnostics());
+            "the project compiles through the release-owned " + invocation.purpose()
+                + " invocation: " + orchestrator.diagnostics());
         CheckedProjectBuildResult built = orchestrator.checkedProject();
         RequirementManifestResult manifests = orchestrator.requirementManifests();
         if (built == null || built.input() == null || built.index() == null
@@ -365,7 +383,7 @@ public class CompositeTerminatorAnalysisTest {
             return null;
         }
         SemanticLowerer.ProjectLoweringResult result = SemanticLowerer.lowerProject(
-            productionInvocation(), built.input(), built.index(),
+            invocation, built.input(), built.index(),
             manifests.manifests(), orchestrator.hostDeclarationSurface(), Map.of(),
             Map.of(), BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
@@ -551,7 +569,9 @@ public class CompositeTerminatorAnalysisTest {
     /**
      * The composite-marking negatives: the body can complete normally, so
      * the pinned implicit null return still lowers as the body block's
-     * trailing statement.
+     * trailing statement. The controls drive the harness invocation — the
+     * public build rejects the same open bodies with the spec's
+     * no-fall-off rule (one E5002), which each control also pins.
      */
     static void testCompositeMarkingNegatives() throws Exception {
         System.out.println("-- the negative controls: the implicit null return is "
@@ -619,7 +639,12 @@ public class CompositeTerminatorAnalysisTest {
                     }
                     """)));
         for (Negative negative : negatives) {
-            Lowered lowered = lowerProbe(negative.name(), negative.source());
+            // The harness invocation keeps the implicit-null-return
+            // tolerance the closed analysis exercises (the public build's
+            // fall-off gate is NullReturnFallOff); the same program's
+            // public rejection is pinned below.
+            Lowered lowered = lowerProbe(negative.name(), negative.source(),
+                ConformanceHarnessMetadata.invocation(SemanticProfile.DEAL_V1_2_INT32));
             if (lowered == null) {
                 continue;
             }
@@ -641,6 +666,10 @@ public class CompositeTerminatorAnalysisTest {
                 check(ops.contains(implicit.get(0)), negative.name()
                     + ": the implicit RETURN is a member of the probe body block");
             }
+            // The public compile surface rejects the same open body with
+            // exactly one E5002 (the spec's no-fall-off rule; ISSUE-0717
+            // defect snippets 25/26).
+            checkPublicFallOff(negative.name(), negative.source());
         }
     }
 
@@ -820,12 +849,15 @@ public class CompositeTerminatorAnalysisTest {
      * The nested-body disjointness: a literal-true loop inside a nested
      * declared body marks the nested body, never the enclosing loop's body
      * — the enclosing body stays {@code OPEN} and keeps its implicit null
-     * return, while the nested composite-terminated body carries none.
+     * return, while the nested composite-terminated body carries none. The
+     * enclosed transfer-less loop is not a terminating composite for the
+     * enclosing body, so the probe drives the harness invocation (its
+     * public one-E5002 rejection is pinned) like the negative controls.
      */
     static void testNestedBodyDisjointness() throws Exception {
         System.out.println("-- a nested body's transfer never contributes to an "
             + "enclosing loop's state --");
-        Lowered lowered = lowerProbe("nested declared body", probeProgram("""
+        String nestedProbe = probeProgram("""
             export function probe(): null {
               while (true) {
                 function inner(): null {
@@ -833,7 +865,9 @@ public class CompositeTerminatorAnalysisTest {
                 }
               }
             }
-            """));
+            """);
+        Lowered lowered = lowerProbe("nested declared body", nestedProbe,
+            ConformanceHarnessMetadata.invocation(SemanticProfile.DEAL_V1_2_INT32));
         if (lowered == null) {
             return;
         }
@@ -851,6 +885,7 @@ public class CompositeTerminatorAnalysisTest {
                 == SemanticOpKind.RETURN,
             "the enclosing body block ends with its implicit null return (op "
                 + "kinds " + kindsOf(lowered, bodies.get(0)) + ")");
+        checkPublicFallOff("nested declared body", nestedProbe);
         List<SemanticOp> nestedOps = lowered.blockOps(bodies.get(1));
         check(!nestedOps.isEmpty() && nestedOps.get(nestedOps.size() - 1).kind()
                 == SemanticOpKind.LOOP,
@@ -1802,10 +1837,52 @@ public class CompositeTerminatorAnalysisTest {
 
     private static CompilationOrchestrator productionCompile(Path moduleRoot, Path entry,
             Backend backend) throws Exception {
+        return compile(moduleRoot, entry, backend, productionInvocation());
+    }
+
+    /**
+     * The public build's diagnostics for one probe program: the negative
+     * controls' rejection through the release-owned production invocation
+     * (the spec's no-fall-off rule, ISSUE-0717 defect snippets 25/26).
+     */
+    private static List<CompilerDiagnostic> publicBuildDiagnostics(String source)
+            throws Exception {
+        Path root = Files.createTempDirectory("composite-terminator-public-");
+        try {
+            write(root, "src/app.deal", source);
+            CompilationOrchestrator orchestrator = productionCompile(
+                root.resolve("src"), root.resolve("src/app.deal"), Backend.LUAJIT);
+            return List.copyOf(orchestrator.diagnostics());
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * Pins the public build's rejection of one open {@code : null} body
+     * with exactly one E5002 (the spec's no-fall-off rule; ISSUE-0717
+     * defect snippets 25/26).
+     */
+    private static void checkPublicFallOff(String name, String source)
+            throws Exception {
+        List<CompilerDiagnostic> diagnostics = publicBuildDiagnostics(source);
+        int fallOff = 0;
+        for (CompilerDiagnostic diagnostic : diagnostics) {
+            if ("E5002".equals(diagnostic.code())) {
+                fallOff++;
+            }
+        }
+        checkEq(1, fallOff, name + ": the public build reports exactly one "
+            + "E5002 fall-off rejection: " + diagnostics);
+    }
+
+    /** One orchestrator compile through the named invocation record. */
+    private static CompilationOrchestrator compile(Path moduleRoot, Path entry,
+            Backend backend, CompilerInvocation invocation) throws Exception {
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entry.toAbsolutePath(), moduleRoot.getParent().resolve("out"), false,
             false, false, false, backend, null, List.of(moduleRoot.toAbsolutePath()),
-            null, null, productionInvocation());
+            null, null, invocation);
         compileQuietly(orchestrator);
         return orchestrator;
     }
