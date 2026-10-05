@@ -102,7 +102,9 @@ WARNING: node not found, skipping standard library JS tests'
   # ExternalFunction SHARED_BODY binding over the callee's recorded entry),
   # the near-collision identifier changing no outcome, and a non-@jsonable
   # class gaining no helper. The combined dependency step runs the oracle
-  # over the same closures: the cross-module helper call succeeds and the
+  # over every fixture of the family through the same one-lowering
+  # closure (the runtime-ok success or the pinned error tuple at the raw
+  # corpus coordinates): the cross-module helper call succeeds and the
   # pinned helper JSON failure renders the cycle tuple at the invoking call
   # expression, so the drive fails if the canonical failure projection
   # authority is broken.

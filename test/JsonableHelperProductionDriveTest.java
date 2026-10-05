@@ -78,10 +78,12 @@ import java.util.stream.Stream;
  * {@code @jsonable} gains no helper, and a user identifier near a helper
  * name changes no outcome.</p>
  *
- * <p>The combined dependency step runs the oracle over the same closures:
- * the cross-module helper call and the pinned helper JSON failure are
- * captured from the lowered project through {@link SemanticOracle}, so
- * the comparison fails if the canonical failure projection authority is
+ * <p>The combined dependency step runs the oracle over every fixture of
+ * the family through the same one-lowering closure (the runtime-ok
+ * success or the pinned error tuple at the raw corpus coordinates), and
+ * captures the cross-module helper call and the pinned helper JSON
+ * failure from the lowered project through {@link SemanticOracle}, so the
+ * comparison fails if the canonical failure projection authority is
  * broken.</p>
  */
 public class JsonableHelperProductionDriveTest {
@@ -922,18 +924,34 @@ public class JsonableHelperProductionDriveTest {
             + "|actual=" + error.actual();
     }
 
+    /**
+     * The dependency step: the oracle executes every fixture of the family
+     * through the same one-lowering closure the production legs used, and
+     * reproduces the sidecar-pinned outcome (the runtime-ok success or the
+     * pinned error tuple at the raw corpus coordinates). The two named
+     * dependency fixtures keep their explicit assertions: the cross-module
+     * helper call succeeds, and the pinned helper JSON failure (the
+     * canonical failure projection authority's cycle arm) renders the
+     * pinned tuple at the invoking call expression.
+     */
     private static void testOracleAgreement() throws Exception {
-        System.out.println("-- the combined dependency step: the oracle captures the "
-            + "cross-module helper call and the pinned helper JSON failure --");
-        for (String fixture : List.of(CROSS_MODULE_FIXTURE, CYCLIC_FIXTURE)) {
-            Project project = materialize(fixture, Target.JVM);
+        System.out.println("-- the combined dependency step: the oracle over every "
+            + "family fixture (the cross-module helper call and the pinned "
+            + "helper JSON failure included) --");
+        List<String> driven = new ArrayList<>(FAMILY_FIXTURES);
+        driven.add(NEAR_COLLISION);
+        driven.add(EXPORT_KEYS);
+        for (String fixture : driven) {
+            String fixtureRel = fixture.contains("/") ? fixture
+                : FAMILY_DIR + "/" + fixture;
+            Project project = materialize(fixtureRel, Target.JVM);
             try {
                 List<Export> exports = exportsOf(
                     Files.readString(project.entryFile(), StandardCharsets.UTF_8));
                 Path driver = project.srcRoot().resolve("__oracle_drive.deal");
                 Files.writeString(driver, oracleDriver(project, exports),
                     StandardCharsets.UTF_8);
-                Lowered lowered = lower(project, driver, fixture + " (oracle)");
+                Lowered lowered = lower(project, driver, fixtureRel + " (oracle)");
                 if (lowered == null) {
                     continue;
                 }
@@ -941,8 +959,20 @@ public class JsonableHelperProductionDriveTest {
                     SemanticOracle.executeProjectInits(lowered.project(),
                         lowered.tables(), lowered.registries(),
                         new SemanticOracle.HostResponder() { }));
-                System.out.println("   oracle " + fixture + ": " + outcome);
-                if (CYCLIC_FIXTURE.equals(fixture)) {
+                System.out.println("   oracle " + fixtureRel + ": " + outcome);
+                Optional<SidecarExpectations.RuntimeExpectation.Executed> pinned =
+                    pinnedOf(fixtureRel);
+                if (pinned.isPresent()) {
+                    if (pinned.get().isRuntimeError()) {
+                        checkEq(pinnedOracleOutcome(pinned.get().error()), outcome,
+                            fixtureRel + ": the oracle reproduces the pinned tuple at "
+                                + "the raw corpus coordinates");
+                    } else {
+                        checkEq("ok", outcome, fixtureRel + ": the oracle executes "
+                            + "the fixture with the pinned runtime-ok outcome");
+                    }
+                }
+                if (CYCLIC_FIXTURE.equals(fixtureRel)) {
                     check(outcome.contains("message=cyclic value cannot be encoded as JSON"),
                         "the oracle's helper JSON failure renders the pinned cycle "
                             + "text: " + outcome);
@@ -951,10 +981,10 @@ public class JsonableHelperProductionDriveTest {
                     check(outcome.contains("expected=null") && outcome.contains(
                         "actual=null"),
                         "the cycle arm carries no expected/actual: " + outcome);
-                    String captured = RECORD.get(fixture).get(Target.LUAJIT);
+                    String captured = RECORD.get(fixtureRel).get(Target.LUAJIT);
                     check(captured != null && captured.startsWith("pin-exact"),
                         "the LuaJIT leg reproduces the pinned tuple: " + captured);
-                } else {
+                } else if (CROSS_MODULE_FIXTURE.equals(fixtureRel)) {
                     checkEq("ok", outcome,
                         "the cross-module helper call executes through the oracle: "
                             + outcome);
@@ -963,6 +993,15 @@ public class JsonableHelperProductionDriveTest {
                 deleteRecursively(project.root());
             }
         }
+    }
+
+    /** The pinned sidecar error row in {@link #oracleOutcome}'s spelling. */
+    private static String pinnedOracleOutcome(
+            SidecarExpectations.ErrorExpectation row) {
+        return "code=" + row.code() + "|message=" + row.message()
+            + "|file=" + row.sourceFile() + "|line=" + row.line()
+            + "|column=" + row.column() + "|expected=" + row.expected().orElse(null)
+            + "|actual=" + row.actual().orElse(null);
     }
 
     // =========================================================================
