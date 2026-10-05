@@ -69,12 +69,16 @@ import java.util.stream.Stream;
  *       {@code SHARED_EMITTER_COVERAGE} per fixture and target. Under the
  *       epic's gating rule (criterion 3: "gated on the Open blocker ...
  *       before it, residual failures are reported per fixture and never
- *       skipped"), a residual is reported per fixture and target with its
- *       diagnostic — never converted into a skip, an exclusion, or a
- *       fabricated pass — and the strict acceptance mode
- *       ({@code -Ddeal.acceptance.strict=true} or
- *       {@code DEAL_ACCEPTANCE_STRICT=1}) re-runs the same measurement
- *       with the zero result asserted as a hard gate.</li>
+ *       skipped"), a <em>named producer-guard</em> residual is reported
+ *       per fixture and target with its diagnostic — never converted into
+ *       a skip, an exclusion, or a fabricated pass — and the strict
+ *       acceptance mode ({@code -Ddeal.acceptance.strict=true} or
+ *       {@code DEAL_ACCEPTANCE_STRICT=1}) asserts the zero result as a
+ *       hard gate over the same measurement. Every other
+ *       acceptance fact is hard at every revision: a compile failure
+ *       outside the named guards, a pinned sidecar rejection that is not
+ *       reproduced, a materialization failure, a missing leg, a guard
+ *       violation, or a count change fails the run immediately.</li>
  *   <li><b>The lane-level dangling-identity guard over every produced
  *       project.</b> Every project the production compile produces — the
  *       lane's own compile subject, never a re-lowering — is audited with
@@ -88,6 +92,15 @@ import java.util.stream.Stream;
  *       this revision's production pipeline refuses) fails closed with
  *       E6005 naming {@code CONSTRUCT_UNLOWERED} and stages nothing, so
  *       the zero result can never be a vacuous pass.</li>
+ *   <li><b>The settled-lane acceptance run.</b> All 390 dispatched cases
+ *       run through the real LuaJIT and JVM lanes
+ *       ({@link GateDispatcher} dispatch and the lanes' own execution
+ *       contract): one verdict per dispatched case, both backends
+ *       accounted per fixture (no skip), and every failing lane outcome
+ *       reported per fixture and backend — with the named producer-guard
+ *       outcomes called out as the zero-unlowered criterion at the lane
+ *       that compiled the project. The strict acceptance mode asserts
+ *       zero failing outcomes.</li>
  *   <li><b>The reachability acceptance invocation.</b> The whole
  *       {@code deal/**} production source set is scanned for the
  *       removed-surface contract (zero retained {@code LuaBackend.generate}
@@ -161,9 +174,11 @@ public class CutoverCorpusAcceptanceAuditTest {
     }
 
     /**
-     * A residual reported under the pre-precondition rule: named per
-     * fixture and target, counted, and asserted only under the strict
-     * acceptance mode (never skipped).
+     * One gated residual — the named producer-guard deficit of the corpus
+     * drive (criterion 3's CD5 precondition) or the pre-removal
+     * reachability deficit (criterion 4's removal slice) — reported under
+     * the pre-precondition rule: named, counted, and asserted only under
+     * the strict acceptance mode, never skipped.
      */
     private static void deficit(String message) {
         reportedDeficit++;
@@ -245,9 +260,15 @@ public class CutoverCorpusAcceptanceAuditTest {
                        List<String> diagnostics, String materializationError) {
     }
 
-    /** The per-leg acceptance outcome, with the produced project keys. */
+    /**
+     * The per-leg acceptance outcome: the fixture's legs, the identity-guard
+     * violations over the projects this fixture's compiles produced, and the
+     * number of projects the guard audited (the non-vacuity count of the
+     * lane-level guard over the drive).
+     */
     private record FixtureOutcome(String corpusPath, List<Leg> legs,
-                                  List<String> guardViolations) {
+                                  List<String> guardViolations,
+                                  int producedProjects) {
     }
 
     private static void testDispatchedCorpusProductionDrive(
@@ -307,12 +328,21 @@ public class CutoverCorpusAcceptanceAuditTest {
 
         // The lane-level identity guard over every produced project (the
         // K12 property; hard at every revision).
-        int producedProjects = 0;
+        int producedProjects = outcomes.stream()
+            .mapToInt(FixtureOutcome::producedProjects).sum();
         for (FixtureOutcome outcome : outcomes) {
             for (String violation : outcome.guardViolations()) {
                 fatal(outcome.corpusPath() + ": " + violation);
             }
         }
+        System.out.println("  the dangling-identity guard audited "
+            + producedProjects + " produced project(s) over the drive: "
+            + (outcomes.stream()
+                .mapToInt(o -> o.guardViolations().size()).sum() == 0
+                    ? "zero violations" : "VIOLATIONS REPORTED"));
+        check(producedProjects > 0,
+            "the guard audited at least one produced project (the drive's "
+                + "non-vacuity)");
         for (Leg leg : allLegs(outcomes)) {
             if (leg.materializationError() != null) {
                 fatal(leg.corpusPath() + " [" + leg.target()
@@ -358,7 +388,12 @@ public class CutoverCorpusAcceptanceAuditTest {
                 if (reproduced) {
                     compileRejectLegs++;
                 } else {
-                    residual.add("[" + leg.target() + "] " + leg.corpusPath()
+                    // A pinned sidecar rejection the production compile does
+                    // not reproduce is an acceptance failure of this
+                    // revision, not a precondition deficit: the rejection
+                    // pins are exercised now and every one of them must
+                    // reproduce. Never reported as a skippable residual.
+                    fatal("[" + leg.target() + "] " + leg.corpusPath()
                         + ": the pinned compile-reject " + rejected.code()
                         + " is not reproduced: " + joined);
                 }
@@ -371,7 +406,10 @@ public class CutoverCorpusAcceptanceAuditTest {
                 residual.add("[" + leg.target() + "] " + leg.corpusPath()
                     + ": " + joined);
             } else {
-                residual.add("[" + leg.target() + "] " + leg.corpusPath()
+                // A compile failure outside the named producer guards is not
+                // the CD5 precondition's deficit: it is an acceptance
+                // failure of this revision and always fails the run.
+                fatal("[" + leg.target() + "] " + leg.corpusPath()
                     + ": non-guard compile failure: " + joined);
             }
         }
@@ -383,9 +421,13 @@ public class CutoverCorpusAcceptanceAuditTest {
                 + (entry.getValue() == 0 ? "PASS" : "FAIL")
                 + " (" + entry.getValue() + " legs)");
         }
-        if (residual.isEmpty()) {
+        if (residual.isEmpty() && fatal == 0) {
             System.out.println("  strict acceptance mode: ENGAGED (zero "
-                + "deficit over the dispatched set)");
+                + "named producer-guard deficit over the dispatched set)");
+        } else if (residual.isEmpty()) {
+            System.out.println("  zero named producer-guard deficit over the "
+                + "dispatched set; the hard failure(s) reported above fail "
+                + "this run");
         } else if (strictAcceptance()) {
             System.out.println("  strict acceptance mode: ENGAGED "
                 + "(-Ddeal.acceptance.strict)");
@@ -422,6 +464,7 @@ public class CutoverCorpusAcceptanceAuditTest {
             Map<String, CorpusDiscovery.Fixture> corpusByPath) {
         List<Leg> legs = new ArrayList<>();
         List<String> guardViolations = new ArrayList<>();
+        int producedProjects = 0;
         Map<Target, Path> roots = new LinkedHashMap<>();
         try {
             Map<Target, Project> projects = new LinkedHashMap<>();
@@ -477,6 +520,7 @@ public class CutoverCorpusAcceptanceAuditTest {
                 ExecutableLoweredProject produced =
                     orchestrator.producedProject();
                 if (compiled && produced != null) {
+                    producedProjects++;
                     ProducedProjectIdentityAudit.laneFailure(produced,
                         fixture.corpusPath() + " [" + target.laneName + "]")
                         .ifPresent(guardViolations::add);
@@ -488,7 +532,7 @@ public class CutoverCorpusAcceptanceAuditTest {
             }
         }
         return new FixtureOutcome(fixture.corpusPath(), List.copyOf(legs),
-            List.copyOf(guardViolations));
+            List.copyOf(guardViolations), producedProjects);
     }
 
     /**
@@ -550,11 +594,13 @@ public class CutoverCorpusAcceptanceAuditTest {
      * The dispatched corpus through the settled LuaJIT and JVM lanes
      * ({@link GateDispatcher} dispatch, the lanes' own execution
      * contract): one verdict per dispatched case (no skip), both backends
-     * accounted per fixture, and zero lane outcomes carrying a named
-     * producer guard. The lanes' other differential rows are the lanes'
-     * own registered accounting; a named-guard outcome is the zero-
-     * unlowered criterion surfacing at the lane that compiled the project,
-     * and it is a hard failure.
+     * accounted per fixture, every failing outcome reported per fixture
+     * and backend, and zero lane outcomes carrying a named producer
+     * guard. A named-guard outcome is the zero-unlowered criterion
+     * surfacing at the lane that compiled the project; both it and every
+     * other differential failure are asserted zero under the strict
+     * acceptance mode, while the existing registered three-lane gate
+     * remains the hard differential verdict surface.
      */
     private static void testSettledLaneAcceptance(
             CorpusDiscovery.DiscoveryResult discovery,
@@ -599,8 +645,9 @@ public class CutoverCorpusAcceptanceAuditTest {
         for (Target target : Target.values()) {
             perBackend.put(target.laneName, new int[2]);
         }
+        long failedOutcomes = 0;
         long namedGuardOutcomes = 0;
-        List<String> namedGuardLines = new ArrayList<>();
+        List<String> failureLines = new ArrayList<>();
         for (GateDispatcher.CaseVerdict verdict : verdicts) {
             for (String backend : List.of("luajit", "jvm")) {
                 boolean present = verdict.outcomes().stream()
@@ -620,13 +667,24 @@ public class CutoverCorpusAcceptanceAuditTest {
                     continue;
                 }
                 counts[1]++;
+                failedOutcomes++;
                 String detail = outcome.mismatch()
                     .map(m -> m.message()).orElse("");
-                if (NAMED_GUARDS.stream().anyMatch(detail::contains)) {
+                boolean namedGuard = NAMED_GUARDS.stream()
+                    .anyMatch(detail::contains);
+                if (namedGuard) {
                     namedGuardOutcomes++;
-                    namedGuardLines.add(verdict.fixturePath() + " ["
-                        + outcome.backend() + "]: " + detail);
                 }
+                // Every failing outcome is reported per fixture and
+                // backend, never skipped and never silently folded into an
+                // aggregate: the named producer-guard outcome is the
+                // zero-unlowered criterion surfacing at the lane that
+                // compiled the project, and every other differential
+                // outcome is reported with its own mismatch text.
+                failureLines.add(verdict.fixturePath() + " ["
+                    + outcome.backend() + "]"
+                    + (namedGuard ? " (named producer guard)" : "")
+                    + ": " + detail);
             }
         }
         for (Target target : Target.values()) {
@@ -637,17 +695,23 @@ public class CutoverCorpusAcceptanceAuditTest {
                 target.laneName + ": the pass/fail counters account for "
                     + "every dispatched case");
         }
+        System.out.println("  failing lane outcomes: " + failedOutcomes
+            + " (each reported per fixture and backend, never skipped; zero "
+            + "over the settled surface)");
+        for (String line : failureLines) {
+            System.out.println("    " + line);
+        }
         System.out.println("  zero CONSTRUCT_UNLOWERED/RETAINED_ABI_DEFERRED "
             + "lane outcomes: "
             + (namedGuardOutcomes == 0 ? "PASS" : "FAIL") + " ("
             + namedGuardOutcomes + ")");
-        if (!namedGuardLines.isEmpty()) {
+        if (failedOutcomes > 0) {
             if (strictAcceptance()) {
-                for (String line : namedGuardLines) {
+                for (String line : failureLines) {
                     fatal("lane acceptance: " + line);
                 }
             } else {
-                for (String line : namedGuardLines) {
+                for (String line : failureLines) {
                     deficit("lane acceptance (pre-precondition, reported): "
                         + line);
                 }
