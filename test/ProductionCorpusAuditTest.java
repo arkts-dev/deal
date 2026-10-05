@@ -887,19 +887,7 @@ public class ProductionCorpusAuditTest {
         Files.writeString(out.resolve("AuditProbe.java"),
             jvmProbe(project, exports, transport), StandardCharsets.UTF_8);
         sources.add(out.resolve("AuditProbe.java").toString());
-        ProcessBuilder javac = new ProcessBuilder();
-        javac.command().add("javac");
-        javac.command().add("--release");
-        javac.command().add("25");
-        javac.command().add("-proc:none");
-        javac.command().add("-cp");
-        javac.command().add(classpath);
-        javac.command().add("-d");
-        javac.command().add(classes.toString());
-        javac.command().addAll(sources);
-        javac.directory(out.toFile());
-        javac.redirectErrorStream(true);
-        ProcessOutcome compile = runProcess(javac);
+        ProcessOutcome compile = compileStaged(sources, classpath, classes);
         if (compile.exitCode() != 0) {
             throw new IllegalStateException(project.modulePath()
                 + " [jvm]: the emitted production artifact does not compile"
@@ -912,6 +900,82 @@ public class ProductionCorpusAuditTest {
         ProcessOutcome outcome = runProcess(run);
         return new Execution(outcome.exitCode(), outcome.stdout(),
             outcome.stderr(), readTransport(transport));
+    }
+
+    // =========================================================================
+    // The in-process compilation of a staged JVM artifact
+    // =========================================================================
+
+    /**
+     * One audit worker's javac instance and file manager. The compiler API of
+     * a single instance is not safe for concurrent use, so each worker owns
+     * one pair and reuses it across its cells; the compiler and the class
+     * path are set up once per worker instead of once per cell. The
+     * compilation options are the ones the JVM lane's javac invocation
+     * carries: {@code --release 25 -proc:none}, the compiler's runtime
+     * classes on the class path, and the cell's classes directory as the
+     * output. The compilation happens in-process, so the drive does not pay
+     * one toolchain JVM start per cell.
+     */
+    static final class JavacWorker {
+        final javax.tools.JavaCompiler compiler;
+        final javax.tools.StandardJavaFileManager fileManager;
+
+        JavacWorker() {
+            this.compiler = javax.tools.ToolProvider.getSystemJavaCompiler();
+            if (this.compiler == null) {
+                throw new IllegalStateException(
+                    "no system Java compiler is available on this toolchain");
+            }
+            this.fileManager = compiler.getStandardFileManager(null, null,
+                StandardCharsets.UTF_8);
+        }
+    }
+
+    private static final ThreadLocal<JavacWorker> JAVAC_WORKER =
+        ThreadLocal.withInitial(JavacWorker::new);
+
+    /** The class path entries of one javac argument, resolved to files. */
+    private static List<File> classpathEntries(String classpath) {
+        List<File> entries = new ArrayList<>();
+        for (String entry : classpath.split(File.pathSeparator)) {
+            if (!entry.isEmpty()) {
+                entries.add(Path.of(entry).toAbsolutePath().normalize().toFile());
+            }
+        }
+        return entries;
+    }
+
+    /**
+     * Compiles one staged artifact set with the toolchain's own compiler and
+     * the lane's options. The outcome carries the compiler's diagnostics so a
+     * failure reports exactly what the {@code javac} invocation reported.
+     */
+    private static ProcessOutcome compileStaged(List<String> sources,
+            String classpath, Path classes) throws Exception {
+        JavacWorker worker = JAVAC_WORKER.get();
+        javax.tools.DiagnosticCollector<javax.tools.JavaFileObject> diagnostics =
+            new javax.tools.DiagnosticCollector<>();
+        worker.fileManager.setLocation(javax.tools.StandardLocation.CLASS_OUTPUT,
+            List.of(classes.toFile()));
+        worker.fileManager.setLocation(javax.tools.StandardLocation.CLASS_PATH,
+            classpathEntries(classpath));
+        worker.fileManager.setLocation(javax.tools.StandardLocation.SOURCE_PATH,
+            List.of());
+        Iterable<? extends javax.tools.JavaFileObject> units =
+            worker.fileManager.getJavaFileObjectsFromStrings(sources);
+        List<String> options = List.of("-proc:none", "--release", "25");
+        Boolean ok = worker.compiler.getTask(null, worker.fileManager,
+            diagnostics, options, null, units).call();
+        StringBuilder text = new StringBuilder();
+        for (javax.tools.Diagnostic<? extends javax.tools.JavaFileObject> d
+                : diagnostics.getDiagnostics()) {
+            text.append(d.getKind()).append(": line ").append(d.getLineNumber())
+                .append(": ").append(d.getMessage(null)).append('\n');
+        }
+        boolean compiled = Boolean.TRUE.equals(ok);
+        return new ProcessOutcome(compiled ? 0 : 1,
+            text.toString().getBytes(StandardCharsets.UTF_8), new byte[0]);
     }
 
     /** The JVM deferred-entry probe source. */
