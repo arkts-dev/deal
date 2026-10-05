@@ -147,6 +147,7 @@ public class BodyInvocationIdentityTest {
         export function main(): null {
           let f: () => null = function(): null {
             let y: int = 2;
+            return null;
           };
           return null;
         }
@@ -324,10 +325,12 @@ public class BodyInvocationIdentityTest {
     private static final String RECURSIVE_GROUP_SOURCE = """
         function left(): null {
           let rightRef: () => null = right;
+          return null;
         }
 
         function right(): null {
           let leftRef: () => null = left;
+          return null;
         }
 
         export function main(): null {
