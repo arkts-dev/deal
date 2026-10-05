@@ -751,6 +751,19 @@ public class CutoverAcceptanceAuditTest {
                 "the " + lane + " lane's failure names the fixture, the "
                     + "module path, the function, the unresolved op id, and "
                     + "the rule: " + text);
+            // The lane's named failure is recognized as a K12 violation by
+            // the settled-lane acceptance run, which fails it hard at every
+            // revision (never as a reportable precondition deficit), while
+            // an unrelated lane mismatch is not.
+            check(CutoverCorpusAcceptanceAuditTest.isLaneIdentityFailure(text),
+                "the settled-lane acceptance recognizes the " + lane
+                    + " lane's named identity failure as a hard failure: "
+                    + text);
+            check(!CutoverCorpusAcceptanceAuditTest.isLaneIdentityFailure(
+                    "the lane compiled and executed the fixture"),
+                "an ordinary lane mismatch is not an identity failure");
+            check(!CutoverCorpusAcceptanceAuditTest.isLaneIdentityFailure(null),
+                "a missing lane mismatch detail is not an identity failure");
         }
     }
 

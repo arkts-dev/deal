@@ -99,8 +99,11 @@ import java.util.stream.Stream;
  *       accounted per fixture (no skip), and every failing lane outcome
  *       reported per fixture and backend — with the named producer-guard
  *       outcomes called out as the zero-unlowered criterion at the lane
- *       that compiled the project. The strict acceptance mode asserts
- *       zero failing outcomes.</li>
+ *       that compiled the project. A lane outcome carrying the lane-level
+ *       dangling-identity guard's named failure is a K12 violation of the
+ *       project the lane itself produced and fails this run at every
+ *       revision, with or without the strict acceptance mode; the strict
+ *       mode additionally asserts zero failing outcomes.</li>
  *   <li><b>The reachability acceptance invocation.</b> The whole
  *       {@code deal/**} production source set is scanned for the
  *       removed-surface contract (zero retained {@code LuaBackend.generate}
@@ -614,7 +617,11 @@ public class CutoverCorpusAcceptanceAuditTest {
      * surfacing at the lane that compiled the project; both it and every
      * other differential failure are asserted zero under the strict
      * acceptance mode, while the existing registered three-lane gate
-     * remains the hard differential verdict surface.
+     * remains the hard differential verdict surface. A lane outcome
+     * carrying the lane-level dangling-identity guard's named failure is
+     * the K12 property violated on the project the lane itself produced:
+     * it fails this run at every revision, never as a reportable
+     * precondition deficit.
      */
     private static void testSettledLaneAcceptance(
             CorpusDiscovery.DiscoveryResult discovery,
@@ -689,6 +696,18 @@ public class CutoverCorpusAcceptanceAuditTest {
                 if (namedGuard) {
                     namedGuardOutcomes++;
                 }
+                // A lane whose dangling-identity guard fired is a K12
+                // violation of the project the lane itself produced, so it
+                // is a hard failure at every revision — the epic's
+                // identity property carries no gate, unlike the named
+                // producer-guard residual — and it is reported per fixture
+                // and backend with the guard's own named failure text (the
+                // module path, the function, the unresolved op id, and the
+                // rule).
+                if (isLaneIdentityFailure(detail)) {
+                    fatal(verdict.fixturePath() + " [" + outcome.backend()
+                        + "]: " + detail);
+                }
                 // Every failing outcome is reported per fixture and
                 // backend, never skipped and never silently folded into an
                 // aggregate: the named producer-guard outcome is the
@@ -749,6 +768,32 @@ public class CutoverCorpusAcceptanceAuditTest {
 
     private static final String LOWER_PROJECT_CALL =
         "SemanticLowerer.lowerProject(";
+
+    /**
+     * The lane-level dangling-identity guard's named failure marker
+     * ({@link ProducedProjectIdentityAudit#laneFailure}): a lane outcome
+     * carrying it is the K12 property violated on the project the lane
+     * itself produced, which no acceptance mode may report as a
+     * precondition deficit.
+     */
+    private static final String LANE_IDENTITY_FAILURE =
+        "failed the dangling-identity audit";
+
+    /**
+     * Whether one lane outcome's mismatch detail is the lane-level
+     * dangling-identity guard's named failure ({@link #LANE_IDENTITY_FAILURE},
+     * the text {@link ProducedProjectIdentityAudit#laneFailure} produces).
+     * Such an outcome is the K12 property violated on the project the lane
+     * itself produced, so the settled-lane acceptance run treats it as a
+     * hard failure at every revision, unlike the named producer-guard
+     * residual the epic's gate covers.
+     *
+     * @param detail the lane outcome's mismatch text, or {@code null}
+     * @return true when the text is the guard's named failure
+     */
+    static boolean isLaneIdentityFailure(String detail) {
+        return detail != null && detail.contains(LANE_IDENTITY_FAILURE);
+    }
 
     private static void testReachabilityAcceptance() throws Exception {
         System.out.println("-- the reachability acceptance: the whole deal/** "
