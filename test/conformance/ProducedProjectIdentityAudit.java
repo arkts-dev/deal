@@ -2,10 +2,12 @@ package deal.test.conformance;
 
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.ExecutableLoweredProject;
+import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.OpId;
+import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 
@@ -35,7 +37,11 @@ import java.util.Optional;
  *
  * <p>The validator's closed body-local return cell rules — the
  * {@code FUNCTION_RETURN} kind, the parent {@code RETURN} of the returning
- * body, and the creation-op ownership —
+ * body, the creation-op ownership, the absence of an assigned static
+ * invocation shape, the single return boundary, the descriptor-kind
+ * failure-policy rule on the allocated function's declared return
+ * descriptor, and (for a {@code CLOSURE_NEW} identity) the declared
+ * signature's return type —
  * are asserted exactly where the closed table scopes them: on the
  * <em>body-local cell</em>, the {@code RETURN} whose identity is the body's
  * own function-value creation op ({@code CLOSURE_NEW} or
@@ -99,6 +105,30 @@ public final class ProducedProjectIdentityAudit {
     /** The rule: the body-local identity is not the returning body's creation op. */
     public static final String BODY_LOCAL_IDENTITY_OWNER_MISMATCH =
         "BODY_LOCAL_IDENTITY_OWNER_MISMATCH";
+
+    /**
+     * The rule: the body-local cell's boundary carries a failure policy
+     * that violates the descriptor-kind rule for its descriptor.
+     */
+    public static final String BODY_LOCAL_DESCRIPTOR_KIND_MISMATCH =
+        "BODY_LOCAL_DESCRIPTOR_KIND_MISMATCH";
+
+    /**
+     * The rule: the body-local {@code FUNCTION_RETURN} boundary checks a
+     * descriptor other than the allocated function's declared return
+     * descriptor.
+     */
+    public static final String BODY_LOCAL_RETURN_DESCRIPTOR_MISMATCH =
+        "BODY_LOCAL_RETURN_DESCRIPTOR_MISMATCH";
+
+    /**
+     * The rule: the body-local cell's boundary is named by a statically
+     * materialized invocation op of the closure (the body has an assigned
+     * invocation shape, so its reserved identity must live on that op and
+     * not on the body's creation op).
+     */
+    public static final String BODY_LOCAL_ASSIGNED_INVOCATION_SHAPE =
+        "BODY_LOCAL_ASSIGNED_INVOCATION_SHAPE";
 
     private ProducedProjectIdentityAudit() {
         // Static audit surface only; no instances.
@@ -169,6 +199,44 @@ public final class ProducedProjectIdentityAudit {
             : Optional.of(violations.get(0));
     }
 
+    /**
+     * The lane-facing form of the guard (ISSUE-0694;
+     * {@code conformance-cutover-guards-pins-and-production-source-removal}
+     * HR4(b) and the lane project identity audit contract): audits the very
+     * project the lane's own compile produced — the production arm's
+     * read-only {@code producedProject()} reference, never a re-lowering —
+     * and returns the nameable lane-failure text of the first violation, or
+     * empty when the audit passes. A lane consumes this after a successful
+     * compile and propagates a present text as a failing lane outcome, so
+     * an identity regression fails the lane by name (the fixture, the
+     * module path, the function, the unresolved op id, and the rule) and can
+     * never pass, never skip, and never be masked by a re-lowering.
+     *
+     * @param project     the project the lane's own compile produced;
+     *                    {@code null} is accepted (a lane that ran no
+     *                    production arm has nothing to audit) and yields an
+     *                    empty result
+     * @param fixturePath the dispatched fixture's corpus path (the named
+     *                    failure's subject); non-null
+     * @return the named lane failure text, or empty when there is nothing
+     *         to audit or the audit passes
+     */
+    public static Optional<String> laneFailure(ExecutableLoweredProject project,
+            String fixturePath) {
+        Objects.requireNonNull(fixturePath, "fixturePath must not be null");
+        if (project == null) {
+            return Optional.empty();
+        }
+        List<Violation> violations = audit(project);
+        if (violations.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of("the lane-produced project of " + fixturePath
+            + " failed the dangling-identity audit: " + violations.get(0).describe()
+            + (violations.size() > 1 ? " (" + violations.size()
+                + " violation(s) total)" : ""));
+    }
+
     private static void auditUnit(LoweredModuleUnit unit, Closure closure,
             List<Violation> violations) {
         String modulePath = unit.moduleId().path();
@@ -205,17 +273,49 @@ public final class ProducedProjectIdentityAudit {
             boolean bodyLocal = identity != null
                 && (identity.kind() == SemanticOpKind.CLOSURE_NEW
                     || identity.kind() == SemanticOpKind.RECURSIVE_GROUP_INIT);
+            boolean boundaryIsFunctionReturn = false;
+            KindPayload.BoundaryPayload boundaryPayload = null;
             if (bodyLocal && boundary != null) {
                 if (boundary.kind() != SemanticOpKind.BOUNDARY
                         || !(boundary.payload()
-                            instanceof KindPayload.BoundaryPayload boundaryPayload)
-                        || boundaryPayload.kind() != BoundaryKind.FUNCTION_RETURN) {
+                            instanceof KindPayload.BoundaryPayload payload0)
+                        || payload0.kind() != BoundaryKind.FUNCTION_RETURN) {
                     violations.add(new Violation(modulePath, function,
                         boundaryId.toString(), RETURN_BOUNDARY_NOT_FUNCTION_RETURN));
-                } else if (!isBodyReturnBoundary(boundary, boundaryId,
-                        payload.function(), closure)) {
+                } else {
+                    boundaryIsFunctionReturn = true;
+                    boundaryPayload = payload0;
+                    if (!isBodyReturnBoundary(boundary, boundaryId,
+                            payload.function(), closure)) {
+                        violations.add(new Violation(modulePath, function,
+                            boundaryId.toString(), RETURN_BOUNDARY_PARENT_MISMATCH));
+                    }
+                }
+            }
+            if (bodyLocal && boundaryIsFunctionReturn && boundaryPayload != null) {
+                // The closed cell's remaining clauses (K12; the validator's
+                // bodyLocalReturnCell): the body has no assigned invocation
+                // shape (no statically materialized invocation op of the
+                // closure names this boundary), the boundary's failure
+                // policy satisfies the descriptor-kind rule, and the
+                // boundary checks the allocated function's declared return
+                // descriptor.
+                if (closure.staticallyMaterializes(boundaryId)) {
                     violations.add(new Violation(modulePath, function,
-                        boundaryId.toString(), RETURN_BOUNDARY_PARENT_MISMATCH));
+                        boundaryId.toString(), BODY_LOCAL_ASSIGNED_INVOCATION_SHAPE));
+                }
+                if (!matchesDescriptorKind(boundaryPayload.descriptor(),
+                        boundary.failurePolicy())) {
+                    violations.add(new Violation(modulePath, function,
+                        boundaryId.toString(), BODY_LOCAL_DESCRIPTOR_KIND_MISMATCH));
+                }
+                if (identity.kind() == SemanticOpKind.CLOSURE_NEW
+                        && identity.payload()
+                            instanceof KindPayload.ClosureNewPayload closureNew
+                        && !closureNew.signature().returnType()
+                            .equals(boundaryPayload.descriptor())) {
+                    violations.add(new Violation(modulePath, function,
+                        boundaryId.toString(), BODY_LOCAL_RETURN_DESCRIPTOR_MISMATCH));
                 }
             }
             if (bodyLocal) {
@@ -285,6 +385,45 @@ public final class ProducedProjectIdentityAudit {
     }
 
     /**
+     * The descriptor-kind rule ({@code SemanticIrValidator.matchesDescriptorKind}):
+     * a function descriptor is checked under {@code FUNCTION_SIGNATURE},
+     * every other descriptor under {@code TYPE_DESCRIPTOR}.
+     */
+    private static boolean matchesDescriptorKind(RuntimeDescriptor descriptor,
+            FailurePolicyId policy) {
+        return policy == (descriptor instanceof RuntimeDescriptor.Func
+            ? FailurePolicyId.FUNCTION_SIGNATURE
+            : FailurePolicyId.TYPE_DESCRIPTOR);
+    }
+
+    /**
+     * The witness of an assigned invocation shape
+     * ({@code SemanticIrValidator.staticallyMaterializes}): a
+     * {@code CALL}/{@code ASYNC_START} of a non-dynamic callee, a
+     * {@code CALLBACK_INVOKE}, or an {@code EXTERNAL_ENTRY} naming the
+     * boundary as its return boundary. A dynamic callee's recorded return
+     * cells are not a statically materialized invocation.
+     */
+    private static boolean staticallyMaterializes(SemanticOp op, OpId boundaryOpId) {
+        return switch (op.kind()) {
+            case CALL -> op.payload() instanceof KindPayload.CallPayload call
+                && !(call.callee() instanceof KindPayload.CallCallee.Dynamic)
+                && boundaryOpId.equals(call.returnBoundaryOpId());
+            case ASYNC_START -> op.payload()
+                    instanceof KindPayload.AsyncStartPayload start
+                && !(start.callee() instanceof KindPayload.CallCallee.Dynamic)
+                && boundaryOpId.equals(start.returnBoundaryOpId());
+            case CALLBACK_INVOKE -> op.payload()
+                    instanceof KindPayload.CallbackInvokePayload callback
+                && boundaryOpId.equals(callback.returnBoundaryOpId());
+            case EXTERNAL_ENTRY -> op.payload()
+                    instanceof KindPayload.ExternalEntryPayload entry
+                && boundaryOpId.equals(entry.returnBoundaryOpId());
+            default -> false;
+        };
+    }
+
+    /**
      * The project closure index the audit resolves against: the first op of
      * every emitted op identity and the identity's occurrence count over
      * the whole closure (an identity is materialized exactly once).
@@ -303,6 +442,20 @@ public final class ProducedProjectIdentityAudit {
                 }
             }
             return closure;
+        }
+
+        /**
+         * Whether any op of the closure statically materializes the given
+         * boundary as its return boundary (a closure-wide witness).
+         */
+        private boolean staticallyMaterializes(OpId boundaryOpId) {
+            for (SemanticOp op : byId.values()) {
+                if (ProducedProjectIdentityAudit.staticallyMaterializes(op,
+                        boundaryOpId)) {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 }
