@@ -106,6 +106,7 @@ public class FailureArmAuthorityTest {
         testWalkOracleNumericPositions();
         testMovedElementCell();
         testRuntimeCarrierProjection();
+        testRuntimeNullSentinelAtWalk();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -2360,8 +2361,21 @@ public class FailureArmAuthorityTest {
 
     /** The walk drive's module unit (its own class layout and JSON walk call site). */
     private static deal.semantic.ir.ExecutableLoweredProject walkProject() {
+        return walkProject(List.of());
+    }
+
+    /**
+     * The walk drive's module unit with the given extra module-init ops
+     * prepended (the runtime-sentinel drive carries its
+     * {@code MODULE_IMPORT(HOST)} op, so its production chunk binds the
+     * deployed runtime and emits the host-boundary cells).
+     */
+    private static deal.semantic.ir.ExecutableLoweredProject walkProject(
+            List<deal.semantic.ir.SemanticOp> extraOps) {
         deal.semantic.ir.ModuleId entry = new deal.semantic.ir.ModuleId("arm-walk");
         deal.semantic.ir.SemanticOp op = walkJsonOp();
+        List<deal.semantic.ir.SemanticOp> ops = new ArrayList<>(extraOps);
+        ops.add(op);
         deal.semantic.ir.BlockId initBlock = new deal.semantic.ir.BlockId(0);
         deal.semantic.ir.LoweredModuleUnit unit =
             new deal.semantic.ir.LoweredModuleUnit(
@@ -2369,7 +2383,7 @@ public class FailureArmAuthorityTest {
                 deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32, entry, "hash",
                 "context", java.util.Set.of(), Map.of(), Map.of(WALK_ID, walkLayout()),
                 Map.of(), new deal.semantic.ir.ModuleInitPlan(List.of(), initBlock),
-                new deal.semantic.ir.ExportPlan(List.of()), Map.of(), List.of(op));
+                new deal.semantic.ir.ExportPlan(List.of()), Map.of(), ops);
         Map<deal.semantic.ir.ModuleId, deal.semantic.ir.LoweredModuleUnit> modules =
             new LinkedHashMap<>();
         modules.put(entry, unit);
@@ -2387,13 +2401,28 @@ public class FailureArmAuthorityTest {
     /** The walk chunk's table (the JSON walk op in the module-init block). */
     private static Map<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>
             walkTables() {
+        return walkTables(List.of());
+    }
+
+    /** The walk chunk's table with the given extra module-init ops. */
+    private static Map<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>
+            walkTables(List<deal.semantic.ir.SemanticOp> extraOps) {
         deal.semantic.ir.ModuleId entry = new deal.semantic.ir.ModuleId("arm-walk");
         deal.semantic.ir.SemanticOp op = walkJsonOp();
+        deal.semantic.ir.BlockId initBlock = new deal.semantic.ir.BlockId(0);
+        List<deal.semantic.ir.OpId> members = new ArrayList<>();
+        Map<deal.semantic.ir.OpId, deal.semantic.ir.BlockId> membership =
+            new LinkedHashMap<>();
+        for (deal.semantic.ir.SemanticOp extra : extraOps) {
+            members.add(extra.opId());
+            membership.put(extra.opId(), initBlock);
+        }
+        members.add(op.opId());
+        membership.put(op.opId(), initBlock);
         Map<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable> tables =
             new LinkedHashMap<>();
         tables.put(entry, new deal.semantic.ir.StructuredBodyTable(
-            Map.of(new deal.semantic.ir.BlockId(0), List.of(op.opId())),
-            Map.of(op.opId(), new deal.semantic.ir.BlockId(0))));
+            Map.of(initBlock, members), membership));
         return tables;
     }
 
@@ -2401,6 +2430,44 @@ public class FailureArmAuthorityTest {
     private static String emittedWalkChunk() {
         return LuaSemanticEmitter.emitProductionProject(walkProject(), walkTables(),
             Map.of(), emptySurface());
+    }
+
+    /** The host-import module identity of the runtime-sentinel walk drive. */
+    private static final deal.semantic.ir.ModuleId WALK_HOST_MODULE =
+        new deal.semantic.ir.ModuleId("host/runtime");
+
+    /** The declaration surface of the runtime-sentinel drive's host import. */
+    private static HostDeclarationSurface walkHostSurface() {
+        return new HostDeclarationSurface(Map.of(WALK_HOST_MODULE,
+            new HostDeclarationSurface.DeclarationFacts(WALK_HOST_MODULE,
+                HostDeclarationSurface.DeclarationKind.HOST, Map.of(), Map.of())));
+    }
+
+    /**
+     * The module-init {@code MODULE_IMPORT(HOST)} op of the runtime-sentinel
+     * drive: with it the production chunk is a host-binding chunk (the
+     * emitted {@code __rtNull} sentinel binding and the host-boundary
+     * cells), exactly like a production project with a host import.
+     */
+    private static deal.semantic.ir.SemanticOp walkHostImportOp() {
+        deal.semantic.ir.ModuleId entry = new deal.semantic.ir.ModuleId("arm-walk");
+        deal.semantic.ir.SourceOrigin origin = new deal.semantic.ir.SourceOrigin(
+            "arm-walk.deal",
+            new deal.semantic.ir.SourceSpan("arm-walk.deal", 1, 1, 1, 20),
+            deal.semantic.ir.SourceOriginKind.USER, new deal.semantic.ir.AnchorId(1),
+            null);
+        return dispatchOp(new deal.semantic.ir.OpId(entry, 7),
+            deal.semantic.ir.SemanticOpKind.MODULE_IMPORT,
+            new KindPayload.ModuleImportPayload("host/runtime", WALK_HOST_MODULE,
+                deal.semantic.ir.ModuleImportKind.HOST, List.of()),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, origin);
+    }
+
+    /** The production Lua chunk of the host-binding walk drive project. */
+    private static String emittedWalkHostChunk() {
+        List<deal.semantic.ir.SemanticOp> extraOps = List.of(walkHostImportOp());
+        return LuaSemanticEmitter.emitProductionProject(walkProject(extraOps),
+            walkTables(extraOps), Map.of(), walkHostSurface());
     }
 
     /** The production JVM source of the walk drive project. */
@@ -2629,6 +2696,90 @@ public class FailureArmAuthorityTest {
                 "the JVM walk machinery publishes the emitted walk's identical class "
                     + "tuple");
         }
+    }
+
+    // =========================================================================
+    // 16b. The deployed runtime's language-null sentinel at the walk
+    // =========================================================================
+
+    /**
+     * The runtime-produced language-null sentinel at a failing walk position
+     * (jsonable-tojson-walk-arm-binding W1's language-null classification):
+     * {@code deal/runtime.lua}'s {@code __rt.__NULL} is a distinct value from
+     * the chunk's own {@code __NULL}, and the landed host crossing preserves
+     * it — {@code __hostReturnCell} returns a host-returned table's entries
+     * unchanged and {@code __hostDealProject} keeps a runtime class
+     * instance's non-class field values. The host-binding production chunk
+     * binds the deployed runtime's sentinel beside the runtime it requires
+     * (a project with a host import), and the typed-boundary projection
+     * classifies that sentinel as the language null at the walk's failing
+     * positions: the message and the actual field both carry {@code null}.
+     * The flat-table control at the same position keeps the table spelling,
+     * so the classification is by sentinel identity, not by table shape.
+     */
+    static void testRuntimeNullSentinelAtWalk() throws Exception {
+        System.out.println("-- the deployed runtime's language-null sentinel at the walk --");
+        String lua = emittedWalkHostChunk();
+        check(lua.contains("local __rt = require(\"deal.runtime\")\n")
+                && lua.contains("__rtNull = __rt.__NULL\n"),
+            "the host-binding production chunk binds the deployed runtime's "
+                + "language-null sentinel");
+        check(lua.contains("__rt.load_host(\"host/runtime\""),
+            "the host-binding walk chunk carries its host import");
+        String body = "local rt = require(\"deal.runtime\")\n"
+            + "local sentinel = rt.check_type(\"?string\", nil)\n"
+            + "print(\"runtime-sentinel-binding|\" .. (__rtNull == sentinel and "
+            + "\"OK\" or \"MISSING\") .. \"|\")\n"
+            + "local returned = __hostReturnCell(\"table\", {k = sentinel}, "
+            + quote(WALK_SPAN) + ", false)\n"
+            + "local dataRoot = {__c = true, __id = " + quote(WALK_ID.text())
+            + ", __p = {name = true, age = true, ratio = true, data = true, "
+            + "tags = true}, __f = {name = " + luaString("n") + ", age = 1, "
+            + "ratio = 0.5, data = {__t = true, __keys = {k = true}, k = "
+            + "returned.k}, tags = {__a = true, __n = 1, [1] = 1}}}\n"
+            + "local cases = {\n"
+            + "  {label = \"host-returned-table-null-entry\", root = dataRoot},\n"
+            + "  {label = \"plain-table-entry-control\", root = {__c = true, __id = "
+            + quote(WALK_ID.text()) + ", __p = {name = true, age = true, ratio = "
+            + "true, data = true, tags = true}, __f = {name = " + luaString("n")
+            + ", age = 1, ratio = 0.5, data = {__t = true, __keys = {k = true}, "
+            + "k = {}}, tags = {__a = true, __n = 1, [1] = 1}}}},\n"
+            + "  {label = \"runtime-class-null-field\", root = __hostDealProject("
+            + quote(WALK_ID.text()) + ", {name = returned.k, age = 1, ratio = "
+            + "0.5, data = {__t = true, __keys = {}}, tags = {__a = true, "
+            + "__n = 0}, __kind = \"class\", __classname = "
+            + quote(WALK_ID.text()) + "}, " + quote(WALK_SPAN) + ")},\n"
+            + "}\n"
+            + "for i = 1, #cases do\n"
+            + "  local c = cases[i]\n"
+            + "  local ok, text, arm, params, actual = __jsonToClassOp("
+            + quote(WALK_ID.text()) + ", c.root)\n"
+            + "  if ok then print(c.label .. \"|OK|\") return end\n"
+            + "  local value = __arm(arm, params, " + quote(WALK_SPAN)
+            + ", nil, actual)\n"
+            + "  print(c.label .. \"|\" .. value.code .. \"|\" .. "
+            + "(value.e == nil and \"\" or value.e) .. \"|\" .. "
+            + "(value.a == nil and \"\" or value.a) .. \"|\" .. value.m .. \"|\" .. "
+            + "tostring(value.o))\n"
+            + "end\n";
+        List<String> rows = runProbe(lua, "arm-walk", body, "walk-runtime-null", 4,
+            true);
+        checkEq("runtime-sentinel-binding|OK|", rows.get(0),
+            "the emitted chunk's own binding is the deployed runtime's sentinel");
+        checkEq(new Tuple("E8001",
+                "value at data.k is not JSON serializable: null", WALK_SPAN, null,
+                "null"), walkLuaTuple(rows.get(1)),
+            "the runtime null in a host-returned table entry renders null in the "
+                + "message and the actual field");
+        checkEq(new Tuple("E8001",
+                "value at data.k is not JSON serializable: table", WALK_SPAN, null,
+                "table"), walkLuaTuple(rows.get(2)),
+            "the flat-table control at the same position keeps the table spelling");
+        checkEq(new Tuple("E8001",
+                "value at name is not JSON serializable: null", WALK_SPAN, null,
+                "null"), walkLuaTuple(rows.get(3)),
+            "the runtime null at a runtime class instance's declared field renders "
+                + "null in the message and the actual field");
     }
 
     // =========================================================================

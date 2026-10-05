@@ -593,10 +593,12 @@ public final class LuaSemanticEmitter {
 
             if (bindsHostRuntime()) {
                 out.append("local __rt = require(\"deal.runtime\")\n");
+                out.append("__rtNull = __rt.__NULL\n");
                 out.append(HOST_BOUNDARY_PRELUDE);
             } else if (bindsBytesRuntime()) {
 
                 out.append("local __rt = require(\"deal.runtime\")\n");
+                out.append("__rtNull = __rt.__NULL\n");
             }
             if (bindsBytesRuntime()) {
                 out.append(BYTES_PRELUDE);
@@ -7442,6 +7444,15 @@ end
 -- ==== shared runtime prelude ====
 local __MISSING = setmetatable({}, {__tostring = function() return "missing" end})
 local __NULL = setmetatable({}, {__tostring = function() return "null" end})
+-- The deployed runtime's own language-null sentinel (deal/runtime.lua's
+-- __rt.__NULL — a value distinct from this chunk's __NULL). The chunk's
+-- runtime binding assigns it when the chunk binds the deployed runtime
+-- (a host or bytes session); a host-free chunk leaves it nil. The
+-- typed-boundary projection classifies it as the language null exactly
+-- like the chunk's own sentinel, so a runtime-produced carrier (a
+-- host-crossed table entry, a runtime class field) reaching a failing
+-- walk position renders "null", never the table spelling.
+local __rtNull = nil
 -- The member-read helper (ISSUE-0239 E10): a present key yields the
 -- stored value (a present null is the plain nil stored by the write
 -- paths); an absent key yields the internal MISSING sentinel — exactly
@@ -8151,7 +8162,7 @@ end
 -- target class name, never the class: IR/trace spelling).
 local function __typedBoundaryKind(staticKind, v)
   if v == __MISSING then return "nil" end
-  if v == nil or v == __NULL then return "null" end
+  if v == nil or v == __NULL or v == __rtNull then return "null" end
   if type(v) == "table" and v.__jn then return v.k end
   local t = type(v)
   if t == "boolean" then return "boolean" end
