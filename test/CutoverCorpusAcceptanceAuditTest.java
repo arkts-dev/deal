@@ -117,7 +117,12 @@ import java.util.stream.Stream;
  * <p>The drive is read-only over the repository: every temp project is
  * removed on every path, nothing is staged in the checkout, and no
  * production source, corpus member, sidecar, schema, or lane mechanism is
- * modified. The workers honor {@code deal.acceptance.jobs} (default 8).</p>
+ * modified. The drive's workers honor the registered suite's worker
+ * bound, {@code deal.test.jobs} (the same bound the differential corpus
+ * gate reads; default: the available processors), so the gate's own
+ * {@code --jobs} choice bounds this audit too; {@code deal.acceptance.jobs}
+ * stays available as an explicit audit override for a bounded acceptance
+ * measurement.</p>
  */
 public class CutoverCorpusAcceptanceAuditTest {
 
@@ -197,6 +202,14 @@ public class CutoverCorpusAcceptanceAuditTest {
             ReleaseConfiguration.releaseCapabilityRegistry());
     }
 
+    /**
+     * The drive's worker bound: the registered suite's worker bound
+     * ({@code deal.test.jobs}, the same bound the differential corpus gate
+     * reads; default: the available processors), with
+     * {@code deal.acceptance.jobs} as an explicit audit override. The
+     * bound is the gate's, so an invocation at {@code --jobs 1} runs this
+     * audit serially like every other registered suite.
+     */
     private static int workerCount() {
         String raw = System.getProperty("deal.acceptance.jobs");
         if (raw != null) {
@@ -206,10 +219,11 @@ public class CutoverCorpusAcceptanceAuditTest {
                     return parsed;
                 }
             } catch (NumberFormatException ignored) {
-                // fall through to the default
+                // fall through to the gate's bound
             }
         }
-        return 8;
+        return Math.max(1, Integer.getInteger("deal.test.jobs",
+            Runtime.getRuntime().availableProcessors()));
     }
 
     // =========================================================================
