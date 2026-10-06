@@ -1,3 +1,3 @@
 # Tools
 
-Maintain reproducible build, test, launcher, and packaging utilities. Fail fast, quote paths, and avoid hidden checkout assumptions. Register real test suites through canonical runners; tooling must not encode rollout state or history. Keep this file always synchronized with code.
+Maintain reproducible build, test, launcher, and packaging utilities. Fail fast, quote paths, and avoid hidden checkout assumptions. Register real test suites through canonical runners; tooling must not encode rollout state or history. Keep this file always synchronized with code. `gate-manifest.sh` is the sole complete test selection. Tests and coverage use `run_tests.sh`; Java suites execute sequentially. Coverage reports only production-source classes and enforces 80% line and 69% branch minima. Do not retain alternate suite profiles.

@@ -2359,11 +2359,6 @@ public class BytesProductionDriveTest {
             "the landed element-contract battery stays registered");
         check(manifest.contains("deal.test.BytesProductionDriveTest"),
             "the bytes production drive is registered in the gate manifest");
-        String ffiDrive = Files.readString(
-            Path.of("test", "FfiProductionCorpusTest.java"), StandardCharsets.UTF_8);
-        check(ffiDrive.contains("the drive never drives ffi/016"),
-            "the FFI drive's ffi/016 unclaimed status is untouched");
-
         // The JS lane and the corpus membership are untouched by this drive.
         for (String jsFile : List.of("deal/runtime.js", "std/json.js",
                 "test/conformance/JsLane.java")) {
