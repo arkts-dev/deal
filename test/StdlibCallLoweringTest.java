@@ -64,60 +64,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
 
-/**
- * The ISSUE-0494 {@code STDLIB_CALL} lowering battery: the carrier
- * slice's stdlib branch lowers every recognized cataloged call to exactly
- * one validated {@code STDLIB_CALL} op with left-to-right ordered
- * operands, one {@code STDLIB_PARAMETER} boundary child per declared
- * parameter in one-based order, the single {@code STDLIB_RETURN} boundary
- * run by the call op, descriptor-kind-rule boundary policies, and the op
- * {@code failurePolicy} stamped from the single closed
- * {@link SemanticIrValidator#stdlibPolicy} table
- * ({@code stdlib-operations-and-time-lock} D2, Verification 4).
- *
- * <p>Tests:
- * <ol>
- *   <li>Single-source policy table: {@link SemanticIrValidator#stdlibPolicy}
- *       equals the pinned 21-id mapping exactly; the closed catalog
- *       carries the K7 {@code std.time}/{@code nowMillis} row and
- *       {@code StdlibFunctionId.RESERVED_NAMES} is empty.</li>
- *   <li>The all-id lowering battery: one checked module calling every
- *       cataloged export (the K7 {@code time.nowMillis()} call included)
- *       lowers to exactly one validated
- *       {@code STDLIB_CALL} per call with the declared operand/result
- *       descriptors, the ordered {@code args} payload with
- *       {@code effectCapability = STDLIB_SEMANTICS}, the boundary-child
- *       shape, and the stamped policy read from the single table (fails
- *       if the catalog misses or adds an entry).</li>
- *   <li>Argument operand completion: a call with three side-effecting
- *       argument expressions asserts left-to-right operand production
- *       before the {@code STDLIB_CALL} START.</li>
- *   <li>Negatives: a user-module member call produces no
- *       {@code STDLIB_CALL}.</li>
- *   <li>The stdlib-export value read (ISSUE-0659): the read and its
- *       typed-binding invocation lower and validate through the
- *       call-machine entry — exactly one {@code EXPORT_READ} of the
- *       cataloged export carrying the row's declared descriptor and
- *       exactly one {@code HostFunction} registration keyed by the
- *       read's result identity, plus the {@code CALL(INDIRECT)} the
- *       landed call machine builds over the host cell family; the read
- *       claims no capability.</li>
- *   <li>Validator conformance: a hand-modified wrong stamped policy on a
- *       {@code STDLIB_CALL} fails validation through the text surface
- *       (R-POLICY-KIND); the unmodified unit passes both surfaces.</li>
- *   <li>Dump determinism: repeated dumps and re-lowering are
- *       byte-identical and carry the stdlib payload fields; the dump
- *       re-validates through the text surface.</li>
- *   <li>The K7 time slice: a {@code std/time} member call is recognized
- *       through the closed catalog row and lowers to
- *       {@code STDLIB_CALL(TIME_NOW_MILLIS)} with zero parameter
- *       boundaries, one {@code STDLIB_RETURN} on the declared {@code int},
- *       and the {@code INT32_RESULT} terminal; the module's manifest
- *       claims {@code STDLIB_SEMANTICS} (never
- *       {@code STDLIB_TIME_CONFLICT}) and records the
- *       {@code STDLIB_TIME_NOW_MILLIS} coverage row.</li>
- * </ol>
- */
 public class StdlibCallLoweringTest {
 
     private static int passed = 0;
@@ -265,14 +211,6 @@ public class StdlibCallLoweringTest {
             SemanticIdAllocator.over(moduleIds));
     }
 
-    /**
-     * Lowers the named subject module through the call-machine entry
-     * (ISSUE-0659's retargeted drive): the resolved import facts and the
-     * callee-route facts are installed, so the read and the typed-binding
-     * invocation both lower and validate. A carrier session installs no
-     * import facts and keeps failing closed through the unresolved-alias
-     * guard.
-     */
     private static SemanticLowerer.FullProgramE7Result lowerSubjectCallMachine(
             CheckedProjectBuildResult checked, String modulePath) {
         CheckedModuleInput subject = moduleOf(checked.input(), modulePath);
@@ -950,10 +888,7 @@ public class StdlibCallLoweringTest {
                     && host.descriptor().equals(rowDescriptor),
                 "exactly one HostFunction(std.console, log, row descriptor) registration "
                     + "keyed by the read's result identity; got " + binding);
-            // The typed-binding invocation of the read value lowers through
-            // the landed call machine: CALL(INDIRECT) with the Static host
-            // binding and the host cell family, admitted by the validator
-            // (this drive validated the unit above).
+
             boolean indirect = unit.ops().stream().anyMatch(op ->
                 op.kind() == SemanticOpKind.CALL
                     && ((KindPayload.CallPayload) op.payload()).callee()
@@ -1330,10 +1265,6 @@ public class StdlibCallLoweringTest {
                         + "catalog row (K7)");
             }
 
-            // The claim slice: the module claims STDLIB_SEMANTICS through the
-            // landed cataloged-call arm and never the inert
-            // STDLIB_TIME_CONFLICT marker; the recognized time construct
-            // records its own coverage row.
             RequirementManifestResult manifests = LoweringSupport.computeManifests(
                 invocation(), checked.input(), checked.index());
             SemanticRequirementManifest manifest = manifestOf(manifests, main.moduleId());
@@ -1422,8 +1353,6 @@ public class StdlibCallLoweringTest {
             deleteRecursively(tmp);
         }
     }
-
-    // =========================================================================
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== Stdlib STDLIB_CALL Lowering Tests (ISSUE-0494) ===\n");

@@ -160,12 +160,6 @@ public final class CanonicalJson {
      * assertion). A magnitude beyond the IEEE range yields ±Infinity —
      * the parser's later consumers decide the projection.
      *
-     * @param text the validated decimal numeral text; non-null
-     * @return the nearest IEEE-754 double of {@code text}
-     * @throws NullPointerException if {@code text} is null
-     * @throws NumberFormatException if {@code text} is not a decimal
-     *                               numeral (a producer defect — the
-     *                               caller validates the grammar first)
      */
     public static double decodeDecimal(String text) {
         Objects.requireNonNull(text, "text must not be null");
@@ -228,8 +222,6 @@ public final class CanonicalJson {
     /**
      * Serializes the value to canonical JSON UTF-8 bytes (S2 rules).
      *
-     * @param value the value; non-null
-     * @return the canonical JSON bytes
      */
     public static byte[] serializeBytes(Value value) {
         Objects.requireNonNull(value, "value must not be null");
@@ -330,8 +322,6 @@ public final class CanonicalJson {
      * digest (contract snapshots, lowering-context hashes, index digests,
      * invocation hashes) flows through this method.
      *
-     * @param bytes the bytes to digest; non-null
-     * @return the lowercase 64-character hex digest
      */
     public static String sha256Hex(byte[] bytes) {
         Objects.requireNonNull(bytes, "bytes must not be null");
@@ -358,9 +348,6 @@ public final class CanonicalJson {
      * malformed syntax, non-canonical numbers, duplicate keys, unpaired
      * surrogates, or trailing content.
      *
-     * @param utf8 the canonical JSON bytes; non-null
-     * @return the parsed value
-     * @throws SemanticIrTextDecodeException on any transport-level violation
      */
     public static Value parse(byte[] utf8) {
         Objects.requireNonNull(utf8, "utf8 must not be null");
@@ -380,9 +367,6 @@ public final class CanonicalJson {
     /**
      * Parses canonical JSON text into the value model.
      *
-     * @param text the canonical JSON text; non-null
-     * @return the parsed value
-     * @throws SemanticIrTextDecodeException on any transport-level violation
      */
     public static Value parse(String text) {
         Objects.requireNonNull(text, "text must not be null");

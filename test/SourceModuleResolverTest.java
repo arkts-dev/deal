@@ -34,38 +34,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
-/**
- * The test battery for {@link SourceModuleResolver} (ISSUE-0267 T6,
- * design source {@code strict-project-context-resolution-identity}
- * D5/D6, {@code deal-v1.2-int32-and-bytes-architecture} D5/D6,
- * verification items 5-7 and the combined T1+T4+T5 dependency gate):
- * the pinned five resolution rules over real temp-project fixtures
- * located through production {@link ProjectLocator} (roots, externals
- * declarations, project-local stdlib surfaces); importer-relative
- * resolution outside all roots and the manifest directory; bare lookup
- * over configured roots in manifest order plus the pinned stdlib
- * surface only (a module reachable only via the old CWD fallback is
- * E2003, proven in a subprocess with a controlled working directory);
- * the 6-module filter; a missing surface or a surface missing a
- * spec-listed file is E2003 (never a RuntimeException); file-keyed
- * stdlib and externals classification across spellings; E2003/E2009 at
- * import spans with complete DiagnosticRanges; nested deal.json files
- * ignored; memoized SourceModuleLocation/SemanticModuleIdentity per
- * canonical URI (equivalent and symlinked spellings yield one
- * identity); manifest-byte-change and source-relocation identity
- * changes; the pinned deploymentModuleId formula; the
- * providerContractDigest domain and determinism; the privacy invariant;
- * the pure classifier matrix (containment, most-specific selection,
- * defensive EQUAL_ROOT_TIE and STDLIB_EXTERNAL_OVERLAP reports, purity
- * over fabricated URIs); and the resource-identity carrier shapes.
- *
- * <p>Runs via main() using the repository's plain check()-helper
- * convention; exits non-zero on failure. Sub-mode
- * {@code --sub-cwd-fallback <dir>} runs a single bare resolution in a
- * fresh JVM whose working directory is {@code <dir>} and prints
- * {@code E2003} or {@code RESOLVED:<path>} (the no-CWD-fallback
- * proof).</p>
- */
 public final class SourceModuleResolverTest {
 
     private SourceModuleResolverTest() {

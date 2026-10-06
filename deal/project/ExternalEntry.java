@@ -13,13 +13,6 @@ import deal.source.SourceScalarRange;
  * only after that conversion. The strict parser defines the shape but
  * never assembles an instance.
  *
- * @param rawImportSpecifier the externals map key exactly as written
- * @param declarationPath    the fully symlink-resolved declaration path
- *                           completed by ProjectLocator step 4
- * @param nativeLibrary      the classified {@code nativeLibrary}, or null
- *                           when the entry omits it
- * @param sourceRange        the entry's value range (the entry object's
- *                           range)
  */
 public record ExternalEntry(
     String rawImportSpecifier,

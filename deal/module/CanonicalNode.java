@@ -7,59 +7,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * One node of the serializer-owned canonical expression grammar
- * (ISSUE-0542, design source
- * {@code provider-versioned-default-plans} D6):
- *
- * <pre>
- * CanonicalNode(kind, operatorKind?, resultDescriptor,
- *   contextualDescriptors: ordered, children: ordered,
- *   literalValue?, target?, sourceRange?)
- * </pre>
- *
- * <ul>
- *   <li>{@code kind} — the node kind over the complete checked
- *       expression construct set (the {@link DefaultIrNode.NodeKind}
- *       name).</li>
- *   <li>{@code operatorKind} — the binary/unary operator name for
- *       {@code BINARY}/{@code UNARY} nodes, absent elsewhere.</li>
- *   <li>{@code resultDescriptor} — the E4 canonical descriptor text of
- *       the node's resolved type, absent for statement-position nodes
- *       (statements carry no type).</li>
- *   <li>{@code contextualDescriptors} — the ordered expected-type
- *       contexts (class-literal context, conversion context), never
- *       null, possibly empty.</li>
- *   <li>{@code children} — the ordered children: evaluation order for
- *       expression children; a {@code FUNCTION_EXPRESSION} node's
- *       children are its body's {@link CanonicalStatement}s (D6:
- *       function-expression bodies serialize through the statement
- *       grammar).</li>
- *   <li>{@code literalValue} — the exact lossless scalar of
- *       {@code LITERAL} nodes (canonical JSON value: signed-int32
- *       decimal, unique IEEE-754 hex float, full Unicode scalar string,
- *       boolean, null), absent elsewhere; never folded, truncated, or
- *       reformatted.</li>
- *   <li>{@code target} — the resolved target of identifier, member
- *       access, call, and contextual class-literal nodes
- *       ({@link Target}), absent when the node has no named
- *       target.</li>
- *   <li>{@code sourceRange} — present exactly when the range is
- *       behavior-affecting: the default expression range (the E3001
- *       anchor, on the root) and each imported-resource reference
- *       range (the planner occurrence range, on the reference node).
- *       All other nodes carry no range.</li>
- * </ul>
- *
- * <p><b>Privacy projection (pinned here):</b> resource targets embed
- * the private semantic identity only through its deterministic
- * {@code semanticResourceIdentityDigest} (SHA-256 over the canonical
- * length-separated identity components) — never the raw URI — and
- * imported resources embed {@code providerContractDigest}. Ranges
- * serialize positions and scalar offsets without the file path, so
- * canonical content that later flows into artifacts never exposes
- * deployment paths.</p>
- */
 public record CanonicalNode(
     String kind,
     String operatorKind,
@@ -87,24 +34,6 @@ public record CanonicalNode(
      * same-module resource identity, an intrinsic, an import-alias
      * module marker, or an imported resource.
      *
-     * @param kind                          the closed target kind (the
-     *                                      {@link DefaultIrNode.TargetKind}
-     *                                      name)
-     * @param name                          the binding or resource name
-     * @param semanticResourceIdentityDigest the deterministic digest of
-     *                                      the resource's private
-     *                                      semantic identity, present
-     *                                      exactly on resource targets
-     *                                      (never the raw identity)
-     * @param providerContractDigest        the provider's contract
-     *                                      digest, present exactly on
-     *                                      imported resources whose
-     *                                      provider has canonical
-     *                                      contract content; absent for
-     *                                      host-declared imported
-     *                                      classes (no plan exists) and
-     *                                      for identity-only targets —
-     *                                      never a placeholder
      */
     public record Target(String kind, String name,
                          String semanticResourceIdentityDigest,

@@ -2267,19 +2267,11 @@ public final class Parser {
                 start.startScalarOffset(), end.endScalarOffset());
     }
 
-    /**
-     * Returns a zero-scalar-length token carrying the start position and
-     * start scalar offset of the given span.
-     */
     private Token tokenSpanStart(Span sp) {
         return new Token(TokenType.IDENTIFIER, "", sp.startLine(), sp.startColumn(), 1,
             sp.startScalarOffset(), 0);
     }
 
-    /**
-     * Returns a zero-scalar-length token carrying the start position and
-     * start scalar offset of a TypeNode's span.
-     */
     private Token tokenSpanStart(TypeNode type) {
         Span sp = type.span();
         return new Token(TokenType.IDENTIFIER, "", sp.startLine(), sp.startColumn(), 1,
@@ -2316,7 +2308,6 @@ public final class Parser {
     private void error(DiagnosticCode code, String message, DiagnosticRange range) {
         diagnostics.add(CompilerDiagnostic.error(code, message, range));
     }
-
 
     // =======================================================================
     // Helper methods — warnings

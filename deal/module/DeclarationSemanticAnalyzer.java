@@ -23,29 +23,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * The declaration/C-struct half of the shared default planning pipeline
- * (ISSUE-0541; design sources
- * {@code deal-v1.2-directives-and-c-ffi-declarations} D3,
- * {@code provider-versioned-default-plans} D1-D4): plans the C-struct
- * classes of an extern-C declaration module with the same
- * {@link CompilerClassDefaultPlan} shape and the same plan-shape gates
- * as implementation classes.
- *
- * <p>The analyzer hoists the declaration's symbols (imports, functions,
- * classes) through a declaration-scope name resolution, checks each
- * C-struct default against its field type through the production
- * checker over a synthetic program of the directive-stripped class
- * declarations (E3001 at the default expression range — the checker
- * identity), applies the E4001 declaration-shape gate at the field
- * declaration range and the E3020 sync gate at the await range, records
- * the typed evaluator IR with the complete walk, and publishes the
- * ordered provisional occurrence data. Host-declared classes are
- * exempt: only {@code @c-struct} classes are planned, and the analyzer
- * publishes no digest and constructs no
- * {@link RuntimeResourceReference} or {@link RuntimeImportDependency}
- * record.</p>
- */
 public final class DeclarationSemanticAnalyzer {
 
     private DeclarationSemanticAnalyzer() {
@@ -80,12 +57,6 @@ public final class DeclarationSemanticAnalyzer {
      * Analyzes one extern-C declaration module and plans its C-struct
      * classes.
      *
-     * @param input            the module's read-only declaration facts
-     * @param identityAssembly the compilation's identity assembly (the
-     *                         plan's class identity comes from its
-     *                         required-identity gate)
-     * @return the diagnostics and the planned classes; on any
-     *         error-level diagnostic {@code plannedClasses} is empty
      */
     public static Result analyze(DefaultDeclarationModuleInput input,
                                  ModuleIdentityAssembly identityAssembly) {

@@ -46,69 +46,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
-/**
- * The closure child's lowering tests (ISSUE-0445 sequencing item 2):
- * {@code CLOSURE_NEW}/{@code LoweredFunction} for every function
- * expression and every size-1 non-group function declaration,
- * capture-by-binding resolution at the detaching op's creation site
- * recursively along the detaching chain, captures of later-declared
- * module functions resolving to the hoisted module-init ALLOC, and the
- * closure-capture arm of the B2 {@code SHARED_CELL} cell-kind upgrade —
- * driven through the child's public lowering entry point
- * ({@link SemanticLowerer#lowerModuleClosureCore}) with the produced
- * units validated by the closed validator, the address-chain protocol,
- * and the claiming seam under the pinned E6-gate activation.
- *
- * <p><b>Coverage.</b></p>
- * <ul>
- *   <li>capture lists in first-reference order with the resolved
- *       generation, producer, and producing-allocation block of each
- *       capture ({@code ClosureCapture});</li>
- *   <li>the doubly-nested capture chain of
- *       {@code test/conformance/backend-runtime/closures/nested-closure-mutation.deal}
- *       (runtime-ok across luajit/jvm/js) lowered in its window shape —
- *       the fixture's {@code return}/{@code call} statements are the
- *       control-flow and call epics' windows, so the equivalent
- *       window-legal shape pins the same detaching chain: the inner
- *       closure's capture of {@code x} resolves to {@code x}'s producing
- *       ALLOC/INIT in {@code test_nested_closure_mutation}'s body while
- *       the intermediate closure {@code make} records
- *       {@code captures = [x]} (B9 R2(ii): the inner closure's creation
- *       site lies inside make's body, so the chain closes inner-body
- *       capture → make's body capture → the R1 step);</li>
- *   <li>captures of later-declared module functions resolving to the
- *       hoisted module-init ALLOC (B1; docs/spec-v1.2.md:1217-1221) with
- *       function-identity preservation on the load (the load publishes
- *       the pre-allocated hoist-time identity the declaration-position
- *       {@code CLOSURE_NEW} reuses);</li>
- *   <li>a closure created inside a for body capturing the per-iteration
- *       incarnation (generation 1) with the counter incarnation staying
- *       {@code DIRECT} (combined with the binding-core child: fails if
- *       the two-incarnation map is broken);</li>
- *   <li>narrowed flow types never captured: capture entries are
- *       {@code BindingId}s carrying no type, and the IR carries the
- *       declared descriptors only;</li>
- *   <li>the closure-capture arm of the B2 cell-kind iff:
- *       closure-captured incarnations {@code SHARED_CELL} (payloads
- *       re-derived through the single derivation — including hoisted
- *       module-function ALLOCs and self-recursive own names),
- *       uncaptured locals {@code DIRECT}, reassignable-uncaptured
- *       locals {@code DIRECT} with the {@code mutable} flag recorded
- *       independently;</li>
- *   <li>the {@code LoweredBody} registration seam: exactly one
- *       {@code functionBindings} entry per closure keyed by its
- *       allocation identity, the identity equal to the
- *       {@code CLOSURE_NEW} result value id;</li>
- *   <li>determinism: capture lists, FunctionId/BlockId allocation, and
- *       unit dumps byte-identical across repeated lowering;</li>
- *   <li>fail-closed negatives: function expressions stay foreign in the
- *       binding-core child's window; a function-typed load of a dynamic
- *       value (a parameter) is the producer rule's typed-load arm (it
- *       registers exactly one {@code DynamicFunctionValue}, ISSUE-0675);
- *       foreign body statements and the legacy profile
- *       guard convert to the pinned E6005.</li>
- * </ul>
- */
 public class ClosureLoweringTest {
 
     private static int passed = 0;
@@ -1133,19 +1070,9 @@ public class ClosureLoweringTest {
             "two runs produce byte-identical unit dumps");
     }
 
-    /**
-     * Fail-closed negatives and the producer rule's realized load arm: a
-     * function expression stays foreign in the
-     * binding-core child's window; a function-typed load of a dynamic
-     * value (a parameter) registers exactly one {@code DynamicFunctionValue}
-     * (ISSUE-0675); foreign body statements and the legacy profile
-     * guard convert to the pinned E6005.
-     */
     static void testFailClosedNegatives() {
         System.out.println("-- fail-closed negatives --");
 
-        // (a) The binding-core entry (ISSUE-0444) still rejects function
-        // expressions: closure production is the closure child's.
         CheckedSlice slice = checkSlice("let h: () => null = function(): null {};");
         if (slice != null) {
             SemanticLowerer.BindingCoreResult foreign = SemanticLowerer.lowerModuleBindingCore(
@@ -1163,13 +1090,6 @@ public class ClosureLoweringTest {
             }
         }
 
-        // (b) A function-typed load of a parameter inside a closure body is
-        // the producer rule's typed-load arm (ISSUE-0675): the parameter's
-        // cell value identity is not statically tracked, so the load
-        // allocates its own carrier identity and registers exactly one
-        // DynamicFunctionValue keyed by that identity with the load's
-        // checked descriptor — the closure window shares the one producer
-        // rule.
         SemanticLowerer.ClosureCoreResult parameterLoad = lowerSlice("""
             function outer(g: () => null): null {
               let h: () => null = function(): null {

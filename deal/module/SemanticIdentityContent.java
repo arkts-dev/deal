@@ -3,20 +3,6 @@ package deal.module;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
-/**
- * The deterministic digest projections of the private semantic
- * identities for canonical plan content (the serializer epic
- * ISSUE-0542; the derivation mirrors the pinned FFI-domain
- * {@code semanticResourceIdentityDigest} rule,
- * {@code deal/ffi/FfiDeclarationValidator.java}): canonical content
- * that later flows into artifacts never carries raw deployment URIs —
- * identities participate through deterministic SHA-256 digests over
- * canonical length-separated (NUL-joined) components only.
- *
- * <p>Deterministic: no address, timestamp, ordinal, or process state
- * enters any input; identical identities always produce identical
- * digests.</p>
- */
 final class SemanticIdentityContent {
 
     private SemanticIdentityContent() {

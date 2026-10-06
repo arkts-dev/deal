@@ -23,101 +23,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-/**
- * The {@code FunctionExecutionBinding} registry of the BINDINGS
- * capability (ISSUE-0447 registry child; design B5 and the Registry
- * contract): the lowering-time producer of
- * {@code LoweredModuleUnit.functionBindings} — exactly one registration
- * per producing allocation, keyed by
- * {@link FunctionAllocationIdentity} — plus this epic's minimal
- * in-epic ownership of the host/external function-value materialization
- * seam (the classification of host/external function-value producing
- * sites and the {@code HostFunction}/{@code ExternalFunction}/
- * {@code HostFunctionValue} registrations over member-read/export-read
- * op facts and {@code HOST_TO_DEAL} boundary-op facts at the IR level).
- *
- * <p><b>Closed producer entry points.</b> One per producing allocation
- * kind of B5:</p>
- * <ul>
- *   <li>{@link #registerClosure} — every {@code CLOSURE_NEW} result →
- *       {@code LoweredBody {functionId, blockId}};</li>
- *   <li>{@link #registerGroupMember} — every {@code RECURSIVE_GROUP_INIT}
- *       member → one {@code LoweredBody} per member keyed by the
- *       member's pre-assigned allocation identity;</li>
- *   <li>{@link #registerAdapter} — every {@code FUNCTION_ADAPT} result →
- *       {@code AdapterBinding {adaptOpId, captureMode, sourceRef,
- *       sourceSignature, targetSignature}} (the registration function is
- *       consumed at the adapter-creation site — the shape-map child's
- *       production);</li>
- *   <li>{@link #registerHostOrExternalImport} — an imported host or
- *       external function value materialized by a member-read/export-read
- *       op, registering {@code HostFunction {hostModuleId, exportName,
- *       descriptor}} or {@code ExternalFunction {moduleId, exportName,
- *       descriptor, executionOwner}};</li>
- *   <li>{@link #registerHostFunctionValue} — a host-materialized
- *       function value produced at a {@code HOST_TO_DEAL} boundary
- *       crossing, registering {@code HostFunctionValue {hostModuleId,
- *       materializingBoundaryOpId, descriptor}};</li>
- *   <li>{@link #registerIntrinsic} — a producer-less conversion intrinsic
- *       ({@code int}/{@code number}) seeded at module-init top,
- *       registering {@code IntrinsicFunction {kind, descriptor}} keyed by
- *       the seeded function-value identity;</li>
- *   <li>{@link #registerDynamicFunctionValue} — a function-typed
- *       materialization whose execution class is resolved from the
- *       materialized carrier at execution (a typed binding load, a
- *       container/class/namespace read, a call result, or an awaited
- *       completion), registering {@code DynamicFunctionValue
- *       {materializingOpId, descriptor}} keyed by the producing op's
- *       result allocation identity.</li>
- * </ul>
- *
- * <p><b>Seam boundary (explicit).</b> This child does not produce the
- * member-read/export-read op, does not implement member-access or import
- * machinery, and does not produce any {@code BOUNDARY} op — the producing
- * op is the expression-lowering/modules epics' (ISSUE-0234/0239) and the
- * boundary op's production is E4's (ISSUE-0233). The seam is wired at
- * those producers: when their producer emits a member/export read that
- * materializes a function-typed host/external value, or a
- * {@code HOST_TO_DEAL} boundary whose checked descriptor is a function
- * type, it calls the corresponding seam entry with the pinned payload
- * record, the produced {@code FunctionAllocationIdentity}, and the
- * checker facts. Route resolution itself is the modules epic's
- * (ISSUE-0239); this child consumes the resolved {@link ModuleRoutePlan}
- * record and pins the registry shape (shared callee →
- * {@code SHARED_BODY}; retained-ABI callee → {@code RETAINED_ABI} — the
- * closed {@link ExternalExecutionOwner} values). The crossing's execution
- * is E7's; this child executes nothing. Generated {@code @jsonable}
- * synthetics are ordinary {@code CLOSURE_NEW} producers registering
- * {@code LoweredBody} like any function (their production is
- * ISSUE-0238's).</p>
- *
- * <p><b>Registration discipline.</b> Exactly one registration per
- * producing allocation: a duplicate-key registration is rejected by the
- * registry at registration time (fail closed, never overwritten), and a
- * function-typed materialization whose producer facts are missing,
- * incomplete, or mismatched fails explicitly — the seam never silently
- * skips a registration. The map is immutable after lowering:
- * {@link #bindings()} is an unmodifiable insertion-ordered snapshot, so
- * repeated lowering of the same checked module yields the same map with
- * identical iteration order (registration order — the unit's production
- * order — feeds the byte-identical {@code deal.semantic-ir/1} dump).
- * One-to-one completeness validation (every producing allocation
- * registered; every key produced exactly once in the unit; every
- * function-typed result resolves to exactly one binding feeding the
- * schema-level R-FUNCTION-BINDING) is the validation child's
- * {@code REGISTRY_ONE_TO_ONE}; R-FUNCTION-BINDING stays the schema's.</p>
- *
- * <p><b>Producer-fact classification.</b> Each host/external
- * materialization seam entry also records a
- * {@link FunctionValueMaterialization} classification keyed by the
- * produced allocation identity — the producer fact the shape-map child's
- * import-read arm consumes (a host/external import read is a
- * non-identifier member-read expression → {@code REEVALUATE_THUNK}, B7;
- * there is no VALUE carve-out for import reads). Loads, reads, argument
- * passing, and returns preserve the
- * {@link FunctionAllocationIdentity}, so a consumer always resolves the
- * producing allocation through {@link #materializationOf}.</p>
- */
 public final class FunctionBindingRegistry {
 
     /** The registrations in insertion order (registration order). */
@@ -251,9 +156,6 @@ public final class FunctionBindingRegistry {
      * {@code CLOSURE_NEW} producing allocation (B5): the closure's
      * allocation identity is the {@code CLOSURE_NEW} result identity.
      *
-     * @param identity  the closure's producing allocation identity; non-null
-     * @param functionId the closure's function id; non-null
-     * @param bodyBlock the closure body's block id; non-null
      */
     public void registerClosure(FunctionAllocationIdentity identity, FunctionId functionId,
                                 BlockId bodyBlock) {
@@ -269,9 +171,6 @@ public final class FunctionBindingRegistry {
      * allocation identity (the identity the group op's publication phase
      * writes into the member binding cell).
      *
-     * @param identity   the member's pre-assigned allocation identity; non-null
-     * @param functionId the member's function id; non-null
-     * @param bodyBlock  the member body's block id; non-null
      */
     public void registerGroupMember(FunctionAllocationIdentity identity, FunctionId functionId,
                                     BlockId bodyBlock) {
@@ -288,12 +187,6 @@ public final class FunctionBindingRegistry {
      * closed source reference, and the source/target signatures the
      * adapter was created for.
      *
-     * @param identity        the adapter's producing allocation identity; non-null
-     * @param adaptOpId       the producing {@code FUNCTION_ADAPT} op id; non-null
-     * @param captureMode     the closed capture mode; non-null
-     * @param sourceRef       the closed source reference; non-null
-     * @param sourceSignature the adapter's source signature; non-null
-     * @param targetSignature the adapter's target signature; non-null
      */
     public void registerAdapter(FunctionAllocationIdentity identity, OpId adaptOpId,
                                 CaptureMode captureMode, AdaptSourceRef sourceRef,
@@ -335,16 +228,6 @@ public final class FunctionBindingRegistry {
      * producer-defect failure — the seam never silently skips a
      * registration.</p>
      *
-     * @param identity        the produced allocation identity; non-null
-     * @param producerPayload the pinned member-read/export-read payload
-     *                        record of the producing op; non-null
-     * @param facts           the checker facts (host or imported module
-     *                        id, export name, descriptor); non-null
-     * @param plan            the already-built route plan whose callee
-     *                        record supplies the {@code executionOwner}
-     *                        for cross-module imports (unused for host
-     *                        exports); non-null for external imports
-     * @return the recorded producer-fact classification of the site
      */
     public FunctionValueMaterialization registerHostOrExternalImport(
             FunctionAllocationIdentity identity, KindPayload producerPayload,
@@ -361,14 +244,6 @@ public final class FunctionBindingRegistry {
      * (shared callee → {@code SHARED_BODY}; retained-ABI callee →
      * {@code RETAINED_ABI}).
      *
-     * @param identity        the produced allocation identity; non-null
-     * @param producerPayload the pinned member-read/export-read payload
-     *                        record of the producing op; non-null
-     * @param facts           the checker facts (host or imported module
-     *                        id, export name, descriptor); non-null
-     * @param calleeRoutes    the callee-module route facts keyed by
-     *                        {@link ModuleId}; non-null
-     * @return the recorded producer-fact classification of the site
      */
     public FunctionValueMaterialization registerHostOrExternalImportWithRoutes(
             FunctionAllocationIdentity identity, KindPayload producerPayload,
@@ -487,16 +362,6 @@ public final class FunctionBindingRegistry {
      * an explicit producer-defect failure — the seam never silently
      * skips a registration.</p>
      *
-     * @param identity                 the produced allocation identity
-     *                                 (the crossing value's identity);
-     *                                 non-null
-     * @param boundaryPayload          the pinned {@code HOST_TO_DEAL}
-     *                                 boundary payload fact record;
-     *                                 non-null
-     * @param materializingBoundaryOpId the boundary op's id (the
-     *                                 correlation id); non-null
-     * @param hostModuleId             the owning host module id; non-null
-     * @return the recorded producer-fact classification of the crossing
      */
     public FunctionValueMaterialization registerHostFunctionValue(
             FunctionAllocationIdentity identity, KindPayload.BoundaryPayload boundaryPayload,
@@ -546,9 +411,6 @@ public final class FunctionBindingRegistry {
      * validator's closed clause set ({@code REGISTRY_ONE_TO_ONE}); a
      * second registration for the same identity stays rejected.
      *
-     * @param identity   the seeded intrinsic function-value identity; non-null
-     * @param kind       the closed intrinsic kind; non-null
-     * @param descriptor the intrinsic's declared signature; non-null
      */
     public void registerIntrinsic(FunctionAllocationIdentity identity, IntrinsicKind kind,
                                   RuntimeDescriptor.Func descriptor) {
@@ -571,9 +433,6 @@ public final class FunctionBindingRegistry {
      * at execution. A second registration for the same identity stays
      * rejected at registration time.
      *
-     * @param identity          the producing op's result allocation identity; non-null
-     * @param materializingOpId the producing op's identity (the correlation id); non-null
-     * @param descriptor        the value's checked function descriptor; non-null
      */
     public void registerDynamicFunctionValue(FunctionAllocationIdentity identity,
                                              OpId materializingOpId,
@@ -610,8 +469,6 @@ public final class FunctionBindingRegistry {
      * lowering of the same checked module yields the same map with
      * identical iteration order.
      *
-     * @return an unmodifiable insertion-ordered view of the
-     *         registrations
      */
     public Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings() {
         return Collections.unmodifiableMap(new LinkedHashMap<>(registrations));
@@ -622,7 +479,6 @@ public final class FunctionBindingRegistry {
      * order (the producer facts the shape-map child's import-read arm
      * consumes).
      *
-     * @return the classifications in registration order
      */
     public List<FunctionValueMaterialization> materializations() {
         return new ArrayList<>(materializations.values());
@@ -635,9 +491,6 @@ public final class FunctionBindingRegistry {
      * through (identity preservation across loads, reads, argument
      * passing, and returns).
      *
-     * @param identity the producing allocation identity; non-null
-     * @return the classification, or empty when the identity has no
-     *         materialization registration
      */
     public Optional<FunctionValueMaterialization> materializationOf(
             FunctionAllocationIdentity identity) {

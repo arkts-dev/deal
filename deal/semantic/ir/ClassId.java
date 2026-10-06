@@ -16,9 +16,6 @@ import java.util.Objects;
  * {@code @/Error} (see {@link #ERROR}). Target class names never appear in
  * canonical descriptor text.</p>
  *
- * @param modulePath the dotted module path of the declaring module
- *                   (empty for the builtin {@code Error} class)
- * @param name       the class name; non-null and non-empty
  */
 public record ClassId(String modulePath, String name) implements SemanticId {
 

@@ -13,57 +13,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * One deterministic per-target route plan (foundation F4; parent
- * canonical surfaces):
- *
- * <pre>{@code
- * ModuleRoutePlan {
- *   target: LUAJIT|JVM,
- *   entries: Map<ModuleId, LEGACY|SHARED>,   // implementation modules only, dependency order
- *   shadowModules: Set<ModuleId>,            // COMMON_SHADOW shadow SHARED entries
- *   bytesExceptions: Set<ModuleId>,          // rule 2b (ISSUE-0574): bytes-bearing LEGACY entries
- *   abiEdges: [TargetModuleAbi],             // one plan-time record per legacy dependency of a shared module
- *   invocationHash, planId
- * }
- * }</pre>
- *
- * <p>{@code entries} covers implementation modules only — stdlib/host
- * declaration modules appear in the interface index, never as route
- * entries. {@code shadowModules} is the subset of {@code SHARED} entries
- * recorded as shadow SHARED entries under {@code COMMON_SHADOW}; shadow
- * entries never drive production publication. {@code bytesExceptions}
- * is the rule-2b route-report record (ISSUE-0574): the subset of
- * {@code LEGACY} entries whose manifest carries the bytes-bearing
- * marker — the plan's recorded bytes-exception reason, in dependency
- * order, never an error and never a shadow entry. {@code abiEdges}
- * carries one plan-time {@link TargetModuleAbi} per legacy dependency
- * of a shared module in dependency order (first reference order), with
- * the planner-owned fields only (foundation F5).</p>
- *
- * <p><b>Hashes.</b> {@code invocationHash} is the pinned
- * {@code SHA-256(canonical JSON {purpose, semanticProfile, releaseState,
- * capabilityRegistryHash, interfaceIndexDigest, target})} computed by
- * {@link MigrationPlanner} through the single canonical JSON facility
- * (S2/F4); {@code planId = "plan-" + first 16 hex chars of
- * invocationHash}. The staging-tree nonce of the publication stage
- * exists only in on-disk tree names — never in this plan record, any
- * record, or any hash (F4/F6). The record is immutable, and the compact
- * constructor enforces the {@code planId} derivation, the hex shape of
- * {@code invocationHash}, the {@code shadowModules} ⊆ SHARED-entries
- * invariant, and the {@code bytesExceptions} ⊆ LEGACY-entries invariant
- * (a bytes-bearing module is never shared — rule 2b).</p>
- *
- * @param target          the plan target; non-null
- * @param entries         every implementation module routed, in dependency
- *                        order; non-null
- * @param shadowModules   the shadow SHARED entries; non-null
- * @param bytesExceptions the rule-2b bytes-exception LEGACY entries;
- *                        non-null
- * @param abiEdges        the plan-time ABI records in dependency order; non-null
- * @param invocationHash  the pinned invocation hash; non-null
- * @param planId          the derived {@code plan-} prefixed id; non-null
- */
 public record ModuleRoutePlan(
     Target target,
     Map<ModuleId, ModuleRoute> entries,
@@ -131,7 +80,6 @@ public record ModuleRoutePlan(
      * in dependency order, {@code abiEdges} in dependency order) — the
      * shape the byte-identical-plan gate compares.
      *
-     * @return the canonical JSON object
      */
     public CanonicalJson.Value toCanonicalJson() {
         List<CanonicalJson.Value> entryValues = new ArrayList<>();
@@ -171,7 +119,6 @@ public record ModuleRoutePlan(
      * containing the staging-tree nonce (the nonce exists only in on-disk
      * tree names, F4/F6).
      *
-     * @return the canonical JSON text
      */
     public String canonicalText() {
         return CanonicalJson.serializeText(toCanonicalJson());

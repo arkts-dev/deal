@@ -10,9 +10,6 @@ import deal.types.Types;
 
 import java.util.*;
 
-/**
- * Unit tests for the {@link IrDumper} class.
- */
 public class IrDumperTest {
 
     private static int passed = 0;
@@ -419,7 +416,7 @@ public class IrDumperTest {
      */
     static void testNullSpanInNodeThrows() {
         System.out.print("  testNullSpanInNodeThrows... ");
-        // Construct a ProgramNode containing a VariableDeclaration with a null span
+
         LiteralExpr lit = new LiteralExpr(
             new Span("test.deal", 1, 1, 1, 1),
             new LiteralValue.IntLiteral(42));
@@ -461,7 +458,7 @@ public class IrDumperTest {
      */
     static void testMissingTypeMapEntryThrows() {
         System.out.print("  testMissingTypeMapEntryThrows... ");
-        // Construct an IdentifierExpr that is NOT in the typeMap
+
         IdentifierExpr idExpr = new IdentifierExpr(
             new Span("test.deal", 1, 10, 1, 11), "x");
         VariableDeclaration var = new VariableDeclaration(
@@ -563,7 +560,6 @@ public class IrDumperTest {
 
         ProgramNode prog = new ProgramNode(span, List.of(imp, var));
 
-        // Set up typeMap — all expression nodes need entries
         Map<ExpressionNode, Type> typeMap = new HashMap<>();
         typeMap.put(calleeId, Type.Table.INSTANCE);
         typeMap.put(callee, Type.Int.INSTANCE);
@@ -702,7 +698,6 @@ public class IrDumperTest {
 
         System.out.println("OK");
     }
-
 
     /**
      * Tests that DEAL v1.2 function descriptors carry no rest arm: a fixed

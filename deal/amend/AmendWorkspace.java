@@ -104,7 +104,6 @@ public final class AmendWorkspace {
     public interface SourceAdapter {
         SourceAdapter IDENTITY = source -> source;
 
-        /** Returns a parser projection with identical line and Unicode-scalar geometry. */
         String parserSource(String source);
     }
 
@@ -576,7 +575,6 @@ public final class AmendWorkspace {
             List<? extends Operation> operations) {
         return apply(source, modulePath, baseDigest, operations, rejectingResolver());
     }
-
 
     private static RepairWorkspaceSnapshot workspace(
             String source,

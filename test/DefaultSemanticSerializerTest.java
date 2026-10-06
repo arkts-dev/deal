@@ -51,58 +51,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * The canonical serializer verification battery of ISSUE-0542 (design
- * source {@code provider-versioned-default-plans} Verification 3/4 and
- * the task-pinned acceptance criteria): the versioned canonical
- * expression and statement grammars, the digest derivations, the
- * {@code canonicalPlanContent}/{@code planDigest}/
- * {@code semanticDefaultContents} projections, the provider digests
- * per kind, and the completion of the plan-embedded
- * {@code runtimeResources} — exercised through the real orchestrator
- * path (ProjectLocator &rarr; the production CompilationOrchestrator
- * &rarr; {@code compile()} &rarr; the E2 planner output) over real
- * scratch-project fixtures plus synthetic serializer inputs for the
- * reentrant-demand guard, the broken-occurrence fail-closed paths, and
- * the non-behavior-affecting-range rule.
- *
- * <p>Variant comparisons recompile over the <em>same</em> scratch root
- * (same deployment identity), so an unchanged provider must produce
- * identical content and digests across the variants — the assertions
- * that pin the exact sensitivity boundaries.</p>
- *
- * <p>Covered:</p>
- * <ol>
- *   <li>Epic criterion 5's serializer parts: canonical-content tests
- *       distinguish changes in literals, operators, types, call
- *       targets, semantic module/resource identity, provider digest,
- *       and behavior-affecting ranges; a non-behavior-affecting range
- *       change changes nothing; equality is full-content and digests
- *       are indexes.</li>
- *   <li>Function-provider content distinguishes statement changes,
- *       call-target changes, embedded imported-provider digest
- *       changes, and behavior-affecting reference-range changes; a
- *       same-module callee's body change changes that callee's digest
- *       but not the caller's; nested function/class declarations
- *       inline.</li>
- *   <li>Provider versioning: a provider resolution or implementation
- *       change changes the provider digest and the consumer's
- *       {@code planDigest}; unchanged providers keep stable digests
- *       across runs (acyclic fixtures).</li>
- *   <li>The serializer is total over the fourteen expression kinds
- *       and the closed statement set, with tests covering every
- *       kind.</li>
- *   <li>Resource completion and the cyclic-path contract: complete
- *       digest-bearing {@code runtimeResources} in first-occurrence
- *       order, real provider digests embedded in canonical targets,
- *       no placeholder observable, broken E2 occurrences fail closed,
- *       and reentrant digest demand fails closed deterministically
- *       (never a hang).</li>
- *   <li>Leaf verification: real acyclic fixtures serialized through
- *       the orchestrator's planning phase, including the out-of-root
- *       provider fixture and the host-declared seams.</li>
- * </ol>
- */
 public class DefaultSemanticSerializerTest {
 
     private static int passed = 0;
@@ -140,12 +88,6 @@ public class DefaultSemanticSerializerTest {
         }
     }
 
-    /**
-     * The harness invocation of this suite's compiles (ISSUE-0643 P10
-     * item 3): the suite's subject — the default-semantics serialization
-     * — is arm-independent, and the fixtures keep the harness arm's
-     * retained artifact behavior.
-     */
     private static CompilerInvocation invocation() {
         return ConformanceHarnessMetadata.invocation(
             SemanticProfile.DEAL_V1_2_INT32);
@@ -572,11 +514,6 @@ public class DefaultSemanticSerializerTest {
             deleteRecursively(compile.root);
         }
     }
-
-    // =========================================================================
-    // Epic criterion 5: canonical-content sensitivity (same-root
-    // recompiles, so unchanged inputs stay byte-identical)
-    // =========================================================================
 
     private static final String SENSITIVITY_BASE_MAIN = """
         class Sens {

@@ -56,86 +56,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
-/**
- * The LuaJIT lane of the v1.2 differential gate (ISSUE-0354; design
- * {@code v12-zero-skip-conformance-gate} G4/G5): the absorbed
- * {@code ConformanceTest} compile → {@link LuaBackend} → {@code luajit}
- * path executed under the Shared Lane Contract.
- *
- * <p>Per case the lane:</p>
- * <ol>
- *   <li>Probes the required tool {@code luajit} once (G3): a missing or
- *       broken-but-present tool is {@link MismatchClass#TOOL_MISSING},
- *       never a skip.</li>
- *   <li>Compiles the fixture plus every transitively imported companion
- *       module and the {@code host/<name>} triplet declarations with the
- *       real frontend (lexer → parser → module shape gate → name
- *       resolution → type checker), companions first so the per-case
- *       identity index classifies every module before its importer.
- *       Every module compiles under the fixture-local case profile. A compile
- *       failure of any module is a lane compile failure (an
- *       infrastructure outcome with the diagnostic codes), never an
- *       execution outcome.</li>
- *   <li>Generates real Lua artifacts through the real {@link LuaBackend}
- *       (the fixture as the v1.2 entry module, so the backend itself
- *       invokes {@code main(): null} exactly once at chunk end) and
- *       asserts artifact presence before execution — a missing artifact
- *       is {@link MismatchClass#ARTIFACT_MISSING}, never a fabricated
- *       result.</li>
- *   <li>Deploys a fresh temp workspace — the lane runner, the generated
- *       fixture module, {@code deal/runtime.lua}, the generated companion
- *       modules, the {@code std/*.lua} library, and the
- *       {@code host/<name>.lua} triplet implementations — and executes
- *       the runner in a real {@code luajit} subprocess with stdout and
- *       stderr captured as separate byte streams. The gate's dispatcher
- *       owns the harness deadline; on interrupt the lane terminates the
- *       spawned subprocess (the Lane contract requirement).</li>
- *   <li>Invocation contract (G4.4): the lane runner auto-invokes each
- *       non-{@code $} zero-arity exported wrapper exactly once, in
- *       declaration order (derived from the compiled AST — the unordered
- *       {@code pairs} auto-invocation of the absorbed runner is
- *       replaced); {@code main} is never re-invoked (the backend's entry
- *       contract already invoked it); return values are discarded — no
- *       lane prints results; an async export's invocation drives the
- *       operation to completion through the runtime's synchronous async
- *       chain before the verdict.</li>
- *   <li>Error framing (G4.6): on an uncaught DEAL error the lane writes
- *       to stdout exactly {@code DEAL_ERROR_CODE: <code>} then
- *       {@code DEAL_ERROR_SNAPSHOT: <canonical JSON>} and exits 1;
- *       success exits 0. The canonical snapshot serialization is the
- *       shared {@link ErrorSnapshot} serializer — the same helper the
- *       JVM and JS lanes reuse verbatim, so the three lanes can never
- *       drift on serialization. The sidecar's Error Expectation is the
- *       authoritative field set: the lane emits the mandatory
- *       {@code code}/{@code message} plus exactly the span group
- *       ({@code sourceFile}/{@code line}/{@code column}) and the
- *       optional fields ({@code expected}, {@code actual},
- *       {@code frames}, {@code cause}) the sidecar pins and suppresses
- *       every unpinned one — a pinned field the captured error does not
- *       carry is never fabricated, so the comparison fails honestly.
- *       The one sanctioned span-less shape — the locked time selector's
- *       retained {@code nowMillis} wrapper raising E8004 with no
- *       file/line/column ({@code luajit-time-selector-disposition},
- *       Failure and operations) — pairs with a sidecar that omits the
- *       whole span group, so the lane emits the span-less snapshot
- *       exactly as captured. The runner transports the raw captured
- *       error fields through a workspace payload file; the lane
- *       normalizes and frames them.</li>
- *   <li>{@code sourceFile} normalization (corpus C2): the lane maintains
- *       its per-module deployment map (the absolute path every compiled
- *       module's spans carry ↔ its canonical corpus-relative path plus
- *       its stripped classification-header line count), recorded at
- *       compile time; the captured {@code file} is normalized to the
- *       corpus-relative form and the captured {@code line} is rebased
- *       onto raw corpus-file coordinates (the coordinates the sidecars
- *       pin). An unmappable captured {@code file} value is emitted
- *       verbatim, so the byte comparison fails and surfaces the defect.</li>
- * </ol>
- *
- * <p>The lane changes no existing runner: {@code ConformanceTest} keeps
- * running in {@code run_tests.sh} until the zero-skip flip retires it
- * (G5's temporary-coexistence window). No production file is modified.</p>
- */
 public class LuaLane implements Lane {
 
     /** The lane's backend name (G4: exactly {@code luajit}). */
@@ -506,10 +426,7 @@ public class LuaLane implements Lane {
                 Set<String> companionCorpusPaths = new LinkedHashSet<>();
                 Map<String, Map<String, Type>> hostModules =
                     new LinkedHashMap<>();
-                // Corpus C FFI externals (ISSUE-0507): raw import path
-                // -> the production-validated FFIGEN module the LuaJIT
-                // emission path serializes into the __rt.load_ffi call
-                // site (the real load_ffi path).
+
                 Map<String, deal.ffi.FfiGeneratedModule> ffiModules =
                     new LinkedHashMap<>();
                 for (StatementNode stmt
@@ -707,9 +624,7 @@ public class LuaLane implements Lane {
                 return new CanonicalModuleIdentity.ExternalModule(
                     modulePath.replace('/', '.'));
             }
-            // Corpus C FFI externals (ISSUE-0507): candidate/* modules
-            // classify as externals with the dotted raw specifier (the
-            // production externals classification).
+
             if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
                 return new CanonicalModuleIdentity.ExternalModule(
                     modulePath.replace('/', '.'));
@@ -1014,9 +929,7 @@ public class LuaLane implements Lane {
             if (hostRegistry.isHostModule(modulePath)) {
                 return hostRegistry.forModule(modulePath).exports();
             }
-            // Corpus C FFI externals (ISSUE-0507): candidate/* imports
-            // resolve through the corpus-owned deal.json wiring into the
-            // real FFI declaration surface.
+
             if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
                 return CorpusFfi.module(conformanceRoot, modulePath,
                     profile).exports();
@@ -1037,9 +950,7 @@ public class LuaLane implements Lane {
                 return hostRegistry.forModule(modulePath)
                     .classSymbols().get(className);
             }
-            // Corpus C FFI externals (ISSUE-0507): classes of a
-            // candidate/* module resolve to the declaration's
-            // synthesized ClassSymbols.
+
             if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
                 return CorpusFfi.module(conformanceRoot, modulePath,
                     profile).classSymbols().get(className);
@@ -1070,9 +981,7 @@ public class LuaLane implements Lane {
                     return hostRegistry.forModule(ext.rawImportSpecifier())
                         .classSymbols().get(className);
                 }
-                // Corpus C FFI externals (ISSUE-0507): the carried
-                // external identity of a candidate/* module routes back
-                // to the declaration's synthesized class symbols.
+
                 Symbol.ClassSymbol ffiSymbol = CorpusFfi.classSymbol(
                     conformanceRoot, declaringModule, className, profile);
                 if (ffiSymbol != null) {
@@ -1113,8 +1022,7 @@ public class LuaLane implements Lane {
                 return hostRegistry.forModule(ext.rawImportSpecifier())
                     .exports().containsKey(functionName);
             }
-            // Corpus C FFI externals (ISSUE-0507): the declared export
-            // map of a candidate/* module.
+
             if (CorpusFfi.declaresFunction(conformanceRoot,
                     declaringModule, functionName, profile)) {
                 return true;
@@ -1144,9 +1052,7 @@ public class LuaLane implements Lane {
                 HostDeclaration decl = hostRegistry.forModule(modulePath);
                 return resolveHostTypeNode(typeNode, modulePath, decl);
             }
-            // Corpus C FFI externals (ISSUE-0507): field annotations of
-            // a candidate/* class resolve against the declaration's own
-            // class registry (the host-registry shape).
+
             if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
                 return CorpusFfi.resolveTypeNode(typeNode,
                     CorpusFfi.module(conformanceRoot, modulePath, profile)

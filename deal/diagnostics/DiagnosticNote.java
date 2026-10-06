@@ -8,9 +8,6 @@ package deal.diagnostics;
  * synthetic anchor notes) carries {@code null}, while a secondary-anchor
  * note carries the note's own range.</p>
  *
- * @param message the note message; must not be null
- * @param range   the note's secondary range, or {@code null} for a
- *                message-only note
  */
 public record DiagnosticNote(String message, DiagnosticRange range) {
     public DiagnosticNote {

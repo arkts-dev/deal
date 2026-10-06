@@ -31,16 +31,6 @@ import java.util.Objects;
  * {@code referencedSemanticIds} is the ordered list of generic JSON
  * objects (the semantic-ID shapes).</p>
  *
- * @param version               the parsed snapshot version; exactly
- *                              {@link OperationContractSnapshot#VERSION}
- *                              (any other value is a decode failure)
- * @param opKind                the raw operation-kind name; non-null
- * @param resultType            the raw result-type text, or {@code null}
- * @param operandTypes          the raw operand descriptor texts in order; non-null
- * @param selector              the raw selector name, or {@code null}
- * @param payload               the raw payload object; non-null
- * @param failurePolicy         the raw failure-policy name; non-null
- * @param referencedSemanticIds the ordered raw semantic-ID objects; non-null
  */
 public record SnapshotJsonRecord(
     int version,

@@ -17,36 +17,6 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * The differential gate's lane dispatcher (ISSUE-0353; design
- * {@code v12-zero-skip-conformance-gate} G7): runs every case's lane
- * executions under a worker pool bounded by available processors, with a
- * harness-owned deadline per lane subprocess execution.
- *
- * <p>Dispatch semantics (G4/G6/G7):</p>
- * <ul>
- *   <li>Cases run in parallel workers; the worker count is the caller's
- *       {@code parallelism} (the gate passes
- *       {@code Runtime.getRuntime().availableProcessors()}, the
- *       worker-pool bound of the parallel backend-test pattern).</li>
- *   <li>Lanes of one case execute sequentially in the case's worker, in
- *       {@link LaneCase} order, so per-case verdict construction is
- *       deterministic and no worker ever blocks on a sibling lane
- *       queued behind itself.</li>
- *   <li>Each lane execution carries a harness-owned deadline: a timer
- *       cancels the execution when it is exceeded, the lane's execution
- *       thread is interrupted (the lane contract requires the lane to
- *       terminate its subprocess on interrupt), and the outcome is
- *       {@link MismatchClass#LANE_TIMEOUT} with process termination —
- *       there is no automatic retry.</li>
- *   <li>No retry, no expectation auto-update, no per-backend weakening:
- *       every lane of every case executes exactly once and the
- *       comparator's verdict is exact.</li>
- *   <li>No silent lane omission: a backend whose lane implementation is
- *       not registered is {@link MismatchClass#HARNESS_DEFECT}, an
- *       infrastructure outcome that never satisfies the case.</li>
- * </ul>
- */
 public final class GateDispatcher {
 
     private GateDispatcher() {

@@ -10,7 +10,6 @@ package deal.semantic.ir;
  * {@code SemanticIdAllocator}'s, uniqueness within a project is the
  * validator's.</p>
  *
- * @param id the numeric identity; non-negative
  */
 public record FunctionId(long id) implements SemanticId {
 

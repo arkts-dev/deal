@@ -42,12 +42,6 @@ import java.util.Objects;
  * runtime descriptors, diagnostic type names, public export keys, or
  * source-language values.</p>
  *
- * @param kind                      the reference kind
- * @param semanticResourceIdentity  the provider resource identity
- * @param providerContractDigest    the provider contract digest (64
- *                                  lowercase hex chars)
- * @param sourceRange               the consuming site's complete source
- *                                  scalar range
  */
 public record RuntimeResourceReference(Kind kind,
                                        SemanticResourceIdentity semanticResourceIdentity,
@@ -83,9 +77,6 @@ public record RuntimeResourceReference(Kind kind,
      * and is rejected as a programming error rather than silently
      * replacing a character.</p>
      *
-     * @param canonicalProviderContent the canonical (serialized) provider
-     *                                 content whose digest to compute
-     * @return the 64-lowercase-hex-char SHA-256 digest
      */
     public static String providerContractDigestOf(String canonicalProviderContent) {
         Objects.requireNonNull(canonicalProviderContent, "canonicalProviderContent");

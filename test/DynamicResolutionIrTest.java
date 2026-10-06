@@ -67,64 +67,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * ISSUE-0531 — dynamically resolved function invocations in
- * {@code deal.semantic-ir/1}: the closed {@code CallCallee.Dynamic}
- * callee shape, the dynamic return-boundary set of {@code CALL}
- * (DEAL body, host, retained-ABI external; {@code SHARED_BODY} records no
- * caller-side cell), the {@code ASYNC_START} dynamic projection (source
- * {@code DEAL_BODY} + the single {@code FUNCTION_RETURN} task cell), the
- * runtime selection protocol
- * ({@link DynamicReturnBoundaryProtocol}), and the
- * callback-delivered/host-response {@code HostFunctionValue}
- * registration closure (R-FUNCTION-BINDING) with the
- * {@code materializingBoundaryOpId} correlation carried on both
- * validator surfaces.
- *
- * <p>Corpus:</p>
- * <ol>
- *   <li>Closed construction: the {@code Dynamic} callee, the
- *       {@code DynamicReturnBoundary} record, the
- *       {@code CallPayload}/{@code AsyncStartPayload} exclusivity
- *       rejections, and the {@code ReturnBoundarySelection} closed
- *       kinds.</li>
- *   <li>The protocol: {@code kindOf} for every direct binding shape and
- *       the adapter fail-closed arm; {@code select} for all four
- *       resolution classes with the pinned cell/kind/owner.</li>
- *   <li>Validator positives: a unit-level dynamic CALL (all three
- *       recorded cells + a parameter boundary), a project-level dynamic
- *       CALL with the DEAL-body cell living in the callee unit, and a
- *       dynamic ASYNC_START — each through the typed and the text
- *       surface.</li>
- *   <li>Validator negatives: wrong mode, missing/extra record,
- *       exclusive single return id, per-class cell violations,
- *       unresolvable/non-BOUNDARY entries, the ASYNC_START source and
- *       missing-return violations, the closed per-class cell checks
- *       (kind/policy/descriptor, mutual distinctness, and the
- *       RETURN-parentage of the DEAL-body and ASYNC task cells), the
- *       malformed-record exclusivity, and the open callee type
- *       (R-ENUM).</li>
- *   <li>The HostFunctionValue crossing closure: the positive
- *       registration, and the negatives (missing registration, dangling
- *       correlation id, descriptor/key mismatches, null correlation id
- *       through the text surface).</li>
- *   <li>Canonical rendering and the text round-trip.</li>
- *   <li>Oracle execution of a dynamically resolved {@code ASYNC_START} for
- *       every runtime resolution class — DEAL_BODY (the task body's
- *       {@code RETURN} runs exactly the recorded {@code FUNCTION_RETURN}
- *       task cell), HOST (start/complete with the derived operation
- *       label; zero caller-side return cells), and EXTERNAL/SHARED_BODY
- *       (the callee async {@code EXTERNAL_ENTRY} owns the canonical
- *       token and the caller {@code AWAIT} completes through the
- *       execution-bound referent).</li>
- *   <li>Oracle execution of adapter-resolved dynamic {@code CALL} and
- *       {@code ASYNC_START} — the D15 source resolution fixes the class
- *       per source binding (LoweredBody, HostFunction, HostFunctionValue,
- *       retained-ABI external, SHARED_BODY external) and each class
- *       executes exactly the selected recorded cell with the pinned
- *       kind and owner.</li>
- * </ol>
- */
 public class DynamicResolutionIrTest {
 
     private static int passed = 0;
@@ -1194,7 +1136,6 @@ public class DynamicResolutionIrTest {
         return CanonicalJson.serializeText(withOp(root, op2));
     }
 
-    /** Sets one payload leaf of the first op of the given kind to an arbitrary value. */
     private static String setPayloadLeaf(String text, SemanticOpKind kind, String key,
             CanonicalJson.Value value) {
         CanonicalJson.Obj root = parseJson(text);
@@ -1236,7 +1177,6 @@ public class DynamicResolutionIrTest {
         return CanonicalJson.serializeText(withOp(root, op2));
     }
 
-    /** Sets the single returnBoundaryOpId of the first CALL op to the host cell entry. */
     private static String setCallReturnBoundary(String text) {
         CanonicalJson.Obj root = parseJson(text);
         CanonicalJson.Obj op = firstOpOfKind(root, "CALL");

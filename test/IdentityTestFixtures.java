@@ -8,15 +8,6 @@ import deal.types.Types;
 
 import java.util.List;
 
-/**
- * Test-side fixtures for the v1.2 identity carriage
- * (ISSUE-0313): class types carrying canonical class identities built
- * from the single-module standalone convention — an empty module path is
- * the intrinsic builtin module, any other path is a project module whose
- * configured root text is the path itself (byte-identical to the
- * pre-carriage {@code @<path>/<Name>} spelling every single-module
- * harness pin used).  Production code never depends on this class.
- */
 public final class IdentityTestFixtures {
 
     private IdentityTestFixtures() { /* static fixtures only */ }

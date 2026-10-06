@@ -5,39 +5,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 
-/**
- * The StructuredExpectationComparator of the differential gate core
- * (ISSUE-0353; design {@code v12-zero-skip-conformance-gate} G4/G6):
- * compares one lane execution against the lane's structured expectation
- * exactly and returns the first mismatch of the closed G6 classes.
- *
- * <p>Check order (fixed, so the verdict is deterministic):</p>
- * <ol>
- *   <li>Infrastructure outcomes ({@code ARTIFACT_MISSING},
- *       {@code TOOL_MISSING}, {@code LANE_TIMEOUT},
- *       {@code PROCESS_FAILURE}, {@code HARNESS_DEFECT}) pass through
- *       labeled — they are reported separately from DEAL outcomes and
- *       never satisfy a case.</li>
- *   <li>Compile-reject cross-check ({@code COMPILE_REJECT_MISMATCH}):
- *       the lane must reject exactly when the expectation pins
- *       {@code compile-reject}, producing exactly the pinned diagnostic
- *       object (code plus pinned line/column, nothing else).</li>
- *   <li>Transcript byte comparison ({@code TRANSCRIPT_MISMATCH}):
- *       stdout then stderr, byte-for-byte; the first differing byte is
- *       reported with bounded context. A lane snapshot violating the
- *       canonical serialization diverges here byte-wise from the
- *       sidecar's canonical transcript.</li>
- *   <li>Exact exit code ({@code EXIT_CODE_MISMATCH}).</li>
- *   <li>For {@code runtime-error}: the G4.6 framing is parsed from
- *       stdout, the snapshot's canonical serialization is validated, and
- *       the fields are compared against the sidecar's Error Expectation
- *       — the sidecar is the authoritative field set: the lane must emit
- *       the mandatory fields plus exactly the pinned optional fields and
- *       suppress every unpinned optional
- *       ({@code ERROR_SNAPSHOT_MISMATCH} naming the backend and the first
- *       differing field).</li>
- * </ol>
- */
 public final class StructuredExpectationComparator {
 
     private StructuredExpectationComparator() {

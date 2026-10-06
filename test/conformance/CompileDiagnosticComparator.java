@@ -6,22 +6,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-/**
- * The Compile Diagnostic comparator of the differential gate core
- * (ISSUE-0353; the Compile Diagnostic contract of
- * {@code v12-zero-skip-conformance-gate}): for a frontend
- * {@code compile-error} fixture with a Compile Expectation Sidecar, the
- * backend-neutral frontend compilation must emit exactly one error
- * diagnostic, and it must equal the pin field-exact — {@code code},
- * {@code line} (from the diagnostic range start, rebased from the
- * header-stripped compile coordinates onto the raw corpus-file
- * coordinates the pin is authored in), {@code column} (range start), and
- * {@code message} when pinned.
- *
- * <p>A second error diagnostic or a differing field is
- * {@code COMPILE_DIAGNOSTIC_MISMATCH} naming the fixture and the first
- * differing field. No backend executes for the fixture.</p>
- */
 public final class CompileDiagnosticComparator {
 
     private CompileDiagnosticComparator() {

@@ -7,47 +7,6 @@ import deal.semantic.ir.SemanticProfile;
 
 import java.util.Objects;
 
-/**
- * The single invocation-resolution component of the common lowering
- * foundation (F1/F8; A1): owns the release-state → public-profile
- * derivation, the closed purpose×profile matrix, and the derived
- * {@code releaseStateHash} recorded on the invocation. This class is the
- * only place {@link CompilerInvocation} records are constructed —
- * {@code deal/Main.java} resolves the public build through it, and the
- * two internal purposes exist only as harness factories, never as CLI
- * flags or source pragmas.
- *
- * <p>Resolution contract (A1, exact):</p>
- * <ul>
- *   <li>{@code PUBLIC_BUILD} — the profile derives from the release state:
- *       {@code PRE_ACTIVATION → LEGACY_SAFE_INT},
- *       {@code V1_2_ACTIVE → DEAL_V1_2_INT32}. The only
- *       {@code PUBLIC_BUILD} constructor is
- *       {@link #resolve(ReleaseState, CapabilityRegistry)} — strictly
- *       derived, never selectable.</li>
- *   <li>{@code COMMON_SHADOW} — the profile is passed explicitly and must
- *       be {@code DEAL_V1_2_INT32} under any release state (pre- and
- *       post-activation shadowing; parent D2 step 1); anything else is
- *       rejected at invocation resolution, before checking or lowering.</li>
- *   <li>{@code LEGACY_REGRESSION} — the profile is passed explicitly and
- *       must be {@code LEGACY_SAFE_INT} under any release state (the
- *       retention window extends past activation); anything else is
- *       rejected at invocation resolution, before checking or lowering.</li>
- * </ul>
- *
- * <p>No factory derives a non-{@code PUBLIC_BUILD} profile from the
- * release state alone: the derivation-based purpose overload is
- * superseded by the A1 matrix, and the internal factories take the
- * profile explicitly. {@link CompilerInvocation}'s compact constructor
- * enforces the same matrix defensively, so the guard holds at the record
- * too, not only at the factories.</p>
- *
- * <p>Profile mixing is impossible by construction: every invocation
- * carries exactly one immutable project-wide {@link SemanticProfile},
- * and the provider derives/validates and records it in a single pass.
- * {@code LEGACY_SAFE_INT} is inspectable for routing/regression but is
- * never lowered; lowering admits only {@code DEAL_V1_2_INT32}.</p>
- */
 public final class CompilerProfileProvider {
 
     private CompilerProfileProvider() {
@@ -59,8 +18,6 @@ public final class CompilerProfileProvider {
      * {@code PRE_ACTIVATION → LEGACY_SAFE_INT},
      * {@code V1_2_ACTIVE → DEAL_V1_2_INT32}.
      *
-     * @param releaseState the release-owned release state; non-null
-     * @return the derived public semantic profile
      */
     public static SemanticProfile publicProfile(ReleaseState releaseState) {
         Objects.requireNonNull(releaseState, "releaseState must not be null");
@@ -78,9 +35,6 @@ public final class CompilerProfileProvider {
      * point {@code deal/Main.java} uses; the public CLI gains no profile
      * or purpose surface.
      *
-     * @param releaseState the release-owned release state; non-null
-     * @param registry     the release-owned capability registry; non-null
-     * @return the immutable invocation record
      */
     public static CompilerInvocation resolve(ReleaseState releaseState,
                                              CapabilityRegistry registry) {
@@ -97,13 +51,6 @@ public final class CompilerProfileProvider {
      * post-activation shadowing — the E11 pre-activation common-closure
      * evidence path). Never a CLI flag or source pragma.
      *
-     * @param profile      the explicit profile; must be
-     *                     {@code DEAL_V1_2_INT32}
-     * @param releaseState the release-owned release state; non-null
-     * @param registry     the release-owned capability registry; non-null
-     * @return the immutable invocation record
-     * @throws IllegalArgumentException when the profile is not
-     *         {@code DEAL_V1_2_INT32}
      */
     public static CompilerInvocation resolveCommonShadow(SemanticProfile profile,
                                                          ReleaseState releaseState,
@@ -126,13 +73,6 @@ public final class CompilerProfileProvider {
      * retention window extends past activation). Never a CLI flag or
      * source pragma.
      *
-     * @param profile      the explicit profile; must be
-     *                     {@code LEGACY_SAFE_INT}
-     * @param releaseState the release-owned release state; non-null
-     * @param registry     the release-owned capability registry; non-null
-     * @return the immutable invocation record
-     * @throws IllegalArgumentException when the profile is not
-     *         {@code LEGACY_SAFE_INT}
      */
     public static CompilerInvocation resolveLegacyRegression(SemanticProfile profile,
                                                              ReleaseState releaseState,
@@ -174,10 +114,6 @@ public final class CompilerProfileProvider {
      * resolution and recorded on the invocation; never a selectable
      * input.
      *
-     * @param releaseState           the release state; non-null
-     * @param capabilityRegistryHash the closed capability-registry digest
-     *                               (F7); non-null
-     * @return the lowercase 64-character hex digest
      */
     public static String deriveReleaseStateHash(ReleaseState releaseState,
                                                 String capabilityRegistryHash) {

@@ -14,85 +14,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-/**
- * The closed {@code FUNCTION_ADAPT} creation-rule position classifier of
- * the BINDINGS capability (ISSUE-0449 creation-rule child, sequencing
- * item 6; design B6, parent D15 "Creation rule (closed)"), plus the
- * closed position set over {@link BoundaryKind}: for every
- * function-typed value flow the lowerer classifies the position by
- * checker facts ({@code CheckResult.typeMap},
- * {@link Types#equals(Type, Type)} / {@link Types#isAssignable(Type,
- * Type)}) before choosing any shape.
- *
- * <p><b>The closed creation rule (B6, exactly).</b></p>
- * <ul>
- *   <li><b>Exact signature</b> — identical async marker, identical
- *       return type, identical parameter lists
- *       ({@code Types.equals}) — the value is stored directly; no
- *       {@code FUNCTION_ADAPT} ({@link Disposition#DIRECT_STORE} — the
- *       direct-store flow is this child's production).</li>
- *   <li><b>Assignable-but-not-exact</b> — identical async marker,
- *       identical return type, {@code M <= N} with exactly equal leading
- *       M parameter types and {@code M < N} — exactly one adaptation
- *       candidate ({@link Disposition#ADAPT}): the candidate carries the
- *       derived source signature (the source expression's checked type),
- *       the target signature (the declared binding signature), the
- *       recorded proof fact for the shape-map child (B7), the prepared
- *       wiring point (the adapted position's own
- *       {@code VARIABLE_DECLARATION}/{@code VARIABLE_ASSIGNMENT}
- *       boundary chain into which the adapter result will be wired as
- *       its direct input — B9's creation-wiring target), and the
- *       producer facts the registry child's host/external
- *       materialization seam supplies when the source is a host/external
- *       function value ({@code HostFunction}/{@code HostFunctionValue}/
- *       {@code ExternalFunction} are admissible adaptation sources per
- *       the same rule, {@code docs/spec-v1.2.md:1078-1082}). This child
- *       emits no {@code FUNCTION_ADAPT} op and chooses no mode — mode
- *       selection, payload construction, and emission are the shape-map
- *       child's obligations, so every emitted adapter carries its
- *       closed-map mode from birth.</li>
- *   <li><b>Non-assignable</b> — never reaches lowering from checked
- *       source (E3001/E5004 are frontend rejections); a value whose
- *       runtime signature can differ from its static claim
- *       (host-materialized) fails the position's own
- *       {@code VARIABLE_DECLARATION}/{@code VARIABLE_ASSIGNMENT}
- *       boundary via the descriptor-kind rule →
- *       {@code FUNCTION_SIGNATURE} E8010 — that boundary op and its
- *       executed check are E4's machinery; this child classifies the
- *       position ({@link Disposition#NON_ASSIGNABLE}) and records the
- *       failure expectation.</li>
- * </ul>
- *
- * <p><b>Typed boundary positions never adapt.</b> The classifier admits
- * no adaptation arm for any position other than
- * {@code VARIABLE_DECLARATION}/{@code VARIABLE_ASSIGNMENT}: every other
- * {@link BoundaryKind} — parameter, return, host/external/callback
- * parameter/return, array/table/class element, JSON, and every other
- * kind — maps to {@link PositionKind#TYPED_BOUNDARY} with
- * {@link Disposition#BOUNDARY_DIRECT} (direct value flow into the
- * position's boundary slot — the wiring E4's boundary producer
- * consumes). The boundary's function-descriptor cell
- * ({@code FUNCTION_SIGNATURE}, descriptor-kind rule) and the
- * exact-signature E8010 rejection for any mismatch including
- * {@code M < N} before any invocation are realized by E4's closed
- * boundary-assignment table and machinery (the pinned
- * {@code jvm-fv-sig-check-return-error} behavior), not by this epic —
- * the classifier records the expectation only, never substitutes a
- * static projection for the executed check.</p>
- *
- * <p><b>After a direct-store commit</b> the function identity is an
- * ordinary function value: loads, reads, argument passing, and returns
- * preserve allocation identity, and any later typed-boundary crossing
- * is an ordinary {@code FUNCTION_SIGNATURE} check — exact-signature
- * pass when the descriptor matches, E8010 on a mismatch at that
- * boundary (realized by E4's boundary machinery).</p>
- *
- * <p><b>Determinism.</b> The classifier is a pure function over its
- * facts: the same position facts always produce an equal
- * classification record, so repeated lowering records identical
- * classification lists in walk order (byte-identical lowering's
- * classification half).</p>
- */
 public final class AdapterCreationRule {
 
     /**
@@ -184,12 +105,6 @@ public final class AdapterCreationRule {
      * behavior is driven by the integration child through E4's
      * realization component).
      *
-     * @param code            the closed visible-error code ({@code E8010})
-     * @param policy          the closed failure policy
-     *                        ({@code FUNCTION_SIGNATURE})
-     * @param boundaryKind    the boundary whose check raises the failure
-     * @param messageTemplate the canonical primary template from the
-     *                        closed failure-contract registry
      */
     public record FailureExpectation(String code, FailurePolicyId policy,
                                      BoundaryKind boundaryKind,
@@ -235,8 +150,6 @@ public final class AdapterCreationRule {
          * identical async marker, identical return type, {@code M <= N}
          * with exactly equal leading M parameter types and {@code M < N}.
          *
-         * @return {@code true} iff the candidate's signature pair
-         *         re-derives as assignable-but-not-exact
          */
         public boolean reDerivesAsAssignableButNotExact() {
             return assignableButNotExact(sourceSignature, targetSignature);
@@ -294,8 +207,6 @@ public final class AdapterCreationRule {
          * The recorded classifications with exactly the given
          * disposition, in record order.
          *
-         * @param disposition the closed disposition; non-null
-         * @return the matching classifications
          */
         public List<PositionClassification> ofDisposition(Disposition disposition) {
             Objects.requireNonNull(disposition, "disposition must not be null");
@@ -312,7 +223,6 @@ public final class AdapterCreationRule {
          * The recorded adaptation candidates in record order (exactly
          * the {@code ADAPT} classifications' candidates).
          *
-         * @return the candidates
          */
         public List<AdaptationCandidate> candidates() {
             List<AdaptationCandidate> candidates = new ArrayList<>();
@@ -339,8 +249,6 @@ public final class AdapterCreationRule {
      * and closed — an unknown kind cannot be expressed and there is no
      * fallback member.
      *
-     * @param kind the closed boundary kind; non-null
-     * @return the position kind
      */
     public static PositionKind positionKindOf(BoundaryKind kind) {
         Objects.requireNonNull(kind, "kind must not be null");
@@ -363,8 +271,6 @@ public final class AdapterCreationRule {
      * whose classification admits the adaptation arm (B6: boundaries
      * never adapt).
      *
-     * @param kind the closed boundary kind; non-null
-     * @return {@code true} iff the kind is a variable position
      */
     public static boolean variablePosition(BoundaryKind kind) {
         return positionKindOf(kind) != PositionKind.TYPED_BOUNDARY;
@@ -376,8 +282,6 @@ public final class AdapterCreationRule {
      * (B6 — the classifier admits no adaptation arm for any other
      * {@link BoundaryKind}).
      *
-     * @param kind the closed boundary kind; non-null
-     * @return {@code true} iff the kind admits adaptation
      */
     public static boolean admitsAdaptation(BoundaryKind kind) {
         return variablePosition(kind);
@@ -394,9 +298,6 @@ public final class AdapterCreationRule {
      * non-assignable → {@link Disposition#NON_ASSIGNABLE}; a
      * non-function-typed target → {@link Disposition#NOT_FUNCTION_FLOW}.
      *
-     * @param sourceType the source expression's checked type; non-null
-     * @param targetType the declared/inferred binding type; non-null
-     * @return the closed disposition
      */
     public static Disposition variableDisposition(Type sourceType, Type targetType) {
         Objects.requireNonNull(sourceType, "sourceType must not be null");
@@ -422,9 +323,6 @@ public final class AdapterCreationRule {
      * identical return type, {@code M <= N} with exactly equal leading M
      * parameter types and {@code M < N}.
      *
-     * @param source the source function type; non-null
-     * @param target the target function type; non-null
-     * @return {@code true} iff the pair is assignable-but-not-exact
      */
     public static boolean assignableButNotExact(Type.Func source, Type.Func target) {
         Objects.requireNonNull(source, "source must not be null");
@@ -455,9 +353,6 @@ public final class AdapterCreationRule {
      * {@code M <= N} with exactly equal leading M parameter types and
      * {@code M < N}.
      *
-     * @param source the source signature; non-null
-     * @param target the target signature; non-null
-     * @return {@code true} iff the pair is assignable-but-not-exact
      */
     public static boolean assignableButNotExact(RuntimeDescriptor.Func source,
                                                 RuntimeDescriptor.Func target) {
@@ -497,24 +392,6 @@ public final class AdapterCreationRule {
      * expectation for any function-typed mismatch including
      * {@code M < N}).
      *
-     * @param kind          the closed boundary kind of the position's
-     *                      boundary chain; non-null
-     * @param sourceType    the source expression's checked type; non-null
-     * @param targetType    the declared/inferred binding type (variable
-     *                      positions) or the position's checked
-     *                      descriptor type (boundary positions); non-null
-     * @param proof         the recorded proof fact of the source binding
-     *                      (variable positions; absent for
-     *                      non-binding sources); non-null, ignored for
-     *                      boundary positions
-     * @param wiringPoint   the prepared wiring point (variable
-     *                      positions); non-null, ignored for boundary
-     *                      positions
-     * @param producerFacts the registry child's producer facts of a
-     *                      host/external function-value source (absent
-     *                      otherwise); non-null, ignored for boundary
-     *                      positions
-     * @return the closed classification
      */
     public static PositionClassification classify(BoundaryKind kind, Type sourceType,
                                                   Type targetType,
@@ -543,19 +420,6 @@ public final class AdapterCreationRule {
      * {@code FUNCTION_SIGNATURE} E8010 failure expectation at the
      * position's own boundary.
      *
-     * @param kind          exactly {@code VARIABLE_DECLARATION} or
-     *                      {@code VARIABLE_ASSIGNMENT}; non-null
-     * @param sourceType    the source expression's checked type; non-null
-     * @param targetType    the declared/inferred binding type; non-null
-     * @param proof         the recorded proof fact of the source binding
-     *                      (absent for non-binding sources); non-null
-     * @param wiringPoint   the prepared wiring point; non-null
-     * @param producerFacts the producer facts of a host/external
-     *                      function-value source (absent otherwise);
-     *                      non-null
-     * @return the closed variable-position classification
-     * @throws IllegalArgumentException if {@code kind} is not a variable
-     *                                  position
      */
     public static PositionClassification classifyVariablePosition(
             BoundaryKind kind, Type sourceType, Type targetType,
@@ -609,13 +473,6 @@ public final class AdapterCreationRule {
      * {@code jvm-fv-sig-check-return-error} behavior; this classifier
      * records the expectation only).
      *
-     * @param kind       a boundary kind other than the two variable
-     *                   positions; non-null
-     * @param sourceType the source value's checked type; non-null
-     * @param targetType the position's checked descriptor type; non-null
-     * @return the closed boundary-position classification
-     * @throws IllegalArgumentException if {@code kind} is a variable
-     *                                  position
      */
     public static PositionClassification classifyBoundaryPosition(BoundaryKind kind,
                                                                   Type sourceType,
@@ -665,8 +522,6 @@ public final class AdapterCreationRule {
      * classification-level expectation only; the boundary op and its
      * executed check are E4's.
      *
-     * @param boundaryKind the position's boundary kind; non-null
-     * @return the recorded expectation
      */
     public static FailureExpectation e8010Expectation(BoundaryKind boundaryKind) {
         Objects.requireNonNull(boundaryKind, "boundaryKind must not be null");

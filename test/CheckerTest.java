@@ -23,11 +23,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 
-/**
- * Comprehensive unit tests for the DEAL type checker (ISSUE-0006).
- * Covers name resolution, type checking, null narrowing, definite return analysis,
- * class construction, and error diagnostics.
- */
 public class CheckerTest {
 
     private static int passed = 0;
@@ -174,13 +169,11 @@ public class CheckerTest {
         testNameResolution_e2006_classBeforeImport();
         testNameResolution_e2006_functionBeforeImport();
 
-        // ISSUE-0052: NameResolver isAsync propagation
         testNameResolution_asyncFuncDeclIsAsync();
         testNameResolution_syncFuncDeclIsNotAsync();
         testNameResolution_asyncFuncTypeAnnotationIsAsync();
         testNameResolution_awaitWalkExpressionHoistsNestedFuncExpr();
 
-        // ISSUE-0053: TypeChecker async/await rules
         testAwaitOutsideAsync_E3012();
         testAwaitOnNonAsyncCall_E3013();
         testAsyncCallWithoutAwait_E3014();
@@ -205,7 +198,6 @@ public class CheckerTest {
         testUnaryOperators();
         testOperatorTypeErrors();
 
-        // -- Bytes equality admission (ISSUE-0158 gate lift) --
         testBytesEqualityAdmission();
         testBytesComparisonNonAdmittedUnchanged();
         testBytesComparisonAdmissionNegatives();
@@ -261,9 +253,7 @@ public class CheckerTest {
         testClassNominalTyping();
         testClassFieldAccess();
         testClassOptionalField();
-        // ISSUE-0075: nullable class member access is only widened for
-        // cross-module classes (conformance-gap-02 seam); local nullable
-        // class member access keeps the baseline E3003 rejection.
+
         testLocalNullableClassMemberAccessRejected();
         testLocalNullableClassMemberAccessNarrowedOk();
         testNestedClass();
@@ -272,7 +262,6 @@ public class CheckerTest {
         testClassDefaultValueTypeError();
         testClassDefaultExpressionsTyped();
 
-        // -- Type Checking: Throw statement (ISSUE-0010) --
         testThrowIntError();
         testThrowStringError();
         testThrowMessageOnly();
@@ -350,33 +339,27 @@ public class CheckerTest {
         // F3: Class field default null for nullable fields
         testClassFieldDefaultNull();
 
-        // ISSUE-0040: void type name produces E3004
         testVoidTypeNameProducesE3004();
 
         // Runtime intrinsics: int() and number()
         testIntrinsicIntRejectsIntLiteral();
         testIntrinsicNumberRejectsBoolean();
-        // ISSUE-0040: coroutine import now fails with E2003
+
         testCoroutineImportRejected();
 
-        // ISSUE-0040: Error class prohibition (E4006)
         testE4006_classErrorProhibition();
-        // ISSUE-0040: Dollar prohibition (E2008)
+
         testE2008_dollarInIdentifier();
 
-        // ISSUE-0041: Additional dollar prohibition tests
         testE2008_dollarInRestParam();
         testE2008_dollarInForLoopVar();
         testE2008_dollarInForOfLoopVar();
 
-        // ISSUE-0041: Negative tests — Error variants not rejected
         testE4006_errorVariantsNoError();
 
-        // ISSUE-0041: Integration tests (null return type + $ param, valid import)
         testE2008_dollarIntegration_nullReturn();
         testE2008_dollarIntegration_validImport();
 
-        // v1.1: For-of scoping and type checking (ISSUE-0034)
         testForOfScoping_loopVarInBody();
         testForOfScoping_iterableCannotRefLoopVar();
         testForOfScoping_iterableRefsOuterVar();
@@ -392,12 +375,11 @@ public class CheckerTest {
         testForOfTypeCheck_arrayWrongVarType();
         testForOfTypeCheck_stringWrongVarType();
 
-        // v1.1: Template literal type checking (ISSUE-0034)
         testTemplateLiteral_stringParts();
         testTemplateLiteral_nonStringInterpolation();
         testTemplateLiteral_typeInference();
         testTemplateLiteral_nameResolution();
-        // v1.1: @jsonable field validation and cycle detection (ISSUE-0048)
+
         testJsonablePrimitiveTypes();
         testJsonableArrayType();
         testJsonableNullableType();
@@ -413,8 +395,6 @@ public class CheckerTest {
         testJsonableImportedClass_valid();
         testJsonableImportedClass_invalid();
 
-        // ISSUE-0519 (deterministic-diagnostics D2): SymbolTable
-        // storage pin and definition-order alias selection
         testSymbolTableSymbolsInsertionOrder();
         testSymbolTableAliasSelectionDefinitionOrder();
 
@@ -687,11 +667,6 @@ public class CheckerTest {
         out = checkProgram("let a: boolean = 1 === true;");
         assertError(out, "E3006", "int === bool error");
     }
-
-    // =======================================================================
-    // Bytes equality admission (ISSUE-0158, the binary-comparison-selectors
-    // B-D7 gate lift)
-    // =======================================================================
 
     /**
      * Equal bytes-containing types and nullable-bytes-vs-null pairs are
@@ -1410,11 +1385,6 @@ public class CheckerTest {
         );
         assertError(out, "E3001", "class default value type mismatch");
 
-        // Non-literal defaults are fully type-checked too (ISSUE-0095
-        // rework): the JVM backend emits defaults inline at each
-        // construction site and reads their subexpression types from the
-        // typeMap, so a non-literal mismatch must be a real diagnostic —
-        // never an artifact javac rejects.
         CheckerOutput arithmetic = checkProgram(
             "class User { name: string = 1 + 2; }"
         );
@@ -1586,10 +1556,6 @@ public class CheckerTest {
         );
         assertNoErrors(out, "Error field access");
     }
-
-    // =========================================================================
-    // Throw Statement Tests (ISSUE-0010)
-    // =========================================================================
 
     static void testThrowIntError() {
         System.out.println("-- Throw: int → E3001 --");
@@ -1926,10 +1892,6 @@ public class CheckerTest {
         assertNoErrors(out, "null default for nullable field OK");
     }
 
-    // =========================================================================
-    // ISSUE-0040: void type name produces E3004
-    // =========================================================================
-
     static void testVoidTypeNameProducesE3004() {
         System.out.println("-- ISSUE-0040: void type name produces E3004 --");
         // void is no longer a recognized type name; produces E3004
@@ -1970,9 +1932,6 @@ public class CheckerTest {
         check(hasE5001,
             "number(true) should reject boolean with E5001, got: " + diags);
     }
-    // =========================================================================
-    // DEAL v1.2: string Unicode scalar-value type-facing checks (ISSUE-0104)
-    // =========================================================================
 
     /**
      * v1.2 string semantics in type-facing checks: a `string` is a
@@ -2011,14 +1970,7 @@ public class CheckerTest {
         assertError(out, "E3016", "template interpolation of int is not string");
     }
 
-    // =========================================================================
-    // DEAL v1.2: function types carry no rest arm (ISSUE-0104)
-    // =========================================================================
-
     /** A function TYPE annotation using the removed rest arm is E1047. */
-    // =========================================================================
-    // DEAL v1.2: bytes class-symbol-first resolution (ISSUE-0322)
-    // =========================================================================
 
     /**
      * The bytes intrinsic sits at the bottom of the spec's name
@@ -2112,10 +2064,6 @@ public class CheckerTest {
         assertError(out, "E1047", "function type rest arm rejected");
     }
 
-    // =========================================================================
-    // ISSUE-0042: coroutine import now fails with E2003
-    // =========================================================================
-
     static void testCoroutineImportRejected() {
         System.out.println("-- ISSUE-0040: coroutine import produces E2003 (module not found) --");
 
@@ -2139,13 +2087,6 @@ public class CheckerTest {
         );
         assertError(out, "E2003", "coroutine import with c.resumeInt usage produces E2003");
     }
-
-
-
-
-    // =================================================================
-    // v1.1: For-of Scoping Tests (ISSUE-0034)
-    // =================================================================
 
     static void testForOfScoping_loopVarInBody() {
         System.out.println("-- For-of Scoping: loop var in body --");
@@ -2213,10 +2154,6 @@ public class CheckerTest {
         );
         assertNoErrors(out, "continue inside for-of");
     }
-
-    // ================================================================="
-    // v1.1: For-of Type Checking Tests (ISSUE-0034)
-    // ================================================================="
 
     static void testForOfTypeCheck_arrayCorrect() {
         System.out.println("-- For-of Type Check: array correct --");
@@ -2296,10 +2233,6 @@ public class CheckerTest {
         assertError(out, "E3015", "for-of over string with int var -> E3015");
     }
 
-    // ================================================================="
-    // v1.1: Template Literal Type Checking Tests (ISSUE-0034)
-    // ================================================================="
-
     static void testTemplateLiteral_stringParts() {
         System.out.println("-- Template Literal: all string parts --");
         CheckerOutput out = checkProgram(
@@ -2344,10 +2277,6 @@ public class CheckerTest {
         assertNoErrors(out, "template literal parts walked for name resolution");
     }
 
-    // =========================================================================
-    // ISSUE-0040: Error class prohibition (E4006)
-    // =========================================================================
-
     static void testE4006_classErrorProhibition() {
         System.out.println("-- ISSUE-0040: class Error prohibition (E4006) --");
 
@@ -2369,10 +2298,6 @@ public class CheckerTest {
         );
         assertError(out, "E4006", "nested class Error inside function produces E4006");
     }
-
-    // =========================================================================
-    // ISSUE-0040: Dollar prohibition (E2008)
-    // =========================================================================
 
     static void testE2008_dollarInIdentifier() {
         System.out.println("-- ISSUE-0040: dollar prohibition (E2008) --");
@@ -2426,11 +2351,6 @@ public class CheckerTest {
         assertError(out, "E2008", "dollar in nested class field name produces E2008");
     }
 
-
-    // =========================================================================
-    // ISSUE-0041: Additional dollar prohibition tests
-    // =========================================================================
-
     /**
      * DEAL v1.2: rest parameters were removed from the language; a rest
      * parameter — dollar in the name or not — is rejected with E1047.
@@ -2470,10 +2390,6 @@ public class CheckerTest {
         assertError(out, "E2008", "dollar in for-of loop variable name produces E2008");
     }
 
-    // =========================================================================
-    // ISSUE-0041: Negative tests — Error variants not rejected
-    // =========================================================================
-
     /** Test that class names similar to Error (but not exactly "Error") do NOT produce E4006. */
     static void testE4006_errorVariantsNoError() {
         System.out.println("-- ISSUE-0041: Error-like class names not rejected (E4006 negative) --");
@@ -2502,10 +2418,6 @@ public class CheckerTest {
         hasE4006 = diags.stream().anyMatch(d -> d.code().equals("E4006"));
         check(!hasE4006, "class \"error\" (lowercase) should NOT produce E4006");
     }
-
-    // =========================================================================
-    // ISSUE-0041: Integration tests (T3/T4 combined)
-    // =========================================================================
 
     /**
      * Integration test: null return type (T3 void removal) combined with
@@ -2785,10 +2697,6 @@ public class CheckerTest {
         assertError(out, "E4007", "imported non-@jsonable class field → E4007");
     }
 
-    // =========================================================================
-    // ISSUE-0052: NameResolver isAsync propagation tests
-    // =========================================================================
-
     /**
      * Verify that an async function declaration resolves with isAsync=true
      * in the symbol table after name resolution.
@@ -2910,10 +2818,6 @@ public class CheckerTest {
         check(!hasUndeclared,
             "nested function expr variable should be hoisted (no E2001)");
     }
-
-    // =========================================================================
-    // ISSUE-0053: Async/await TypeChecker tests
-    // =========================================================================
 
     /** E3012: await outside async function. */
     static void testAwaitOutsideAsync_E3012() {
@@ -3056,7 +2960,6 @@ public class CheckerTest {
         assertError(out, "E3014", "unawaited async in argument → E3014");
     }
 
-
     /** NullNarrowing.invalidateAll() clears all narrowed entries. */
     static void testNullNarrowingInvalidateAll() {
         System.out.println("-- NullNarrowing.invalidateAll() clears all entries --");
@@ -3089,10 +2992,6 @@ public class CheckerTest {
         check(nn.narrowedVariableNames().isEmpty(),
             "narrowedVariableNames should be empty after invalidateAll");
     }
-
-    // =========================================================================
-    // ISSUE-0519 (deterministic-diagnostics D2): SymbolTable storage pin
-    // =========================================================================
 
     /**
      * symbols() must iterate in define() insertion order: the storage

@@ -122,13 +122,6 @@ public final class CheckedProjectBuilder {
      * invocation's derived {@code releaseStateHash} verbatim (a copy of
      * the invocation field, never a recomputation).
      *
-     * @param invocation              the release-owned compiler invocation; non-null
-     * @param entryModule             the entry module's dotted module path; non-null
-     * @param dependencyOrderedModules the module facts in
-     *                                {@code buildCheckOrder}; non-null,
-     *                                non-empty, distinct module ids
-     * @return the build result: both records plus no diagnostics on
-     *         success, both {@code null} plus one E6005 on a fact defect
      */
     public static CheckedProjectBuildResult build(CompilerInvocation invocation,
                                                   ModuleId entryModule,

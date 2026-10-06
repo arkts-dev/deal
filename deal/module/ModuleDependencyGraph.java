@@ -25,86 +25,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * The merged runtime dependency graph of the default planning epics
- * (ISSUE-0543, design source
- * {@code provider-versioned-default-plans} D1/D7/D8): ordinary
- * runtime-use edges ({@code RUNTIME_USE}) and the planner's deferred
- * default edges ({@code DEFERRED_DEFAULT_BINDING}) merge over the one
- * {@link RuntimeImportDependency} carrier, a digest-free SCC pass runs
- * before any provider digest is requested, a strongly connected
- * component containing at least one runtime edge fails the compilation
- * with E2005 (with one note per runtime edge inside the SCC carrying
- * {@code (reason, from &rarr; to, sourceRange)} and no plan, FFI
- * metadata, or artifact publication), type-only cycles stay legal, and
- * acyclic graphs produce the initialization order preserving
- * first-import declaration order plus the final digest-bearing
- * dependency records.
- *
- * <p><b>Two-phase pipeline (task-pinned):</b>
- * {@link #digestFreePass} collects the provisional runtime occurrences
- * (semantic resource identity, reason, first source range — no digest),
- * merges them over the import-declaration edge structure, and runs the
- * SCC pass. Only after that pass succeeds may the orchestrator request
- * provider digests from the serializer
- * ({@code DefaultSemanticSerializer.serialize} with the additional
- * demand overload) and call {@link #finalizeGraph} to publish the final
- * digest-bearing records and complete every plan's
- * {@code runtimeDependencies}. No digest is computed or requested
- * anywhere in the digest-free pass, so digest equations are well-founded
- * exactly when they are evaluated (D9).</p>
- *
- * <p><b>Ordinary runtime-use edges (D7(a)):</b> for each implementation
- * module the complete typed evaluator IR of every top-level function
- * body (including nested function declarations and function-expression
- * bodies reached through the shared {@link DefaultIrRecorder}
- * statement walk) publishes an ordered occurrence — a call whose callee
- * resolves to a function declared in an imported module (call-site
- * range), an imported function referenced as a first-class value
- * (member-access range), or a contextual class literal typed as a
- * plan-bearing class declared in an imported module (literal range).
- * Type positions and class field defaults publish nothing (defaults are
- * the planner's {@code DEFERRED_DEFAULT_BINDING} edges). One module
- * edge is kept per {@code (importer, imported module, semantic resource
- * identity)} with the first occurrence's range and alias (D7(a)).
- * Declaration modules carry no executable bodies and publish none.</p>
- *
- * <p><b>Default edges (D7(b)/D2/D4):</b> the planner's provisional
- * occurrences of every planned class, one dependency per imported
- * resource identity per plan, carrying the first occurrence's range.</p>
- *
- * <p><b>E2005:</b> Tarjan's SCC algorithm over the merged import-edge
- * graph classifies every strongly connected component; an SCC
- * containing at least one runtime edge (either reason) is a runtime
- * SCC. Each runtime SCC emits one E2005 diagnostic with the pinned
- * anchor chain (the import declaration span of the first cycle module
- * targeting another cycle member, then that module's program span, then
- * the canonical synthetic shape — the landed
- * {@link CompilationOrchestrator#e2005Diagnostic} helper) plus one
- * note per runtime edge inside the SCC carrying
- * {@code (reason, from &rarr; to, sourceRange)}. The compilation fails
- * and publishes no plan, FFI metadata, or artifact (D1/D7). Type-only
- * SCCs are allowed and impose no initialization order.</p>
- *
- * <p><b>Initialization order:</b> {@link #initializationOrder} is the
- * one shared ordering algorithm — Kahn over the import edges in module
- * discovery order; when no module is ready, exactly the remaining cycle
- * members (type-only by construction on a successful graph pass) are
- * appended in discovery order and the sweep resumes. The phase-2 check
- * order and the graph's initialization order both derive from this one
- * method, so they are byte-identical for every compilation.</p>
- *
- * <p><b>Finalization:</b> {@link #finalizeGraph} is the sole producer
- * of completed digest-bearing records in the production pipeline: for
- * every provisional edge it resolves the provider digest (already
- * demanded through the serializer) and constructs
- * {@link RuntimeImportDependency}; every planned class completes its
- * {@code runtimeDependencies} through
- * {@link CompilerClassDefaultPlan#withRuntimeDependencies} with the
- * serializer-completed plan content preserved. A missing digest is a
- * broken wiring defect and fails with an {@link IllegalStateException}
- * — never a placeholder digest.</p>
- */
 public final class ModuleDependencyGraph {
 
     private ModuleDependencyGraph() {
@@ -122,21 +42,6 @@ public final class ModuleDependencyGraph {
      * declaration modules), the import surface, the module-identity
      * classification, and the declaration flag.
      *
-     * @param sourcePath        the module's absolute normalized source
-     *                          path (the graph node key)
-     * @param modulePath        the module's dotted module path
-     * @param program           the module's parsed program
-     * @param location          the module's resolved source location
-     * @param checkResult       the module's phase-3 check result, or
-     *                          null for declaration modules
-     * @param nameResolver      the module's phase-3 name resolver, or
-     *                          null for declaration modules
-     * @param imports           import alias &rarr; the provider
-     *                          snapshot, insertion-ordered
-     * @param classification    dotted module path &rarr; canonical
-     *                          public module identity
-     * @param isDeclarationFile true when the module is a
-     *                          {@code .d.deal} declaration module
      */
     public record ModuleInput(
         String sourcePath,
@@ -176,18 +81,6 @@ public final class ModuleDependencyGraph {
      * carrying everything the SCC pass and the E2005 notes need without
      * a provider digest.
      *
-     * @param kind                     the reference kind
-     * @param from                     the consuming module's private
-     *                                 semantic identity
-     * @param to                       the provider module's private
-     *                                 semantic identity
-     * @param importAlias              the import alias of the first
-     *                                 occurrence
-     * @param semanticResourceIdentity the imported resource's private
-     *                                 semantic identity
-     * @param sourceRange              the first occurrence's complete
-     *                                 scalar reference range
-     * @param reason                   the closed edge reason
      */
     public record ProvisionalEdge(
         RuntimeResourceReference.Kind kind,
@@ -217,18 +110,6 @@ public final class ModuleDependencyGraph {
      * order (empty when failed), the ordinary occurrences for the
      * serializer's digest-demand overload, and the failure flag.
      *
-     * @param diagnostics          the E2005 diagnostics (never null;
-     *                             empty exactly on success)
-     * @param provisionalEdges     the merged provisional edges in
-     *                             first-occurrence order (empty when
-     *                             failed)
-     * @param ordinaryOccurrences  the collected ordinary runtime-use
-     *                             occurrences in walk order (empty when
-     *                             failed)
-     * @param initializationOrder  the initialization order (empty when
-     *                             failed)
-     * @param failed               true exactly when a runtime SCC fired
-     *                             E2005
      */
     public record DigestFreeResult(
         List<CompilerDiagnostic> diagnostics,
@@ -256,13 +137,6 @@ public final class ModuleDependencyGraph {
      * (every plan's {@code runtimeDependencies} filled with the
      * serializer-completed entry content preserved).
      *
-     * @param runtimeDependencies the merged final records — ordinary
-     *                            edges in first-occurrence order, then
-     *                            default edges in module/plan order,
-     *                            structurally deduplicated
-     * @param completedPlans      module source path &rarr; the
-     *                            completed planned classes in planning
-     *                            order
      */
     public record PublishedGraph(
         List<RuntimeImportDependency> runtimeDependencies,
@@ -303,18 +177,6 @@ public final class ModuleDependencyGraph {
      * runtime edge inside it. No provider digest is computed or
      * requested anywhere in this pass.
      *
-     * @param modules         the compilation's modules in discovery
-     *                        order (the graph node set)
-     * @param plannedClasses  module source path &rarr; the planned
-     *                        classes with their provisional occurrence
-     *                        data (the planner output)
-     * @param importEdgeSpans source path &rarr; (resolved import target
-     *                        &rarr; the import declaration span), for
-     *                        the E2005 anchor chain
-     * @param programSpans    source path &rarr; the module program
-     *                        span, for the E2005 anchor fallback
-     * @return the diagnostics, the merged provisional edges, the
-     *         ordinary occurrences, and the initialization order
      */
     public static DigestFreeResult digestFreePass(
             Map<String, ModuleInput> modules,
@@ -516,15 +378,6 @@ public final class ModuleDependencyGraph {
             }
         }
 
-        /**
-         * One E2005 for a runtime SCC: the pinned anchor chain (the
-         * landed {@link CompilationOrchestrator#e2005Diagnostic}
-         * helper — import declaration span of the first cycle module
-         * targeting another cycle member, then that module's program
-         * span, then the canonical synthetic shape) plus one note per
-         * runtime edge inside the SCC carrying
-         * {@code (reason, from &rarr; to, sourceRange)}.
-         */
         private CompilerDiagnostic runtimeCycleDiagnostic(
                 List<String> cycle) {
             String chain = String.join(" -> ", cycle) + " -> "
@@ -638,10 +491,6 @@ public final class ModuleDependencyGraph {
      * initialization order both derive from this method, so they are
      * byte-identical for every compilation.
      *
-     * @param nodes     the module source paths in discovery order
-     * @param typeEdges source path &rarr; the ordered resolved import
-     *                  targets
-     * @return the initialization order over every node
      */
     public static List<String> initializationOrder(
             List<String> nodes,
@@ -797,15 +646,6 @@ public final class ModuleDependencyGraph {
      * {@link CompilerClassDefaultPlan#withRuntimeDependencies} while
      * the serializer-completed entry content stays byte-identical.
      *
-     * @param free               the successful digest-free result
-     * @param plannedClasses     module source path &rarr; the planned
-     *                           classes (the planner output)
-     * @param serializedClasses  module source path &rarr; the
-     *                           serializer-completed classes (one per
-     *                           planned class, same order)
-     * @param providerDigests    semantic resource identity &rarr; the
-     *                           demanded provider contract digest
-     * @return the merged final records and the completed plans
      */
     public static PublishedGraph finalizeGraph(
             DigestFreeResult free,

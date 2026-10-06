@@ -13,14 +13,6 @@ import java.util.Comparator;
 import java.util.Set;
 import java.util.stream.Stream;
 
-/**
- * The shared closed envelope protocol of the async-export invokers
- * (ISSUE-0161 / ISSUE-0417 D6): the status set, the strict per-status
- * schema validation over {@link EnvelopeJson}, the last-marker-line
- * selection, and the capture-file / temp-directory helpers. Both host
- * halves (JVM and LuaJIT) consume it; only the status-to-result mapping
- * and the hard-failure exception type stay with each invoker.
- */
 public final class AsyncExportEnvelope {
 
     public static final String STATUS_VALUE = "value";

@@ -3,25 +3,6 @@ package deal.semantic.ir;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * A lowered function record of a {@link LoweredModuleUnit} (parent source-
- * construct coverage: "function declaration/expression covers
- * {@code CLOSURE_NEW}/{@code RECURSIVE_GROUP_INIT} and a
- * {@code LoweredFunction}"). The unit's {@code functions} map records one
- * entry per lowered function; execution semantics of the body are owned by
- * the construct epics (ISSUE-0234..0239) — this is the immutable schema
- * shape only.
- *
- * @param functionId the function identity; non-null
- * @param descriptor the exact function signature descriptor; non-null
- * @param captures   the ordered captured binding generations (closures
- *                   capture bindings, not values; each entry names the
- *                   creation-site incarnation of the captured binding —
- *                   the same generation-pinned entries as the
- *                   {@code CLOSURE_NEW} payload, so the factory's capture
- *                   parameter is the body's binding source); non-null
- * @param body       the body block identity; non-null
- */
 public record LoweredFunction(
     FunctionId functionId,
     RuntimeDescriptor.Func descriptor,

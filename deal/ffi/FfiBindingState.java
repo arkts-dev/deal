@@ -17,6 +17,6 @@ public enum FfiBindingState {
     BINDING,
     /** The typed wrapper is installed; invocation dereferences it. */
     READY,
-    /** Initialization failed; the cached error is re-raised. */
+
     FAILED
 }

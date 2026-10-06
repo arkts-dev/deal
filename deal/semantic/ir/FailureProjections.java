@@ -63,10 +63,6 @@ public final class FailureProjections {
      * class atom (never a target class name, never the {@code class:}
      * IR/trace spelling).
      *
-     * @param kind    the closed actual kind; must not be null
-     * @param classId the carried canonical class atom for
-     *                {@link ActualKind#CLASS}, otherwise {@code null}
-     * @return the canonical token
      */
     public static String typedBoundaryToken(ActualKind kind, String classId) {
         Objects.requireNonNull(kind, "kind must not be null");
@@ -211,9 +207,6 @@ public final class FailureProjections {
      * emitted Lua prelude renders the same arm through its serialized
      * table.
      *
-     * @param carrierKind the failing value's closed carrier kind; must not
-     *                    be null
-     * @return the rendered arm tuple
      */
     public static BoundaryFailure stringifyUnsupported(CarrierKind carrierKind) {
         FailureArm arm = FailureContractRegistry.arm(
@@ -236,9 +229,6 @@ public final class FailureProjections {
      * descriptor spelling and one closed actual token — the shape the
      * boundary suites and the consumers' focused drives assert against.
      *
-     * @param descriptorText the canonical descriptor text; must parse
-     * @param actualToken    the closed typed-boundary actual token
-     * @return the rendered kind-arm failure
      */
     public static BoundaryFailure kindFailure(String descriptorText, String actualToken) {
         RuntimeDescriptor descriptor = RuntimeDescriptor.parseCanonicalText(descriptorText);
@@ -250,12 +240,6 @@ public final class FailureProjections {
      * The arm's expected field, selected by the arm's declared expected-token
      * source: the closed token vocabulary of P2, never a composed text.
      *
-     * @param arm     the arm whose expected source is resolved
-     * @param cell    the failing cell's checked descriptor (the element
-     *                descriptor for the element arm)
-     * @param element the array's element descriptor for the element arm, else
-     *                {@code null}
-     * @return the expected token, or {@code null} when the arm declares none
      */
     public static String expectedFor(FailureArm arm, RuntimeDescriptor cell,
                                      RuntimeDescriptor element) {

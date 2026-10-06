@@ -10,96 +10,6 @@ import deal.semantic.ir.UnarySelector;
 
 import java.util.Objects;
 
-/**
- * The single normative signed32/IEEE-number value-semantics primitive
- * (ISSUE-0231 design I2): pure, static, deterministic, no I/O, no state.
- * The lowerer stamps the closed selector→policy rows, the retained routes
- * mirror this algorithm, and the later oracle/emitters embed it — one
- * authority, no per-consumer divergence.
- *
- * <p><b>Int32Result.</b> Every int32 operation returns
- * {@link Int32Result}: {@code Value(int)} on success or
- * {@code Fail(code, template, origin)} on failure. Every failure carries
- * the caller-supplied operation {@link SourceOrigin} and the canonical
- * template. The code and template come from the closed
- * {@link FailureContractRegistry} rows — this primitive never selects
- * message text; the tests pin the instantiated text verbatim.</p>
- *
- * <p><b>Rows (normative, I2).</b></p>
- * <ul>
- *   <li>{@link #int32Add}, {@link #int32Sub}, {@link #int32Mul},
- *       {@link #int32Neg}: exact {@code long} intermediates (exact for all
- *       int32 operands); a result outside
- *       {@code [-2147483648, 2147483647]} fails E8004
- *       {@code int out of safe range} ({@code INT32_RESULT}).</li>
- *   <li>{@link #int32Div}, {@link #int32Mod}: zero divisor fails E8005
- *       {@code integer division by zero} first; truncation toward zero;
- *       then the {@code INT32_RESULT} gate
- *       ({@code INT32_DIVISOR_THEN_RESULT}).
- *       {@code -2147483648 / -1} → E8004;
- *       {@code -2147483648 % -1} → {@code 0} (truncated remainder, spec
- *       v1.2:87-98).</li>
- *   <li>{@link #int32Pow}: negative exponent fails E8006
- *       {@code integer exponent must be non-negative} first
- *       ({@code INT32_EXPONENT_THEN_RESULT}); exact integer power via
- *       long repeated squaring with early long-overflow detection; an
- *       in-long result passes the ±2^31 gate (E8004); a long overflow is
- *       classified through the double intermediate in the retained
- *       NaN/infinity-first order —
- *       {@code d = Math.pow((double) a, (double) b)}:
- *       {@code NaN(d)} → E8001 {@code expected int, got NaN};
- *       {@code infinite(d)} → E8001 {@code expected int, got infinity};
- *       finite {@code d} → E8004 {@code int out of safe range}.
- *       Pinned bands: {@code 2 ** 62} → E8004,
- *       {@code 2 ** 1024} → E8001. Classification is sign-insensitive,
- *       and doubles are exact for every {@code |result| <= 2^53}, so the
- *       ±2^31 boundary never misclassifies.</li>
- *   <li>{@link #intFromNumber} ({@code INT_CONVERSION} order, normative):
- *       NaN → E8001 {@code expected int, got NaN}; ±infinity → E8001
- *       {@code expected int, got infinity}; fractional → E8001
- *       {@code expected int, got non-integer number}; integral out of
- *       range → E8004 {@code int out of safe range}. {@code -0.0} is
- *       normalized to {@code 0} (negative zero does not exist in
- *       {@code int}).</li>
- *   <li>{@link #checkInt32Integral}: the int descriptor path tail —
- *       after kind/integrality checks — out of range → E8004
- *       {@code int out of safe range}.</li>
- *   <li>{@link #numberFromInt}: exact double ({@code NUMBER_CONVERSION};
- *       every int32 value is exactly representable).</li>
- * </ul>
- *
- * <p><b>Number operations ({@code NO_DEAL_FAILURE} — never fail).</b>
- * {@code numberAdd/Sub/Mul} are IEEE; {@link #numberDiv} is IEEE
- * ({@code x/0} → ±Infinity, {@code 0/0} → NaN); {@link #numberNeg} is
- * IEEE ({@code -(-0.0)} → {@code +0.0}); {@link #numberModFloor} is
- * {@code a - floor(a/b)*b}; {@link #numberPow} is IEEE-754 pow with the
- * pinned special-case table, implemented as {@code Math.pow} plus exactly
- * the two pinned corrections — Java {@code Math.pow} deviates from
- * IEEE-754 pow on exactly {@code pow(1.0, NaN)} (Java NaN, IEEE 1.0) and
- * {@code pow(±1.0, ±Infinity)} (Java NaN, IEEE 1.0) — so
- * {@code numberPow} returns 1.0 for those two cases before delegating to
- * {@code Math.pow}, which already matches IEEE on {@code pow(x, ±0) = 1}
- * for every x incl. NaN, the ±0 sign rules for negative odd-integer y,
- * the ±∞ sign/parity rules, negative-finite/non-integer → NaN,
- * {@code pow(x, NaN) = NaN} for {@code x != 1}, overflow → ±∞, and
- * underflow → ±0.</p>
- *
- * <p><b>Comparisons and the boolean row.</b> Int32 EQ/NE/LT/LE/GT/GE
- * are exact; number EQ is IEEE ({@code NaN != NaN}, {@code -0 == +0});
- * number NE is {@code NaN != NaN} is true; number LT/LE/GT/GE are false
- * when either operand is NaN; {@link #boolNot} is logical negation
- * (the pinned {@code BOOL_NOT} row, never fails).</p>
- *
- * <p><b>Selector→policy.</b> The single closed assignment stays the
- * validator's tables ({@code SemanticIrValidator.binaryPolicy} and
- * {@code SemanticIrValidator.unaryPolicy}); this primitive's row
- * projection ({@link #binarySelectorPolicy},
- * {@link #unarySelectorPolicy}) covers exactly the selectors this
- * primitive implements — every {@code INT32_*}/{@code NUMBER_*}
- * binary selector and the complete unary set incl. {@code BOOL_NOT} —
- * and is cross-checked against those tables by the gate test: a
- * selector stamped with any other policy is a failure.</p>
- */
 public final class SharedValueSemantics {
 
     private SharedValueSemantics() { /* pure static primitive: no state, no instances */ }
@@ -456,10 +366,6 @@ public final class SharedValueSemantics {
      * null, nullable, reference — the later construct epics' ownership)
      * fail closed.
      *
-     * @param selector the closed binary selector; non-null
-     * @return the pinned policy of this primitive's row
-     * @throws IllegalArgumentException if the selector is outside this
-     *                                  primitive's rows
      */
     public static FailurePolicyId binarySelectorPolicy(BinarySelector selector) {
         Objects.requireNonNull(selector, "selector must not be null");
@@ -493,8 +399,6 @@ public final class SharedValueSemantics {
      * every unary selector — a selector stamped with any other policy is
      * a failure. No unary selector is outside this primitive's rows.
      *
-     * @param selector the closed unary selector; non-null
-     * @return the pinned policy of this primitive's row
      */
     public static FailurePolicyId unarySelectorPolicy(UnarySelector selector) {
         Objects.requireNonNull(selector, "selector must not be null");

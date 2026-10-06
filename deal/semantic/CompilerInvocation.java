@@ -41,13 +41,6 @@ import java.util.Objects;
  *       {@code LEGACY_SAFE_INT} regardless of release state.</li>
  * </ul>
  *
- * @param purpose                the invocation purpose; non-null
- * @param semanticProfile        the single project-wide profile; non-null
- * @param releaseState           the release-owned release state; non-null
- * @param capabilityRegistryHash the closed capability-registry digest
- *                               (foundation F7); non-null
- * @param releaseStateHash       the derived release-state hash recorded at
- *                               resolution (F1); non-null
  */
 public record CompilerInvocation(
     InvocationPurpose purpose,
@@ -66,11 +59,6 @@ public record CompilerInvocation(
      * {@code COMMON_SHADOW} → {@code DEAL_V1_2_INT32};
      * {@code LEGACY_REGRESSION} → {@code LEGACY_SAFE_INT}).
      *
-     * @throws IllegalArgumentException when a component is null, the
-     *         recorded hash differs from the recomputed derivation (the
-     *         hash is derived by {@link CompilerProfileProvider}, never
-     *         selectable), or the purpose×profile combination violates
-     *         the A1 matrix
      */
     public CompilerInvocation {
         Objects.requireNonNull(purpose, "purpose must not be null");

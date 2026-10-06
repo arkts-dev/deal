@@ -25,9 +25,6 @@ import java.util.Objects;
  * descriptor text, a diagnostic type name, an export key, or a
  * source-language value.</p>
  *
- * @param semanticModuleIdentity     the private module identity
- * @param resourceKind               the resource kind
- * @param lexicalDeclarationIdentity the lexical declaration identity
  */
 public record SemanticResourceIdentity(
     SemanticModuleIdentity semanticModuleIdentity,

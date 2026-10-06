@@ -5,8 +5,6 @@ package deal.ast;
  * Used for else-branches ({@code Either<IfStatement, Block>}) and other
  * two-case alternatives.
  *
- * @param <A> type of the left/primary alternative
- * @param <B> type of the right/secondary alternative
  */
 public sealed interface Either<A, B> permits Either.Left, Either.Right {
 

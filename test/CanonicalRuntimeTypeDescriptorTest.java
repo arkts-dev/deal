@@ -18,59 +18,6 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 
-/**
- * Tests for the strict canonical runtime type descriptor service
- * (ISSUE-0310/0311): {@link CanonicalRuntimeTypeDescriptor#parse(String)}
- * and {@link CanonicalRuntimeTypeDescriptor#render(DescriptorAst)} with
- * the immutable {@link DescriptorAst} atoms and scalar-offset
- * {@link DescriptorSyntaxError} failures, plus the class-free
- * {@link CanonicalRuntimeTypeDescriptor#encode(Type)} surface with its
- * property round-trip corpus.
- *
- * <p>Coverage:</p>
- * <ul>
- *   <li>Pinned {@code bytes} atom tie with {@code Type.Bytes.INSTANCE}.</li>
- *   <li>Round trips of every primitive and the canonical compound shapes.</li>
- *   <li>The full pinned rejection corpus with the exact syntax-error kind
- *       and 0-based scalar offset per case (legacy {@code T[]}/{@code T|null}/
- *       rest sigs, bare class names, nested nullables, {@code ?null}, empty/
- *       malformed arrays and functions, invalid class atoms, dotted
- *       class-name text, trailing content).</li>
- *   <li>Text-opaque class atoms: distinct {@code /} vs {@code .} spellings,
- *       byte-for-byte equality only to themselves, dotted non-final
- *       components, delimiter-bounded termination, no boundary inference.</li>
- *   <li>Property-style round trips over deterministically generated deep
- *       canonical texts (nesting depth &gt;= 50, multi-component roots,
- *       exact sync/async functions, bytes at arbitrary depth).</li>
- *   <li>Scalar offsets (not UTF-16 code units) for astral input, and the
- *       never-throw contract.</li>
- *   <li>The encode surface (ISSUE-0311 + the ISSUE-0317 identity-carriage
- *       consumption): the per-compilation service over the pinned
- *       (index, module-path classification) constructor contract,
- *       primitives verbatim, {@code [D]}/{@code ?D}, exact sync/async
- *       functions, the class branch through the identity index
- *       ({@code @lib/utils/User} and the {@code @$builtin/Error} builtin
- *       projection), the {@code Type.Error}/{@code Type.Class}
- *       absent-identity internal invariant violations, and the
- *       property-style corpus asserting
- *       {@code render(parse(encode(T))) == encode(T)} byte-identically
- *       for every generated tree with per-member legacy-spelling negative
- *       pins, bytes at depth &gt;= 50, and bytes through sync/async
- *       function parameter/return positions.</li>
- *   <li>The class-bearing encode totality (ISSUE-0314): the pinned
- *       example identities ({@code @lib/utils/User},
- *       {@code @$external/pkg/Cls},
- *       {@code @$external/host.cfg/ServerConfig},
- *       {@code @$builtin/Error}) plus grammatical-but-arbitrary
- *       anti-hollow and dotted-project entries registered in a
- *       contract-conformant in-repo test index; a property corpus over
- *       class-bearing trees nested in arrays/nullables/functions with
- *       byte-identical {@code render(parse(encode(T))) == encode(T)}
- *       round trips, index-text verbatim pass-through, per-member
- *       legacy/bare/dotted negative pins, T2 reverse-lookup pins, and
- *       index-miss invariant violations at any nesting depth.</li>
- * </ul>
- */
 public class CanonicalRuntimeTypeDescriptorTest {
 
     private static int passed = 0;
@@ -831,10 +778,6 @@ public class CanonicalRuntimeTypeDescriptorTest {
             "mixed atom tree reaches depth " + depth);
     }
 
-    // =========================================================================
-    // Class-free encode (ISSUE-0311): the one Type->text authority
-    // =========================================================================
-
     /**
      * The per-compilation service instance for the class-free encode
      * corpus.  The index is empty and contract-conformant: every lookup
@@ -1283,11 +1226,6 @@ public class CanonicalRuntimeTypeDescriptorTest {
         check(mixedAst != null && maxDepth(mixedAst) >= depth,
             "encode: mixed atom tree reaches depth " + depth);
     }
-    // =========================================================================
-    // Class-bearing encode (ISSUE-0314): totality through the class branch and
-    // the class-bearing round-trip property corpus over a contract-conformant
-    // in-repo test index (T2's contract; the real index is E2's)
-    // =========================================================================
 
     /** Pinned example identity: project module {@code lib} + relative
      * component {@code utils}, class {@code User} → {@code @lib/utils/User}. */

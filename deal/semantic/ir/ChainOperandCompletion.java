@@ -84,11 +84,7 @@ public final class ChainOperandCompletion {
                     if (call.returnBoundaryOpId() != null) {
                         owned.add(call.returnBoundaryOpId());
                     }
-                    // ISSUE-0531: the dynamic return-boundary set's three
-                    // recorded cells are payload-owned exactly like the
-                    // single return boundary (the runtime executes exactly
-                    // the selected cell; the block walk never executes any
-                    // of them directly).
+
                     if (call.dynamicReturnBoundary() != null) {
                         owned.add(call.dynamicReturnBoundary().dealBodyBoundaryOpId());
                         owned.add(call.dynamicReturnBoundary().hostBoundaryOpId());
@@ -126,13 +122,7 @@ public final class ChainOperandCompletion {
                 // parented boundary child.
                 case KindPayload.OptionalReadPayload ignored ->
                     addBoundaryChildren(unit, op, owned);
-                // The class field ops (step 8 of the shared-emission
-                // cutover): the FIELD_READ receiver/optional-read children,
-                // the FIELD_WRITE receiver/assignment children, and the
-                // FIELD_DELETE receiver child are parented to their field op
-                // (K-D12) — the field arm executes each exactly once, so the
-                // block walk skips them like every other parented boundary
-                // child (a double execution would duplicate events).
+
                 case KindPayload.FieldReadPayload ignored ->
                     addBoundaryChildren(unit, op, owned);
                 case KindPayload.FieldWritePayload ignored ->
@@ -195,12 +185,6 @@ public final class ChainOperandCompletion {
      * under their own owner arm (e.g. a nested chain child, a boundary
      * child) and must never be re-executed here.
      *
-     * @param child           the chain child whose operands must complete
-     *                        before its START
-     * @param unit            the validated lowered unit
-     * @param structuralOwned the payload-owned children (see
-     *                        {@link #structuralOwners(LoweredModuleUnit)})
-     * @return the closure ops in unit list order (each appears at most once)
      */
     public static List<SemanticOp> operandProducersOf(SemanticOp child,
                                                       LoweredModuleUnit unit,
@@ -252,14 +236,6 @@ public final class ChainOperandCompletion {
      * consuming child's position inside the chain (never at their flat
      * block-list position), completing the A-D2 operand-completion rule.
      *
-     * @param unit            the validated lowered unit
-     * @param structuralOwned the payload-owned children (see
-     *                        {@link #structuralOwners(LoweredModuleUnit)});
-     *                        closures are computed against this set so a
-     *                        nested chain child is never pulled into an
-     *                        outer closure
-     * @param skipSet         the set the block walk consults; the closure
-     *                        ops are added here
      */
     public static void registerChainOperandOwners(LoweredModuleUnit unit,
                                                   Set<OpId> structuralOwned,

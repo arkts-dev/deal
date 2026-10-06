@@ -10,7 +10,6 @@ package deal.semantic.ir;
  * factory entry at staging. The identifier is route-independent and
  * deterministic.</p>
  *
- * @param id the numeric identity; non-negative
  */
 public record ClassFactoryId(long id) implements SemanticId {
 

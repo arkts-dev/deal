@@ -9,26 +9,6 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.Supplier;
 
-/**
- * The shared JVM JSON algorithm of the {@code JSON_FROM_CLASS}/
- * {@code JSON_TO_CLASS} arms (E7/K-D8/K-D10): the closed E8 RFC-8259
- * parse and canonical text algorithms plus the flat-layout class walk
- * over the per-class plans the shared emitter records. The parse mirrors
- * the Lua artifact's prelude algorithm (the differential harness
- * compares the three consumers event-for-event): signed32 integer
- * lexical carriers, duplicate keys keep the last value and the first
- * position, any syntax defect yields {@link #SYNTAX}; the canonical
- * number text is {@link Double#toString(double)}; the from-json walk
- * runs the per-site class-default thunks with their own events and
- * returns language null on every listed failure ({@code JSON_FROM_NULL});
- * the to-json walk returns the deterministic text or throws the first
- * declaration-order {@link Projection} for the arm's {@code JSON_TO_ERROR}
- * projection.
- *
- * <p>A nested {@code @jsonable} class field fails closed (a producer
- * defect naming the nested shape): the nested-decode seam is not part of
- * this slice's emitted plan.</p>
- */
 public final class JvmJson {
 
     private JvmJson() {
@@ -48,7 +28,6 @@ public final class JvmJson {
         }
     };
 
-    /** The pinned bounded walk depth (K-D8/K-D10). */
     public static final int MAX_DEPTH = 512;
 
     /** One field of a class plan: name, descriptor, optionality, default child. */
@@ -653,7 +632,6 @@ public final class JvmJson {
         return out;
     }
 
-    /** The final descriptor conformance check of the walk (K-D8 step 7). */
     private static boolean conforms(String descriptor, Object value) {
         if (descriptor.startsWith("nullable:")) {
             if (value == null) {

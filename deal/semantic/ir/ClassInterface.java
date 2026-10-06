@@ -15,9 +15,6 @@ import java.util.Objects;
  * another module's default-expression AST. Pure immutable data of
  * {@code deal.semantic-interface/1}.
  *
- * @param classId           the class identity; non-null
- * @param fields            the field interfaces in declaration order; non-null
- * @param constructionEntry the route-independent construction entry; non-null
  */
 public record ClassInterface(ClassId classId, List<FieldInterface> fields,
                              ClassFactoryId constructionEntry) {

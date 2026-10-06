@@ -15,84 +15,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * Differential gate lanes corpus test (ISSUE-0357 Verification — the
- * cluster integration verification for the gate stage): the complete
- * three-lane gate over the real on-disk corpus through the gate core's
- * dispatch/verdict path — real {@code luajit}, {@code javac}+{@code java},
- * and {@code node} subprocesses — plus the six controlled divergence
- * experiments on scratch copies (never the committed corpus).
- *
- * <p>The full-run checks (Verification 1/8, lane accounting):</p>
- * <ul>
- *   <li>the designated converged subset
- *       ({@code control-flow/if-else.deal},
- *       {@code functions/direct-recursion.deal},
- *       {@code stdlib/string/length-unicode.deal},
- *       {@code error-handling/try-catch.deal} plus two more converged
- *       cases) passes byte-exact on all three lanes;</li>
- *   <li>the real corpus run converges green: the failure set is empty —
- *       an honest zero over the dispatched runtime cases on all three
- *       lanes — and a staged single-lane mismatch over the same corpus
- *       flips the verdict to FAIL with exactly that failure visible,
- *       naming fixture, backend, and the closed mismatch class with the
- *       first differing byte/field detail (never greenwashed);</li>
- *   <li>the per-backend pin of the luajit lane (ISSUE-0598, the LuaJIT
- *       lane convergence leaf): every runtime-classified case passes
- *       byte-exact on luajit ({@code 390/0}), zero luajit gate
- *       failures, and no luajit row in the pinned differential-failure
- *       enumeration;</li>
- *   <li>the per-backend pin of the js lane (ISSUE-0599, the JS lane
- *       convergence leaf): every runtime-classified case passes
- *       byte-exact on js ({@code 390/0}), zero js gate failures, and no
- *       js row in the pinned differential-failure enumeration (the
- *       retired pre-flip E8003 first-byte divergence is gone with its
- *       row);</li>
- *   <li>the ISSUE-0604 convergence class (the arithmetic/conversion/
- *       stdlib-int raise-site origins): every fixture of
- *       {@link #JVM_ARITHMETIC_CONVERGED} passes the jvm lane
- *       byte-exact against its on-disk sidecar, and the int-add-overflow
- *       framing is re-run on the real lane and pinned byte-for-byte;</li>
- *   <li>no {@code SKIP} verdict class appears anywhere (the gate has no
- *       skip branch; {@code Skipped: 0}).</li>
- * </ul>
- *
- * <p>The scratch experiments (Verification 1/4/5/6/7/8):</p>
- * <ol>
- *   <li>a passing fixture whose console output diverges on exactly one
- *       backend (a flagged perturbing lane double) fails naming that
- *       backend and the first differing byte;</li>
- *   <li>scratch lane variants printing a return value, invoking
- *       {@code main} twice, reordering exports, and writing framing to
- *       stderr fail the transcript comparison;</li>
- *   <li>scratch sidecars perturbing one error field, pinning an absent
- *       optional field, and violating the canonical serialization fail
- *       with the exact class and field/byte naming;</li>
- *   <li>scratch Compile Expectation Sidecars with a perturbed
- *       code/line/column/message fail
- *       {@code COMPILE_DIAGNOSTIC_MISMATCH} naming the fixture and the
- *       field; a second error diagnostic fails the fixture;</li>
- *   <li>scratch divergent sidecars for a non-FFI fixture or with a
- *       non-E6006 code are rejected by schema validation;</li>
- *   <li>a scratch slow fixture exceeds the harness-owned deadline and
- *       fails {@code LANE_TIMEOUT} with process termination on every
- *       lane.</li>
- * </ol>
- *
- * <p><b>Anti-hollow:</b> every lane of every run here is the production
- * lane — the LuaJIT lane compiles through the real frontend +
- * {@code LuaBackend} and executes real {@code luajit}, the JVM lane runs
- * the real whole-project orchestrator pipeline + {@code javac} +
- * {@code java}, and the JS lane runs the real {@code JsBackend} +
- * deployed runtime/stdlib + {@code node}. The only lane variations are
- * the flagged test-double subclasses of the real lanes used for the
- * controlled experiments, exactly as the lane suites do.</p>
- *
- * <p>The gate stays a dev-time tool in this stage (G5): the legacy
- * runners keep executing the corpus in {@code run_tests.sh} — the
- * temporary-coexistence window — and this test does not wire the gate
- * into the release surface.</p>
- */
 public class DifferentialGateLanesCorpusTest {
 
     private static int passed = 0;
@@ -113,13 +35,6 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/error-handling/throw-error.deal",
         "backend-runtime/control-flow/continue.deal");
 
-    /** The converged arithmetic-leaf framing of
-     * {@code arithmetic/int-add-overflow.deal} (ISSUE-0604): the retired
-     * missing-column PROCESS_FAILURE prefix's positive replacement. The
-     * jvm leg now emits the exact sidecar-pinned snapshot — E8004 with
-     * the closed message and the operator expression's origin (7:10) —
-     * so the leaf pins the framed bytes instead of the absent-span
-     * report. */
     private static final String JVM_ADD_OVERFLOW_FRAMING =
         "DEAL_ERROR_CODE: E8004\n"
             + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8004\","
@@ -127,16 +42,6 @@ public class DifferentialGateLanesCorpusTest {
             + "\"backend-runtime/arithmetic/int-add-overflow.deal\","
             + "\"line\":7,\"column\":10}\n";
 
-    /**
-     * The ISSUE-0604 convergence class
-     * (jvm-canonical-error-snapshot-convergence D3/D11): every
-     * arithmetic, conversion, and stdlib-int raise site of the retained
-     * JVM emitter now carries the authoritative node's origin (the
-     * operator or intrinsic-call expression start) and the closed
-     * message/projection literals, so each of these fixtures matches its
-     * on-disk sidecar byte-exact on the jvm lane. The jvm-leg pin below
-     * verifies the convergence through the real three-lane run.
-     */
     private static final List<String> JVM_ARITHMETIC_CONVERGED = List.of(
         "backend-runtime/arithmetic/int-add-overflow.deal",
         "backend-runtime/arithmetic/int-sub-overflow.deal",
@@ -464,10 +369,7 @@ public class DifferentialGateLanesCorpusTest {
                 backend + " pass/fail counters account for every dispatched "
                     + "runtime case, got " + counts[0] + " / " + counts[1]);
         }
-        // ISSUE-0598 (the LuaJIT lane convergence leaf): the luajit
-        // lane passes every runtime-classified case byte-exact — the
-        // per-backend pin {390, 0}, and the pinned differential-failure
-        // enumeration above carries no luajit row anymore.
+
         int[] luajitCounts = run.perBackend().get("luajit");
         check(run.runtimeCasesDispatched() == 390
                 && luajitCounts[0] == 390 && luajitCounts[1] == 0,
@@ -475,8 +377,7 @@ public class DifferentialGateLanesCorpusTest {
                 + "byte-exact (390/0), got " + luajitCounts[0] + " / "
                 + luajitCounts[1] + " over "
                 + run.runtimeCasesDispatched() + " dispatched");
-        // ISSUE-0599 (the JS lane convergence leaf): the js lane passes
-        // every runtime-classified case byte-exact.
+
         int[] jsCounts = run.perBackend().get("js");
         check(run.runtimeCasesDispatched() == 390
                 && jsCounts[0] == 390 && jsCounts[1] == 0,
@@ -492,12 +393,6 @@ public class DifferentialGateLanesCorpusTest {
                     .map(DifferentialGate.GateFailure::message)
                     .toList());
 
-        // The shared time fixture's js leg passes after the
-        // disposition-application unit (ISSUE-0536 remediation): the
-        // lane suppresses the captured call-site span against the
-        // sanctioned span-less sidecar, so the transcript matches the
-        // pinned expectation field-exactly — the JS half of the
-        // combined-behavior proof on the differential gate.
         GateDispatcher.CaseVerdict timeVerdict = verdictOf(run,
             "backend-runtime/stdlib-edge/time-now-millis-positive.deal");
         check(timeVerdict != null,
@@ -529,13 +424,6 @@ public class DifferentialGateLanesCorpusTest {
                     + timeJvm.mismatch());
         }
 
-        // The shared int32 remainder fixture's js leg passes after
-        // the js-v12-int32-bytes lane closure (ISSUE-0324): the JS
-        // runtime's intMod carries the I4 int32 branch —
-        // MIN_VALUE % -1 computes the truncated remainder 0 — so
-        // the transcript matches the uniform runtime-ok sidecar
-        // byte-exact (the lane compiles the fixture under
-        // COMMON_SHADOW + DEAL_V1_2_INT32, A5).
         GateDispatcher.CaseVerdict modVerdict = verdictOf(run,
             "backend-runtime/arithmetic/int32-mod-min-neg-one.deal");
         check(modVerdict != null,
@@ -554,9 +442,6 @@ public class DifferentialGateLanesCorpusTest {
                     + "mismatch, got: " + modJs.mismatch());
         }
 
-        // ISSUE-0598: the luajit lane converged — int-add-overflow
-        // passes byte-exact. ISSUE-0599: the js lane converged the same
-        // way and carries zero gate failures.
         check(run.failures().stream().noneMatch(f ->
                 f.subject().startsWith("luajit ")),
             "zero luajit gate failures after the lane convergence, got: "
@@ -565,15 +450,6 @@ public class DifferentialGateLanesCorpusTest {
                     .map(DifferentialGate.GateFailure::message)
                     .toList());
 
-        // ISSUE-0604 (the arithmetic/conversion/stdlib-int origin leaf):
-        // the retired missing-column spot-pin is replaced by the positive
-        // convergence proof. The per-site origin literals and the closed
-        // message/projection literals landed for every int arithmetic/
-        // conversion/stdlib-int raise site, so the int-add-overflow jvm
-        // leg converges byte-exact (E8004 "int out of safe range" at the
-        // operator expression's 7:10) and no PROCESS_FAILURE remains to
-        // pin. The replacement assertions re-run the real lane and pin
-        // the exact framed bytes.
         DifferentialGate.GateFailure jvmAddOverflow = run.failures().stream()
             .filter(f -> f.subject().equals("jvm "
                 + "backend-runtime/arithmetic/int-add-overflow.deal"))
@@ -605,9 +481,6 @@ public class DifferentialGateLanesCorpusTest {
             "the real jvm lane emits the exact pinned int-add-overflow "
                 + "framing (E8004 at 7:10), got: " + addOverflowExecution);
 
-        // ISSUE-0604: every fixture of the convergence class matches its
-        // on-disk sidecar byte-exact on the jvm lane through the real
-        // run (the class-wide form of the criterion above).
         for (String fixturePath : JVM_ARITHMETIC_CONVERGED) {
             GateDispatcher.LaneOutcome arithmeticJvm = outcomeOf(run,
                 fixturePath, "jvm");
@@ -616,14 +489,7 @@ public class DifferentialGateLanesCorpusTest {
                     + fixturePath + " passes the jvm lane byte-exact "
                     + "against its sidecar, got: " + arithmeticJvm);
         }
-        // ISSUE-0604: the convergence class is visible in the jvm
-        // lane's accounting — every fixture of the class is one of the
-        // lane's passes. The leaf pins no fixed pass/fail population:
-        // the remaining pre-flip jvm rows belong to the not-yet-landed
-        // class leaves (array/bytes/table access), and a fixed
-        // population pin would go stale with every canonical advance
-        // (the engine boundary excludes fixed population pins). The
-        // counters' honesty over the dispatched set is asserted above.
+
         int[] jvmCounts = run.perBackend().get("jvm");
         check(jvmCounts[0] >= JVM_ARITHMETIC_CONVERGED.size(),
             "the jvm lane's pass count covers the converged arithmetic/"

@@ -24,21 +24,6 @@ package deal.diagnostics;
  * zero-length shape {@code (file,1,1,1,1,0,0,0,SYNTHETIC)} and carries an
  * anchor note naming the missing anchor.</p>
  *
- * @param file              the most specific known source path (module
- *                          path, or the empty string when none)
- * @param startLine         1-based start line
- * @param startColumn       1-based start column in decoded Unicode scalars
- * @param endLine           1-based line of the first scalar after the range
- * @param endColumn         1-based column of the first scalar after the range
- * @param startScalarOffset 0-based start scalar offset (inclusive), or a
- *                          negative value for "no offset information"
- * @param endScalarOffset   0-based end scalar offset (exclusive), or a
- *                          negative value for "no offset information"
- * @param scalarLength      decoded Unicode scalar count of the range; must
- *                          equal {@code endScalarOffset - startScalarOffset}
- *                          for a well-formed range
- * @param origin            {@link RangeOrigin#SOURCE} or
- *                          {@link RangeOrigin#SYNTHETIC}
  */
 public record DiagnosticRange(
     String file,

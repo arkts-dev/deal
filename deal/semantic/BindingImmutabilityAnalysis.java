@@ -11,53 +11,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * The checker-side conservative binding-immutability analysis of the
- * BINDINGS capability (ISSUE-0448 proof child, sequencing item 5; design
- * B7): the producer of the closed {@link BindingImmutabilityProof}
- * records that the D15 VALUE arm of the shape-map child consumes. The
- * closed rule (B7, exactly):
- *
- * <p>A binding incarnation carries a {@link BindingImmutabilityProof}
- * iff <em>no assignment to that binding occurs anywhere in its enclosing
- * scope after its declaration</em> — for parameters, any assignment in
- * the function body defeats the proof; for loop variables, the update
- * assignment defeats the proof; for function names, any assignment to
- * the name in the module defeats the proof; intrinsic bindings
- * ({@code int}/{@code number}) always carry the proof (builtin,
- * unassignable).</p>
- *
- * <p><b>Conservatism.</b> Any assignment that resolves to an incarnation
- * defeats that incarnation's proof regardless of its position relative
- * to an adaptation site — the analysis never predicts which assignments
- * execute, and the shape-map child's positions carry no weight here.</p>
- *
- * <p><b>Per-incarnation records.</b> Proofs are recorded per
- * {@code {binding, generation}} over the binding-core child's incarnation
- * map ({@link SemanticLowerer.BindingCoreFacts}): an assignment defeats
- * exactly the incarnation it resolves to at its site — the dominant
- * incarnation there — so the for-let counter (generation 0, the update
- * assignment resolves to it) carries no proof while the per-iteration
- * incarnation (generation 1) does. The records are the closed
- * {@link BindingImmutabilityProof} shape copied into
- * {@code FUNCTION_ADAPT} payloads by the shape-map child.</p>
- *
- * <p><b>Checker facts only.</b> The production walk feeds this analysis
- * with the checked program's assignment sites as resolved by the walk's
- * own dominant-incarnation environment (declaration/parameter facts) and
- * with the checker's intrinsic-binding facts
- * ({@code checks.symbolTable().resolve(name) instanceof
- * IntrinsicSymbol}); it consumes no target, route, or emitter knowledge
- * and executes nothing.</p>
- *
- * <p><b>Narrowing is orthogonal (B3).</b> Proofs concern reassignment
- * only; {@code NullNarrowing} flow state never enters the analysis.</p>
- *
- * <p>Determinism: assignment facts are recorded in walk order and proofs
- * derive in binding-registration order (generation ascending per
- * binding), so repeated analysis of the same checked module yields
- * identical records.</p>
- */
 public final class BindingImmutabilityAnalysis {
 
     /**
@@ -106,9 +59,6 @@ public final class BindingImmutabilityAnalysis {
          * generation}} pair, or empty when that incarnation carries no
          * proof (an assignment defeated it or the pair is unknown).
          *
-         * @param binding    the binding identity; non-null
-         * @param generation the generation ordinal; non-negative
-         * @return the proof record, or empty
          */
         public Optional<BindingImmutabilityProof> proofOf(BindingId binding,
                                                           long generation) {
@@ -145,9 +95,6 @@ public final class BindingImmutabilityAnalysis {
      * the assignment defeats the incarnation it names — the dominant
      * incarnation at the assignment site, per the walk's own resolution.
      *
-     * @param name       the source identifier name of the target; non-null
-     * @param binding    the resolved binding identity; non-null
-     * @param generation the resolved dominant generation; non-negative
      */
     public void recordAssignment(String name, BindingId binding, long generation) {
         BindingAssignment fact = new BindingAssignment(name, binding, generation);
@@ -160,7 +107,6 @@ public final class BindingImmutabilityAnalysis {
      * intrinsic bindings always carry the proof — builtin, unassignable —
      * regardless of any assignment fact.
      *
-     * @param binding the intrinsic binding identity; non-null
      */
     public void markIntrinsic(BindingId binding) {
         intrinsicBindings.add(Objects.requireNonNull(binding,
@@ -189,9 +135,6 @@ public final class BindingImmutabilityAnalysis {
      * unless an assignment defeated it; intrinsic bindings always carry
      * their proofs.
      *
-     * @param bindings the binding-core incarnation map (registration
-     *                 order); non-null
-     * @return the proof records in registration order
      */
     public List<BindingImmutabilityProof> deriveProofs(
             List<SemanticLowerer.BindingCoreBinding> bindings) {
@@ -214,9 +157,6 @@ public final class BindingImmutabilityAnalysis {
      * The complete fact surface over the binding-core incarnation map:
      * the derived proof records plus the resolved assignment facts.
      *
-     * @param bindings the binding-core incarnation map (registration
-     *                 order); non-null
-     * @return the complete fact surface; non-null
      */
     public BindingImmutabilityFacts facts(
             List<SemanticLowerer.BindingCoreBinding> bindings) {

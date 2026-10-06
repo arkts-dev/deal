@@ -7,53 +7,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * The shared runtime-observation model of the decomposition-tail
- * integration verification (ISSUE-0410): the canonical atom text,
- * the closed runtime-value kinds, the semantic trace event, the ordered
- * effect record, the canonical error snapshot, and the consumer run
- * report. The semantic oracle and both shared emitters produce this
- * model from their own target representations; the differential harness
- * compares the three reports event-for-event (semantic-lowering-
- * differential-conformance D2/D7: every event validates against its
- * exact validated IR operation — snapshot digest, {@code parentOpId}
- * nesting — before ordinary three-way comparison).
- *
- * <p><b>Atom text (canonical, representation-independent).</b> Every
- * observable value in a trace event or effect is one exact atom text:</p>
- *
- * <pre>{@code
- * null                    the language null
- * missing                 an internal missing (past-end array read)
- * bool:true | bool:false  boolean values
- * int:&lt;signed32&gt;         signed32 int values
- * num:&lt;ieee754Hex&gt;       IEEE-754 values via the canonical hex-float spelling
- *                          ({@code CanonicalJson.numberHex}); NaN → "num:nan"
- * str:&lt;escaped&gt;          Unicode scalar strings (\\, \n, \t, and non-printables escaped)
- * ref:&lt;allocId&gt;          an allocation (array/table/function) identity
- * err:&lt;code&gt;:&lt;escaped message&gt;   an Error value's code/message
- * }</pre>
- *
- * <p>Allocation ids are assigned by each consumer's runtime allocation
- * counter in allocation order — identical execution produces identical
- * id sequences, so the three reports compare exactly. The harness
- * additionally re-binds refs by first observation as a normalization
- * safety net (conformance D3's run-wide namespace rule).</p>
- *
- * <p><b>Error snapshots.</b> A DEAL failure is projected as
- * {@link ErrorSnapshot} — code, canonical message, origin
- * ({@code sourceId:line:column}), expected/actual (when the registry row
- * attains them), active frames innermost-first, and the nested cause —
- * exactly the observable projection of the closed failure registry.
- * The canonical message text is the registry-instantiated template; the
- * emitters realize the same templates over their target
- * representations (never invented message text).</p>
- *
- * <p><b>Effects.</b> The closed effect for this domain is the console
- * write ({@link EffectEvent.Kind#CONSOLE_WRITE}): exact scalar text plus
- * channel, in run order. A consumer records one {@link EffectEvent} per
- * executed {@code STDLIB_CALL(CONSOLE_LOG/CONSOLE_ERROR)} terminal.</p>
- */
 public final class SemanticRuntimeModel {
 
     private SemanticRuntimeModel() {

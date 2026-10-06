@@ -15,9 +15,6 @@ import deal.source.SourceScalarRange;
  * declaration row). This record only pins the shape — the parser never
  * touches the filesystem.
  *
- * @param absoluteNormalizedPath the fully symlink-resolved absolute path,
- *                               completed only by ProjectLocator step 4
- * @param sourceRange            the declaration member's value range
  */
 public record NormalizedDeclarationPath(String absoluteNormalizedPath,
                                         SourceScalarRange sourceRange) {

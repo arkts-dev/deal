@@ -20,9 +20,6 @@ import java.util.Objects;
  * condition is a silent claim or a later planner condition, never an
  * error here.
  *
- * @param manifests   the dependency-ordered manifests; null exactly when
- *                    the computation failed
- * @param diagnostics the E6005 diagnostics (empty on success); non-null
  */
 public record RequirementManifestResult(
     List<SemanticRequirementManifest> manifests,

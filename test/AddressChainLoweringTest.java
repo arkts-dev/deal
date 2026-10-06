@@ -76,49 +76,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * Verifies the ISSUE-0405 ASSIGN/DELETE address-chain lowering arms of
- * {@link SemanticLowerer} (assignment-delete-address-chains A-D2/A-D4/
- * A-D5/A-D6/A-D7/A-D8/A-D9; parent D14): the closed A-D9 construct→op
- * map, the pinned child order and parentage, the boundary production,
- * the commit structure, the committed-value result, and single
- * evaluation — plus the E3018 string-key gate interplay, the
- * production-time {@link AddressChainProtocol} validation of every
- * lowered chain, and the module-level seam with byte-identical
- * determinism.
- *
- * <p>Pinned cases (the task verification):
- * <ol>
- *   <li>every A-D9 row — VARIABLE write, TABLE_SLOT member/index
- *       writes, ARRAY_SLOT write, CLASS_FIELD write, the four delete
- *       rows — with exact child kinds, exact order,
- *       {@code parentOpId} = the chain op, boundary kind/policy,
- *       normalize modes, one commit last, {@code ASSIGN} result = the
- *       committed value with the target descriptor, {@code DELETE}
- *       result none;</li>
- *   <li>the append idiom {@code xs[xs.length] = v} lowers through the
- *       standard ARRAY_SLOT chain (the keyOp is the {@code .length}
- *       {@code ARRAY_LENGTH} read);</li>
- *   <li>VARIABLE boundary production: function-typed target →
- *       {@code FUNCTION_SIGNATURE}, non-function target →
- *       {@code TYPE_DESCRIPTOR}, boundary between value child and
- *       {@code BINDING_STORE}, the store carrying
- *       {@code {binding, generation, committed value}}; loop-binding
- *       targets reuse the frame's binding identity;</li>
- *   <li>nested chains: an inner {@code ASSIGN} as the value child
- *       records the outer chain op as its {@code parentOpId};</li>
- *   <li>the E3018 gate: {@code t[0] = v}/{@code delete t[0]} fail in
- *       the checker before lowering; {@code t["k"] = v}/
- *       {@code delete t["k"]} lower with the total string key;</li>
- *   <li>every lowered chain passes {@link AddressChainProtocol}; hand-
- *       corrupted variants (missing lengthOp, commit not last,
- *       duplicated child) fail E6005
- *       {@code ADDRESS_CHAIN_SHAPE}/{@code SINGLE_EVALUATION};</li>
- *   <li>the module-level corpus (deletes plus a nested VARIABLE chain
- *       inside a delete key) lowers to a validated unit, passes the
- *       protocol, and repeats byte-identically.</li>
- * </ol>
- */
 public class AddressChainLoweringTest {
 
     private static int passed = 0;

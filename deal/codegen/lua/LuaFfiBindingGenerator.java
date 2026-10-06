@@ -110,10 +110,6 @@ public final class LuaFfiBindingGenerator {
      * module's dotted path (the chunk export-surface registry key of
      * the production session).
      *
-     * @param importAlias         the declaration's import alias;
-     *                            non-null
-     * @param importedModulePath  the provider module's dotted module
-     *                            path; non-null
      */
     public record ProviderBinding(String importAlias,
                                   String importedModulePath) {
@@ -137,25 +133,6 @@ public final class LuaFfiBindingGenerator {
      * Generates the complete {@code load_ffi} argument literals for one
      * extern-c import from the metadata phase's generated module.
      *
-     * @param module            the validated-and-generated extern-c module
-     *                          inputs (descriptor, bundle, plans, bindings)
-     * @param manifestDirectory the compilation's manifest directory text
-     *                          (the base of manifest-relative loader-text
-     *                          resolution); an empty text denotes the
-     *                          process CWD exactly like the protected path
-     *                          conversion does
-     * @param bindingsLocal     the Lua local name the backend emits for
-     *                          the bindings literal — deferred evaluators
-     *                          close over it to dereference the same-module
-     *                          forward cells (adopted D6: evaluators close
-     *                          over cells, never over a not-yet-published
-     *                          export table)
-     * @param importPrefix      the per-import Lua local prefix of the
-     *                          imported provider bindings — deferred
-     *                          evaluators referencing imported functions
-     *                          call {@code <prefix><alias>.<export>.f}
-     *                          on the provider module the prelude requires
-     * @return the failure or the four literals plus the prelude lines
      */
     public static Generation generate(FfiGeneratedModule module,
             String manifestDirectory, String bindingsLocal,
@@ -216,9 +193,6 @@ public final class LuaFfiBindingGenerator {
      * prelude through {@link #importPrelude} and the production project
      * session through the chunk export-surface registry.
      *
-     * @param bindings the generated module's frozen forward bindings;
-     *                 non-null
-     * @return the provider bindings in the generator's order; non-null
      */
     public static List<ProviderBinding> providerBindings(
             FfiForwardBindings bindings) {

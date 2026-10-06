@@ -38,36 +38,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * ISSUE-0641: the JVM production project entry
- * {@code JvmSemanticEmitter.emitProductionProject(project, tables,
- * registries, className, declarationSurface)}
- * ({@code production-project-emission-and-atomic-cutover} P1/P2/P3 and the
- * production JVM emission contract;
- * {@code luajit-jvm-single-lowering-production-cutover} C2 and the
- * production JVM emission contract).
- *
- * <ol>
- *   <li>The entry consumes only the validated project, the per-module body
- *       tables and class-factory registries, the entry class name, and the
- *       host declaration surface; the artifact is one {@code public final
- *       class <className>} with {@code public static void main(String[])}
- *       and the {@code dealMain()} drive carrying the whole closure.</li>
- *   <li>The trace protocol is suppressed (the class enables no trace and
- *       carries no {@code R|} line), {@code main} drives {@code dealMain()}
- *       exactly once, and the production {@code DEAL_ERROR_CODE: <code>}
- *       terminal is the uncaught-DEAL-failure outcome.</li>
- *   <li>The class carries the module export-surface registry keyed by the
- *       module identity (one {@code JvmRuntime.Table} per module), written
- *       by {@code EXPORT_PUBLISH} in declaration order.</li>
- *   <li>The class name is used verbatim; the artifact compiles with
- *       {@code javac --release 25 -proc:none} against the compiler's
- *       runtime classes and runs under {@code java}.</li>
- *   <li>{@code emitProject} and {@code emitProductionModule} keep their
- *       signatures and behavior; repeated production emission is
- *       byte-identical.</li>
- * </ol>
- */
 public class JvmProductionProjectEmissionTest {
 
     private static int passed = 0;
@@ -146,7 +116,6 @@ public class JvmProductionProjectEmissionTest {
         Map<ModuleId, CanonicalModuleIdentity> declarationIdentities) {
     }
 
-    /** The release-owned production invocation (the epic's production record). */
     private static CompilerInvocation invocation() {
         return CompilerProfileProvider.resolve(ReleaseConfiguration.CURRENT_RELEASE_STATE,
             ReleaseConfiguration.releaseCapabilityRegistry());
@@ -259,12 +228,10 @@ public class JvmProductionProjectEmissionTest {
                     + name);
         }
 
-        // The two landed entries keep their signatures.
         Method projectEntry = null;
         Method moduleEntry = null;
         for (Method method : JvmSemanticEmitter.class.getDeclaredMethods()) {
-            // The reflected order of same-named overloads is unspecified:
-            // select each landed entry by its own signature.
+
             if (method.getName().equals("emitProject")
                     && method.getParameterCount() == 3) {
                 projectEntry = method;
@@ -451,7 +418,6 @@ public class JvmProductionProjectEmissionTest {
                     "public final class CustomApp {"),
                 "a verbatim className lands in the class head");
 
-            // The landed entries keep their behavior.
             JvmSemanticEmitter.EmissionResult trace = JvmSemanticEmitter.emitProject(
                 project, result.tables(), result.registries());
             check(trace.className().startsWith("SharedM") && trace.source().contains("R|"),

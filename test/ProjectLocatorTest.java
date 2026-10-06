@@ -22,45 +22,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.regex.Pattern;
 
-/**
- * The test battery for {@link ProjectLocator} (ISSUE-0265 T4, design
- * source {@code strict-project-context-resolution-identity} D1/D4,
- * verification items 1–4, 6–7, and the combined T1+T2+T3 dependency
- * gate): entry validation (missing, directory, unreadable, NUL,
- * unrepresentable → CliDiagnostic, no context); ancestor discovery
- * (one/zero/two+ manifests, walk to the root, candidate notes);
- * strict UTF-8 REPORT-mode decode with real byte fixtures (invalid
- * continuation, truncated final sequence, overlong form, CESU-8
- * surrogate encoding → one E2010 at the first offending byte range,
- * span length 1, before any schema check; valid multi-byte scalars; a
- * literal {@code \uFFFD} escape; a leading BOM fails the strict pass);
- * override rules (valid alias lua|luajit|jvm|js after trim+lowercase;
- * invalid backend and empty/whitespace-only/NUL/unrepresentable output
- * overrides are CliDiagnostics; a malformed manifest fails before any
- * override is consulted); step-4 roots (conversion, non-existent roots,
- * no implicit root, duplicate normalized roots incl. symlink-alias and
- * lexical spellings at the second member's value range); step-4
- * externals (existence/readability at the declaration value range,
- * nativeLibrary classification, symlink resolution, cross-entry
- * duplicate declaration paths, stdlib-overlap rejection direct and
- * symlinked with the module-naming note); output (backend-dependent
- * defaults, manifest/CLI classification, symlinked prefixes, no
- * directory creation, the D1 step-5 failure mapping seam); stdlib
- * surface (project-local first, else the process-CWD surface, else
- * absent via a subprocess fixture); deployment identity (SHA-256 over
- * the exact bytes, whitespace-change sensitivity, symlink-spelling URI
- * equivalence); the privacy invariant (no digest or {@code file:} URI
- * text in diagnostics); determinism (identical inputs → equal
- * contexts); and the combined end-to-end fixture asserting every
- * published {@link ProjectContext} field before and after a manifest
- * byte mutation.
- *
- * <p>Runs via main() using the repository's plain check()-helper
- * convention; exits non-zero on failure. The subprocess mode
- * {@code --sub-locate <entry>} runs a single locate in a fresh JVM with
- * a controlled working directory (for the absent-stdlib-surface case)
- * and prints {@code SURFACE=<path>} / {@code SURFACE=absent}.</p>
- */
 public final class ProjectLocatorTest {
 
     private ProjectLocatorTest() {

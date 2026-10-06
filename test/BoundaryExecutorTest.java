@@ -22,51 +22,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * Verifies the ISSUE-0233 D3 surface: {@link BoundaryExecutor} as the
- * single, pure execution form of the closed boundary-assignment table at
- * the {@code BOUNDARY}-op level — the closed 11-policy projection engine
- * over the closed value view, with every message instantiated from the
- * registry rows' pinned templates.
- *
- * <p>Tests (wiki Verification 2, one pinned case per D3 projection):
- * <ol>
- *   <li>E8001 generic templates with every canonical actual kind
- *       including {@code class:<ClassId>}, {@code missing},
- *       {@code nothing}, and the pinned invalid-string message.</li>
- *   <li>The int path in normative order (non-numeric → NaN → infinity →
- *       non-integer → E8004 at both signed32 ends, with the nearest valid
- *       values passing), and {@code number} accepting an int carrier.</li>
- *   <li>Class atom byte-equality, including the builtin {@code @/Error}
- *       spelling.</li>
- *   <li>E8003 first failing element in increasing index order with
- *       cause = the leaf failure (nested arrays included).</li>
- *   <li>E8010 signature mismatch versus non-function E8001.</li>
- *   <li>HOST_PARAMETER {@code {index}}, HOST_SYNC_RETURN
- *       {@code got nothing}/{@code got {actual}}, ASYNC_COMPLETION
- *       (the corpus-aligned {@code expected {expected}} with the cell's
- *       actual kind — a numeric completion carrier is the number kind).</li>
- *   <li>All four array cells including index/length boundaries.</li>
- *   <li>JSON_FROM_NULL swallow and JSON_TO_ERROR {@code {fieldPath}}.</li>
- *   <li>Missing→null at the two named cells and {@code got missing}
- *       elsewhere; Pass returns the same semantic value (same view
- *       instance, never copied).</li>
- *   <li>Proved cells ({@code RepresentationProof}): SUCCESS without any
- *       check logic — a view that fails under {@code RuntimeValidation}
- *       still passes under the proof, and the proof path never requires a
- *       context; a policy outside the closed 11 fails closed as a
- *       producer defect; a null descriptor on the proof path throws the
- *       documented NPE.</li>
- *   <li>Combined behavior with T1: every descriptor is built through
- *       {@code DescriptorService.describe} from checked {@code Type}s.</li>
- *   <li>Determinism: repeated checks are byte-identical.</li>
- * </ol>
- *
- * <p>Every failure assertion compares the instantiated message against
- * the literal expected string (never a substring match) and checks the
- * structured fields (policy, code, expected, actual, metadata, cause)
- * against the registry rows.</p>
- */
 public class BoundaryExecutorTest {
 
     private static int passed = 0;
@@ -581,10 +536,6 @@ public class BoundaryExecutorTest {
             "(int)->string", "async(int)->string", new LinkedHashMap<>(), null,
             "async marker mismatch");
 
-        // Non-function values are E8001 with the pinned function row: the
-        // fixed "function" expected token both target runtimes project and
-        // the shared actual-kind classification (never the descriptor
-        // text; ISSUE-0681).
         expectFail(checkCell(FailurePolicyId.FUNCTION_SIGNATURE, SYNC_INT_TO_STRING,
                 BoundaryValueView.ofNumber(1)),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,

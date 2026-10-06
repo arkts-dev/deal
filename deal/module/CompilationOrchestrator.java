@@ -111,13 +111,6 @@ public final class CompilationOrchestrator {
     private final boolean dumpIr;
     private final boolean sourceMap;
 
-    /**
-     * True when {@code --source-map} was explicitly requested, distinct
-     * from {@link #sourceMap} (which is also derived from {@code --dump-ir}
-     * because IR hardening enables source maps with it). The JVM
-     * source-map warning fires only on the explicit request, never on a
-     * {@code --dump-ir}-derived one (ISSUE-0091 rework).
-     */
     private final boolean sourceMapExplicit;
     private final Backend backend;
 
@@ -193,190 +186,48 @@ public final class CompilationOrchestrator {
      */
     private final CompilerInvocation invocation;
 
-    /**
-     * The foundation-phase result built once per compile (ISSUE-0288):
-     * after phase 3 succeeds, {@link CheckedProjectBuilder} consumes the
-     * orchestrator's module map in {@code buildCheckOrder} and produces
-     * exactly one checked project input and one project interface index.
-     * {@code null} before the foundation phase runs (or when a
-     * pre-foundation phase failed).
-     */
     private CheckedProjectBuildResult checkedProjectBuild;
 
-    /**
-     * The requirement-manifest foundation result of this compile
-     * (ISSUE-0289): exactly one manifest per implementation module in
-     * dependency order computed by {@link LoweringSupport} after the
-     * checked project and interface index (foundation F3/F8) —
-     * {@code null} before the manifest phase runs or when a preceding
-     * phase failed. The support's E6005 diagnostics (an inconsistent
-     * checked/interface fact, never a crash) are merged into
-     * {@link #diagnostics()}.
-     */
     private RequirementManifestResult requirementManifests;
 
-    /**
-     * The route-plan foundation result of this compile (ISSUE-0290): one
-     * {@code ModuleRoutePlan} for the compile's target after the
-     * manifests — {@code null} before the route-plan phase runs, when a
-     * preceding phase failed, or for the JS backend (the closed
-     * route-plan target axis is LUAJIT|JVM, foundation F4). Planner
-     * E6005 diagnostics (fact defects, never a crash) are also merged
-     * into {@link #diagnostics()}.
-     */
     private RoutePlanResult routePlan;
 
-    /**
-     * The ISSUE-0239 E10 per-route emission counters of this compile:
-     * {@code semanticEmissionCount} modules were SHARED-routed and
-     * emitted from validated semantic IR by the shared emitter;
-     * {@code retainedEmissionCount} modules were LEGACY-routed and
-     * emitted by the retained backend. Both are zero before phase 4 and
-     * read-only after it.
-     */
     private int semanticEmissionCount = 0;
     private int retainedEmissionCount = 0;
 
-    /**
-     * The project-wide semantic-id allocator of the shared route
-     * (ISSUE-0239 E10): one allocator over the dependency-ordered
-     * implementation modules, created at the first SHARED lowering.
-     */
     private SemanticIdAllocator sharedAllocator;
 
-    /**
-     * The lowered callees' recorded {@code EXTERNAL_ENTRY} op ids by
-     * module, filled in dependency order as SHARED modules lower
-     * (ISSUE-0239 E10: the caller-side {@code externalEntryRef}
-     * resolution).
-     */
     private final Map<ModuleId, Map<String, OpId>> sharedCalleeEntries =
         new HashMap<>();
 
-    /**
-     * The emitted SHARED-owner ABI manifests of this compile (ISSUE-0239
-     * E10): one per SHARED-routed module, validated against the staged
-     * set and the interface index before publication.
-     */
     private final List<TargetModuleAbi> emittedSharedAbis = new ArrayList<>();
 
     private final Map<String, ModuleInfo> modules = new LinkedHashMap<>();
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
     private boolean hasErrors = false;
 
-    /**
-     * The dependency (check/initialization) order of this
-     * compilation, in module-path form — the one shared ordering
-     * algorithm of {@link ModuleDependencyGraph#initializationOrder}
-     * (Kahn over the import edges in module discovery order with the
-     * remaining cycle members appended at a stuck step). Phase 2
-     * derives the type-checking order from it; the runtime dependency
-     * graph phase (ISSUE-0543) republishes the identical order as the
-     * initialization order after graph success. The extern-C metadata
-     * phase orders imported provider references by it. Empty before
-     * phase 2.
-     */
     private List<String> dependencyOrder = List.of();
 
-    /**
-     * The validated extern-C metadata published by the FFI phase
-     * (ISSUE-0162): dotted module path &rarr; the generated module
-     * inputs (descriptor, cdef bundle, retained plans, forward
-     * bindings). Populated only for the LuaJIT backend after successful
-     * validation; empty for JVM/JS and on any validation failure — a
-     * failed validation or an incapable backend publishes no metadata
-     * and no partial artifact.
-     */
     private final Map<String, FfiGeneratedModule> ffiGenerations =
         new LinkedHashMap<>();
 
-    /**
-     * The compilation's declaration surface (ISSUE-0630, design source
-     * {@code project-lowering-entry-and-registration-seeds} D3): one
-     * immutable fact record per host and extern-C declaration module the
-     * compilation imports, produced once at the start of phase 4 before
-     * any emission arm runs. Null before phase 4 and on a producer
-     * defect (an unrepresentable declared class field type), where the
-     * compile carries the first E6005 and publishes nothing.
-     */
     private HostDeclarationSurface hostDeclarationSurface;
 
-    /**
-     * The compiler-default planning result of this compile (ISSUE-0541,
-     * {@code provider-versioned-default-plans} D1): module source path
-     * &rarr; the planned classes (one {@link CompilerClassDefaultPlan}
-     * per plan-bearing class plus the ordered provisional
-     * {@link DefaultResourceOccurrence} list), in planning order —
-     * dependency order over the implementation modules and extern-C
-     * declaration modules. Plans stay compiler-internal until the
-     * dependency graph succeeds: this epic publishes them nowhere (no
-     * lowerer, no FFI descriptor, no artifact). Empty before the
-     * planning phase runs, when a preceding phase failed, or when
-     * planning produced error-level diagnostics.
-     */
     private final Map<String, List<PlannedDefaultClass>>
         plannedDefaultClasses = new LinkedHashMap<>();
 
-    /**
-     * The dependency graph's published result of this compile
-     * (ISSUE-0543): the completed plans — every plan's
-     * {@code runtimeDependencies} filled with the final digest-bearing
-     * records and the serializer-completed entry content preserved —
-     * keyed by module source path in planning order. Populated only
-     * after the graph phase succeeded; empty on E2005 and on any
-     * preceding failure (a failed graph publishes no plan).
-     */
     private final Map<String, List<PlannedDefaultClass>>
         completedDefaultPlans = new LinkedHashMap<>();
 
-    /**
-     * The merged final digest-bearing runtime dependency records of
-     * this compile (ISSUE-0543): ordinary RUNTIME_USE records in
-     * first-occurrence order followed by the per-plan
-     * DEFERRED_DEFAULT_BINDING records, structurally deduplicated.
-     * Empty before the graph phase runs or when the graph rejected the
-     * compilation (E2005 publishes no dependency record).
-     */
     private List<RuntimeImportDependency> runtimeDependencies =
         List.of();
 
-    /**
-     * The JVM codegen pass-1 results of this compile (ISSUE-0374 profile
-     * plumb observability): module source path → the
-     * {@link JvmBackend.JvmCodegenResult} the backend generated for every
-     * module it accepted — including the backend's recorded int32 mode,
-     * the real stored backend state the profile plumb selected
-     * ({@link #invocation()}'s semantic profile → {@link
-     * JvmBackend#generate}). Read-only; empty before the JVM codegen
-     * phase runs or when the backend rejected every module. A pass-2
-     * class-name collision does not remove a pass-1 entry (it only
-     * blocks the artifact write).
-     */
     private final Map<String, JvmBackend.JvmCodegenResult> jvmGeneratedResults =
         new LinkedHashMap<>();
 
-    /**
-     * The LuaJIT codegen results of this compile (ISSUE-0544 lowering
-     * observability, the JVM {@code jvmGeneratedResults} precedent):
-     * module source path &rarr; the {@link LuaBackend.GenerationResult}
-     * the backend generated for every module it accepted — including the
-     * realized {@code RuntimeClassDefaultPlan}s the lowering epic
-     * consumed. Read-only; empty before the LuaJIT codegen phase runs
-     * or when the backend rejected every module.
-     */
     private final Map<String, LuaBackend.GenerationResult>
         luaGeneratedResults = new LinkedHashMap<>();
 
-    /**
-     * The JavaScript codegen results of this compile (ISSUE-0544
-     * lowering observability, the JVM {@code jvmGeneratedResults}
-     * precedent): module source path &rarr; the
-     * {@link JsBackend.JsCodegenResult} the backend generated for every
-     * module it accepted — including the realized
-     * {@code RuntimeClassDefaultPlan}s the lowering epic consumed.
-     * Read-only; empty before the JS codegen phase runs or when the
-     * backend rejected every module.
-     */
     private final Map<String, JsBackend.JsCodegenResult>
         jsGeneratedResults = new LinkedHashMap<>();
 
@@ -390,16 +241,6 @@ public final class CompilationOrchestrator {
      */
     private final Path diagnosticsJsonPath;
 
-    /**
-     * The pinned three-tier distribution resolver of this compilation's
-     * project (ISSUE-0457,
-     * {@code release-distribution-packaging-and-discovery} D3): the
-     * runtime and stdlib deployment copies resolve their sources
-     * through it in the pinned order — project-local surface first,
-     * then the language distribution (classpath resources, then the
-     * {@code DEAL_HOME} filesystem layout), then the checkout CWD dev
-     * fallback.
-     */
     private final DistributionHome distributionHome;
 
     /**
@@ -425,16 +266,6 @@ public final class CompilationOrchestrator {
      */
     private IOException pendingStageFailure;
 
-    // Host externals (ISSUE-0082, host-module-abi D5, file-keyed since
-    // ISSUE-0269): the externals declarations live in
-    // ProjectContext.externals (raw import specifier → validated
-    // ExternalEntry). A resolved source whose canonical URI equals an
-    // entry's declaration path carries ExternalModule(that key)
-    // regardless of the import spelling — the classification recorded on
-    // each SourceModuleLocation by the T6 resolver; the dotted
-    // typing/class-identity name for an externals module is derived from
-    // the raw specifier (the legacy externalsModulePaths behavior).
-
     private static final class ModuleInfo {
         final String sourcePath;
         final String modulePath;
@@ -456,40 +287,6 @@ public final class CompilationOrchestrator {
         }
     }
 
-    /**
-     * Production entry point (ISSUE-0269 migration, design source
-     * {@code strict-project-context-resolution-identity} D7 + Failure and
-     * operations): the orchestrator consumes the immutable validated
-     * {@link ProjectContext} published by {@link ProjectLocator} plus the
-     * compilation options. The backend is the context's effective backend
-     * ({@code "luajit"} | {@code "jvm"} | {@code "js"} — the strict
-     * backend set), the
-     * output root is the context's classified
-     * {@link OutputConfigResolver.OutputRef} (created only in the write
-     * phase), and module roots, externals declarations, the stdlib
-     * surface, and the private deployment identity are the context's
-     * validated values. No {@code DealConfig}, no implicit
-     * entry-directory root, no CWD bare-lookup fallback, and no lossy
-     * {@code computeModulePath} participate: module naming derives from
-     * the T5/T6 classification (the dotted root-relative path, the
-     * externals raw specifier with {@code /} → {@code .}, the pinned
-     * stdlib module name) and the private {@code deploymentModuleId} for
-     * unclassified sources.
-     *
-     * @param context the validated immutable project context
-     * @param entryFile the entry source file (absolute normalized
-     *                  lexical path — the same path text the T6
-     *                  entry-file seam publishes)
-     * @param verbose verbose phase/timing output
-     * @param dumpIr produce IR dump files
-     * @param sourceMap produce source-map sidecars
-     * @param sourceMapExplicit true when {@code --source-map} was
-     *                         explicitly requested (distinct from the
-     *                         {@code --dump-ir}-derived flag)
-     * @param diagnosticsJsonPath the {@code --diagnostics-json} output
-     *                            path, or null
-     * @param invocation the release-owned compiler invocation
-     */
     public CompilationOrchestrator(ProjectContext context, Path entryFile,
                                     boolean verbose, boolean dumpIr,
                                     boolean sourceMap, boolean sourceMapExplicit,
@@ -713,16 +510,6 @@ public final class CompilationOrchestrator {
             syntheticDeploymentIdentity(entryDir));
     }
 
-    /**
-     * The deterministic representable {@code configuredText} of a
-     * synthesized root: the root path's final component (no manifest
-     * spelling exists for a test-only context, and the text only feeds
-     * the T7 representability gates and the compilation's
-     * class-identity index — the pre-ISSUE-0269 configured-root-text
-     * fallback for a config-less compile kept byte-identical). A
-     * degenerate root (filesystem root or a relative input) falls back
-     * to the pinned {@code "project"} text.
-     */
     private static String configuredRootTextOf(Path absoluteRoot) {
         Path fileName = absoluteRoot.getFileName();
         return fileName == null || fileName.toString().isEmpty()
@@ -825,86 +612,31 @@ public final class CompilationOrchestrator {
      * recorded (foundation F1) — resolved before checking/lowering and
      * recorded verbatim on every invocation, verbose or not.
      *
-     * @return the immutable invocation record
      */
     public CompilerInvocation invocation() {
         return invocation;
     }
 
-    /**
-     * Read-only view of {@link #jvmGeneratedResults}: the backend's
-     * generated JVM artifact records of this compile keyed by module
-     * source path (ISSUE-0374 profile plumb observability).
-     *
-     * @return the pass-1 accepted module results; empty before the JVM
-     *         codegen phase runs
-     */
     public Map<String, JvmBackend.JvmCodegenResult> jvmGeneratedResults() {
         return Collections.unmodifiableMap(jvmGeneratedResults);
     }
 
-    /**
-     * The checked-project foundation result of this compile (ISSUE-0288):
-     * exactly one checked project input and one project interface index
-     * built in dependency order after phase 3 succeeds — {@code null} before the foundation phase runs or when
-     * a pre-foundation phase failed. The builder's E6005 diagnostics (a
-     * fact defect, never a crash) are also merged into
-     * {@link #diagnostics()}.
-     *
-     * @return the build result, or {@code null} when the foundation phase
-     *         did not run
-     */
     public CheckedProjectBuildResult checkedProject() {
         return checkedProjectBuild;
     }
 
-    /**
-     * The requirement-manifest foundation result of this compile
-     * (ISSUE-0289): one {@code SemanticRequirementManifest} per
-     * implementation module in dependency order — {@code null} before the
-     * manifest phase runs or when a preceding phase failed.
-     *
-     * @return the manifest result, or {@code null} when the phase did not
-     *         run
-     */
     public RequirementManifestResult requirementManifests() {
         return requirementManifests;
     }
 
-    /**
-     * The route-plan foundation result of this compile (ISSUE-0290):
-     * exactly one deterministic {@code ModuleRoutePlan} for the
-     * compile's target in dependency order — {@code null} before the
-     * route-plan phase runs, when a preceding phase failed, or when the
-     * backend is JS (no closed route-plan target exists for JS in this
-     * epic; the phase is skipped and the retained JS path is
-     * untouched).
-     *
-     * @return the route-plan result, or {@code null} when the phase did
-     *         not run
-     */
     public RoutePlanResult routePlan() {
         return routePlan;
     }
 
-    /**
-     * The number of SHARED-routed modules emitted from validated
-     * semantic IR in phase 4 of this compile (ISSUE-0239 E10) — zero
-     * before the codegen phase runs.
-     *
-     * @return the semantic-emission count
-     */
     public int semanticEmissionCount() {
         return semanticEmissionCount;
     }
 
-    /**
-     * The number of LEGACY-routed modules emitted by the retained
-     * backend in phase 4 of this compile (ISSUE-0239 E10) — zero before
-     * the codegen phase runs.
-     *
-     * @return the retained-emission count
-     */
     public int retainedEmissionCount() {
         return retainedEmissionCount;
     }
@@ -1027,33 +759,10 @@ public final class CompilationOrchestrator {
         buildCheckedProject(checkOrder);
         if (hasErrors) { printDiagnostics(); return false; }
 
-        // Foundation phase (F3/F8): after the checked project and index,
-        // LoweringSupport computes exactly one SemanticRequirementManifest
-        // per implementation module in dependency order (the closed
-        // capability claims — the superseded four-part
-        // STDLIB_TIME_CONFLICT trigger is retired since K7 — plus the
-        // constructCoverage rows). Read-only over the checked facts; its
-        // E6005 diagnostics fail the compile exactly like frontend errors.
         log("Phase 3.6: Semantic requirement manifests");
         computeRequirementManifests();
         if (hasErrors) { printDiagnostics(); return false; }
 
-        // Foundation phase (F4/F8): after the manifests, MigrationPlanner
-        // produces exactly one deterministic ModuleRoutePlan for the
-        // compile's target in dependency order (closed routing rules, the
-        // closed E6005-vs-LEGACY-reroute split, plan-time TargetModuleAbi
-        // records). Read-only over the checked facts; its E6005
-        // diagnostics fail the compile exactly like frontend errors. The
-        // JS backend has no closed route-plan target in this epic, so the
-        // phase is skipped and the retained JS path is untouched.
-        // ISSUE-0643 (design source
-        // production-project-emission-and-atomic-cutover P4): the
-        // release-owned production invocation skips phase 3.7 entirely —
-        // the production arm consults no route plan, so no plan is
-        // computed and the route-plan view stays null. Every other
-        // LuaJIT/JVM invocation (the harness purposes and the test-only
-        // PUBLIC_BUILD records that are not the release-owned record)
-        // keeps the phase and the harness arm.
         log("Phase 3.7: Route plan");
         if (productionArmApplies()) {
             log("  Route plan skipped: the release-owned production invocation"
@@ -1063,62 +772,20 @@ public final class CompilationOrchestrator {
             if (hasErrors) { printDiagnostics(); return false; }
         }
 
-        // Default planning phase (ISSUE-0541, design source
-        // provider-versioned-default-plans D1-D4): after checking and
-        // declaration analysis, before serialization and the graph —
-        // one CompilerClassDefaultPlan per plan-bearing class
-        // (implementation classes planned by DefaultSemanticPlanner,
-        // C-struct classes planned by DeclarationSemanticAnalyzer),
-        // resolution/type-checking in the declaring lexical/import
-        // context, the complete typed evaluator IR walk, and the two
-        // plan-shape gates (E4001 declaration shape, E3020 sync
-        // evaluators). Host-declared classes are exempt and produce no
-        // plan. No evaluator is invoked and no library is loaded; no
-        // digest is computed and no dependency edge or graph runs
-        // (the serializer and graph epics own those).
         log("Phase 3.8: Default planning and declaration default analysis");
         planDefaultClasses();
         if (hasErrors) { printDiagnostics(); return false; }
 
-        // Runtime dependency graph phase (ISSUE-0543, design source
-        // provider-versioned-default-plans D1/D7/D8): after planning,
-        // before FFI validation and codegen — the digest-free SCC pass
-        // merges the ordinary runtime-use edges (RUNTIME_USE) with the
-        // planner's default edges (DEFERRED_DEFAULT_BINDING) over the
-        // one RuntimeImportDependency carrier; a runtime SCC reports
-        // E2005 with a note per runtime edge and publishes no plan,
-        // FFI metadata, or artifact. Only an acyclic pass requests the
-        // provider digests (the serializer, with the ordinary
-        // occurrences demanded), publishes the final digest-bearing
-        // dependency records, completes every plan's
-        // runtimeDependencies, and fixes the initialization order.
-        // No evaluator is invoked and no library is loaded here.
         log("Phase 3.85: Runtime dependency graph and plan publication");
         evaluateDependencyGraph();
         if (hasErrors) { printDiagnostics(); return false; }
 
-        // FFI phase (ISSUE-0162, design source
-        // deal-v1.2-directives-and-c-ffi-declarations D4/D7/D8): after
-        // semantic/graph success, validate every extern-C declaration
-        // module (E7002 policy), reject the C FFI on an incapable
-        // backend (JVM: E6006 FFI_UNSUPPORTED_BACKEND at @extern-c)
-        // before any artifact write, and publish the validated
-        // metadata/bundle/bindings on LuaJIT for later runtime loading.
-        // Validation never evaluates defaults; a failed validation or
-        // an incapable backend publishes no metadata and no artifact.
         log("Phase 3.9: C FFI declaration validation and metadata");
         validateCffiDeclarations();
         if (hasErrors) { printDiagnostics(); return false; }
 
         log("Phase 4: Code generation");
-        // Declaration surface (ISSUE-0630, design source
-        // project-lowering-entry-and-registration-seeds D3 and the
-        // declaration-surface contract): phase-4 input data, produced
-        // once per compile over every host and extern-C declaration
-        // module the compilation imports, before any emission arm runs.
-        // A producer defect (a declared class field type with no runtime
-        // representation) fails the compile through the descriptor path
-        // with the first E6005 and publishes nothing.
+
         hostDeclarationSurface = produceHostDeclarationSurface();
         if (hasErrors) { printDiagnostics(); return false; }
         codegenAll();
@@ -1505,19 +1172,6 @@ public final class CompilationOrchestrator {
         }
     }
 
-    /**
-     * DEAL v1.2 selected-entry rule: when a compiler invocation selects an
-     * entry module, that module must export {@code main} with non-async
-     * signature {@code (): null}; the backend invokes {@code main()} from
-     * that module.
-     *
-     * <p>Emitted diagnostics (ISSUE-0269 D7 re-registration):</p>
-     * <ul>
-     *   <li>{@code E2012} — the entry module does not export {@code main}</li>
-     *   <li>{@code E2011} — {@code main} exists but is async or does not
-     *       have signature {@code (): null}</li>
-     * </ul>
-     */
     private void validateEntryMain() {
         ModuleInfo entry = modules.get(entryFile.toString());
         if (entry == null) return; // discovery already reported E2003
@@ -1568,20 +1222,6 @@ public final class CompilationOrchestrator {
     // ... (unchanged)
     // =========================================================================
 
-    /**
-     * Phase-2 module ordering for type checking: the one shared
-     * initialization-order algorithm over the import-declaration edge
-     * structure ({@link ModuleDependencyGraph#initializationOrder} —
-     * Kahn in module discovery order; when no module is ready, exactly
-     * the remaining cycle members are appended in discovery order and
-     * the sweep resumes, so an importer never precedes its imported
-     * module). Every import cycle orders here: type-only cycles are
-     * legal and impose no order, and runtime-cycle rejection moved to
-     * the post-checking dependency graph phase (ISSUE-0543) — the
-     * digest-free SCC pass over the merged ordinary + default runtime
-     * edges, where the resolved semantic resource identities and the
-     * planner's default edges exist.
-     */
     private List<String> buildCheckOrder() {
         Map<String, Set<String>> deps = new LinkedHashMap<>();
         for (Map.Entry<String, ModuleInfo> entry : modules.entrySet()) {
@@ -1603,23 +1243,6 @@ public final class CompilationOrchestrator {
             new ArrayList<>(modules.keySet()), deps);
     }
 
-    /**
-     * Builds the E2005 runtime-cycle diagnostic with the D5 anchor chain
-     * (public static so the fallback chain is directly pinnable; the
-     * graph epic, ISSUE-0543, is the production owner of this helper —
-     * {@link ModuleDependencyGraph} builds the per-runtime-SCC E2005
-     * diagnostics with the per-edge notes through it):
-     * <ul>
-     *   <li>the import declaration span of the first cycle module that
-     *       targets another cycle member,</li>
-     *   <li>falling back to that module's program span,</li>
-     *   <li>then to the canonical synthetic shape
-     *       {@code (file,1,1,1,1,0,0,0,SYNTHETIC)} plus an anchor note
-     *       naming the cycle edge
-     *       ({@code missing anchor: import declaration closing the module
-     *       cycle a -> b -> a}) (D5/D6).</li>
-     * </ul>
-     */
     public static CompilerDiagnostic e2005Diagnostic(List<String> cycle,
             Map<String, Map<String, Span>> edgeSpans,
             Map<String, Span> programSpans, String message) {
@@ -1678,10 +1301,6 @@ public final class CompilationOrchestrator {
             "missing anchor: IR dump path for module '" + sourcePath + "'");
     }
 
-    // =========================================================================
-    // Phase 3.5: Checked project and interface index (foundation, ISSUE-0288)
-    // =========================================================================
-
     /**
      * Runs the checked-project foundation after phase 3: packages the
      * orchestrator's module facts in {@code buildCheckOrder} (source
@@ -1714,18 +1333,6 @@ public final class CompilationOrchestrator {
         }
     }
 
-    /**
-     * Runs the requirement-manifest foundation after the checked project
-     * and interface index (ISSUE-0289): hands the checked project and the
-     * index to {@link LoweringSupport}, which computes one manifest per
-     * implementation module in dependency order — the closed capability
-     * claims (the superseded four-part {@code STDLIB_TIME_CONFLICT}
-     * detector is retired since K7: the cataloged-call arm claims
-     * {@code STDLIB_SEMANTICS}) and the reachable-construct coverage
-     * rows. Support E6005 diagnostics merge into
-     * {@link #diagnostics()} and fail the compile; a failed computation
-     * leaves {@link #requirementManifests()} null.
-     */
     private void computeRequirementManifests() {
         CheckedProjectBuildResult checked = this.checkedProjectBuild;
         if (checked == null || checked.hasErrors()) {
@@ -1740,25 +1347,7 @@ public final class CompilationOrchestrator {
             log("  Requirement manifest computation failed: " + result.diagnostics());
         }
     }
-    /**
-     * Runs the route-plan foundation after the manifests (ISSUE-0290):
-     * hands the checked project, the interface index, the manifests, the
-     * capability registry the invocation recorded, and the compile's
-     * target to {@link MigrationPlanner} — one deterministic plan per
-     * target over the closed routing rules (F4). The planner's F1/F7
-     * guard requires the registry digest to equal the invocation's
-     * recorded digest, so the registry is resolved from the invocation:
-     * the promoted release registry (E12's committed derivation — the
-     * production route set, F4 rule 4 eligible for promoted
-     * capability × target pairs) or the all-{@code SHADOW} release
-     * default (the internal harnesses' recorded registry — F4 rule 4
-     * ineligible, all-LEGACY); any other digest fails the planner guard
-     * (a producer-defect wiring defect, never an E6005 class). Planner
-     * E6005 diagnostics merge into {@link #diagnostics()} and fail the
-     * compile. The JS backend skips the phase: the closed route-plan
-     * target axis is {@code LUAJIT|JVM} (foundation F4/F5), and no
-     * closed target exists for JS in this epic.
-     */
+
     private void planRoutesForCompile() {
         CheckedProjectBuildResult checked = this.checkedProjectBuild;
         if (checked == null || checked.hasErrors()) {
@@ -1773,7 +1362,7 @@ public final class CompilationOrchestrator {
             case JS -> null;
         };
         if (target == null) {
-            return; // JS: no closed route-plan target in this epic
+            return;
         }
         RoutePlanResult result = MigrationPlanner.planRoutes(
             invocation, registryForInvocation(invocation),
@@ -1812,10 +1401,6 @@ public final class CompilationOrchestrator {
         return release;
     }
 
-    // =========================================================================
-    // Phase 3.8: C FFI declaration validation and metadata (ISSUE-0162)
-    // =========================================================================
-
     /**
      * The read-only view of the validated extern-C metadata: dotted
      * module path &rarr; generated module inputs (descriptor, cdef
@@ -1823,53 +1408,11 @@ public final class CompilationOrchestrator {
      * LuaJIT backend after successful validation; empty for JVM/JS and
      * on any validation failure.
      *
-     * @return the generated FFI modules (unmodifiable)
      */
     public Map<String, FfiGeneratedModule> ffiGenerations() {
         return Collections.unmodifiableMap(ffiGenerations);
     }
 
-    /**
-     * The extern-C metadata phase: runs after semantic/graph success
-     * (phases 0–3.7) and before any artifact write (phase 4).
-     *
-     * <p>Per extern-C declaration module in the graph:</p>
-     * <ol>
-     *   <li>validate the declaration policy (E7002: sync functions,
-     *       export/C names, ABI parameter/return allowlists, same-file
-     *       class references, required/defaulted source-order struct
-     *       fields, pointer emptiness/non-constructibility) — never
-     *       evaluating defaults;</li>
-     *   <li>on an incapable backend (JVM) emit E6006 containing
-     *       {@code FFI_UNSUPPORTED_BACKEND} at the {@code @extern-c}
-     *       directive range after validation and before artifacts;</li>
-     *   <li>on LuaJIT publish the validated immutable descriptor plus
-     *       the generated cdef bundle, retained plans, and forward
-     *       bindings for later runtime loading.</li>
-     * </ol>
-     *
-     * <p>A failed validation or an incapable backend publishes no
-     * metadata and no partial artifact (the compile stops before phase
-     * 4). The JS backend keeps its pinned import-site E6006 arm
-     * (ISSUE-0169 skeleton) and does not run this phase.</p>
-     */
-    // =========================================================================
-    // Phase 3.8: Default planning and declaration default analysis (ISSUE-0541)
-    // =========================================================================
-
-    /**
-     * Runs the shared default planning pipeline over every plan-bearing
-     * module in dependency order: implementation modules through
-     * {@link DefaultSemanticPlanner}, extern-C declaration modules
-     * through {@link DeclarationSemanticAnalyzer}. Host-declared
-     * (non-extern-C declaration) classes are exempt and produce no
-     * plan. Error-level diagnostics fail the compile and publish no
-     * plan; success stores the plans and their provisional occurrence
-     * data in {@link #plannedDefaultClasses()} only — nothing is
-     * published to lowerers, the FFI descriptor stage, or artifacts
-     * (the graph epic owns publication), no digest is computed, no
-     * evaluator is invoked, and no library is loaded.
-     */
     private void planDefaultClasses() {
         // The planning epics require public class identity for every
         // plan-bearing class and the canonical descriptor encoder
@@ -2008,51 +1551,19 @@ public final class CompilationOrchestrator {
         return Collections.unmodifiableMap(plannedDefaultClasses);
     }
 
-    /**
-     * The dependency graph's published completed plans of this compile
-     * (ISSUE-0543): module source path &rarr; the planned classes with
-     * every plan's {@code runtimeDependencies} completed with the final
-     * digest-bearing records and the serializer-completed entry content
-     * preserved, in planning order. Read-only; empty before the graph
-     * phase runs, when a preceding phase failed, or when the graph
-     * rejected the compilation (E2005 publishes no plan).
-     */
     public Map<String, List<PlannedDefaultClass>> completedDefaultPlans() {
         return Collections.unmodifiableMap(completedDefaultPlans);
     }
 
-    /**
-     * The LuaJIT codegen results keyed by module source path (the
-     * {@link #jvmGeneratedResults()} accessor's Lua mirror, ISSUE-0544):
-     * each entry carries the backend's realized runtime default plans
-     * for the module. Read-only; empty before the LuaJIT codegen phase.
-     */
     public Map<String, LuaBackend.GenerationResult>
             luaGeneratedResults() {
         return Collections.unmodifiableMap(luaGeneratedResults);
     }
 
-    /**
-     * The JS codegen results keyed by module source path (the
-     * {@link #jvmGeneratedResults()} accessor's JS mirror, ISSUE-0544):
-     * each entry carries the backend's realized runtime default plans
-     * for the module. Read-only; empty before the JS codegen phase.
-     */
     public Map<String, JsBackend.JsCodegenResult> jsGeneratedResults() {
         return Collections.unmodifiableMap(jsGeneratedResults);
     }
 
-    /**
-     * The completed default plans of this compile keyed by module path
-     * (ISSUE-0544, the lowering epic's backend seam): module path
-     * &rarr; the module's completed {@link PlannedDefaultClass} list in
-     * planning order. Built from {@link #completedDefaultPlans()} (keyed
-     * by module source path) so the three backends consume one uniform
-     * plan surface — each backend keys its own module's plans by its
-     * module path and the JVM backend additionally resolves imported
-     * providers' plans through the imported module paths. Empty before
-     * the graph phase succeeds or when it published no plan.
-     */
     public Map<String, List<PlannedDefaultClass>>
             completedPlansByModulePath() {
         Map<String, List<PlannedDefaultClass>> byModulePath =
@@ -2067,44 +1578,14 @@ public final class CompilationOrchestrator {
         return Collections.unmodifiableMap(byModulePath);
     }
 
-    /**
-     * The merged final digest-bearing runtime dependency records of
-     * this compile (ISSUE-0543): ordinary {@code RUNTIME_USE} records
-     * in first-occurrence order followed by the per-plan
-     * {@code DEFERRED_DEFAULT_BINDING} records, structurally
-     * deduplicated. Read-only; empty before the graph phase runs or
-     * when the graph rejected the compilation.
-     */
     public List<RuntimeImportDependency> runtimeDependencies() {
         return List.copyOf(runtimeDependencies);
     }
 
-    /**
-     * The initialization order of this compile (ISSUE-0543): module
-     * source paths in dependency order preserving first-import
-     * declaration order — the one shared ordering algorithm of
-     * {@link ModuleDependencyGraph#initializationOrder} (the phase-2
-     * check order derives from it, and the graph phase republishes the
-     * identical order after success). Read-only; empty before phase 2.
-     */
     public List<String> dependencyOrder() {
         return List.copyOf(dependencyOrder);
     }
 
-    /**
-     * The canonical serializer input surface of this compile
-     * (ISSUE-0542): module source path &rarr; the read-only per-module
-     * facts {@link DefaultSemanticSerializer} consumes alongside
-     * {@link #plannedDefaultClasses()} — checked facts and the name
-     * resolver for implementation modules, the module resolver and the
-     * export map for declaration modules, the import surface, the
-     * canonical descriptor encoder, and the module-identity
-     * classification. Read-only; a data seam only — this epic wires
-     * no serializer phase: the graph epic (ISSUE-0543) owns the
-     * orchestrator phase that invokes the serializer after its
-     * digest-free SCC pass. No digest is computed, no graph runs, and
-     * nothing is published here.
-     */
     public Map<String, DefaultSerializerModuleInput>
             defaultSerializerModuleInputs() {
         Map<String, DefaultSerializerModuleInput> inputs =
@@ -2146,26 +1627,6 @@ public final class CompilationOrchestrator {
         return Collections.unmodifiableMap(inputs);
     }
 
-    /**
-     * Phase 3.85 (ISSUE-0543, design source
-     * {@code provider-versioned-default-plans} D1/D7/D8): the runtime
-     * dependency graph and plan publication — the digest-free SCC
-     * pass merges the ordinary runtime-use edges ({@code RUNTIME_USE},
-     * the complete typed evaluator IR walk of every function body)
-     * with the planner's default edges
-     * ({@code DEFERRED_DEFAULT_BINDING}) over the one
-     * {@link RuntimeImportDependency} carrier; a strongly connected
-     * component containing at least one runtime edge reports E2005
-     * with a note per runtime edge carrying
-     * {@code (reason, from &rarr; to, sourceRange)} and publishes no
-     * plan, FFI metadata, or artifact (the provisional plans are
-     * discarded). Only an acyclic pass requests the provider digests —
-     * the serializer completes every default's {@code runtimeResources}
-     * and additionally demands the ordinary occurrences' provider
-     * digests — publishes the final digest-bearing dependency records
-     * and the completed plans, and fixes the initialization order. No
-     * evaluator is invoked and no library is loaded.
-     */
     private void evaluateDependencyGraph() {
         Map<String, ModuleDependencyGraph.ModuleInput> inputs =
             new LinkedHashMap<>();
@@ -2276,11 +1737,7 @@ public final class CompilationOrchestrator {
             }
             String canonicalExternalIdentity = canonicalExternalIdentityOf(info);
             if (canonicalExternalIdentity == null) {
-                // Defensive: an extern-C module that is not
-                // externals-listed has no native library and no public
-                // module identity — the E2010 library/manifest policy
-                // belongs to the config epic (ISSUE-0111); this phase
-                // publishes no metadata for it.
+
                 continue;
             }
             NativeLibraryRef nativeLibrary = nativeLibraryOf(info);
@@ -2390,7 +1847,6 @@ public final class CompilationOrchestrator {
         }
         return targets;
     }
-
 
     /**
      * Packages one orchestrator module's read-only facts for the builder:
@@ -2556,36 +2012,16 @@ public final class CompilationOrchestrator {
     // Phase 4: Code generation
     // =========================================================================
 
-    /**
-     * Phase-4 dispatch (ISSUE-0643; design source
-     * {@code production-project-emission-and-atomic-cutover} P4/P5):
-     * {@link Backend#LUAJIT}/{@link Backend#JVM} with the release-owned
-     * production invocation ({@link #productionArmApplies()}) runs the
-     * production project emission arm — one lowering, one project
-     * artifact, no route plan; every other LuaJIT/JVM invocation runs
-     * the unchanged harness arm (phase 3.7 route planning, the
-     * per-module route dispatch, the retained loops and counters, the
-     * mixed-edge validation, and the per-module production emission);
-     * {@link Backend#JS} keeps its untouched pipeline.
-     *
-     * <p>The dispatch reads no routing, planner, registry,
-     * retained-backend, or retained-counter surface itself: those live
-     * in the harness arms this method only selects.</p>
-     */
     private void codegenAll() throws IOException {
         long phaseStart = System.currentTimeMillis();
         try {
             if (productionArmApplies()) {
                 emitProductionProject();
             } else if (backend == Backend.JVM) {
-                // JVM use site (ISSUE-0091): emit one .java module class per
-                // module. Import resolution and the Lua runtime copies are
-                // LuaJIT-specific and skipped here.
+
                 codegenAllJvm();
             } else if (backend == Backend.JS) {
-                // JS use site (ISSUE-0247 core slice, js-backend-emitter D3):
-                // codegenAllJs() replaces the ISSUE-0189 staging guard with the
-                // two-pass emitter plus the runtime/stdlib deployment copies.
+
                 codegenAllJs();
             } else {
                 codegenAllLua();
@@ -2631,9 +2067,6 @@ public final class CompilationOrchestrator {
      * invocation that records another release state or another registry
      * digest keeps the harness arm.
      *
-     * @param invocation the compile's recorded invocation; non-null
-     * @return whether the compile is the release-owned production
-     *         invocation
      */
     public static boolean isProductionInvocation(CompilerInvocation invocation) {
         Objects.requireNonNull(invocation, "invocation must not be null");
@@ -2658,13 +2091,7 @@ public final class CompilationOrchestrator {
         // it; the local legacy dialect producer is retired.
         ModuleIdentityResolver.IdentityIndex identityIndex =
             buildCanonicalIdentitySurface();
-        // ISSUE-0239 E10 dispatch: the ModuleRoutePlan selects the
-        // emitter per module — SHARED-routed modules lower to
-        // validated semantic IR and emit through the shared
-        // emitter; LEGACY-routed modules keep the retained
-        // backend. No within-run fallback exists: a shared
-        // lowering/emission failure fails the compile and
-        // publishes nothing.
+
         for (CheckedModuleInput checked : sharedModulesInDependencyOrder()) {
             emitSharedLuaModule(checked);
         }
@@ -2798,23 +2225,6 @@ public final class CompilationOrchestrator {
         hasErrors = true;
     }
 
-    // =========================================================================
-    // Phase 4 shared-route emission (ISSUE-0239 E10): the ModuleRoutePlan
-    // selects semantic or retained emission per module with no within-run
-    // fallback
-    // =========================================================================
-
-    /**
-     * The production route of one implementation module (ISSUE-0239
-     * E10): the plan's entry for the module, or {@code LEGACY} when the
-     * compile's backend has no closed route-plan target (JS), the plan
-     * phase did not produce, or the module is absent from the plan — a
-     * defensive LEGACY selection over incomplete plan facts only, never
-     * a within-run reroute of a SHARED plan entry.
-     *
-     * @param info the implementation module; non-null
-     * @return the planned route ({@code LEGACY} when no SHARED entry exists)
-     */
     private ModuleRoute routeOf(ModuleInfo info) {
         if (routePlan == null || routePlan.hasErrors() || routePlan.plan() == null) {
             return ModuleRoute.LEGACY;
@@ -2823,14 +2233,6 @@ public final class CompilationOrchestrator {
         return route == null ? ModuleRoute.LEGACY : route;
     }
 
-    /**
-     * The SHARED-routed implementation modules in the checked project's
-     * dependency order (ISSUE-0239 E10) — the lowering/emission order of
-     * the shared route (never the discovery-map insertion order, which
-     * is entry-first).
-     *
-     * @return the shared modules in dependency order
-     */
     private List<CheckedModuleInput> sharedModulesInDependencyOrder() {
         List<CheckedModuleInput> shared = new ArrayList<>();
         if (checkedProjectBuild == null || checkedProjectBuild.hasErrors()
@@ -2862,13 +2264,6 @@ public final class CompilationOrchestrator {
         return null;
     }
 
-    /**
-     * Lowers one SHARED-routed module through the full-program E7 walk
-     * (ISSUE-0239 E10): the dependency-ordered project allocator, the
-     * already-lowered callees' recorded {@code EXTERNAL_ENTRY} op ids,
-     * and the plan's route facts. The unit is validated by the lowerer;
-     * a failure is the returned E6005 — never a reroute.
-     */
     private SemanticLowerer.FullProgramE7Result lowerSharedModule(
             CheckedModuleInput module) {
         if (sharedAllocator == null) {
@@ -2920,12 +2315,6 @@ public final class CompilationOrchestrator {
         return lowered;
     }
 
-    /**
-     * Emits one SHARED-routed module through the shared LuaJIT emitter
-     * into the staging tree (ISSUE-0239 E10) and records its emitted ABI
-     * manifest. A lowering/emission failure merges E6005 and fails the
-     * compile — no artifact stages for the module and nothing publishes.
-     */
     private void emitSharedLuaModule(CheckedModuleInput checked) throws IOException {
         SemanticLowerer.FullProgramE7Result lowered =
             lowerSharedModuleOrFail(checked);
@@ -2949,12 +2338,6 @@ public final class CompilationOrchestrator {
         log("  Generated (shared semantic IR): " + outputRoot.resolve(artifactPath));
     }
 
-    /**
-     * Emits one SHARED-routed module through the shared JVM emitter into
-     * the staging tree (ISSUE-0239 E10) under the retained layout's
-     * class name, and records its emitted ABI manifest. A
-     * lowering/emission failure merges E6005 and fails the compile.
-     */
     private void emitSharedJvmModule(CheckedModuleInput checked) throws IOException {
         SemanticLowerer.FullProgramE7Result lowered =
             lowerSharedModuleOrFail(checked);
@@ -2979,13 +2362,6 @@ public final class CompilationOrchestrator {
             + outputRoot.resolve(className + ".java"));
     }
 
-    /**
-     * The fail-closed emitter-coverage gate (ISSUE-0239 E10): an op kind
-     * outside the shared emitters' closed production set is E6005 —
-     * never a crash, never a within-run reroute, and the failed module
-     * stages no artifact (the publication transaction then preserves
-     * the prior set).
-     */
     private void failSharedEmission(String modulePath, IllegalStateException gap) {
         diagnostics.add(deal.semantic.ir.FailureContractRegistry.e6005(
             new deal.semantic.ir.LoweringFailureDetail(modulePath,
@@ -2999,15 +2375,6 @@ public final class CompilationOrchestrator {
         log("  Shared emission failed for " + modulePath + ": " + gap.getMessage());
     }
 
-    /**
-     * Records the emitted SHARED-owner ABI manifest of one module
-     * (ISSUE-0239 E10): the planner-owned class facts copied from the
-     * index, the exported descriptors from the unit's
-     * {@code EXPORT_PUBLISH} payloads, one sync-invocation entry per
-     * export (the recorded {@code EXTERNAL_ENTRY} op id, or the entry
-     * delegation's wrapper name for {@code main}), one wrapper ABI per
-     * function export, and the staged load key/initialization entry.
-     */
     private void recordSharedAbi(ModuleId moduleId,
                                  SemanticLowerer.FullProgramE7Result lowered,
                                  String loadKey, String initializationEntry) {
@@ -3033,8 +2400,7 @@ public final class CompilationOrchestrator {
                 syncEntries.put(payload.name(),
                     new SyncInvocationEntry.ExternalEntry(entryOpId));
             } else {
-                // main: the ENTRY_INVOKE delegation owns its invocation
-                // shape; the retained-layout wrapper name stands in.
+
                 syncEntries.put(payload.name(),
                     new SyncInvocationEntry.AbiWrapper(payload.name()));
             }
@@ -3056,14 +2422,6 @@ public final class CompilationOrchestrator {
             syncEntries, List.of()));
     }
 
-    /**
-     * Stage-time mixed-edge validation (ISSUE-0239 E10): every emitted
-     * SHARED ABI manifest and the plan's plan-time retained records are
-     * validated against the staged set and the interface index before
-     * publication. A failure is E6005 — nothing publishes and the prior
-     * live set stays untouched (the publication transaction owns the
-     * all-or-nothing swap).
-     */
     private void validateMixedEdges() throws IOException {
         if (emittedSharedAbis.isEmpty()) {
             return;
@@ -3135,14 +2493,7 @@ public final class CompilationOrchestrator {
                 ModuleInfo imported = resolveImport(imp, info,
                     importResolutions);
                 if (imported != null) {
-                    // Host modules (ISSUE-0082, host-module-abi D5):
-                    // declaration files that are not spec stdlib
-                    // modules load through __rt.load_host with the
-                    // raw import path verbatim as the require key.
-                    // An effective extern-C declaration with published
-                    // FFI metadata is an FFI module instead (emitter
-                    // page D6): it loads through __rt.load_ffi and is
-                    // never a host module.
+
                     if (imported.isDeclarationFile
                             && !isSpecStdlibModuleInfo(imported)) {
                         FfiGeneratedModule ffi =
@@ -3172,11 +2523,6 @@ public final class CompilationOrchestrator {
         Path liveOutputPath = outputRoot.resolve(filePath);
         Path stageOutputPath = stager.stagePath(filePath);
 
-        // v1.2 entry contract: the selected entry module must export a
-        // non-async main(): null and the backend invokes main() from that
-        // module. Only the LuaJIT entry module gets the entry treatment
-        // here — the JVM backend owns its own entry handling (JVM work is
-        // out of scope for this slice).
         boolean isEntry = Path.of(info.sourcePath).toAbsolutePath().normalize()
             .equals(entryFile.toAbsolutePath().normalize());
 
@@ -3217,31 +2563,6 @@ public final class CompilationOrchestrator {
         log("  Generated: " + liveOutputPath + " (" + modElapsed + "ms)");
     }
 
-    /**
-     * JVM use site (ISSUE-0091, ISSUE-0096, ISSUE-0100): emits one {@code
-     * <ClassName>.java} module class per module, with the per-module import
-     * resolution map (raw import path → imported module path) built exactly
-     * like the LuaJIT use site — only non-declaration modules are entries.
-     * Imports of declaration files that are not spec stdlib modules become
-     * HOST modules (ISSUE-0100, host-module-abi D5): their declared export
-     * map flows into the backend's hostModules parameter, which emits the
-     * load-time-validated host wrappers. Backend diagnostics (E6000 for
-     * out-of-slice constructs — including unsupported host export shapes,
-     * at the import statement itself) fail the compilation with
-     * the standard diagnostic report; no artifact is written for a module
-     * the backend rejects. Class names are derived from the full module
-     * path ({@code app/main} → {@code AppMain}), and a collision between
-     * two modules mapping to the same class name (e.g. a case-only
-     * difference) is an E6000 error — never a silent artifact overwrite.
-     */
-
-    /** Per-module JVM import context (ISSUE-0096/ISSUE-0100/ISSUE-0109):
-     * import resolutions, imported class declarations, host-module
-     * declarations, and the imported modules' declared-boundary surfaces
-     * (ISSUE-0603 D6: the exported {@code FunctionDeclaration} nodes plus
-     * each imported module's source path) for one module — the same
-     * discovery the JVM use site builds. Shared by the ISSUE-0301
-     * shape-collection pre-pass and the per-module codegen pass. */
     private record JvmImportContext(
             Map<String, String> importResolutions,
             Map<String, Map<String, ClassDeclaration>> importedClasses,
@@ -3264,29 +2585,15 @@ public final class CompilationOrchestrator {
 
     /** Builds the per-module JVM import context for {@code info}. */
     private JvmImportContext jvmImportContextOf(ModuleInfo info) {
-        // Import resolutions (ISSUE-0096): raw import path → module
-        // path of the imported COMPILED module. Declaration files
-        // become host modules (ISSUE-0100). ISSUE-0109: the same
-        // discovery pass collects each imported module's class
-        // declarations (module path → name → declaration).
+
         Map<String, String> importResolutions = new HashMap<>();
         Map<String, Map<String, ClassDeclaration>> importedClasses =
             new HashMap<>();
         Map<String, Map<String, Type>> hostModules = new HashMap<>();
-        // Host-class declarations (ISSUE-0303, jvm-v12-host-abi-completion
-        // D4): the declared class exports' field records with their
-        // orchestrator-resolved types — the JVM backend synthesizes the
-        // shared $DealRt record classes from them.
+
         Map<String, Map<String, List<HostModuleDeclarations.HostField>>>
             hostClassDeclarations = new HashMap<>();
-        // Declared-boundary surfaces (ISSUE-0603 D6,
-        // jvm-canonical-error-snapshot-convergence): every imported
-        // compiled module's exported FunctionDeclaration nodes — whose
-        // parameter/return type annotations carry the spans the
-        // declared-boundary origins name — plus the module's source
-        // path, so the importing artifact can emit the callee's declared
-        // parameter/return boundary origin, imported companions
-        // included.
+
         Map<String, JvmBackend.ImportedModuleSurface> importedSurfaces =
             new HashMap<>();
         for (StatementNode stmt : info.rawAst.statements()) {
@@ -3302,22 +2609,7 @@ public final class CompilationOrchestrator {
                         if (!isSpecStdlibModuleInfo(imported)) {
                             HostModuleDeclarations declared =
                                 hostDeclarationsOf(imported);
-                            // Host-module wiring (ISSUE-0100/ISSUE-0303):
-                            // the alias-keyed export map keeps the raw
-                            // import specifier (the emitted load-time
-                            // presence check and the wrapper ABI key on
-                            // it), while the declared class-field records
-                            // key on the declaration module's externals
-                            // identity specifier — the compilation's
-                            // typing/class-identity name the synthesized
-                            // records, their canonical identity text, and
-                            // every class-typed lookup project. The two
-                            // spellings coincide for an exact-key
-                            // externals entry; a derived conformance
-                            // context may carry the dotted typing name
-                            // first (the corpus externals-identity
-                            // convention), and the export map stays
-                            // reachable under both spellings.
+
                             String identitySpecifier =
                                 externalsSpecifierOf(imported);
                             hostModules.put(imp.modulePath(),
@@ -3384,12 +2676,7 @@ public final class CompilationOrchestrator {
 
     private void codegenAllJvm() throws IOException {
         if (sourceMapExplicit) {
-            // Source-map sidecars (.deal.map.json) are produced only by the
-            // LuaJIT emitter; surface that to the CLI user instead of
-            // silently producing no sidecars (ISSUE-0091 rework round 3).
-            // Fired only when --source-map was explicitly requested: a
-            // --dump-ir-derived sourceMap flag (IR hardening enables source
-            // maps with dumps) must not print the warning.
+
             System.err.println("Warning: --source-map produces no source-map "
                 + "sidecars with the JVM backend (source maps are "
                 + "LuaJIT-only)");
@@ -3404,21 +2691,7 @@ public final class CompilationOrchestrator {
         // exists).
         ModuleIdentityResolver.IdentityIndex identityIndex =
             buildCanonicalIdentitySurface();
-        // Compilation-wide class-declaration identity surface (ISSUE-0301
-        // D4 shared-scope emission): canonical class identity → declaring
-        // module path for every class of every checked project module.
-        // The entry module's shared-scope wrapper pre-registration
-        // resolves a collected shape's class reference through this map
-        // when the declaring module is one the entry does not import
-        // directly (its own importAliases/importedClasses maps cannot
-        // name it), so the wrapper's invoke signature always references
-        // the real declaring module's emitted class. Deterministic:
-        // module order, then source order per module; the first
-        // declaration of an identity wins. Host declarations are
-        // excluded (their class exports resolve to the shared
-        // $DealRt synthesized records — jvm-v12-host-abi-completion
-        // D4 — collected in the projectHostClasses union below, never
-        // through a module-emitted class).
+
         Map<CanonicalClassIdentity, String> classDeclaringModules =
             new LinkedHashMap<>();
         for (ModuleInfo info : modules.values()) {
@@ -3442,20 +2715,7 @@ public final class CompilationOrchestrator {
                 }
             }
         }
-        // Pre-codegen collection pass (ISSUE-0301 D4, the shared
-        // runtime value surface): walk every checked module's types and
-        // collect the closed project-wide shape set — function-signature
-        // shapes, nested/function/bytes array element shapes — so the
-        // selected entry module's shared $DealRt scope carries every
-        // shape any module references. Deterministic: module dependency
-        // order (the modules map), then source order per module.
-        //
-        // ISSUE-0303 (jvm-v12-host-abi-completion D4): host-class-typed
-        // shapes join the union — the declared host classes emit their
-        // synthesized record classes in the shared $DealRt scope (the
-        // project-wide host-class union collected right below), so a
-        // wrapper may reference a host-class record exactly like any
-        // other shared carrier.
+
         List<Type> sharedShapes = new ArrayList<>();
         Set<Type> seenShapes = new LinkedHashSet<>();
         for (ModuleInfo info : modules.values()) {
@@ -3474,14 +2734,6 @@ public final class CompilationOrchestrator {
         }
         List<Type> projectShapes = List.copyOf(sharedShapes);
 
-        // Project-wide host-class declaration union (ISSUE-0303,
-        // jvm-v12-host-abi-completion D4): raw import specifier → class
-        // name → declared field records, deterministic (module order,
-        // then per-module import order, then declaration order). The
-        // entry module's shared $DealRt scope emits one synthesized
-        // record class per declared host class — the single emission
-        // point, keyed by the specifier + class name, never by a hash
-        // iteration.
         Map<String, Map<String, List<HostModuleDeclarations.HostField>>>
             projectHostClasses = new LinkedHashMap<>();
         for (ModuleInfo info : modules.values()) {
@@ -3508,18 +2760,11 @@ public final class CompilationOrchestrator {
         for (ModuleInfo info : modules.values()) {
             if (info.isDeclarationFile) continue;
             if (routeOf(info) == ModuleRoute.SHARED) {
-                continue; // ISSUE-0239 E10: emitted by the shared emitter
+                continue;
             }
             JvmImportContext ctx = jvmImportContextOf(info);
             boolean isEntry = info.sourcePath.equals(entryFile.toString());
-            // ISSUE-0374 profile plumb: the backend derives its
-            // backend-wide int mode from the invocation's project-wide
-            // semantic profile — never from a static flag, a system
-            // property, or any source/CLI/environment surface.
-            // v1.2 identity carriage (descriptor-identity-propagation
-            // D1/D2): the compilation's identity index and module-path
-            // classification flow in; every class descriptor the backend
-            // emits resolves through index.descriptorTextFor(identity).
+
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(
                 info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
                 ctx.importResolutions, ctx.importedClasses, ctx.hostModules,
@@ -3572,10 +2817,7 @@ public final class CompilationOrchestrator {
             retainedEmissionCount++;
             log("  Generated: " + outputRoot.resolve(className + ".java"));
         }
-        // ISSUE-0239 E10: SHARED-routed modules lower to validated
-        // semantic IR and emit through the shared JVM emitter — no
-        // within-run fallback: a shared lowering/emission failure fails
-        // the compile and publishes nothing.
+
         for (CheckedModuleInput checked : sharedModulesInDependencyOrder()) {
             emitSharedJvmModule(checked);
         }
@@ -3619,27 +2861,6 @@ public final class CompilationOrchestrator {
         return modulePathIdentities;
     }
 
-    /**
-     * JS use site (ISSUE-0247 core slice, js-backend-emitter D3): the JVM
-     * two-pass model — pass 1 generates every module and merges
-     * diagnostics, pass 2 writes one {@code <modulePath with '/' for
-     * '.'>.js} artifact per clean module — plus the LuaJIT
-     * deployment-copy precedent (copyJsRuntimeLibrary/
-     * copyStdlibJsModules). The per-module import classification mirrors
-     * the LuaJIT use site (codegenLuaModule): a resolved non-declaration
-     * module is a project import, a resolved declaration file that is not
-     * a spec stdlib module is a host module. Backend diagnostics (E6004
-     * for an invalid entry module main at this slice; later slices add
-     * the E6000/E6006 rejection table) fail the compilation with the
-     * standard report; no artifact is written for a rejected module. The
-     * dot→slash artifact mapping is injective over the module-path
-     * domain, so no class-name-collision gate is needed (unlike
-     * codegenAllJvm's). The deployment copies run unconditionally at the
-     * end of phase 4 (Lua deployment parity). js-v12-source-maps D1:
-     * the explicit --source-map warning retired — the effective
-     * sourceMap flag (explicit or --dump-ir-derived) drives the
-     * per-module .deal.map.json sidecar writes in pass 2 instead.
-     */
     private void codegenAllJs() throws IOException {
         // Canonical identity surface (js-v12-completion-architecture D3):
         // the shared per-compilation surface both emitter arms consume.
@@ -3659,13 +2880,7 @@ public final class CompilationOrchestrator {
             // spec stdlib modules become host modules with their declared
             // export map.
             Map<String, String> importResolutions = new HashMap<>();
-            // Host modules (ISSUE-0328, js-v12-host-abi-completion D1):
-            // the raw import path carries the declared export map PLUS
-            // the declaration AST's class-field records with their
-            // orchestrator-resolved field types — the emitter renders
-            // the loadHost declared map (functions as canonical
-            // declared descriptors, classes as the canonical identity
-            // plus the field-descriptor array) from this record.
+
             Map<String, HostModuleDeclarations> hostModules =
                 new HashMap<>();
             // Extern-C imports (fixed-name-directive-events D9): raw
@@ -3699,19 +2914,7 @@ public final class CompilationOrchestrator {
                 }
             }
             boolean isEntry = info.sourcePath.equals(entryFile.toString());
-            // js-v12-source-maps D2: the effective sourceMap flag
-            // (explicit --source-map or --dump-ir-derived) attaches a
-            // mapping recorder to the generation — the optional
-            // SourceMapGenerator parameter (the Lua generateResult
-            // precedent). A rejected module never serializes its
-            // recorder: pass 2 runs for clean modules only.
-            // ISSUE-0374 profile plumb (js-v12-int32-bytes D2): the
-            // backend derives its backend-wide int mode from the
-            // invocation's project-wide semantic profile — never from a
-            // static flag, a system property, or any source/CLI/
-            // environment surface. Under DEAL_V1_2_INT32 every emitted
-            // module calls $rt.setInt32Mode(true) immediately after the
-            // runtime $require; LEGACY_SAFE_INT emits no selector.
+
             JsBackend.JsCodegenResult res = JsBackend.generate(
                 info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
                 importResolutions, hostModules, externCImports, isEntry,
@@ -3782,19 +2985,6 @@ public final class CompilationOrchestrator {
         copyStdlibJsModules();
     }
 
-    /**
-     * The compilation's declaration surface (ISSUE-0630, design source
-     * {@code project-lowering-entry-and-registration-seeds} D3): the one
-     * immutable fact record per host and extern-C declaration module the
-     * compilation imports, with the declared exports, the per-class field
-     * records in declaration order with their resolved declared types,
-     * and the per-class declaration kind. Produced once per compile at
-     * the start of phase 4; the retained host consumers read the host
-     * projection of this surface.
-     *
-     * @return the produced surface, or null when production failed (the
-     *         compile carries the first E6005 and publishes nothing)
-     */
     public HostDeclarationSurface hostDeclarationSurface() {
         return hostDeclarationSurface;
     }
@@ -3808,7 +2998,6 @@ public final class CompilationOrchestrator {
      * merges its E6005 into the compile's diagnostics and yields no
      * surface.
      *
-     * @return the produced surface, or null on a producer defect
      */
     private HostDeclarationSurface produceHostDeclarationSurface() {
         List<HostDeclarationSurface.DeclarationFacts> facts =
@@ -3860,13 +3049,7 @@ public final class CompilationOrchestrator {
                 }
             }
         }
-        // v1.2 identity carriage (ISSUE-0303 D4): the extractor is
-        // seeded with the compilation's module-path classification, so
-        // the host-class field types carry the canonical externals
-        // identity (ExternalModule(rawImportSpecifier) — the manifest
-        // key as written), never the standalone dotted-path default.
-        // The JVM synthesized record emission keys on the externals
-        // projection, exactly like the checker's host-class symbols.
+
         ExportExtractor extractor = new ExportExtractor(
             imported.modulePath, true, modulePathClassification()::get);
         extractor.setImportModulePaths(importAliasMap);
@@ -3898,27 +3081,6 @@ public final class CompilationOrchestrator {
             classes);
     }
 
-    /**
-     * The ISSUE-0328 host-module declaration record for one imported
-     * declaration file (js-v12-host-abi-completion D1): the declared
-     * export map plus, per class export name, the declaration AST's
-     * {@link ClassField} records with their resolved declared types.
-     * A declaration file never runs the phase-3 name-resolver pass, so
-     * the field types resolve structurally through an
-     * {@link ExportExtractor} over the declaration's own AST — the
-     * same resolution the declaration's export signatures use — with
-     * the declaration's import aliases mapped exactly like the
-     * phase-1 extraction. A same-module class field type (e.g.
-     * {@code endpoint: Endpoint} in {@code cfg.d.deal}) therefore
-     * resolves to the declaring module's class identity, which the
-     * JS emitter's descriptor service projects to the canonical
-     * {@code @$external/&lt;specifier&gt;/&lt;ClassName&gt;} atom.
-     *
-     * <p>The facts are the host projection of the compilation's one
-     * declaration surface (ISSUE-0630): the resolution runs once per
-     * declaration module at the surface's production, so the retained
-     * JS/JVM declared maps keep byte-identical facts.</p>
-     */
     private HostModuleDeclarations hostDeclarationsOf(
             ModuleInfo imported) {
         HostDeclarationSurface.DeclarationFacts facts = hostDeclarationSurface
@@ -3977,30 +3139,13 @@ public final class CompilationOrchestrator {
         return new String[] { relSourcePath, relGeneratedPath };
     }
 
-    /**
-     * True when the module is a spec-listed stdlib declaration module:
-     * its published classification is
-     * {@link CanonicalModuleIdentity.BuiltinModule} — the file-keyed
-     * stdlib predicate over the six pinned declaration files under the
-     * resolved {@code ProjectContext.stdlibSurfacePath} (D6 (1);
-     * ISSUE-0269). Stdlib imports stay on the trusted raw-require path
-     * (ISSUE-0082, host-module-abi D5(5)); a same-named file outside
-     * the pinned surface is not builtin.
-     */
     private boolean isSpecStdlibModuleInfo(ModuleInfo info) {
         return info.location.moduleClassification()
             instanceof CanonicalModuleIdentity.BuiltinModule;
     }
 
     private void copyRuntimeLibrary() throws IOException {
-        // Whole-set semantics (whole-project-artifact-publication D3/D6):
-        // the runtime copy always stages fresh from the resolved
-        // distribution surface — the pinned three-tier order
-        // (ISSUE-0457, D3): classpath resources, then the DEAL_HOME
-        // filesystem layout, then the checkout CWD dev fallback
-        // (no project-local location is pinned for the runtime) — and
-        // the whole-set swap replaces any earlier bytes; no skip of an
-        // existing destination remains.
+
         Optional<DistributionHome.ResolvedSource> runtime =
             stager.stageRuntimeCopy("deal/runtime.lua", distributionHome);
         if (runtime.isPresent()) {
@@ -4016,19 +3161,6 @@ public final class CompilationOrchestrator {
             "missing anchor: runtime library path 'deal/runtime.lua'");
     }
 
-    /**
-     * Copies the spec-listed stdlib .lua implementation files to the
-     * output. The module list is derived from the 6 spec-listed stdlib
-     * modules. Each copy source resolves through {@link
-     * DistributionHome} in the pinned three-tier order (ISSUE-0457,
-     * {@code release-distribution-packaging-and-discovery} D3) —
-     * project-local surface first, then the language distribution
-     * (classpath resources, then the {@code DEAL_HOME} filesystem
-     * layout), then the checkout CWD dev fallback — so a v1.2 project
-     * shipping a local {@code std/} override stages its own bytes and
-     * an out-of-checkout compile stages the distribution's bytes. A
-     * module absent at every tier is skipped silently (unchanged).
-     */
     private void copyStdlibModules() throws IOException {
         for (String stdlibModule : StdlibModuleResolver.SPEC_STDLIB_MODULES) {
             // Whole-set semantics (whole-project-artifact-publication
@@ -4056,11 +3188,7 @@ public final class CompilationOrchestrator {
      * spelling.
      */
     private void copyJsRuntimeLibrary() throws IOException {
-        // Whole-set semantics (whole-project-artifact-publication D3/D6):
-        // the runtime copy always stages fresh from the resolved
-        // distribution surface — the pinned three-tier order
-        // (ISSUE-0457, D3) — and the whole-set swap replaces any
-        // earlier bytes; no skip of an existing destination remains.
+
         Optional<DistributionHome.ResolvedSource> runtime =
             stager.stageRuntimeCopy("deal/runtime.js", distributionHome);
         if (runtime.isPresent()) {
@@ -4076,18 +3204,6 @@ public final class CompilationOrchestrator {
             "missing anchor: runtime library path 'deal/runtime.js'");
     }
 
-    /**
-     * Copies the spec-listed stdlib .js implementation files to the
-     * output (the module list is derived from the 6 spec-listed stdlib
-     * modules). Each copy source resolves through {@link
-     * DistributionHome} in the pinned three-tier order (ISSUE-0457) —
-     * project-local surface first, then the language distribution
-     * (classpath resources, then the {@code DEAL_HOME} filesystem
-     * layout), then the checkout CWD dev fallback; a missing source for
-     * a module is skipped silently. Staged fresh every compile
-     * (whole-set semantics). The mirror of copyStdlibModules with the
-     * .js spelling (js-backend-emitter D10).
-     */
     private void copyStdlibJsModules() throws IOException {
         for (String stdlibModule : StdlibModuleResolver.SPEC_STDLIB_MODULES) {
             // Whole-set semantics (whole-project-artifact-publication
@@ -4143,7 +3259,6 @@ public final class CompilationOrchestrator {
      * resolution fails; without an import declaration span the re-emission
      * is synthetic with an anchor note naming the import path (D5).
      *
-     * @return the resolved source path, or {@code null} if not found
      */
     /**
      * Resolves an import path to a source file through the T6 resolver
@@ -4153,8 +3268,6 @@ public final class CompilationOrchestrator {
      * synthetic shape plus anchor note when no import declaration span
      * is available.
      *
-     * @return the resolved source path (the location's
-     *         {@code normalizedSourcePath}), or {@code null} if not found
      */
     public String resolveImportPath(String importPath, Path fromFile) {
         return resolveImportPath(importPath, fromFile, null);
@@ -4199,24 +3312,6 @@ public final class CompilationOrchestrator {
     // Canonical module-identity classification (js-v12-completion-architecture D3)
     // =========================================================================
 
-    /**
-     * The canonical public module identity of one compiled module, per
-     * the identity layer's classification (design source
-     * {@code strict-project-context-resolution-identity} D6):
-     * externals-listed declarations carry
-     * {@code ExternalModule(rawImportSpecifier)} (the manifest key
-     * exactly as written), spec stdlib modules carry
-     * {@code BuiltinModule}, and a configured root-contained source
-     * module carries {@code ProjectModule(configuredRootText,
-     * relativeModuleComponents)} — the T6 resolver's file-keyed
-     * classification published on the module's
-     * {@link SourceModuleLocation} (ISSUE-0269; the legacy
-     * specifier-keyed externalsDeclarations/externalsModulePaths maps
-     * and the lossy bestRootIndex computation are retired).
-     * {@code null} means the module has no public identity (an
-     * out-of-root relative source): class-free code stays valid, and a
-     * class there fails closed at descriptor production.
-     */
     private CanonicalModuleIdentity classifyModuleIdentity(ModuleInfo info) {
         if (info.location == null) {
             return null;
@@ -4277,17 +3372,7 @@ public final class CompilationOrchestrator {
     final class ModuleResolverImpl implements ModuleResolver {
 
         private final Map<String, ModuleInfo> modules;
-        /**
-         * The lazily built name resolvers over declaration-file modules
-         * (keyed by dotted module path): declaration files skip the
-         * phase-3 name-resolution pass, so a cross-module class-field
-         * type annotation declared by a host declaration resolves
-         * through a resolver built on demand over the declaration's own
-         * AST (ISSUE-0328 — the frontend's shared host-class symbol
-         * synthesis). Each resolver is cached before its
-         * {@link NameResolver#resolve} completes so declaration-only
-         * import cycles terminate.
-         */
+
         private final Map<String, NameResolver> declarationResolvers =
             new HashMap<>();
 
@@ -4430,16 +3515,7 @@ public final class CompilationOrchestrator {
                         if (sym instanceof Symbol.ClassSymbol cs) return cs;
                         return null;
                     }
-                    // Host declaration synthesis (ISSUE-0328,
-                    // js-v12-host-abi-completion D3): a declaration
-                    // file carries no symbol table, so its declared
-                    // classes synthesize as ClassSymbols straight from
-                    // the declaration AST — DEAL-side construction and
-                    // field reads of a declared host class type-check
-                    // against the declaration's field records, and the
-                    // checker's cross-module field-type resolution runs
-                    // against the declaring module's own context (the
-                    // resolveTypeNodeInModule override below).
+
                     for (StatementNode stmt : info.rawAst.statements()) {
                         ClassDeclaration cd = null;
                         if (stmt instanceof ClassDeclaration c) {
@@ -4570,12 +3646,7 @@ public final class CompilationOrchestrator {
                         return resolved == Type.Error.INSTANCE
                             ? null : resolved;
                     }
-                    // Declaration-file owner (ISSUE-0328): resolve
-                    // through the lazily built resolver over the
-                    // declaration's own AST, so a bare same-module
-                    // class name inside a host class field type
-                    // resolves against the declaring module — never
-                    // against the importing module's scope.
+
                     Type resolved = declarationResolver(info)
                         .resolveTypeNode(typeNode);
                     return resolved == Type.Error.INSTANCE
@@ -4585,13 +3656,6 @@ public final class CompilationOrchestrator {
             return null;
         }
 
-        /**
-         * The cached name resolver over one declaration-file module,
-         * built on demand (ISSUE-0328 host-class symbol synthesis).
-         * The resolver is cached before its resolve completes so
-         * declaration-only import cycles terminate; its own import
-         * resolution runs through this same module resolver.
-         */
         private NameResolver declarationResolver(ModuleInfo info) {
             NameResolver cached = declarationResolvers.get(info.modulePath);
             if (cached != null) {

@@ -86,10 +86,6 @@ public final class ProjectConfigValidator {
      * Validates the strictly walked document into a {@link ProjectManifest}.
      * Deterministic: the result is a pure function of the document.
      *
-     * @param document the strict walk's model (root may be null for empty
-     *                 input)
-     * @return the manifest, or the first failure in the pinned canonical
-     *         order
      */
     public static Outcome validate(StrictJsonDocument document) {
         // 1. languageVersion — required, exactly the JSON string "1.2".

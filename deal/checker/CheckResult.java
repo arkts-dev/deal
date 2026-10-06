@@ -9,26 +9,6 @@ import deal.types.Type;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Result of type-checking a module.
- *
- * @param typeMap     resolved type for each expression node
- * @param symbolTable the module-level symbol table after resolution
- * @param scopeMap    the checker's per-scoped-statement symbol tables
- *                    (blocks, function declarations, for statements, try
- *                    statements — the resolution scopes each construct
- *                    created during pass 1); copied at lowering time so
- *                    the lowerer can resolve declared types of bindings
- *                    in nested scopes without retaining any
- *                    {@code NameResolver} instance (D4)
- * @param diagnostics type errors (and name-resolution errors) produced
- * @param classScopes the lexical scope in which each class declaration
- *                    was checked, in checker walk order (the
- *                    default-planning seam of ISSUE-0541: the planner
- *                    resolves every class default against exactly the
- *                    scope the checker used — the declaring lexical
- *                    context — without re-running resolution)
- */
 public record CheckResult(
     Map<ExpressionNode, Type> typeMap,
     SymbolTable symbolTable,
@@ -56,7 +36,6 @@ public record CheckResult(
         if (classScopes == null) throw new IllegalArgumentException("classScopes must not be null");
     }
 
-    /** Returns true if any error-level diagnostics were produced. */
     public boolean hasErrors() {
         return diagnostics.stream().anyMatch(d -> "error".equals(d.severity()));
     }

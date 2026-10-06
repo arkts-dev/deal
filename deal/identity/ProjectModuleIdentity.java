@@ -34,14 +34,6 @@ import java.util.Objects;
  * copied, and record equality/hashCode are structural over all three
  * components.</p>
  *
- * @param configuredRootText        the configured root's decoded manifest
- *                                  spelling
- * @param normalizedRootPath        the configured root's
- *                                  protected-resolved absolute normalized
- *                                  path
- * @param relativeModuleComponents  the path components from the root
- *                                  prefix to the defining file's
- *                                  directory (possibly empty)
  */
 public record ProjectModuleIdentity(
     String configuredRootText,

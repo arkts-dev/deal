@@ -48,15 +48,6 @@ public class JvmConformanceTest {
     // Host modules for the JVM-applicable host-ABI corpus tests
     // =========================================================================
 
-    /**
-     * Java host implementations for the host-ABI corpus tests whose
-     * declared surfaces the landed JVM host ABI slice supports. Each
-     * class name derives from the raw module path with the same
-     * {@code classNameFor} rule every emitted module uses
-     * (host/bad_return → HostBad_return); methods take the JVM-mapped
-     * parameter types and return Object (or a CompletableFuture for
-     * async exports), exactly like the jvm-host-abi-slice hosts.
-     */
     private static final Map<String, String> HOST_JAVA = Map.ofEntries(
         Map.entry("async_bad",
             "import java.util.concurrent.CompletableFuture;\n"
@@ -244,7 +235,6 @@ public class JvmConformanceTest {
                 + "  public static Object badBytesReturn() { calls += 1; return \"not-bytes\"; }\n"
                 + "}\n")
     );
-
 
     // =========================================================================
     // Data types and counters
@@ -558,9 +548,7 @@ public class JvmConformanceTest {
             SemanticProfile profile) {
         List<CompilerDiagnostic> all = new ArrayList<>();
         try {
-            // ISSUE-0272 D8 item 2a: in-memory seam site — classification
-            // headers are stripped before the lexer; parseMetadata keeps
-            // reading the raw fixture bytes.
+
             String source = ConformanceHarnessMetadata
                 .stripClassificationHeaders(Files.readString(file));
             String filename = file.toString();
@@ -599,11 +587,6 @@ public class JvmConformanceTest {
                 parseResult.program());
             all.addAll(result.diagnostics());
 
-            // Corpus C FFI externals (ISSUE-0507): the production
-            // FfiDeclarationValidator diagnostics of every candidate/*
-            // import surface on the frontend compile paths (the E7002 C
-            // FFI declaration policy) exactly as the orchestrator's FFI
-            // phase surfaces them.
             for (StatementNode stmt
                     : parseResult.program().statements()) {
                 if (stmt instanceof ImportDeclaration imp
@@ -639,8 +622,7 @@ public class JvmConformanceTest {
             this.testFileDir = testFile.toAbsolutePath().getParent();
             this.profile = java.util.Objects.requireNonNull(profile,
                 "profile must not be null");
-            // ISSUE-0269: the resolved distribution surface (the
-            // CWD-relative no-arg read is retired).
+
             this.stdlibExports = StdlibModuleResolver.stdlibExports(
                 Path.of("std").toAbsolutePath().normalize().toString());
         }
@@ -659,9 +641,7 @@ public class JvmConformanceTest {
                     "Module not found: '" + modulePath
                     + "' is not a spec-listed stdlib module");
             }
-            // Corpus C FFI externals (ISSUE-0507): candidate/* imports
-            // resolve through the corpus-owned FFI wiring into the real
-            // FFI declaration surface.
+
             if (deal.test.conformance.CorpusFfi.isFfiImport(
                     conformanceRoot, modulePath)) {
                 return deal.test.conformance.CorpusFfi.module(
@@ -670,8 +650,7 @@ public class JvmConformanceTest {
             Path resolved = resolveRelativePath(modulePath);
             if (resolved != null && Files.exists(resolved)) {
                 try {
-                    // ISSUE-0272 D8 item 2a: in-memory seam site —
-                    // classification headers are stripped before the lexer.
+
                     String source = ConformanceHarnessMetadata
                         .stripClassificationHeaders(Files.readString(resolved));
                     boolean isDecl = resolved.toString().endsWith(".d.deal");
@@ -780,8 +759,7 @@ public class JvmConformanceTest {
             Path resolved = resolveRelativePath(modulePath);
             if (resolved == null || !Files.exists(resolved)) return null;
             try {
-                // ISSUE-0272 D8 item 2a: in-memory seam site —
-                // classification headers are stripped before the lexer.
+
                 String source = ConformanceHarnessMetadata
                     .stripClassificationHeaders(Files.readString(resolved));
                 LexResult lex = new Lexer(source, resolved.toString())
@@ -805,8 +783,7 @@ public class JvmConformanceTest {
         private Map<String, Symbol.ClassSymbol> classSymbolsOf(Path file) {
             Map<String, Symbol.ClassSymbol> symbols = new LinkedHashMap<>();
             try {
-                // ISSUE-0272 D8 item 2a: in-memory seam site —
-                // classification headers are stripped before the lexer.
+
                 String source = ConformanceHarnessMetadata
                     .stripClassificationHeaders(Files.readString(file));
                 LexResult lex = new Lexer(source, file.toString()).tokenize();
@@ -889,20 +866,8 @@ public class JvmConformanceTest {
             Path entryFile = projectRoot.resolve(entryRel);
             Path outputRoot = projectRoot.resolve("out");
 
-            // 2. Every harness project receives an injected exact-v1.2
-            // deal.json and routes through production ProjectLocator
-            // (ISSUE-0269, parent D12): moduleRoots ["src"] (the
-            // representable configured root), output "out", backend
-            // "jvm" — host-ABI fixtures additionally carry the
-            // externals map wiring every raw host import path to its
-            // declaration under the project root (bindings/).
             Set<String> hostNames = hostImports(test.path());
-            // Corpus C FFI externals (ISSUE-0507): every candidate/*
-            // import of the compilation set wires through the real
-            // whole-project externals machinery — the orchestrator's FFI
-            // phase validates the declaration and the JVM backend
-            // rejects with E6006 FFI_UNSUPPORTED_BACKEND before any
-            // artifact.
+
             Set<String> ffiImports = ffiImports(test.path());
             StringBuilder dealJson = new StringBuilder();
             dealJson.append("{\n  \"languageVersion\": \"1.2\",\n");
@@ -911,11 +876,7 @@ public class JvmConformanceTest {
             dealJson.append("  \"backend\": \"jvm\"");
             if (!hostNames.isEmpty() || !ffiImports.isEmpty()) {
                 if (!hostNames.isEmpty()) {
-                    // ISSUE-0272 D8 item 2b: producer-side seam — the host
-                    // declaration materialization strips classification
-                    // headers before the bytes reach the orchestrator, and
-                    // each raw host import path is wired to its declaration
-                    // under the project root (bindings/).
+
                     copyHostBindings(projectRoot, hostFixturesRoot,
                         hostNames);
                 }
@@ -966,13 +927,7 @@ public class JvmConformanceTest {
             OrchestratorRun run = runOrchestrator(entryFile,
                 located.context(), invocation);
             if (!run.success()) {
-                // Corpus C6 (ISSUE-0507): the sanctioned FFI
-                // divergence — when the fixture's sidecar pins the jvm
-                // leg as compile-reject E6006 FFI_UNSUPPORTED_BACKEND
-                // and the real pipeline rejected with exactly that code
-                // before any artifact, the lane records the pinned
-                // rejection as the verdict (matching the sidecar),
-                // never as an applicable failure.
+
                 deal.test.conformance.SidecarExpectations
                         .StructuredExpectationSidecar sidecar =
                     sidecarOf(test.path());
@@ -1131,16 +1086,6 @@ public class JvmConformanceTest {
                                    List<CompilerDiagnostic> diagnostics,
                                    String capturedOutput) {}
 
-    /**
-     * Runs the real {@link CompilationOrchestrator} with the
-     * context-driven production constructor over the temp project
-     * (ISSUE-0269): the published immutable {@link ProjectContext}
-     * supplies the backend, the output root, the module roots, the
-     * externals declarations, and the stdlib surface. Module discovery,
-     * signature extraction, dependency ordering, name resolution, type
-     * checking, and per-module JvmBackend codegen run unchanged.
-     * Stdout/stderr is captured so per-test output stays clean.
-     */
     private static OrchestratorRun runOrchestrator(Path entryFile,
             ProjectContext context, CompilerInvocation invocation) {
         ByteArrayOutputStream captured = new ByteArrayOutputStream();
@@ -1199,17 +1144,6 @@ public class JvmConformanceTest {
             projectRoot, written);
     }
 
-    /**
-     * Copies the host-ABI binding declarations to
-     * {@code bindings/<hostName>.d.deal} under the temp project root.
-     * ISSUE-0272 D8 item 2b: producer-side seam — every binding is
-     * written classification-header free (18 of 20
-     * {@code test/conformance/host-fixtures/*.d.deal} carry
-     * {@code // @expected: host-fixture} / {@code // @description:}
-     * headers), so the production orchestrator never lexes a header
-     * line. A missing host declaration fails loudly, exactly as the
-     * inline copy this replaces did.
-     */
     private static void copyHostBindings(Path projectRoot,
             Path hostFixturesRoot, Set<String> hostNames) throws IOException {
         for (String hostName : hostNames) {
@@ -1288,9 +1222,7 @@ public class JvmConformanceTest {
         if (target.getParent() != null) {
             Files.createDirectories(target.getParent());
         }
-        // ISSUE-0272 D8 item 2b: producer-side seam — the entry fixture
-        // and every transitive companion are written classification-header
-        // free, so the production orchestrator never lexes a header line.
+
         Files.writeString(target, ConformanceHarnessMetadata
             .stripClassificationHeaders(Files.readString(normalized)));
         written.put(normalized.toString(), target);
@@ -1298,11 +1230,7 @@ public class JvmConformanceTest {
             Path resolved = resolveCompanionPath(importPath,
                 normalized.getParent());
             if (resolved == null) continue;
-            // D4 (ISSUE-0176): an import spelling carrying an explicit
-            // .deal extension resolves to its alias-named copy in the
-            // flat project root, so materialize the companion under
-            // that name before the recursive walk (the written-map
-            // early return below must not suppress it).
+
             copyCompanionAliasIfExplicit(resolved, importPath, projectRoot);
             copyTransitively(resolved, entryDir, projectRoot, written);
         }
@@ -1332,9 +1260,7 @@ public class JvmConformanceTest {
         }
         Path aliasTarget = projectRoot.resolve(aliasBase + ".deal");
         if (Files.exists(aliasTarget)) return;
-        // ISSUE-0272 D8 item 2b: producer-side seam — the explicit-.deal
-        // alias copy is written classification-header free; the
-        // written-map dedup/alias semantics are unchanged.
+
         Files.writeString(aliasTarget, ConformanceHarnessMetadata
             .stripClassificationHeaders(
                 Files.readString(resolved.toAbsolutePath().normalize())));
@@ -1433,13 +1359,6 @@ public class JvmConformanceTest {
         return ffi;
     }
 
-    /**
-     * Materializes the corpus FFI declarations under the project root
-     * ({@code bindings/ffi/<raw with / as _>.d.deal},
-     * classification-header free — the ISSUE-0272 D8 producer-side
-     * seam) so the real whole-project externals machinery resolves
-     * every candidate/* import through the declaration on disk.
-     */
     private static void copyFfiBindings(Path projectRoot,
             Set<String> ffiImports) throws IOException {
         for (String raw : ffiImports) {
@@ -1494,9 +1413,7 @@ public class JvmConformanceTest {
      */
     private static String entryClassName(String entryRel) {
         String path = entryRel;
-        // ISSUE-0269: the entry key carries the configured-root prefix
-        // (src/...); the orchestrator's module name is the root-relative
-        // path, so the prefix is stripped before deriving the class name.
+
         if (path.startsWith("src/")) {
             path = path.substring("src/".length());
         }
@@ -1507,20 +1424,6 @@ public class JvmConformanceTest {
             path.replace('/', '.').replace('\\', '.'));
     }
 
-    /**
-     * Parses the entry module with the real lexer + parser for the runner
-     * (its export list drives auto-invocation). Type checking is NOT
-     * re-run here — the orchestrator already checked every module — so
-     * this parse cannot act as a checker bypass.
-     *
-     * <p>ISSUE-0273 D8 item 2c/3: this runner parse is NOT an in-memory
-     * seam site — its lexer reads the already-stripped temp copy produced
-     * by the materialization seam, and its single parser construction
-     * keeps the no-events parser form: the orchestrator already validated
-     * the same bytes with full directive evaluation, and re-running
-     * file-directive evaluation and binding here would duplicate that
-     * work.</p>
-     */
     private static ProgramNode parseEntryProgram(Path entryFile,
             SemanticProfile profile) throws IOException {
         String source = Files.readString(entryFile);

@@ -20,99 +20,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * Importer-relative-first source resolution under one immutable
- * {@link ProjectContext} with the pinned five rules (design source
- * {@code strict-project-context-resolution-identity} D5,
- * {@code deal-v1.2-int32-and-bytes-architecture} D5/D6).
- *
- * <p><b>Resolution rules, pinned:</b></p>
- * <ol>
- *   <li>A bare specifier listed in {@code ProjectContext.externals}
- *       resolves to its validated {@link deal.project.NormalizedDeclarationPath}
- *       (the manifest declaration is authoritative; on-disk candidates
- *       are not consulted). Missing/unreadable declaration files were
- *       already E2010 at locate, so no missing-declaration import case
- *       remains.</li>
- *   <li>{@code ./} and {@code ../} specifiers resolve from the importer's
- *       directory and may leave every configured root and the manifest
- *       directory; no containment check exists for relative resolution.
- *       Classification is by canonical file (D6).</li>
- *   <li>Bare specifiers search the configured roots in manifest order,
- *       then the pinned stdlib surface ({@code
- *       ProjectContext.stdlibSurfacePath}) with the existing 6-module
- *       filter. A bare {@code std/...} import outside the filter is
- *       E2003 at the import span; a missing surface or a surface missing
- *       a spec-listed file makes the corresponding stdlib import E2003
- *       (never a {@code RuntimeException}); a non-spec-listed
- *       {@code .d.deal} physically inside the stdlib directory is not
- *       resolvable through bare lookup and is reachable only by relative
- *       import. The stdlib-surface lookup consults the single pinned
- *       candidate {@code <surface>/<module>.d.deal} only — the generic
- *       four-candidate walk never applies under the surface. There is
- *       no CWD module fallback and no importer-relative fallback for
- *       bare lookup; the stdlib surface is the only {@code std/} source
- *       authority.</li>
- *   <li>Candidates per root are {@code S.deal}, {@code S/index.deal},
- *       {@code S.d.deal}, {@code S/index.d.deal} (spec order). A bare
- *       import whose resolution lands on a non-stdlib {@code .d.deal}
- *       whose canonical path equals an externals entry's declaration
- *       path carries {@code ExternalModule(that key)} (file-keyed) even
- *       though rule 1 did not match; a bare import whose resolution
- *       lands on a non-stdlib {@code .d.deal} whose canonical path
- *       matches no externals entry is E2009 at the import span;
- *       resolution failure is E2003 at the import span.</li>
- *   <li>Nested {@code deal.json} files under the entry project are never
- *       rediscovered and are not errors: the entry's one
- *       {@code ProjectContext} governs the graph.</li>
- * </ol>
- *
- * <p><b>Import-candidate handling</b> follows the T1 per-path-class
- * matrix: every existing candidate is fully symlink-resolved and
- * verified regular + readable ({@link
- * ProtectedPathOps#canonicalizeExisting(String)}); an unreadable module
- * is E2003, a not-found candidate advances to the next candidate, and a
- * total miss is E2003 — always at the import span, never a raw
- * exception. Every resolution diagnostic carries a complete
- * {@link deal.diagnostics.DiagnosticRange} (a SOURCE range from a span
- * with computed scalar offsets; the pinned synthetic shape plus anchor
- * note for an anchorless span).</p>
- *
- * <p><b>Identity assignment.</b> Every successfully resolved source
- * receives {@link SemanticModuleIdentity} built from the context's
- * private {@link ProjectDeploymentIdentity} and the protected-resolved
- * canonical {@code file:} URI. The resolver memoizes by canonical source
- * URI: equivalent import spellings ({@code ./x}, {@code ../a/x}, a root
- * spelling, symlinked spellings) of one resolved source yield one
- * semantic identity, and failed resolution registers nothing. When
- * publishing each {@link SourceModuleLocation} the resolver invokes
- * {@link ModuleIdentityResolver#classify(ProjectContext, String)} exactly
- * once per resolved source: the result is the provenance of
- * {@code projectIdentity} and the module-level classification recorded
- * on the location; {@code CanonicalClassIdentity} assembly stays
- * eligibility-gated at consumer time ({@link ModuleIdentityAssembly}). A bare import
- * additionally evaluates the classification before memoization to apply
- * the file-keyed E2009 gate, so a bare import of a previously
- * relatively-resolved undeclared declaration file still fails E2009.</p>
- *
- * <p><b>{@code deploymentModuleId}</b> is deterministic:
- * {@code "m" +} the first 16 lowercase hex chars of
- * SHA-256(length-prefixed deployment digest ‖ length-prefixed canonical
- * source URI) using {@link ProtectedPathOps#lengthPrefixedUtf8(String)}.
- * It is opaque, byte-stable for unchanged inputs, and never descriptor
- * text or an export key.</p>
- *
- * <p><b>Privacy invariant.</b> Private identity URIs, digests, and
- * {@code deploymentModuleId}s never appear in this module's diagnostic
- * messages or any descriptor-like string; they are exposed only through
- * the compiler-internal records.</p>
- *
- * <p><b>Determinism.</b> Identical {@code (ProjectContext, importer,
- * specifier, on-disk files)} inputs produce identical locations and
- * identities; classification is a pure function of the resolved
- * canonical file, never of the import spelling or the resolution
- * order.</p>
- */
 public final class SourceModuleResolver {
 
     /** The pinned {@code deploymentModuleId} prefix. */
@@ -134,7 +41,6 @@ public final class SourceModuleResolver {
     /**
      * Creates a resolver over one validated project context.
      *
-     * @param context the immutable validated project context (never null)
      */
     public SourceModuleResolver(ProjectContext context) {
         this.context = Objects.requireNonNull(context, "context");
@@ -191,11 +97,6 @@ public final class SourceModuleResolver {
      * {@link #resolve(String, String)}; with a span, diagnostics anchor
      * exactly at the import declaration span.</p>
      *
-     * @param importerPath the importing source file's absolute path text
-     *                     (never null)
-     * @param specifier    the import specifier text exactly as written
-     *                     (never null)
-     * @return the resolved location or the single import diagnostic
      */
     public ResolveResult resolve(String importerPath, String specifier) {
         Objects.requireNonNull(importerPath, "importerPath");
@@ -209,15 +110,6 @@ public final class SourceModuleResolver {
      * importer path is the importing source file's absolute path text;
      * relative specifiers resolve from its directory.
      *
-     * @param importerPath the importing source file's absolute path text
-     *                     (never null)
-     * @param specifier    the import specifier text exactly as written
-     *                     (never null)
-     * @param importSpan   the import declaration span the diagnostic
-     *                     anchors at (never null); a span without
-     *                     computed scalar offsets yields the pinned
-     *                     synthetic range with an anchor note
-     * @return the resolved location or the single import diagnostic
      */
     public ResolveResult resolve(String importerPath, String specifier, Span importSpan) {
         Objects.requireNonNull(importerPath, "importerPath");
@@ -228,10 +120,6 @@ public final class SourceModuleResolver {
         }
         return resolveBare(specifier, importSpan);
     }
-
-    // =========================================================================
-    // The entry-file seam (orchestrator consumption, ISSUE-0269)
-    // =========================================================================
 
     /**
      * Publishes the compilation's entry file as a resolved source: the
@@ -248,11 +136,6 @@ public final class SourceModuleResolver {
      * lexical absolute normalized path — the same key the orchestrator
      * uses for the entry module.
      *
-     * @param entryPathText the entry file's absolute path text (never
-     *                      null)
-     * @param entrySpan     the anchor for a failure diagnostic (never
-     *                      null)
-     * @return the published location or the single E2003; never null
      */
     public ResolveResult resolveEntryFile(String entryPathText, Span entrySpan) {
         Objects.requireNonNull(entryPathText, "entryPathText");

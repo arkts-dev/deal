@@ -11,9 +11,6 @@ import java.util.Objects;
  * {@code FAILED(error)} on failure, and publishes no exports on failure;
  * the plan carries the resolved imports and the init block the op runs.
  *
- * @param imports   the resolved imported module identities in dependency
- *                  order; non-null
- * @param initBlock the module init body block identity; non-null
  */
 public record ModuleInitPlan(List<ModuleId> imports, BlockId initBlock) {
 

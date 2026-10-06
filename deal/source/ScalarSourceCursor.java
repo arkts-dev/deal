@@ -36,10 +36,6 @@ public final class ScalarSourceCursor {
      * column, scalar offset, and the UTF-16 source index (the next
      * unconsumed unit) exactly.
      *
-     * @param line         1-based line number
-     * @param column       1-based scalar column within the line
-     * @param scalarOffset 0-based decoded Unicode scalar offset from source start
-     * @param index        UTF-16 index of the next unconsumed source unit
      */
     public record Mark(int line, int column, int scalarOffset, int index) {
     }
@@ -66,24 +62,18 @@ public final class ScalarSourceCursor {
         this.source = source == null ? "" : source;
     }
 
-    /**
-     * Returns the current position as a {@link ScalarPosition}.
-     */
     public ScalarPosition position() {
         return new ScalarPosition(line, column, scalarOffset);
     }
 
-    /** Returns the current 1-based line number. */
     public int line() {
         return line;
     }
 
-    /** Returns the current 1-based scalar column within the line. */
     public int column() {
         return column;
     }
 
-    /** Returns the 0-based count of decoded Unicode scalars consumed so far. */
     public int scalarOffset() {
         return scalarOffset;
     }
@@ -98,7 +88,6 @@ public final class ScalarSourceCursor {
         return index;
     }
 
-    /** Returns true exactly at end of input (no unconsumed source unit remains). */
     public boolean atEnd() {
         return index >= source.length();
     }

@@ -283,8 +283,6 @@ public class JsBackendTest {
             return new Frontend(null, null, errors);
         }
 
-        // ISSUE-0273: the events-carrying parser — @jsonable binding in
-        // the adapter fixtures needs production directive evaluation.
         Parser parser = new Parser(lex.tokens(), filename,
             lex.directiveEvents());
         ParseResult parseResult = parser.parse();
@@ -683,14 +681,6 @@ public class JsBackendTest {
         check(Backend.fromCliName("wasm").isEmpty(), "unknown backend is empty");
     }
 
-    /**
-     * Strict backend-field pins (ISSUE-0169 remediation, ISSUE-0471):
-     * {@code "js"} is part of the strict v1.2 backend set
-     * ({@code "luajit"} | {@code "jvm"} | {@code "js"}) — a manifest
-     * value of {@code "js"} parses cleanly and publishes the backend,
-     * while case/whitespace variants and unknown values stay exactly
-     * one E2010 at the backend value range naming the supported set.
-     */
     private static void testDealConfigBackendJs() {
         System.out.println("-- Strict manifest backend field: js accepted --");
 
@@ -723,20 +713,6 @@ public class JsBackendTest {
         }
     }
 
-    /**
-     * The production CLI {@code --backend js} path with the DEFAULT
-     * output {@code build/js} (ISSUE-0169 remediation, ISSUE-0471): a
-     * real {@code java -cp build deal.Main compile <entry> --backend
-     * js} subprocess over a temp project whose manifest carries no
-     * backend — the CLI alias selects {@link Backend#JS} through the
-     * production locator, the default output is the manifest-relative
-     * {@code build/js}, and the compilation deploys the runtime and
-     * stdlib copies. The subprocess working directory is the repository
-     * root (the deployment copies fall back to the repo-root
-     * {@code deal/runtime.js} and {@code std/*.js} sources) while the
-     * entry path is absolute, so the backend-dependent default output
-     * still lands at {@code <manifestDirectory>/build/js}.
-     */
     private static void testCliBackendFlagJsDefaultOutput() throws Exception {
         System.out.println("-- CLI --backend js: production alias, default build/js --");
 
@@ -1567,8 +1543,6 @@ public class JsBackendTest {
         check(js.contains("let __proto__;"),
             "the __proto__ function predeclares its plain binding");
 
-        // Import-side read: a second module importing the exporter reads
-        // the raw member through the module alias.
         Map<String, Map<String, Type>> modules = new LinkedHashMap<>();
         modules.put("./proto_lib", Map.of("__proto__",
             Types.func(List.of(), Type.Int.INSTANCE)));
@@ -1774,34 +1748,10 @@ public class JsBackendTest {
     private static void testUnsupportedConstructsRejected() {
         System.out.println("-- Unsupported constructs → E6000/E6006 --");
 
-        // @jsonable emission retired the E6000 arm
-        // (js-v12-jsonable-completion D1): the passing emission pins
-        // live in testJsonableEmissionPins(). The nested-class E6000
-        // arm retired with ISSUE-0318: the passing emission pins live
-        // in testNestedClassEmissionPins().
-
-        // The host-ABI E6000 arm retired with ISSUE-0328
-        // (js-v12-host-abi-completion D1): a host-module import emits
-        // the $rt.loadHost binding with the declared map — the passing
-        // emission and runtime pins live in
-        // testHostAbiEmissionPins/testHostAbiOrchestratorNode.
-
-        // @extern-c import: E6006 with the EXACT current detail text
-        // (the JSON-slice-corpus rejection-detail pin migrated here,
-        // ISSUE-0359; v12-three-backend-conformance-corpus C1/C6:
-        // backend-internal rejection detail texts are never corpus
-        // fields). ISSUE-0507 (FFI candidate fixture conformance)
-        // landed the E6006 FFI_UNSUPPORTED_BACKEND registration and
-        // migrated this arm from its former E6003 reuse — this unit
-        // test pins the CURRENT emission (E6006 + the current text at
-        // deal/codegen/js/JsBackend.java).
         String externDetailText = "JavaScript backend: @extern-c imports "
             + "are not supported (FFI_UNSUPPORTED_BACKEND, "
             + "ISSUE-0169 skeleton)";
-        // ISSUE-0273 D9 re-key: the trigger is the extern-C import set,
-        // not a lexer-attached token directive (the source carries no
-        // @extern-c comment — on an implementation file it would be
-        // E1046).
+
         JsBackend.JsCodegenResult extern = generateWithExternC("""
             import * as ffi from "myffi"
             export function test(): int { return 1; }
@@ -1837,17 +1787,6 @@ public class JsBackendTest {
                 + (bytesClean == null ? "<null>" : bytesClean.diagnostics()));
     }
 
-
-    /**
-     * The ISSUE-0328 host-ABI emission pins
-     * (js-v12-host-abi-completion D1/D4): the retired E6000 arm's
-     * successor — the loadHost import binding, the emitter-rendered
-     * declared map (canonical function descriptors; canonical externals
-     * class identities plus the declared field-descriptor array), and
-     * the D4 read-site deferral (a host-call argument emits the raw
-     * expression — the boundary wrapper raises E8010, never a read-site
-     * E8001).
-     */
     private static void testHostAbiEmissionPins() throws Exception {
         System.out.println("-- Host ABI: loadHost binding, declared map, boundary deferral (ISSUE-0328) --");
         String q = "\"";
@@ -2124,13 +2063,6 @@ public class JsBackendTest {
         }
     }
 
-    /**
-     * The orchestrator-level host-ABI chain (ISSUE-0328): a real
-     * deal.json externals wiring, the declaration-file gather with
-     * class-field records, frontend host-class symbol synthesis, the
-     * emitted loadHost artifact, and a node execution through a
-     * deployed host implementation — the E6000 successor pin.
-     */
     private static void testHostAbiOrchestratorNode() throws Exception {
         System.out.println("-- Orchestrator: host ABI end-to-end under node (ISSUE-0328) --");
 
@@ -2173,11 +2105,6 @@ public class JsBackendTest {
         List<Path> roots = List.of(tmpDir.resolve(
             "hostjs_proj/src").toAbsolutePath());
 
-        // ISSUE-0269: the externals authority flows through the
-        // test-only synthesized context (raw specifier → declaration
-        // path resolved from the entry directory — the injected
-        // deal.json spelling "bindings/cfg.d.deal" relative to the
-        // project root is "../bindings/cfg.d.deal" here).
         Map<String, String> externals = Map.of(
             "host/cfg", "../bindings/cfg.d.deal");
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
@@ -2483,7 +2410,6 @@ public class JsBackendTest {
         }
 
     }
-
 
     private static void testInt32MatrixNode() throws Exception {
         System.out.println("-- Node: signed-int32 matrix under DEAL_V1_2_INT32 --");
@@ -3126,10 +3052,6 @@ public class JsBackendTest {
                 + nestedRun.output());
     }
 
-    // =========================================================================
-    // ISSUE-0323 — JS recursive bytes closure verification (js-v12-int32-bytes D5)
-    // =========================================================================
-
     /**
      * The closure surface of the first-class sync bytes value: a
      * {@code ((bytes)->bytes)[]} array built from a real
@@ -3324,22 +3246,6 @@ public class JsBackendTest {
                 + "read/write positions (returns 1): " + run.output());
     }
 
-    /**
-     * Arbitrary-depth Array/Nullable compositions roundtrip through
-     * dynamic and function boundaries: the {@code [?[bytes]]} element
-     * shape (nullable array of bytes inside an array — depth 2) and the
-     * top-level {@code ?[[bytes]]} shape (depth 3) cross table set/get
-     * and function parameter/return boundaries with the canonical
-     * descriptor text byte-exact, the depth walk validates the real
-     * buffers (positive case) and rejects a wrong inner shape at the
-     * pinned depth (negative case), and the mutated buffer stays
-     * observable through the parallel non-null view. The nullable
-     * shapes are flow-only in checker-accepted source: the
-     * {@code === null} test that would unpack them is checker-admitted
-     * since the ISSUE-0158 E3019 gate lift (bytes identity equality —
-     * binary-comparison-selectors B-D7 assigned the lift to
-     * ISSUE-0111/ISSUE-0158), never a backend rejection.
-     */
     private static void testBytesClosureDeepCompositionsNode() throws Exception {
         System.out.println("-- Node: arbitrary-depth Array/Nullable bytes compositions through boundaries --");
         if (!nodeAvailable) { skipNode("bytes closure deep compositions"); return; }
@@ -3541,16 +3447,6 @@ public class JsBackendTest {
         }
     }
 
-    /**
-     * The no-E6000 pins: every closure program generates with zero
-     * diagnostics and no E6000 for bytes nesting or function shape
-     * alone, the canonical descriptor texts appear byte-exact at the
-     * emitted boundary sites, and bytes identity equality is
-     * checker-admitted since the ISSUE-0158 E3019 gate lift
-     * (binary-comparison-selectors B-D7 — the frontend admission rule
-     * with native identity comparison emission), never a backend
-     * rejection.
-     */
     private static void testBytesClosureNoE6000Pins() throws Exception {
         System.out.println("-- Bytes closure: no-E6000 generation pins and canonical descriptor texts --");
 
@@ -3657,12 +3553,6 @@ public class JsBackendTest {
                     + "[[bytes]] inner descriptor byte-exact");
         }
 
-        // The legal-equality boundary: bytes identity equality is
-        // checker-admitted since the ISSUE-0158 E3019 gate lift
-        // (binary-comparison-selectors B-D7 assigned the lift to
-        // ISSUE-0111/ISSUE-0158) and emits native identity comparison
-        // ($rt carriers are Uint8Array objects, so `===` is reference
-        // identity) — never a backend E6000 rejection.
         Frontend eq = compileFrontend("""
             export function test(): int {
               let a: bytes = bytes(1);
@@ -4886,24 +4776,6 @@ public class JsBackendTest {
     private static void testOrchestratorJsRejectsUnsupported() throws Exception {
         System.out.println("-- Orchestrator: no-partial-artifact on rejection --");
 
-        // The retired @jsonable rejection (js-v12-jsonable-completion
-        // D1), the retired nested-class rejection (ISSUE-0318), and the
-        // retired host-ABI E6000 (ISSUE-0328 — the passing model lives
-        // in testHostAbiOrchestratorNode) no longer drive this pin; the
-        // still-live @extern-c E6006 arm keeps the
-        // no-partial-artifact rejection model covered — a rejected
-        // module fails the whole compilation and nothing is published
-        // (the transactional whole-set contract,
-        // whole-project-artifact-publication D3/D4; the single-module
-        // model lives in testNoPartialArtifactOnRejection).
-        // ISSUE-0273 D9 re-key: the E6006 trigger is an import of an
-        // extern-C declaration module — the @extern-c file directive
-        // lives on ffi.d.deal, never on the importing implementation
-        // file (where it is E1046). The import is manifest-backed (an
-        // externals entry with nativeLibrary) — an unbacked extern-C
-        // import is the frontend E2010 invalid-manifest-policy
-        // rejection (docs/spec-v1.2.md:1891), which the production
-        // pipeline emits before codegen (ISSUE-0477 remediation).
         writeFile("rej_proj/deal.json",
             "{\"languageVersion\": \"1.2\", \"backend\": \"js\","
                 + " \"moduleRoots\": [\"src\"], \"externals\": {"
@@ -4924,9 +4796,7 @@ public class JsBackendTest {
             """);
 
         Path entryFile = tmpDir.resolve("rej_proj/src/rej_main.deal").toAbsolutePath();
-        // The production locator path (ISSUE-0169 remediation,
-        // ISSUE-0471): the manifest-selected Backend.JS compile
-        // rejects the manifest-backed @extern-c import with E6006.
+
         ProjectLocator.LocateResult located = ProjectLocator.locate(
             entryFile.toString(), null);
         check(located.context() != null && located.e2010() == null
@@ -4964,10 +4834,6 @@ public class JsBackendTest {
             "the failed compilation publishes no live root at all");
     }
 
-    // =========================================================================
-    // ISSUE-0194 orchestrator-level slice (merged; distinct trigger paths)
-    // =========================================================================
-
     /** Backend.JS joins the single selection seam under the name "js". */
     private static void testBackendSelectionNames() {
         check(Backend.fromCliName("js").orElse(null) == Backend.JS,
@@ -4986,15 +4852,6 @@ public class JsBackendTest {
             "unknown backend names are rejected");
     }
 
-    /**
-     * deal.json {@code "backend": "js"} selects the JS backend through
-     * the production locator (ISSUE-0169 remediation, ISSUE-0471): the
-     * strict manifest parses, the published context carries the
-     * effective backend {@code "js"} and the backend-dependent default
-     * output {@code build/js} (manifest-relative), and no diagnostic is
-     * produced. An unknown backend stays one E2010 naming the supported
-     * set.
-     */
     private static void testDealJsonBackendAcceptance() throws Exception {
         Path projectDir = null;
         try {
@@ -5044,17 +4901,6 @@ public class JsBackendTest {
         }
     }
 
-    /**
-     * Production CLI over a manifest-selected {@code "backend": "js"}
-     * (ISSUE-0169 remediation, ISSUE-0471): {@code deal.Main compile}
-     * with no {@code --backend} flag selects {@link Backend#JS} from
-     * the strict manifest through the production locator, exits 0, and
-     * writes the emitted entry artifact plus the deployed runtime under
-     * the manifest-relative default {@code build/js}. The subprocess
-     * working directory is the repository root (the deployment copies
-     * fall back to the repo-root {@code deal/runtime.js} source) while
-     * the entry path is absolute.
-     */
     private static void testCliDefaultOutputBuildJs() throws Exception {
         Path projectDir = null;
         try {
@@ -5124,11 +4970,7 @@ public class JsBackendTest {
                     + "  return null;\n"
                     + "}\n",
                 StandardCharsets.UTF_8);
-            // The production locator path (ISSUE-0169 remediation,
-            // ISSUE-0471): the manifest selects Backend.JS, the
-            // context-based orchestrator constructor runs the compile,
-            // and the default output build/js receives the runtime and
-            // stdlib deployment copies.
+
             ProjectLocator.LocateResult located = ProjectLocator.locate(
                 entry.toString(), null);
             check(located.context() != null && located.e2010() == null
@@ -5169,13 +5011,6 @@ public class JsBackendTest {
         }
     }
 
-    /**
-     * No-partial-artifact: an {@code @extern-c} import (the retained
-     * E6006 rejection) fails the compilation and the rejected module
-     * writes no artifact — the rejection model the retired host-ABI
-     * E6000 arm used to cover (ISSUE-0328 retired that arm; the
-     * host-ABI passing model lives in testHostAbiOrchestratorNode).
-     */
     private static void testNoPartialArtifactOnRejection() throws Exception {
         Path projectDir = null;
         try {
@@ -5186,14 +5021,7 @@ public class JsBackendTest {
                     + "  \"externals\": {\"ffi\": {\"declaration\":"
                     + " \"ffi.d.deal\", \"nativeLibrary\": \"libhost\"}}\n}\n",
                 StandardCharsets.UTF_8);
-            // ISSUE-0273 D9 re-key: the E6006 trigger is an import of an
-            // extern-C declaration module — the @extern-c file directive
-            // lives on ffi.d.deal (on an implementation file it is
-            // E1046). The import is manifest-backed (an externals entry
-            // with nativeLibrary) — an unbacked extern-C import is the
-            // frontend E2010 invalid-manifest-policy rejection
-            // (docs/spec-v1.2.md:1891), emitted before codegen
-            // (ISSUE-0477 remediation).
+
             Files.writeString(projectDir.resolve("ffi.d.deal"),
                 "// @extern-c\nexport function cFn(x: int): int;\n",
                 StandardCharsets.UTF_8);
@@ -5205,10 +5033,7 @@ public class JsBackendTest {
                     + "  return null;\n"
                     + "}\n",
                 StandardCharsets.UTF_8);
-            // The production locator path (ISSUE-0169 remediation,
-            // ISSUE-0471): the manifest-selected Backend.JS compile
-            // rejects the @extern-c import with E6006 and writes no
-            // artifact for the rejected module.
+
             ProjectLocator.LocateResult located = ProjectLocator.locate(
                 entry.toString(), null);
             check(located.context() != null && located.e2010() == null

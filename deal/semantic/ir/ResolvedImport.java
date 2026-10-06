@@ -18,10 +18,6 @@ import java.util.Objects;
  * {@code IMPLEMENTATION|STDLIB|HOST} are produced and the parent-pinned
  * {@code DECLARATION} value has no producer.</p>
  *
- * @param alias            the import alias bound at the importing module; non-null
- * @param modulePath       the raw import specifier as written; non-null
- * @param resolvedModuleId the resolved target's dotted module path; non-null
- * @param kind             the resolved target's index kind; non-null
  */
 public record ResolvedImport(String alias, String modulePath, ModuleId resolvedModuleId,
                              ExternalModuleKind kind) {

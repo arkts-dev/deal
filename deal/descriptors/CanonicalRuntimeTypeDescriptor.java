@@ -117,7 +117,6 @@ public final class CanonicalRuntimeTypeDescriptor {
      * carried identity is the input, so no module-path classification
      * enters the service.
      *
-     * @param index the canonical class-identity index; non-null
      */
     public CanonicalRuntimeTypeDescriptor(CanonicalClassIdentityIndex index) {
         this.index = Objects.requireNonNull(index, "index must not be null");
@@ -137,11 +136,6 @@ public final class CanonicalRuntimeTypeDescriptor {
      * internal invariant violations — never silently emitted, never an
      * artifact).</p>
      *
-     * @param type the checked type; non-null
-     * @return the byte-identical canonical descriptor text
-     * @throws NullPointerException  when {@code type} is {@code null}
-     * @throws IllegalStateException for the internal {@link Type.Error}
-     *         sentinel or an identity absent from the index
      */
     public String encode(Type type) {
         Objects.requireNonNull(type, "type must not be null");
@@ -223,11 +217,6 @@ public final class CanonicalRuntimeTypeDescriptor {
     /**
      * Strictly parses complete canonical descriptor text.
      *
-     * @param text descriptor text ({@code null} is treated as empty input)
-     * @return the complete {@link DescriptorAst}, or a
-     *         {@link DescriptorSyntaxError} with the 0-based scalar offset
-     *         of the failure — never {@code null}, never an exception, never
-     *         a partial AST
      */
     public static DescriptorParseResult parse(String text) {
         Parser parser = new Parser(text == null ? "" : text);
@@ -260,8 +249,6 @@ public final class CanonicalRuntimeTypeDescriptor {
      * <p>Total for every atom: for every accepted text,
      * {@code render(parse(text))} equals {@code text} byte-for-byte.</p>
      *
-     * @param ast the atom to render
-     * @return the byte-identical canonical descriptor text
      */
     public static String render(DescriptorAst ast) {
         Objects.requireNonNull(ast, "ast must not be null");

@@ -13,20 +13,6 @@ import java.util.Objects;
  * {@code snapshot} is the raw 8-field operation-contract object without
  * {@code canonicalDigest}, which is carried separately.
  *
- * @param opId          the operation identity; non-null
- * @param kind          the raw operation-kind name; non-null
- * @param failurePolicy the raw failure-policy name; non-null
- * @param parentOpId    the enclosing/triggering op identity, or {@code null}
- * @param resultValue   the result value identity, or {@code null}
- * @param resultToken   the result token identity, or {@code null}
- * @param resultType    the raw result-type text (descriptor text or
- *                      internal sentinel name), or {@code null} for none
- * @param operands      the completed operand value identities in order; non-null
- * @param operandTypes  the raw operand descriptor texts in order; non-null
- * @param payload       the raw payload object; non-null
- * @param selector      the raw snapshot selector name, or {@code null}
- * @param canonicalDigest the carried contract digest; non-null
- * @param snapshot      the raw 8-field contract object (no canonicalDigest); non-null
  */
 public record RawOp(
     OpId opId,

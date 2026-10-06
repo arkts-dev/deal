@@ -125,13 +125,11 @@ public enum DiagnosticCode {
     /** Rest parameters are not supported in DEAL v1.2. */
     E1047(Phase.FRONTEND, "Rest parameters are not supported in DEAL v1.2"),
 
-    /** Import declaration after a non-import top-level declaration. */
     E1048(Phase.FRONTEND, "Import declarations must precede all other top-level declarations"),
 
     /** Statement that is not a top-level declaration at module top level. */
     E1049(Phase.FRONTEND, "Only imports, functions, classes, and exports are allowed at module top level"),
 
-    /** Import or export in a nested (block) context. */
     E1050(Phase.FRONTEND, "'import' and 'export' are only allowed at module top level"),
 
     /** Bodyless (external) function declaration in an implementation file. */
@@ -153,34 +151,20 @@ public enum DiagnosticCode {
     E2004(Phase.FRONTEND, "Export not found in module"),
     /** Circular import with runtime dependency. */
     E2005(Phase.FRONTEND, "Circular import with runtime dependency"),
-    /** Import-shadowed by earlier declaration. */
+
     E2006(Phase.FRONTEND, "Import-shadowed by earlier declaration"),
     /** Declaration shadowed by earlier import. */
     E2007(Phase.FRONTEND, "Declaration shadowed by earlier import"),
     /** User-declared identifiers must not contain '$'. */
     E2008(Phase.FRONTEND, "User-declared identifiers must not contain '$'"),
-    /** Import of external host module not declared in deal.json externals. */
+
     E2009(Phase.FRONTEND, "Import of external host module not declared in deal.json externals"),
 
-    /**
-     * Invalid project configuration or class identity (ISSUE-0269
-     * re-registration, design source
-     * {@code strict-project-context-resolution-identity} D7): every
-     * manifest/discovery/decode/schema/duplicate/root/
-     * externals-declaration (including stdlib-overlap)/manifest-output/
-     * public-class-identity error of the exact-v1.2 project stack.
-     */
     E2010(Phase.FRONTEND, "Invalid project configuration or class identity"),
 
     /** Entry module 'main' has the wrong signature. */
     E2011(Phase.FRONTEND, "Entry module 'main' must have non-async signature '(): null'"),
 
-    /**
-     * Entry module does not export 'main' (ISSUE-0269 re-registration,
-     * design source {@code strict-project-context-resolution-identity}
-     * D7): the former E2010 entry-main-missing meaning; the
-     * orchestrator's {@code validateEntryMain} emits this code.
-     */
     E2012(Phase.FRONTEND, "Entry module must export 'main'"),
 
     // =========================================================================
@@ -277,23 +261,15 @@ public enum DiagnosticCode {
     E6000(Phase.BACKEND_LOWERING, "Unsupported statement type"),
     /** Continue outside loop (detected during codegen). */
     E6001(Phase.BACKEND_LOWERING, "Continue outside loop"),
-    /** Historical code — no longer emitted (try/break/continue, ISSUE-0011). */
+
     E6002(Phase.BACKEND_LOWERING, "Cannot break/continue across try boundary"),
     /** Rest parameters are not part of DEAL v1.2 (LuaJIT backend). */
     E6003(Phase.BACKEND_LOWERING, "Rest parameters are not part of DEAL v1.2"),
     /** Entry module must export a non-async main(): null (v1.2 entry contract). */
     E6004(Phase.BACKEND_LOWERING, "Entry module must export non-async main(): null"),
 
-    /** Common semantic lowering contract violation (ISSUE-0230 foundation, parent D11). */
     E6005(Phase.BACKEND_LOWERING, "Common semantic lowering failed"),
 
-    /**
-     * A backend without C FFI support rejects an {@code @extern-c}
-     * import or declaration (the corpus C6 sanctioned rejection —
-     * {@code FFI_UNSUPPORTED_BACKEND}; ISSUE-0507 FFI candidate fixture
-     * conformance). The JVM pipeline emits it at the extern-C
-     * declaration; the JavaScript backend emits it at the import site.
-     */
     E6006(Phase.BACKEND_LOWERING, "C FFI (@extern-c) is not supported by this backend"),
 
     // =========================================================================
@@ -378,8 +354,6 @@ public enum DiagnosticCode {
     /**
      * Looks up a DiagnosticCode by its code string.
      *
-     * @param code the code string (e.g. "E1001")
-     * @return the matching DiagnosticCode, or null if not found
      */
     public static DiagnosticCode fromCode(String code) {
         return BY_CODE.get(code);

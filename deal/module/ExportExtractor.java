@@ -126,7 +126,6 @@ public final class ExportExtractor {
     /**
      * Extract exports from a parsed program.
      *
-     * @return map from export name to its type
      */
     public Map<String, Type> extract(ProgramNode program) {
         exports.clear();
@@ -294,21 +293,6 @@ public final class ExportExtractor {
         };
     }
 
-    /**
-     * Resolves one type node in this module's own declaration context —
-     * primitives (the v1.2 {@code bytes} included), arrays, nullables,
-     * function types, locally declared classes, and alias-qualified
-     * classes through {@link #importModulePaths}. The JS host
-     * declared-map gather consumes this for host-class field descriptor
-     * types (ISSUE-0328, js-v12-host-abi-completion D1): a declaration
-     * file never runs the name-resolver pass, so its field types must
-     * resolve structurally against the declaration's own class map.
-     * Callers invoke it after {@link #extract(ProgramNode)}.
-     *
-     * @param typeNode the field type annotation to resolve
-     * @return the resolved type ({@code Type.Error} for an unresolvable
-     *         inner node)
-     */
     public Type resolveFieldType(TypeNode typeNode) {
         return resolveTypeNodeSimple(typeNode, classMap);
     }

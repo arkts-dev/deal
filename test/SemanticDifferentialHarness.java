@@ -32,51 +32,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * The differential harness of the decomposition-tail integration
- * verification (ISSUE-0410): runs the identical validated
- * {@link LoweredModuleUnit} + {@link StructuredBodyTable} through the
- * semantic oracle and both shared emitters' real artifacts and compares
- * the three reports event-for-event (semantic-lowering-differential-
- * conformance D2/D4/D7 — no common-consumer skip, no hollow pass).
- *
- * <p><b>Run sequence per consumer.</b> The oracle executes in-process
- * ({@link SemanticOracle}). The shared LuaJIT artifact is emitted by
- * {@link LuaSemanticEmitter}, written to an isolated workspace, executed
- * by the real {@code luajit} binary with the pinned runtime, and its
- * protocol lines are decoded. The shared JVM artifact is emitted by
- * {@link JvmSemanticEmitter}, compiled with the real {@code javac
- * --release 25 -proc:none}, executed by the real {@code java} on the
- * compiled classes, and decoded the same way. Real console effect bytes
- * on each artifact's stdout are cross-checked against its recorded
- * effects. A tool failure is an infrastructure failure of the harness
- * verdict, never a pass.</p>
- *
- * <p><b>Verdict gates (all must hold).</b></p>
- * <ol>
- *   <li>Gate 0 (pre-run): the address-chain protocol over every unit the
- *       harness consumes — the single-evaluation rule and the closed chain
- *       shapes (exactly one commit child, always last). A corrupted chain
- *       (a duplicated commit, a re-wired commit target, a moved child) is
- *       rejected before any consumer runs with the protocol's first
- *       failing rule named; a consumer's fail-closed producer-defect
- *       rejection is likewise a failing verdict, never a crash.</li>
- *   <li>Every consumer produces a report: three real per-consumer
- *       results with at least one event each (no stubbed/partial
- *       run).</li>
- *   <li>Every event validates against its exact validated IR operation:
- *       module, op id, structural parent, kind, and the recomputed
- *       operation-contract digest — a moved child, a wrong selector, a
- *       missing boundary, or a fabricated event fails even with
- *       coincidental output.</li>
- *   <li>Each op has exactly one START and one terminal event, and the
- *       three traces match event-for-event (canonical text).</li>
- *   <li>Ordered effects match event-for-event across consumers and equal
- *       the seed's pinned expectation (the wiki projection).</li>
- *   <li>Terminals match across consumers and equal the seed's pinned
- *       expectation (post-state/result and error origin).</li>
- * </ol>
- */
 public final class SemanticDifferentialHarness {
 
     private SemanticDifferentialHarness() {
@@ -216,24 +171,6 @@ public final class SemanticDifferentialHarness {
     // The project-level matrix (cross-module CLASSES surfaces)
     // =========================================================================
 
-    /**
-     * Runs the three-consumer project matrix over the validated
-     * executable closure (the cross-module factory surface): the
-     * semantic oracle executes the closure in-process; the shared
-     * LuaJIT combined artifact and the shared JVM combined artifact are
-     * emitted, compiled, and executed by the real toolchains. A
-     * {@code CLASS_FACTORY} event's expected parent is the triggering
-     * caller's {@code CLASS_NEW} op (the cross-unit K-D12 parent),
-     * derived deterministically from the caller payloads and the owner
-     * registries.
-     *
-     * @param project    the validated executable closure; non-null
-     * @param tables     each module's block-membership table; non-null
-     * @param registries each module's class-factory registry; non-null
-     * @param expectation the seed's pinned expectation; non-null
-     * @param workspace  an isolated workspace directory; non-null
-     * @return the verdict with the per-consumer comparison report
-     */
     public static Verdict runProject(ExecutableLoweredProject project,
                                      Map<ModuleId, StructuredBodyTable> tables,
                                      Map<ModuleId, ClassFactoryRegistry> registries,
@@ -461,15 +398,6 @@ public final class SemanticDifferentialHarness {
         return new Verdict(pass, report.toString(), runs, failures);
     }
 
-    /**
-     * The deterministic cross-unit factory-parent overrides: every
-     * caller {@code CLASS_NEW(SHARED_FACTORY)} resolves its owner
-     * factory through the owner's registry — that factory op's executed
-     * events parent to the caller op (K-D12). One factory may be
-     * triggered by several callers, so the expected parents queue in
-     * trigger order (unit order, then op order — the straight-line walk
-     * order of the corpus).
-     */
     private static Map<OpId, ArrayDeque<OpId>> factoryParentOverrides(
             ExecutableLoweredProject project, Map<ModuleId, ClassFactoryRegistry> registries) {
         Map<OpId, ArrayDeque<OpId>> overrides = new HashMap<>();

@@ -28,153 +28,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
-/**
- * JavaScript corpus conformance gate (ISSUE-0278,
- * js-v12-completion-architecture D5).
- *
- * <p>Runs every existing backend-runtime conformance test
- * ({@code test/conformance/backend-runtime/}) against the JavaScript
- * backend with a deterministic classification policy and a real
- * whole-project pipeline: module discovery → parsing → signature
- * extraction → dependency ordering → name resolution → type checking →
- * per-module {@link deal.codegen.js.JsBackend} codegen (via
- * {@link CompilationOrchestrator} with {@link Backend#JS}) →
- * {@code node} execution of the emitted artifacts. A bypassed
- * parser/checker/module-discovery yields no orchestrator success; a
- * bypassed codegen leaves no {@code .js} artifact (asserted before node
- * runs); a bypassed node execution produces no output and no exit code
- * (asserted against the captured subprocess output).
- *
- * <h2>The lane-wide activated invocation (ISSUE-0536 remediation)</h2>
- *
- * <p>Every on-disk backend-runtime fixture compiles through the single
- * lane-wide activated invocation {@link #LANE_INVOCATION} — the
- * explicit {@code COMMON_SHADOW + DEAL_V1_2_INT32} invocation passed through the
- * {@link CompilationOrchestrator} constructor in
- * {@link #runOrchestrator}. Under that invocation the emitted entry
- * module calls {@code $rt.setInt32Mode(true)} immediately after the
- * runtime {@code $require}, so {@code deal/runtime.js} gates
- * {@code checkInt} at the signed-32 boundary and the retained
- * {@code std/time.nowMillis} {@code ()->int} route raises E8004 for
- * contemporary epoch milliseconds: the flipped shared fixture
- * {@code backend-runtime/stdlib-edge/time-now-millis-positive.deal}
- * passes as {@code runtime-error E8004} on this gate, and the gate
- * validity condition {@code expectation(fixture) == landed
- * std/time.js behavior} (js-v12-completion-architecture D5) holds by
- * construction. The gate is launched by {@code run_tests.sh} on every
- * gate run; the legacy safe-int default mode of the retained JS
- * runtime stays the unselected direct-caller mode
- * ({@code test_stdlib_js.js} keeps running the legacy range and stays
- * green unchanged).</p>
- *
- * <h2>Classification policy (deterministic, documented)</h2>
- *
- * <ol>
- *   <li><b>Frontend-classified files</b> ({@code compile-ok} /
- *       {@code compile-error CODE} anywhere under the corpus): run the
- *       shared frontend pipeline (lexer → parser → name resolver → type
- *       checker) and must pass 100% — they are backend-neutral and never
- *       node-executed and never counted in the node-executed runtime
- *       denominator (the same classification the LuaJIT harness
- *       applies).</li>
- *   <li><b>Companions</b> ({@code @expected: companion}): classified
- *       support modules (the {@code *_lib} fixtures plus the two
- *       {@code .d.deal} declaration companions) that carry no entry
- *       {@code main} and are never node-executed standalone. Their
- *       standalone compilation is enforced here through the shared
- *       frontend/declaration gate (the {@code deal.test.ConformanceTest}
- *       companion path: lexer/parser plus the declaration-file pipeline
- *       {@link ExportExtractor} for {@code .d.deal} companions, the
- *       module shape gate plus name resolution and type checking for
- *       {@code .deal} companions); a companion failure fails the run.
- *       Each companion compiles as part of the transitive module graph
- *       of every classified fixture that imports it, through that
- *       importer's real frontend → CompilationOrchestrator → JsBackend
- *       temp-project run, and is loaded by node at the importer's
- *       execution — the runner materializes the transitive companion
- *       closure into every importing fixture's temp project and the
- *       report gates the materialized set against the on-disk import
- *       graph. Companions are accounted separately: the printed
- *       companion count must equal the on-disk
- *       {@code @expected: companion} count, and a companion classified
- *       as anything else fails the run.</li>
- *   <li><b>Backend-runtime tests</b> ({@code runtime-ok} /
- *       {@code runtime-error CODE}): JS-applicable and must pass through
- *       the whole pipeline. There is no skip registry and no fallback
- *       skip branch: an {@code @expected} value the classifier cannot
- *       place is a classification failure, and {@code SKIPPED} is
- *       unclassifiable by construction.</li>
- * </ol>
- *
- * <h2>The HOST_JS harness (js-v12-host-abi-completion D6)</h2>
- *
- * <p>One CommonJS implementation per host fixture name (derived from the
- * raw module path — {@code host/bad_string} → artifact
- * {@code host/bad_string.js}), each implementing the declared surface
- * with the JS-mapped carriers (JS Arrays, DEAL wrapper objects for
- * function parameters, validated host-class instances) and the pinned
- * outputs ({@code split} → {@code ["a","b","c"]}, {@code join} →
- * concatenation, {@code apply} → {@code f.$f(x, ...)},
- * {@code describe} → {@code endpoint.path}/{@code port} host-side
- * reads). The runner validates the {@link #HOST_JS} map against the
- * on-disk {@code test/conformance/host-fixtures/} subtree — a missing
- * or wrong-shaped implementation is a harness failure, never a pass —
- * and deploys each implementation to
- * {@code <outputRoot>/<raw specifier>.js} with the generated
- * {@code deal.json} externals wiring. Each map entry is the byte-exact
- * mirror of the authoritative on-disk
- * {@code test/conformance/host-fixtures/<name>.js} per-backend
- * implementation landed by ISSUE-0352; startup validation requires the
- * declaration/{@code .lua}/{@code .java}/{@code .js} name sets and the
- * map/on-disk contents to match, so harness/corpus drift fails the run
- * as a harness failure, never a pass.</p>
- *
- * <h2>Gates</h2>
- * <ul>
- *   <li>frontend-classified files: 100% pass (zero failed);</li>
- *   <li>backend-runtime on node: zero applicable failures AND 100% of
- *       the node-executed runtime denominator (every on-disk
- *       runtime-ok/runtime-error test)
- *       executed through node;</li>
- *   <li>zero skipped (by construction — the classifier has no skip
- *       registry and no fallback skip branch);</li>
- *   <li>every companion standalone-compiles, the classified companion
- *       count equals the on-disk {@code @expected: companion} count, no
- *       companion is dead (every companion is imported by at least one
- *       classified fixture), and the companions materialized into
- *       importing fixtures' temp projects equal the companions
- *       reachable from runtime-classified fixtures;</li>
- *   <li>zero probe runner exceptions (a probe crash is never silent
- *       evidence);</li>
- *   <li>the classified total — FRONTEND + APPLICABLE + COMPANION —
- *       equals the on-disk backend-runtime denominator, and
- *       the classified runtime total equals the on-disk runtime
- *       denominator;</li>
- *   <li>node absence is a hard run failure, never a skip;</li>
- *   <li>the runner exits non-zero when any gate fails.</li>
- * </ul>
- */
 public class JsConformanceTest {
 
-    // =========================================================================
-    // The lane-wide activated invocation (ISSUE-0536 remediation)
-    // =========================================================================
-
-    /**
-     * The single lane-wide activated invocation: every on-disk
-     * backend-runtime fixture compiles through this exact invocation
-     * via the {@link CompilationOrchestrator} constructor in
-     * {@link #runOrchestrator}. The {@code COMMON_SHADOW +
-     * DEAL_V1_2_INT32} invocation is the activated profile used for the
-     * shared stdlib-edge time fixture, so the
-     * flipped fixture passes as {@code runtime-error E8004} on this
-     * gate and the gate validity condition
-     * {@code expectation(fixture) == landed std/time.js behavior}
-     * (js-v12-completion-architecture D5) holds by construction. The
-     * unselected direct-caller default mode of the retained JS
-     * runtime stays the legacy range ({@code test_stdlib_js.js} runs
-     * unselected and stays green unchanged).
-     */
     private static final CompilerInvocation LANE_INVOCATION =
         CompilerProfileProvider.resolveCommonShadow(
             SemanticProfile.DEAL_V1_2_INT32, ReleaseState.PRE_ACTIVATION,
@@ -184,26 +39,6 @@ public class JsConformanceTest {
     // Host harness: one CommonJS implementation per host fixture
     // =========================================================================
 
-    /**
-     * The complete JS host implementation map: host fixture name (the
-     * raw module path minus the {@code host/} prefix, e.g.
-     * {@code bad_string} for {@code host/bad_string}) → CommonJS source.
-     * Every entry must name an on-disk
-     * {@code test/conformance/host-fixtures/<name>.d.deal} declaration
-     * (validated at startup; a dead entry or a missing implementation is
-     * a harness failure, never a pass). Each entry is the byte-exact
-     * mirror of the authoritative on-disk
-     * {@code test/conformance/host-fixtures/<name>.js} triplet
-     * implementation landed by ISSUE-0352 — startup validation fails
-     * the run on any drift between the map and the corpus. Each
-     * implementation realizes the
-     * declared surface with the JS-mapped carriers and the pinned
-     * outputs (js-v12-host-abi-completion D6): JS Arrays for array
-     * parameters/returns, DEAL wrapper objects invoked through
-     * {@code .$f} for function parameters, validated host-class
-     * instances read field-wise host-side, the DEAL {@code null} as the
-     * null result.
-     */
     private static final Map<String, String> HOST_JS = Map.ofEntries(
         Map.entry("array_return", """
 "use strict";
@@ -794,22 +629,6 @@ module.exports = {
     // Host harness validation (js-v12-host-abi-completion D6)
     // =========================================================================
 
-    /**
-     * Validates the {@link #HOST_JS} map against the on-disk
-     * {@code host-fixtures} subtree (the ISSUE-0352 per-backend
-     * triplet layout): the declaration names ({@code *.d.deal}) and
-     * the per-backend implementation names ({@code *.lua},
-     * {@code *.java}, {@code *.js}) must name the same set, every
-     * on-disk host fixture must have a HOST_JS implementation, every
-     * HOST_JS entry must name an on-disk declaration (no dead
-     * entries), and every implementation must be a well-shaped
-     * CommonJS module ({@code module.exports}) that is byte-identical
-     * to the authoritative on-disk {@code <name>.js} host
-     * implementation (the map is the runner's mirror of the corpus
-     * implementation; drift is a wrong-shaped harness). Any violation
-     * is a harness failure that fails the run — never a skip and
-     * never a pass.
-     */
     private static void validateHostHarness() throws IOException {
         if (!Files.isDirectory(hostFixturesRoot)) {
             System.out.println("GATE FAILURE: host-fixtures directory "
@@ -1097,9 +916,7 @@ module.exports = {
                     }
                     stack.push(normalized);
                 }
-                // Corpus C FFI externals (ISSUE-0507): a candidate/*
-                // import reaches its wired support declaration (the
-                // companion-participation surface of the FFI wiring).
+
                 for (String importPath : ffiImports(List.of(current))) {
                     deal.test.conformance.CorpusFfi.Wiring wiring =
                         deal.test.conformance.CorpusFfi.wiringFor(
@@ -1228,11 +1045,6 @@ module.exports = {
             String source = Files.readString(file);
             String filename = file.toString();
 
-            // ISSUE-0272 D8 item 2a: in-memory seam site —
-            // classification headers are stripped before the lexer
-            // (the same seam ConformanceTest.compileAndGetDiagnostics
-            // applies), so the production directive gate never sees
-            // an @spec/@description/@expected/@features header line.
             source = ConformanceHarnessMetadata
                 .stripClassificationHeaders(source);
 
@@ -1266,11 +1078,6 @@ module.exports = {
                 parseResult.program());
             all.addAll(result.diagnostics());
 
-            // Corpus C FFI externals (ISSUE-0507): the production
-            // FfiDeclarationValidator diagnostics of every candidate/*
-            // import surface on the frontend compile paths (the E7002 C
-            // FFI declaration policy) exactly as the orchestrator's FFI
-            // phase surfaces them.
             for (StatementNode stmt
                     : parseResult.program().statements()) {
                 if (stmt instanceof ImportDeclaration imp
@@ -1321,9 +1128,7 @@ module.exports = {
                     "Module not found: '" + modulePath
                     + "' is not a spec-listed stdlib module");
             }
-            // Corpus C FFI externals (ISSUE-0507): candidate/* imports
-            // resolve through the corpus-owned FFI wiring into the real
-            // FFI declaration surface.
+
             if (deal.test.conformance.CorpusFfi.isFfiImport(
                     conformanceRoot, modulePath)) {
                 return deal.test.conformance.CorpusFfi.module(
@@ -1333,9 +1138,7 @@ module.exports = {
             Path resolved = resolveRelativePath(modulePath);
             if (resolved != null && Files.exists(resolved)) {
                 try {
-                    // ISSUE-0272 D8 item 2a: in-memory seam site —
-                    // the inner companion read strips classification
-                    // headers before the lexer.
+
                     String source = ConformanceHarnessMetadata
                         .stripClassificationHeaders(
                             Files.readString(resolved));
@@ -1383,9 +1186,7 @@ module.exports = {
             Path resolved = resolveRelativePath(modulePath);
             if (resolved == null || !Files.exists(resolved)) return null;
             try {
-                // ISSUE-0272 D8 item 2a: in-memory seam site —
-                // classification headers are stripped before the
-                // lexer.
+
                 String source = ConformanceHarnessMetadata
                     .stripClassificationHeaders(
                         Files.readString(resolved));
@@ -1409,9 +1210,7 @@ module.exports = {
         private Map<String, Symbol.ClassSymbol> classSymbolsOf(Path file) {
             Map<String, Symbol.ClassSymbol> symbols = new LinkedHashMap<>();
             try {
-                // ISSUE-0272 D8 item 2a: in-memory seam site —
-                // classification headers are stripped before the
-                // lexer.
+
                 String source = ConformanceHarnessMetadata
                     .stripClassificationHeaders(Files.readString(file));
                 LexResult lex = new Lexer(source, file.toString()).tokenize();
@@ -1511,10 +1310,6 @@ module.exports = {
             String source = Files.readString(file);
             String filename = file.toString();
 
-            // ISSUE-0272 D8 item 2a: in-memory seam site —
-            // classification headers are stripped before the lexer
-            // (the same seam ConformanceTest.compileAndGetDiagnostics
-            // applies).
             source = ConformanceHarnessMetadata
                 .stripClassificationHeaders(source);
 
@@ -1601,22 +1396,10 @@ module.exports = {
             Map<String, String> externals =
                 writeProjectManifest(projectRoot, hostNames, ffiNames);
 
-            // 3. The real whole-project pipeline: module discovery,
-            // signature extraction, dependency ordering, name resolution,
-            // type checking, per-module JsBackend codegen — the
-            // isolated-phase Backend.JS path with the externals wiring
-            // (the JS backend stays outside the strict backend set until
-            // the skeleton epic extends the schema).
             OrchestratorRun run = runOrchestrator(projectRoot, entryFile,
                 outputRoot, externals);
             if (!run.success()) {
-                // Corpus C6 (ISSUE-0507): the sanctioned FFI
-                // divergence — when the fixture's sidecar pins the js
-                // leg as compile-reject E6006 FFI_UNSUPPORTED_BACKEND
-                // and the real pipeline rejected with exactly that code
-                // before any artifact, the lane records the pinned
-                // rejection as the verdict (matching the sidecar),
-                // never as an applicable failure.
+
                 deal.test.conformance.SidecarExpectations
                         .StructuredExpectationSidecar sidecar =
                     sidecarOf(test.path());
@@ -1815,20 +1598,7 @@ module.exports = {
      * declaration or a manifest the harness generated that does not
      * load is a harness failure.
      */
-    /**
-     * Writes the injected project manifest (exact-v1.2 shape:
-     * languageVersion "1.2", moduleRoots ["."], output "out", backend
-     * "js", plus the externals map wiring every bare {@code host/<name>}
-     * import to the copied {@code bindings/<name>.d.deal} declaration)
-     * and returns the externals wiring map (raw specifier → absolute
-     * declaration path) the isolated-phase Backend.JS orchestrator
-     * consumes. The JS backend stays outside the strict backend set
-     * ({@code "js"} is E2010 until the skeleton epic extends the
-     * schema), so the harness drives {@link Backend#JS} through the
-     * test-only isolated-phase constructor; the injected manifest keeps
-     * the harness-project configuration exact-v1.2-shaped (ISSUE-0269,
-     * parent D12).
-     */
+
     private static Map<String, String> writeProjectManifest(
             Path projectRoot, Set<String> hostNames, Set<String> ffiImports)
             throws IOException {
@@ -1838,10 +1608,7 @@ module.exports = {
         dealJson.append("  \"output\": \"out\",\n");
         dealJson.append("  \"backend\": \"js\"");
         Map<String, String> externals = new LinkedHashMap<>();
-        // Corpus C FFI externals (ISSUE-0507): every candidate/* import
-        // of the compilation set wires through the corpus-owned FFI
-        // wiring — the isolated-phase externals map (the JS backend
-        // rejects the extern-c import with E6006 at the import site).
+
         for (String raw : ffiImports) {
             deal.test.conformance.CorpusFfi.Wiring wiring =
                 deal.test.conformance.CorpusFfi.wiringFor(
@@ -1891,32 +1658,14 @@ module.exports = {
                 String declRel = "bindings/" + hostName + ".d.deal";
                 Files.createDirectories(projectRoot.resolve("bindings"));
                 Path declTarget = projectRoot.resolve(declRel);
-                // ISSUE-0272 D8 item 2b: producer-side seam — the
-                // host declaration copy is written
-                // classification-header free, so the production
-                // orchestrator never lexes a header line.
+
                 Files.writeString(declTarget,
                     ConformanceHarnessMetadata.stripClassificationHeaders(
                         Files.readString(decl)));
                 dealJson.append("    \"host/").append(hostName)
                     .append("\": { \"declaration\": \"")
                     .append(declRel).append("\" }");
-                // ISSUE-0599 (the conformance externals-identity
-                // convention): the corpus host triplets, the sidecar
-                // pins, and the three differential lanes project a host
-                // module's class identities through its dotted typing
-                // name (@$external/host.presence/Config — the raw
-                // specifier with '/' -> '.'), while the import
-                // resolution keys on the raw specifier. The
-                // isolated-phase context is fabricated, and its
-                // documented rule takes the first entry whose
-                // declaration path matches the source
-                // (ModuleIdentityResolver.externalKeyOf: "for a
-                // fabricated context with duplicates the first in
-                // member order wins deterministically") — so the dotted
-                // identity key is inserted first and the raw resolution
-                // key second, both naming the same declaration file.
-                // The manifest keeps the single valid raw-key entry.
+
                 String declPath = declTarget.toAbsolutePath()
                     .normalize().toString();
                 externals.put("host." + hostName, declPath);
@@ -1998,10 +1747,7 @@ module.exports = {
         if (target.getParent() != null) {
             Files.createDirectories(target.getParent());
         }
-        // ISSUE-0272 D8 item 2b: producer-side seam — the entry
-        // fixture and every transitive companion are written
-        // classification-header free, so the production orchestrator
-        // never lexes a header line (the E1044 directive rejection).
+
         Files.writeString(target, ConformanceHarnessMetadata
             .stripClassificationHeaders(Files.readString(normalized)));
         written.put(normalized.toString(), target);
@@ -2042,9 +1788,7 @@ module.exports = {
         }
         Path aliasTarget = projectRoot.resolve(aliasBase + ".deal");
         if (Files.exists(aliasTarget)) return;
-        // ISSUE-0272 D8 item 2b: producer-side seam — the
-        // explicit-.deal alias copy is written classification-header
-        // free; the written-map dedup/alias semantics are unchanged.
+
         Files.writeString(aliasTarget, ConformanceHarnessMetadata
             .stripClassificationHeaders(Files.readString(
                 resolved.toAbsolutePath().normalize())));

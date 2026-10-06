@@ -107,9 +107,7 @@ public class DiagnosticClassificationTest {
     private static List<CompilerDiagnostic> compileAndGetDiagnostics(String source,
                                                               String filename) {
         LexResult lex = new Lexer(source, filename).tokenize();
-        // ISSUE-0273 D6: the classification compile helper switches to
-        // the events-carrying parser so parser-side directive codes
-        // (E1044-E1046/E7002) fire exactly as in production.
+
         ParseResult parse = new Parser(lex.tokens(), filename,
             lex.directiveEvents()).parse();
 

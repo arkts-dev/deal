@@ -57,9 +57,6 @@ import java.util.Set;
  * unmodifiable copy, so later mutation of a constructor argument cannot
  * change the record.</p>
  *
- * @param registrations the per-imported-module registrations; non-null
- *                      (keys and values must be non-null and each value's
- *                      module must equal its key)
  */
 public record NamespaceRegistrations(Map<ModuleId, NamespaceRegistration> registrations) {
 
@@ -92,8 +89,6 @@ public record NamespaceRegistrations(Map<ModuleId, NamespaceRegistration> regist
      * The registration of the given imported module, or {@code null} when
      * the module is not imported by the closure.
      *
-     * @param module the imported module identity; non-null
-     * @return the registration, or {@code null}
      */
     public NamespaceRegistration registrationFor(ModuleId module) {
         return registrations.get(Objects.requireNonNull(module,
@@ -117,9 +112,6 @@ public record NamespaceRegistrations(Map<ModuleId, NamespaceRegistration> regist
      * exactly that E6005 and {@code null} registrations — no partial
      * registration set.</p>
      *
-     * @param closure the complete implementation closure's lowered units
-     *                in dependency order; non-null
-     * @return the assembled registrations, or the first E6005
      */
     public static Assembly assemble(List<LoweredModuleUnit> closure) {
         Objects.requireNonNull(closure, "closure must not be null");
@@ -133,26 +125,6 @@ public record NamespaceRegistrations(Map<ModuleId, NamespaceRegistration> regist
         return recorder.build();
     }
 
-    /**
-     * The recording-half builder of the project walk (ISSUE-0634;
-     * {@code project-lowering-entry-and-registration-seeds} D8 and the
-     * namespace registration contract): the registrations are created
-     * <em>before</em> the first unit walk — the map key is the module
-     * identity, so one entry exists per pre-registered distinct resolved
-     * imported module in the given order (closure order, then first-import
-     * declaration order) — and each lowered unit's import arm completes
-     * them as its {@code MODULE_IMPORT} completions are recorded.
-     *
-     * <p>Every rule of {@link #assemble} is enforced here fail-closed and
-     * first-defect-wins: a completion naming a cell that is not an
-     * import-alias allocation of its unit, a cell named by two completions,
-     * a cell registered under two modules, an import-alias allocation named
-     * by no completion (of a unit that carries the modules arm), and a kind
-     * disagreement between a completion and its entry. A pre-registered
-     * module whose completions carry another kind is exactly that kind
-     * disagreement: the entry exists before the walk, so a mismatched
-     * completion is a producer defect, never a second entry.</p>
-     */
     public static final class Recorder {
 
         /** The entry kinds in creation order (the registration order). */
@@ -167,10 +139,6 @@ public record NamespaceRegistrations(Map<ModuleId, NamespaceRegistration> regist
         /**
          * Creates one recorder over the pre-registered entries.
          *
-         * @param preRegistered the distinct resolved imported modules of
-         *                      the complete closure with their closed
-         *                      import kinds, in closure order then
-         *                      first-import declaration order; non-null
          */
         public Recorder(Map<ModuleId, ModuleImportKind> preRegistered) {
             Objects.requireNonNull(preRegistered, "preRegistered must not be null");
@@ -190,8 +158,6 @@ public record NamespaceRegistrations(Map<ModuleId, NamespaceRegistration> regist
          * {@link NamespaceRegistrations#assemble} over the given unit's
          * produced {@code MODULE_IMPORT} payloads.
          *
-         * @param unit the lowered unit in closure order; non-null
-         * @return empty on success, otherwise the first E6005
          */
         public Optional<CompilerDiagnostic> record(LoweredModuleUnit unit) {
             Objects.requireNonNull(unit, "unit must not be null");
@@ -258,7 +224,6 @@ public record NamespaceRegistrations(Map<ModuleId, NamespaceRegistration> regist
          * {@link NamespaceRegistration} per entry in creation order
          * (closure order, then first-import declaration order).
          *
-         * @return the assembled registrations with no diagnostics
          */
         public Assembly build() {
             Map<ModuleId, NamespaceRegistration> registrations = new LinkedHashMap<>();
@@ -311,10 +276,6 @@ public record NamespaceRegistrations(Map<ModuleId, NamespaceRegistration> regist
      * {@code null} registrations with exactly the first E6005 diagnostic
      * on failure (no partial registration set).
      *
-     * @param registrations the assembled {@link NamespaceRegistrations},
-     *                      or {@code null} on failure
-     * @param diagnostics   empty on success, otherwise the failure
-     *                      diagnostics
      */
     public record Assembly(NamespaceRegistrations registrations,
                            List<CompilerDiagnostic> diagnostics) {

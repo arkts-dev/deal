@@ -15,76 +15,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * The production JSON algorithm delegate of the {@code @jsonable} walks
- * (class-construction-jsonable-operations K-D8/K-D10/K-D11; ISSUE-0515):
- * the adapter wiring {@link ClassOpsExecutor}'s JSON algorithm delegate
- * seam (the {@link ClassOpsExecutor.JsonParser} parse arm and the
- * {@link ClassOpsExecutor.JsonStringifier} stringify arm) to E8's
- * {@link SharedStdlibSemantics} — the single production JSON algorithm
- * executor of {@code deal.semantic-ir/1} ({@code JSON_PARSE}/
- * {@code JSON_STRINGIFY}). This epic defines no second production JSON
- * algorithm: the adapter maps the executor's closed {@link
- * ClassOpsExecutor.Value} view onto {@link SharedStdlibSemantics.Value}
- * and back and delegates every parse/stringify emission to E8's
- * algorithm; the walker tests use a fixture delegate implementing
- * exactly the pinned rows, and this adapter's parity with the fixture
- * pins the same contract.
- *
- * <p><b>Parse.</b> The executor hands a scalar-valid input text
- * ({@link UnicodeScalars.Valid}); the adapter calls
- * {@link SharedStdlibSemantics#jsonParse} (the E8 {@code JSON_PARSE}
- * row — signed32 integer lexical mapping, duplicate keys keep the last
- * value and the first position, document order preserved) and maps the
- * parsed {@link SharedStdlibSemantics.Value} back into the executor's
- * view (null/bool/int/number/string/table/array — the parsed model is
- * always JSON-shaped, so no {@code Other} carrier ever appears; one is
- * a producer {@code IllegalStateException}, never a projection). A
- * syntax defect is the seam's {@link
- * ClassOpsExecutor.JsonParse.SyntaxFailure} (the
- * {@code JSON_FROM_CLASS} walk swallows it into language null).</p>
- *
- * <p><b>Stringify.</b> The executor hands one JSON-shaped value plus
- * the pinned-convention fieldPath prefix. Every stringify call first
- * runs the adapter's segment-aware first-failure pre-walk over the
- * executor's own value view — E8's exact walk order (table keys in
- * first-insertion order, array elements in index order, depth-first
- * pre-order) with E8's exact failure conditions (nonfinite numbers,
- * invalid-scalar strings, the unsupported carriers, and identity-based
- * path-local container re-entry) — recording the first failure in the
- * epic's pinned {@code JSON_TO_CLASS} segment convention (a table key
- * {@code k} appends {@code ".k"}, an array element {@code i} appends
- * {@code "[i]"}) plus E8's own dot-joined spelling for cross-checks. A
- * cyclic container is projected straight from the pre-walk (the
- * mapping cannot represent a cycle, so a cyclic value never reaches
- * E8; the re-entering container's own canonical token is the pinned
- * {@code actual}). A clean value then maps to the E8 view: tables
- * delegate straight to {@link SharedStdlibSemantics#jsonStringify}
- * over the mapped first-insertion-order table, and arrays and leaves
- * wrap in a synthetic single-entry table under the empty key (an
- * identifier-derived table key can never be empty, so no real key can
- * collide), whose framing is stripped off the emitted text
- * ({@code {"":TEXT}} &#8594; {@code TEXT} — E8's escaping of the
- * wrapped value is exact, so the unwrap adds no re-encoding). On an E8
- * failure the adapter cross-checks E8's reported dot path and
- * {@code actual} token against the pre-walk's recorded position — any
- * divergence fails closed as a producer defect — and projects the
- * pre-walk's pinned path with the canonical {@code actual} token, so
- * the reported path never parses E8's ambiguous dot string back (a
- * dotted table key like {@code a.0} cannot be told apart from the
- * array element 0 under key {@code a} from the string alone).</p>
- *
- * <p><b>Origins.</b> E8's algorithms take an origin only for their
- * failure projections; the seam never projects (the walk swallows
- * parse failures and projects stringify failures itself at the call
- * origin), so the adapter passes the supplied origin through and no
- * projection escapes from E8 through this seam.</p>
- *
- * <p><b>Purity.</b> Stateless, deterministic, no host code: exactly
- * the mapped value in, the E8 algorithm, the mapped value out. The
- * adapter is the production delegate seam; the fixture delegate of the
- * walker tests pins the identical rows independently.</p>
- */
 public final class JsonClassAlgorithmAdapter {
 
     private JsonClassAlgorithmAdapter() {
@@ -96,7 +26,6 @@ public final class JsonClassAlgorithmAdapter {
      * {@code (UnicodeScalars.Valid) → ClassOpsExecutor.JsonParse} over
      * the E8 {@code JSON_PARSE} algorithm.
      *
-     * @return the parser delegate (stateless, reusable)
      */
     public static ClassOpsExecutor.JsonParser parser() {
         return JsonClassAlgorithmAdapter::parse;
@@ -107,7 +36,6 @@ public final class JsonClassAlgorithmAdapter {
      * seam: {@code (Value, fieldPathPrefix) → ClassOpsExecutor.JsonStringify}
      * over the E8 {@code JSON_STRINGIFY} algorithm.
      *
-     * @return the stringifier delegate (stateless, reusable)
      */
     public static ClassOpsExecutor.JsonStringifier stringifier() {
         return JsonClassAlgorithmAdapter::stringify;
@@ -436,13 +364,6 @@ public final class JsonClassAlgorithmAdapter {
      * E8's reported failing position (the row's internal
      * {@code fieldPath} metadata).
      *
-     * @param root the direct executor value (never a synthetic
-     *             wrapper; E8's empty wrapper key contributes nothing
-     *             under E8's empty-path rule, so the dot-joined
-     *             spelling of the direct root equals E8's reported
-     *             path)
-     * @return the first failure, or {@code null} when the value is
-     *         finite, acyclic, and JSON-shaped
      */
     private static FirstFailure firstFailure(ClassOpsExecutor.Value root) {
         Set<Object> path = Collections.newSetFromMap(new IdentityHashMap<>());

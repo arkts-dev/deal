@@ -19,7 +19,6 @@ import deal.semantic.ir.CanonicalJson;
 import deal.semantic.ir.SemanticIrTextDecodeException;
 import deal.test.ConformanceHarnessMetadata;
 
-
 import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
 import javax.tools.JavaCompiler;
@@ -47,119 +46,6 @@ import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
-/**
- * The JVM lane of the v1.2 differential gate (ISSUE-0355; design
- * {@code v12-zero-skip-conformance-gate} G4/G5): the absorbed
- * {@code JvmConformanceTest} whole-project pipeline — module
- * materialization → {@code deal.json} → {@link ProjectLocator} →
- * {@link CompilationOrchestrator} → per-module {@link JvmBackend}
- * codegen → javac-semantics compile of every emitted artifact plus the
- * lane runner → a real {@code java} subprocess — executed under the
- * Shared Lane Contract.
- *
- * <p>Per case the lane:</p>
- * <ol>
- *   <li>Probes the required tools {@code javac} + {@code java} once
- *       (G3): a missing or broken-but-present tool is
- *       {@link MismatchClass#TOOL_MISSING}, never a skip.</li>
- *   <li>Materializes the fixture plus its compilation set into a fresh
- *       temp project root ({@code src/} modules with the absorbed
- *       flat-stem/subdirectory layout and explicit-{@code .deal} alias
- *       copies, {@code bindings/} host declarations, and the injected
- *       exact-v1.2 {@code deal.json}) and routes the real
- *       {@link CompilationOrchestrator} through the fixture-local
- *       profile metadata invocation seam. A compile failure of any module is a lane
- *       compile failure (an infrastructure outcome with the diagnostic
- *       codes), never an execution outcome.</li>
- *   <li>Asserts artifact presence before execution (G4.2): the emitted
- *       entry {@code .java} artifact must exist after codegen, javac
- *       must accept every emitted {@code .java} artifact plus the lane
- *       runner, and the entry and runner {@code .class} artifacts must
- *       exist after javac — a missing or rejected artifact is
- *       {@link MismatchClass#ARTIFACT_MISSING}, never a fabricated
- *       result. The in-process javac frontend runs with
- *       {@code -g:source,lines} (the absorbed options minus
- *       {@code -g:none}).</li>
- *   <li>Deploys the {@code host-fixtures/&lt;name&gt;.java} triplet
- *       implementations beside the emitted default-package artifacts
- *       under their {@code classNameFor} names (corpus C5): a fixture
- *       importing {@code host/&lt;name&gt;} whose {@code .java} file is
- *       missing is a corpus error ({@link MismatchClass#HARNESS_DEFECT}
- *       naming the missing file), never a skip.</li>
- *   <li>Executes the lane runner in a real {@code java} subprocess with
- *       stdout and stderr captured as separate byte streams. The gate's
- *       dispatcher owns the harness deadline; on interrupt the lane
- *       terminates the spawned subprocess (the Lane contract
- *       requirement).</li>
- *   <li>Invocation contract (G4.4): the lane runner invokes the entry
- *       module's {@code main(): null} exactly once (the backend entry
- *       contract's observable order — {@code main} first, mirroring the
- *       Lua lane's chunk-end invocation) and then auto-invokes each
- *       non-{@code $} zero-arity exported wrapper exactly once, in
- *       declaration order (derived from the compiled AST); return values
- *       are discarded — no lane prints results (the result-printing of
- *       the absorbed {@code buildJvmRunner} is removed, closing the
- *       cross-backend formatting hazard); an async export's blocking
- *       invocation drives the operation to completion before the
- *       verdict (the JVM backend emits async function declarations as
- *       plain blocking methods).</li>
- *   <li>Error framing (G4.6): on an uncaught DEAL error the lane writes
- *       to stdout exactly {@code DEAL_ERROR_CODE: <code>} then
- *       {@code DEAL_ERROR_SNAPSHOT: <canonical JSON>} and exits 1;
- *       success exits 0. The canonical snapshot serialization is the
- *       shared {@link ErrorSnapshot} serializer — the same helper the
- *       LuaJIT and JS lanes reuse verbatim, so the three lanes can
- *       never drift on serialization. Code and message are mandatory;
- *       the span group ({@code file}/{@code line}/{@code column}) is
- *       carried complete or absent, and the lane mirrors the Lua
- *       lane's closed rules: a span-pinned sidecar against a span-less
- *       capture is a {@code PROCESS_FAILURE} naming the missing span —
- *       never fabricated — while the sanctioned span-less shape (the
- *       locked time selector's declared-int boundary raise) pairs with
- *       a sidecar that omits the whole group. The sidecar's Error
- *       Expectation is the authoritative field set: the lane emits the
- *       mandatory fields plus exactly the pinned span group and pinned
- *       optional fields ({@code expected}, {@code actual},
- *       {@code frames}, {@code cause}) and suppresses every unpinned
- *       one — a pinned field the captured error does not carry is
- *       never fabricated, so the comparison fails honestly. The lane
- *       runner transports the DealError's OWN fields through a
- *       workspace payload file (code, message, file, line, column,
- *       expected, actual, frames, cause; absent fields omitted) — the
- *       removed stack-frame fallback never transports generated-Java
- *       coordinates, so a span-less raise transports no span.</li>
- *   <li>{@code sourceFile} normalization (corpus C2): the lane records
- *       its per-module deployment map at compile time (every deployed
- *       module's temp {@code src} path and its emitted artifact class
- *       file name ↔ its canonical corpus-relative path plus the
- *       stripped classification-header line delta; the host triplet
- *       artifact names ↔ {@code host-fixtures/&lt;name&gt;.java}).
- *       A captured error {@code file} inside the temp project root is
- *       emitted as the canonical corpus-relative path — the fixture's
- *       path, or a throwing companion's path when the companion throws
- *       — and the captured DEAL-source {@code line} is rebased onto
- *       raw corpus-file coordinates by the module's stripped-header
- *       delta (the Lua lane's seam); an unmappable captured
- *       {@code file} value is emitted verbatim, so the byte comparison
- *       fails and surfaces the defect.</li>
- *   <li>Compile-reject path (corpus C6): for a {@code compile-reject}
- *       expectation the lane reports the orchestrator's rejection as
- *       {@link LaneExecution.Rejected} when the first error diagnostic
- *       exists and no entry artifact was emitted — with the actual
- *       diagnostic code, matching or not, so the comparator
- *       cross-checks the exact diagnostic object and reports
- *       {@code COMPILE_REJECT_MISMATCH} with the exact code delta on a
- *       differently-coded rejection (the pinned line/column are
- *       emitted only when the sidecar pins them). A clean compile
- *       under a rejection pin is refused as {@code PROCESS_FAILURE} —
- *       the lane never executes a module whose sidecar pins
- *       rejection.</li>
- * </ol>
- *
- * <p>The lane changes no production file: it reuses the real
- * {@link JvmBackend} as-is; any JVM divergence found is a differential
- * failure, never a harness workaround.</p>
- */
 public class JvmLane implements Lane {
 
     /** The lane's backend name (G4: exactly {@code jvm}). */
@@ -570,13 +456,6 @@ public class JvmLane implements Lane {
                     laneCase.fixturePath()).toAbsolutePath().normalize();
                 Path entryDir = entryCorpusFile.getParent();
 
-                // 1. Materialize every compilation-set module into the
-                // temp src root (the absorbed writeModuleFiles layout:
-                // companions inside the entry's own corpus directory keep
-                // their subdirectory layout; every other module keeps the
-                // flat stem layout). The lane writes the header-stripped
-                // sources the gate core verified (ISSUE-0272 D8: the
-                // orchestrator never lexes a classification header).
                 for (SidecarSchemaValidator.CompilationModule module
                         : laneCase.compilationSet()) {
                     Path corpusFile = conformanceRoot.resolve(
@@ -693,12 +572,6 @@ public class JvmLane implements Lane {
                             Files.readString(decl)));
                 }
 
-                // 2b. Corpus C FFI bindings (ISSUE-0507): every
-                // candidate/* import of the compilation set wires
-                // through the corpus-owned FFI externals machinery —
-                // the orchestrator's FFI phase validates the
-                // declaration and the JVM backend rejects with E6006
-                // FFI_UNSUPPORTED_BACKEND before any artifact.
                 Set<String> ffiImports = new LinkedHashSet<>();
                 for (SidecarSchemaValidator.CompilationModule module
                         : laneCase.compilationSet()) {
@@ -733,11 +606,6 @@ public class JvmLane implements Lane {
                                 Files.readString(declaration)));
                 }
 
-                // 3. The injected exact-v1.2 deal.json (the absorbed
-                // ISSUE-0269 surface): moduleRoots ["src"], output "out",
-                // backend "jvm", externals wiring every raw host import
-                // path to its binding declaration plus every corpus FFI
-                // import with its nativeLibrary.
                 StringBuilder dealJson = new StringBuilder();
                 dealJson.append("{\n  \"languageVersion\": \"1.2\",\n");
                 dealJson.append("  \"moduleRoots\": [\"").append(SRC_DIRECTORY)
@@ -944,13 +812,6 @@ public class JvmLane implements Lane {
                                    List<CompilerDiagnostic> diagnostics,
                                    String capturedOutput) { }
 
-    /**
-     * Runs the real {@link CompilationOrchestrator} with the
-     * context-driven production constructor over the temp project
-     * (ISSUE-0269). Stdout/stderr is captured under the shared console
-     * lock so per-case output stays clean and parallel workers never
-     * interleave (the absorbed runner's CONSOLE_LOCK pattern).
-     */
     private static OrchestratorRun runOrchestrator(Path entryFile,
             ProjectContext context, CompilerInvocation invocation) {
         ByteArrayOutputStream captured = new ByteArrayOutputStream();

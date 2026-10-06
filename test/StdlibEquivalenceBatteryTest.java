@@ -66,7 +66,6 @@ public final class StdlibEquivalenceBatteryTest {
         JVM_EMITTED
     }
 
-
     private StdlibEquivalenceBatteryTest() {
         // Static test main only.
     }

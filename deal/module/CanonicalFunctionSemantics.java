@@ -6,36 +6,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * The serializer-owned statement-level canonical grammar for provider
- * function bodies (ISSUE-0542, design source
- * {@code provider-versioned-default-plans} D9):
- *
- * <pre>
- * CanonicalFunctionSemantics(serializerVersion, isAsync,
- *   parameters: ordered canonical type descriptor texts,
- *   returnDescriptor, body: ordered CanonicalStatement)
- * </pre>
- *
- * <ul>
- *   <li>{@code serializerVersion} — the one versioned format constant
- *       shared with the expression grammar
- *       ({@link DefaultSemanticSerializer#SERIALIZER_VERSION}).</li>
- *   <li>{@code isAsync} — the exact sync/async marker of the
- *       function.</li>
- *   <li>{@code parameters} — the ordered E4 canonical descriptor texts
- *       of the parameter types.</li>
- *   <li>{@code returnDescriptor} — the E4 canonical descriptor text of
- *       the return type.</li>
- *   <li>{@code body} — the ordered statement children (source order;
- *       expression children in evaluation order).</li>
- * </ul>
- *
- * <p>The canonical text is the single canonical JSON facility's
- * serialization ({@link deal.semantic.ir.CanonicalJson}); equality
- * compares the full content byte-for-byte and SHA-256 is an index
- * only.</p>
- */
 public record CanonicalFunctionSemantics(
     String serializerVersion,
     boolean isAsync,
@@ -81,7 +51,6 @@ public record CanonicalFunctionSemantics(
      * The canonical content text (the deterministic single canonical
      * JSON serialization) — the provider-digest input.
      *
-     * @return the canonical text, never null
      */
     public String canonicalText() {
         return CanonicalJson.serializeText(canonicalJson());

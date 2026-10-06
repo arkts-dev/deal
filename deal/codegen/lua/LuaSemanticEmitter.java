@@ -57,57 +57,6 @@ import java.util.Objects;
 import static deal.codegen.SemanticEmitterShared.descriptorText;
 import static deal.codegen.SemanticEmitterShared.staticKind;
 
-/**
- * The shared LuaJIT emitter of the decomposition-tail integration
- * verification (ISSUE-0410): emits a real LuaJIT artifact from the
- * validated {@link LoweredModuleUnit} + {@link StructuredBodyTable} over
- * the EVALUATION_ORDER op set (assignment-delete-address-chains A-D8,
- * binary-comparison-selectors B-D6, and control-flow-structures C-D9):
- *
- * <ul>
- *   <li><b>Chains:</b> every chain child's result is materialized into a
- *       fresh local in payload order before the next child executes; the
- *       bounds check runs only from the boundary child's projection
- *       (never a target-side re-check that can raise twice); no
- *       receiver/key/RHS expression is re-emitted or re-evaluated; the
- *       retained {@code emitAssignment} double-evaluation shape
- *       ({@code LuaBackend.java:2366-2406}) never appears.</li>
- *   <li><b>Comparisons:</b> native {@code ==}/{@code ~=}/{@code <}/
- *       {@code <=}/{@code >}/{@code >=} realize the closed B-D2 table —
- *       IEEE semantics on numbers, scalar-lexicographic order on
- *       validated scalar strings (UTF-8 byte order equals code point
- *       order), native identity on tables/functions; missing compares as
- *       language null at both operand positions.</li>
- *   <li><b>Control flow:</b> no speculative execution; condition ops are
- *       emitted inside the loop structure and re-evaluated per
- *       iteration; the {@code FOR_EACH} iterable is materialized into a
- *       local once before the loop; the short-circuited block sits
- *       behind a guard so its effects cannot run when skipped; FOR's
- *       continue landing is before the update; block code follows the
- *       {@code StructuredBodyTable} membership; catches are limited to
- *       DEAL errors (an infrastructure failure is never caught or
- *       reified); every loop form a {@code break}/{@code continue}
- *       targets emits the labels its transfers use (the {@code FOR_EACH}
- *       exit label at the op's own {@code do … end} level, before its
- *       SUCCESS event); and a transfer inside a protected
- *       ({@code TRY_CATCH}) body crosses each enclosing protected
- *       boundary as the re-raised marker, so its jump — to a loop exit, a
- *       loop continue, or the return trampoline — is emitted only at the
- *       level where the target label is defined in the same emitted Lua
- *       function and no emitted {@code goto} references a label of
- *       another function.</li>
- * </ul>
- *
- * <p>The artifact publishes its execution report on the dedicated trace
- * channel (stderr) through the
- * {@link deal.semantic.SemanticTraceProtocol} line grammar —
- * byte-identical to the semantic oracle's report — and writes real
- * console effect bytes to stdout. Every event carries the validated
- * operation's contract digest and structural parent, so the differential
- * harness validates each event against the exact IR op before the
- * three-way comparison: a duplicated evaluation, a wrong selector, or a
- * missing boundary fails even when printed output coincides.</p>
- */
 public final class LuaSemanticEmitter {
 
     /**
@@ -173,10 +122,6 @@ public final class LuaSemanticEmitter {
      * cross-unit parent. Single-unit sessions are the singleton closure
      * of the same machinery.
      *
-     * @param project    the validated executable closure; non-null
-     * @param tables     each module's block-membership table; non-null
-     * @param registries each module's class-factory registry; non-null
-     * @return the combined artifact source text
      */
     public static String emitProject(ExecutableLoweredProject project,
                                      Map<ModuleId, StructuredBodyTable> tables,
@@ -187,27 +132,6 @@ public final class LuaSemanticEmitter {
         return new Session(project, tables, registries, true, null).emit();
     }
 
-    /**
-     * Emits the combined trace artifact of a validated executable
-     * project with the compile's host declaration surface (ISSUE-0651;
-     * the differential drive of the sync host call realization): the
-     * trace-mode project session of {@link #emitProject} additionally
-     * carries the declared map and the host-boundary prelude, so a
-     * {@code MODULE_IMPORT(HOST)} emits its {@code __rt.load_host} load
-     * in the trace walk and a host {@code CALL}/{@code CALLBACK_INVOKE}
-     * arm resolves the loaded surface entry — the oracle-agreement drive
-     * (“the oracle matches event-for-event in trace mode”) then
-     * compares one event stream from the oracle and both targets.
-     *
-     * @param project            the validated executable closure; non-null
-     * @param tables             each module's block-membership table;
-     *                           non-null
-     * @param registries         each module's class-factory registry;
-     *                           non-null
-     * @param declarationSurface the declaration surface covering every
-     *                           declaration import of the compile; non-null
-     * @return the combined trace artifact source text
-     */
     public static String emitProject(ExecutableLoweredProject project,
                                      Map<ModuleId, StructuredBodyTable> tables,
                                      Map<ModuleId, ClassFactoryRegistry> registries,
@@ -221,48 +145,6 @@ public final class LuaSemanticEmitter {
             declarationSurface).emit();
     }
 
-    /**
-     * Emits the production LuaJIT project artifact for the validated
-     * executable closure (ISSUE-0640;
-     * {@code production-project-emission-and-atomic-cutover} P1/P3 and the
-     * production LuaJIT emission contract;
-     * {@code luajit-jvm-single-lowering-production-cutover} C2): the
-     * combined project session of {@link #emitProject} with the
-     * trace/terminal mode switched to production — exactly one Lua chunk
-     * carries the whole closure (the prelude once, every module's function
-     * factories, adapter thunks, detached class-default functions, and
-     * per-class JSON plans, then each module's init walk in dependency
-     * order). The conformance trace protocol is suppressed (no event
-     * output and no {@code R|} terminal), an uncaught DEAL failure
-     * publishes the retained {@code DEAL_ERROR_CODE: <code>} line on
-     * stdout and exits 1, a non-DEAL failure rethrows, and success exits
-     * silently. The chunk carries the module export-surface registry keyed
-     * by module identity and returns the entry module's surface (the
-     * retained-caller ABI); only the entry module's {@code ENTRY_INVOKE}
-     * delegation runs (every non-entry {@code ENTRY_INVOKE} and its
-     * delegated {@code CALL} stay skipped), so the entry {@code main}
-     * executes exactly once per chunk execution.
-     *
-     * <p>The entry consumes only the validated project, the per-module
-     * block-membership tables, the per-module class-factory registries, and
-     * the host declaration surface: no AST, no checker result, no route
-     * input, no extern-C generated-module map, and no identity index. The
-     * declaration surface is the single source of the declared export map
-     * the {@code MODULE_IMPORT(HOST)} load emits (ISSUE-0650;
-     * {@code host-module-load-and-host-call-realization} H1 and the
-     * host-load contract) — the function exports carry the canonical
-     * runtime-descriptor text in declaration order and the class exports
-     * their canonical class-descriptor text.</p>
-     *
-     * @param project            the validated executable closure; non-null
-     * @param tables             each module's block-membership table;
-     *                           non-null
-     * @param registries         each module's class-factory registry;
-     *                           non-null
-     * @param declarationSurface the declaration surface covering every
-     *                           declaration import of the compile; non-null
-     * @return the production project artifact source text
-     */
     public static String emitProductionProject(ExecutableLoweredProject project,
                                                Map<ModuleId, StructuredBodyTable> tables,
                                                Map<ModuleId, ClassFactoryRegistry> registries,
@@ -271,52 +153,6 @@ public final class LuaSemanticEmitter {
             declarationSurface, null);
     }
 
-    /**
-     * Emits the FFI-capable production LuaJIT project artifact for the
-     * validated executable closure (the extern-C admission slice): the
-     * landed production project session plus the compile's FFI emission
-     * input (the validated extern-C generated-module metadata and the
-     * manifest-directory text). A session carrying the FFI emission
-     * input emits, at the owning {@code MODULE_IMPORT} of an extern-C
-     * declaration import, the landed generator's literals — one
-     * provider binding per referenced alias, re-pointed at the chunk's
-     * export-surface registry (never a {@code require} line), the
-     * bindings literal, and the
-     * {@code __exportSurfaces[<module>] = ... __rt.load_ffi(...)}
-     * registry entry with the import statement's span triplet — so the
-     * loaded module table becomes the import's namespace value. A
-     * {@code MANIFEST_RELATIVE_PATH} loader text resolves against the
-     * input's manifest directory through the pinned prefix-resolved
-     * conversion. An extern-C import without generated metadata, an
-     * unserializable generated module, and a wrapper-incapable provider
-     * (a provider the artifact does not publish in the wrapper
-     * convention before the binding position — a spec-stdlib module, a
-     * declaration module whose load the emission emitted after that
-     * position or never emitted, and any module outside the closure and
-     * the declaration facts) each fail closed (an
-     * {@link IllegalStateException} the production arm maps to E6005
-     * {@code SHARED_EMITTER_COVERAGE} and stages nothing). A session
-     * without the FFI emission input keeps the landed arm: an extern-C
-     * declaration import emits its {@code MODULE_IMPORT} op with no
-     * load, its loaded surface being the trace session's scenario seam.
-     *
-     * <p>No evaluator runs and no library opens during emission: the
-     * generated-module contract carries compile-time metadata only, and
-     * the emitted literals are byte-deterministic.</p>
-     *
-     * @param project            the validated executable closure; non-null
-     * @param tables             each module's block-membership table;
-     *                           non-null
-     * @param registries         each module's class-factory registry;
-     *                           non-null
-     * @param declarationSurface the declaration surface covering every
-     *                           declaration import of the compile;
-     *                           non-null
-     * @param ffiEmissionInput   the compile's FFI emission input, or
-     *                           {@code null} for a session without an
-     *                           FFI emission input
-     * @return the production project artifact source text
-     */
     public static String emitProductionProject(ExecutableLoweredProject project,
                                                Map<ModuleId, StructuredBodyTable> tables,
                                                Map<ModuleId, ClassFactoryRegistry> registries,
@@ -331,22 +167,6 @@ public final class LuaSemanticEmitter {
             declarationSurface, ffiEmissionInput).emit();
     }
 
-    /**
-     * Emits the production LuaJIT module artifact for the validated unit
-     * (ISSUE-0239 E10): the conformance trace protocol is suppressed, a
-     * DEAL failure publishes the retained {@code DEAL_ERROR_CODE: <code>}
-     * line on stdout and exits 1, the chunk returns its own module's
-     * surface through the chunk-global per-module export-surface registry
-     * (the retained-caller ABI surface, keyed by the module identity), and
-     * the {@code ENTRY_INVOKE} delegation executes only for the entry
-     * module.
-     *
-     * @param unit        the validated lowered module unit; non-null
-     * @param table       the unit's produced block-membership table; non-null
-     * @param entryModule whether this module is the selected entry module
-     *                    (runs the {@code ENTRY_INVOKE} delegation)
-     * @return the production artifact source text
-     */
     public static String emitProductionModule(LoweredModuleUnit unit,
                                               StructuredBodyTable table,
                                               boolean entryModule) {
@@ -413,33 +233,11 @@ public final class LuaSemanticEmitter {
          * production project session, null in the trace/unit sessions.
          */
         final HostDeclarationSurface hostSurface;
-        /**
-         * The declared host classes of the compile's declaration surface by
-         * canonical class identity (ISSUE-0624; K10): a host declaration
-         * class construction resolves its declaring module — the
-         * {@code __exportSurfaces} key whose loaded surface carries the
-         * class's {@code <C>_defaults} entry — through this map, never from
-         * a dotted-path derivation. Empty outside the host-aware project
-         * sessions.
-         */
+
         final Map<ClassId, ModuleId> hostClassModules = new LinkedHashMap<>();
-        /**
-         * The declared extern-C classes of the compile's declaration
-         * surface by canonical class identity (ISSUE-0666; struct-plan
-         * F1): a C-struct class construction resolves its declaring module
-         * — the {@code __exportSurfaces} key whose loaded surface carries
-         * the class's {@code <C>_plan} entry — through this map, never from
-         * a dotted-path derivation. Empty outside the declaration-surface
-         * sessions.
-         */
+
         final Map<ClassId, ModuleId> ffiClassModules = new LinkedHashMap<>();
-        /**
-         * The compile's FFI emission input (the extern-C generated-module
-         * metadata and the manifest-directory text): non-null exactly in
-         * the FFI-capable production session, null in every other session
-         * (the trace/unit entries and the landed production entry, whose
-         * extern-C import keeps the landed no-op arm).
-         */
+
         final FfiEmissionInput ffiInput;
         /**
          * The declaration modules whose load this session's walk already
@@ -496,14 +294,6 @@ public final class LuaSemanticEmitter {
             this(project, tables, registries, trace, null);
         }
 
-        /**
-         * The project-mode session of the production project entry (and,
-         * since ISSUE-0651, of the host-aware trace project entry): the
-         * combined closure plus the compile's host declaration surface
-         * (the declared-map source of the {@code MODULE_IMPORT(HOST)}
-         * load). A trace-mode project session without the surface keeps
-         * the landed no-op arm.
-         */
         Session(ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
                 Map<ModuleId, ClassFactoryRegistry> registries, boolean trace,
                 HostDeclarationSurface hostSurface) {
@@ -557,19 +347,6 @@ public final class LuaSemanticEmitter {
             }
         }
 
-        /**
-         * Registers the compile's declared declaration classes (ISSUE-0624
-         * K10 and ISSUE-0666; struct-plan F1): one entry per declaration
-         * module class export, keyed by the canonical class identity
-         * projected through the single {@link DescriptorService} producer —
-         * the same identity the {@code CLASS_NEW} payloads and the field-op
-         * payloads carry. A {@code HOST} declaration class resolves its
-         * declaring module through {@link #hostClassModules} (the loaded
-         * {@code <C>_defaults} entry's surface key), an {@code EXTERN_C}
-         * declaration class through {@link #ffiClassModules} (the loaded
-         * {@code <C>_plan} entry's surface key): one declaration kind per
-         * module, so every class identity lands in exactly one map.
-         */
         private void registerDeclarationClasses() {
             if (hostSurface == null) {
                 return;
@@ -603,16 +380,6 @@ public final class LuaSemanticEmitter {
             return hostClassModules.containsKey(classId);
         }
 
-        /**
-         * The emitted expression of one declared extern-C C-struct class's
-         * loaded {@code <C>_plan} entry (ISSUE-0666; struct-plan F1): the
-         * module's published surface entry — the module table
-         * {@code __rt.load_ffi} returned, keyed by the class's declaration
-         * name ({@code <C>_plan}, the runtime's own publication key) — read
-         * back by the construction site. An absent surface or entry is a
-         * fail-closed producer defect in the prelude helper, never a silent
-         * default.
-         */
         private String ffiPlanExpr(ClassId classId) {
             ModuleId declarationModule = ffiClassModules.get(classId);
             if (declarationModule == null) {
@@ -644,7 +411,6 @@ public final class LuaSemanticEmitter {
             return "__hostClassDefaults(" + luaString(declarationModule.path())
                 + ", " + luaString(classId.name()) + ")";
         }
-
 
         // -- naming ---------------------------------------------------------------
 
@@ -678,18 +444,6 @@ public final class LuaSemanticEmitter {
 
         // -- static kinds -----------------------------------------------------------
 
-
-        /**
-         * The emitted prelude boundary check of one descriptor over one
-         * value: {@code __bcheck(desc, kind, value)} — plus, when the
-         * descriptor carries a function position, the descriptor's
-         * canonical spec text as the trailing argument, so the function
-         * row can compare a host ABI wrapper's declared canonical
-         * signature (the loaded host surface entry's own metadata — the
-         * read value of ISSUE-0653's HOST read; the {@code desc}
-         * spelling stays the DEAL carrier's internal text). The text of
-         * every non-function check is emitted unchanged.
-         */
         static String bcheckExpr(RuntimeDescriptor descriptor, String value) {
             return "__bcheck(" + bcheckArgs(descriptor, value) + ")";
         }
@@ -772,13 +526,7 @@ public final class LuaSemanticEmitter {
             // execution per run. __module stays chunk-local (every chunk
             // names its own module in its events).
             out.append("__frames = __frames or {}\n");
-            // The function-id -> owning-module resolution of the dynamic
-            // dispatch's DEAL_BODY class path (ISSUE-0658;
-            // dynamic-call-shape-production-and-emission Y6): one
-            // chunk-global row per lowered function of the closure, built
-            // by the same walk that declares the function factories below.
-            // A carrier whose function id has no row identifies no class
-            // and the dynamic call fails closed at its origin.
+
             out.append("__fnModules = __fnModules or {}\n");
             out.append("__seq = __seq or 0\n");
             out.append("local __module\n");
@@ -788,15 +536,7 @@ public final class LuaSemanticEmitter {
             // (an owner default that constructs another module's class)
             // restores its own saved module, never the enclosing one's.
             out.append("local __modStack = {}\n");
-            // The nesting-safe invocation-state stack (ISSUE-0654): one
-            // push per re-entrant body invocation, one pop per restore — a
-            // nested invocation of the same body (recursion) restores its
-            // own saved private state, never the enclosing invocation's.
-            // A chunk-level local, not a per-site Lua local: a `goto` (the
-            // return trampolines) may never enter a local's scope; the
-            // per-body active markers are shared across chunks like the
-            // rest of the run state (a cross-chunk drive re-enters a body
-            // through the export surface).
+
             out.append("local __svStack = {}\n");
             out.append("__bodyActive = __bodyActive or {}\n");
             out.append("__allocIds = __allocIds or {}\n");
@@ -849,25 +589,12 @@ public final class LuaSemanticEmitter {
             // (a second chunk of the same process resolves the same
             // carriers).
             out.append("__intrinsicCarriers = __intrinsicCarriers or {}\n");
-            // The host-module loader of the chunk (ISSUE-0650, extended by
-            // ISSUE-0668): a project chunk whose closure carries a HOST-kind
-            // import (host or extern-C) requires the deployed runtime's landed
-            // loaders and the host-boundary cells in both modes, independent
-            // of whether the session carries the compile's declaration surface
-            // — the trace project entry's loaded surface is the scenario
-            // seam's, and its FFI arms (__hostParamCell/__hostProjectArg/
-            // __hostReturnCell, __rt.class_plan_) reference only bound
-            // helpers. A per-unit session keeps the landed gate (it carries
-            // no closure and no declaration surface), and a host-free chunk
-            // keeps its self-contained prelude.
+
             if (bindsHostRuntime()) {
                 out.append("local __rt = require(\"deal.runtime\")\n");
                 out.append(HOST_BOUNDARY_PRELUDE);
             } else if (bindsBytesRuntime()) {
-                // The bytes surface's runtime binding (K6 item 13): the
-                // landed bytes entries are the one carrier/authority, so a
-                // chunk carrying bytes ops binds the deployed runtime in
-                // both modes.
+
                 out.append("local __rt = require(\"deal.runtime\")\n");
             }
             if (bindsBytesRuntime()) {
@@ -939,12 +666,7 @@ public final class LuaSemanticEmitter {
             for (LoweredModuleUnit moduleUnit : units.values()) {
                 for (LoweredFunction function : moduleUnit.functions().values()) {
                     emitFunctionFactory(function);
-                    // The function-id -> owning-module resolution row of
-                    // the dynamic dispatch's DEAL_BODY class path
-                    // (ISSUE-0658; Y6): the same walk that declares the
-                    // factory registers the function's owning module, so
-                    // a dynamically invoked carrier establishes the
-                    // callee's module context before its body runs.
+
                     out.append("__fnModules[")
                         .append(function.functionId().id()).append("] = ")
                         .append(luaString(moduleUnit.moduleId().path()))
@@ -990,13 +712,6 @@ public final class LuaSemanticEmitter {
                 }
             }
 
-            // The per-class JSON plans (E7/K-D8/K-D10): one plan per
-            // class layout of the resolution context — declaration-order
-            // fields with descriptor, optionality, static result kind,
-            // and the per-field CLASS_DEFAULT child metadata the
-            // JSON_FROM_CLASS walk consumes (the lowerer's per-site
-            // JsonDefaultChildTable entry, derived from the unit: one
-            // CLASS_DEFAULT op per (classId, field)).
             for (ClassLayout layout : classLayouts.values()) {
                 emitJsonPlan(layout);
             }
@@ -1071,18 +786,6 @@ public final class LuaSemanticEmitter {
                 }
             }
 
-            // The host-driven async-entry dispatch entries (async
-            // EXTERNAL_ENTRY): one entry per recorded async export of
-            // every closure unit, keyed by module#export — the scenario
-            // host adapter's invocation surface (the E6 dispatch-entry
-            // pattern). The entry creates the callee's canonical task;
-            // the drive flag makes the top-level scenario invocation drain
-            // it and return the completion, while a cross-module caller
-            // passes the drive flag false (its AWAIT drains). The
-            // per-closure loop is the same shape the CALLBACK_INVOKE
-            // entries above use: a non-entry module's async export is
-            // reachable in the one artifact (ISSUE-0655,
-            // cross-module-call-realization X2).
             for (LoweredModuleUnit moduleUnit : units.values()) {
                 for (SemanticOp op : moduleUnit.ops()) {
                     if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
@@ -1101,21 +804,6 @@ public final class LuaSemanticEmitter {
             return out.toString();
         }
 
-        /**
-         * Whether the chunk carries the runtime binding and the host-boundary
-         * prelude (ISSUE-0650, extended by ISSUE-0668 and ISSUE-0678): a
-         * project session whose closure's op walk carries a HOST-kind import
-         * (host or extern-C), read from the closure's own {@code MODULE_IMPORT}
-         * ops — never from the session's declaration surface, so the trace
-         * project entry without the compile's declaration surface binds the
-         * runtime for its FFI arms exactly like the production project session
-         * does — or a host-boundary cell of its own (the
-         * {@code DEAL_TO_HOST}/{@code HOST_PARAMETER}/{@code HOST_TO_DEAL}/
-         * {@code HOST_SYNC_RETURN} family), whose emitted checks are the host
-         * prelude's: a spec-stdlib declared-function export read called as a
-         * value carries the same host cell family (K2) without any host import,
-         * so its chunk binds the helpers too.
-         */
         private boolean bindsHostRuntime() {
             return projectSession && (hasHostImports() || hasHostCellBoundaries());
         }
@@ -1638,8 +1326,6 @@ public final class LuaSemanticEmitter {
                 .append(", {}, nil, nil)\n");
         }
 
-
-
         /**
          * A result SUCCESS event atomized by the value's own kind (the
          * deferred composite read: the pass-through admits a value whose
@@ -2000,12 +1686,7 @@ public final class LuaSemanticEmitter {
                     && isNumberKind(staticKind(readDescriptor)) ? "true" : "false")
                 .append(")\n");
             if (boundary != null) {
-                // A contextual composite value (ISSUE-0651): the function and
-                // array carriers pass through — the consuming declared cell
-                // carries the pinned E8010 projection at its own origin (the
-                // corpus pins the call-origin failure for a wrong-kind
-                // argument whose contextual read sits on the argument
-                // expression); every other descriptor keeps the strict row.
+
                 emitBoundaryCheckStartAtom(boundary, target);
                 emitBoundaryCheckBlock(op, boundary, target);
                 // The deferred composite read's SUCCESS atom renders
@@ -2034,7 +1715,6 @@ public final class LuaSemanticEmitter {
                 .append(luaString(inner == null ? "ref" : "nullable:" + staticKind(inner)))
                 .append(", ").append(target).append("), nil)\n");
         }
-
 
         /**
          * OPTIONAL_READ: the internal missing pre-maps to language null
@@ -2085,19 +1765,7 @@ public final class LuaSemanticEmitter {
                     .append(", {__rawAtom(")
                     .append(luaString(staticKind(boundaryPayload.descriptor())))
                     .append(", ").append(target).append(")}, nil, nil)\n");
-                // The present branch is validated per the closed table's
-                // optional-read rule; the boundary failure publishes the
-                // boundary FAILURE and the op FAILURE events with the
-                // boundary origin (a wrong present kind fails the
-                // differential verdict even with coincidental output).
-                // A composite contextual position (ISSUE-0651) — the
-                // function and array carriers — passes through: the
-                // consuming declared cell carries the pinned E8010
-                // projection at its own origin (the corpus pins the
-                // call-origin failure for a wrong-kind argument whose
-                // contextual read sits on the argument expression),
-                // exactly the oracle's identical deferral. Every other
-                // descriptor keeps the strict row.
+
                 emitBoundaryCheckBlock(op, boundary, target);
                 // The op's own result SUCCESS renders the value-aware
                 // atom too (the oracle's publish atomizes the value).
@@ -2121,11 +1789,6 @@ public final class LuaSemanticEmitter {
             return inner instanceof RuntimeDescriptor.Array;
         }
 
-        /**
-         * Whether one boundary descriptor is a composite value type whose
-         * contextual read defers its shape check to the consuming declared
-         * cell (ISSUE-0651: the function and array carriers).
-         */
         private boolean defersContextualCheck(RuntimeDescriptor descriptor) {
             // The composite carriers (functions, arrays, and bytes — a bytes
             // contextual read defers its shape check to the consuming
@@ -2154,11 +1817,7 @@ public final class LuaSemanticEmitter {
             emitStart(op);
             String target = slot((ValueId) op.result());
             if (isHostClassReceiver(op)) {
-                // A declared host class instance (ISSUE-0624; K10): the
-                // deployed construction carrier stores the declared fields
-                // directly (an absent optional field is absent, a present
-                // null is the deployed runtime's sentinel), so presence is
-                // exactly the retained host representation's rule.
+
                 out.append(target).append(" = (")
                     .append(slot(payload.receiver())).append("[")
                     .append(luaString(payload.key())).append("] ~= nil)\n");
@@ -2170,15 +1829,6 @@ public final class LuaSemanticEmitter {
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
 
-        /**
-         * Whether one op's receiver operand is a declared host class
-         * (ISSUE-0624; K10): the {@code HAS_FIELD} payload names no class
-         * id, so the receiver's producing op (or, for an operand-carrying
-         * op, its first operand type) resolves the checked descriptor — a
-         * class-typed receiver whose identity is a declared host class of
-         * the compile's declaration surface. A nullable wrap (an optional
-         * class field read) is unwrapped first.
-         */
         private boolean isHostClassReceiver(SemanticOp op) {
             RuntimeDescriptor descriptor = null;
             if (!op.operandTypes().isEmpty()) {
@@ -2210,16 +1860,6 @@ public final class LuaSemanticEmitter {
         // re-evaluated source expression.
         // =====================================================================
 
-        /**
-         * FIELD_READ (K-D6): the nominal receiver boundary
-         * ({@code UNTYPED_CLASS_INPUT}) runs first — a null receiver or a
-         * foreign class identity fails its canonical E8001 projection —
-         * then the presence-aware read (a missing field pre-maps to
-         * language null; present null is the {@code __NULL} sentinel
-         * converted to nil, never conflated with missing) goes through
-         * the {@code OPTIONAL_FIELD_READ} boundary; SUCCESS publishes the
-         * boundary-checked value.
-         */
         private void emitFieldRead(SemanticOp op) {
             KindPayload.FieldReadPayload payload =
                 (KindPayload.FieldReadPayload) op.payload();
@@ -2230,19 +1870,11 @@ public final class LuaSemanticEmitter {
             emitFieldBoundaryCheck(op, receiverBoundary, slot(payload.classValue()));
             out.append("__instT = __chkB\n");
             if (ClassId.ERROR.equals(payload.classId())) {
-                // The builtin Error carrier (ISSUE-0619; K13 item 6): both
-                // declared fields are always present, and the carrier names
-                // them {@code code} and {@code m} — the read maps the
-                // declared field to the carrier's own field.
+
                 out.append("__rvT = __instT.")
                     .append(errorCarrierField(op, payload.field())).append("\n");
             } else if (isHostClass(payload.classId())) {
-                // A declared host class instance (ISSUE-0624; K10): the
-                // deployed construction carrier stores the declared fields
-                // directly, so the presence-aware read is the field itself
-                // (an absent optional field is nil) with the present-null
-                // sentinel pre-mapped to the language null, exactly like the
-                // in-project carrier's presence-map read.
+
                 out.append("__rvT = __instT[").append(luaString(payload.field()))
                     .append("]\n");
                 out.append("if __rvT == __NULL or __rvT == __rt.__NULL then "
@@ -2265,15 +1897,6 @@ public final class LuaSemanticEmitter {
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
 
-        /**
-         * FIELD_WRITE (K-D6, the ASSIGN chain's commit child): the
-         * receiver boundary runs over the resolved receiver slot, then the
-         * field boundary ({@code CLASS_FIELD_ASSIGNMENT}) over the
-         * resolved stored value — the store commits only after both pass
-         * (a failed boundary commits nothing), and the published instance
-         * carries the boundary-published value in the named field with
-         * every other presence state unchanged.
-         */
         private void emitFieldWrite(SemanticOp op) {
             KindPayload.FieldWritePayload payload =
                 (KindPayload.FieldWritePayload) op.payload();
@@ -2294,11 +1917,7 @@ public final class LuaSemanticEmitter {
                     .append(errorCarrierField(op, payload.field()))
                     .append(" = __chkB\n");
             } else if (isHostClass(payload.classId())) {
-                // A declared host class field write (ISSUE-0624; K10): the
-                // commit stores the boundary-published value into the
-                // deployed construction carrier's own field, the language
-                // null as the deployed runtime's sentinel (the retained host
-                // representation's present-null convention).
+
                 out.append("__instT[").append(luaString(payload.field()))
                     .append("] = (__chkB == nil) and __rt.__NULL or __chkB\n");
             } else {
@@ -2310,13 +1929,6 @@ public final class LuaSemanticEmitter {
             emitPlainSuccess(op);
         }
 
-        /**
-         * FIELD_DELETE (K-D6, the DELETE chain's commit child): the
-         * receiver boundary runs over the resolved receiver slot, then
-         * the named field's presence and value are cleared — deleting an
-         * already-missing field is a no-op SUCCESS, and every other field
-         * state is unchanged.
-         */
         private void emitFieldDelete(SemanticOp op) {
             KindPayload.FieldDeletePayload payload =
                 (KindPayload.FieldDeletePayload) op.payload();
@@ -2336,9 +1948,7 @@ public final class LuaSemanticEmitter {
                 boundaryChildOfKind(op, BoundaryKind.UNTYPED_CLASS_INPUT);
             emitFieldBoundaryCheck(op, receiverBoundary, slot(payload.classValue()));
             if (isHostClass(payload.classId())) {
-                // A declared host class field delete (ISSUE-0624; K10): the
-                // deployed construction carrier clears the direct field —
-                // deleting an already-absent field is a no-op SUCCESS.
+
                 out.append("__chkB[").append(luaString(payload.field()))
                     .append("] = nil\n");
                 emitPlainSuccess(op);
@@ -2368,7 +1978,6 @@ public final class LuaSemanticEmitter {
                     + " producer defect, never emitted");
             };
         }
-
 
         /**
          * One field-op boundary child: the START carries the input's
@@ -2617,12 +2226,7 @@ public final class LuaSemanticEmitter {
                 (KindPayload.BindingAllocPayload) op.payload();
             emitStart(op);
             if (isCatchBinding(payload.binding())) {
-                // The catch binding's ALLOC sits at the catch block's entry
-                // and its pinned initializing write is the TRY_CATCH arm's
-                // catch-entry assignment, which runs before the catch block's
-                // ops (the catch binding's cell carries the reified Error
-                // value — ISSUE-0619's catch reification). A cell reset here
-                // would clobber the caught value.
+
                 emitPlainSuccess(op);
                 return;
             }
@@ -2632,7 +2236,6 @@ public final class LuaSemanticEmitter {
             }
             emitPlainSuccess(op);
         }
-
 
         private void emitBindingInit(SemanticOp op) {
             KindPayload.BindingInitPayload payload =
@@ -2658,20 +2261,6 @@ public final class LuaSemanticEmitter {
             emitPlainSuccess(op);
         }
 
-
-        /**
-         * The memoized intrinsic carrier expression of one value identity
-         * (J2): the closed {@code IntrinsicFunction} registration of the
-         * closure resolves the kind — never a spelling — and every op
-         * result publishing the identity is an identity-preserving
-         * {@code BINDING_LOAD} of the seed {@code BINDING_INIT}'s own cell
-         * (or nothing publishes it, the seed's producer-less identity), so
-         * an identity-preserving load of the seeded binding never replaces
-         * the memoized carrier with a slot read. {@code null} when the
-         * identity is not a registered intrinsic: every other value keeps
-         * the landed {@code hasProducer} behavior (a closure identity has
-         * its real creation op).
-         */
         private String intrinsicCarrierExpr(ValueId valueId) {
             IntrinsicKind kind = intrinsicKindOf(valueId);
             return kind == null ? null : intrinsicAccessor(kind);
@@ -2703,17 +2292,6 @@ public final class LuaSemanticEmitter {
             return null;
         }
 
-
-
-        /**
-         * The deterministic placeholder expression of a site whose identity
-         * resolves no intrinsic registration (the landed residual arm): a
-         * fresh, per-site value carrying the landed opaque export view — the
-         * oracle's {@code ()->number} projection — and the real carrier's
-         * interface, so the landed function row admits it exactly as the
-         * oracle's view does. Never the removed marker: the placeholder is a
-         * real carrier surface.
-         */
         private static String exportPlaceholderCarrier() {
             return "__intrinsicExport()";
         }
@@ -2835,12 +2413,6 @@ public final class LuaSemanticEmitter {
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
 
-        /**
-         * The carrier expression of one adapter VALUE source: the memoized
-         * intrinsic carrier when the identity carries the seeded
-         * {@code IntrinsicFunction} registration (J2), the operand's own
-         * slot for a produced identity, and the landed placeholder otherwise.
-         */
         private String adaptValueExpr(AdaptSourceRef.Value value) {
             String sourceExpr = intrinsicCarrierExpr(value.value());
             if (sourceExpr == null) {
@@ -2967,7 +2539,6 @@ public final class LuaSemanticEmitter {
             return "number".equals(kind) || "nullable:number".equals(kind);
         }
 
-
         private void emitDelete(SemanticOp op) {
             KindPayload.DeletePayload payload = (KindPayload.DeletePayload) op.payload();
             emitStart(op);
@@ -3087,7 +2658,6 @@ public final class LuaSemanticEmitter {
             }
         }
 
-
         /** The chain's normalize-slot local (found among its children). */
         private String chainSlotExpr(SemanticOp chain) {
             for (OpId childId : chainChildOps(chain)) {
@@ -3111,7 +2681,6 @@ public final class LuaSemanticEmitter {
             return "nil";
         }
 
-
         /** The single BOUNDARY child parented to the given op, or null. */
         private SemanticOp boundaryChildOf(SemanticOp op) {
             for (SemanticOp candidate : opsById.values()) {
@@ -3125,21 +2694,12 @@ public final class LuaSemanticEmitter {
 
         private void emitCall(SemanticOp op) {
             KindPayload.CallPayload payload = (KindPayload.CallPayload) op.payload();
-            // A Dynamic callee resolves its execution class at execution
-            // (ISSUE-0658; {@link #emitDynamicCall}) and has no
-            // emission-time binding; every other callee resolves its
-            // static binding here.
+
             FunctionExecutionBinding binding = payload.callee()
                     instanceof KindPayload.CallCallee.Dynamic
                 ? null : callBinding(payload);
             emitStart(op);
-            // The host arms (ISSUE-0651; host-module-load-and-host-call-
-            // realization H3/H7 and the sync host call contract): the
-            // loaded surface entry is invoked through the landed wrapper's
-            // own `.f` calling convention with the trailing literal span
-            // triplet, the declared parameter cells run at the call site
-            // with the pinned E8010 projections, and every crossed value is
-            // projected through the host-facing carrier set.
+
             if (binding instanceof FunctionExecutionBinding.HostFunction host) {
                 emitHostCall(op, payload, host.hostModuleId(), host.exportName(),
                     true);
@@ -3149,12 +2709,7 @@ public final class LuaSemanticEmitter {
                 emitHostValueCall(op, payload, hostValue);
                 return;
             }
-            // The conversion intrinsic's value call (ISSUE-0679; design
-            // source {@code conversion-intrinsic-function-values} J3/J4): the
-            // seeded identity's registration is a boundary-shaped callable, so
-            // the indirect arm runs the recorded host cell family and the one
-            // conversion ladder at the call site with the invoking CALL op's
-            // own context and kind.
+
             if (binding instanceof FunctionExecutionBinding.IntrinsicFunction intrinsic) {
                 emitIntrinsicValueCall(op, payload, intrinsic);
                 return;
@@ -3185,9 +2740,7 @@ public final class LuaSemanticEmitter {
                 emitBoundarySuccess(boundary, "__chk", boundaryPayload.descriptor());
             }
             if (payload.callee() instanceof KindPayload.CallCallee.Dynamic dynamic) {
-                // The dynamic dispatch (ISSUE-0658): the recorded parameter
-                // cells above are the class-independent family; the
-                // carrier's own class tag selects the path.
+
                 emitDynamicCall(op, payload, dynamic);
                 String dynamicResult = slot((ValueId) op.result());
                 out.append(dynamicResult).append(" = __resT\n");
@@ -3242,19 +2795,7 @@ public final class LuaSemanticEmitter {
                     out.append("end\n");
                 }
                 case FunctionExecutionBinding.AdapterBinding adapter -> {
-                    // The D15 invocation protocol: resolve the source per
-                    // the recorded capture mode, the source-signature
-                    // check (E8010 at this CALL's origin), then the
-                    // source invocation with the leading M arguments
-                    // only — every N target-signature parameter boundary
-                    // already ran above. The adapter protocol pushes the
-                    // source body's frame itself; the identical
-                    // completion error propagates unchanged. An adapter
-                    // whose recorded source is the seeded intrinsic
-                    // identity runs the same order at this call site with
-                    // the conversion ladder as its source invocation
-                    // (ISSUE-0680; design source
-                    // {@code conversion-intrinsic-function-values} J5).
+
                     if (adapterIntrinsicKind(adapter) != null) {
                         emitAdapterOverIntrinsicRun(op, payload, adapter);
                         break;
@@ -3294,19 +2835,6 @@ public final class LuaSemanticEmitter {
                 (RuntimeDescriptor) op.resultType());
         }
 
-        /**
-         * The {@code ExternalFunction(SHARED_BODY)} CALL arm (ISSUE-0654;
-         * {@code cross-module-call-realization} X1/X4/X5 and the
-         * cross-module sync call contract): the callee unit's recorded
-         * {@code EXTERNAL_ENTRY} runs inside the one artifact under the
-         * callee module's context, with the entry's trace events parented
-         * to the caller's {@code CALL} op, and the callee body's
-         * {@code RETURN} runs the callee's single {@code EXTERNAL_RETURN}
-         * boundary. The caller publishes the returned value without
-         * re-checking (its own {@code EXTERNAL_PARAMETER} cells ran
-         * exactly once above); the module context is restored on success
-         * and on failure.
-         */
         private void emitExternalCall(SemanticOp op, KindPayload.CallPayload payload,
                                       FunctionExecutionBinding.ExternalFunction external) {
             if (external.executionOwner()
@@ -3403,8 +2931,6 @@ public final class LuaSemanticEmitter {
             emitModulePop();
         }
 
-
-
         /**
          * The re-entrant invocation's private-state save, or {@code null}
          * when the callee body has no private state or is not already
@@ -3474,7 +3000,6 @@ public final class LuaSemanticEmitter {
             out.append("__svStack[#__svStack] = nil\n");
         }
 
-
         /**
          * The registered execution binding of one allocation identity. The
          * project session's units share one identity space (every semantic
@@ -3495,15 +3020,6 @@ public final class LuaSemanticEmitter {
             return null;
         }
 
-        /**
-         * The statically resolved execution binding of one CALL: the
-         * inline Static binding or the unit's registered binding of an
-         * Indirect callee identity (the same registration the semantic
-         * oracle re-resolves at execution). A Dynamic callee is the
-         * runtime-resolution slice (ISSUE-0531/ISSUE-0658): its execution
-         * class is read from the resolved carrier at execution and the
-         * emission-time binding is null ({@link #emitDynamicCall}).
-         */
         private FunctionExecutionBinding callBinding(KindPayload.CallPayload payload) {
             FunctionExecutionBinding binding = switch (payload.callee()) {
                 case KindPayload.CallCallee.Static staticCallee -> staticCallee.binding();
@@ -3519,18 +3035,6 @@ public final class LuaSemanticEmitter {
             return binding;
         }
 
-        /**
-         * The sync host call arm (ISSUE-0651;
-         * {@code host-module-load-and-host-call-realization} H3/H7 and the
-         * sync host call contract): the loaded surface entry is resolved
-         * by {@code (hostModuleId, exportName)} — the resolved module
-         * identity is the registry key, so no alias is needed and the
-         * direct {@code CALL(HOST)}, the value-position
-         * {@code CALL(INDIRECT)}, and a host callback all use the one
-         * loaded entry — and invoked through the landed wrapper's
-         * {@code .f} calling convention with the completed argument
-         * values and the trailing literal span triplet.
-         */
         private void emitHostCall(SemanticOp op, KindPayload.CallPayload payload,
                 ModuleId hostModuleId, String exportName, boolean moduleEntry) {
             emitHostInvocation(op, payload,
@@ -3643,21 +3147,6 @@ public final class LuaSemanticEmitter {
             return index - 1;
         }
 
-        /**
-         * The conversion intrinsic's value call (ISSUE-0679; design source
-         * {@code conversion-intrinsic-function-values} J3/J4): the seeded
-         * identity's registration is a boundary-shaped callable, so the
-         * indirect arm runs exactly the recorded host cell family — one
-         * {@code DEAL_TO_HOST} + {@code HOST_PARAMETER} cell per declared
-         * parameter through the landed host parameter rule (the argument
-         * domain the cells own; a null or wrong-kind argument is a
-         * parameter-cell projection, never a conversion failure) — then the one
-         * conversion ladder with the invoking CALL op's own context and kind
-         * label (the pinned texts and the FAILURE event carry the invoking op),
-         * then the recorded {@code HOST_TO_DEAL} + {@code HOST_SYNC_RETURN}
-         * cell at the call origin. One algorithm authority with the direct
-         * {@code INTRINSIC_CALL} arm, whose kind label stays its own.
-         */
         private void emitIntrinsicValueCall(SemanticOp op, KindPayload.CallPayload payload,
                 FunctionExecutionBinding.IntrinsicFunction intrinsic) {
             int argCount = emitHostParameterCells(op, payload);
@@ -3689,17 +3178,6 @@ public final class LuaSemanticEmitter {
             emitResultSuccess(op, result, (RuntimeDescriptor) op.resultType());
         }
 
-        /**
-         * The intrinsic kind of one adapter's statically fixed recorded
-         * source, or {@code null} (ISSUE-0680; design source
-         * {@code conversion-intrinsic-function-values} J5): a VALUE source
-         * operand whose identity carries the seeded {@code IntrinsicFunction}
-         * registration under the identity-preserving-load predicate — the
-         * same resolution the adapter's creation operand publishes, so the
-         * call site and the creation site agree on the source class, and an
-         * operand of any other binding or class keeps the landed
-         * {@code __adaptInvoke} protocol.
-         */
         private IntrinsicKind adapterIntrinsicKind(
                 FunctionExecutionBinding.AdapterBinding adapter) {
             if (!(adapter.sourceRef() instanceof AdaptSourceRef.Value value)) {
@@ -3708,15 +3186,6 @@ public final class LuaSemanticEmitter {
             return intrinsicKindOf(value.value());
         }
 
-        /**
-         * The one conversion ladder at one DEAL call site (ISSUE-0679 J4;
-         * ISSUE-0680 for the adapter-over-intrinsic path): the closed kind's
-         * conversion over the cell-admitted argument with the invoking op's
-         * own context, kind label, and origin — the pinned texts and the
-         * FAILURE event carry the invoking op. One algorithm authority with
-         * the direct {@code INTRINSIC_CALL} arm, whose kind label stays its
-         * own.
-         */
         private void emitIntrinsicLadder(SemanticOp op, IntrinsicKind kind, String input,
                                          String indent) {
             String helper = kind == IntrinsicKind.INT_CONVERT ? "__intConv" : "__numConv";
@@ -3730,14 +3199,6 @@ public final class LuaSemanticEmitter {
                 .append(luaString(originOf(op))).append(")\n");
         }
 
-        /**
-         * The one conversion ladder inside a task closure (ISSUE-0680): the
-         * task body's pcall over the closed kind's conversion with the
-         * invoking op's own context and kind label; the closure re-raises
-         * the captured conversion error unchanged, so a conversion failure
-         * surfaces at the owning AWAIT exactly as the task protocol
-         * prescribes (the async form's single completion position).
-         */
         private void emitIntrinsicLadderPcall(SemanticOp op, IntrinsicKind kind,
                                               String input, String indent) {
             String helper = kind == IntrinsicKind.INT_CONVERT ? "__intConv" : "__numConv";
@@ -3751,22 +3212,6 @@ public final class LuaSemanticEmitter {
                 .append(luaString(originOf(op))).append(")\n");
         }
 
-        /**
-         * The adapter-over-intrinsic invocation at a statically classified
-         * call site (ISSUE-0680; design source
-         * {@code conversion-intrinsic-function-values} J5): the landed D15
-         * order with the seeded intrinsic identity as the recorded source —
-         * (1) the source resolution per the recorded capture mode (VALUE
-         * retains the memoized carrier the adapter creation published),
-         * (2) the carried canonical spec checked against the recorded source
-         * signature (the pinned E8010 at this CALL's origin), (3) the
-         * leading-M argument projection over the recorded target-cell values,
-         * (4) the one conversion ladder with the invoking CALL op's own
-         * context and kind, and (5) the recorded {@code HOST_TO_DEAL} +
-         * {@code HOST_SYNC_RETURN} cell — the source class is HOST, so the
-         * call op runs exactly the cell the intrinsic's own indirect arm
-         * records. The checked value is left in {@code __resT}.
-         */
         private void emitAdapterOverIntrinsicRun(SemanticOp op,
                 KindPayload.CallPayload payload,
                 FunctionExecutionBinding.AdapterBinding adapter) {
@@ -3820,14 +3265,6 @@ public final class LuaSemanticEmitter {
          * identity — a nullable, function, or class position is a fail-closed
          * producer defect, never a silently projected argument.</p>
          *
-         * @param op              the invoking CALL op; non-null
-         * @param payload         the CALL payload (its recorded parameter cells);
-         *                        non-null
-         * @param target          the surface entry expression (the cataloged
-         *                        carrier); non-null
-         * @param row             the resolved catalog row; non-null
-         * @param argCount        the completed argument count; ≥0
-         * @param returnBoundary  the recorded {@code HOST_TO_DEAL} cell, or null
          */
         private void emitStdlibCalleeInvocation(SemanticOp op,
                 KindPayload.CallPayload payload, String target,
@@ -3868,19 +3305,6 @@ public final class LuaSemanticEmitter {
             out.append("end\n");
         }
 
-        /**
-         * The invocation tail of one host row (ISSUE-0658 extraction of
-         * the landed ISSUE-0651 host arm): the {@code .f} call with the
-         * host-projected parameters ({@code __hbT[1..argCount]}) and the
-         * trailing literal span triplet, the wrapper-error projection,
-         * and the declared return cell — the checked value is left in
-         * {@code __resT}. Shared by the static host arms (target: the
-         * loaded surface entry; cell: the payload's single
-         * {@code HOST_TO_DEAL} child) and the dynamic dispatch's HOST
-         * row (target: the carrier's own loaded surface entry; cell: the
-         * recorded {@code HOST_TO_DEAL} cell of the dynamic
-         * return-boundary set).
-         */
         private void emitHostInvocationTail(SemanticOp op, String target, int argCount,
                                             SemanticOp returnBoundary) {
             String declaredReturn = returnBoundary == null ? null
@@ -3915,28 +3339,6 @@ public final class LuaSemanticEmitter {
             emitHostReturnCellRun(op, returnBoundary, "__hostCellAtom");
         }
 
-        /**
-         * The declared-return half of one host-shaped result: the call op runs
-         * the recorded {@code HOST_TO_DEAL} + {@code HOST_SYNC_RETURN} cell on
-         * the value left in {@code __resT} — the class-value carrier projection
-         * (F4) first, then the boundary's START/SUCCESS atoms and the
-         * descriptor check under the cell's own origin. Shared by the static
-         * host arms' invocation tail and the dynamic dispatch's HOST row (the
-         * landed host wrapper and the cataloged stdlib callable alike), so the
-         * recorded cell runs exactly once per invocation on every HOST path.
-         *
-         * @param op              the invoking call op; non-null
-         * @param returnBoundary  the recorded {@code HOST_TO_DEAL} cell, or
-         *                        {@code null} for a call with no return cell;
-         *                        the caller leaves the checked value in
-         *                        {@code __resT}
-         * @param atomizer        the prelude atom helper for the cell's
-         *                        boundary atoms: the DEAL-null-aware host
-         *                        atom for a loaded host surface value, the
-         *                        general value atom for the cataloged stdlib
-         *                        callable's result (a session without a host
-         *                        declaration surface emits no host atom helper)
-         */
         private void emitHostReturnCellRun(SemanticOp op, SemanticOp returnBoundary,
                                            String atomizer) {
             if (returnBoundary == null) {
@@ -3994,38 +3396,6 @@ public final class LuaSemanticEmitter {
             out.append("__resT = __chkB\n");
         }
 
-        /**
-         * The dynamic CALL arm (ISSUE-0658;
-         * {@code dynamic-call-shape-production-and-emission} Y2/Y3/Y5/Y6
-         * and the dynamic dispatch contract): the recorded parameter
-         * cells ran once, left to right, before the dispatch (the
-         * class-independent family); the carrier's own class tag then
-         * selects exactly one class path — never the checked descriptor,
-         * the callee spelling, or an argument value.
-         *
-         * <p>{@code DEAL_BODY} resolves the carrier's function id to its
-         * owning module through the chunk-global {@code __fnModules}
-         * table (built by the same walk that declares the function
-         * factories), pushes the callee frame, switches the module
-         * context, and invokes the carrier's own invoker
-         * ({@code __unfn}); {@code ADAPTER} runs the landed D15 sequence
-         * (the source value's own tag, the source-signature check, the
-         * leading-M argument projection) and executes the cell the
-         * source class selects — a DEAL-body source runs that body's own
-         * {@code RETURN} cell; {@code HOST} invokes the loaded surface
-         * entry through its host calling convention and runs the
-         * recorded {@code HOST_TO_DEAL} + {@code HOST_SYNC_RETURN} cell
-         * of the dynamic return-boundary set.</p>
-         *
-         * <p>Every other carrier — and an adapter whose D15 source value
-         * identifies no executable class at this boundary — fails closed
-         * with the pinned E8001 {@code expected function} projection
-         * ({@code expected}/{@code actual}) at the call origin, exactly
-         * the projection the materialization-site function row produces:
-         * never a guessed path and never a silent no-op. The module
-         * context and the frame stack are restored on success and on
-         * failure; the checked value is left in {@code __resT}.</p>
-         */
         private void emitDynamicCall(SemanticOp op, KindPayload.CallPayload payload,
                                      KindPayload.CallCallee.Dynamic callee) {
             KindPayload.DynamicReturnBoundary cells = payload.dynamicReturnBoundary();
@@ -4043,12 +3413,7 @@ public final class LuaSemanticEmitter {
                     + " (producer defect)");
             }
             String origin = luaString(originOf(op));
-            // The recorded DEAL-body cell's closed form (ISSUE-0677; design
-            // source {@code function-typed-value-materialization-and-dispatch}
-            // M6): a call-owned record is executed by the invocation site on
-            // the value the resolved body returned, after the body's own
-            // RETURN ran the body's own cell; a callee-owned record is that
-            // body's own cell and runs nothing here.
+
             SemanticOp recordedDealCell = opsById.get(cells.dealBodyBoundaryOpId());
             boolean callOwnedDealCell = recordedDealCell != null
                 && callOwnedCell(recordedDealCell);
@@ -4089,10 +3454,7 @@ public final class LuaSemanticEmitter {
             if (callOwnedDealCell) {
                 emitRecordedCellRun(op, recordedDealCell, "__resT", "  ");
             }
-            // ADAPTER: the landed D15 sequence; the source class selects
-            // the return cell (a DEAL-body source runs its own body's
-            // RETURN cell, and a call-owned recorded cell then runs at the
-            // invocation site).
+
             out.append("elseif __dynK == \"ADAPTER\" then\n");
             out.append("  __dynS = __adaptSource(__dynC)\n");
             out.append("  __okB, __chkB = pcall(__fncheck, __dynS, __dynC.__csrc, ")
@@ -4125,15 +3487,7 @@ public final class LuaSemanticEmitter {
             if (callOwnedDealCell) {
                 emitRecordedCellRun(op, recordedDealCell, "__resT", "    ");
             }
-            // The runtime adapter branch's intrinsic source (ISSUE-0680;
-            // design source {@code conversion-intrinsic-function-values}
-            // J5): the resolved source value is the memoized intrinsic
-            // carrier, so the same D15 sequence runs here — the leading-M
-            // recorded argument through the one conversion ladder with the
-            // invoking CALL op's context and kind, then the recorded
-            // HOST_TO_DEAL + HOST_SYNC_RETURN cell of the dynamic set (the
-            // source class is HOST). Non-intrinsic source values keep the
-            // landed fail-closed residue.
+
             out.append("  elseif __dynS.__it ~= nil then\n");
             if (payload.parameterBoundaryOpIds().isEmpty()) {
                 // The leading-M projection of the runtime intrinsic source has
@@ -4172,35 +3526,9 @@ public final class LuaSemanticEmitter {
             out.append("end\n");
         }
 
-        /**
-         * The dynamic dispatch's HOST row: the carrier's own HOST sub-class
-         * decides the path (never the checked descriptor). The conversion
-         * intrinsic ({@code __it}) runs the closed kind's conversion ladder
-         * with the invoking CALL op's own context and kind label — one
-         * algorithm authority with the direct {@code INTRINSIC_CALL} arm
-         * (ISSUE-0679; design source
-         * {@code conversion-intrinsic-function-values} J3/J4). A loaded surface
-         * entry is invoked through its host calling convention ({@code .f} with
-         * the projected parameters and the trailing literal span triplet); the
-         * cataloged stdlib callable ({@code __sid}) runs the closed catalog
-         * row's one invoker with the invoking CALL op's context (the row
-         * identity plus the op key, contract digest, parent key, and origin —
-         * one algorithm authority with the direct {@code STDLIB_CALL} arm and
-         * the read's callable), its failures projecting the CALL op's own
-         * FAILURE event kind. Every sub-class then runs the recorded
-         * {@code HOST_TO_DEAL} + {@code HOST_SYNC_RETURN} cell exactly once at
-         * the call origin (the oracle's {@code invokeResolvedHostRequest}
-         * followed by {@code runBoundaryChild}). The checked value is left in
-         * {@code __resT}.
-         */
         private void emitDynamicHostRow(SemanticOp op, KindPayload.CallPayload payload,
                                         SemanticOp returnBoundary) {
-            // The conversion intrinsic's sub-class (ISSUE-0679): the carrier's
-            // own kind tag selects the one conversion ladder over the value the
-            // recorded class-independent parameter cells admitted (the declared
-            // parameter descriptor is the argument domain), with the invoking
-            // CALL op's context and kind label; then the recorded cell admits
-            // the converted value.
+
             if (payload.parameterBoundaryOpIds().size() == 1) {
                 SemanticOp parameter = opsById.get(payload.parameterBoundaryOpIds().get(0));
                 KindPayload.BoundaryPayload parameterPayload =
@@ -4265,23 +3593,6 @@ public final class LuaSemanticEmitter {
             out.append("  end\n");
         }
 
-
-        /**
-         * The invocation site's execution of one call-owned recorded
-         * DEAL-body cell (ISSUE-0677; the oracle's
-         * {@code runBoundaryChild} over the recorded cell): the cell's START
-         * event carries the input atom, the boundary check runs under the
-         * cell's own origin, the SUCCESS terminal publishes the admitted
-         * value, and a failure emits the cell's and the invocation op's
-         * FAILURE events and raises. The cell is total on the admitted value
-         * (an identical declared descriptor), so its check passes and only
-         * its boundary events are observable.
-         *
-         * @param invocation the dynamic invocation op; non-null
-         * @param cell       the recorded call-owned cell; non-null
-         * @param valueSlot  the Lua slot holding the returned value; non-null
-         * @param indent     the emitted block's indentation prefix; non-null
-         */
         private void emitRecordedCellRun(SemanticOp invocation, SemanticOp cell,
                                          String valueSlot, String indent) {
             KindPayload.BoundaryPayload payload =
@@ -4331,52 +3642,13 @@ public final class LuaSemanticEmitter {
             out.append("error(__dynE, 0)\n");
         }
 
-        /**
-         * The dynamic {@code ASYNC_START} arm (ISSUE-0658; ISSUE-0678 for the
-         * asynchronous host class;
-         * {@code dynamic-call-shape-production-and-emission} Y4/Y5 and
-         * the dynamic async start contract): the recorded parameter
-         * cells ran above; a DEAL-body carrier starts the callee body
-         * task under the callee's module context with the recorded
-         * task cell (the body's own {@code RETURN} runs it) — a callee value
-         * of another unit resolves its owning module through the carrier's
-         * function id and runs its own body under that module context, the
-         * emitter twin of the oracle's owning-unit body terminal; the adapter
-         * class runs the landed D15 sequence and starts the source
-         * class's task under the source's module context with the
-         * leading-M recorded arguments (the source body task), with
-         * zero caller-side return boundaries beyond the recorded task
-         * cell — the oracle's {@code executeDynamicAdapterAsyncStart}; a
-         * loaded host surface entry ({@code __kind == "function"}) starts the
-         * declared async export through the same host calling convention and
-         * {@code ASYNC_OPERATION_HANDLE} terminal as the static arm, with the
-         * operation handle bound to this token under the entry's declared
-         * identity (the oracle's dynamic HOST resolution; zero caller-side
-         * return cells). A shared-body/retained-ABI external function value
-         * carries no value tag at all (M4: the identity channel only), so a
-         * value-resolved external callee of another unit is the DEAL-body
-         * class above — its own body under its own module context — and the
-         * identity-channel external async link stays the landed static
-         * {@code ASYNC_START(EXTERNAL)} arm's recorded
-         * {@code ExternalAsyncLink}. A carrier of any other class fails closed
-         * here with the pinned E8001 at the start origin, as does an adapter
-         * whose D15 source value identifies no class the closed protocol
-         * resolves and a host-tagged carrier whose declared identity resolves
-         * no unique loaded surface entry. The caller records no
-         * return boundary beyond the recorded task cell, and its single
-         * {@code AWAIT} drains the token.
-         */
         private void emitDynamicAsyncStart(SemanticOp op,
                                            KindPayload.AsyncStartPayload payload,
                                            KindPayload.CallCallee.Dynamic callee,
                                            AsyncTokenId token) {
             String origin = luaString(originOf(op));
             String carrierArgs = "S.__sa" + op.opId().id();
-            // The recorded task cell's closed form (ISSUE-0677; design
-            // source {@code function-typed-value-materialization-and-dispatch}
-            // M6): a call-owned record executes in this caller-side task
-            // wrapper before the token completes; a callee-owned record is
-            // the resolved body's own cell and runs inside the body.
+
             SemanticOp recordedTaskCell = payload.returnBoundaryOpId() == null
                 ? null : opsById.get(payload.returnBoundaryOpId());
             boolean callOwnedTaskCell = recordedTaskCell != null
@@ -4408,12 +3680,7 @@ public final class LuaSemanticEmitter {
             }
             out.append("    return __resA\n");
             out.append("  end), ").append(carrierArgs).append(")\n");
-            // ADAPTER: the landed D15 sequence resolves the source value
-            // and checks its carried source spec; the source class then
-            // starts its own task with the leading-M recorded arguments
-            // (a DEAL-body source runs that body's own RETURN cell under
-            // its module context, with zero caller-side return
-            // boundaries).
+
             out.append("elseif __dynK == \"ADAPTER\" then\n");
             out.append("  __dynS = __adaptSource(__dynC)\n");
             out.append("  __okB, __chkB = pcall(__fncheck, __dynS, __dynC.__csrc, ")
@@ -4423,15 +3690,7 @@ public final class LuaSemanticEmitter {
             out.append("    error(__chkB, 0)\n");
             out.append("  end\n");
             out.append("  __dynS = __chkB\n");
-            // The runtime adapter branch's intrinsic source (ISSUE-0680;
-            // design source {@code conversion-intrinsic-function-values}
-            // J5): the resolved source value is the memoized intrinsic
-            // carrier, so the task is the closed DEAL_BODY task running the
-            // one conversion ladder with this op's context and kind over the
-            // leading-M recorded argument and completing immediately with
-            // the converted value; the single AWAIT runs the landed
-            // ASYNC_COMPLETION cell. Every other non-DEAL_BODY source keeps
-            // the landed fail-closed residue.
+
             out.append("  if __dynS.__it ~= nil then\n");
             if (recordedArgCount(payload, op) == 0) {
                 // The leading-M projection of the runtime intrinsic source has
@@ -4570,9 +3829,7 @@ public final class LuaSemanticEmitter {
             String input = slot(payload.input());
             String kind = staticKind(op.operandTypes().get(0));
             String origin = originOf(op);
-            // The direct arm keeps its own kind as the invoking op's label
-            // (ISSUE-0679 J4); an intrinsic value call passes the invoking
-            // CALL op's kind through the same ladder.
+
             switch (payload.kind()) {
                 case INT_CONVERT -> out.append(target).append(" = __intConv(")
                     .append(input).append(", ").append(luaString(op.kind().name()))
@@ -4712,56 +3969,21 @@ public final class LuaSemanticEmitter {
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
 
-        /**
-         * CLASS_NEW (E5, D16 construction order): provided values
-         * completed before the op; default application in declaration
-         * order (LOCAL through the detached class-default functions, or
-         * the owner's CLASS_FACTORY transfer with the factory's events
-         * parented to this caller op — the cross-unit K-D12 parent);
-         * extra-key rejection first in provided-source order (E8007 at
-         * the op origin); provided-field application and field
-         * validation in declaration order through the boundary
-         * children; the instance is tagged with its canonical class
-         * identity last. Zero return boundaries; a failure publishes no
-         * partial instance.
-         *
-         * <p>The declaration-class owners replace the tail with their own
-         * construction entry: {@code BUILTIN_DEFAULTS} publishes the
-         * canonical Error carrier, {@code HOST_DEFAULTS} runs the
-         * deployed {@code __rt.class_} over the loaded
-         * {@code <C>_defaults} entry, and {@code FFI_PLAN} (ISSUE-0666)
-         * runs the runtime's four phases over the loaded
-         * {@code <C>_plan} entry — see
-         * {@link #emitClassNewFfiPlan}.</p>
-         */
         private void emitClassNew(SemanticOp op) {
             KindPayload.ClassNewPayload payload =
                 (KindPayload.ClassNewPayload) op.payload();
             emitStart(op);
             ClassLayout layout = classLayouts.get(payload.classId());
             if (layout == null && payload.defaultOwner() == DefaultOwner.BUILTIN_DEFAULTS) {
-                // The compiler-owned builtin Error layout (ISSUE-0619; K13
-                // item 1): the builtin class resolves through the same
-                // compiler constant every consumer resolves — the layout is
-                // a resolution-only entry (the class is excluded from the
-                // generated class carriers and the JSON plans).
+
                 layout = ClassLayout.BUILTIN_ERROR;
             }
             if (layout == null && payload.defaultOwner() == DefaultOwner.HOST_DEFAULTS) {
-                // The host declaration class's registered layout (ISSUE-0624;
-                // K10): the payload carries exactly the project lowering's
-                // registration-seed layout (the validator checks the
-                // equality against the seeds), and the declaration layouts
-                // are never merged into a unit's own classLayouts.
+
                 layout = payload.layout();
             }
             if (layout == null && payload.defaultOwner() == DefaultOwner.FFI_PLAN) {
-                // The extern-C declaration class's registered C-struct
-                // layout (ISSUE-0666; struct-plan F1/F2): the payload carries
-                // exactly the project lowering's registration-seed layout of
-                // the validated plan's ordered fields (the validator checks
-                // the equality against the seeds), and the declaration
-                // layouts are never merged into a unit's own classLayouts.
+
                 layout = payload.layout();
             }
             if (layout == null) {
@@ -4777,22 +3999,10 @@ public final class LuaSemanticEmitter {
                 case LOCAL -> emitClassNewLocalDefaults(op, payload, provided);
                 case SHARED_FACTORY -> emitClassNewFactoryTransfer(op, payload, provided);
                 case HOST_DEFAULTS -> {
-                    // The host declaration class construction (ISSUE-0624;
-                    // K10 and the K10 contract): dispatched after the
-                    // static extra-key scan below — the shape carries no
-                    // default children and no factory transfer, and its
-                    // phases run through the loaded <C>_defaults entry.
+
                 }
                 case FFI_PLAN -> {
-                    // The extern-C C-struct construction (ISSUE-0666;
-                    // struct-plan F1 and the construction contract): the
-                    // provided fields' boundary children run first, then
-                    // the deterministic extra-key guard, then the runtime
-                    // entry over the loaded <C>_plan entry — the fixed
-                    // order of the decision, so the guard's E8007 is the
-                    // deterministic authority over the runtime's order-free
-                    // phase-1 pairs() iteration and no default runs before
-                    // it.
+
                     emitClassNewFfiPlan(op, payload, layout);
                     return;
                 }
@@ -4807,9 +4017,7 @@ public final class LuaSemanticEmitter {
                     + " carries defaultOwner " + payload.defaultOwner()
                     + " outside the emitted owners (producer defect)");
             }
-            // K-D4 step 3: extra-key rejection first in provided-source
-            // order — after default application, before any provided-field
-            // application or field validation.
+
             emitExtraKeyRejection(op, payload, layout);
             if (payload.defaultOwner() == DefaultOwner.BUILTIN_DEFAULTS) {
                 emitClassNewBuiltinDefaults(op, payload, layout);
@@ -4819,9 +4027,7 @@ public final class LuaSemanticEmitter {
                 emitClassNewHostDefaults(op, payload, layout);
                 return;
             }
-            // K-D4 steps 4-5: instance building plus field validation in
-            // declaration order; the tag and the publication come last
-            // (step 6).
+
             out.append("__instT = {}\n");
             out.append("__instT.__f = {}\n");
             out.append("__instT.__p = {}\n");
@@ -4837,8 +4043,7 @@ public final class LuaSemanticEmitter {
                 String inputExpr;
                 if (entry.kind() == BoundaryKind.CLASS_DEFAULT_FIELD
                         && payload.defaultOwner() == DefaultOwner.SHARED_FACTORY) {
-                    // The K-D4 extraction rule: the checked value is the
-                    // transferred instance's named field.
+
                     SemanticOp factoryOp = opsById.get(factoryOpIdOf(op, payload));
                     inputExpr = "__fT";
                     out.append("__fT = __member(")
@@ -4868,7 +4073,7 @@ public final class LuaSemanticEmitter {
                 out.append("__instT.__p[").append(luaString(entry.field()))
                     .append("] = true\n");
             }
-            // K-D4 step 6: the tag, then the publication.
+
             out.append("__instT.__c = true\n");
             out.append("__instT.__id = ")
                 .append(luaString(payload.classId().text())).append("\n");
@@ -4877,15 +4082,6 @@ public final class LuaSemanticEmitter {
                 (RuntimeDescriptor) op.resultType());
         }
 
-        /**
-         * K-D4 step 3: the extra-key rejection in provided-source order —
-         * a provided name absent from the layout raises E8007 {@code extra
-         * field '<field>' in class '<identity>'} at the op's own origin,
-         * before any provided-field application or field validation runs,
-         * and names the first offending name in provided-source order. The
-         * FFI construction runs the same guard after its provided-field
-         * boundary children (struct-plan F1's fixed order).
-         */
         private void emitExtraKeyRejection(SemanticOp op,
                 KindPayload.ClassNewPayload payload, ClassLayout layout) {
             for (KindPayload.ProvidedField field : payload.providedFields()) {
@@ -4943,21 +4139,6 @@ public final class LuaSemanticEmitter {
             emitBoundarySuccess(boundary, checked, boundaryPayload.descriptor());
         }
 
-        /**
-         * The builtin {@code Error} construction (ISSUE-0619;
-         * {@code semantic-ir-construct-coverage-cutover} K13 items 3/4):
-         * the provided fields run their pinned
-         * {@code CLASS_LITERAL_FIELD} boundary children in payload order
-         * (the descriptor-kind rule, the field's declared {@code string}
-         * descriptor), the omitted fields take the compiler constant empty
-         * string, and the publication is the canonical err carrier
-         * {@code {__d = true, code = &lt;code&gt;, m = &lt;message&gt;}} —
-         * the same carrier {@code THROW}, the async failure path,
-         * {@code __bcheck("@/Error")}, and {@code __carrierKind} already
-         * speak. No default child, no factory transfer, and no extra-key
-         * projection (the checker's E4002 rejects an extra literal field
-         * before lowering).
-         */
         private void emitClassNewBuiltinDefaults(SemanticOp op,
                 KindPayload.ClassNewPayload payload, ClassLayout layout) {
             if (!ClassId.ERROR.equals(payload.classId())
@@ -4986,27 +4167,6 @@ public final class LuaSemanticEmitter {
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
 
-        /**
-         * The host declaration class construction (ISSUE-0624;
-         * {@code semantic-ir-construct-coverage-cutover} K10 and the K10
-         * contract): the provided values evaluate in literal order by the
-         * caller (already completed operands), the construction runs
-         * through the deployed runtime's {@code __rt.class_} over the
-         * declaring module's loaded {@code <C>_defaults} entry — the
-         * per-attempt deep copy with the sentinel identities preserved, the
-         * provided overlay with the extra provided name raising E8007 at the
-         * literal origin before any field validation, the
-         * {@code __MISSING} removal of the omitted optionals, and the
-         * canonical identity tag — then the pinned
-         * {@code CLASS_LITERAL_FIELD} boundary children run in declaration
-         * order and the admitted values are written back into the instance
-         * (the language null as the deployed runtime's own sentinel, so the
-         * host side observes the retained convention and the emitted field
-         * ops read present null as null). The instance carries the shared
-         * carrier markers ({@code __c}/{@code __id}) so every boundary and
-         * field-op byte-exact identity check applies unchanged. A failed
-         * construction publishes no instance.
-         */
         private void emitClassNewHostDefaults(SemanticOp op,
                 KindPayload.ClassNewPayload payload, ClassLayout layout) {
             if (!isHostClass(payload.classId())) {
@@ -5070,44 +4230,6 @@ public final class LuaSemanticEmitter {
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
 
-        /**
-         * The extern-C C-struct class construction (ISSUE-0666;
-         * {@code luajit-ffi-struct-plan-construction-and-oracle-projection}
-         * F1 and the C-struct construction contract; the loaded plan is the
-         * single default authority): the fixed order
-         *
-         * <ol>
-         *   <li>the provided fields in declaration order — each
-         *       {@code CLASS_LITERAL_FIELD} boundary child runs its
-         *       descriptor-kind check and the checked value is written into
-         *       the provided table under the field name; a class-typed
-         *       field value is projected to the runtime representation first
-         *       (the load/crossing page F4's chunk-to-wrapper direction, the
-         *       same helper the call-site cells use);</li>
-         *   <li>the deterministic extra-key guard in provided-source order —
-         *       E8007 at the literal origin before any default runs, naming
-         *       the first extra name, because the runtime entry's phase-1
-         *       {@code pairs()} iteration is order-free and the artifact's
-         *       guard is the deterministic authority;</li>
-         *   <li>{@code __rt.class_plan_(<identity text>, <loaded plan entry>,
-         *       <provided table>, <literal span triplet>)} — the runtime's
-         *       four phases over the loaded {@code <C>_plan} entry: the
-         *       provided copy, the omitted fields' deferred evaluators
-         *       exactly once per attempt in class source order, the
-         *       per-field descriptor validation (E8001/E8004) at the literal
-         *       origin, and the identity tag and publication;</li>
-         *   <li>the wrapper-to-chunk projection of the constructed instance
-         *       into the op's slot (the same F4 helper pair), then the
-         *       op's SUCCESS terminal.</li>
-         * </ol>
-         *
-         * <p>No {@code CLASS_DEFAULT} child, no in-project factory, and no
-         * default expression are emitted: the plan's generated evaluators
-         * are the only default authority and they run inside the runtime
-         * entry. A failed construction publishes no instance — including
-         * the boundary children's own failures, which raise before the entry
-         * call and before the slot write.</p>
-         */
         private void emitClassNewFfiPlan(SemanticOp op,
                 KindPayload.ClassNewPayload payload, ClassLayout layout) {
             if (ffiClassModules.get(payload.classId()) == null) {
@@ -5183,12 +4305,6 @@ public final class LuaSemanticEmitter {
             return checked;
         }
 
-        /**
-         * K-D4 step 2, LOCAL: the default children run in declaration
-         * order through their detached class-default functions, skipping
-         * any child whose field is provided (a provided field's default
-         * never runs); each child emits its own START and terminal.
-         */
         private void emitClassNewLocalDefaults(SemanticOp op,
                 KindPayload.ClassNewPayload payload, java.util.Set<String> provided) {
             for (OpId defaultOpId : payload.classDefaultOpIds()) {
@@ -5232,7 +4348,6 @@ public final class LuaSemanticEmitter {
                 .append(", __resT), nil)\n");
         }
 
-
         /**
          * The nesting-safe module save of a factory transfer: one stack
          * push; the stack order is the transfer nesting order.
@@ -5250,19 +4365,6 @@ public final class LuaSemanticEmitter {
             out.append("__modStack[#__modStack] = nil\n");
         }
 
-        /**
-         * K-D4 step 2, SHARED_FACTORY: the transfer to the owner's
-         * CLASS_FACTORY entry — the factory's events parent to this
-         * caller op (cross-unit) and carry the owner's module path; its
-         * CLASS_DEFAULT children evaluate in the declaring module's
-         * scope (skipping provided fields) and fill the untagged
-         * internal transfer instance, which the factory publishes as its
-         * result for the caller's CLASS_DEFAULT_FIELD extraction. The
-         * module switch is one stack push/pop pair (a nested transfer
-         * inside an owner default restores its own saved module; the
-         * caller's own terminals are emitted after the pop, so every
-         * event carries its op's module).
-         */
         private void emitClassNewFactoryTransfer(SemanticOp op,
                 KindPayload.ClassNewPayload payload, java.util.Set<String> provided) {
             OpId factoryOpId = factoryOpIdOf(op, payload);
@@ -5304,7 +4406,7 @@ public final class LuaSemanticEmitter {
                 KindPayload.ClassDefaultPayload defaultPayload =
                     (KindPayload.ClassDefaultPayload) defaultOp.payload();
                 if (provided.contains(defaultPayload.field())) {
-                    continue; // the skip-provided rule (K-D5)
+                    continue;
                 }
                 out.append("__ev(").append(luaString(opKey(defaultOp.opId())))
                     .append(", \"START\", \"CLASS_DEFAULT\", ")
@@ -5377,8 +4479,6 @@ public final class LuaSemanticEmitter {
             }
             return null;
         }
-
-
 
         private void emitBranch(SemanticOp op) {
             KindPayload.BranchPayload payload = (KindPayload.BranchPayload) op.payload();
@@ -5534,7 +4634,6 @@ public final class LuaSemanticEmitter {
             emitPlainSuccess(op);
         }
 
-
         private void emitTryCatch(SemanticOp op) {
             KindPayload.TryCatchPayload payload = (KindPayload.TryCatchPayload) op.payload();
             emitStart(op);
@@ -5547,10 +4646,7 @@ public final class LuaSemanticEmitter {
             out.append("if not __okT then\n");
             emitTransferDispatch(op, payload.tryBlock(), "  ", "__resT");
             out.append("  if type(__resT) == \"table\" and __resT.__d then\n");
-            // The caught value is the canonical Error value itself (ISSUE-0619;
-            // K13 item 6): the distinct caught-marker carrier is retired, so
-            // the caught binding crosses an @/Error boundary and reads its
-            // fields exactly like any other builtin Error value.
+
             out.append("    ").append(cellName).append(" = __resT\n");
             tryDepth++;
             out.append("    __okT, __terrT = pcall(function()\n");
@@ -5558,11 +4654,7 @@ public final class LuaSemanticEmitter {
             out.append("    end)\n");
             tryDepth--;
             out.append("    if not __okT then\n");
-            // The catch block's own pcall result is __terrT (ISSUE-0619: a
-            // RETURN/ BREAK/CONTINUE inside the catch block signals through
-            // that pcall, so its transfer dispatch reads __terrT — reading
-            // the try block's __resT would wrap the transfer signal into a
-            // code-less carrier).
+
             emitTransferDispatch(op, payload.catchBlock(), "      ", "__terrT");
             out.append("      __wrappedT = {__d = true, code = __terrT.code, "
                 + "m = __terrT.m, o = __terrT.o, e = __terrT.e, a = __terrT.a, "
@@ -5660,7 +4752,6 @@ public final class LuaSemanticEmitter {
             out.append(pad).append("  error(").append(errorVar).append(", 0)\n");
             out.append(pad).append("end\n");
         }
-
 
         private void emitThrow(SemanticOp op) {
             KindPayload.ThrowPayload payload = (KindPayload.ThrowPayload) op.payload();
@@ -6005,15 +5096,6 @@ public final class LuaSemanticEmitter {
             out.append("end\n");
         }
 
-        /**
-         * The host {@code CALLBACK_INVOKE} arm (ISSUE-0651;
-         * {@code host-module-load-and-host-call-realization} H3 and the sync
-         * host call contract): the callback record's bound value resolves
-         * to a host function, so the host-driven invocation runs the loaded
-         * surface entry with the {@code HOST_TO_DEAL} checked arguments and
-         * the callback op's own origin, then the callback op's own return
-         * projection (its single return boundary child).
-         */
         private void emitHostCallbackInvoke(SemanticOp op,
                 KindPayload.CallbackInvokePayload payload, String target) {
             StringBuilder args = new StringBuilder();
@@ -6189,8 +5271,7 @@ public final class LuaSemanticEmitter {
                 out.append("}\n");
             }
             if (payload.callee() instanceof KindPayload.CallCallee.Dynamic dynamic) {
-                // The dynamic async start (ISSUE-0658): the class of the
-                // resolved carrier selects the task source.
+
                 emitDynamicAsyncStart(op, payload, dynamic, token);
                 emitTokenSuccess(op, luaString(tokenAtom(token)));
                 return;
@@ -6248,9 +5329,7 @@ public final class LuaSemanticEmitter {
                 }
                 case FunctionExecutionBinding.HostFunction host -> {
                     if (hostSurface == null) {
-                        // A unit/surface-less session is the scenario drive:
-                        // its async host path is the landed deterministic
-                        // seam, which the production path never reaches.
+
                         emitAsyncHostSeamStart(op, token, host.hostModuleId().path(),
                             host.exportName());
                     } else {
@@ -6273,17 +5352,7 @@ public final class LuaSemanticEmitter {
                 case FunctionExecutionBinding.ExternalFunction external ->
                     emitAsyncExternalStart(op, token, payload.externalAsyncLink());
                 case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
-                    // The intrinsic's async form (ISSUE-0680; design source
-                    // {@code conversion-intrinsic-function-values} J3: the
-                    // conversion intrinsics are synchronous values, so an
-                    // async use is a checker rejection — this arm is the
-                    // deterministic closed treatment of a doctored site): the
-                    // closed DEAL_BODY task runs the one conversion ladder
-                    // inside the task closure with this op's context and kind
-                    // over the recorded argument carrier and completes
-                    // immediately with the converted value; the single AWAIT
-                    // runs the landed ASYNC_COMPLETION cell on the completion
-                    // (zero return boundaries).
+
                     String carrier = "S.__sa" + op.opId().id() + "[1]";
                     out.append("__asyncStartTask(").append(token.tokenId())
                         .append(", \"DEAL_BODY_TASK\", coroutine.create(function()\n");
@@ -6323,13 +5392,6 @@ public final class LuaSemanticEmitter {
             return args;
         }
 
-        /**
-         * The scenario-drive {@code ASYNC_START(HOST)} terminal (the landed
-         * shape): the deterministic seam start plus the bad-handle check.
-         * Emitted only by a session without the compile's host declaration
-         * surface (a unit/surface-less session); the production and
-         * trace-mode project sessions take the operation-handle arm above.
-         */
         private void emitAsyncHostSeamStart(SemanticOp op, AsyncTokenId token,
                                             String module, String export) {
             KindPayload.AsyncStartPayload payload =
@@ -6358,21 +5420,6 @@ public final class LuaSemanticEmitter {
                 .append(luaString(label)).append(")\n");
         }
 
-        /**
-         * The ASYNC_START(HOST) terminal (ISSUE-0652;
-         * {@code host-module-load-and-host-call-realization} H4 and the
-         * async host start and completion contract): the loaded surface
-         * entry is invoked through the same host-boundary call shape as
-         * the sync arm ({@code <entry>.f(args..., file, line, column)}) —
-         * the loaded wrapper's declared-async shape check realizes the
-         * op's {@code ASYNC_OPERATION_HANDLE} terminal with the pinned
-         * E8010 {@code host async function must return an async operation,
-         * got {actual}} at the call origin — and the returned operation
-         * handle is bound to the canonical token. The deterministic
-         * {@code __callbacks.__hostStartAsync} seam is never referenced on
-         * the production path (the seam entry stays the scenario/oracle
-         * drive's).
-         */
         private void emitAsyncHostStart(SemanticOp op, AsyncTokenId token,
                                         String target, List<String> args) {
             KindPayload.AsyncStartPayload payload =
@@ -6431,18 +5478,6 @@ public final class LuaSemanticEmitter {
             return slot(boundary.input());
         }
 
-        /**
-         * The ASYNC_START(EXTERNAL) terminal: the callee unit's
-         * async-entry dispatch inside the one artifact, keyed by the
-         * callee module and export (ISSUE-0655,
-         * {@code cross-module-call-realization} X2). The caller passes the
-         * drive flag false (its AWAIT drains). A project session resolves
-         * the link's canonical token against the emitted async-entry set
-         * and fails closed when it names no entry — never a silently
-         * missing invocation; a single-unit session keys the chunk-global
-         * dispatch table the callee's own artifact populates (the
-         * multi-artifact drive of the differential harness).
-         */
         private void emitAsyncExternalStart(SemanticOp op, AsyncTokenId token,
                                             ExternalAsyncLink link) {
             if (link == null) {
@@ -6460,22 +5495,6 @@ public final class LuaSemanticEmitter {
                 .append(op.opId().id()).append("))\n");
         }
 
-
-        /**
-         * AWAIT — the completion position (D13 step 6): the deterministic
-         * FIFO drain first, then the canonical referent's completion. A
-         * production host operation (a record carrying the loaded declared
-         * async export's operation handle) is driven to completion through
-         * the landed {@code __rt.async_step} machinery — the operation's
-         * own DEAL failure becomes the task's failure identical (never
-         * re-checked, copied, or re-projected) and a non-DEAL failure
-         * rethrows as infrastructure; a seam-registered record (no
-         * handle) keeps the landed deterministic host-seam completion. A
-         * failed operation publishes the identical error — never a
-         * re-check or a synthesized copy — and a completed value crosses
-         * the single {@code ASYNC_COMPLETION} boundary at the await site
-         * (a boundary failure is re-originated at that site).
-         */
         private void emitAwait(SemanticOp op) {
             KindPayload.AwaitPayload payload = (KindPayload.AwaitPayload) op.payload();
             long canonicalId = canonicalReferent(payload.token());
@@ -6491,13 +5510,7 @@ public final class LuaSemanticEmitter {
             out.append("end\n");
             out.append("if __tA.status == 2 then\n");
             out.append("  if __tA.handle ~= nil then\n");
-            // The production host operation: the registered operation
-            // handle is driven through the landed async_step machinery.
-            // The operation's own DEAL failure (the runtime's error table
-            // or the chunk's tagged carrier) is the task's failure —
-            // converted once into the chunk's canonical carrier with its
-            // own code, message, origin, expected, and actual; anything
-            // else is an infrastructure failure and rethrows identical.
+
             out.append("    __okH, __errH = pcall(__rt.async_step, "
                 + "__tA.handle)\n");
             out.append("    if not __okH then\n");
@@ -6581,24 +5594,6 @@ public final class LuaSemanticEmitter {
                 (RuntimeDescriptor) op.resultType());
         }
 
-        /**
-         * The async EXTERNAL_ENTRY dispatch entry (the E6 dispatch-entry
-         * pattern; ISSUE-0655, {@code cross-module-call-realization} X2
-         * and the cross-module async call contract): the scenario host
-         * adapter invokes it top-level with scripted arguments (drive
-         * flag on — the entry drains and returns the completion), and a
-         * cross-module caller invokes it with the drive flag off (its
-         * AWAIT drains). One entry exists per async export of every
-         * closure unit, keyed by the owning module's path and the export
-         * name; the entry resolves its function and its capture cells
-         * through its own unit. It emits the callee record's
-         * START/SUCCESS under the passed parent key and creates exactly
-         * one canonical task wrapping the entry function's body-task
-         * closure, establishing the owning module's context around the
-         * body and its own events (a cross-module caller invokes the
-         * entry from the caller's context) and restoring it on every
-         * path.
-         */
         private void emitAsyncEntry(SemanticOp op, LoweredModuleUnit owner) {
             KindPayload.ExternalEntryPayload payload =
                 (KindPayload.ExternalEntryPayload) op.payload();
@@ -6616,11 +5611,7 @@ public final class LuaSemanticEmitter {
             out.append("__asyncEntries[")
                 .append(luaString(ownerPath + "#" + payload.exportName()))
                 .append("] = function(__parentKey, __drive, ...)\n");
-            // The entry establishes its own module context: a
-            // cross-module caller invokes it from the caller's context,
-            // and every event the entry emits (and every event of the
-            // callee body it wraps) must carry the callee module. The
-            // landed nesting-safe push/pop pair is reused verbatim.
+
             emitModulePush();
             out.append("  __module = ").append(luaString(ownerPath)).append("\n");
             out.append("  local __eargs = {...}\n");
@@ -6694,71 +5685,12 @@ public final class LuaSemanticEmitter {
             emitPlainSuccess(op);
         }
 
-        /**
-         * {@code MODULE_IMPORT} — the import's load/initialization op. A
-         * {@code HOST}-kind import emits the host load inline at its
-         * position in the module init walk (ISSUE-0650;
-         * {@code host-module-load-and-host-call-realization} H1 and the
-         * host-load contract): the module's surface entry becomes the
-         * loaded table through the landed loader
-         * {@code __rt.load_host(rawSpecifier, declared, file, line,
-         * column)} with the compiler-owned declared map in declaration
-         * order, and the chunk-global {@code __exportSurfaces} registry
-         * entry is written with the idempotent {@code or} guard, so a
-         * repeated import of the same module (two aliases, two
-         * declarations) loads exactly once per program and every alias
-         * observes the one loaded surface value. The loaded table is
-         * published in the same registry the {@code EXPORT_PUBLISH}/
-         * {@code EXPORT_READ} arms use, so it is the host import's
-         * namespace value. The pinned E8011 defects (missing declared
-         * export, invalid function/class export shape, pre-wrapped
-         * signature mismatch or non-function {@code .f}, class identity
-         * mismatch, missing or non-table {@code <C>_defaults}, a
-         * non-table module result) fail the importing module's init at
-         * the emitted import-statement origin with the host-module-abi
-         * texts.
-         *
-         * <p>An extern-C declaration import ({@code @extern-c}) emits the
-         * generator's FFI load at the same position — the provider
-         * bindings re-pointed at the chunk's export-surface registry, the
-         * bindings literal, and the
-         * {@code __exportSurfaces[<module>] = ... __rt.load_ffi(...)}
-         * registry entry with the import statement's span triplet (the
-         * extern-C admission slice) — when the session carries the
-         * compile's FFI emission input; the loaded module table becomes
-         * the import's namespace value exactly like the host load's. A
-         * session without the FFI emission input emits no FFI load: the
-         * extern-C import's op keeps the landed no-op load (the trace
-         * session's loaded surface is the scenario seam's).
-         * {@code COMPILED}/{@code STDLIB} imports keep the landed no-op
-         * load realization: their surface entry is the module's own
-         * publication (its {@code EXPORT_PUBLISH} writes, or the chunk-top
-         * cataloged-callable population).</p>
-         *
-         * <p><b>The completion write (K15 items 1-2).</b> After the
-         * kind-specific load the op's payload {@code aliasCells} receive
-         * the module's namespace value — the module-identity-keyed
-         * {@code __exportSurfaces} entry, the one surface object the
-         * module's own publication or its single guarded load created — so
-         * {@code let t = time} reads the very table the direct
-         * {@code EXPORT_READ}/{@code EXPORT_PUBLISH} arms use and two
-         * aliases of one module observe the identical value. It is the
-         * alias cells' single initializing write (an alias cell never
-         * carries a {@code BINDING_INIT}); the cell-kind switch keeps the
-         * {@code SHARED_CELL} in-place publication discipline.</p>
-         */
         private void emitModuleImport(SemanticOp op) {
             KindPayload.ModuleImportPayload payload =
                 (KindPayload.ModuleImportPayload) op.payload();
             emitStart(op);
             if (payload.kind() == ModuleImportKind.HOST && hostSurface != null) {
-                // The host load is a production project realization; a
-                // unit/trace session (no declaration surface) keeps the
-                // landed no-op arm — its host path is the landed scenario
-                // seam, which the production path never reaches. The
-                // extern-C declaration import selects its own arm by the
-                // declaration kind: the FFI load when the session carries
-                // the FFI emission input, the landed no-op otherwise.
+
                 HostDeclarationSurface.DeclarationFacts facts =
                     hostSurface.require(payload.resolvedModule());
                 if (facts.kind() == HostDeclarationSurface.DeclarationKind.EXTERN_C) {
@@ -6874,54 +5806,6 @@ public final class LuaSemanticEmitter {
                 .append(order).append(")\n");
         }
 
-        /**
-         * The inline FFI load of one {@code MODULE_IMPORT} of an extern-C
-         * declaration module (the extern-C admission slice;
-         * {@code luajit-ffi-load-emission-and-typed-crossings} F1/F2 and
-         * the FFI import and load contract): the four argument literals
-         * come from the landed {@link LuaFfiBindingGenerator} over the
-         * FFI emission input's generated module — the descriptor's
-         * {@code ffi:}-keyed module key, the cdef bundle, the per-class
-         * plans with their deferred evaluators, and the forward bindings —
-         * with the loader text resolved against the input's manifest
-         * directory, and the import statement's own span triplet is the
-         * origin, so the pinned {@code FFI_LIBRARY_LOAD}/
-         * {@code FFI_SYMBOL_MISSING} failures name the import statement.
-         * The provider bindings are the same alias mapping the generator
-         * renders, re-pointed at the chunk-global {@code __exportSurfaces}
-         * registry instead of a per-module {@code require} (the one-chunk
-         * production layout has no per-provider module artifact): one
-         * binding per referenced alias in the generator's graph order
-         * (first-reference order over the imported function and
-         * class-plan references), each capturing the provider module's
-         * published surface object by identity, and the bindings literal
-         * and the {@code load_ffi} publication following in the pinned
-         * order. The evaluator text calls
-         * {@code <prefix><alias>.<export>.f(...)}, so a provider must be
-         * wrapper-capable — a session unit of the lowered closure (its
-         * surface object is created at the chunk top and filled by the
-         * module's own {@code EXPORT_PUBLISH} publication, so an entry
-         * published later in the program is visible to the evaluator
-         * through the captured object) or a covered declaration module
-         * whose load this walk already emitted before the binding
-         * position (the loaded table the registry holds when the binding
-         * captures it). Every other provider — a spec-stdlib module, a
-         * declaration module whose load the artifact does not emit or
-         * emits after the binding position, and any module outside the
-         * closure and the declaration facts — is wrapper-incapable and
-         * fails the compile closed through the typed {@link FfiProviderGap}
-         * — the production arm maps it to exactly one E6005
-         * {@code SHARED_EMITTER_COVERAGE} whose detail names the consuming
-         * (emitting) module, the extern-C import statement's origin, the
-         * import's raw specifier, the resolved declaration module, and the
-         * offending provider alias and module — staging nothing. An alias
-         * that names two provider modules is the same fail-closed producer
-         * defect, never a silent first-wins. The
-         * registry entry is written with the landed idempotent {@code or}
-         * guard, so two aliases of one module share the one loaded table
-         * and no second open runs. Nothing here evaluates a plan default,
-         * opens a library, or resolves a symbol.
-         */
         private void emitFfiLoad(SemanticOp op,
                                  KindPayload.ModuleImportPayload payload) {
             ModuleId moduleId = payload.resolvedModule();
@@ -7177,22 +6061,6 @@ public final class LuaSemanticEmitter {
                 + span.startLine() + ", " + span.startColumn();
         }
 
-        /**
-         * MODULE_INIT (E8; ISSUE-0590): the emitted module envelope.
-         * The op's START precedes the payload init block (the
-         * {@code MODULE_IMPORT}/{@code EXPORT_*}/entry-delegation ops
-         * nested under it); the block runs inside a pcall so an
-         * uncaught DEAL failure publishes the op's single FAILURE
-         * terminal recording {@code FAILED(error)} (no export
-         * publication) before the error propagates to the deferred-main
-         * wrapper's terminal. The closed
-         * {@code UNINITIALIZED -> INITIALIZING -> INITIALIZED} state
-         * machine runs in both modes (the production mode's event
-         * helpers are no-ops): a re-execution of an initialized module
-         * publishes the state without re-running the block; a
-         * re-entrant or failed re-execution is a producer defect, never
-         * a silent re-run.
-         */
         private void emitModuleInit(SemanticOp op) {
             KindPayload.ModuleInitPayload payload =
                 (KindPayload.ModuleInitPayload) op.payload();
@@ -7250,7 +6118,6 @@ public final class LuaSemanticEmitter {
             out.append("}}\n");
         }
 
-
         /**
          * The JSON plan descriptor text: the boundary descriptor text with
          * the JSON walk's {@code nullable:INNER} spelling (the walk's
@@ -7266,17 +6133,6 @@ public final class LuaSemanticEmitter {
             return descriptorText(descriptor);
         }
 
-        /**
-         * JSON_FROM_CLASS (E7/K-D8): the shared walk ({@code __jsonFromClassOp})
-         * over the class's emitted plan — the payload's JSON text operand
-         * resolves exactly once; the walk runs the per-site CLASS_DEFAULT
-         * children (their own START/terminal events) for omitted
-         * required-present defaulted fields and publishes the tagged
-         * instance, or language null on any syntax/extra-key/decode/
-         * default/validation failure (the {@code JSON_FROM_NULL}
-         * projection; a failing default child keeps its completed
-         * effects).
-         */
         private void emitJsonFromClass(SemanticOp op) {
             KindPayload.JsonFromClassPayload payload =
                 (KindPayload.JsonFromClassPayload) op.payload();
@@ -7288,15 +6144,6 @@ public final class LuaSemanticEmitter {
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
 
-        /**
-         * JSON_TO_CLASS (E7/K-D10): the shared walk over the class's
-         * emitted plan — the root identity check, the declaration-order
-         * field serialization, and the first failing position's
-         * {@code JSON_TO_ERROR} projection (E8001
-         * {@code value at {fieldPath} is not JSON serializable: {actual}}
-         * at the op origin, no cause, active frames); success publishes
-         * the deterministic RFC-8259 text.
-         */
         private void emitJsonToClass(SemanticOp op) {
             KindPayload.JsonToClassPayload payload =
                 (KindPayload.JsonToClassPayload) op.payload();
@@ -7366,14 +6213,7 @@ public final class LuaSemanticEmitter {
         private void emitExportRead(SemanticOp op) {
             KindPayload.ExportReadPayload payload =
                 (KindPayload.ExportReadPayload) op.payload();
-            // The read's module kind is the session's own recorded import
-            // fact (M6). A module the session records no import fact for —
-            // the test-only class-core carrier sessions, whose units carry
-            // no module-level import op — keeps the landed interim
-            // realization (the residual kind arm's real carrier surface);
-            // the production and
-            // conformance sessions record every resolved import, so a
-            // COMPILED read is never guessed from a path.
+
             ModuleImportKind kind = importKinds.get(payload.module());
             if (kind == ModuleImportKind.COMPILED && projectSession
                     && !units.containsKey(payload.module())) {
@@ -7401,13 +6241,7 @@ public final class LuaSemanticEmitter {
                     .append(stdlibRowArgs(stdlibRowOf(payload.module().path(),
                         payload.name()))).append(")\n");
             } else {
-                // The residual kind arm (a session whose unit records no
-                // import fact for the read's module): the placeholder
-                // publishes the memoized intrinsic carrier the identity's
-                // own registration resolves, and a fresh opaque export
-                // carrier otherwise (the landed per-read allocation, now a
-                // real carrier surface) — never the removed marker and
-                // never a re-read of the read's own slot.
+
                 String carrier = registeredIntrinsicCarrierExpr((ValueId) op.result());
                 out.append(slot((ValueId) op.result())).append(" = ")
                     .append(carrier == null ? exportPlaceholderCarrier() : carrier)
@@ -7422,21 +6256,6 @@ public final class LuaSemanticEmitter {
     // The Lua runtime prelude (byte-identical protocol output)
     // =========================================================================
 
-    /**
-     * The shared JSON algorithm realization (E7/K-D8/K-D10) of the
-     * {@code JSON_FROM_CLASS}/{@code JSON_TO_CLASS} arms: the closed E8
-     * RFC-8259 parse and canonical text algorithms plus the class walk
-     * over the per-class plans the session records in {@code __plans}
-     * (classId → plan: declaration-order fields with descriptor,
-     * optionality, default-child metadata, and the owner factory
-     * metadata of the nested-decode seam). The walk runs zero boundary
-     * children; the class-default/class-factory events carry the plan's
-     * recorded keys and digests. All syntax/decode/shape failures return
-     * language null (the {@code JSON_FROM_NULL} projection); the
-     * to-json walk returns the first declaration-order failure
-     * {@code (fieldPath, actual)} for the arm's {@code JSON_TO_ERROR}
-     * projection.
-     */
     private static final String JSON_PRELUDE = """
 -- ==== shared JSON algorithm (E7/K-D8/K-D10 realization) ====
 -- The closed E8 RFC-8259 parse and canonical text algorithms plus the
@@ -8172,18 +6991,6 @@ local function __jsonToClassOp(planName, root)
 end
 """;
 
-    /**
-     * The host-boundary prelude of the production chunk (ISSUE-0651;
-     * {@code host-module-load-and-host-call-realization} H3/H7 and the sync
-     * host call contract): the declared parameter/return cells of a host
-     * call (the loaded runtime matcher's own rule, projected through the
-     * pinned E8010 templates at the call origin — the wrapper's parameter
-     * cells, run at the call site so the boundary children's trace events
-     * carry the pinned projection), the DEAL-function-value to
-     * host-facing-wrapper projection of a declared function position, and
-     * the bridge the host calls back through. Emitted exactly for a chunk
-     * with a HOST-kind import, after the runtime binding it uses.
-     */
     private static final String HOST_BOUNDARY_PRELUDE = """
 -- The production chunk is the v1.2 profile: the deployed runtime's int32
 -- gate uses the pinned v1.2 template ("int out of safe range") for the
@@ -8485,16 +7292,7 @@ local function __ffiClassPlan(module, class)
   return surface[class.."_plan"]
 end
 """;
-    /**
-     * The shared bytes surface (K6 items 1/2/4/7/13): the emitted helpers
-     * over the deployed runtime's landed bytes entries
-     * ({@code __rt.bytes_new}/{@code bytes_length}/{@code bytes_get}/
-     * {@code bytes_set}), each passing the site's own
-     * {@code (file, line, column)} origin so the pinned E8012/E8013 texts
-     * and origins hold, plus the boundary/read/commit cells that emit the
-     * boundary events the semantic oracle emits. Emitted exactly for a
-     * chunk carrying bytes ops, after the runtime binding it uses.
-     */
+
     private static final String BYTES_PRELUDE = """
 -- The bytes allocation intrinsic (K6 item 1): the pinned E8012
 -- non-negative gate at the bytes(...) call expression, then the runtime's

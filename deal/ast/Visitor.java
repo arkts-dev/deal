@@ -7,7 +7,6 @@ package deal.ast;
  * so partial visitors (e.g., visitors that only handle statements)
  * can compile without implementing every method.
  *
- * @param <T> the return type of visit methods
  */
 public interface Visitor<T> {
 

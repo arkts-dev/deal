@@ -101,9 +101,6 @@ public final class SemanticIdAllocator {
      * Creates one allocator over the given module list in dependency
      * order.
      *
-     * @param dependencyOrderedModules the module identities in dependency
-     *                                 order; non-null, non-empty, distinct
-     * @return a fresh allocator handing out ids from 0
      */
     public static SemanticIdAllocator over(List<ModuleId> dependencyOrderedModules) {
         return new SemanticIdAllocator(dependencyOrderedModules);
@@ -114,8 +111,6 @@ public final class SemanticIdAllocator {
      * closure in the project's dependency order (the project record
      * preserves module insertion order).
      *
-     * @param project the executable lowered project; non-null
-     * @return a fresh allocator handing out ids from 0
      */
     public static SemanticIdAllocator over(ExecutableLoweredProject project) {
         Objects.requireNonNull(project, "project must not be null");
@@ -133,19 +128,6 @@ public final class SemanticIdAllocator {
      * allocation's key in the pinned lexicographic order (dependency
      * order, source order, semantic role, synthetic ordinal).
      *
-     * @param module           the allocating module (must be in the pinned
-     *                         dependency order); non-null
-     * @param sourceOrdinal    the source-order position within the module;
-     *                         non-negative
-     * @param role             the semantic role; non-null
-     * @param syntheticOrdinal the synthetic ordinal within the same
-     *                         module/source-position/role coordinates;
-     *                         non-negative
-     * @return the fresh globally unique numeric id
-     * @throws IllegalArgumentException on an unknown module or negative
-     *         ordinals
-     * @throws IllegalStateException    when the request is out of the
-     *         pinned allocation order (a producer defect)
      */
     public long next(ModuleId module, long sourceOrdinal, Role role, long syntheticOrdinal) {
         Objects.requireNonNull(module, "module must not be null");

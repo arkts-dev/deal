@@ -18,55 +18,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-/**
- * The single protected host-path boundary of the strict v1.2 project layer
- * (ISSUE-0262, design {@code strict-project-context-resolution-identity}
- * D4). Every host-path conversion of the project/configuration pipeline
- * flows through this class; every operation returns a structured result
- * and no raw path, encoding, or I/O exception escapes any public surface.
- *
- * <p>The pinned per-path-class conversion matrix is:</p>
- *
- * <ul>
- *   <li><b>Entry file</b>, <b>discovered manifest file</b>,
- *       <b>externals declaration files</b>, and <b>import candidates</b>
- *       require existence as a regular, readable file after full symlink
- *       resolution — {@link #canonicalizeExisting(String)}. The caller maps
- *       the structured failure to its domain diagnostic (CliDiagnostic,
- *       E2010, or E2003).</li>
- *   <li><b>{@code moduleRoots} entries</b> and <b>output paths</b> never
- *       require existence — {@link #normalizePrefixResolved(String)}
- *       resolves the longest existing directory prefix through symlinks
- *       and appends the remaining suffix lexically. A not-yet-existing
- *       output directory is a normal value, never a failure.</li>
- *   <li><b>The stdlib surface directory</b> is probed and absence is a
- *       plain value, never a failure — {@link #probeDirectory(Path)}
- *       returns {@link Optional#empty()} for any absent or non-directory
- *       input.</li>
- * </ul>
- *
- * <p>Input validation (NUL and host-representability) runs on every input
- * string before any conversion: {@link #validateInput(String)} rejects
- * NUL (U+0000) and unpaired UTF-16 surrogates, which is exactly the set
- * of strings whose strict UTF-8 materialization as a host path would fail
- * or require a replacement character on Linux. A Linux backslash is an
- * ordinary filename character and passes validation unchanged.</p>
- *
- * <p>The class also owns the shared length-prefixed UTF-8 serialization
- * helper — {@link #lengthPrefixedUtf8(String)} and its round-trip partner
- * {@link #decodeLengthPrefixedUtf8(byte[])} — the sole serialization used
- * by every identity digest in this epic (deployment digest,
- * {@code deploymentModuleId} inputs). Serialization is deterministic:
- * identical inputs produce identical bytes, and no address, timestamp,
- * ordinal, or process state enters any output.</p>
- *
- * <p>This module depends only on the JDK. It holds no mutable state; all
- * operations are pure functions of their inputs plus the actual filesystem
- * state at call time, so symlink resolution reflects the filesystem as it
- * exists when the call runs. Failure mapping (CliDiagnostic / E2010 /
- * E2003-E2009 / OutputPathFailure) is each caller's job, never this
- * module's.</p>
- */
 public final class ProtectedPathOps {
 
     private ProtectedPathOps() {
@@ -83,9 +34,6 @@ public final class ProtectedPathOps {
      * A failed input-validation check: the offending input string and the
      * pinned deterministic reason.
      *
-     * @param offendingInput the input string that failed validation (the
-     *                       literal {@code "<null>"} for a null input)
-     * @param reason         the pinned reason text
      */
     public record InputValidationFailure(String offendingInput, String reason) {
         public InputValidationFailure {
@@ -106,9 +54,6 @@ public final class ProtectedPathOps {
      * content-only parsers may reuse it for their value-level NUL and
      * scalar checks.</p>
      *
-     * @param input the input string (a null input is invalid)
-     * @return {@link Optional#empty()} when the input is valid; otherwise
-     *         the offending input and reason
      */
     public static Optional<InputValidationFailure> validateInput(String input) {
         if (input == null) {
@@ -226,8 +171,6 @@ public final class ProtectedPathOps {
      * boundary. Equivalent spellings of one file — including symlinked
      * spellings — yield one resolved path.</p>
      *
-     * @param path the input path string
-     * @return the resolved regular readable file, or the classified failure
      */
     public static PathResult canonicalizeExisting(String path) {
         Optional<InputValidationFailure> invalid = validateInput(path);
@@ -281,10 +224,6 @@ public final class ProtectedPathOps {
      * INVALID_INPUT classification. The caller (ProjectLocator) maps
      * every failure to a CliDiagnostic — never E2010.</p>
      *
-     * @param entryFile the CLI-supplied entry-file value (a null input is
-     *                  invalid)
-     * @return the resolved regular readable entry file, or the
-     *         classified failure
      */
     public static PathResult validateEntry(String entryFile) {
         if (entryFile == null) {
@@ -331,8 +270,6 @@ public final class ProtectedPathOps {
      * the process CWD (an existing directory, so it resolves fully);
      * non-emptiness is a schema concern of the callers.</p>
      *
-     * @param path the input path string
-     * @return the prefix-resolved absolute path, or the classified failure
      */
     public static PathResult normalizePrefixResolved(String path) {
         Optional<InputValidationFailure> invalid = validateInput(path);
@@ -417,10 +354,6 @@ public final class ProtectedPathOps {
      * the single {@link Optional#empty()} result. This method never
      * throws.</p>
      *
-     * @param directory the directory path to probe (may be relative; a
-     *                  null input is absent)
-     * @return the fully symlink-resolved directory when one exists,
-     *         otherwise {@link Optional#empty()}
      */
     public static Optional<Path> probeDirectory(Path directory) {
         if (directory == null) {
@@ -471,9 +404,6 @@ public final class ProtectedPathOps {
      * equivalent spellings of one file yield one URI because full symlink
      * resolution has already collapsed them to one real path.
      *
-     * @param resolvedPath a protected-resolved absolute path
-     * @return the derived URI, or a structured failure for a null or
-     *         relative input (or a provider that cannot derive a URI)
      */
     public static UriResult toFileUri(Path resolvedPath) {
         if (resolvedPath == null) {
@@ -545,24 +475,6 @@ public final class ProtectedPathOps {
         }
     }
 
-    /**
-     * The shared length-prefixed UTF-8 serialization: the 8-byte
-     * big-endian byte length of the strict UTF-8 encoding, followed by the
-     * exact UTF-8 bytes. This is the sole serialization used by every
-     * identity digest in this epic (deployment digest,
-     * {@code deploymentModuleId} inputs).
-     *
-     * <p>Encoding is strict: an input containing an unpaired UTF-16
-     * surrogate is not a Unicode scalar sequence and fails with a
-     * structured {@link ByteResult.Failure} — never a replacement
-     * character, never an exception. U+0000 is a valid scalar and encodes
-     * normally. Supplementary-plane scalars encode as their four UTF-8
-     * bytes. Identical input always produces identical bytes; no address,
-     * timestamp, ordinal, or process state enters the output.</p>
-     *
-     * @param value the scalar sequence to frame (a null input fails)
-     * @return the framed bytes, or the structured failure
-     */
     public static ByteResult lengthPrefixedUtf8(String value) {
         if (value == null) {
             return new ByteResult.Failure("<null>", "input is null");
@@ -590,8 +502,6 @@ public final class ProtectedPathOps {
      * valid UTF-8 — is a structured {@link DecodedResult.Failure}, never
      * a replacement character, never an exception.
      *
-     * @param bytes the framed bytes (a null input fails)
-     * @return the decoded scalar sequence, or the structured failure
      */
     public static DecodedResult decodeLengthPrefixedUtf8(byte[] bytes) {
         if (bytes == null) {

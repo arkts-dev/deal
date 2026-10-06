@@ -23,62 +23,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
-/**
- * ISSUE-0643: the phase-4 production dispatch and the atomic cutover
- * acceptance tests
- * ({@code production-project-emission-and-atomic-cutover} P4/P6/P7/P8/
- * P10/P11 and the production-arm, source-map, zero-retained-reachability,
- * publication, and fail-closed producer-guard contracts;
- * {@code luajit-jvm-single-lowering-production-cutover} C3/C5/C7/C8;
- * {@code conformance-lane-production-cutover} L1/L4).
- *
- * <ol>
- *   <li>the production-invocation predicate is record identity: true
- *       exactly for the record {@code Main} and {@code defaultInvocation}
- *       resolve, false for both harness purposes and for the test-only
- *       {@code PUBLIC_BUILD} records that carry another release state or
- *       another capability-registry digest;</li>
- *   <li>a release-owned LuaJIT and JVM production compile emits exactly
- *       one project artifact named for the entry module, with
- *       {@code semanticEmissionCount() == 1},
- *       {@code retainedEmissionCount() == 0}, {@code routePlan() == null},
- *       an empty {@code jvmGeneratedResults()}, no per-module siblings,
- *       byte-identical repeated compiles, and real-toolchain execution
- *       ({@code luajit}; {@code javac --release 25 -proc:none} plus
- *       {@code java});</li>
- *   <li>the two-module realizable fixture (a {@code COMPILED} import with
- *       no cross-module call) emits one artifact per target carrying the
- *       per-module export surfaces, and the entry {@code main} runs
- *       exactly once;</li>
- *   <li>a failing lowering (a later-slice construct) stages nothing and
- *       leaves the previous artifact set byte-identical, while a
- *       cross-module sync call emits through the realized
- *       {@code CALL(EXTERNAL)} {@code SHARED_BODY} arm (ISSUE-0654) and
- *       publishes its one project artifact;</li>
- *   <li>the admitted extern-C declaration import (ISSUE-0662): the
- *       LuaJIT production compile emits the {@code load_ffi} prelude at
- *       the import's {@code MODULE_IMPORT} and the artifact's init fails
- *       at the import with {@code FFI_LIBRARY_LOAD}, while the JVM
- *       target keeps the phase-3.9 E6006 rejection;</li>
- *   <li>the fail-closed families: bytes and function-typed
- *       materializations each fail with their named E6005 and publish
- *       nothing, while a {@code STDLIB}/{@code COMPILED}-only closure, a
- *       HOST-declaration-kind import (the emitted host load), the
- *       extern-C declaration import (the emitted FFI load), a
- *       cross-module sync and async call, the builtin Error construction
- *       (ISSUE-0619), the {@code time.nowMillis} coverage (ISSUE-0623: the
- *       emitted artifacts publish the pinned E8004 terminal), and a
- *       same-module async call emit and execute;</li>
- *   <li>the C9 source-map disposition: an explicit {@code --source-map}
- *       LuaJIT and JVM production compile succeeds, publishes the project
- *       artifact, writes no sidecar, and prints the pinned warning exactly
- *       once; a {@code --dump-ir}-only compile prints none;</li>
- *   <li>the dispatch: every other LuaJIT/JVM invocation (both harness
- *       purposes and the two test-only {@code PUBLIC_BUILD} record
- *       families) keeps the harness arm — phase 3.7 route planning, the
- *       retained per-module artifacts, and the retained counters.</li>
- * </ol>
- */
 public class ProductionDispatchTest {
 
     private static int passed = 0;
@@ -180,7 +124,6 @@ public class ProductionDispatchTest {
         }
         """;
 
-    /** The builtin-Error-construction fixture (ISSUE-0619's covered slice). */
     private static final String ERROR_SOURCE = """
         export function main(): null {
           let e: Error = { code: "E1", message: "m" }
@@ -188,7 +131,6 @@ public class ProductionDispatchTest {
         }
         """;
 
-    /** The {@code time.nowMillis} fixture (ISSUE-0623's covered construct). */
     private static final String TIME_SOURCE = """
         import * as time from "std/time"
 
@@ -739,10 +681,7 @@ public class ProductionDispatchTest {
         try {
             Path out = project.resolve("out");
             write(project, "deal.json", DEAL_JSON_LUA);
-            // ISSUE-0626 retargeted this probe: the bytes-bearing module now
-            // compiles (the bytes element contract is production-covered), so
-            // the atomic-staging probe uses the still-fail-closed
-            // function-typed materialization fixture.
+
             write(project, "src/main.deal", FUNCTION_VALUE_SOURCE);
             // A previous artifact set in the live output root.
             write(out, "main.lua", "-- previous artifact\n");
@@ -760,12 +699,6 @@ public class ProductionDispatchTest {
             checkTreeIdentical(before, out,
                 "the failing lowering preserves the previous set");
 
-            // ISSUE-0654: the cross-module sync call now emits through the
-            // realized CALL(EXTERNAL) SHARED_BODY arm (the callee unit's
-            // EXTERNAL_ENTRY inside the one project artifact): the compile
-            // exits 0 and publishes the one project artifact (the atomic
-            // staging property stays covered by the bytes-lowering case
-            // above).
             Path sync = Files.createTempDirectory(
                 "production-dispatch-atomic-sync-");
             try {
@@ -805,11 +738,6 @@ public class ProductionDispatchTest {
         System.out.println("-- accept-and-emit families: HOST import, "
             + "cross-module async, bytes, Error, time, function values --");
 
-        // (a) A HOST-declaration-kind import (never called) is realized by
-        // the host load of the module init walk (ISSUE-0650, ISSUE-0656):
-        // the production compile succeeds and publishes the one project
-        // artifact carrying the declared-map load, with one project
-        // emission and no retained emission.
         Path host = Files.createTempDirectory("production-dispatch-host-");
         try {
             write(host, "deal.json", HOST_DEAL_JSON_LUA);
@@ -843,10 +771,6 @@ public class ProductionDispatchTest {
             deleteRecursively(host);
         }
 
-        // (b) A cross-module async call is realized through the callee
-        // module's own async entry and the caller's alias token
-        // (ISSUE-0655, ISSUE-0656): the production compile succeeds,
-        // publishes the one project artifact, and the artifact executes.
         Path async = Files.createTempDirectory("production-dispatch-async-");
         try {
             write(async, "deal.json", DEAL_JSON_LUA);
@@ -970,9 +894,6 @@ public class ProductionDispatchTest {
             deleteRecursively(same);
         }
 
-        // (d) The later-slice constructs each fail with their named E6005;
-        // the builtin Error construction is covered by ISSUE-0619 and
-        // executes its production artifact on both targets.
         checkBytesProductionCoverage();
         checkTimeNowMillisCoverage();
         checkLaterSliceConstruct("function-typed materialization",
@@ -1183,15 +1104,6 @@ public class ProductionDispatchTest {
         }
     }
 
-    /**
-     * The builtin Error construction through the release-owned production
-     * invocation (ISSUE-0619's retargeted pin; the fixture the ISSUE-0643
-     * cutover battery pinned fail-closed): the closure emits exactly one
-     * project artifact per target, the emitted carriers are the canonical
-     * err values ({@code {__d = true, ...}} on LuaJIT,
-     * {@code JvmRuntime.ErrorValue} on the JVM), and both artifacts execute
-     * under their real toolchains with the empty success output.
-     */
     private static void checkBuiltinErrorConstruction() throws Exception {
         Path project = Files.createTempDirectory("production-dispatch-error-");
         try {

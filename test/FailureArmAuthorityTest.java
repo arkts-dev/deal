@@ -1048,17 +1048,6 @@ public class FailureArmAuthorityTest {
     // 11b. The int-ladder wrong-kind cell (the closed kind arm)
     // =========================================================================
 
-    /**
-     * The conversion ladder's wrong-kind tail (P2 item 1: the closed
-     * typed-boundary kind arm): every carrier outside the ladder's
-     * int/number/null/NaN/infinity/fractional cases renders the arm's own
-     * suffix-less text with the closed token — the oracle through its
-     * ladder's arm render, the JVM runtime through {@code intConv}, and the
-     * emitted prelude through {@code __intConv}: one identical tuple, never
-     * an internal producer defect and never the superseded row projection.
-     * The oracle leg drives the ladder's engine directly (the tail's
-     * totality guard over the closed value kinds).
-     */
     static void testIntLadderWrongKindCell() throws Exception {
         System.out.println("-- the int-ladder wrong-kind cell (the closed kind arm) --");
         String origin = "int-ladder.deal:3:16";
@@ -1094,25 +1083,13 @@ public class FailureArmAuthorityTest {
             new Tuple(oracleTuple.code(), oracleTuple.message(), origin,
                 oracleTuple.expected(), oracleTuple.actual())),
             "the oracle renders the authority's identical int-ladder tuple");
-        // The superseded projection cannot render the corrected row: the
-        // TYPE_DESCRIPTOR row's kind template carries no {expected}/{actual}
-        // placeholder, so the old row-index call is a fail-closed Defect (the
-        // control that makes the oracle leg's subject load-bearing).
+
         expectDefect(() -> BoundaryFailure.fromRow(
             FailureContractRegistry.row(FailurePolicyId.TYPE_DESCRIPTOR), 0, "int",
             "string", new LinkedHashMap<>(), null),
             "the superseded row projection fails closed on the corrected kind template");
     }
 
-    /**
-     * The oracle's int-ladder wrong-kind cell, driven at the engine with a
-     * lowered unit whose module-init block holds a string {@code CONST}
-     * feeding {@code INTRINSIC_CALL(INT_CONVERT)} (the intrinsic carries no
-     * boundary child, so the value reaches the ladder unchanged). The
-     * oracle must render the closed suffix-less kind arm — before the
-     * correction the tail projected the superseded {@code TYPE_DESCRIPTOR}
-     * row template and aborted as an internal producer defect.
-     */
     private static Tuple oracleIntLadderWrongKindLeg() {
         deal.semantic.ir.ModuleId module = new deal.semantic.ir.ModuleId("int-ladder");
         deal.semantic.ir.OpId constOp = new deal.semantic.ir.OpId(module, 0);
@@ -1463,16 +1440,6 @@ public class FailureArmAuthorityTest {
     // The negative single-source control
     // =========================================================================
 
-    /**
-     * The negative single-source proof (Verification 3): the comparison
-     * helper reports the first differing field by name, so a consumer that
-     * composes its own text or picks its own span is caught by the field it
-     * composed. The reference tuples are the authority's own renders; each
-     * negative drives a deliberately composing snapshot: the superseded
-     * suffixed spelling, the superseded {@code FOR_EACH} absent-element text,
-     * the superseded host composite, and a call-site span for a
-     * declaration-owned arm.
-     */
     static void testNegativeSingleSourceControl() {
         System.out.println("-- the negative single-source control --");
         // The reference: the authority's own kind arm (runtime-errors/
@@ -1482,12 +1449,11 @@ public class FailureArmAuthorityTest {
             null), "type-mismatch-e8001.deal:6:21");
         checkEq(null, firstDifferingField(kind, kind),
             "the identical tuple compares equal (the control is not vacuous)");
-        // (1) A consumer composing the superseded suffix.
+
         checkEq("message", firstDifferingField(kind, new Tuple(kind.code(),
             "expected int, got string", kind.span(), kind.expected(), kind.actual())),
             "the superseded suffixed spelling is caught by field name message");
-        // (2) The superseded FOR_EACH absent-element text (the cell now
-        // renders the kind arm with the typed-boundary nil actual).
+
         Tuple foreach = tupleOf(FailureContractRegistry.render(
             FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", "int"), "int", "nil",
             null), "for-of:8:3");
@@ -1495,8 +1461,7 @@ public class FailureArmAuthorityTest {
             "expected int, got missing", foreach.span(), foreach.expected(),
             "missing")),
             "the superseded absent-element text is caught by field name message");
-        // (3) The superseded host composite (expected/actual inlined instead
-        // of the host inner reason).
+
         Tuple host = tupleOf(FailureContractRegistry.render(
             FailureArmId.HOST_PARAMETER_CELL,
             Map.of("index", "1", "inner",

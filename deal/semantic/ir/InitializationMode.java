@@ -13,6 +13,5 @@ package deal.semantic.ir;
  */
 public enum InitializationMode {
 
-    /** Initialize exactly once after all dependencies initialize. */
     ONCE_AFTER_DEPENDENCIES
 }

@@ -10,7 +10,6 @@ import java.util.Objects;
  * atomic publication after the {@code MODULE_EXPORT} boundary, with the
  * declared descriptor.
  *
- * @param entries the export entries in declaration order; non-null
  */
 public record ExportPlan(List<ExportPlanEntry> entries) {
 

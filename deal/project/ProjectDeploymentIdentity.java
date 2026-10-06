@@ -37,10 +37,6 @@ import java.util.Objects;
  * identical values; no timestamp, ordinal, address, or process state
  * enters either field.</p>
  *
- * @param canonicalManifestUri           the symlink-resolved {@code file:}
- *                                       URI text of the validated manifest
- * @param validatedManifestContentDigest SHA-256 of the exact manifest
- *                                       bytes, 64 lowercase hex chars
  */
 public record ProjectDeploymentIdentity(String canonicalManifestUri,
                                         String validatedManifestContentDigest) {

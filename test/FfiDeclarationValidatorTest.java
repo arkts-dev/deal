@@ -43,19 +43,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * The dedicated C FFI declaration-validation, metadata, and
- * forward-binding battery (ISSUE-0162): the validator's policy matrix
- * (sync/export/name/type/class/field/default/pointer E7002 cases with
- * exact ranges), immutable source-ordered descriptor publication with
- * canonical descriptors and behavior-bearing identity, private
- * C-safe name generation with {@code deal_fN} ordinal members and
- * retained cdef text/ownership metadata, the forward-binding state
- * machine and graph-ordered imported references, the
- * no-evaluator-execution discipline, and the orchestrator integration
- * (JVM E6006 FFI_UNSUPPORTED_BACKEND without artifacts; the Lua
- * descriptor accepted for later runtime loading).
- */
 public class FfiDeclarationValidatorTest {
 
     private static int passed = 0;

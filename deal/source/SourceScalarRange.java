@@ -20,12 +20,6 @@ package deal.source;
  * <p>Every field is a concrete value computed by {@link ScalarSourceCursor};
  * the record performs no validation and never throws.
  *
- * @param startLine         1-based line of the first scalar in the range
- * @param startColumn       1-based scalar column of the first scalar
- * @param endLine           1-based line of the first scalar after the range
- * @param endColumn         1-based scalar column of the first scalar after the range
- * @param startScalarOffset 0-based decoded scalar offset of the range start (inclusive)
- * @param endScalarOffset   0-based decoded scalar offset of the range end (exclusive)
  */
 public record SourceScalarRange(int startLine, int startColumn, int endLine, int endColumn,
                                 int startScalarOffset, int endScalarOffset) {

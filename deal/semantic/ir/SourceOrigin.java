@@ -15,11 +15,6 @@ import java.util.Objects;
  * (cross-unit references are valid because {@link OpId} carries its
  * module).</p>
  *
- * @param sourceId   the stable source identifier; non-null
- * @param span       the copied source span; non-null
- * @param kind       {@code USER} or {@code SYNTHETIC}; non-null
- * @param anchorId   the source-anchor identity; non-null
- * @param parentOpId the enclosing/triggering op identity, or {@code null}
  */
 public record SourceOrigin(
     String sourceId,

@@ -12,12 +12,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * Package-private construction helpers for the default-plan carrier
- * records (the carrier-shape domain of ISSUE-0540). Not part of the
- * public carrier surface; every helper produces defensively immutable,
- * insertion-ordered collections and fails fast on nulls and duplicates.
- */
 final class CarrierCollections {
 
     private CarrierCollections() {
@@ -62,13 +56,6 @@ final class CarrierCollections {
         return Collections.unmodifiableSet(copy);
     }
 
-    /**
-     * Copies the input map into an unmodifiable insertion-ordered map
-     * (the input's own iteration order). Rejects a null input, null
-     * keys, and null values. A repeated key keeps its first insertion
-     * position with the later value (the JDK {@link LinkedHashMap} put
-     * contract); the exact key semantics are owned by the planner epic.
-     */
     static Map<String, Symbol> bindingsCopy(Map<String, Symbol> input,
                                             String fieldName) {
         Objects.requireNonNull(input, fieldName);

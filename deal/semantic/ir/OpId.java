@@ -10,8 +10,6 @@ import java.util.Objects;
  * {@code EXTERNAL_ENTRY} or {@code CLASS_FACTORY} recording its triggering
  * caller op) are unambiguous without any project-wide lookup table.</p>
  *
- * @param module the module the op belongs to; non-null
- * @param id     the numeric identity, unique within the project; non-negative
  */
 public record OpId(ModuleId module, long id) implements SemanticId {
 

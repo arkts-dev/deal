@@ -69,108 +69,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * The route planner of the pre-lowering foundation (F4, one component):
- * one deterministic {@link ModuleRoutePlan} per target over the closed
- * routing rules, with the closed plan-time E6005-vs-LEGACY-reroute
- * split.
- *
- * <p><b>Closed routing rules (applied in dependency order).</b></p>
- * <ol>
- *   <li>{@code LEGACY_SAFE_INT} profile → every implementation module
- *       {@code LEGACY}, {@code shadowModules} empty (never lowered).</li>
- *   <li>Rule 2 ({@code STDLIB_TIME_CONFLICT}, inert since K7): a module
- *       whose manifest requires {@code STDLIB_TIME_CONFLICT} (never
- *       claimed since the four-part line trigger and its propagation
- *       are retired) → {@code LEGACY} in every purpose,
- *       including {@code COMMON_SHADOW} — never a shadow entry. The rule
- *       stays as the closed-set surface the capability catalog and the
- *       validator's empty-evidence rule still consume.</li>
- *   <li>Rule 2b (ISSUE-0574 bytes guard, parent S1b): a module whose
- *       manifest carries the plan-time {@code bytesBearing} marker →
- *       {@code LEGACY} in every purpose — {@code PUBLIC_BUILD} pre- and
- *       post-activation, {@code COMMON_SHADOW} even when
- *       shadow-requested (never a shadow entry), and
- *       {@code LEGACY_REGRESSION}. Deterministic, plan-time-only,
- *       never an error; the plan records the bytes-exception reason in
- *       its {@code bytesExceptions} route-report set.</li>
- *   <li>{@code PUBLIC_BUILD + PRE_ACTIVATION} → every implementation
- *       module {@code LEGACY}; {@code shadowModules} empty. Production
- *       SHARED routing is unreachable by construction in this release
- *       state.</li>
- *   <li>{@code PUBLIC_BUILD + V1_2_ACTIVE} → a module is {@code SHARED}
- *       only when every capability in its manifest is {@code PROMOTED}
- *       for the target in the capability registry (F7's capability ×
- *       target lookup) and its mixed ABI edges satisfy the plan-time
- *       index checks below. A module that fails any index check raises
- *       E6005 per the closed split — these are index-fact checks, never
- *       reroute conditions. A module with a non-{@code PROMOTED}
- *       capability reroutes {@code LEGACY} at plan time, before
- *       emission: never an error, never a within-run fallback. This arm
- *       exists structurally and is unreachable in this epic because the
- *       release registry is all {@code SHADOW} (ISSUE-0241 promotes).</li>
- *   <li>{@code COMMON_SHADOW + DEAL_V1_2_INT32} → requested modules are
- *       recorded as shadow SHARED entries in {@code shadowModules};
- *       shadow entries never drive production publication. Only the
- *       closed {@code shadowRequests} argument names requested modules —
- *       there is no other shadow-selection surface.</li>
- * </ol>
- *
- * <p><b>Plan-time error split (closed).</b> E6005 is raised at plan time
- * only for internally inconsistent checked/interface facts: the
- * interface index contradicts the checked project (an input module
- * missing from the index or wrongly classified, an index
- * IMPLEMENTATION entry without an input module, a manifest/input
- * mismatch, an import resolving outside the dependency-ordered index, or
- * an import kind contradicting the index entry), an import of a SHARED
- * module has no resolved export entry in the index, an imported export's
- * entry is absent or ill-formed (missing name or declared type), a
- * {@code ClassInterface} has no {@code constructionEntry}, an
- * initialization contract is not {@code ONCE_AFTER_DEPENDENCIES}, or the
- * index's {@code formatVersion} contradicts the invocation (the pinned
- * interface version is {@code deal.semantic-interface/1}; any other
- * value is an inconsistent fact). Every E6005 flows through
- * {@link FailureContractRegistry} with
- * {@code LoweringFailureDetail {module, capability: MODULES,
- * validatorRule: ROUTE_INTERNAL_ERROR_SENTINEL, semanticProfile,
- * irVersion, origin}}. Profile/purpose contradictions are rejected at
- * invocation resolution before checking/lowering (F1) and never reach
- * the planner as E6005 conditions; the planner's defensive guard raises
- * {@link IllegalArgumentException} for an inconsistent invocation, a
- * registry whose digest differs from the invocation's recorded digest,
- * shadow requests outside the {@code COMMON_SHADOW} contract, a
- * manifest/input coverage mismatch, or an entry module outside the
- * input — producer-defect wiring guards, never part of the closed E6005
- * split.</p>
- *
- * <p><b>Determinism.</b> Closed rules, dependency-order iteration, the
- * first-reference-order ABI edge list, and the single canonical JSON
- * facility make repeated builds byte-identical with stable
- * {@code invocationHash}/{@code planId}: {@code invocationHash =
- * SHA-256(canonical JSON {purpose, semanticProfile, releaseState,
- * capabilityRegistryHash, interfaceIndexDigest, target})} (F4),
- * {@code planId = "plan-" + first 16 hex chars of invocationHash}. The
- * staging-tree nonce of the publication stage exists only in on-disk
- * tree names — never in the plan, any record, or any hash.</p>
- *
- * <p><b>Plan-time {@link TargetModuleAbi} records (F5).</b> One record
- * per legacy dependency of a shared module, derived from the index
- * facts: {@code moduleId}, {@code target},
- * {@code artifactOwner: RETAINED_LUAJIT|RETAINED_JVM}, the project
- * {@code semanticProfile}, and {@code classFactoryAbi}/
- * {@code classLayoutAbi} copied from the module's
- * {@code ClassInterface} records. {@code exportedDescriptors} is empty
- * at plan time (ISSUE-0233); the emission-owned realization fields are
- * absent (null) and completed during staging (ISSUE-0239). The planner
- * never invents retained wrapper names, sync-invocation entry names,
- * async-handle protocol records, or load keys.</p>
- *
- * <p>The computation is strictly read-only over the checked facts — no
- * AST, checker, or symbol-table mutation — and this epic's closed rules
- * contain no plan-time edge-incompatibility reroute condition (such
- * rules are added only by ISSUE-0239 under parent verification 3): the
- * reroute arm covers profile/purpose/capability ineligibility only.</p>
- */
 public final class MigrationPlanner {
 
     /**
@@ -196,27 +94,6 @@ public final class MigrationPlanner {
      * the checked project, the interface index, and the already-computed
      * dependency-ordered manifests.
      *
-     * @param invocation     the release-owned compiler invocation; non-null
-     * @param registry       the release-owned capability registry (F7); non-null
-     * @param input          the checked project input (implementation
-     *                       modules in dependency order); non-null
-     * @param index          the project interface index covering the full
-     *                       dependency closure; non-null
-     * @param manifests      the dependency-ordered manifests, one per
-     *                       input module; non-null
-     * @param target         the closed plan target; non-null
-     * @param shadowRequests the COMMON_SHADOW shadow-requested module ids
-     *                       (empty for every other purpose); non-null
-     * @return the route-plan result: the plan plus no diagnostics on
-     *         success, {@code null} plan plus one E6005 on an
-     *         internally inconsistent fact (never a silent reroute for a
-     *         fact defect; ineligibility reroutes with zero diagnostics)
-     * @throws IllegalArgumentException for a producer-defect wiring
-     *         guard — an inconsistent invocation, a registry digest
-     *         differing from the invocation's recorded digest, shadow
-     *         requests outside the COMMON_SHADOW contract, a
-     *         manifest/input coverage mismatch, or an entry module
-     *         outside the input
      */
     public static RoutePlanResult planRoutes(CompilerInvocation invocation,
                                              CapabilityRegistry registry,
@@ -253,12 +130,7 @@ public final class MigrationPlanner {
                 SemanticRequirementManifest manifest =
                     manifestByModule.get(module.moduleId());
                 boolean shadowRequested = shadowRequests.contains(module.moduleId());
-                // Rule 2b's route-accounting record (ISSUE-0574): a
-                // bytes-bearing module is a recorded retained-route
-                // bytes exception in every purpose — the plan's
-                // bytesExceptions set is the route report naming the
-                // reason (never an error, never a shadow entry, never a
-                // within-run fallback).
+
                 if (manifest.bytesBearing()) {
                     bytesExceptions.add(module.moduleId());
                 }
@@ -303,15 +175,6 @@ public final class MigrationPlanner {
     // Closed routing rules (F4, applied in dependency order)
     // =========================================================================
 
-    /**
-     * The closed routing decision for one implementation module: rule 1
-     * (legacy profile), rule 2 ({@code STDLIB_TIME_CONFLICT}, an inert
-     * marker no manifest claims since K7), rule 2b
-     * (the bytes-bearing marker, ISSUE-0574), rule 3
-     * ({@code PUBLIC_BUILD + PRE_ACTIVATION}), rule 4
-     * ({@code PUBLIC_BUILD + V1_2_ACTIVE} promotion gate), rule 5
-     * ({@code COMMON_SHADOW} shadow request).
-     */
     private static ModuleRoute routeOf(CompilerInvocation invocation,
                                        CapabilityRegistry registry, Target target,
                                        SemanticRequirementManifest manifest,
@@ -323,12 +186,7 @@ public final class MigrationPlanner {
             return ModuleRoute.LEGACY; // rule 2: never shared in any purpose
         }
         if (manifest.bytesBearing()) {
-            // Rule 2b (ISSUE-0574): a bytes-bearing module stays on the
-            // retained route in every purpose, before the purpose switch so
-            // the CONTAINERS_AND_STRINGS promotion never flips it SHARED.
-            // The production path never consults the route plan (C3); the
-            // marker is the retained route report's own subject.
-            // Deterministic, plan-time-only, never an error.
+
             return ModuleRoute.LEGACY;
         }
         switch (invocation.purpose()) {
@@ -743,19 +601,6 @@ public final class MigrationPlanner {
         return true;
     }
 
-    /**
-     * Collects one plan-time {@link TargetModuleAbi} per legacy
-     * Collects one plan-time {@link TargetModuleAbi} per legacy
-     * dependency of the shared module (F4/F5): the planner-owned fields
-     * copied from the index — {@code classFactoryAbi} from the
-     * F2-derived {@code constructionEntry} values and
-     * {@code classLayoutAbi} from the declaration-order
-     * {@code FieldInterface} lists. {@code exportedDescriptors} is empty
-     * at plan time (ISSUE-0233); every emission-owned field is absent
-     * (null) until staging (ISSUE-0239). The planner never invents
-     * retained wrapper names, sync-invocation entry names, async-handle
-     * protocol records, or load keys.
-     */
     private static void collectAbiEdges(CheckedModuleInput shared,
                                         Map<ModuleId, ModuleRoute> entries,
                                         ProjectInterfaceIndex index,
@@ -816,10 +661,6 @@ public final class MigrationPlanner {
      * byte-identical-plan gate. The staging-tree nonce never enters this
      * hash, the plan, or any record (F4/F6).
      *
-     * @param invocation           the invocation; non-null
-     * @param interfaceIndexDigest the index digest (foundation F2); non-null
-     * @param target               the plan target; non-null
-     * @return the lowercase 64-character hex digest
      */
     public static String deriveInvocationHash(CompilerInvocation invocation,
                                               String interfaceIndexDigest,
@@ -846,9 +687,6 @@ public final class MigrationPlanner {
      * The pinned plan-id derivation (F4): {@code "plan-" + first 16 hex
      * chars of invocationHash}.
      *
-     * @param invocationHash the lowercase 64-character hex invocation
-     *                       hash; non-null
-     * @return the plan id
      */
     public static String planIdFor(String invocationHash) {
         Objects.requireNonNull(invocationHash, "invocationHash must not be null");
@@ -1031,11 +869,6 @@ public final class MigrationPlanner {
      * construction; this check is the planner's single producer-defect
      * backstop over the same invariant.
      *
-     * @param invocation    the invocation; non-null
-     * @param entryModule   the payload module (the entry module); non-null
-     * @param formatVersion the index's format version; nullable in the
-     *                      defect arm
-     * @return null when consistent, else the E6005 diagnostic
      */
     static CompilerDiagnostic verifyFormatVersionFact(CompilerInvocation invocation,
                                                       ModuleId entryModule,
@@ -1058,11 +891,6 @@ public final class MigrationPlanner {
      * record guard; this check is the planner's single producer-defect
      * backstop over the same invariant.
      *
-     * @param invocation     the invocation; non-null
-     * @param moduleId       the payload module; non-null
-     * @param initialization the index entry's initialization mode;
-     *                       nullable in the defect arm
-     * @return null when consistent, else the E6005 diagnostic
      */
     static CompilerDiagnostic verifyInitializationFact(CompilerInvocation invocation,
                                                        ModuleId moduleId,
@@ -1086,12 +914,6 @@ public final class MigrationPlanner {
      * null entry at construction; this check is the planner's single
      * producer-defect backstop over the same invariant.
      *
-     * @param invocation        the invocation; non-null
-     * @param moduleId          the payload module; non-null
-     * @param classId           the class identity; non-null
-     * @param constructionEntry the class entry's construction entry;
-     *                          nullable in the defect arm
-     * @return null when consistent, else the E6005 diagnostic
      */
     static CompilerDiagnostic verifyConstructionEntryFact(CompilerInvocation invocation,
                                                           ModuleId moduleId,

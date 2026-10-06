@@ -1,19 +1,5 @@
 package deal.semantic.ir;
 
-/**
- * The closed runtime resolution classes of a dynamically resolved
- * {@code CALL}/{@code ASYNC_START} site (ISSUE-0531): the execution
- * shapes the runtime selects when the callee's binding kind is unknown
- * until execution.
- *
- * <p>Closed set — exactly the four values below; no open or unknown
- * fallback member and no external extension point exist. A
- * {@link FunctionExecutionBinding.AdapterBinding} resolution derives its
- * class from the adapter's D15-resolved source binding
- * ({@link DynamicReturnBoundaryProtocol#kindOf(FunctionExecutionBinding)}
- * applied to the source binding) — the adapter carries no source kind of
- * its own.</p>
- */
 public enum DynamicResolutionKind {
 
     /**

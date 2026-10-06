@@ -60,7 +60,6 @@ public final class NameResolver {
     /** Loop nesting depth — used to validate break/continue (F8). */
     private int loopDepth = 0;
 
-    /** Set of modules currently being resolved (for circular import detection, F12/F2). */
     private final Set<String> modulesInProgress;
 
     public NameResolver(String modulePath, ModuleResolver moduleResolver) {
@@ -202,7 +201,6 @@ public final class NameResolver {
         this.currentScope = scope;
     }
 
-    /** Returns diagnostics accumulated during resolution. */
     public List<CompilerDiagnostic> diagnostics() {
         return diagnostics;
     }
@@ -250,10 +248,6 @@ public final class NameResolver {
 
         Span synth = Span.synthetic(modulePath);
 
-        // The compiler-owned builtin `Error` declaration is sourced from
-        // its one authority (ISSUE-0631): the root binding below and the
-        // project lowering's builtin layout seed both derive from the
-        // same declaration record, so the two can never diverge.
         BuiltinErrorDeclaration builtinError =
             BuiltinErrorDeclaration.synthesized(synth);
         List<ClassField> errorFields = new ArrayList<>();
@@ -393,12 +387,6 @@ public final class NameResolver {
         root.define(name, new Symbol.ClassSymbol(name, cd.fields(), modulePath,
             classIdentityFor(modulePath, name)));
 
-        // Check for $ in field names (E2008). Default value type
-        // mismatches are checked by TypeChecker.checkClassDeclaration
-        // (ISSUE-0095 rework): every default runs through checkExpression
-        // there — covering non-literal defaults this resolver-level
-        // literal/identifier inference could never see — and records
-        // subexpression types in the typeMap the JVM backend consumes.
         for (ClassField cf : cd.fields()) {
             checkNoDollar(cf.name(), cf.span());
         }
@@ -478,7 +466,6 @@ public final class NameResolver {
      *   <li>If the declaration came AFTER the import, emit E2007.</li>
      * </ul>
      *
-     * @return true if a diagnostic was emitted and the declaration should be skipped
      */
     private boolean shadowsImport(String name, Span declSpan) {
         Symbol existing = root.resolveLocal(name);
@@ -930,17 +917,7 @@ public final class NameResolver {
             case "string"    -> Type.String.INSTANCE;
             case "table"     -> Type.Table.INSTANCE;
             case "Error"     -> errorClassType();
-            // DEAL v1.2: `bytes` is the canonical bytes primitive
-            // (Type.Bytes.INSTANCE). bytes is not a DEAL keyword, so a
-            // checker-accepted user class named `bytes` resolves to its
-            // ClassSymbol and wins over the primitive — the same
-            // class-symbol-first guard the retired JS-backend defensive
-            // arm used. Resolution runs in the lexical scope the
-            // annotation lives in (Pass 1 walks with the live scope;
-            // Pass 2 keeps the resolver's scope pointer synced with
-            // the checker's scopeMap scope — the ISSUE-0318 seam), so
-            // a nested user class named `bytes` wins at any nesting
-            // depth.
+
             case "bytes" -> {
                 Symbol sym = currentScope.resolve(name);
                 if (sym instanceof Symbol.ClassSymbol cs) {
@@ -969,8 +946,6 @@ public final class NameResolver {
      * declaring source's identity — never a reconstructed dotted
      * path).
      *
-     * @param cls the checked class type carrying its canonical identity
-     * @return the ClassSymbol, or {@code null} if not found
      */
     public Symbol.ClassSymbol resolveClassSymbol(Type.Class cls) {
         CanonicalModuleIdentity mine = moduleIdentity();
@@ -1000,9 +975,6 @@ public final class NameResolver {
      * consumers that hold the private deployment module id, never
      * public text).
      *
-     * @param className the simple class name
-     * @param modulePath the module path where the class is declared
-     * @return the ClassSymbol, or {@code null} if not found
      */
     public Symbol.ClassSymbol resolveClassSymbol(String className, String modulePath) {
         if (modulePath == null || modulePath.isEmpty()
@@ -1027,9 +999,6 @@ public final class NameResolver {
      * when the target module cannot be found or does not support the
      * resolution (callers fall back to local resolution).</p>
      *
-     * @param typeNode the type annotation to resolve
-     * @param modulePath the module path of the declaring module
-     * @return the resolved type, or {@code null} when unsupported
      */
     public Type resolveTypeNodeInModule(TypeNode typeNode, String modulePath) {
         if (modulePath == null || modulePath.isEmpty()
@@ -1056,9 +1025,6 @@ public final class NameResolver {
      * validate that a class type used as a jsonable field has the
      * required {@code C$fromJson} / {@code C$toJson} exports.
      *
-     * @param modulePath the module path where the function is expected
-     * @param functionName the function name (e.g. "User$fromJson")
-     * @return true if the function is exported from the module
      */
     public boolean isFunctionExportedFromModule(String modulePath, String functionName) {
         if (modulePath == null || modulePath.isEmpty()

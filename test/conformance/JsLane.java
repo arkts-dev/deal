@@ -59,102 +59,6 @@ import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
-/**
- * The JavaScript lane of the v1.2 differential gate (ISSUE-0356; design
- * {@code v12-zero-skip-conformance-gate} G4/G5): the absorbed
- * {@code retired JSON conformance harness} JS adapter path — the real frontend +
- * {@link JsBackend} codegen, the {@code deal/runtime.js} / {@code std/*.js}
- * / host-triplet deployment, and a real {@code node} subprocess —
- * executed under the Shared Lane Contract.
- *
- * <p>Per case the lane:</p>
- * <ol>
- *   <li>Probes the required tool {@code node} once (G3): a missing or
- *       broken-but-present tool is {@link MismatchClass#TOOL_MISSING},
- *       never a skip.</li>
- *   <li>Compiles the fixture plus every transitively imported companion
- *       module with the real frontend (lexer → parser → module shape
- *       gate → name resolution → type checker), companions first so the
- *       per-case identity index classifies every module before its
- *       importer. Every module compiles under the fixture-local case profile. A
- *       compile failure of any module is a lane compile failure (an
- *       infrastructure outcome with the diagnostic codes), never an
- *       execution outcome.</li>
- *   <li>Generates real CommonJS artifacts through the real
- *       {@link JsBackend} production seam — one artifact per module
- *       under its flat corpus stem (the corpus has no duplicate stems
- *       inside one compilation set), the fixture as the v1.2 entry
- *       module (the backend's entry scan emits E6004 and no artifact for
- *       an invalid entry) — and asserts artifact presence before
- *       execution: a missing artifact is
- *       {@link MismatchClass#ARTIFACT_MISSING}, never a fabricated
- *       result.</li>
- *   <li>Deploys a fresh temp workspace — the lane runner, the generated
- *       entry and companion artifacts, {@code deal/runtime.js}, the
- *       {@code std/*.js} library, and the imported {@code host/<name>}
- *       triplet implementations from
- *       {@code test/conformance/host-fixtures/<name>.js} (corpus C5) —
- *       and executes the runner in a real {@code node} subprocess with
- *       stdout and stderr captured as separate byte streams. A fixture
- *       importing {@code host/<name>} whose {@code <name>.js} triplet is
- *       missing fails as a corpus error ({@code ARTIFACT_MISSING} naming
- *       the file), never a skip. The gate's dispatcher owns the harness
- *       deadline; on interrupt the lane terminates the spawned
- *       subprocess (the Lane contract requirement).</li>
- *   <li>Invocation contract (G4.4): the lane runner invokes
- *       {@code main(): null} exactly once (the runner is the node entry,
- *       so the emitted entry shim — keyed on {@code require.main} — stays
- *       inert and the runner owns the single invocation), then
- *       auto-invokes each non-{@code $} zero-arity exported wrapper
- *       exactly once, in declaration order (derived from the compiled
- *       AST); return values are discarded — no lane prints results (the
- *       JVM/JS result-printing of the absorbed runners is removed, the
- *       cross-backend formatting hazard); an async export's invocation
- *       is awaited to completion before the verdict;
- *       {@code $}-prefixed exports are skipped from auto-invocation.</li>
- *   <li>Error framing (G4.6): on an uncaught DEAL error the lane writes
- *       to stdout exactly {@code DEAL_ERROR_CODE: <code>} then
- *       {@code DEAL_ERROR_SNAPSHOT: <canonical JSON>} and exits 1;
- *       success exits 0. The canonical snapshot serialization is the
- *       shared {@link ErrorSnapshot} serializer — the same helper the
- *       Lua and JVM lanes reuse verbatim, so the three lanes can never
- *       drift on serialization. The sidecar's Error Expectation is the
- *       authoritative field set: the lane emits the mandatory fields plus
- *       exactly the optional fields the sidecar pins ({@code expected},
- *       {@code actual}, {@code frames}, {@code cause}) and suppresses
- *       every unpinned optional — a pinned field the captured error does
- *       not carry is never fabricated, so the comparison fails honestly.
- *       The runner transports the raw captured error fields through a
- *       workspace payload file; the lane normalizes and frames them.
- *       stderr carries no framing — a lane writing framing to stderr
- *       diverges and fails.</li>
- *   <li>{@code sourceFile} normalization (corpus C2): the lane maintains
- *       its per-module deployment map (the absolute path every compiled
- *       module's spans carry ↔ its canonical corpus-relative path plus
- *       its stripped classification-header line count), recorded at
- *       compile time; the captured {@code file} is normalized to the
- *       corpus-relative form and the captured {@code line} is rebased
- *       onto raw corpus-file coordinates (the coordinates the sidecars
- *       pin). An unmappable captured {@code file} value is emitted
- *       verbatim, so the byte comparison fails and surfaces the defect.</li>
- *   <li>Sanctioned rejection (corpus C6): for a {@code compile-reject}
- *       expectation the lane compiles without executing and reports the
- *       compile's first error diagnostic as the rejection object; the
- *       comparator's closed cross-check compares it against the pinned
- *       diagnostic (the FFI divergent case lands when the backend epics
- *       register E6006 — until then a divergent expectation fails the
- *       comparison honestly, never a skip).</li>
- * </ol>
- *
- * <p>No skip branch exists in this lane: pre-flip, JS gaps over the
- * {@code .deal} corpus are reported as real differential failures by the
- * gate (the gate is the measuring instrument); the flip (T14) is the
- * point where the full three-backend pass becomes the enforced state.
- * The lane changes no existing runner: {@code retired JSON conformance harness} and
- * {@code JsE2eTest} keep running in {@code run_tests.sh} until the
- * absorption/retirement children land (G5's temporary-coexistence
- * window). No production file is modified.</p>
- */
 public class JsLane implements Lane {
 
     /** The lane's backend name (G4: exactly {@code js}). */
@@ -675,11 +579,7 @@ public class JsLane implements Lane {
                     new LinkedHashMap<>();
                 Map<String, HostModuleDeclarations> hostModules =
                     new LinkedHashMap<>();
-                // Corpus C FFI externals (ISSUE-0507): candidate/*
-                // imports join the extern-C rejection set — the real
-                // JsBackend import-site arm emits E6006
-                // FFI_UNSUPPORTED_BACKEND (the sanctioned C6
-                // divergence), never a require of a missing artifact.
+
                 Set<String> externCImports = new LinkedHashSet<>();
                 for (StatementNode stmt
                         : parseResult.program().statements()) {
@@ -956,8 +856,7 @@ public class JsLane implements Lane {
                 return new CanonicalModuleIdentity.ExternalModule(
                     modulePath.replace('/', '.'));
             }
-            // Corpus C FFI externals (ISSUE-0507): candidate/* modules
-            // classify as externals with the dotted raw specifier.
+
             if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
                 return new CanonicalModuleIdentity.ExternalModule(
                     modulePath.replace('/', '.'));
@@ -1193,10 +1092,6 @@ public class JsLane implements Lane {
                     }
                 }
 
-                // The JS host-module declared map (ISSUE-0328,
-                // js-v12-host-abi-completion D1): the declared export map
-                // plus, per class export name, the declaration AST's
-                // field records with their resolved declared types.
                 Map<String, List<HostModuleDeclarations.HostField>>
                     classFields = new LinkedHashMap<>();
                 for (StatementNode stmt
@@ -1296,10 +1191,7 @@ public class JsLane implements Lane {
             if (hostRegistry.isHostModule(modulePath)) {
                 return hostRegistry.forModule(modulePath).exports();
             }
-            // Corpus C FFI externals (ISSUE-0507): candidate/* imports
-            // resolve through the corpus-owned FFI wiring into the real
-            // FFI declaration surface (the JS lane types them before the
-            // import-site E6006 rejection).
+
             if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
                 return CorpusFfi.module(conformanceRoot, modulePath,
                     profile).exports();
@@ -1320,9 +1212,7 @@ public class JsLane implements Lane {
                 return hostRegistry.forModule(modulePath)
                     .classSymbols().get(className);
             }
-            // Corpus C FFI externals (ISSUE-0507): classes of a
-            // candidate/* module resolve to the declaration's
-            // synthesized ClassSymbols.
+
             if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
                 return CorpusFfi.module(conformanceRoot, modulePath,
                     profile).classSymbols().get(className);
@@ -1353,9 +1243,7 @@ public class JsLane implements Lane {
                     return hostRegistry.forModule(ext.rawImportSpecifier())
                         .classSymbols().get(className);
                 }
-                // Corpus C FFI externals (ISSUE-0507): the carried
-                // external identity of a candidate/* module routes back
-                // to the declaration's synthesized class symbols.
+
                 Symbol.ClassSymbol ffiSymbol = CorpusFfi.classSymbol(
                     conformanceRoot, declaringModule, className, profile);
                 if (ffiSymbol != null) {
@@ -1396,8 +1284,7 @@ public class JsLane implements Lane {
                 return hostRegistry.forModule(ext.rawImportSpecifier())
                     .exports().containsKey(functionName);
             }
-            // Corpus C FFI externals (ISSUE-0507): the declared export
-            // map of a candidate/* module.
+
             if (CorpusFfi.declaresFunction(conformanceRoot,
                     declaringModule, functionName, profile)) {
                 return true;

@@ -19,26 +19,6 @@ import java.util.Objects;
  * declared arms' templates in arm order (the registry's fail-closed
  * consistency invariant).</p>
  *
- * @param id                the closed arm id
- * @param policy            the row the arm renders
- * @param templateIndex     the arm's template position in the row's list
- * @param template          the arm's complete message template
- * @param parameters        the arm's named parameters in order of appearance
- * @param parameterSources  each parameter's closed source id (its keys are
- *                          exactly {@link #parameters()})
- * @param expectedSource    the expected-token source, or {@link ExpectedSource#NONE}
- * @param pinnedExpectedText the pinned expected text when the expected-token
- *                          source is {@link ExpectedSource#PINNED_TEXT},
- *                          otherwise {@code null}
- * @param actualProjection  the actual projection, or {@link ActualProjection#NONE}
- * @param origin            the arm's origin convention
- * @param scope             the arm's render scope
- * @param code              the arm's DEAL-visible code, or {@code null} exactly
- *                          when the arm keeps its row's code. The multi-code
- *                          {@code BYTES_WRITE} row pins E8013 for its
- *                          value-range arm beside the row's own E8012, so the
- *                          arm carries that code and no consumer selects a
- *                          code of its own.
  */
 public record FailureArm(
     FailureArmId id,

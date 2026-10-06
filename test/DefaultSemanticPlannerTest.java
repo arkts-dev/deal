@@ -24,48 +24,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * The planner-level verification battery of ISSUE-0541 (design source
- * {@code provider-versioned-default-plans} Verification 1; the
- * task-pinned acceptance criteria): the shared default planning
- * pipeline — {@code DefaultSemanticPlanner} for implementation classes
- * and {@code DeclarationSemanticAnalyzer} for declaration/C-struct
- * classes — exercised through the real orchestrator path
- * ({@link ProjectLocator} → the production
- * {@link CompilationOrchestrator} constructor → {@code compile()}) over
- * real scratch-project fixtures, inspecting the produced
- * {@link CompilerClassDefaultPlan}s and the provisional
- * {@link DefaultResourceOccurrence} data — not isolated API calls.
- *
- * <p>Covered:</p>
- * <ol>
- *   <li>Epic criterion 1 at the plan level: same-module and imported
- *       calls, imported class plans, contextual class literals
- *       (including a literal nested in a call nested in an array, and a
- *       literal nested in a literal field), out-of-root class-free
- *       providers, and type-only references — with source order of
- *       {@code orderedFields} and first-IR-walk-occurrence order plus
- *       deduplication by semantic resource identity on the provisional
- *       occurrence records (kind, from/to semantic module identities,
- *       import alias, semantic resource identity, reference range — and
- *       no digest field).</li>
- *   <li>The E4001 declaration-shape gate at the field declaration range
- *       for implementation and C-struct classes; host-declared classes
- *       exempt (the host defaults seam keeps compiling).</li>
- *   <li>The E3020 sync gate at the await range for evaluator-scope
- *       await — including a class declared inside an async function
- *       body; await inside a nested async function-expression body
- *       compiles.</li>
- *   <li>E3001 at the default expression range through the real
- *       pipeline (implementation default via the checker; C-struct
- *       default via the declaration analyzer's checker).</li>
- *   <li>Zero evaluator invocation, zero library loading, no digest
- *       computation and no final-edge construction: plans carry empty
- *       {@code runtimeDependencies}, expressions carry null canonical
- *       content/digest and empty {@code runtimeResources}, and the
- *       occurrence record has no digest component.</li>
- * </ol>
- */
 public class DefaultSemanticPlannerTest {
 
     private static int passed = 0;
@@ -104,12 +62,6 @@ public class DefaultSemanticPlannerTest {
         }
     }
 
-    /**
-     * The harness invocation of this suite's compiles (ISSUE-0643 P10
-     * item 3): the suite's subject — the default-class planning phase —
-     * is arm-independent, and the fixtures keep the harness arm's
-     * retained artifact behavior.
-     */
     private static CompilerInvocation invocation() {
         return ConformanceHarnessMetadata.invocation(
             SemanticProfile.DEAL_V1_2_INT32);
@@ -245,10 +197,6 @@ public class DefaultSemanticPlannerTest {
             "PlannedDefaultClass components are (plan, declaration,"
                 + " occurrences), got " + plannedComponents);
     }
-
-    // =========================================================================
-    // Epic criterion 1 at the plan level (the real orchestrator path)
-    // =========================================================================
 
     private static void testPlanShapeAndResolutionThroughOrchestrator()
             throws Exception {

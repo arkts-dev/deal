@@ -18,14 +18,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
 
-/**
- * The v1.2 differential gate core entry point (ISSUE-0353): discovery,
- * authoritative classification, sidecar loading and schema validation,
- * backend-neutral frontend execution, compile-diagnostic comparison,
- * lane dispatch with harness-owned deadlines, and ordinary mismatch
- * failures. The {@link GateRun} carries every per-case
- * {@link GateDispatcher.CaseVerdict} for integration tests.
- */
 public final class DifferentialGate {
 
     private DifferentialGate() {
@@ -208,14 +200,6 @@ public final class DifferentialGate {
             + straySidecars + " stray");
         out.println();
 
-        // ---------------------------------------------------------------------
-        // Phase 2b: frontend corpus execution (G1, ISSUE-0357): every
-        // compile-ok fixture must compile clean and every compile-error
-        // fixture without a Compile Expectation Sidecar must reject with
-        // its exact pinned code, through the real backend-neutral frontend
-        // with the per-case A5 profile and the corpus module resolver
-        // (stdlib exports, relative corpus imports). No backend executes.
-        // ---------------------------------------------------------------------
         int frontendCompiled = 0;
         Set<String> pinFixturePaths = new java.util.HashSet<>();
         for (LoadedFixture loadedFixture : pinLoaded) {

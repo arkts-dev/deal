@@ -37,49 +37,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * ISSUE-0642: the production project emission unit
- * {@code deal.module.ProductionProjectEmission}
- * ({@code production-project-emission-and-atomic-cutover} P5/P6/P7/P9/P11
- * and the production-arm, source-map, and fail-closed producer-guard
- * contracts; {@code luajit-jvm-single-lowering-production-cutover}
- * C3/C4/C5/C7/C8/C9).
- *
- * <ol>
- *   <li>the unit is one production-source unit with one public static
- *       entry, consuming exactly the compile's declared inputs, the
- *       target, the explicit source-map flag, the deployment-copy
- *       resolver, and the staging surface;</li>
- *   <li>one lowering, one emission, one staged project artifact per
- *       target ({@code app.lua} on LuaJIT, {@code App.java} on the JVM),
- *       the unchanged LuaJIT runtime/stdlib deployment copies, no
- *       sidecar, and byte-identical repeated staging;</li>
- *   <li>the C9 warning fires once for an explicit {@code --source-map}
- *       request and never for a {@code --dump-ir}-derived flag;</li>
- *   <li>the pre-emission closure guard carries no HOST-kind shape after
- *       the calls child's realization (ISSUE-0656) and this slice's
- *       extern-C admission (ISSUE-0662): a HOST-declaration-kind import
- *       emits its declared-map host load and an extern-C declaration
- *       import emits its {@code load_ffi} prelude, each staging its one
- *       project artifact, while the guard's stable
- *       {@code HOST_MODULE_IMPORT} token and its E6005 producer stay
- *       landed; the cross-module sync and async calls emit and execute
- *       (ISSUE-0654/ISSUE-0655) with the {@code EXTERNAL_ASYNC_CALL}
- *       shape removed (ISSUE-0656);</li>
- *   <li>a failing lowering (bytes) stages nothing and leaves the previous
- *       artifact set byte-identical, while a cross-module sync call emits
- *       through the realized {@code CALL(EXTERNAL)} {@code SHARED_BODY}
- *       arm and stages its one project artifact (ISSUE-0654);</li>
- *   <li>the staged LuaJIT artifact executes under {@code luajit} and the
- *       staged JVM artifact compiles with {@code javac --release 25
- *       -proc:none} plus {@code java}.</li>
- * </ol>
- *
- * <p>The fixture inputs are gathered through a harness-invocation compile
- * (the P10 item-3 pattern), so the fixtures stay valid after the dispatch
- * leaf activates the production arm for the release-owned invocation; the
- * unit itself is driven with the release-owned production invocation.</p>
- */
 public class ProductionProjectEmissionTest {
 
     private static int passed = 0;
@@ -347,13 +304,6 @@ public class ProductionProjectEmissionTest {
         }
         """;
 
-    /**
-     * The still-fail-closed source: an arity-extended adapter call whose
-     * source identity is not statically fixed (a call-result
-     * REEVALUATE_THUNK source — the function-typed-value child's
-     * ISSUE-0531 residue), so the production lowering fails the module
-     * with the named E6005 CONSTRUCT_UNLOWERED rule before any emission.
-     */
     private static final String ADAPTER_SOURCE_APP_SOURCE = """
         export function main(): null {
           let f: (a: int, b: int) => int = one
@@ -716,9 +666,6 @@ public class ProductionProjectEmissionTest {
             + "previous artifact set; the cross-module sync call emits and "
             + "stages --");
 
-        // ISSUE-0626: the bytes allocation now lowers and emits through
-        // the one production pipeline (the bytes coverage slice), so the
-        // bytes-bearing run stages its one project artifact.
         Fixture bytes = bytesFixture();
         Path bytesOut = bytes.root().resolve("out-arm");
         try {
@@ -742,10 +689,6 @@ public class ProductionProjectEmissionTest {
             deleteRecursively(bytes.root());
         }
 
-        // ISSUE-0626: the nested-declaration arm is production-covered (a
-        // declaration inside a function body owns its lowering context), so
-        // the nested-declaration fixture emits its one project artifact
-        // instead of failing closed.
         Fixture nested = nestedDeclarationFixture();
         Path nestedOut = nested.root().resolve("out-arm");
         try {
@@ -769,10 +712,6 @@ public class ProductionProjectEmissionTest {
             deleteRecursively(nested.root());
         }
 
-        // The failing lowering: an arity-extended adapter call whose source
-        // identity is not statically fixed (the function-typed-value
-        // child's ISSUE-0531 residue) fails CONSTRUCT_UNLOWERED. The live
-        // root is pre-populated with a previous artifact set.
         Fixture failing = adapterSourceFixture();
         Path out = failing.root().resolve("out-arm");
         try {
@@ -802,12 +741,6 @@ public class ProductionProjectEmissionTest {
             deleteRecursively(failing.root());
         }
 
-        // ISSUE-0654: a cross-module sync call now emits through the
-        // realized CALL(EXTERNAL) SHARED_BODY arm — the callee unit's
-        // EXTERNAL_ENTRY runs inside the one project artifact — so the
-        // production run stages its one artifact over the previous set
-        // (the atomic staging property stays covered by the adapter-source
-        // case above, whose lowering fails before any emission).
         Fixture sync = twoModuleFixture(SYNC_CALL_APP_SOURCE);
         Path syncOut = sync.root().resolve("out-arm");
         try {
@@ -903,14 +836,6 @@ public class ProductionProjectEmissionTest {
             deleteRecursively(fixture.root());
         }
 
-        // The extern-C admission (ISSUE-0662): a HOST-kind import whose
-        // declaration-surface kind is EXTERN_C (the @extern-c declaration
-        // module) is realized by the emitted load_ffi prelude selected from
-        // the compile's FFI emission input, so the arm stages its one
-        // project artifact and no guard outcome fires. The guard step and
-        // its stable HOST_MODULE_IMPORT token stay landed (a superseded
-        // shape is replaced, never deleted); the fail-closed seeds of the
-        // FFI emission family are the focused suite's.
         Fixture externC = externCFixture();
         Path externCOut = externC.root().resolve("out-arm");
         try {
@@ -964,9 +889,6 @@ public class ProductionProjectEmissionTest {
             + "entity-local async entry and executes; a same-module async call "
             + "emits --");
 
-        // The cross-module async call: one project artifact stages, no
-        // guard shape fires, and the exported async worker executes the
-        // caller's alias-token linkage end-to-end (ISSUE-0655/ISSUE-0656).
         Fixture cross = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
         Path crossOut = cross.root().resolve("out-arm");
         try {

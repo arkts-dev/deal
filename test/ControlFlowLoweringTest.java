@@ -90,69 +90,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * Verifies the ISSUE-0409 control-flow lowering arms of
- * {@link SemanticLowerer} (control-flow-structures C-D3..C-D8): the
- * pinned construct→op map for {@code BRANCH} (IF + logical short
- * circuit), {@code LOOP(WHILE|FOR)} including the test-less FOR row,
- * {@code FOR_EACH(ARRAY_VALUES)}, {@code TRY_CATCH}, {@code THROW},
- * {@code BREAK}/{@code CONTINUE}, and {@code DISCARD} — plus the
- * produced {@link StructuredBodyTable} (C-D1), the production-time
- * {@link ControlFlowValidator} seam (C-D2), the detector coverage rows,
- * the T2 chains-inside-blocks composition, and byte-identical
- * determinism.
- *
- * <p>Pinned cases (the task verification):
- * <ol>
- *   <li>{@code if} → {@code BRANCH(IF)}: the condition's producing ops
- *       complete in the enclosing block before the {@code BRANCH} op;
- *       exactly one of {@code selectedBlock}/{@code alternateBlock}
- *       executes (block membership); an absent {@code else} produces
- *       {@code alternateBlock = null}; an {@code else if} chain nests
- *       its {@code BRANCH} in the alternate block; SUCCESS publishes no
- *       result.</li>
- *   <li>{@code &&}/{@code ||} → {@code BRANCH(LOGICAL_AND/OR)} (never
- *       {@code BINARY}): the left operand completes before START as the
- *       condition; the right operand's producing ops live in
- *       {@code selectedBlock} only; the op's result {@code ValueId} is
- *       the right operand's value identity with result type boolean;
- *       chained {@code &&}/{@code ||} nest in source order.</li>
- *   <li>{@code while} → {@code LOOP(WHILE)} with {@code initBlock} =
- *       the per-iteration condition block and {@code updateBlock =
- *       null}.</li>
- *   <li>{@code for} → {@code LOOP(FOR)}: init + first condition
- *       production in {@code initBlock}; update + condition
- *       re-production in {@code updateBlock} publishing the same
- *       condition {@code ValueId}; a test-less {@code for (;;)} produces
- *       exactly one {@code CONST true} in {@code initBlock} and
- *       {@code updateBlock} carries only the update ops.</li>
- *   <li>{@code for-of} over arrays → {@code FOR_EACH(ARRAY_VALUES)}
- *       (iterable prior step once, fresh binding, initial generation,
- *       {@code TYPE_DESCRIPTOR}); {@code BREAK}/{@code CONTINUE} target
- *       the recorded innermost loop.</li>
- *   <li>{@code try/catch} → {@code TRY_CATCH} with try/catch blocks and
- *       the producer-allocated {@code catchBinding}; a load of the catch
- *       variable lowers to {@code BINDING_LOAD} of that binding;
- *       {@code throw} → {@code THROW} with {@code THROW_TRANSFER} whose
- *       operand completes before START.</li>
- *   <li>Expression statements → {@code DISCARD} (role
- *       {@code SYNTHETIC}).</li>
- *   <li>Every lowered function's block table passes
- *       {@link ControlFlowValidator} (tree, dominance, exits); mutated
- *       units — an op after a terminator, a {@code BREAK} targeting a
- *       non-loop, an orphan block — fail E6005
- *       {@code CONTROL_BLOCK_TREE}/{@code CONTROL_EXIT}.</li>
- *   <li>T2 composition: a while condition block carrying an
- *       assignment chain (receiver/key/RHS) lowers with the chain's
- *       child order intact inside the block and the whole unit validates
- *       end-to-end.</li>
- *   <li>Coverage: {@code constructCoverage} carries the extended
- *       detector rows for the lowered constructs; no new
- *       {@code ConstructKind} values are introduced.</li>
- *   <li>Determinism: repeated lowering produces byte-identical
- *       {@code deal.semantic-ir/1} dumps.</li>
- * </ol>
- */
 public class ControlFlowLoweringTest {
 
     private static int passed = 0;
@@ -1151,11 +1088,6 @@ public class ControlFlowLoweringTest {
     // 6. DISCARD
     // =========================================================================
 
-    /**
-     * The five module-level kinds outside the block-membership table (the
-     * C-D1/C-D2 completeness exemption of {@code ControlFlowValidator};
-     * ISSUE-0590 adds the lowerer-produced {@code MODULE_INIT} envelope).
-     */
     private static final Set<SemanticOpKind> MODULE_LEVEL_KINDS = Set.of(
         SemanticOpKind.MODULE_INIT,
         SemanticOpKind.EXTERNAL_ENTRY,
@@ -1177,9 +1109,7 @@ public class ControlFlowLoweringTest {
         if (result == null || result.hasErrors()) {
             return;
         }
-        // The lowerer appends one detached module-level MODULE_INIT
-        // envelope op per unit (ISSUE-0590 E3/E8); the statement's own ops
-        // are the CONST + DISCARD pair.
+
         List<SemanticOp> ops = result.unit().ops().stream()
             .filter(op -> !MODULE_LEVEL_KINDS.contains(op.kind()))
             .toList();

@@ -46,62 +46,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * Verifies the ISSUE-0515 JSON walkers of {@link ClassOpsExecutor}
- * (class-construction-jsonable-operations K-D8/K-D9/K-D10/K-D11; parent
- * D16): the single op-level execution form of
- * {@code JSON_FROM_CLASS}/{@code JSON_TO_CLASS} over the closed value
- * view, driven by a fixture JSON algorithm delegate implementing exactly
- * the pinned E8 {@code JSON_PARSE}/{@code JSON_STRINGIFY} rows (RFC-8259
- * scalar-valid parse; signed32 integer lexical mapping; duplicate keys
- * keep last value and first position; document order preserved; finite
- * acyclic JSON-shaped output; object insertion order and array index
- * order; RFC-8259 escaping; shortest round-trippable decimals) — this
- * epic defines no second production JSON algorithm, and the fixture is
- * test-only. The production delegate ({@link JsonClassAlgorithmAdapter}
- * over E8's {@code SharedStdlibSemantics}) is pinned against the fixture
- * on the same inputs.
- *
- * <p>Pinned cases (the task verification):
- * <ol>
- *   <li>the fixture delegate implements the pinned rows and the
- *       production adapter agrees with it;</li>
- *   <li>{@code JSON_FROM_CLASS} — language null on every listed failure
- *       with no partial instance: syntax defect; unknown key in document
- *       order (before any decode or default); descriptor failures
- *       (int-from-Number, null on non-nullable, non-empty array for a
- *       table field, wrong element shapes); a failing default child
- *       (completed effects remain); an absent required-present
- *       no-default key (K-D9); a nested decode failure; depth
- *       overflow (class/array recursion and table-field
- *       contents);</li>
- *   <li>the {@code {}}/{@code []} collapse and the top-level gate
- *       (null/non-object/non-empty-array → null);</li>
- *   <li>the three-state roundtrip (missing vs present null preserved);
- *       a provided-value failure runs no defaults (the default-block
- *       probe stays empty);</li>
- *   <li>nested defaults evaluate through the nested class's
- *       {@code CLASS_FACTORY} in the declaring module — the fixture
- *       factory seam drives the real {@link
- *       ClassOpsExecutor#executeClassFactory} with the
- *       {@code JSON_FROM_CLASS} op as the factory's executed
- *       {@code parentOpId} (K-D5 trigger (b), cross-unit);</li>
- *   <li>{@code JSON_TO_CLASS} — the first declaration-order failure with
- *       the exact template {@code value at {fieldPath} is not JSON
- *       serializable: {actual}} and the pinned fieldPath convention
- *       (root {@code ""}, field {@code "f"}, nested class field
- *       {@code "f.g"}, array element {@code "f[0]"}, table key
- *       {@code "f.k"}); wrong identity at root and nested positions;
- *       cycles (class and table); nonfinite numbers; missing required;
- *       optional omitted; deterministic output bytes; depth overflow
- *       (class recursion and table-field contents);</li>
- *   <li>the call-origin anchoring — a failure projects at the supplied
- *       call origin, never the generated body's synthetic anchor;</li>
- *   <li>fail-closed defects and null-argument NPEs;</li>
- *   <li>determinism — repeated executions with equal inputs produce
- *       equal results.</li>
- * </ol>
- */
 public class JsonClassExecutorTest {
 
     private static int passed = 0;
@@ -223,7 +167,6 @@ public class JsonClassExecutorTest {
         return new ClassLayout(classId, List.of(fields));
     }
 
-    /** A detached CLASS_DEFAULT op (K-D12: no static parent). */
     private static SemanticOp defaultOp(ClassId classId, String field, SemanticValue result,
                                         RuntimeDescriptor resultType) {
         return op(SemanticOpKind.CLASS_DEFAULT,
@@ -786,17 +729,6 @@ public class JsonClassExecutorTest {
         }
     }
 
-    /**
-     * The nested-class factory seam fixture (the production caller's
-     * shape): resolves the nested class's {@code CLASS_FACTORY} op
-     * through the caller-supplied registry context and drives the real
-     * {@link ClassOpsExecutor#executeClassFactory} with the triggering
-     * {@code JSON_FROM_CLASS} op as the factory's executed
-     * {@code parentOpId} (K-D5 trigger (b), cross-unit) — recording the
-     * executed parent in the shared log. The owner-side default blocks
-     * evaluate through the owner-side body runner (the declaring
-     * module's scope).
-     */
     private static final class FactorySeam implements NestedClassFactory {
 
         private final List<String> log;
@@ -1203,9 +1135,6 @@ public class JsonClassExecutorTest {
             FixtureJson.parser(), missingFactorySeam(), runner);
         check(nonEmpty instanceof Value.Null, "a non-empty array top level returns null");
 
-        // The {} collapse: an empty object decodes as the defaulted
-        // instance — with no defaults and no provided keys the walk
-        // fails K-D9 (absent required-present no-default fields).
         Value emptyObject = ClassOpsExecutor.executeJsonFromClass(op,
             Map.of(jsonId, Value.string("{}")), List.of(), defaultOps, layouts,
             FixtureJson.parser(), missingFactorySeam(), runner);
@@ -1361,8 +1290,6 @@ public class JsonClassExecutorTest {
                 && table.table().keys().isEmpty(),
             "the empty-array collapse decodes an empty table field");
 
-        // An absent required-present field without a declared default is
-        // a field failure (K-D9).
         ClassLayout strict = layoutOf(POINT, field("x", INT, true));
         ValueId strictJsonId = nextValue();
         SemanticOp strictOp = jsonFromOp(strict, strictJsonId);
@@ -1387,9 +1314,6 @@ public class JsonClassExecutorTest {
                 "default " + tagDefault.opId())),
             "completed children's effects remain (x ran; tag ran and failed)");
 
-        // A producer Defect thrown by the default-block runner fails
-        // closed (K-D11): it never uses the walk's language-null
-        // carrier (the JsonFromFailure carrier's pinned discipline).
         BodyRunner defectiveRunner = defaultOp -> {
             throw new Defect("a producer defect inside the default block of "
                 + defaultOp.opId() + " — fail closed, never language null");
@@ -1493,11 +1417,6 @@ public class JsonClassExecutorTest {
         check(nestedFailure instanceof Value.Null,
             "a nested extra-key failure returns null end-to-end");
 
-        // A failing nested-factory child: the owner-side default block
-        // throws through the real executeClassFactory (the
-        // DEAL-failure stand-in) — the walk publishes language null
-        // end-to-end (K-D8 step 6 / K-D5's failing-child rule), never
-        // an uncaught throw, and the completed child ran first.
         List<String> failingLog = new ArrayList<>();
         NestedClassFactory failingSeam = (classId, providedFields) -> {
             Outcome<Value> outcome = ClassOpsExecutor.executeClassFactory(rebuiltFactory,
@@ -1521,8 +1440,6 @@ public class JsonClassExecutorTest {
             "the failing nested factory ran its first child before the failure "
                 + "(completed children's effects remain)");
 
-        // A producer Defect of the nested seam fails closed (K-D11): it
-        // never uses the walk's language-null carrier.
         NestedClassFactory defectiveSeam = (classId, providedFields) -> {
             throw new Defect("a producer defect of the nested factory seam — never a "
                 + "walk failure");

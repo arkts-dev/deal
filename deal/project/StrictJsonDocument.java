@@ -23,11 +23,6 @@ import java.util.Map;
  * no byte-level decoding, and no {@code java.nio.file} or
  * {@code java.io} types.
  *
- * @param root        the strictly decoded root value, or null when the
- *                    input contains no value at all (empty or
- *                    whitespace-only text)
- * @param valueRanges identity-keyed map from each value in the tree to
- *                    its half-open decoded-scalar range
  */
 public record StrictJsonDocument(
     StrictJsonValue root,

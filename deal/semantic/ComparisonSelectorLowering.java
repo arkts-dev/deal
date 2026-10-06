@@ -28,106 +28,8 @@ import deal.types.Types;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * The comparison producer of the {@code EVALUATION_ORDER} capability
- * (binary-comparison-selectors B-D3): the single checked-fact &rarr;
- * selector lowering map of {@code deal.semantic-ir/1} and the producer of
- * exactly one {@code BINARY} comparison op per checked comparison.
- *
- * <p><b>Lowering map (B-D3, exact).</b> One selector from the checked
- * operand types and the operator:</p>
- *
- * <pre>{@code
- * int ===/!== int            -> INT32_EQ/NE
- * int < <= > >= int          -> INT32_LT/LE/GT/GE
- * number vs number           -> NUMBER_EQ/NE
- * number relational          -> NUMBER_LT/LE/GT/GE
- * string vs string           -> STRING_EQ/NE
- * string relational          -> STRING_LT/LE/GT/GE
- * boolean vs boolean         -> BOOLEAN_EQ/NE
- * null vs null               -> NULL_EQ/NE
- * T|null vs T|null           -> NULLABLE_EQ/NE, side BOTH, inner = T
- * T|null vs null literal     -> NULLABLE_NULL_EQ/NE, side LEFT (left
- *                               nullable) | RIGHT (right nullable)
- * array/table/class/function equal types
- *                            -> REFERENCE_EQ/NE with the shared checked
- *                               descriptor
- * bytes vs bytes             -> BYTES_EQ/NE with the shared checked
- *                               descriptor (RuntimeDescriptor.Bytes —
- *                               ISSUE-0158)
- * }</pre>
- *
- * <p><b>Payload rules (B-D3).</b> {@code BinaryPayload.innerDescriptor}
- * carries the shared checked descriptor for {@code REFERENCE_*}/{@code
- * BYTES_*} and the inner descriptor for {@code NULLABLE_*}/{@code
- * NULLABLE_NULL_*}; {@code side} is carried only for the nullable
- * selectors ({@code LEFT}/{@code RIGHT} for {@code NULLABLE_NULL_*},
- * {@code BOTH} for equal nullable pairs) and is {@code null} otherwise.
- * Equal nullable types never use a reference selector — null is not a
- * reference. Inner/shared descriptors are derived through
- * {@link DescriptorService#describe(Type)} — the single
- * {@code Type}&rarr;{@code RuntimeDescriptor} producer — never
- * re-derived here.</p>
- *
- * <p><b>Logical operators.</b> {@code &&}/{@code ||} are never
- * {@code BINARY} (they lower to selector-bearing {@code BRANCH} — the
- * control-flow lowering slice); this producer never handles them. Any
- * operator outside the six comparison operators, any pair outside the
- * map, and any {@code Type.Error} pair raise {@link Defect} — a producer
- * defect, never a guessed selector.</p>
- *
- * <p><b>Totality (B-D3/B-D7).</b> The checker admits exactly the map's
- * pairs for descriptor-representable operand types: it rejects
- * non-admitted pairs (E3006 mixed, E3007 relationals). ISSUE-0158 lifted
- * the former B-D7 E3019 frontend gate and added the bytes selector and
- * descriptor row ({@code BYTES_EQ}/{@code BYTES_NE} over
- * {@link RuntimeDescriptor.Bytes}), so every checker-admitted
- * bytes-involving equality pair — equal bytes-containing types, nullable
- * bytes-vs-null, equal nullable bytes pairs — now has a map row. The map
- * is therefore total over lowering-reachable comparisons: every
- * checker-admitted pair has a row, and a pair reaching this producer
- * without a row is the unreachable E6005 {@code COMPARISON_SELECTOR}
- * producer-defect layer only (B-D7's defensive guard). Arithmetic
- * selectors (INT32/NUMBER arithmetic) are the signed-int32/containers
- * epics' producers, never this one.</p>
- *
- * <p><b>Produced op.</b> {@link #produce} builds exactly one
- * {@code BINARY} op per source comparison: operands in source order
- * (left then right), operand types via the descriptor service, result
- * type {@code boolean}, policy {@code NO_DEAL_FAILURE} (validator-pinned
- * {@code binaryPolicy}: no selector may raise), a fresh {@code ValueId}
- * result and {@code OpId} from the caller's allocator at the caller's
- * coordinates, the caller's {@code SourceOrigin} verbatim (no AST
- * identity is retained — parent D4), and a contract snapshot with the
- * T3 digest computed by {@code ContractSnapshotCanonicalizer}.</p>
- *
- * <p><b>Fail closed (B-D3/B-D7).</b> A no-row pair raises
- * {@link Defect} (internal control flow, never a crash and never an
- * invented selector); {@link #loweringFailureDetail(ModuleId, Defect)}
- * produces the named {@code COMPARISON_SELECTOR} failure carrying the
- * exact {@link LoweringFailureDetail} fields — {@code module},
- * {@code capability EVALUATION_ORDER}, {@code validatorRule
- * COMPARISON_SELECTOR}, {@code semanticProfile DEAL_V1_2_INT32},
- * {@code irVersion deal.semantic-ir/1}, {@code origin} — and nothing
- * else. The unit-production seam converts the detail into the E6005
- * diagnostic through {@code FailureContractRegistry.e6005(detail)} — the
- * {@link #e6005(ModuleId, Defect)} seam of this producer — and the
- * registry owns the message construction.</p>
- *
- * <p>The component is static, pure, deterministic, stateless, and
- * executes no host code.</p>
- */
 public final class ComparisonSelectorLowering {
 
-    /**
-     * The fact-defect identifier carried in the {@code validatorRule}
-     * field of the E6005 diagnostic for a checked type pair with no
-     * closed comparison selector row (B-D3/B-D7): a producer defect,
-     * provably unreachable for user programs — the checker rejects every
-     * non-admitted pair (E3006/E3007) in phase 3 before lowering, and
-     * every admitted pair (bytes rows included since the ISSUE-0158 lift)
-     * has a map row.
-     */
     public static final String COMPARISON_SELECTOR = "COMPARISON_SELECTOR";
 
     private ComparisonSelectorLowering() {
@@ -178,13 +80,6 @@ public final class ComparisonSelectorLowering {
      * {@code GT}/{@code GTE} — raises {@link Defect} (fail closed, never
      * an invented selector).</p>
      *
-     * @param op        the source comparison operator; non-null
-     * @param leftType  the checked left operand type; non-null
-     * @param rightType the checked right operand type; non-null
-     * @return the exact {@code BinaryPayload} of the B-D3 row
-     * @throws Defect when the checked pair has no closed comparison
-     *         selector row (the unreachable E6005
-     *         {@code COMPARISON_SELECTOR} producer-defect layer)
      */
     public static KindPayload.BinaryPayload payloadOf(BinaryOp op, Type leftType, Type rightType) {
         Objects.requireNonNull(op, "op must not be null");
@@ -397,23 +292,6 @@ public final class ComparisonSelectorLowering {
      * START). This producer never evaluates, re-emits, or re-reads an
      * operand.</p>
      *
-     * @param module          the lowering module; non-null
-     * @param op              the source comparison operator; non-null
-     * @param leftType        the checked left operand type; non-null
-     * @param rightType       the checked right operand type; non-null
-     * @param leftOperand     the completed left operand value; non-null
-     * @param rightOperand    the completed right operand value; non-null
-     * @param origin          the source origin of the comparison
-     *                        expression; non-null
-     * @param allocator       the project's semantic-id allocator; non-null
-     * @param sourceOrdinal   the source-order position within the module;
-     *                        non-negative
-     * @param syntheticOrdinal the synthetic ordinal within the same
-     *                        source position; non-negative
-     * @return the single produced {@code BINARY} op
-     * @throws Defect when the checked pair has no closed comparison
-     *         selector row (the unreachable E6005
-     *         {@code COMPARISON_SELECTOR} producer-defect layer)
      */
     public static SemanticOp produce(
         ModuleId module,
@@ -506,12 +384,6 @@ public final class ComparisonSelectorLowering {
      * {@code FailureContractRegistry.e6005(detail)}; this producer
      * constructs no diagnostic and no selector on this path.
      *
-     * @param module the module whose unit-production seam hit the defect;
-     *               non-null
-     * @param defect the defect raised by the selector map or the op
-     *               producer; non-null
-     * @return the exact {@code LoweringFailureDetail} of the
-     *         {@code COMPARISON_SELECTOR} failure
      */
     public static LoweringFailureDetail loweringFailureDetail(ModuleId module, Defect defect) {
         Objects.requireNonNull(module, "module must not be null");
@@ -537,12 +409,6 @@ public final class ComparisonSelectorLowering {
      * error severity, and the canonical synthetic range, exactly like
      * every other E6005 (parent D11).
      *
-     * @param module the module whose unit-production seam hit the defect;
-     *               non-null
-     * @param defect the defect raised by the selector map or the op
-     *               producer; non-null
-     * @return the registry-constructed E6005
-     *         {@code COMPARISON_SELECTOR} diagnostic
      */
     public static CompilerDiagnostic e6005(ModuleId module, Defect defect) {
         Objects.requireNonNull(module, "module must not be null");

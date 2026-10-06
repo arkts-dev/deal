@@ -12,31 +12,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * The gate's sidecar loading phase (ISSUE-0353): the presence and shape
- * rules of the Zero-Skip Classification Contract plus the T1
- * {@link SidecarSchemaValidator} wiring with the fixture's compilation
- * set.
- *
- * <p>Presence rules: every runtime-classified fixture requires a valid
- * three-backend sidecar; a Compile Expectation Sidecar may sit only
- * next to an exact {@code compile-error CODE} fixture (the T1 validator
- * cross-checks the pin against the {@code @expected} code); every other
- * classification carries no sidecar. A missing, malformed, or partial
- * sidecar is a classification failure naming the fixture and field —
- * there is no silent default.</p>
- *
- * <p>Validation wiring: the gate derives the fixture's compilation set
- * via module-import resolution over the corpus
- * ({@link CorpusDiscovery#compilationSet}) and supplies it — module paths
- * plus sources — to {@link SidecarSchemaValidator} for the
- * {@code sourceFile} compilation-graph check and the divergent-form
- * {@code @extern-c} check. The gate then cross-checks the sidecar's
- * runtime mode and error code against the fixture's classification (the
- * uniform {@code expected.mode}, the divergent {@code backends.luajit}
- * leg, and the {@code error.code}) and parses the validated document
- * into the typed expectation model for the comparators.</p>
- */
 public final class SidecarGateLoader {
 
     private SidecarGateLoader() {

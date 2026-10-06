@@ -122,8 +122,6 @@ public final class SemanticIrDumper {
      * {@link RawUnit#fromTyped(LoweredModuleUnit)}). The dumper owns no
      * unit shape of its own and adds no reordering.
      *
-     * @param unit the unit; non-null
-     * @return the canonical JSON object of the unit text protocol
      */
     public static CanonicalJson.Value toJson(LoweredModuleUnit unit) {
         Objects.requireNonNull(unit, "unit must not be null");
@@ -135,8 +133,6 @@ public final class SemanticIrDumper {
      * canonical text protocol (the canonicalizer's unit mapping, no added
      * bytes, no reordering).
      *
-     * @param unit the unit; non-null
-     * @return the canonical JSON UTF-8 bytes
      */
     public static byte[] dumpModule(LoweredModuleUnit unit) {
         return ContractSnapshotCanonicalizer.serializeJson(toJson(unit));
@@ -146,8 +142,6 @@ public final class SemanticIrDumper {
      * Dumps one module as canonical JSON text (UTF-8; observation surface
      * only).
      *
-     * @param unit the unit; non-null
-     * @return the canonical JSON text
      */
     public static String dumpModuleText(LoweredModuleUnit unit) {
         return ContractSnapshotCanonicalizer.serializeText(toJson(unit));
@@ -164,8 +158,6 @@ public final class SemanticIrDumper {
      * semantic profile. Module references render as plain module paths —
      * the same spelling the unit text protocol uses for {@code moduleId}.
      *
-     * @param project the project; non-null
-     * @return the canonical JSON manifest object
      */
     public static CanonicalJson.Value manifestJson(ExecutableLoweredProject project) {
         Objects.requireNonNull(project, "project must not be null");
@@ -239,8 +231,6 @@ public final class SemanticIrDumper {
      * Dumps a complete project: the manifest plus every module dump in
      * dependency order (the project's module insertion order).
      *
-     * @param project the project; non-null
-     * @return the project dump
      */
     public static ProjectDump dumpProject(ExecutableLoweredProject project) {
         Objects.requireNonNull(project, "project must not be null");
@@ -266,8 +256,6 @@ public final class SemanticIrDumper {
      * rejects any path outside that closed character set rather than
      * writing an unexpected file name.
      *
-     * @param moduleId the module identity; non-null
-     * @return the file name
      */
     public static String moduleFileName(ModuleId moduleId) {
         Objects.requireNonNull(moduleId, "moduleId must not be null");
@@ -292,9 +280,6 @@ public final class SemanticIrDumper {
      * Writes one module dump to a file: the canonical document terminated
      * by exactly one LF (UTF-8, LF-only line endings, no CR anywhere).
      *
-     * @param file the target file; non-null
-     * @param unit the unit; non-null
-     * @throws IOException on a write failure
      */
     public static void dumpModuleTo(Path file, LoweredModuleUnit unit) throws IOException {
         Objects.requireNonNull(file, "file must not be null");
@@ -312,9 +297,6 @@ public final class SemanticIrDumper {
      * order, each file the canonical document terminated by exactly one
      * LF (UTF-8, LF-only line endings).
      *
-     * @param directory the target directory; non-null
-     * @param project   the project; non-null
-     * @throws IOException on a write failure
      */
     public static void dumpProjectTo(Path directory, ExecutableLoweredProject project)
             throws IOException {

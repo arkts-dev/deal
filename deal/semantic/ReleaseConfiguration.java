@@ -6,35 +6,6 @@ import deal.semantic.ir.SemanticCapability;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * The single release-owned configuration selection point (A2): the
- * release state that drives the public-profile derivation plus the
- * release capability registry (foundation F7).
- *
- * <p>E12's public activation release action is performed here and is now
- * complete: {@link #CURRENT_RELEASE_STATE} is pinned to
- * {@link ReleaseState#V1_2_ACTIVE} and
- * {@link #releaseCapabilityRegistry()} carries the release-owned E12
- * promotion list (R3's one atomic release change — the constant edit
- * plus the registry promotion transitions ISSUE-0241 owns). Public
- * builds derive {@code DEAL_V1_2_INT32} and production {@code SHARED}
- * routing is eligible (F4 rule 4) for exactly the promoted
- * capability &times; target pairs; a module using {@code int} requires
- * target capability {@code SIGNED_INT32} at plan time (small literals
- * waive nothing, foundation I3). No source pragma or CLI flag selects
- * the release state or a profile: {@code deal/Main.java} and
- * {@code CompilationOrchestrator.defaultInvocation()} both consume this
- * class, and no other code path derives the public profile.</p>
- *
- * <p>Post-activation rollback (A3) never touches this class: rollback
- * keeps {@code DEAL_V1_2_INT32} and changes only the module emitter
- * route — by construction there is no derivation path back to a legacy
- * public profile now that {@code V1_2_ACTIVE} is set. The pre-activation
- * matrix row ({@code PRE_ACTIVATION &rarr; LEGACY_SAFE_INT}) remains an
- * internal derivation fact of {@link CompilerProfileProvider} forever —
- * it is a route/regression inspection surface, never a production
- * rollback target.</p>
- */
 public final class ReleaseConfiguration {
 
     /**
@@ -64,45 +35,6 @@ public final class ReleaseConfiguration {
         }
     }
 
-    /**
-     * The release-owned promotion list (R3): non-empty, in the
-     * parent's capability order, carrying the post-flip minimum content
-     * — {@code SIGNED_INT32} promoted for both shared targets
-     * ({@code LUAJIT} and {@code JVM}) — plus {@code FOUNDATION_VALUES}
-     * for both targets (every module manifest claims
-     * {@code FOUNDATION_VALUES}, foundation F3, so the post-flip
-     * shared-routing eligibility check of an int-using module requires
-     * both capabilities PROMOTED for the target). The step-1 cutover
-     * promotion (ISSUE-0575) extends the E12 list with
-     * {@code CONTAINERS_AND_STRINGS} for both targets, in the pinned
-     * capability order ({@code LUAJIT} before {@code JVM} within the
-     * capability): the bytes guard (planner rule 2b) keeps bytes-bearing
-     * modules on the retained route in every purpose, so the promotion
-     * never flips them SHARED. The step-2 cutover promotion (ISSUE-0577)
-     * extends the list further with {@code DESCRIPTORS} for both targets,
-     * still in the pinned capability order (the existing {@code BOUNDARY}
-     * emission was proven green three-way on the descriptor-boundary
-     * corpus before the promotion landed). The step-3 cutover promotion
-     * (ISSUE-0578) extends the list again with {@code BOUNDARIES} for
-     * both targets, still in the pinned capability order (the existing
-     * {@code BOUNDARY} emission was proven green three-way on the closed
-     * boundary-assignment corpus before the promotion landed). The
-     * step-4 cutover promotion (ISSUE-0579) extends the list with
-     * {@code EVALUATION_ORDER} for both targets, still in the pinned
-     * capability order (the landed {@code BRANCH}/{@code LOOP}/
-     * {@code DISCARD} emission, ISSUE-0410, was proven green three-way
-     * on the full evaluation-order corpus — chain materialization,
-     * comparison selectors, no speculative execution, and continue
-     * landing — before the promotion landed). The step-5 cutover
-     * promotion (ISSUE-0581) extends the list with {@code BINDINGS}
-     * for both targets, still in the pinned capability order (the
-     * landed {@code RECURSIVE_GROUP_INIT} emission, ISSUE-0580, was
-     * proven green three-way on the group/closure corpus — atomic
-     * publication, fresh identities, one factory invocation per member
-     * per execution, and the nested-scope emission shape — before the
-     * promotion landed). The list is the registry half of E12's one
-     * atomic release change plus its later promotion units.
-     */
     private static final List<ReleasePromotion> ACTIVATION_PROMOTIONS = List.of(
         new ReleasePromotion(SemanticCapability.FOUNDATION_VALUES, Target.LUAJIT),
         new ReleasePromotion(SemanticCapability.FOUNDATION_VALUES, Target.JVM),
@@ -141,7 +73,6 @@ public final class ReleaseConfiguration {
      * order). Deterministic; the source {@code releaseRegistry()} stays
      * byte-unchanged.
      *
-     * @return the immutable promoted release registry
      */
     private static CapabilityRegistry deriveReleaseRegistry() {
         CapabilityRegistry registry = CapabilityRegistry.releaseRegistry();
@@ -159,7 +90,6 @@ public final class ReleaseConfiguration {
      * before {@code JVM}. Read-only release data consumed by the release
      * action's gate validation and the gate-run suites.
      *
-     * @return the immutable promotion list (never empty)
      */
     public static List<ReleasePromotion> activationPromotions() {
         return ACTIVATION_PROMOTIONS;
@@ -179,7 +109,6 @@ public final class ReleaseConfiguration {
      * internal harnesses consume exactly this instance for invocation
      * resolution and route planning.
      *
-     * @return the immutable promoted release registry
      */
     public static CapabilityRegistry releaseCapabilityRegistry() {
         return RELEASE_REGISTRY;

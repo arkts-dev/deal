@@ -40,9 +40,6 @@ public final class DiagnosticOrder {
      * list. Equal keys are stable (input relative order is preserved —
      * {@link List#sort} over a copy).
      *
-     * @param diagnostics the collected diagnostics in internal emission
-     *                    order, or null
-     * @return a new list in the canonical D1 report order
      */
     public static List<CompilerDiagnostic> canonical(
             List<CompilerDiagnostic> diagnostics) {

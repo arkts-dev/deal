@@ -28,19 +28,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * The corpus-aware module resolver of the gate's frontend-corpus
- * execution (ISSUE-0357; design {@code v12-zero-skip-conformance-gate}
- * G1): the same resolution surface the legacy runners' compile-stage
- * tests use — spec-listed stdlib exports from the stdlib declarations,
- * relative {@code ./} / {@code ../} corpus imports resolved through the
- * on-disk corpus (the discovered fixtures' header-stripped sources) via
- * {@link ExportExtractor}, and synthesized class symbols carrying the
- * single-module standalone identity convention.
- *
- * <p>Backend-neutral: no backend executes; the resolver only feeds the
- * real frontend pipeline ({@link FrontendCompiler}).</p>
- */
 final class CorpusFrontendResolver implements ModuleResolver {
 
     private final String fixtureCorpusPath;
@@ -96,11 +83,7 @@ final class CorpusFrontendResolver implements ModuleResolver {
                 "Module not found: '" + modulePath
                     + "' is not a spec-listed stdlib module");
         }
-        // Corpus C FFI externals (ISSUE-0507): candidate/* imports
-        // resolve through the corpus-owned FFI wiring; the production
-        // FfiDeclarationValidator diagnostics (the E7002 C FFI
-        // declaration policy) are collected into the resolver's sink
-        // for the fixture's compile verdict.
+
         if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
             CorpusFfi.Module ffiModule = CorpusFfi.module(
                 conformanceRoot, modulePath, profile);
@@ -147,8 +130,7 @@ final class CorpusFrontendResolver implements ModuleResolver {
         if (modulePath == null || modulePath.isEmpty()) {
             return null;
         }
-        // Corpus C FFI externals (ISSUE-0507): classes of a candidate/*
-        // module resolve to the declaration's synthesized ClassSymbols.
+
         if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
             return CorpusFfi.module(conformanceRoot, modulePath, profile)
                 .classSymbols().get(className);
@@ -184,8 +166,7 @@ final class CorpusFrontendResolver implements ModuleResolver {
     public boolean isFunctionExportedFromModule(
             CanonicalModuleIdentity declaringModule, String functionName,
             String importingModule) throws ModuleNotFoundException {
-        // Corpus C FFI externals (ISSUE-0507): the declared export map
-        // of a candidate/* module.
+
         if (CorpusFfi.declaresFunction(conformanceRoot, declaringModule,
                 functionName, profile)) {
             return true;
@@ -214,9 +195,7 @@ final class CorpusFrontendResolver implements ModuleResolver {
         if (modulePath == null || modulePath.isEmpty()) {
             return null;
         }
-        // Corpus C FFI externals (ISSUE-0507): field annotations of a
-        // candidate/* class resolve against the declaration's own class
-        // registry (the host-registry shape).
+
         if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
             return CorpusFfi.resolveTypeNode(typeNode,
                 CorpusFfi.module(conformanceRoot, modulePath, profile)

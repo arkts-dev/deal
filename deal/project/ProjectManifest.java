@@ -23,23 +23,6 @@ import java.util.Map;
  * OutputConfigResolver's duty and requires the manifest directory the
  * parser deliberately does not receive.
  *
- * @param languageVersion the validated version, always {@code "1.2"}
- * @param moduleRoots     the strictly decoded root texts with their value
- *                        ranges, in member order; empty when absent
- * @param output          the strictly decoded output text plus its value
- *                        range, or null when the member is absent
- * @param backend         the validated backend {@code "luajit"} or
- *                        {@code "jvm"} after validation (absence defaults
- *                        to {@code "luajit"})
- * @param stdlib          the validated stdlib version {@code "1.2"}
- * @param dependencies    the spec-reserved, structurally strict, opaque
- *                        {@code dependencies} object, or null when absent
- * @param externals       each raw import specifier mapped to its
- *                        parser-side {@link ExternalEntrySpec}, in member
- *                        order; empty when absent
- * @param ranges          each member present in the document mapped to
- *                        its value range, for post-walk re-anchoring by
- *                        later locate steps
  */
 public record ProjectManifest(
     String languageVersion,

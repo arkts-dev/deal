@@ -67,77 +67,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * The validation child's tests (ISSUE-0451 sequencing item 8): the B9
- * production-time structural validation of the BINDINGS capability —
- * the closed rule set {@code GROUP_SHAPE}, {@code CAPTURE_RESOLUTION},
- * {@code BINDING_GENERATION_RESOLUTION}, {@code BINDING_INIT_ONCE},
- * {@code INIT_DOMINATES_LOAD}, {@code ADAPTER_PAIR},
- * {@code ADAPTER_SOURCE_SHAPE}, {@code REGISTRY_ONE_TO_ONE}, and
- * {@code NO_ADAPTER_AT_BOUNDARY} over the one uniform resolution
- * context (R1-R4) — enforced at the production site by the walk
- * ({@link SemanticLowerer#lowerModuleValidationCore}) and exposed as a
- * closed IR-level surface ({@link BindingsProductionValidator}).
- *
- * <p><b>Positive corpus (each validates).</b> The store-to-pre-init
- * {@code let x: int = (x = 1);} (stores are exempt — the rule covers
- * loads only); size-1 self-recursion; forward module-function body
- * references; group-member body loads (the publication arm);
- * parameter/catch/{@code FOR_EACH} entry-transfer captures (arm 2 at
- * the creation site); nested size-1 self-recursion (the own-name arm
- * along the chain); the doubly-nested capture shape of
- * {@code test/conformance/backend-runtime/closures/nested-closure-mutation.deal}
- * (creation-site dominance transitively along the detaching chain —
- * the equivalent chain over declared functions, the fixture's runtime
- * constructs being outside this walk's window); structured
- * child-block loads of ancestor bindings (R1); thunk-block captures of
- * closures created inside thunks (R3 with the chain closing at the
- * {@code FUNCTION_ADAPT} creation site); the for-let counter's
- * generation-0 condition/update/body-top references under the
- * intra-{@code LOOP} init→condition→body→update sequencing (arm 1);
- * default-block module-level references (R4's module-level arm,
- * unit-level — source-level {@code CLASS_DEFAULT} production is
- * ISSUE-0238's); VALUE-over-proof single loads (arm 1); and the
- * combined all-three-modes corpus over the earlier children's
- * production.</p>
- *
- * <p><b>Negative corpus (each fails with exactly one E6005 naming the
- * rule).</b> {@code let x: int = x;} and the
- * closure-capturing-own-initializer shape (INIT_DOMINATES_LOAD);
- * stale generations (BINDING_GENERATION_RESOLUTION); capture chains
- * closing with zero or multiple producing allocations and detached
- * free references outside {@code captures}/{@code capturedBindings}
- * (CAPTURE_RESOLUTION); group-shape violations (GROUP_SHAPE); exact or
- * non-assignable adapter pairs (ADAPTER_PAIR); mode/source shape
- * mismatches, VALUE-over-binding without its proof, and a proof
- * naming the wrong binding/generation (ADAPTER_SOURCE_SHAPE);
- * duplicate/missing/orphan registry entries including the
- * host/external seam and {@code HostFunctionValue} registrations
- * (REGISTRY_ONE_TO_ONE; the function-typed-result-without-binding
- * rejection stays R-FUNCTION-BINDING at the schema, which keeps
- * running on both surfaces); and an adapter result wired into a
- * non-position boundary op (NO_ADAPTER_AT_BOUNDARY).</p>
- *
- * <p><b>Boundary-scope discipline.</b> The {@code ADAPTER_PAIR} tests
- * assert pair-level assignability only: the closed function-signature
- * predicates (exact equality and the arity-extension assignability
- * over {@code RuntimeDescriptor.Func}) re-derive the pair — they never
- * produce, execute, or claim a boundary check. No fixture in this
- * class calls a boundary realization, so this child's suites contain
- * no executed boundary check (the executed {@code FUNCTION_SIGNATURE}
- * E8010 is E4's boundary machinery, exercised by the integration
- * child).</p>
- *
- * <p><b>Cell-kind invariant.</b> {@code deriveCellKinds} — the closed
- * B2 iff over the union of the three capture reference sets plus the
- * pinned special cases — is asserted against every emitted
- * {@code BINDING_ALLOC} payload of the full positive corpus; a unit
- * violating the complete iff fails the assertion (the closed
- * 14-condition schema validator stays unchanged).</p>
- *
- * <p><b>Determinism.</b> The same checked module lowers repeatedly to
- * byte-identical {@code deal.semantic-ir/1} dump text.</p>
- */
 public class BindingsValidationTest {
 
     private static int passed = 0;
@@ -779,15 +708,9 @@ public class BindingsValidationTest {
             """,
             "(k) thunk-block captures of closures created inside thunks");
 
-        // (l) The for-let counter's generation-0 condition/update/
-        // body-top references under the intra-LOOP init→condition→body→
-        // update sequencing (arm 1).
         validatedResult("for (let i = 0; i < 3; i = i + 1) { let j = i; }",
             "(l) the for-let counter's generation-0 references");
 
-        // (l2) The for-let per-iteration capture: body-created closures
-        // resolve the generation-1 incarnation (the body-top ALLOC/INIT
-        // dominate the closure creation under the intra-LOOP sequencing).
         validatedResult("""
             function f(): null {
               for (let i = 0; i < 3; i = i + 1) {
@@ -1467,11 +1390,6 @@ public class BindingsValidationTest {
     private static void testIrLevelPositives() {
         System.out.println("-- IR-level positives (unit-level; each must validate) --");
 
-        // The default-block module-level reference (R4's module-level
-        // arm, unit-level — source-level CLASS_DEFAULT production is
-        // ISSUE-0238's): a default block loading a later-declared
-        // module function validates under the module-init-completion
-        // arm extended to per-construction default blocks.
         BindingId makeFactory = nextBindingId();
         FunctionId fn = nextFunctionId();
         BlockId fnBody = nextBlock();

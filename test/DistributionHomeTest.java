@@ -15,32 +15,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-/**
- * DistributionHome tier-selection proofs (ISSUE-0457,
- * {@code release-distribution-packaging-and-discovery} D3): each
- * requested surface — stdlib declarations, stdlib {@code .lua}/{@code
- * .js} implementations, and the runtime sources — resolves to exactly
- * one source per request in the pinned order
- * <ol>
- *   <li>project-local surface ({@code <manifestDir>/std}) — project
- *       bytes win over every distribution tier;</li>
- *   <li>language distribution — classpath-resource bytes (the
- *       {@code std/} prefix on the classpath), then the
- *       {@code DEAL_HOME}/{@code deal.home} filesystem layout when the
- *       resources lack the {@code std/} prefix;</li>
- *   <li>checkout CWD dev fallback ({@code <cwd>/std},
- *       {@code <cwd>/deal/runtime.*}) — the unchanged developer
- *       loop.</li>
- * </ol>
- *
- * <p>Every assertion is a real resolution: the suite reads marker bytes
- * staged in each tier and fails on any tier-selection divergence, so
- * the {@code run_tests.sh} registration executes the proofs (never dead
- * code). The suite runs from the repository root — the CWD tier's
- * {@code std/} and {@code deal/runtime.*} are the committed checkout
- * files — and stages its classpath/DEAL_HOME/project tiers in temporary
- * directories.</p>
- */
 public class DistributionHomeTest {
 
     private static int passed = 0;

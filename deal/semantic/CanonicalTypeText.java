@@ -15,74 +15,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * The canonical type text of {@code deal.semantic-interface/1} (foundation
- * F2, one inseparable component): the closed structural rendering of the
- * declared-variant forms —
- *
- * <pre>{@code
- * null | boolean | int | number | string | table | bytes | T[] | T | null
- * | @modulePath/Name | (T1, …, TN) => R | async (T1, …, TN) => R
- * }</pre>
- *
- * <p>One rendering rule set is pinned twice — over checked {@link Type}
- * values (implementation entries render the module's Phase-3-corrected
- * resolved export map) and over {@link TypeNode} values (STDLIB/HOST
- * declaration entries and every field interface render the declaration
- * AST) — so both produce byte-identical forms. The eleven declared
- * checked variants render as twelve canonical forms ({@code Type.Func}
- * as both the sync and async function forms, {@link Type.Bytes} as the
- * {@code bytes} primitive name).</p>
- *
- * <p><b>Shared parenthesization rule (the one rule both renderers use):</b>
- * a function form or a nullable form is wrapped in parentheses when it is
- * an array element ({@code (…)[]}) or the inner of a nullable
- * ({@code (…) | null}); all other positions render unwrapped —
- * {@code int[]}, {@code int[][]}, {@code int[] | null},
- * {@code ((int) => int)[]}, {@code ((int) => int) | null},
- * {@code (int | null)[]}, {@code (() => null)[]}, {@code bytes[]},
- * {@code bytes[] | null}, {@code (bytes) => bytes}.</p>
- *
- * <p>The pinned {@code TypeNode → CanonicalTypeText} grammar:</p>
- * <ul>
- *   <li>{@code NamedType(n)}: {@code n ∈ {null, boolean, int, number,
- *       string, table, bytes}} → the literal name; {@code n = "Error"} →
- *       {@code @/Error} (the builtin Error class reference); any other
- *       {@code n} (a class declared in the declaring module) →
- *       {@code @<moduleId>/<n>} with {@code moduleId} = the entry's
- *       module path.</li>
- *   <li>{@code ArrayType(elem)} → {@code E[]} with {@code E = "(…)"} when
- *       the element renders as a function or nullable form, else the
- *       plain element rendering.</li>
- *   <li>{@code NullableType(inner)} → {@code I | null} with
- *       {@code I = "(…)"} when the inner renders as a function form, else
- *       the plain inner rendering.</li>
- *   <li>{@code FunctionType(params, returnType, isAsync)} →
- *       {@code (T1, …, TN) => R} or {@code async (T1, …, TN) => R} with
- *       {@code Ti}/{@code R} rendered recursively.</li>
- *   <li>{@code QualifiedType(alias, name)} →
- *       {@code @<resolvedModulePath>/<name>} where the alias resolves
- *       through the declaring module's import records joined to the
- *       orchestrator's resolved imports.</li>
- * </ul>
- *
- * <p><b>Failure contract (F2):</b> {@link Type.Error} — the internal
- * checker sentinel — has <em>no rendering</em>, and any TypeNode shape
- * outside the grammar in an index position (an unresolvable qualified-type
- * alias, a chained {@code T | null | null}, or a {@code NamedType} that is
- * neither a primitive nor a class declared in the module) is a fact
- * defect. {@link Type.Bytes} — the v1.2 bytes primitive — renders as the
- * {@code bytes} primitive name: the structural-descriptors reservation
- * held only "until the type and value semantics exist" (the bytes type
- * and the JS carrier/helper surface landed with the bytes epic), so the
- * bytes-bearing closure's module-boundary positions
- * (js-v12-int32-bytes D5: imports/exports) render byte-identically in
- * both rule sets. All out-of-grammar shapes raise {@link Defect} —
- * never an invented rendering, never a crash;
- * {@link CheckedProjectBuilder} converts the defect into E6005 through
- * the failure contract registry with
- * {@code validatorRule: INDEX_INTERNAL_ERROR_SENTINEL}.</p>
- */
 public final class CanonicalTypeText {
 
     /**
@@ -132,10 +64,6 @@ public final class CanonicalTypeText {
      * declared variants render as twelve canonical forms;
      * {@link Type.Error} has no rendering and raises {@link Defect}.
      *
-     * @param type the checked type; non-null
-     * @return the canonical declared-type text
-     * @throws Defect when {@code type} is {@link Type.Error} (the internal
-     *         checker sentinel is excluded from the index by contract)
      */
     public static String render(Type type) {
         Objects.requireNonNull(type, "type must not be null");
@@ -181,13 +109,6 @@ public final class CanonicalTypeText {
      * parenthesization rule. STDLIB/HOST declaration entries and every
      * field interface render through this exact grammar.
      *
-     * @param node    the type annotation; non-null
-     * @param context the declaring module's rendering context; non-null
-     * @return the canonical declared-type text
-     * @throws Defect for any out-of-grammar shape: an unresolvable
-     *         qualified-type alias, a chained {@code T | null | null}, or
-     *         a {@code NamedType} that is neither a primitive nor a class
-     *         declared in the module
      */
     public static String render(TypeNode node, Context context) {
         Objects.requireNonNull(node, "node must not be null");
@@ -234,11 +155,6 @@ public final class CanonicalTypeText {
      * the declaration's parameter annotations, return annotation, and
      * async marker (the pinned declaration-entry derivation of F2).
      *
-     * @param paramTypes the parameter type annotations in order; non-null
-     * @param returnType the return type annotation; non-null
-     * @param isAsync    the async marker
-     * @param context    the declaring module's rendering context; non-null
-     * @return the canonical full function form
      */
     public static String renderFunctionForm(List<TypeNode> paramTypes, TypeNode returnType,
                                             boolean isAsync, Context context) {

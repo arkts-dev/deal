@@ -10,37 +10,6 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * One implementation module of a {@link CheckedProjectInput} (parent
- * canonical surfaces; foundation F2):
- *
- * <pre>{@code
- * CheckedModuleInput {
- *   moduleId, sourceId, sourcePath, ast, checks: CheckResult,
- *   imports: [ResolvedImport], exports: [ExportInterface],
- *   kind: IMPLEMENTATION | DECLARATION
- * }
- * }</pre>
- *
- * <p>Immutable. Every record this epic produces carries
- * {@code kind = IMPLEMENTATION} with {@code checks} present by
- * construction (the parent-pinned {@code DECLARATION} input kind has no
- * producer under the current orchestrator classification), and the
- * compact constructor enforces that invariant: an {@code IMPLEMENTATION}
- * entry without {@code checks} — or a {@code DECLARATION} entry with one —
- * is a producer defect rejected at construction, never a legitimate
- * state. The shared {@code ast}/{@code checks} references are read-only
- * inputs for the later lowering epics; the builder never mutates them.</p>
- *
- * @param moduleId   the dotted module path; non-null
- * @param sourceId   the resolved source file path (stable source identity); non-null
- * @param sourcePath the resolved source file; non-null
- * @param ast        the parsed program AST (read-only, shared); non-null
- * @param checks     the module's checked facts; non-null for IMPLEMENTATION
- * @param imports    the resolved imports in source order; non-null
- * @param exports    the export entries in declaration order; non-null
- * @param kind       the closed input kind; non-null
- */
 public record CheckedModuleInput(
     ModuleId moduleId,
     String sourceId,

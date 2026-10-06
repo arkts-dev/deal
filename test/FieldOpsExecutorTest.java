@@ -42,55 +42,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-/**
- * Verifies the ISSUE-0513 field-operation slice of
- * {@link ClassOpsExecutor} (class-construction-jsonable-operations
- * K-D6/K-D7; parent D16 rows {@code FIELD_READ}/{@code FIELD_WRITE}/
- * {@code FIELD_DELETE}/{@code HAS_FIELD}): the op-level execution of
- * the field arms over the closed value view — the nominal receiver
- * boundary first, the presence-aware read (missing pre-maps to
- * language null before the {@code OPTIONAL_FIELD_READ} boundary), the
- * commit-only-after-both-boundaries write, the idempotent delete, and
- * the presence boolean of {@code has} — driven by fixture delegates
- * with side-effect probes and the real {@link BoundaryExecutor} as the
- * production-delegate stand-in for the canonical projections.
- *
- * <p>Pinned cases (the task verification):
- * <ol>
- *   <li>the presence matrix (missing / present null / present value)
- *       through read, write, delete, and {@code has} on instances
- *       produced by T2's {@code CLASS_NEW} execution (the
- *       {@code executeClassNewLocal} drive) — reads publish the
- *       checked values, {@code has} returns true/false per the pinned
- *       semantics, writes land and later reads observe them, deletes
- *       turn present into missing and are idempotent;</li>
- *   <li>nominal receiver failures for read/write/delete — a null
- *       receiver fails E8001 {@code expected @corpus.fieldops/Point,
- *       got null} and a wrong-identity receiver fails with actual
- *       {@code class:@corpus.fieldops/Other} (the canonical
- *       descriptor-kind projections);</li>
- *   <li>the required-field missing read — a missing {@code x} of a
- *       defective instance pre-maps to null and the non-nullable
- *       result descriptor fails E8001 {@code expected int, got null};</li>
- *   <li>write-commit ordering — a failing
- *       {@code CLASS_FIELD_ASSIGNMENT} boundary commits nothing (the
- *       prior field state is unchanged and no updated instance
- *       exists); the receiver boundary runs first and its failure
- *       stops the field boundary;</li>
- *   <li>the receiver is consumed exactly once from the value lookup
- *       (a counting fixture proves no re-evaluation) and the stored
- *       value resolves exactly once;</li>
- *   <li>fail-closed defects — wrong op kinds/policies, a non-{@code
- *       ValueId} read result, boundary children of the wrong
- *       kind/parentage/realization/descriptor/policy/input,
- *       unresolvable/mismatched layouts, undeclared fields,
- *       field-count mismatches, and post-boundary shape violations are
- *       producer defects, never DEAL projections; null arguments throw
- *       the documented NPEs;</li>
- *   <li>determinism — repeated executions with equal inputs produce
- *       equal outcomes.</li>
- * </ol>
- */
+
 public class FieldOpsExecutorTest {
 
     private static int passed = 0;
@@ -246,13 +198,6 @@ public class FieldOpsExecutorTest {
                                        ClassLayout layout) {
     }
 
-    /**
-     * Produces the presence-matrix base instance through T2's
-     * {@code executeClassNewLocal} (K-D4): provided x=1 and t="v", the
-     * optional y omitted — so y stays missing. The heap maps the
-     * provided values' prior steps; the construction publishes the
-     * instance under {@link #BASE_REF}.
-     */
     private static final ValueId BASE_REF = new ValueId(9001);
     private static final ValueId X_REF = new ValueId(9002);
     private static final ValueId T_REF = new ValueId(9003);

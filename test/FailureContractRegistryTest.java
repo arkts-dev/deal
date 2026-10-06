@@ -20,44 +20,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Verifies the ISSUE-0285 {@link FailureContractRegistry}: the closed
- * 24-row failure-policy table (code, exact templates, metadata keys,
- * origin rule, cause rule, frame rule, precedence — verbatim from the
- * parent's "Closed failure policies and canonical visible errors"), the
- * registry-owned E6005 detail→message construction, the parent-D11
- * single-producer coverage list, and the closed canonical actual-kind
- * tokens.
- *
- * <p>Tests:
- * <ol>
- *   <li>Exhaustive row coverage: enumerating all 24 closed
- *       {@link FailurePolicyId} values asserts exactly one row each —
- *       none missing, none extra, no fallback; the four reserved policy
- *       names are not enum members, not rows, and fail closed at the type
- *       level (no string-keyed lookup surface exists).</li>
- *   <li>Per-row goldens: all 24 rows' code/templates/metadata keys/origin
- *       rule/cause rule/frame rule/precedence against pinned goldens —
- *       every exact template string included (JSON parse template with
- *       {@code {oneBasedByteOffset}}/{@code {reason}}, "int out of
- *       range", "integer division by zero", "extra field '{field}' in
- *       class '{classId}'", "array index out of bounds", "function
- *       signature mismatch: expected {expected}, got {actual}", all six
- *       HOST_LOAD templates).</li>
- *   <li>E6005 construction: a detail {module, capability:
- *       FOUNDATION_VALUES, validatorRule:
- *       INDEX_INTERNAL_ERROR_SENTINEL, semanticProfile: DEAL_V1_2_INT32,
- *       irVersion: "deal.semantic-ir/1", origin} yields a diagnostic with
- *       code E6005, phase BACKEND_LOWERING, and the instantiated message
- *       carrying the detail; E6000 construction stays E6000 and carries
- *       no E6005 payload.</li>
- *   <li>Canonical actual-kind tokens: exactly the 13 pinned values; the
- *       class token renders {@code class:<ClassId>}; target class names
- *       never appear on a non-class kind (fails closed).</li>
- *   <li>Immutability: rows and the table are immutable; repeated lookups
- *       return the identical row instance.</li>
- * </ol>
- */
 public class FailureContractRegistryTest {
 
     private static int passed = 0;

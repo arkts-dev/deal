@@ -86,190 +86,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 
-/**
- * JavaScript backend: the typed-AST-walking CommonJS emitter
- * (js-backend-architecture D2-D8, js-backend-emitter).
- *
- * <p>ISSUE-0247 core slice: the {@link #generate} seam with the
- * {@link JsCodegenResult} shape, the canonical module skeleton (shape
- * steps 1-9, with steps 5-8 structurally empty — later slices populate
- * the import bindings, the predeclared {@code let}s, the declarations,
- * and the export assignments), the {@link #jsName} binding-position
- * translation and the canonical {@link CanonicalRuntimeTypeDescriptor}
- * descriptor foundations, the
- * entry shim with the location-embedding catch body, and the E6004 entry
- * backstop.
- *
- * <p>ISSUE-0248 data slice: the full expression/statement lowering —
- * literals (template literals lower to string concatenation), variables
- * with the checker's inferred types and {@code jsName}-translated
- * binding positions, checked int arithmetic via the {@code $rt} int
- * members (E8001/E8004/E8005/E8006 in the runtime) and
- * {@code number % number} through {@code $rt.numMod}, comparisons with
- * {@code $rt.strCompare} for string ordering and native
- * {@code ===}/{@code !==}, {@code &&}/{@code ||}, if/else/while/C-style
- * for/break/continue, array and string for-of (fresh per-iteration
- * {@code let} bindings; array for-of is index-based and stops before the
- * first {@code $rt.undefined}), arrays (literals, guarded
- * reads/writes/appends, {@code .length}, element delete with the
- * E8002-bounded {@code $rt.undefined} write and no write at
- * {@code i === length}), {@code T | null} boundaries via
- * {@code $rt.checkNullable}, tables (the coordinated {@code $rt.makeTable}
- * runtime member — js-backend-emitter D9 — plus literals via
- * computed-key entry objects and contextual reads/writes/delete via
- * {@code .get}/{@code .set}/{@code .delete}), class declarations (the
- * predeclared artifact {@code let}s, the construction closure with the
- * per-construction defaults thunk, the inline META pair) and contextual
- * class-typed literals (the builtin {@code Error} through the header
- * {@code Error$new} pair), field reads/writes/{@code has()}/delete with
- * the optional three-state ({@code $rt.optRead}/{@code $rt.has}/
- * {@code $rt.MISSING}), the two throw forms ({@code $rt.errorValue} with
- * per-property {@code ""} default filling; the non-literal
- * {@code throw <expr>;} rethrow), try/catch via {@code $rt.reifyError},
- * {@code int()}/{@code number()} conversion calls through the header
- * wrapper values, and Unicode scalar-value strings. Every emitted check
- * and {@code .$f} call carries the literal {@code .deal} file/line/column
- * arguments from the AST span.
- *
- * <p>ISSUE-0249 functions-and-closures slice: function declarations
- * and expressions emit as {@code $rt.function} wrappers with the exact
- * canonical descriptor signature, the entry parameter checks in
- * parameter order with the forwarded {@code $file}/{@code $line}/
- * {@code $column} span (parameter errors report the call site), the
- * return-site exit checks on every {@code return} path plus the
- * validated {@code null} fall-off return for null-typed functions, the
- * trailing {@code $}-prefixed span parameters (duplicate-free for user
- * parameters literally named {@code file}/{@code line}/{@code column}),
- * direct/nested/indirect/member calls through {@code .$f} with the
- * literal call-site span arguments, recursion/forward calls/mutual
- * recursion through the predeclare-then-assign pattern (module shape
- * step 6 plus per-scope {@code let} hoisting for nested functions —
- * collision-free in the emitted JS scope: one {@code let} per distinct
- * name, body/catch statements in the checker's nested block scopes so
- * hoisted {@code let}s legally shadow parameter and catch bindings, and
- * a same-list var-before-function pair sharing the hoisted binding
- * through a plain assignment; {@code require}/{@code module}/
- * {@code exports} translate in binding positions so the module-scope
- * capture stays immune per js-backend-architecture D2),
- * native closure capture, function values crossing function-typed
- * boundaries through the runtime's exact-{@code $sig} E8010 check, and
- * arity-extension adapters (a wider function-typed declaration or
- * assignment context wraps the value in an adapter closure that checks
- * the extended parameters, drops the extras, and calls the inner
- * {@code .$f} with the forwarded span — the {@code deal/runtime.lua}
- * adapter precedent). The header {@code int}/{@code number} wrapper
- * values are first-class function values with no special casing.
- *
- * <p>ISSUE-0250 modules slice: import bindings in import order (shape
- * step 5) — spec-stdlib raw paths ({@code std/<name>} in the
- * {@code StdlibModuleResolver} spec list) emit
- * {@code <relpath>/std/<name>} and project modules emit the relative
- * specifier between the emitting module's artifact directory and the
- * imported module's artifact directory (sibling {@code ./lib}, nested
- * {@code ../sub/util}), the extension omitted; export assignments in
- * declaration order (shape step 8) via the own-property-safe
- * {@code $rt.setProp} with raw keys — the visible class META export
- * plus the hidden compiler-generated {@code <C>$new} export for every
- * exported class (imported construction runs the declaring module's
- * closure, so defaults evaluate in the declaring module's scope);
- * imported class-typed literals construct through
- * {@code <alias>.<C>$new}; imported optional field reads map
- * {@code MISSING} through {@code $rt.optRead}; module-member
- * writes/deletes (checker-accepted mutations of the export table,
- * the LuaJIT plain-assignment/nil-out semantics) route through
- * {@code $rt.setProp} instead of the Map method calls; and the entry
- * shim's {@code $exports.main.$f()} reaches the exported {@code main}.
- *
- * <p>ISSUE-0251 async/await slice: the full D5 lowering — async
- * function declarations and expressions emit as native
- * {@code async function} bodies inside the {@code $rt.function}
- * wrapper with the exact {@code async(...)} descriptor signature
- * (the {@code async} prefix from the canonical descriptor, the T3
- * wrapper mechanics intact), {@code await E} lowers to
- * {@code await <callee>.$f(<args>, <file>, <line>, <column>)} with
- * the literal call-site span arguments (the direct and the indirect
- * function-typed forms; {@link #emitAwait}), the declared-return
- * check runs inside the async body on every return path — the
- * fall-off path of a {@code null}-returning async wrapper included,
- * where the trailing validated {@code null} return closes the body
- * before the Promise resolves — no completion check is added at any
- * await site, errors raised by an awaited operation propagate
- * natively at the await site (Promise rejection), async function
- * values cross function-typed boundaries with the exact
- * {@code async(...)} sig (E8010 on any mismatch, the runtime's
- * function-branch exact compare), and an async arity-extension
- * adapter returns the inner operation untouched — the inner async
- * body's completion check is the boundary crossing, exactly once.
- * Sync wrappers and the entry gate (non-async {@code main(): null},
- * E2010/E2011) are unchanged.
- *
- * <p>ISSUE-0252 rejection pass: the D8 rejection table with exact
- * error-severity diagnostics at their documented sites — an import of
- * an extern-C declaration module is E6006 containing
- * {@code FFI_UNSUPPORTED_BACKEND} at the import statement, keyed on
- * the orchestrator-built extern-C import set
- * (fixed-name-directive-events D9;
- * {@link #rejectUnsupportedImport}, live at this merge,
- * never a dead placeholder, and preceding any host handling);
- * a non-stdlib declaration-file import (a {@code hostModules} entry)
- * emits the {@code $rt.loadHost} binding with the emitter-rendered
- * declared map (ISSUE-0328, js-v12-host-abi-completion D1 — the
- * retired host-ABI E6000 arm);
- * {@code @jsonable} on an exported class emits the two exported
- * wrappers plus the hidden {@code C$fields} descriptor export
- * (js-v12-jsonable-completion D1-D2); and
- * the retired defensive {@code bytes} E6000 arms
- * (js-backend-architecture A1) are gone: the v1.2 bytes lane
- * (js-v12-int32-bytes D3/D4) lowers {@code bytes(n)} to
- * {@code $rt.bytes}, {@code b.length} to {@code $rt.bytesLength},
- * {@code b[i]} to {@code $rt.bytesGet}, {@code b[i] = v} to
- * {@code $rt.bytesSet}, and every bytes-typed boundary to
- * {@code $rt.checkBytes} — no E6000 is reported for any bytes
- * program. Every rejection makes {@code hasErrors()} hold, so the
- * orchestrator's two-pass {@code codegenAllJs()} writes no artifact
- * for the rejected module — a clean sibling's artifact is unaffected —
- * and the compilation fails with the standard diagnostic report.
- *
- * <p>ISSUE-0328 host-ABI slice (js-v12-host-abi-completion D1/D4):
- * the host-ABI E6000 arm retires — a non-stdlib declaration-file
- * import emits {@code const &lt;alias&gt; = $rt.loadHost($require("<relpath>/<raw
- * specifier>"), <declared map>);} with the raw specifier verbatim,
- * prefixed by the same relative-path rule every project import uses
- * (the host file lives at {@code <outputRoot>/<raw specifier>.js}),
- * and the declared map is emitter-rendered from the orchestrator's
- * host declaration records (canonical function descriptors; canonical
- * {@code @$external/<specifier>/<ClassName>} identities plus the
- * declared field-descriptor array for class exports). Host-call
- * argument positions emit the raw expression value — a typed table
- * read materializing a host-call argument never pre-raises its own
- * E8001; the runtime host wrapper's boundary raises E8010 (D4
- * read-site deferral). Let/assignment/return-boundary typed reads
- * keep their pinned read-site checks. The E6006 {@code @extern-c} arm
- * precedes any host handling.
- *
- * <p>ISSUE-0318 nested-class slice: the former D6 nested-class E6000
- * arm (below-module-level {@link ClassDeclaration}) is retired — a
- * nested class declaration emits the same scope-local
- * {@code C$new}/{@code C$meta} artifact pair as a module-level class,
- * predeclared at the top of the enclosing block and assigned at the
- * declaration site (js-v12-completion-architecture D4).
- *
- * <p>js-v12-source-maps: the optional {@link SourceMapGenerator}
- * parameter on {@link #generate} enables mapping recording at every
- * generated statement-group boundary (D2) — the wrapper, check, and
- * entry-shim emission sites included — and the orchestrator's pass 2
- * serializes the per-module {@code .deal.map.json} sidecars from the
- * returned recorder (D1), retiring the explicit {@code --source-map}
- * warning.
- *
- * <p>The backend consumes the checked AST exactly like
- * {@code JvmBackend} ({@code CheckResult.typeMap()}/{@code symbolTable()})
- * and never re-checks frontend decisions; it never writes files — the
- * orchestrator's two-pass {@code codegenAllJs()} owns the artifact writes
- * and the runtime/stdlib deployment copies (js-backend-emitter D2/D3).
- * Emission is deterministic and synchronous, with per-generate state
- * only.
- */
 public final class JsBackend {
 
     /**
@@ -404,19 +220,7 @@ public final class JsBackend {
      */
     private final Set<String> externCImports;
     private final boolean isEntry;
-    /**
-     * The backend-wide int mode derived from the invocation's
-     * project-wide semantic profile (ISSUE-0374 profile plumb,
-     * js-v12-int32-bytes D2): true exactly when the profile passed to
-     * {@link #generate} was {@link SemanticProfile#DEAL_V1_2_INT32}.
-     * One derivation per backend instance — no static/global flag, no
-     * system property, and no source, CLI, or environment selection
-     * surface exists. Under the int32 mode every emitted module calls
-     * {@code $rt.setInt32Mode(true)} immediately after the runtime
-     * {@code $require} (module shape step 3); under
-     * {@code LEGACY_SAFE_INT} the selector is absent and the retained
-     * ±(2^53-1) emission stays byte-identical to the legacy artifacts.
-     */
+
     private final boolean int32Mode;
 
     /** Shape step 8: the export assignments collected during the
@@ -460,16 +264,7 @@ public final class JsBackend {
      * level's count once the assembled text lands in the buffer. */
     private int inFlightNewlines = 0;
 
-    /**
-     * True while the walk sits at module level; false inside a
-     * function-body walk. Nested class declarations no longer reject
-     * below module level (ISSUE-0318 retired the arm): the flag now
-     * only distinguishes module-level type resolution (the hoisted
-     * symbol table) from AST-derived nested types
-     * ({@link #visit(FunctionDeclaration)}).
-     */
     private boolean atModuleLevel = true;
-
 
     /**
      * Stack of user-declared local names visible at the current walk
@@ -523,33 +318,12 @@ public final class JsBackend {
     private final Deque<Set<String>> hoistedFunctionNames =
         new ArrayDeque<>();
 
-    // ISSUE-0544 (the lowering epic): module path → the module's
-    // completed PlannedDefaultClass list (the graph-published plans),
-    // passed by the orchestrator. The emitter consumes the published
-    // CompilerClassDefaultPlan of every class declaration for the
-    // per-construction defaults-thunk projection (entry order,
-    // canonical descriptors, optional flags, evaluators only on
-    // required-present entries) plus the labelled per-entry evaluator
-    // expressions. Empty on the standalone entry points (the
-    // synthesized fallback path stays).
     private Map<String, List<PlannedDefaultClass>> plansByModulePath =
         Map.of();
 
-    // ISSUE-0544: the realized RuntimeClassDefaultPlans of this module,
-    // in class source order — the carrier-side realization data (the
-    // evaluator invocation seams execute inside the generated artifact,
-    // never in-process; see artifactInvocationSeam). Attached to the
-    // JsCodegenResult for the compiler-to-lowerer verification battery
-    // and the later FFI identity consumption.
     private final List<RuntimeClassDefaultPlan> runtimePlans =
         new ArrayList<>();
 
-    // ISSUE-0599: the completion span of the immediately awaited call —
-    // the await expression's own span, appended as the second trailing
-    // span triplet by the first emitCall after the call site's own
-    // triplet (cleared before nested argument emissions; restored by
-    // emitAwait), so the host async completion check reports the await
-    // site and every other check keeps the call site.
     private Span awaitedCallSpanOverride;
 
     private JsBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols,
@@ -588,17 +362,6 @@ public final class JsBackend {
      * source and any backend diagnostics, and the orchestrator's pass 2
      * writes artifacts only for clean modules (js-backend-emitter D2/D3).
      *
-     * @param program           the checked module AST
-     * @param result            the checker's type map and symbol table
-     * @param sourcePath        the emitting module's source file
-     * @param modulePath        the dotted module path ({@code main},
-     *                          {@code app.main}); the artifact path is
-     *                          {@code modulePath.replace('.', '/') + ".js"}
-     * @param importResolutions raw import path → imported module path
-     * @param hostModules       raw import path → declared export map
-     *                          (non-spec-stdlib declaration imports)
-     * @param isEntry           true when this module is the selected
-     *                          entry module (emits the entry shim, D7)
      */
     public static JsCodegenResult generate(ProgramNode program, CheckResult result,
                                            String sourcePath, String modulePath,
@@ -614,21 +377,6 @@ public final class JsBackend {
             SemanticProfile.LEGACY_SAFE_INT);
     }
 
-    /**
-     * Profile-plumbed standalone overload (ISSUE-0374 profile plumb,
-     * js-v12-int32-bytes D2): the same recorder-less standalone surface
-     * as {@link #generate(ProgramNode, CheckResult, String, String, Map,
-     * Map, boolean)} with an explicit project-wide semantic profile —
-     * {@link SemanticProfile#DEAL_V1_2_INT32} derives the int32 mode and
-     * every emitted module calls {@code $rt.setInt32Mode(true)}
-     * immediately after the runtime {@code $require};
-     * {@link SemanticProfile#LEGACY_SAFE_INT} emits no selector and is
-     * byte-identical to the legacy artifacts. The profile is derived
-     * from the release-owned compiler invocation in the real pipeline;
-     * no source, CLI, or environment surface selects it.
-     *
-     * @param semanticProfile   the project-wide semantic profile
-     */
     public static JsCodegenResult generate(ProgramNode program, CheckResult result,
                                            String sourcePath, String modulePath,
                                            Map<String, String> importResolutions,
@@ -657,7 +405,6 @@ public final class JsBackend {
      * serializes the sidecar after codegen. The profile defaults to
      * {@link SemanticProfile#LEGACY_SAFE_INT} (no selector emission).
      *
-     * @param sourceMap         the mapping recorder (or {@code null})
      */
     public static JsCodegenResult generate(ProgramNode program, CheckResult result,
                                            String sourcePath, String modulePath,
@@ -670,16 +417,6 @@ public final class JsBackend {
             SemanticProfile.LEGACY_SAFE_INT);
     }
 
-    /**
-     * Profile-plumbed standalone variant (ISSUE-0374 profile plumb,
-     * js-v12-int32-bytes D2): the {@code sourceMap} standalone surface
-     * above with an explicit project-wide semantic profile — the same
-     * standalone identity-index construction (the single-module adapter
-     * convention), then the production seam with the derived int mode.
-     *
-     * @param sourceMap         the mapping recorder (or {@code null})
-     * @param semanticProfile   the project-wide semantic profile
-     */
     public static JsCodegenResult generate(ProgramNode program, CheckResult result,
                                            String sourcePath, String modulePath,
                                            Map<String, String> importResolutions,
@@ -704,41 +441,6 @@ public final class JsBackend {
             semanticProfile);
     }
 
-    /**
-     * The production seam: generates one CommonJS artifact for a checked
-     * DEAL module over the compilation's canonical identity surface —
-     * the per-compilation identity index and the module-path
-     * classification (js-v12-completion-architecture D3).  Every
-     * {@code Type}&rarr;text production site consumes
-     * {@link CanonicalRuntimeTypeDescriptor#encode(Type)} built from
-     * that surface; no legacy descriptor spelling is emitted.  The
-     * {@code sourceMap} recorder attaches optional mapping recording
-     * (js-v12-source-maps D2); {@code null} disables it.
-     *
-     * <p>ISSUE-0374 profile plumb (js-v12-int32-bytes D2): the
-     * {@code semanticProfile} — the orchestrator passes
-     * {@code invocation.semanticProfile()} — derives the backend-wide
-     * int mode exactly once per backend instance:
-     * {@link SemanticProfile#DEAL_V1_2_INT32} makes every emitted
-     * module call {@code $rt.setInt32Mode(true)} immediately after the
-     * runtime {@code $require}; {@link SemanticProfile#LEGACY_SAFE_INT}
-     * emits no selector (the retained ±(2^53-1) emission). All modules
-     * in one output root share one profile (F1), so one runtime
-     * instance and one flag are sound (the runtime is deployed once per
-     * output root).
-     *
-     * @param identityIndex    the compilation's canonical class-identity
-     *                         index (the orchestrator-built
-     *                         {@code ModuleIdentityResolver.IdentityIndex})
-     * @param moduleIdentities the compilation's dotted-module-path &rarr;
-     *                         module-identity classification
-     * @param externCImports   raw import paths whose resolved module is
-     *                         an extern-C declaration file
-     *                         (fixed-name-directive-events D9) — the
-     *                         re-keyed E6006 arm keys on this set
-     * @param sourceMap        the mapping recorder (or {@code null})
-     * @param semanticProfile  the project-wide semantic profile
-     */
     public static JsCodegenResult generate(ProgramNode program, CheckResult result,
                                            String sourcePath, String modulePath,
                                            Map<String, String> importResolutions,
@@ -767,20 +469,6 @@ public final class JsBackend {
             Map.of());
     }
 
-    /**
-     * Plan-carrying production seam (ISSUE-0544): the same contract as
-     * the overload above with the compilation's completed default plans
-     * keyed by module path
-     * ({@code CompilationOrchestrator#completedPlansByModulePath}) —
-     * the published-plan consumption surface of the lowering epic. The
-     * emitter consumes this module's plans for the per-construction
-     * defaults-thunk projection (js-backend-runtime D5: the thunk is
-     * created at load, never invoked there, and {@code $rt.makeClass}/
-     * {@code $jsonFromDocument} invoke it once per construction) plus
-     * the labelled per-entry evaluator expressions. The standalone
-     * entry points pass {@code Map.of()} and keep the synthesized
-     * fallback emission.
-     */
     public static JsCodegenResult generate(ProgramNode program, CheckResult result,
                                            String sourcePath, String modulePath,
                                            Map<String, String> importResolutions,
@@ -879,12 +567,7 @@ public final class JsBackend {
                 HostModuleDeclarations hostDecls =
                     hostModules.get(imp.modulePath());
                 if (hostDecls != null) {
-                    // The raw import specifier byte-for-byte plus the
-                    // import statement's span (ISSUE-0599, the
-                    // reference's load_host call shape,
-                    // deal/codegen/lua/LuaBackend.java:2330-2363): every
-                    // E8011 load-time rejection reports the import site
-                    // and names the module (host-missing-export).
+
                     importBindings.add("const " + jsName(imp.alias())
                         + " = $rt.loadHost($require("
                         + jsStringLiteral(relativeSpecifier(
@@ -1179,28 +862,6 @@ public final class JsBackend {
         return null;
     }
 
-    /**
-     * The emitter-rendered host declared map (ISSUE-0328,
-     * js-v12-host-abi-completion D1) — the second {@code $rt.loadHost}
-     * argument: one entry per declared export name in sorted order
-     * (deterministic emission independent of the caller-supplied map
-     * implementation, the LuaBackend TreeMap precedent):
-     *
-     * <pre>
-     * "&lt;name&gt;": { $k: "function", $d: "&lt;canonical declared descriptor&gt;" }
-     *           | { $k: "class", $d: "&lt;canonical identity&gt;",
-     *               $fields: [ { name, $d, optional, nullable, hasDefault }, ... ] }
-     * </pre>
-     *
-     * A declared function export renders its canonical function
-     * descriptor; a declared class export renders the canonical
-     * externals identity ({@code @$external/&lt;specifier&gt;/&lt;ClassName&gt;})
-     * plus the declared field-descriptor array. Every descriptor text
-     * comes from {@link #descriptors} — the single Type&rarr;text
-     * authority; no legacy spelling is emitted. Extra host exports are
-     * dropped structurally by the runtime loader; a missing declared
-     * export is the loader's load-time E8011.
-     */
     private String renderHostDeclaredMap(HostModuleDeclarations decls) {
         StringBuilder sb = new StringBuilder("{");
         boolean first = true;
@@ -1267,24 +928,6 @@ public final class JsBackend {
         return sb.append("]").toString();
     }
 
-    /**
-     * The D8 import-classification rejections, fired before any import
-     * binding is computed (js-backend-emitter D8; re-keyed by
-     * fixed-name-directive-events D9). An import whose raw path is
-     * marked in the orchestrator-built extern-C import set — the
-     * resolved module is a declaration file with effective
-     * {@code FileDirectives.externC} — is E6006 containing
-     * {@code FFI_UNSUPPORTED_BACKEND} at the import statement
-     * (deal-v1.2-directives-and-c-ffi-declarations D8: an incapable
-     * backend rejects {@code @extern-c} before any artifact write).
-     * The former host-ABI E6000 arm retired with ISSUE-0328: a
-     * non-stdlib declaration-file import (a {@code hostModules} entry)
-     * now emits the {@code $rt.loadHost} binding with the declared map
-     * (js-v12-host-abi-completion D1). The E6006 arm precedes any host
-     * handling, so an extern-C host path rejects before the loadHost
-     * binding is consulted. Spec-stdlib raw paths and
-     * {@code importResolutions} entries are never rejected here.
-     */
     private boolean rejectUnsupportedImport(ImportDeclaration imp) {
         if (externCImports.contains(imp.modulePath())) {
             diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E6006,
@@ -1480,13 +1123,6 @@ public final class JsBackend {
     // Statement walking
     // =========================================================================
 
-    /**
-     * Statement dispatch. Import declarations (T4) and export
-     * declarations (T4 assignments; a wrapped function/class
-     * declaration emits its artifacts here) remain tolerated
-     * structurally at this slice (js-backend-emitter D1); every other
-     * statement kind lowers fully.
-     */
     private void visitStatement(StatementNode stmt) {
         // js-v12-source-maps D2: one mapping per generated
         // statement-group boundary — recorded at the current output
@@ -1717,32 +1353,6 @@ public final class JsBackend {
         return sb.toString();
     }
 
-    /**
-     * The shared wrapper body emission: entry parameter checks in
-     * parameter order against the declared parameter types with each
-     * parameter's own declared type span (the reference's parameter
-     * check form, LuaBackend.java:1878-1886 — a boundary error reports
-     * the parameter declaration site, so the three lanes agree on the
-     * pinned corpus span; the pre-flip forwarded-call-site form is
-     * retired), the body statement walk inside an additional block scope
-     * with the parameters declared above it (mirroring the checker's
-     * function scope and body Block scope, so per-scope hoisted
-     * {@code let}s legally shadow the parameter bindings), and — for a
-     * function whose declared return type is {@code null} — the
-     * validated fall-off return after the block (control falling off
-     * the end returns the DEAL null). For an async wrapper the
-     * trailing fall-off return sits inside the {@code async function}
-     * body, so the implicit completion crosses the declared-return
-     * boundary before the Promise resolves (js-backend-architecture
-     * D5) — without it the Promise would resolve with the nil
-     * equivalent {@code undefined} and the awaiter's {@code null}
-     * boundary would raise E8001, where the reference maps the
-     * coroutine's nil fall-off to DEAL null. A nested class declaration
-     * in the body emits its scope-local artifact pair through
-     * {@link #walkStatements} (ISSUE-0318: the D6 E6000 arm retired).
-     * Return statements inside the body check against
-     * {@link #currentReturnType} at the return site.
-     */
     private void emitWrappedBody(List<Parameter> params, Block body,
                                  Type returnType, Span fallOffSpan) {
         // js-v12-source-maps D2: the wrapper's entry parameter-check
@@ -1821,11 +1431,7 @@ public final class JsBackend {
      * cannot see a nested site's scope-local bindings).
      */
     private void visit(ClassDeclaration cd) {
-        // The pinned evaluator labels (ISSUE-0544, runtime page D2):
-        // one (classIdentity, fieldName, semanticDigest) triple per
-        // required-present entry, as JS comments directly above the
-        // construction closure — the artifact carries the label of
-        // every evaluator it creates.
+
         for (String label : defaultEvaluatorLabels(cd)) {
             line("// default evaluator " + label);
         }
@@ -1838,15 +1444,7 @@ public final class JsBackend {
         String identity = qualifiedClassName(cd.name());
         CompilerClassDefaultPlan plan = publishedPlanFor(cd);
         if (plan != null) {
-            // ISSUE-0545 (the construction-consumption epic, runtime
-            // page D4/D6): a plan-bearing class constructs through
-            // $rt.classPlan over its published runtime plan list — the
-            // per-entry shape {name, descriptor, optional, evaluator}
-            // with labelled zero-argument evaluator closures created at
-            // load and never invoked there. $rt.classPlan realizes the
-            // four pinned phases: extra-key E8007 before any default,
-            // omitted required defaults exactly once per attempt in
-            // plan order, per-field canonical validation, tag/publish.
+
             String planList = publishedPlanList(plan);
             line(cd.name() + "$plan = " + planList + ";");
             line(cd.name() + "$new = (provided, $file, $line, $column) => "
@@ -1858,18 +1456,7 @@ public final class JsBackend {
                 emitJsonableArtifacts(cd, plan);
             }
         } else {
-            // ISSUE-0599 (the JS lane convergence leaf): the plan-less
-            // path constructs through the same $rt.classPlan machinery
-            // over the synthesized AST plan list (the LuaBackend
-            // synthesizedPlan mirror) — the four pinned phases including
-            // the phase-3 provided-value validation and the E8007
-            // identity message. The former makeClass overlay ran no
-            // provided-value validation (the bytes-class-default-
-            // integration divergence). The @jsonable wrappers keep the
-            // synthesized defaults thunk (the walker consumes exactly
-            // the omitted required entries through it); it is built
-            // lazily so a non-jsonable class records no duplicate
-            // expression mappings.
+
             line(cd.name() + "$plan = " + synthesizedPlanList(cd) + ";");
             line(cd.name() + "$new = (provided, $file, $line, $column) => "
                 + "$rt.classPlan(" + jsStringLiteral(identity) + ", "
@@ -1975,15 +1562,6 @@ public final class JsBackend {
             + jsonFieldsArray(cd.fields(), null, null) + ";");
     }
 
-    /**
-     * The plan-bearing JSONable variant (ISSUE-0545, runtime page D5):
-     * the {@code C$fromJson} wrapper passes the published plan's
-     * per-entry evaluator carriers through the descriptor array (the
-     * walker consumes exactly the omitted required entries, once per
-     * attempt — no thunk, so no eager default evaluation) while the
-     * {@code C$toJson} wrapper and the exported descriptor shape stay
-     * byte-identical to the thunk form.
-     */
     private void emitJsonableArtifacts(ClassDeclaration cd,
                                        CompilerClassDefaultPlan plan) {
         String identity = qualifiedClassName(cd.name());
@@ -2028,24 +1606,6 @@ public final class JsBackend {
         return sb.append("]").toString();
     }
 
-    /**
-     * One field-descriptor entry. The {@code nullable} flag is the
-     * declaration flag ({@code ClassField.nullable()}); the
-     * {@code jtype} derives from the declared type node with a
-     * {@code T | null} unwrapped, the {@code className}/{@code fields}
-     * pair carries the canonical identity text and the nested
-     * descriptor array for class-typed fields, and {@code element}
-     * carries the element entry for array-typed fields.
-     *
-     * <p>Plan-bearing entries additionally carry the published plan's
-     * labelled zero-argument evaluator closure under {@code evaluator}
-     * — a reference to the class's module-local {@code <C>$plan[i]}
-     * entry, created at load and never invoked there (ISSUE-0545,
-     * runtime page D1/D5): {@code $jsonFromDocument} invokes exactly
-     * the omitted required entries once per attempt, in descriptor
-     * order. Optional entries carry no evaluator key (a declared
-     * default on an optional field never evaluates).</p>
-     */
     private String jsonFieldEntry(ClassField cf,
                                   CompilerClassDefaultEntry planEntry,
                                   String planBinding, int planIndex,
@@ -2246,21 +1806,6 @@ public final class JsBackend {
             .equals(CanonicalModuleIdentity.BuiltinModule.INSTANCE);
     }
 
-    /**
-     * The per-construction defaults thunk: a zero-arg closure returning a
-     * computed-key object literal — every user-named key computed, so a
-     * {@code __proto__} field name creates an own property and never
-     * invokes the inherited accessor (js-backend-architecture D4) — with
-     * every declared field present. Absent optional fields store
-     * {@code $rt.MISSING}; default expressions evaluate fresh on every
-     * construction (spec §Construction); the remaining required fields
-     * carry their zero-value placeholders (dead entries — the checker's
-     * E4001 requires every literal to provide them). Reached only when
-     * the graph published no plan for the visited declaration (the
-     * standalone entry points and checker-error programs): plan-bearing
-     * classes construct through {@code $rt.classPlan} over the
-     * published plan list instead (ISSUE-0545, {@link #visit(ClassDeclaration)}).
-     */
     private String classDefaultsThunk(ClassDeclaration cd) {
         StringBuilder sb = new StringBuilder("() => ({");
         boolean first = true;
@@ -2274,27 +1819,6 @@ public final class JsBackend {
         return sb.toString();
     }
 
-    /**
-     * The published plan's runtime plan-list projection (ISSUE-0545,
-     * runtime page D1/D2/D6): one entry per plan entry in class source
-     * order with the pinned entry shape
-     * {@code {name, descriptor, optional, evaluator?}} — the declared-
-     * name set and the canonical descriptors {@code $rt.classPlan}
-     * validates against. A required-present entry carries its labelled
-     * zero-argument evaluator closure — created here at load, closing
-     * over the declaring module's scope, never invoked during lowering
-     * or load; {@code $rt.classPlan} invokes it exactly once per
-     * omitted required entry per construction attempt (fresh mutable
-     * literals, re-executed calls, function results retained by
-     * reference). An optional entry carries no evaluator and NEVER
-     * evaluates (a declared default on an optional field is
-     * checker-validated metadata only, D1). Each evaluator label is a
-     * JS block comment directly before the closure. The realized
-     * {@link RuntimeClassDefaultPlan} carrier (digests, labels,
-     * presence) is appended exactly once here; the @jsonable wrappers
-     * reference the same per-entry closures through the descriptor
-     * array's {@code evaluator} keys.
-     */
     private String publishedPlanList(CompilerClassDefaultPlan plan) {
         String identityText = identityText(plan.classIdentity());
         List<RuntimeDefaultPlanLowering.EvaluatorRealization>
@@ -2329,16 +1853,6 @@ public final class JsBackend {
         return sb.toString();
     }
 
-    /**
-     * The carrier-side zero-argument invocation seam of a generated JS
-     * evaluator (ISSUE-0544/0545): the real evaluator is the generated
-     * plan-entry closure — it executes inside the artifact exactly once
-     * per omitted required entry per construction attempt — so an
-     * in-process {@code invoke()} is a lowering-contract misuse and
-     * raises. Nothing in the production pipeline invokes the seam
-     * in-process; it carries the label so the misuse names its
-     * evaluator.
-     */
     private RuntimeDefaultEvaluator.Invocation artifactInvocationSeam(
             String label) {
         return () -> {
@@ -2940,13 +2454,7 @@ public final class JsBackend {
             }
         }
         for (String name : hoistedClasses) {
-            // A class additionally predeclares its scope-local plan
-            // binding (ISSUE-0545/ISSUE-0599): the declaration site
-            // assigns the plan list — the published plan or the
-            // synthesized plan of the plan-less path — and
-            // $rt.classPlan construction sites in the same list resolve
-            // through the hoisted binding, exactly like the $new/$meta
-            // pair.
+
             line("let " + name + "$new; let " + name + "$meta;"
                 + " let " + name + "$plan;");
             if ("class".equals(firstKind.get(name))) {
@@ -3062,41 +2570,6 @@ public final class JsBackend {
         };
     }
 
-    /**
-     * Await lowering (js-backend-architecture D5, js-backend-emitter
-     * D6): {@code await E} emits the parenthesized awaited result
-     * {@code (await <emitted callee>)}. The awaited callee is a
-     * {@link CallExpr} (the parser enforces E1042, the checker E3013
-     * against non-async callees), so its emission is the wrapper call
-     * {@code <callee>.$f(<args>, <file>, <line>, <column>)} with the
-     * literal call-site span arguments — a direct awaited call lowers
-     * to {@code (await base.$f(<file>, <line>, <column>))} and an
-     * awaited indirect function-typed value to {@code (await
-     * g.$f(...))}. The parentheses make the emission position-aware:
-     * {@code await} binds at unary precedence, so an unparenthesized
-     * awaited result composed into a postfix position binds the
-     * postfix to the Promise instead of the awaited value —
-     * {@code (await getU()).name} must emit {@code (await
-     * getU.$f(...)).name}, never {@code await getU.$f(...).name}
-     * (which reads {@code .name} off the Promise before awaiting).
-     * No completion check is emitted at the await site: the async
-     * wrapper checks its declared return inside its own {@code async
-     * function} body before the Promise resolves, so the completion
-     * value crosses its typed boundary exactly once
-     * (js-backend-runtime D6). Errors raised by the awaited operation
-     * propagate natively at the await site (Promise rejection), and
-     * evaluation before an await precedes evaluation after it — native
-     * async semantics. The awaited value is not a source-language
-     * value: the wrapper shape stays the only source-visible form.
-     *
-     * Span convergence (ISSUE-0599): the awaited call appends the
-     * {@code await} expression's own span as a second trailing triplet
-     * (see {@link #emitCall}), so the host async wrapper's completion
-     * check reports the pinned await site (host-async-bad) while its
-     * shape check keeps the call site (host-async-shape-bad/value) — the
-     * reference's split of the caller-side with the await span
-     * (LuaBackend.java:2676-2678) and the call-site host-wrapper checks.
-     */
     private String emitAwait(AwaitExpression await) {
         Span saved = awaitedCallSpanOverride;
         awaitedCallSpanOverride = await.span();
@@ -3376,15 +2849,7 @@ public final class JsBackend {
      * arguments (js-backend-emitter D6).
      */
     private String emitCall(CallExpr call) {
-        // The awaited-call completion span (ISSUE-0599): the immediately
-        // awaited call appends a second span triplet — the await
-        // expression's own span — after its call-site triplet, so the
-        // host async wrapper's completion check (and only that check)
-        // reports the await site while its shape/arity/parameter checks
-        // keep reporting the call site (the reference's split,
-        // LuaBackend.java:2676-2678 caller check plus the call-site
-        // host-wrapper checks). Consumed before any nested emission so
-        // calls inside the arguments keep their own spans.
+
         Span completionSpan = awaitedCallSpanOverride;
         awaitedCallSpanOverride = null;
         Type calleeType = typeOf(call.callee());

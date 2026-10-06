@@ -60,48 +60,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
-/**
- * ISSUE-0712: the closed composite terminator analysis
- * ({@code residual-carrier-shapes-production-realization} D1/D3 and the
- * terminator-and-unreachable-tail contract; {@code dispatched-corpus-
- * production-realization} R4 item 2; {@code luajit-jvm-single-lowering-
- * production-cutover} C1/C2/C10).
- *
- * <ol>
- *   <li><b>The unit battery</b> through the registered lowering session
- *       (the release-owned project entry): both-branch returns, an
- *       {@code else if} chain, try/catch both returning, and the
- *       literal-true loop's three condition forms (the source
- *       {@code while (true)}, the source {@code for (; true; …)}, the
- *       test-less {@code for (;;)} — plus the for-let {@code true} form)
- *       each mark their body non-{@code OPEN}: the body block carries no
- *       implicit trailing synthetic null return. The negative controls —
- *       an {@code if} without {@code else}, an {@code if}/{@code else}
- *       with one non-returning branch, a {@code try} with a
- *       non-returning catch, and a literal-true loop whose body carries a
- *       break/continue path ({@code TRANSFER}) — keep the pinned implicit
- *       null return. A nested declared/closure body's blocks stay
- *       disjoint from the enclosing body's blocks, and a genuinely
- *       unterminated non-null body still fails closed with the landed
- *       arm.</li>
- *   <li><b>The four named fixtures</b> ({@code async-await/
- *       async-if-branching}, {@code control-flow/return-inside-try},
- *       {@code descriptors/canonical-class-atom-error-roundtrip},
- *       {@code error-handling/error-roundtrip}) compile through the
- *       release-owned production invocation on LuaJIT and JVM with zero
- *       E6005, stage one project artifact with no retained emission, and
- *       execute on the real toolchains ({@code luajit};
- *       {@code javac --release 25 -proc:none} plus {@code java}) with
- *       their pinned {@code runtime-ok} sidecar transcripts and their
- *       exported probes exercised.</li>
- *   <li><b>The pinned probe values and the oracle</b>: the differential
- *       matrix (semantic oracle + shared LuaJIT artifact + shared JVM
- *       artifact) runs each fixture's probe event-for-event — the sync
- *       fixtures through a driver entry module that asserts the pinned
- *       value, the async fixture through its recorded async entry — and
- *       the oracle agrees with both artifacts.</li>
- * </ol>
- */
 public class CompositeTerminatorAnalysisTest {
 
     private static int passed = 0;
@@ -628,13 +586,6 @@ public class CompositeTerminatorAnalysisTest {
             + "closure body carries no implicit return");
     }
 
-    /**
-     * A genuinely unterminated non-null body keeps the landed fail-closed
-     * arm: the closed analysis never waives it and never fabricates an
-     * implicit return. The shape is the checker's own E5002 rejection, so
-     * the arm is exercised at the unit level through the registered
-     * full-program lowering session.
-     */
     static void testUnterminatedNonNullStillFailsClosed() throws Exception {
         System.out.println("-- a genuinely unterminated non-null body still fails "
             + "closed --");
@@ -1130,7 +1081,6 @@ public class CompositeTerminatorAnalysisTest {
     // The production invocation and process helpers
     // =========================================================================
 
-    /** The release-owned production invocation (the epic's production record). */
     private static CompilerInvocation productionInvocation() {
         return CompilerProfileProvider.resolve(ReleaseConfiguration.CURRENT_RELEASE_STATE,
             ReleaseConfiguration.releaseCapabilityRegistry());

@@ -30,8 +30,6 @@ import java.util.Objects;
  * registration and the {@code @$builtin/Error} descriptor-text projection
  * are owned by the module-identity layer.</p>
  *
- * @param moduleIdentity the declaring module's canonical module identity
- * @param className      the declared class name
  */
 public record CanonicalClassIdentity(
     CanonicalModuleIdentity moduleIdentity,

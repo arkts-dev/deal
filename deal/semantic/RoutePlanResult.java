@@ -21,9 +21,6 @@ import java.util.Objects;
  * plan time with zero diagnostics: never an error, never a within-run
  * fallback.
  *
- * @param plan        the target route plan; null exactly when planning
- *                    failed
- * @param diagnostics the E6005 diagnostics (empty on success); non-null
  */
 public record RoutePlanResult(
     ModuleRoutePlan plan,

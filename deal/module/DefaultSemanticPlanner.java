@@ -18,40 +18,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * The shared resolved default planner for implementation classes
- * (ISSUE-0541; design source {@code provider-versioned-default-plans}
- * D1-D4): one {@link CompilerClassDefaultPlan} per plan-bearing
- * implementation class, produced from the module's checked facts —
- * resolution and type checking in the declaring lexical/import context,
- * typed evaluator IR recording with the complete walk, and the two
- * plan-shape gates (E4001 declaration shape, E3020 sync evaluators).
- *
- * <p>The plan-shape gates ({@code provider-versioned-default-plans}
- * D2):</p>
- * <ul>
- *   <li>a required-present field without a default is E4001 "Class
- *       field without default is not valid" at the field declaration
- *       range;</li>
- *   <li>an {@code await} node at evaluator scope — outside a nested
- *       function-expression body — is E3020 "'await' in class default"
- *       at the await range, including defaults of classes declared
- *       inside async function bodies (which the checker's E3012 does
- *       not cover); await inside a nested async function-expression
- *       body stays legal.</li>
- * </ul>
- *
- * <p>A class with any gate violation or default defect publishes no
- * plan. A published plan carries empty {@code runtimeDependencies}
- * (plans stay compiler-internal until the dependency graph succeeds,
- * D1) and the ordered, deduplicated provisional
- * {@link DefaultResourceOccurrence} list — no digest is computed and no
- * {@link RuntimeResourceReference} or {@link RuntimeImportDependency}
- * record is constructed (the serializer and graph epics own those).
- * An optional field's declared default is checked and recorded (the
- * E3020 gate applies to every declared default) but carries no runtime
- * effect: the plan entry omits it.</p>
- */
 public final class DefaultSemanticPlanner {
 
     private DefaultSemanticPlanner() {
@@ -87,13 +53,6 @@ public final class DefaultSemanticPlanner {
      * checker walk order (source order) — over the module's checked
      * facts.
      *
-     * @param input            the module's read-only checked facts
-     * @param identityAssembly the compilation's identity assembly (the
-     *                         plan's class identity comes from its
-     *                         required-identity gate; idempotent
-     *                         registration)
-     * @return the diagnostics and the planned classes; on any
-     *         error-level diagnostic {@code plannedClasses} is empty
      */
     public static Result plan(DefaultPlanModuleInput input,
                               ModuleIdentityAssembly identityAssembly) {

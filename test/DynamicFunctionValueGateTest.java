@@ -79,67 +79,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * ISSUE-0674 — the closed gate of the function-typed materialization: the
- * producing-position clause, the callee-position exclusivity, the dynamic
- * cell family, and the refinements the identity-preserving function-typed
- * load of the seeded intrinsic binding requires (wiki
- * {@code function-typed-value-materialization-and-dispatch} M2 item 4 and
- * M3 items 3-6; wiki {@code conversion-intrinsic-function-values} J1).
- *
- * <ol>
- *   <li><b>Producing position.</b>
- *       {@code BindingsProductionValidator.REGISTRY_ONE_TO_ONE} admits a
- *       {@code DynamicFunctionValue} key exactly when the op its record
- *       names produces that key identity and the key carries no static
- *       producing position: a closure/adapt/export-read production, a
- *       function-typed {@code HOST_TO_DEAL} crossing input, and a
- *       producer-less seed {@code BINDING_INIT} operand each keep the
- *       closed gate rejecting, and the group family keeps its own closed
- *       class (exactly one {@code LoweredBody} per member). The producer
- *       rule's dynamic arms — a function-typed binding load, a member read
- *       with a function-typed result, a call result, and an awaited
- *       completion (the {@code AWAIT} result) — are admitted as the
- *       record's producing op. Every other key
- *       keeps its landed clause; the exactly-one registration discipline is
- *       unchanged.</li>
- *   <li><b>Callee position.</b> A {@code DynamicFunctionValue}
- *       registration is admissible exactly as a dynamic
- *       ({@code CallCallee.Dynamic}) call/await callee: the indirect callee
- *       spelling over the same identity fails closed as a producer defect
- *       ({@code R-FUNCTION-BINDING}, the dynamic callee-position
- *       exclusivity) on both the typed and the canonical text surface, and
- *       the inline static spelling stays rejected by the
- *       closed nested shape enumeration ({@code R-ENUM}). The indirect cell
- *       switch gains no dynamic case: the dynamic return-boundary set stays
- *       the registration's only cell family and the indirect spelling is
- *       never routed to it.</li>
- *   <li><b>Cell family.</b> A call whose callee registration is
- *       {@code dynamicFunctionValue} takes the landed dynamic return-cell
- *       arm on both the typed and the canonical text surface.</li>
- *   <li><b>Identity-preserving intrinsic load (J1).</b> A
- *       {@code BINDING_LOAD} naming the seed {@code BINDING_INIT}'s
- *       {@code {binding, generation}} that publishes that init's operand
- *       identity is not a producing position for the seed clause, while a
- *       load naming any other binding or generation and any other op
- *       carrying the seeded identity keep the clause rejecting; the
- *       converse clause is unchanged.</li>
- *   <li><b>VALUE-over-intrinsic exemption (J1).</b> The arity-extension
- *       unit's {@code VALUE} operand is the seeded intrinsic identity
- *       itself, so it passes {@code ADAPTER_SOURCE_SHAPE} with or without
- *       its proof; a proof recorded for it must name the seeded
- *       binding/generation; every other {@code VALUE} operand keeps the
- *       landed proof rule and the creation shape is unchanged.</li>
- * </ol>
- *
- * <p><b>Anti-hollow.</b> The positives are the real production walk's units
- * (the dynamic callee carrier reads of the identifier-callee fixture and
- * the seeded arity-extension adapter) with the registrations and the
- * identity-preserving load added exactly as the producer rule produces
- * them; every negative is one mutation of a passing unit, and each combined
- * drive runs the schema rules and the production rules over the same unit in
- * one run.</p>
- */
 public class DynamicFunctionValueGateTest {
 
     private static int passed = 0;
@@ -1061,8 +1000,6 @@ public class DynamicFunctionValueGateTest {
             "the Indirect ASYNC_START callee on the canonical text surface",
             "resolves its callee to a DynamicFunctionValue registration");
 
-        // The static spelling stays rejected by the closed nested shape
-        // enumeration (the landed R-ENUM clause).
         KindPayload staticPayload = new KindPayload.CallPayload(CallMode.INDIRECT,
             new KindPayload.CallCallee.Static(
                 new FunctionExecutionBinding.DynamicFunctionValue(new OpId(MODULE, 9001), SIG0)),
@@ -1228,9 +1165,6 @@ public class DynamicFunctionValueGateTest {
                 SemanticIrValidator.toUnitText(loaded), facts(loaded)),
             "the load-carrying unit on the canonical text surface");
 
-        // The exemption is closed: a load naming another binding is not an
-        // identity-preserving load of the seeded binding, so the landed proof
-        // rule governs the operand again.
         BindingId otherBinding = null;
         long otherGeneration = -1;
         for (SemanticOp op : unit.ops()) {

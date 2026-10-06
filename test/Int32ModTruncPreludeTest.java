@@ -44,49 +44,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
-/**
- * ISSUE-0714: the truncating int32 remainder in the LuaJIT production
- * prelude ({@code residual-carrier-shapes-production-realization} D4;
- * {@code luajit-jvm-single-lowering-production-cutover} C2 and the
- * production LuaJIT emission contract).
- *
- * <p>The emitted production chunk's {@code __arith}
- * {@code INT32_MOD_TRUNC} arm computes the quotient truncated toward zero
- * (the same computation the landed {@code INT32_DIV_TRUNC} arm performs)
- * and the remainder {@code l - t * r}; Lua's floor {@code %} is not used,
- * so the remainder's sign follows the dividend exactly as the oracle's
- * {@code INT32_MOD_TRUNC} row and {@code JvmRuntime.arith} compute it.</p>
- *
- * <ol>
- *   <li><b>The emitted arm.</b> The production LuaJIT artifact's arm
- *       carries the truncating quotient and {@code rng(l - t * r)}, and
- *       carries no floor {@code %}; the landed {@code INT32_DIV_TRUNC}
- *       arm's quotient lines are the arm's own lines (one truncation
- *       rule, not two).</li>
- *   <li><b>The five sign/boundary cases.</b> {@code -5 % 2 == -1},
- *       {@code 5 % -2 == 1}, {@code -5 % -2 == -1}, {@code 5 % 2 == 1},
- *       and {@code INT_MIN % -1 == 0} are driven through the emitted
- *       LuaJIT artifact under real {@code luajit} and through the emitted
- *       JVM artifact under {@code javac --release 25 -proc:none} plus
- *       {@code java}; each value equals the semantic oracle's
- *       {@code INT32_MOD_TRUNC} result and
- *       {@code JvmRuntime.arith("INT32_MOD_TRUNC", …)}.</li>
- *   <li><b>The zero-divisor arm.</b> {@code x % 0} keeps the landed
- *       {@code INT32_DIVISION_BY_ZERO} projection — {@code E8005},
- *       {@code integer division by zero} at the operation origin — and
- *       the oracle, the LuaJIT artifact, the JVM artifact, and the JVM
- *       runtime render the identical tuple.</li>
- *   <li><b>The named fixture.</b>
- *       {@code arithmetic/int32-div-rem-boundaries} compiles through the
- *       release-owned production invocation on LuaJIT and JVM with zero
- *       diagnostics (no {@code CONSTRUCT_UNLOWERED}, no
- *       {@code RETAINED_ABI_DEFERRED}, no {@code SHARED_EMITTER_COVERAGE}),
- *       stages exactly one project artifact with no retained emission,
- *       and executes on the real toolchains and through the oracle with
- *       its pinned {@code runtime-ok} outcome (exit 0, empty
- *       stdout/stderr).</li>
- * </ol>
- */
 public final class Int32ModTruncPreludeTest {
 
     private static int passed = 0;
@@ -118,7 +75,6 @@ public final class Int32ModTruncPreludeTest {
     private static final String FIXTURE = "arithmetic/int32-div-rem-boundaries";
     private static final String FIXTURE_SIDECAR = FIXTURE + ".expect.json";
 
-    /** The three landed producer-guard rule identifiers (zero over the fixture). */
     private static final List<String> GUARD_RULES = List.of("CONSTRUCT_UNLOWERED",
         "RETAINED_ABI_DEFERRED", "SHARED_EMITTER_COVERAGE");
 
@@ -1017,8 +973,6 @@ public final class Int32ModTruncPreludeTest {
         }
         return matcher.group(1).replace("\\n", "\n").replace("\\\"", "\"");
     }
-
-    // =========================================================================
 
     public static void main(String[] args) throws Exception {
         testFiveCases();

@@ -45,9 +45,6 @@ public final class NullNarrowing {
     /**
      * Process an if-condition and record narrowing for the appropriate branch.
      *
-     * @param cond               the if-condition expression
-     * @param enterTrueBranch    true for the then-block, false for the else-block
-     * @param declaredTypeOf     function to look up the declared type of a variable
      */
     public void onIfCondition(ExpressionNode cond, boolean enterTrueBranch,
                               Function<String, Type> declaredTypeOf) {
@@ -164,9 +161,6 @@ public final class NullNarrowing {
         }
     }
 
-    /**
-     * Returns all variable names that currently have narrowed entries.
-     */
     public Set<String> narrowedVariableNames() {
         return new HashSet<>(narrowed.keySet());
     }

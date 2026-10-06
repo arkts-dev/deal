@@ -13,43 +13,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 
-/**
- * The strict ISSUE-0111 feature fixture catalog (declarations page D12):
- * loads a corpus directory of unchanged DEAL roots with explicit sidecar
- * metadata, validates catalog closure (sidecar/source accounting,
- * duplicate canonical aliases, unresolved support edges, unreachable
- * support-only sources), enforces the architecture-owned
- * {@link FeatureBackendMatrix}, and publishes an ordered record list for
- * production execution.
- *
- * <p>Layout contract: a sidecar is any {@code *.sidecar.json} file under
- * the corpus root. A sidecar's parent directory is the record directory;
- * the canonical record id is the sidecar's corpus-relative path without
- * the {@code .sidecar.json} suffix (e.g. {@code int32/truncating-arith}).
- * Every file under a record directory other than the sidecar is that
- * record's fixture source (copied byte-identically into the temporary
- * exact-v1.2 project at execution time — the gate never rewrites fixture
- * source). A record directory that carries a {@code manifest-inject.json}
- * pins a malformed-manifest project: the gate publishes its exact bytes
- * as the project {@code deal.json}, and the sidecar must pin the exact
- * {@code manifestErrorFragment} the resulting E2010 message carries — a
- * code-only match against a manifest-discovery E2010 would be vacuous, so
- * the pairing is a hard catalog rule in both directions. A directory is a
- * support-only directory when no sidecar lives in its subtree and it is
- * not inside a record directory; support-only directories must be
- * reachable from at least one record's {@code support} closure (a listed
- * path covers its whole subtree). A record directory may itself appear in
- * another record's {@code support} only through the explicit dual-role
- * rule (the listing record imports it). {@code linkedRecord} references
- * resolve against the same catalog by canonical id.</p>
- *
- * <p>Catalog validation failures are hard {@link CatalogFailure}s: a
- * malformed sidecar, a matrix violation, an orphan/unlisted source, an
- * unresolved or unused support edge, a duplicate alias, a broken
- * manifest-inject/fragment pairing, or a broken linked record aborts the
- * gate before any compilation — never a skip, never a partial record
- * list.</p>
- */
 public final class V12FeatureFixtureCatalog {
 
     /** The sidecar file-name suffix. */

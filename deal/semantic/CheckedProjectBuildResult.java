@@ -14,11 +14,6 @@ import java.util.Objects;
  * diagnostics list carries the single E6005 produced through the failure
  * contract registry (never a crash, never an invented rendering).
  *
- * @param input       the checked project input; null exactly when the
- *                    build failed
- * @param index       the project interface index; null exactly when the
- *                    build failed
- * @param diagnostics the E6005 diagnostics (empty on success); non-null
  */
 public record CheckedProjectBuildResult(
     CheckedProjectInput input,

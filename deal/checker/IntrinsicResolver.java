@@ -16,12 +16,6 @@ public interface IntrinsicResolver {
     /**
      * Type-check a call to this intrinsic.
      *
-     * @param call   the call expression AST node
-     * @param argTypes the already-resolved types of each argument
-     * @param ctx    the type-checker context (for producing diagnostics, resolving
-     *               contextual types, etc.)
-     * @return the result type of the call, or {@code null} if a type error
-     *         occurred (the diagnostic has already been emitted)
      */
     Type checkCall(CallExpr call, List<Type> argTypes, TypeChecker.Context ctx);
 }

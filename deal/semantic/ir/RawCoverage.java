@@ -11,8 +11,6 @@ import java.util.Objects;
  * rows from T2's closed enums; the text surface produces them through the
  * single canonical JSON parser with no enum conversion.
  *
- * @param construct the raw construct name; non-null
- * @param opKinds   the raw mapped op-kind names; non-null
  */
 public record RawCoverage(String construct, List<String> opKinds) {
 

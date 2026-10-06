@@ -17,9 +17,6 @@ package deal.semantic.ir;
  * formula lands with the canonicalizer (T3); this record pins the input
  * domain only.
  *
- * @param semanticProfile       the invocation's semantic profile; non-null
- * @param capabilityRegistryHash the invocation's closed capability-registry
- *                              digest (foundation F1/F7); non-null
  */
 public record LoweringContext(SemanticProfile semanticProfile, String capabilityRegistryHash) {
 

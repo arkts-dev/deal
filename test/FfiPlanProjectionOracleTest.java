@@ -54,61 +54,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 
-/**
- * ISSUE-0667: the oracle plan-projection seam and the FFI construction
- * execution
- * ({@code luajit-ffi-struct-plan-construction-and-oracle-projection} F4
- * and the oracle plan-projection contract; {@code
- * luajit-ffi-shared-emission-and-jvm-rejection} F6;
- * {@code luajit-ffi-class-plan-consumption-verification} D4; sequencing
- * step 6).
- *
- * <ol>
- *   <li><b>The provided-only parity drive.</b>
- *       {@code ffi/019-ffi-struct-copy-isolation} runs through the oracle:
- *       the closed plan-projection terminal is requested with the resolved
- *       claiming module, the class's declared name, and its class
- *       descriptor; the construction publishes a declaration-order
- *       instance whose fields are the provided values; the host call
- *       receives exactly that instance and the fixture's own checks hold —
- *       and the same fixture's production artifact (the T5 construction
- *       site) executes under {@code luajit} with the sidecar-pinned
- *       {@code runtime-ok} transcript. The oracle's CLASS_NEW events (the
- *       provided fields' {@code CLASS_LITERAL_FIELD} boundary children in
- *       declaration order, then the op's terminal) are asserted.</li>
- *   <li><b>The omitted-field parity drive.</b> The focused declaration
- *       whose struct fields carry native-counting defaults runs through
- *       the oracle's projection suppliers: zero evaluations at load, one
- *       supplier per omitted field per attempt in class source order,
- *       provided-field suppression, and the counter sequence the artifact
- *       pins through the real generated evaluators
- *       ({@code 0, 2, 3, 5}) — while the same project's production
- *       artifact (real native evaluators) executes under {@code luajit}
- *       with exit 0.</li>
- *   <li><b>The projection agreement negatives.</b> A mutated entry order,
- *       a mutated descriptor, a short projection, and an absent projection
- *       each fail closed as a producer defect before any phase runs — the
- *       deferred suppliers (the phase-2 canary) are never invoked.</li>
- *   <li><b>The phase-3 descriptor projections.</b> A plan-supplied default
- *       of the wrong kind raises E8001 and an out-of-range integral number
- *       raises E8004, both at the literal origin, through the same
- *       canonical-matcher projections the artifact's runtime entry
- *       raises.</li>
- *   <li><b>The doctored extra-key parity.</b> A doctored
- *       {@code CLASS_NEW(FFI_PLAN)} payload carrying extra provided names
- *       yields the identical E8007 (code, message, origin) through the
- *       oracle and through the emitted artifact.</li>
- *   <li><b>The surface's closed owner set.</b> The new executor surface
- *       accepts only {@code FFI_PLAN} and rejects every other owner, a
- *       non-null factory ref, a non-empty default-op list, and an absent
- *       projection as producer defects.</li>
- *   <li><b>No generated evaluator content and no native code.</b> The
- *       negative drives compile the focused fixture without building its
- *       native library at all; the construction still executes through the
- *       seam — the oracle resolves no library, loads no symbol, and runs
- *       no generated evaluator text.</li>
- * </ol>
- */
 public class FfiPlanProjectionOracleTest {
 
     private static int passed = 0;
@@ -132,10 +77,6 @@ public class FfiPlanProjectionOracleTest {
         check(java.util.Objects.equals(expected, actual),
             message + " (expected " + expected + ", got " + actual + ")");
     }
-
-    // =========================================================================
-    // The fixtures of this slice
-    // =========================================================================
 
     private static final String CORPUS_FFI_DIR = "test/conformance/backend-runtime/ffi";
     private static final Path CONFORMANCE_ROOT = Path.of("test/conformance");
@@ -171,7 +112,6 @@ public class FfiPlanProjectionOracleTest {
         Path outputRoot) {
     }
 
-    /** The corpus FFI fixture project of this slice (ffi/019). */
     private static Fixture compileCorpus() throws Exception {
         String rawFixture = Files.readString(Path.of(CORPUS_FFI_DIR + "/"
             + CORPUS_CASE + ".deal"), StandardCharsets.UTF_8);

@@ -60,77 +60,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
-/**
- * The canonical-projection parity verification
- * ({@code canonical-failure-projection-authority} Verification 1-6): the
- * named canonical divergences byte-exact through the release-owned
- * production pipeline on the oracle, the LuaJIT artifact under
- * {@code luajit}, and the JVM artifact under {@code javac --release 25
- * -proc:none} plus {@code java}; the per-arm three-consumer tuple
- * identity; the {@code FOR_EACH} terminal check over a deleted
- * array-element slot; the row/arm completeness and single-source
- * negatives; and the unchanged-surface accounting.
- *
- * <ol>
- *   <li><b>The named divergences.</b> Five corpus fixtures compile
- *       through the release-owned production invocation with the
- *       lane-equivalent materialization (the corpus-relative mirror, the
- *       header-stripped compilation set, the host declaration files and
- *       the corpus externals map with the dotted class-identity key
- *       first, and the drive's own entry module for a probe export) and
- *       every capture is rebased onto raw corpus coordinates. Each of the
- *       three consumers reproduces its sidecar's pinned {@code code},
- *       {@code message}, span group, {@code expected}, and {@code actual}
- *       byte-exact, and the three tuples are identical.</li>
- *   <li><b>The arm families through the production pipeline.</b> A closed
- *       fixture list covers the reachable typed-boundary, class,
- *       array-element, signature, int-ladder, signed32-range, conversion,
- *       {@code std/json}, host parameter/return/nothing/string-carrier,
- *       async-shape, completion, class-construction, and host-load
- *       families; each drive asserts the sidecar pins per consumer and the
- *       three-consumer tuple identity. Where the oracle's host seam cannot
- *       carry the value the corpus host returns (the non-operation async
- *       handle), the oracle leg renders the same closed arm.</li>
- *   <li><b>The closed arm table's renderer identity.</b> Every declared
- *       arm renders its own template with the same named parameters,
- *       expected token, and actual token from the registry renderer, the
- *       emitted Lua prelude under {@code luajit}, and the JVM runtime
- *       renderer; the field shapes fail closed, and the marked arms (the
- *       two inner-only string carriers, the sibling-owned walk arm) never
- *       render at a boundary site. The host inner-reason vocabulary and
- *       its pass-throughs are driven through the oracle's host cells, the
- *       JVM runtime's own producers, and the deployed matcher under
- *       {@code luajit}.</li>
- *   <li><b>The {@code FOR_EACH} terminal check.</b> A deleted
- *       array-element slot inside a typed for-of publishes the kind arm's
- *       suffix-less text with expected {@code int} and actual {@code nil}
- *       at the op's own origin on all three consumers.</li>
- *   <li><b>The negatives.</b> The row/arm completeness invariants and the
- *       single-source control fail by name (an unbound retained template,
- *       a foreign template, a duplicate binding, an {@code INNER_ONLY}
- *       arm rendered top-level, a {@code SIBLING_OWNED} arm rendered by a
- *       production consumer, and a deliberately composing consumer
- *       reported as {@code message}/{@code span}).</li>
- *   <li><b>The origin cells.</b> The pinned span group is asserted for
- *       every pinned fixture, and the unpinned {@code MODULE_EXPORT} cell
- *       and the host-driven callback entry slot ({@code HOST_TO_DEAL}
- *       under {@code CALLBACK_INVOKE}) are asserted against their landed
- *       emission: the export publication and the callback's parameter
- *       slots carry the invoking unit's program span in the lowering and
- *       in the three consumers' render.</li>
- *   <li><b>The unchanged surfaces.</b> The corpus membership/count (the
- *       dispatched runtime-classified 390), the sidecar schema (version
- *       and the landed three backends), the comparison contract (mandatory
- *       {@code code}/{@code message}; the span group and optional fields
- *       only when pinned; a pinned field the capture lacks fails; nothing
- *       fabricated), and the landed {@code JSON_TO_ERROR}/{@code
- *       INT32_RESULT} row data stay as landed.</li>
- * </ol>
- *
- * <p>Every assertion reports the fixture, the consumer, and the field it
- * compared; the drive is read-only over the corpus (a temp mirror per
- * fixture, deleted on completion) and stages no repository artifact.</p>
- */
 public class CanonicalProjectionParityTest {
 
     private static int passed = 0;
@@ -681,12 +610,6 @@ public class CanonicalProjectionParityTest {
         }
     }
 
-    /**
-     * The {@code MODULE_EXPORT} cell's landed emission (P3): every export
-     * publication's checked boundary carries the exporting unit's program
-     * span as its origin — the cell has no corpus pin, so the drive
-     * asserts it against the lowering.
-     */
     private static void assertModuleExportOrigins(Compiled compiled) {
         int exports = 0;
         Map<String, String> moduleExportOrigins = new LinkedHashMap<>();
@@ -1104,10 +1027,6 @@ public class CanonicalProjectionParityTest {
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             Set.of());
     }
-
-    // =========================================================================
-    // 2c. The callback entry slot's landed emission (an unpinned origin cell)
-    // =========================================================================
 
     /**
      * The callback entry slot's source (P3's unpinned cell): an exported
@@ -2476,7 +2395,6 @@ public class CanonicalProjectionParityTest {
             expectation, executed(framing(spanless))).isPresent(),
             "a pinned span group the capture lacks fails the comparison");
 
-        // The landed row data of the two rows that stay as landed.
         checkEq(List.of("value at {fieldPath} is not JSON serializable: {actual}",
             "unsupported type for JSON encoding: {actual}"),
             FailureContractRegistry.row(FailurePolicyId.JSON_TO_ERROR).templates(),

@@ -33,9 +33,6 @@ public final class ArtifactSet {
     /**
      * Builds the set from the given artifacts in insertion order.
      *
-     * @param artifacts the artifacts (never null, no null elements)
-     * @throws IllegalArgumentException when two artifacts carry the same
-     *                                  relative path
      */
     public ArtifactSet(List<Artifact> artifacts) {
         Objects.requireNonNull(artifacts, "artifacts");

@@ -10,7 +10,6 @@ package deal.semantic.ir;
  * function-typed value's producing allocation is always resolvable
  * through its {@link FunctionAllocationIdentity} registration.</p>
  *
- * @param id the numeric identity; non-negative
  */
 public record ValueId(long id) implements SemanticId, SemanticValue {
 

@@ -44,15 +44,15 @@ public enum TokenType {
 
     // -- Operators --
     PLUS,        // +
-    MINUS,       // -
-    STAR,        // *
-    SLASH,       // /
+    MINUS,
+    STAR,
+    SLASH,
     PERCENT,     // %
-    STAR_STAR,   // **
+    STAR_STAR,
 
-    EQ_STRICT,   // ===
+    EQ_STRICT,
     NEQ_STRICT,  // !==
-    EQ,          // ==
+    EQ,
     NEQ,         // !=
 
     LT,          // <
@@ -65,7 +65,7 @@ public enum TokenType {
     PIPE,        // |
     BANG,        // !
 
-    EQ_SIGN,     // =
+    EQ_SIGN,
     ARROW,       // =>
 
     DOT,         // .

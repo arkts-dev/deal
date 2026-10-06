@@ -11,7 +11,6 @@ package deal.semantic.ir;
  * registers exactly one {@link FunctionExecutionBinding} keyed by this
  * identity; loads, reads, argument passing, and returns preserve it.</p>
  *
- * @param id the numeric identity; non-negative
  */
 public record FunctionAllocationIdentity(long id) implements SemanticId {
 

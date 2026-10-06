@@ -7,50 +7,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Verifies the ISSUE-0232 D5 Unicode scalar model
- * ({@link UnicodeScalars}): the closed {@code ScalarString} ADT
- * ({@code Valid(carrier) | Invalid}), the complete-sequence validation of
- * UTF-16 carriers (a lone surrogate unit classifies {@code Invalid}) and
- * of the raw UTF-8 byte sequences materialized at host boundaries (each
- * of the five pinned defect classes — truncated, overlong, bad
- * continuation, surrogate, above U+10FFFF — classifies {@code Invalid}
- * the same way, never a per-defect projection), scalar iteration (a
- * surrogate pair is one code point; one single-scalar string per code
- * point in source order), scalar-sequence concatenation in source order,
- * the fail-closed rule (no normalization of invalid strings — no
- * replacement characters, no truncation — {@code Invalid} is exposed for
- * the consuming op's named {@code TYPE_DESCRIPTOR} projection), and the
- * {@code Invalid → invalid-unicode} actual-kind rendering against the
- * closed {@link ActualKind} token.
- *
- * <p>Pinned cases (containers-and-strings-lowering Verification 2/3):
- * <ol>
- *   <li>A valid multi-byte code point (U+1F600, one surrogate pair)
- *       decodes as exactly one scalar.</li>
- *   <li>Lone high and lone low surrogate carriers classify
- *       {@code Invalid} (high at end, high followed by a non-low unit,
- *       lone low before a pair included).</li>
- *   <li>Each of the five pinned UTF-8 defect classes classifies
- *       {@code Invalid}: truncated, overlong, bad continuation,
- *       surrogate, above U+10FFFF (plus the lead-byte shapes the
- *       retained validator rejects: stray continuation, C0/C1 overlong
- *       lead, F5..FF above-U+10FFFF lead).</li>
- *   <li>Valid UTF-8 bytes decode strictly to their carrier (U+1F600,
- *       multi-scalar, empty).</li>
- *   <li>Iteration yields one single-scalar string per code point in
- *       source order; an empty string yields zero scalars; U+10FFFF is
- *       one scalar.</li>
- *   <li>Concatenation of multi-scalar fragments matches the source-order
- *       scalar sequence; an {@code Invalid} fragment propagates
- *       {@code Invalid} (fail-closed exposure, never a repair).</li>
- *   <li>The {@code Invalid → invalid-unicode} actual-kind rendering is
- *       asserted against {@link ActualKind#INVALID_UNICODE}.</li>
- *   <li>Defect guards: a {@code Valid} carrier with a lone surrogate, a
- *       non-scalar {@code scalarString} argument, and null arguments
- *       fail closed; repeats are byte-identical.</li>
- * </ol>
- */
 public class UnicodeScalarsTest {
 
     private static int passed = 0;

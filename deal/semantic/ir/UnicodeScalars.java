@@ -5,56 +5,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * The closed Unicode scalar model (ISSUE-0232 design D5): the single
- * owner of string classification, scalar iteration, and scalar-sequence
- * concatenation over the Java UTF-16 carrier, consumed by the
- * {@code STRING_CONCAT} and {@code FOR_EACH(STRING_SCALARS)} execution
- * contracts of the parent operation table.
- *
- * <pre>{@code
- * ScalarString = Valid(carrier: String)   // scalar sequence; no lone surrogate units
- *              | Invalid                   // classified actual kind invalid-unicode
- * }</pre>
- *
- * <p><b>Validation.</b> {@link #validate(String)} decodes the complete
- * UTF-16 sequence: a lone UTF-16 surrogate unit (high or low) makes the
- * carrier {@link Invalid}; otherwise {@link Valid}.
- * {@link #validate(byte[])} applies the same classification to the raw
- * UTF-8 byte sequences materialized at host boundaries — the pinned
- * defect-class set of the retained runtime
- * ({@code deal/runtime.lua:164-206}): <em>truncated</em> (a multi-byte
- * sequence extends past the end), <em>overlong</em>
- * ({@code E0} with {@code b2 < A0}, {@code F0} with {@code b2 < 90}, or a
- * {@code C0}/{@code C1} lead), <em>bad continuation</em> (a continuation
- * position outside {@code 80..BF}, stray {@code 80..BF} lead bytes
- * included), <em>surrogate</em> ({@code ED} with {@code b2 > 9F} —
- * U+D800..U+DFFF), and <em>above U+10FFFF</em> ({@code F4} with
- * {@code b2 > 8F}, or an {@code F5..FF} lead). {@link Invalid} is the
- * single invalid classification — never a per-defect projection. A valid
- * byte sequence decodes to its carrier exactly once, strictly; the JDK's
- * lenient replacement-characters decoder is never reached by malformed
- * input (fail-closed).</p>
- *
- * <p><b>Iteration.</b> {@link #scalars(Valid)} yields the code points in
- * order — a surrogate pair is one code point; {@link #scalarString(int)}
- * returns the one-single-scalar string for a code point.</p>
- *
- * <p><b>Concatenation.</b> {@link #concat(List)} concatenates scalar
- * sequences in source order, representation-agnostic (byte-level
- * UTF-8/UTF-16 layout is never observable). An {@link Invalid} fragment
- * propagates {@link Invalid} — exposed for the consuming op's named
- * {@code TYPE_DESCRIPTOR} E8001
- * {@code expected string, got invalid Unicode scalar encoding} projection
- * ({@code docs/spec-v1.2.md:64} pins that boundary strings reject invalid
- * encodings, including malformed UTF-8 and unpaired UTF-16 surrogates) —
- * never silently repaired: no replacement characters, no truncation.</p>
- *
- * <p>The component is pure, static, deterministic, and linear in string
- * length; it executes no host code and carries no
- * {@code deal.types} dependency ({@code deal.semantic.ir} is
- * schema-adjacent), and no target representation leaks into it.</p>
- */
 public final class UnicodeScalars {
 
     private UnicodeScalars() {
@@ -88,11 +38,6 @@ public final class UnicodeScalars {
      * invariant, so a {@code Valid} value always denotes a valid scalar
      * sequence.
      *
-     * @param carrier the UTF-16 carrier string; must not be null and must
-     *                not contain a lone surrogate unit
-     * @throws NullPointerException     if {@code carrier} is null
-     * @throws IllegalArgumentException if {@code carrier} contains a lone
-     *                                  high or low surrogate unit
      */
     public record Valid(String carrier) implements ScalarString {
 
@@ -146,10 +91,6 @@ public final class UnicodeScalars {
      * preceded by a high surrogate). A valid surrogate pair is one
      * scalar and passes unchanged.
      *
-     * @param carrier the UTF-16 carrier string
-     * @return {@link Valid} for a scalar-sequence carrier,
-     *         {@link Invalid#INSTANCE} otherwise
-     * @throws NullPointerException if {@code carrier} is null
      */
     public static ScalarString validate(String carrier) {
         Objects.requireNonNull(carrier, "carrier must not be null");
@@ -168,11 +109,6 @@ public final class UnicodeScalars {
      * decoder is never reached by malformed input), so no normalization
      * ever occurs in the component.
      *
-     * @param utf8 the raw UTF-8 byte sequence
-     * @return {@link Valid} carrying the decoded carrier for a
-     *         well-formed scalar-sequence encoding,
-     *         {@link Invalid#INSTANCE} for any pinned defect class
-     * @throws NullPointerException if {@code utf8} is null
      */
     public static ScalarString validate(byte[] utf8) {
         Objects.requireNonNull(utf8, "utf8 must not be null");
@@ -262,9 +198,6 @@ public final class UnicodeScalars {
      * surrogate pair is one code point, and the iteration walks the
      * complete sequence (an empty carrier yields zero code points).
      *
-     * @param valid the valid scalar sequence
-     * @return the code points in scalar order
-     * @throws NullPointerException if {@code valid} is null
      */
     public static List<Integer> scalars(Valid valid) {
         Objects.requireNonNull(valid, "valid must not be null");
@@ -285,14 +218,6 @@ public final class UnicodeScalars {
      * supplementary scalar. The result is always exactly one Unicode
      * scalar value.
      *
-     * @param codePoint a Unicode scalar value (0..0x10FFFF, never a
-     *                  surrogate code point)
-     * @return the one-single-scalar string
-     * @throws IllegalArgumentException if {@code codePoint} is not a
-     *                                  Unicode scalar value (outside
-     *                                  0..0x10FFFF or a surrogate code
-     *                                  point) — a producer defect, never
-     *                                  a repaired value
      */
     public static String scalarString(int codePoint) {
         if (codePoint < 0 || codePoint > 0x10FFFF
@@ -316,13 +241,6 @@ public final class UnicodeScalars {
      * repaired (fail-closed); an empty fragment list concatenates to the
      * empty scalar sequence.
      *
-     * @param fragments the scalar sequences in source order; no element
-     *                  may be null
-     * @return {@link Valid} carrying the source-order concatenation when
-     *         every fragment is valid, {@link Invalid#INSTANCE}
-     *         otherwise
-     * @throws NullPointerException if {@code fragments} is null or
-     *                              contains a null element
      */
     public static ScalarString concat(List<? extends ScalarString> fragments) {
         Objects.requireNonNull(fragments, "fragments must not be null");

@@ -16,10 +16,6 @@ import java.util.Objects;
  * artifact is immutable once built (the {@link ArtifactSet}
  * immutability contract).</p>
  *
- * @param relativePath the final {@code '/'}-separated relative path
- *                     under the publication root (canonical grammar)
- * @param content      the artifact bytes (defensively copied; never
- *                     null)
  */
 public record Artifact(String relativePath, byte[] content) {
 
@@ -35,8 +31,6 @@ public record Artifact(String relativePath, byte[] content) {
      * grammar: non-empty, {@code '/'}-separated, no leading or trailing
      * separator, and no empty, {@code "."}, or {@code ".."} segment.
      *
-     * @param relativePath the candidate relative path
-     * @throws IllegalArgumentException when the path violates the grammar
      */
     public static void validateRelativePath(String relativePath) {
         Objects.requireNonNull(relativePath, "relativePath");

@@ -68,98 +68,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * The requirement-manifest computation of the pre-lowering foundation
- * (F3, one component): one read-only classification over the checked
- * project, producing exactly one {@link SemanticRequirementManifest} per
- * implementation module in {@code CheckedProjectInput} dependency order.
- *
- * <p><b>Closed capability claims.</b> Every implementation module claims
- * {@code FOUNDATION_VALUES}. {@code STDLIB_TIME_CONFLICT} is never claimed
- * since K7: the superseded four-part line trigger
- * ({@code semantic-ir-construct-coverage-cutover} K7 item 6) is retired,
- * so a module referencing {@code std/time.nowMillis} claims through the
- * landed cataloged-call arm below like every other stdlib call, and the
- * closed capability set, the capability-requirement catalog's empty row,
- * the planner's time-conflict reroute, and the validator's
- * empty-evidence rule stay in the tree as inert surfaces. The I3
- * derivation rows (signed-int32 foundation,
- * ISSUE-0395) add exactly one further claim — {@code SIGNED_INT32} —
- * selected by the construct kind, never the magnitude:</p>
- *
- * <ul>
- *   <li>an {@code IntLiteral} of any magnitude → {@code CONST(Int)} → claims
- *       {@code SIGNED_INT32} — a small literal ({@code 1}) claims exactly
- *       like {@code 2147483647}, small literals waive nothing;</li>
- *   <li>a unary negation over an int-typed operand → {@code UNARY(INT32_NEG)}
- *       → claims {@code SIGNED_INT32};</li>
- *   <li>an arithmetic or comparison binary over int-typed operands →
- *       {@code BINARY(INT32_*)} → claims {@code SIGNED_INT32};</li>
- *   <li>an {@code int(...)} intrinsic call → {@code INTRINSIC_CALL(INT_CONVERT)}
- *       → claims {@code SIGNED_INT32}; an {@code number(...)} intrinsic
- *       call → {@code INTRINSIC_CALL(NUMBER_CONVERT)} → claims
- *       {@code FOUNDATION_VALUES} (the module-level row every manifest
- *       carries by construction — {@code NUMBER_CONVERT} never claims
- *       {@code SIGNED_INT32}).</li>
- * </ul>
- *
- * <p>Post-activation this makes every int-using module require target
- * capability {@code SIGNED_INT32} at plan time (F4 rule 4). The closed
- * {@code ConstructKind} set and the S4 capability catalog are untouched —
- * only the construct→capability derivation rows extend.</p>
- *
- * <p>The stdlib epic's plan-time arm ({@code stdlib-operations-and-time-lock}
- * D9): a module whose checked source contains a cataloged stdlib call
- * claims {@code STDLIB_SEMANTICS} — selected by the closed checked-fact
- * recognition predicate ({@link StdlibCallRecognition}: a
- * {@code ModuleSymbol} on a {@code STDLIB}-classified import plus the
- * closed {@link StdlibFunctionCatalog}, never a module/name pair) — so
- * F4 route rule 4's promotion gate covers stdlib-using modules before
- * lowering. A module without a cataloged call never claims it, and a
- * stdlib-export value read (a non-callee position) claims no stdlib
- * capability from the read and adds no route rule (D3). The claim is
- * derived from the checked source only — identical under every
- * invocation purpose.</p>
- *
- * <p><b>The remainder of the closed claims.</b></p>
- * <ul>
- *   <li><b>The stdlib claim:</b> a module whose checked source contains a
- *       cataloged stdlib call claims {@code STDLIB_SEMANTICS} — including
- *       the {@code std.time}/{@code nowMillis} call, whose catalog row is
- *       closed since K7 and whose produced {@code STDLIB_CALL} op is the
- *       claim's evidence. A stdlib-export value read (a non-callee
- *       position) claims no stdlib capability from the read.</li>
- * </ul>
- *
- * <p><b>{@code constructCoverage}.</b> One row per reachable construct
- * of the module's AST over the closed construct→op detector table (S4):
- * the row key is the {@link ConstructKind} the detector maps the AST
- * shape to and the row value is exactly
- * {@link ConstructKind#mappedOpKinds()} verbatim (enforced by the
- * manifest record). A recognized {@code std.time.nowMillis} call records
- * the {@code STDLIB_TIME_NOW_MILLIS} row besides the call row; at
- * lowering start the unit producer copies these rows onto the unit's own
- * enum-keyed {@code constructCoverage} (S1 — the validator's R-COVERAGE
- * fact). ISSUE-0231..0239 extend only the construct→op detector rows,
- * never the closed {@code ConstructKind} set.</p>
- *
- * <p><b>Errors.</b> E6005 through {@code FailureContractRegistry} (T5)
- * with {@code LoweringFailureDetail {module, capability:
- * FOUNDATION_VALUES, validatorRule:
- * MANIFEST_INTERNAL_ERROR_SENTINEL, semanticProfile, irVersion, origin}}
- * for internally inconsistent checked/interface facts only — an import
- * resolving outside the dependency-ordered index, an implementation input
- * entry without its {@code CheckResult} (producer-defect guard: present
- * by construction), an out-of-grammar checked fact the detector requires
- * (a missing or {@link Type.Error} typeMap entry for a
- * {@code nowMillis}-access object, an object literal, or a binary
- * expression; a module symbol without its import declaration). No other
- * new error exists and no SHARED-ineligibility condition is an error
- * here. The computation is strictly read-only — no AST, checker, or
- * symbol-table mutation — and deterministic: dependency-order iteration
- * and the canonical JSON facility make repeated computation
- * byte-identical.</p>
- */
 public final class LoweringSupport {
 
     /**
@@ -183,14 +91,6 @@ public final class LoweringSupport {
      * first (a resolution outside the dependency-ordered index fails
      * closed with E6005, never a silent under-claim).
      *
-     * @param invocation the release-owned compiler invocation; non-null
-     * @param input      the checked project input (implementation modules
-     *                   in dependency order); non-null
-     * @param index      the project interface index covering the full
-     *                   dependency closure; non-null
-     * @return the manifest result: the dependency-ordered manifests plus
-     *         no diagnostics on success, {@code null} manifests plus one
-     *         E6005 on an inconsistent-fact defect
      */
     public static RequirementManifestResult computeManifests(CompilerInvocation invocation,
                                                              CheckedProjectInput input,
@@ -201,12 +101,6 @@ public final class LoweringSupport {
         try {
             validateIndexFacts(input, index);
 
-            // The ISSUE-0239 E10 imported-by arm's gate: the set of
-            // implementation modules imported by another implementation
-            // module (the reverse edge of the import graph, computed over
-            // the index in one pass — a dependency module's artifact must
-            // carry the retained-caller ABI surface while the emission
-            // owned wrapper/init facts stay SHADOW).
             Set<ModuleId> implementationDependencies = new LinkedHashSet<>();
             for (ExternalModuleInterface entry : index.modules().values()) {
                 if (entry.kind() != ExternalModuleKind.IMPLEMENTATION) {
@@ -219,11 +113,6 @@ public final class LoweringSupport {
                 }
             }
 
-            // One dependency-ordered pass over the input modules: each
-            // module's claim set and coverage rows are computed from its
-            // own checked facts (no cross-module claim propagation exists
-            // since K7 — the superseded four-part line detector is
-            // retired).
             List<SemanticRequirementManifest> manifests = new ArrayList<>();
             for (CheckedModuleInput module : input.modules()) {
                 if (module.kind() != CheckedModuleKind.IMPLEMENTATION) {
@@ -298,33 +187,16 @@ public final class LoweringSupport {
         if (scan.signedInt32) {
             capabilities.add(SemanticCapability.SIGNED_INT32);
         }
-        // The plan-time STDLIB_SEMANTICS arm (stdlib epic T5, D9): a
-        // module whose checked source contains a cataloged stdlib call
-        // claims STDLIB_SEMANTICS before lowering; a module without a
-        // cataloged call never claims it, and a stdlib-export value
-        // read claims nothing from the read (D3 — no route rule).
-        // Since K7 the arm covers the std.time/nowMillis call too.
+
         if (scan.stdlibCall) {
             capabilities.add(SemanticCapability.STDLIB_SEMANTICS);
         }
-        // The modules epic's plan-time arms (ISSUE-0239, E10): a
-        // module whose shared artifact cannot yet carry a fact
-        // claims the owning capability so F4 rule 4 reroutes it
-        // LEGACY at plan time post-activation (the reserved parent
-        // verification-3 plan-time edge reroute conditions — an
-        // over-claim only forces LEGACY, never E6005 and never a
-        // within-run fallback).
+
         if (scan.importsModule
                 || implementationDependencies.contains(module.moduleId())) {
             capabilities.add(SemanticCapability.MODULES);
         }
-        // The canonical plan-time CLASSES arm (class epic,
-        // ISSUE-0516) covers every class-construct claim: a class
-        // declaration, a class-typed object literal (including the
-        // builtin Error literal of a throw — the literal position,
-        // never a declaration), a class member read/write/delete,
-        // and has() — every construct the class epic's arms lower
-        // to a class op.
+
         if (scan.classConstruct) {
             capabilities.add(SemanticCapability.CLASSES);
         }
@@ -342,14 +214,7 @@ public final class LoweringSupport {
         if (scan.bytesInContainer || scan.bytesValue) {
             capabilities.add(SemanticCapability.CONTAINERS_AND_STRINGS);
         }
-        // The step-1 bytes guard (ISSUE-0574, parent S1b): the
-        // manifest's plan-time bytesBearing marker is set exactly
-        // from the same triggers as the unchanged claim arm above —
-        // the claim stays the construct-ownership fact, the marker
-        // is the routing fact planner rule 2b consumes to keep
-        // bytes-bearing modules on the retained route in every
-        // purpose. A fixed per-module boolean, never a capability,
-        // registry entry, registry hash, or schema member.
+
         boolean bytesBearing = scan.bytesInContainer || scan.bytesValue;
         return new SemanticRequirementManifest(module.moduleId(), capabilities,
             scan.coverage, bytesBearing);
@@ -377,102 +242,33 @@ public final class LoweringSupport {
          *  stdlib-export value read never sets it. */
         boolean stdlibCall;
 
-        /** The ISSUE-0239 {@code MODULES} trigger: any import
-         *  declaration in the module's checked source (the reserved
-         *  parent verification-3 plan-time edge reroute condition — the
-         *  over-claim only forces LEGACY post-activation). */
         boolean importsModule;
 
-        /** The ISSUE-0239 {@code CALLS} trigger: a direct call of one of
-         *  the module's own exported functions from source (the
-         *  single-invocation-shape guard's plan-time arm — an exported
-         *  function called from source would carry two invocation shapes
-         *  under the statically-resolved call machine; ISSUE-0531's
-         *  runtime selection is the deferred closure). */
         boolean exportedCalledFromSource;
 
         /** The module's exported names (the export-fact arm's gate). */
         final Set<String> exportNames = new LinkedHashSet<>();
 
-        /** The plan-time {@code CLASSES} trigger (ISSUE-0516): a class
-         *  declaration, a class-typed object literal (including the
-         *  builtin {@code Error} literal of a {@code throw} — the
-         *  literal position, never a declaration), a member access or
-         *  write/delete target on a class-typed receiver, or a
-         *  {@code has()} expression — every checked construct the class
-         *  epic's arms lower to a class op. Type-only references never
-         *  set it. */
         boolean classConstruct;
 
-        /** The ISSUE-0239 {@code CALLS} async trigger: any await
-         *  expression in the module's checked source (ASYNC_START/AWAIT
-         *  execution stays SHADOW in this slice). */
         boolean awaitsAsync;
 
-        /** The ISSUE-0239 {@code CALLS} async-declaration trigger: any
-         *  async function declaration or expression in the module's
-         *  checked source (the retained async-export wrapper protocol
-         *  and async body execution stay SHADOW in this slice). */
         boolean declaresAsyncFunction;
 
-        /** The ISSUE-0239 container trigger: a for-of iterable whose
-         *  checked type carries a function type (function elements are
-         *  called through the iteration binding). */
         boolean functionContainer;
-        /** The ISSUE-0239 container trigger: a for-of iterable whose
-         *  checked type carries bytes. */
+
         boolean bytesInContainer;
 
-        /** The ISSUE-0239 {@code CONTAINERS_AND_STRINGS} trigger: any
-         *  walked expression whose checked type carries bytes —
-         *  {@code bytes(...)} calls, bytes {@code .length}/index
-         *  positions, and bytes-typed values anywhere in the checked
-         *  source (the position claims the owning capability; the
-         *  plan-time marker additionally drives the retained route's
-         *  bytesBearing row, while the production path lowers the bytes
-         *  construct through the shared bytes surface, K6). */
         boolean bytesValue;
 
-        /** The ISSUE-0239 {@code CALLS} trigger: a call of a
-         *  dynamically-resolved function value — a variable, parameter,
-         *  catch binding, or iteration binding (the E7 call machine
-         *  resolves only statically tracked function identities;
-         *  ISSUE-0531's runtime selection is the deferred closure), or a
-         *  callee shape outside the statically-resolved identifier and
-         *  import-member set. */
         boolean dynamicCall;
 
-        /** The ISSUE-0239 {@code CALLS} trigger: a function declaration
-         *  nested inside a function body (nested local functions and
-         *  nested recursion shapes carry no registered execution
-         *  binding in this slice). */
         boolean nestedFunctionDeclaration;
 
-        /** The ISSUE-0239 {@code CALLS} trigger: a function-typed
-         *  variable-initializer or assignment position whose declared
-         *  signature is assignable-but-not-exact (the closed D15
-         *  {@code FUNCTION_ADAPT} creation rule — the produced adapter
-         *  op has no shared emission in this slice). */
         boolean adapterCreation;
 
-        /** The ISSUE-0239 {@code CALLS} trigger: a function expression
-         *  (closure) in a stored/embedded value position — a binding
-         *  initializer, an array/table literal element, a call
-         *  argument, or a return value — whose body has no direct
-         *  invocation. The closure body's RETURN boundary names no
-         *  invocation shape and the closed validator rejects the unit
-         *  (R-BOUNDARY-TRIPLE), so the position claims CALLS and F4
-         *  rule 4 reroutes the module LEGACY at plan time (an
-         *  over-claim only forces LEGACY, never E6005). The
-         *  directly-invoked shape (an IIFE callee) is exempt: its
-         *  body's RETURN names the enclosing CALL — and the
-         *  dynamic-callee arm claims that call anyway. */
         boolean storedFunctionExpression;
 
-        /** The ISSUE-0239 {@code CALLS} trigger: a non-exported declared
-         *  function with zero source call sites (every non-exported
-         *  declared function's single return boundary names an existing
-         *  invocation; an uncalled one fails the closed validator). */
         boolean uncalledDeclaredFunction;
 
         /** The current function-body nesting depth (mutable walk state:
@@ -582,10 +378,7 @@ public final class LoweringSupport {
                 if (functionDeclaration.isAsync()) {
                     scan.declaresAsyncFunction = true;
                 }
-                // The ISSUE-0239 CALLS nested-declaration arm: a function
-                // declaration inside a function body (nested local
-                // functions and nested recursion shapes) carries no
-                // registered execution binding in this slice.
+
                 if (scan.functionBodyDepth > 0) {
                     scan.nestedFunctionDeclaration = true;
                 }
@@ -609,12 +402,7 @@ public final class LoweringSupport {
                 scan.cover(ConstructKind.VARIABLE_DECLARATION);
                 walkExpression(variableDeclaration.initializer(), module, scan,
                     checkerScope);
-                // The closed D15 FUNCTION_ADAPT creation-rule arm
-                // (ISSUE-0239): a variable-initializer position whose
-                // declared binding signature is a function type and whose
-                // source value is a different (assignable-but-not-exact)
-                // function type produces FUNCTION_ADAPT — an op without
-                // a shared emission in this slice.
+
                 noteAdapterCreation(module, scan, checkerScope,
                     variableDeclaration.name(), variableDeclaration.initializer());
             }
@@ -719,13 +507,7 @@ public final class LoweringSupport {
     private static void walkExpression(ExpressionNode expression, CheckedModuleInput module,
                                        ModuleScan scan, SymbolTable checkerScope)
             throws FactDefect {
-        // The ISSUE-0239 CONTAINERS_AND_STRINGS bytes arm: a walked
-        // expression whose checked type carries bytes — bytes(...) calls,
-        // bytes .length/index positions, and bytes-typed values anywhere in
-        // the checked source — claims the owning capability at the value
-        // position (the claim also sets the manifest's bytesBearing row the
-        // retained route's rule 2b consumes; the production path lowers the
-        // bytes construct through the shared bytes surface, K6).
+
         if (Types.containsBytes(checkedType(module, expression))) {
             scan.bytesValue = true;
         }
@@ -809,17 +591,7 @@ public final class LoweringSupport {
                         scan.cover(ConstructKind.STDLIB_TIME_NOW_MILLIS);
                     }
                 }
-                // The callee classification (I3 + the ISSUE-0239 E10
-                // CALLS arms): a declared function call counts the call
-                // site (the never-called arm's fact) and pins the
-                // exported-from-source dual shape; a call of a variable,
-                // parameter, catch binding, or iteration binding is a
-                // dynamically-resolved function value; a non-identifier,
-                // non-import-member callee (call result, index, closure
-                // expression) is runtime callee selection (ISSUE-0531's
-                // deferred closure) — every shape the statically-resolved
-                // call machine cannot lower claims CALLS so F4 rule 4
-                // reroutes LEGACY at plan time.
+
                 ExpressionNode callee = callExpr.callee();
                 Symbol calleeSymbol = null;
                 boolean importMemberCallee = false;
@@ -932,13 +704,7 @@ public final class LoweringSupport {
                 // walk normally.
                 walkWriteTarget(assignmentExpr.target(), module, scan, checkerScope);
                 walkExpression(assignmentExpr.value(), module, scan, checkerScope);
-                // The closed D15 FUNCTION_ADAPT creation-rule arm
-                // (ISSUE-0239): an assignment position whose target is a
-                // function-typed binding and whose source value is a
-                // different (assignable-but-not-exact) function type
-                // produces FUNCTION_ADAPT — an op without a shared
-                // emission in this slice. Exact-signature positions store
-                // directly and claim nothing.
+
                 if (assignmentExpr.target() instanceof IdentifierExpr identifier) {
                     noteAdapterCreation(module, scan, checkerScope, identifier.name(),
                         assignmentExpr.value());
@@ -956,20 +722,6 @@ public final class LoweringSupport {
         }
     }
 
-    /**
-     * Walks one function-expression body. The ISSUE-0239 {@code CALLS}
-     * stored-expression arm: a function expression in a stored/embedded
-     * value position — a binding initializer, an array/table literal
-     * element, a call argument, or a return value — whose body has no
-     * direct invocation carries a RETURN boundary naming no invocation
-     * shape, and the closed validator rejects the unit
-     * (R-BOUNDARY-TRIPLE). The position therefore claims {@code CALLS}
-     * so F4 rule 4 reroutes the module LEGACY at plan time (an
-     * over-claim only forces LEGACY, never E6005 and never a within-run
-     * fallback). The directly-invoked shape (an IIFE callee) is exempt:
-     * its body's RETURN names the enclosing CALL — the dynamic-callee
-     * arm claims that call anyway.
-     */
     private static void walkFunctionExpr(FunctionExpr functionExpr,
                                          CheckedModuleInput module, ModuleScan scan,
                                          SymbolTable checkerScope,
@@ -1012,18 +764,6 @@ public final class LoweringSupport {
         return false;
     }
 
-    /**
-     * The closed D15 {@code FUNCTION_ADAPT} creation-rule arm
-     * (ISSUE-0239 E10): a variable-initializer or assignment position
-     * whose declared binding signature is a function type and whose
-     * source value's checked type is a different (assignable-but-not-
-     * exact) function type produces {@code FUNCTION_ADAPT} — an op with
-     * no shared emission in this slice — so the position claims
-     * {@code CALLS} (an exact-signature position stores the value
-     * directly and claims nothing). The declared binding signature is
-     * the checker's {@link Symbol.VariableSymbol} fact of the position's
-     * scope — never a target-built inference.
-     */
     private static void noteAdapterCreation(CheckedModuleInput module, ModuleScan scan,
                                             SymbolTable checkerScope, String name,
                                             ExpressionNode source) throws FactDefect {

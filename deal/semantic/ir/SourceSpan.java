@@ -14,13 +14,6 @@ import java.util.Objects;
  * {@link #UNKNOWN_OFFSET} as the explicit "no offset information"
  * sentinel. The semantic IR retains no AST node; spans are copied values.</p>
  *
- * @param file              the source file identifier; non-null
- * @param startLine         1-based start line
- * @param startColumn       1-based start column
- * @param endLine           1-based inclusive end line
- * @param endColumn         1-based inclusive end column
- * @param startScalarOffset start scalar offset (inclusive) or {@link #UNKNOWN_OFFSET}
- * @param endScalarOffset   end scalar offset (exclusive) or {@link #UNKNOWN_OFFSET}
  */
 public record SourceSpan(
     String file,
@@ -59,7 +52,6 @@ public record SourceSpan(
         }
     }
 
-    /** Returns true iff both scalar offset components are non-negative. */
     public boolean hasScalarOffsets() {
         return startScalarOffset >= 0 && endScalarOffset >= 0;
     }

@@ -59,11 +59,6 @@ public final class DiagnosticStructuredOutput {
      * Serializes the diagnostics as the canonical structured JSON document
      * (version 1).
      *
-     * @param diagnostics the normalized diagnostics in emission order; a
-     *                    null list yields the empty document
-     * @return the deterministic JSON document with the exact D8 field
-     *         order
-     * @throws NullPointerException if a list element is null
      */
     public static String toJson(List<CompilerDiagnostic> diagnostics) {
         List<CompilerDiagnostic> list = diagnostics == null ? List.of() : diagnostics;

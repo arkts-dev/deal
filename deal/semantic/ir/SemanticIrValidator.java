@@ -11,87 +11,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * The closed {@code deal.semantic-ir/1} validator (schema S6; foundation
- * admission gate): rejects exactly the objective's closed 14-condition
- * rule set and nothing else, on both pinned surfaces —
- *
- * <ul>
- *   <li>the <b>typed record surface</b>:
- *       {@link #validate(LoweredModuleUnit, ComparisonFacts)} and
- *       {@link #validate(ExecutableLoweredProject, ComparisonFacts)} over
- *       T2's closed schema records; and</li>
- *   <li>the <b>canonical-JSON text surface</b>:
- *       {@link #validateText(String, ComparisonFacts)}, the pinned
- *       invalid-IR injection route: the text is decoded through T3's
- *       single parser ({@link CanonicalJson#parse}) into intermediate
- *       records whose closed enum positions carry raw strings, and the
- *       <em>same</em> 14 rules run on both surfaces (one rule engine, two
- *       converters — a typed converter extracting enum names and payload
- *       JSON through {@link ContractSnapshotCanonicalizer#payloadJson}
- *       and {@link ContractSnapshotCanonicalizer#toJson}, and a text
- *       converter extracting the same raw names from the serialized
- *       unit/project).</li>
- * </ul>
- *
- * <p>The 14 rules reject exactly the S6 list (rule order fixed as the S6
- * enumeration order, deterministic across runs):</p>
- *
- * <pre>{@code
- * R-COVERAGE, R-ENUM, R-CAPABILITY, R-POLICY-KIND, R-BOUNDARY-TRIPLE,
- * R-ELIDED-PLACEMENT, R-FUNCTION-BINDING, R-EXTERNAL-ENTRY, R-ALIAS-CYCLE,
- * R-TOKEN-REUSE, R-PRIVATE-STEP, R-RESERVED-NAME, R-DIGEST, R-PROFILE
- * }</pre>
- *
- * <p>Deterministic first-failure order: modules in dependency order
- * (outer), then the 14 rules in the pinned enumeration order, then — for
- * each rule — the unit's ops in op order (inner). A single closed position
- * dispatches to exactly one rule, pinned by S6's negative list:</p>
- *
- * <ul>
- *   <li>an op-kind value outside the closed 55 → {@code R-PRIVATE-STEP}
- *       (a consumer-private semantic step);</li>
- *   <li>an out-of-set {@code StdlibFunctionId} value → {@code R-ENUM}
- *       (the stdlib selector reservation list is empty since
- *       {@code TIME_NOW_MILLIS} became the 21st member, so
- *       {@code R-RESERVED-NAME} covers only the reserved
- *       {@code FailurePolicyId} names);</li>
- *   <li>a {@code FailurePolicyId} value among
- *       {@code EXTERNAL_PARAMETER}/{@code EXTERNAL_RETURN}/
- *       {@code STDLIB_PARAMETER}/{@code STDLIB_RETURN} →
- *       {@code R-RESERVED-NAME}, any other out-of-set value →
- *       {@code R-ENUM};</li>
- *   <li>a {@code BoundaryKind} value — including the reserved
- *       {@code C_FFI_TO_DEAL}/{@code DEAL_TO_C_FFI} — outside the closed
- *       27 → {@code R-ENUM};</li>
- *   <li>every other closed enum position (selectors, modes, control
- *       selectors, capture modes, index/iteration modes, async sources)
- *       → {@code R-ENUM};</li>
- *   <li>a unit {@code semanticProfile} other than {@code DEAL_V1_2_INT32}
- *       → {@code R-PROFILE} (a non-{@code DEAL_V1_2_INT32} unit, S6's
- *       first sub-condition — including the {@code LEGACY_SAFE_INT} name
- *       injected through text).</li>
- * </ul>
- *
- * <p>The structural checks the parent's resource-limit sentence names
- * (ownership cycles, bad dominance, invalid exits, stale generations,
- * unresolvable bindings, missing boundaries) are <em>not</em> part of
- * this closed set — they are the construct epics' production-time checks
- * (ISSUE-0233..0236). Every rejection is E6005 with a
- * {@link LoweringFailureDetail} built by T5's
- * {@link FailureContractRegistry} (code {@code E6005}, phase
- * {@code BACKEND_LOWERING}); a text-surface decode failure raises
- * {@link SemanticIrTextDecodeException} — a transport-level rejection,
- * never E6005 and never a validator rule.</p>
- *
- * <p>The unit text protocol (produced by {@link #toUnitText(LoweredModuleUnit)},
- * consumed by {@link #validateText(String, ComparisonFacts)}) carries the
- * validator's pinned input — the unit's validation-relevant fields with
- * their record component names as pinned keys; the ops' payloads and
- * contracts render through T3's single snapshot/payload mappings. The
- * project text protocol is
- * {@code {semanticProfile, entryModule, modules:[unit…]}}.</p>
- */
 public final class SemanticIrValidator {
 
     private SemanticIrValidator() {
@@ -116,42 +35,11 @@ public final class SemanticIrValidator {
     /** The R-POLICY-KIND rule: a failure policy not allowed for its selector/kind. */
     public static final String R_POLICY_KIND = "R-POLICY-KIND";
 
-    /**
-     * The R-BOUNDARY-TRIPLE rule: a boundary triple outside the closed
-     * boundary-assignment table (including a body-local creation-op return cell
-     * that violates its closed conditions), and the closed dynamic-invocation
-     * clauses (the callee-value class set and the recorded DEAL-body cell
-     * form's correlation with the callee value's registration — ISSUE-0677).
-     * The {@code INDIRECT} arm's resolved-binding switch pins every statically
-     * classified callee's cell family — the conversion intrinsic's registration
-     * is a boundary-shaped callable, so its indirect call takes the host family
-     * (one {@code DEAL_TO_HOST} + {@code HOST_PARAMETER} cell per declared
-     * parameter and the single {@code HOST_TO_DEAL} + {@code HOST_SYNC_RETURN}
-     * return cell — ISSUE-0679).
-     */
     public static final String R_BOUNDARY_TRIPLE = "R-BOUNDARY-TRIPLE";
 
     /** The R-ELIDED-PLACEMENT rule: ELIDED_BY_ADAPTER outside an adapter-over-async task. */
     public static final String R_ELIDED_PLACEMENT = "R-ELIDED-PLACEMENT";
 
-    /**
-     * The R-FUNCTION-BINDING rule: a function-typed result ValueId or a
-     * function-typed {@code HOST_TO_DEAL} crossing input without exactly
-     * one registration — including the closed {@code HostFunctionValue}
-     * correlation (ISSUE-0531): the materializing crossing op id must
-     * name exactly the producing host crossing whose input identity keys
-     * the registration and whose checked descriptor the registration
-     * carries — the closed {@code DynamicFunctionValue} correlation
-     * (ISSUE-0673): the registered producing op id must name an op of
-     * the unit whose result identity is the registration key and whose
-     * result descriptor is the registered descriptor — and the closed
-     * {@code DynamicFunctionValue} callee-position exclusivity
-     * (ISSUE-0674): such a registration is admissible exactly as a
-     * {@code Dynamic} call/await callee, so an {@code Indirect} callee
-     * identity resolving to it (or an inline {@code Static} naming it,
-     * already rejected by the closed nested shape enumeration) is a
-     * producer defect.
-     */
     public static final String R_FUNCTION_BINDING = "R-FUNCTION-BINDING";
 
     /** The R-EXTERNAL-ENTRY rule: a SHARED_BODY ExternalFunction without a recorded EXTERNAL_ENTRY. */
@@ -197,11 +85,6 @@ public final class SemanticIrValidator {
      * {@code LoweringContextHash.of(semanticProfile, capabilityRegistryHash)}
      * recomputed from these facts.
      *
-     * @param interfaceIndexDigest   the interface index digest the unit was
-     *                               checked against; non-null
-     * @param semanticProfile        the invocation's semantic profile; non-null
-     * @param capabilityRegistryHash the invocation's capability-registry
-     *                               digest (hex string, carried verbatim); non-null
      */
     public record ComparisonFacts(String interfaceIndexDigest, SemanticProfile semanticProfile,
                                   String capabilityRegistryHash) {
@@ -229,9 +112,6 @@ public final class SemanticIrValidator {
      * unit-level validation treats foreign-module references as
      * indeterminate and skips them.</p>
      *
-     * @param unit  the unit; non-null
-     * @param facts the comparison facts; non-null
-     * @return empty on pass, otherwise the first E6005
      */
     public static Optional<CompilerDiagnostic> validate(LoweredModuleUnit unit, ComparisonFacts facts) {
         Objects.requireNonNull(unit, "unit must not be null");
@@ -255,9 +135,6 @@ public final class SemanticIrValidator {
      * implementation closure). Returns empty on pass and exactly one E6005
      * naming the first failing rule on failure.
      *
-     * @param project the project; non-null
-     * @param facts   the comparison facts; non-null
-     * @return empty on pass, otherwise the first E6005
      */
     public static Optional<CompilerDiagnostic> validate(ExecutableLoweredProject project,
                                                         ComparisonFacts facts) {
@@ -294,12 +171,6 @@ public final class SemanticIrValidator {
      * — through the single parser with closed enum positions carried as
      * raw strings, running exactly the same closed 14 rules.
      *
-     * @param canonicalJson the canonical unit/project JSON text; non-null
-     * @param facts         the comparison facts; non-null
-     * @return empty on pass, otherwise the first E6005
-     * @throws SemanticIrTextDecodeException on malformed JSON, a pinned
-     *         framing/field/value-type/version mismatch, or an
-     *         unresolvable entry module (transport-level, never E6005)
      */
     public static Optional<CompilerDiagnostic> validateText(String canonicalJson, ComparisonFacts facts) {
         Objects.requireNonNull(canonicalJson, "canonicalJson must not be null");
@@ -326,8 +197,6 @@ public final class SemanticIrValidator {
      * text-surface protocol consumed by {@link #validateText(String, ComparisonFacts)}.
      * The mapping flows through the single canonicalizer.
      *
-     * @param unit the unit; non-null
-     * @return the deterministic canonical JSON text (UTF-8, sorted keys)
      */
     public static String toUnitText(LoweredModuleUnit unit) {
         Objects.requireNonNull(unit, "unit must not be null");
@@ -339,8 +208,6 @@ public final class SemanticIrValidator {
      * Serializes a project to its canonical validation text
      * ({@code {semanticProfile, entryModule, modules}}).
      *
-     * @param project the project; non-null
-     * @return the deterministic canonical JSON text
      */
     public static String toProjectText(ExecutableLoweredProject project) {
         Objects.requireNonNull(project, "project must not be null");
@@ -452,20 +319,6 @@ public final class SemanticIrValidator {
 
     // -- R-COVERAGE ------------------------------------------------------------
 
-    /**
-     * The typed-surface layout tie of the {@code CLASS_DECLARATION}
-     * row's layout-only R-COVERAGE waiver (ISSUE-0511): the waiver is
-     * admitted only when the layout record the row is satisfied by was
-     * actually produced. The raw model carries no layouts
-     * ({@link RawUnit}), so the tie is checked on the typed unit after
-     * the closed rule engine passes: when the
-     * {@code CLASS_DECLARATION} row is recorded, no op of the mapped
-     * kinds ({@code CLASS_DEFAULT}/{@code CLASS_FACTORY}/
-     * {@code EXPORT_PUBLISH}) was produced, and
-     * {@code unit.classLayouts()} is empty, the row is satisfied by
-     * nothing — a layout-only class must still have its layout record —
-     * and R-COVERAGE fails.
-     */
     private static Optional<CompilerDiagnostic> checkClassDeclarationLayout(
             LoweredModuleUnit unit, RawUnit raw, ComparisonFacts facts) {
         if (!unit.constructCoverage().containsKey(ConstructKind.CLASS_DECLARATION)) {
@@ -488,46 +341,6 @@ public final class SemanticIrValidator {
                 + "layout)"));
     }
 
-    /**
-     * The K12 dynamic DEAL-body cell's form correlation on the typed
-     * surface (ISSUE-0677; design source
-     * {@code function-typed-value-materialization-and-dispatch} M3 item 5 and
-     * the dynamic DEAL-body cell contract): a dynamic invocation records
-     * exactly one closed cell form, and the recorded structure must agree
-     * with the callee value's produced registration —
-     *
-     * <ul>
-     *   <li>a same-walk {@code loweredBody} registration whose body carries a
-     *       {@code RETURN}-materialized return cell requires the
-     *       callee-owned form: the recorded cell is that body's own return
-     *       boundary, parented to a {@code RETURN} of the body naming the
-     *       body's function and recording the cell as its
-     *       {@code returnBoundaryOpId}; a call-owned record for such a
-     *       registration (which would leave the body's own cell unexecuted
-     *       or duplicate it) is a producer defect;</li>
-     *   <li>the producer rule's {@code dynamicFunctionValue} registration (or
-     *       no registration) requires the call-owned form: the recorded cell
-     *       is parented to a {@code RETURN} of no lowered body of the unit
-     *       (the landed record shape). A callee-owned record for a
-     *       runtime-resolved callee is a producer defect (the named body is
-     *       not the callee's);</li>
-     *   <li>a never-returning same-walk body (whose walk produced no
-     *       {@code RETURN}, so its cell is materialized by its invocation op
-     *       and no {@code RETURN}-owned cell exists to record) takes the
-     *       call-owned form.</li>
-     * </ul>
-     *
-     * <p>The raw model carries no lowered-function set, so this tie is
-     * checked on the typed unit after the closed rule engine (and the
-     * callee-value class clause the raw rule runs on both surfaces) passes —
-     * exactly the typed-surface tie {@code CLASS_DECLARATION}'s layout waiver
-     * uses.</p>
-     *
-     * @param unit  the typed unit; non-null
-     * @param raw   the unit's raw model (the diagnostic's module path); non-null
-     * @param facts the comparison facts; non-null
-     * @return the first failure, or empty
-     */
     private static Optional<CompilerDiagnostic> checkDynamicCellForms(
             LoweredModuleUnit unit, RawUnit raw, ComparisonFacts facts) {
         Map<OpId, SemanticOp> opsById = new LinkedHashMap<>();
@@ -576,7 +389,7 @@ public final class SemanticIrValidator {
             OpId cellOpId) {
         SemanticOp cell = opsById.get(cellOpId);
         if (cell == null || cell.origin() == null || cell.origin().parentOpId() == null) {
-            return Optional.empty(); // the landed cell rules own an unresolvable cell.
+            return Optional.empty();
         }
         SemanticOp parent = opsById.get(cell.origin().parentOpId());
         KindPayload.ReturnPayload returned = parent != null
@@ -695,20 +508,7 @@ public final class SemanticIrValidator {
                 }
             }
             if (!produced) {
-                // ISSUE-0231..0239 row-extension consumption: the
-                // CLASS_DECLARATION row's required common form begins with
-                // "layout" — a class layout is unit data
-                // (unit.classLayouts), never an op. A no-default
-                // non-exported (layout-only) class therefore produces no
-                // CLASS_DEFAULT/CLASS_FACTORY op, and the row is satisfied
-                // by the produced layout record; the op-bearing shapes
-                // (defaulted/exported classes) evidence the row through
-                // the produced CLASS_DEFAULT/CLASS_FACTORY ops. No vacuous
-                // op is invented for the layout-only shape. The raw model
-                // carries no layouts, so the waiver's layout record is
-                // tied on the typed surface (checkClassDeclarationLayout):
-                // a recorded row with no mapped op and no layout record
-                // still fails R-COVERAGE.
+
                 if (construct == ConstructKind.CLASS_DECLARATION) {
                     continue;
                 }
@@ -1185,15 +985,7 @@ public final class SemanticIrValidator {
                     + "\" in a closed FunctionExecutionBinding shape position"));
         }
         if ("intrinsicFunction".equals(shape)) {
-            // The intrinsic function value's closed shape position
-            // (ISSUE-0679; design source
-            // {@code conversion-intrinsic-function-values} J3): the static
-            // callee slot of an indirect intrinsic call carries the seeded
-            // identity's own registration — the closed {@code IntrinsicKind}
-            // member plus the intrinsic's declared signature text, both
-            // required, so a doctored nested payload with an open kind or
-            // with either position absent fails the closed gate exactly as
-            // the unit-level binding shape does.
+
             String nestedKind = optionalString(binding, "intrinsicKind");
             String nestedDescriptor = optionalString(binding, "descriptor");
             Optional<CompilerDiagnostic> kindFailure = checkSlotEnum(unit, facts,
@@ -1473,23 +1265,6 @@ public final class SemanticIrValidator {
         };
     }
 
-    /**
-     * The closed stdlib algorithm→policy table for {@code STDLIB_CALL}
-     * (parent "Standard-library operation table"):
-     * {@code CONSOLE_LOG}/{@code CONSOLE_ERROR} →
-     * {@code INFRASTRUCTURE_ONLY}; {@code STRING_LENGTH} →
-     * {@code INT32_RESULT}; {@code JSON_PARSE} →
-     * {@code JSON_PARSE_SYNTAX}; {@code JSON_STRINGIFY} →
-     * {@code JSON_TO_ERROR}; {@code MATH_SQRT} →
-     * {@code SQRT_NEGATIVE}; {@code MATH_ABS_INT} and
-     * {@code TIME_NOW_MILLIS} → {@code INT32_RESULT} (the declared
-     * {@code int} return boundary is the single terminal of the
-     * target-clock read, K7); every other id → {@code NO_DEAL_FAILURE}.
-     * This method is the single source of the assignment: the lowerer's
-     * {@code STDLIB_CALL} policy stamping reads this table (never a
-     * copy) — exactly like the landed {@code unaryPolicy}/
-     * {@code binaryPolicy}/{@code intrinsicPolicy} accessors.
-     */
     public static FailurePolicyId stdlibPolicy(StdlibFunctionId function) {
         return switch (function) {
             case CONSOLE_LOG, CONSOLE_ERROR -> FailurePolicyId.INFRASTRUCTURE_ONLY;
@@ -1779,47 +1554,6 @@ public final class SemanticIrValidator {
         };
     }
 
-    /**
-     * The body-local return cell of the closed boundary-assignment table
-     * (ISSUE-0635; design sources
-     * {@code project-lowering-entry-and-registration-seeds} D9 and the
-     * body-invocation identity contract, and
-     * {@code semantic-ir-construct-coverage-cutover} K12's lowering side):
-     * a body with no statically materialized invocation names its
-     * function-value creation op ({@code CLOSURE_NEW} or
-     * {@code RECURSIVE_GROUP_INIT}) as its {@code RETURN}'s enclosing
-     * invocation, because the creation op took over the body's reserved
-     * invocation identity. The cell admits exactly one
-     * {@code FUNCTION_RETURN} boundary per body:
-     *
-     * <ol>
-     *   <li>the boundary is parented to the body's {@code RETURN} and
-     *       equals that {@code RETURN}'s {@code returnBoundaryOpId};</li>
-     *   <li>the creation-op match holds: a {@code CLOSURE_NEW} identity
-     *       allocates the returning function; a
-     *       {@code RECURSIVE_GROUP_INIT} identity publishes it as a
-     *       member;</li>
-     *   <li>the body has no assigned invocation shape: no statically
-     *       materialized invocation op of the closure names the boundary
-     *       as its return boundary (a dynamic call's recorded cells are
-     *       not a statically materialized invocation, so a body reached
-     *       only through its value keeps the cell);</li>
-     *   <li>it is the body's single return boundary: every {@code RETURN}
-     *       of the same function names it;</li>
-     *   <li>the boundary is {@code FUNCTION_RETURN} under the
-     *       descriptor-kind rule on the allocated function's declared
-     *       return descriptor ({@code CLOSURE_NEW} carries the signature;
-     *       the group publication carries no per-member signature, so the
-     *       group arm pins the descriptor-kind rule and the member
-     *       identity).</li>
-     * </ol>
-     *
-     * @param unit      the boundary's unit; non-null
-     * @param creation  the creation op the {@code RETURN} names; non-null
-     * @param boundary  the boundary op under check; non-null
-     * @param closure   the project closure units by module path; non-null
-     * @return empty on a matching cell, otherwise a failure description
-     */
     private static Optional<String> bodyLocalReturnCell(RawUnit unit, RawOp creation,
                                                         RawOp boundary,
                                                         Map<String, RawUnit> closure) {
@@ -2021,18 +1755,7 @@ public final class SemanticIrValidator {
                         isReturn, policy, descriptor);
                     case "hostFunction", "hostFunctionValue" -> hostCallCell(call, boundary,
                         signature, index, isReturn, policy, descriptor);
-                    // The conversion intrinsic's value call (ISSUE-0679;
-                    // design source
-                    // {@code conversion-intrinsic-function-values} J3): the
-                    // seeded identity's registration is a boundary-shaped
-                    // callable, so its indirect call records exactly the host
-                    // cell family — one DEAL_TO_HOST + HOST_PARAMETER cell per
-                    // declared parameter and the single HOST_TO_DEAL +
-                    // HOST_SYNC_RETURN return cell run by the call op. The
-                    // class is HOST
-                    // ({@link DynamicReturnBoundaryProtocol#kindOf}), so the
-                    // pinned cell family is the host one, exactly as the
-                    // statically resolved host rows'.
+
                     case "intrinsicFunction" -> hostCallCell(call, boundary, signature,
                         index, isReturn, policy, descriptor);
                     case "externalFunction" -> externalCallCell(call, boundary, signature, index,
@@ -2051,23 +1774,6 @@ public final class SemanticIrValidator {
         };
     }
 
-    /**
-     * The DYNAMIC-callee arm of the closed table (ISSUE-0531): the
-     * recorded return-boundary set replaces the single
-     * {@code returnBoundaryOpId}, and each recorded cell must carry the
-     * closed cell of its runtime resolution class —
-     * {@code FUNCTION_RETURN} (DEAL body, executed by the callee's
-     * source RETURN), {@code HOST_TO_DEAL} + {@code HOST_SYNC_RETURN}
-     * (host, executed by the call op), or {@code EXTERNAL_RETURN}
-     * (retained-ABI external, executed by the call op). A
-     * {@code SHARED_BODY} external resolution executes zero caller-side
-     * return boundaries (the callee's RETURN under its
-     * {@code EXTERNAL_ENTRY} runs the single {@code EXTERNAL_RETURN} in
-     * the callee unit), so the set records no entry for it. Parameter
-     * boundaries of a dynamically resolved site are selected by the
-     * runtime resolution as well and stay outside the return-boundary
-     * reconciliation.
-     */
     private static Optional<String> dynamicCallCell(RawOp call, RawOp boundary, CallMode mode,
                                                     RuntimeDescriptor.Func signature, int index,
                                                     boolean isReturn, FailurePolicyId policy,
@@ -2346,16 +2052,6 @@ public final class SemanticIrValidator {
         };
     }
 
-    /**
-     * The DYNAMIC-callee arm of the ASYNC_START cells (ISSUE-0531): the
-     * recorded {@code source} is the closed {@code DEAL_BODY} projection
-     * (the only resolution whose caller-recorded return boundary
-     * executes) and the recorded return boundary is that resolution's
-     * single {@code FUNCTION_RETURN} task cell; the runtime derives the
-     * effective source from the resolved binding exactly like
-     * {@code CALL(INDIRECT)}, and HOST/EXTERNAL/adapter-over-async
-     * resolutions execute zero caller-side return boundaries.
-     */
     private static Optional<String> dynamicAsyncCell(RawOp start, RawOp boundary,
                                                      AsyncStartSource source,
                                                      RuntimeDescriptor completion, int index,
@@ -2580,20 +2276,6 @@ public final class SemanticIrValidator {
         return Optional.empty();
     }
 
-    /**
-     * The DYNAMIC CALL's per-class return-cell checks (direction (b),
-     * ISSUE-0531): each recorded entry must resolve to the BOUNDARY op
-     * carrying the closed cell of its runtime resolution class — the
-     * DEAL-body cell a FUNCTION_RETURN checking the declared return
-     * descriptor under the descriptor-kind rule and parented to a
-     * RETURN naming the CALL, the host cell HOST_TO_DEAL +
-     * HOST_SYNC_RETURN on the declared return descriptor, and the
-     * retained-ABI cell EXTERNAL_RETURN under the descriptor-kind rule
-     * on the declared return descriptor — so the runtime selection can
-     * never execute a cell whose actual kind/owner contradicts the
-     * selection's pinned kind/owner. The three entries must be
-     * mutually distinct.
-     */
     private static Optional<String> checkDynamicReturnCells(RawUnit unit, RawOp call,
                                                             KindPayload.DynamicReturnBoundary dynamic,
                                                             RuntimeDescriptor.Func signature,
@@ -2977,27 +2659,6 @@ public final class SemanticIrValidator {
         return "dynamic".equals(optionalString(callee, "type"));
     }
 
-    /**
-     * The callee-value class clause of a dynamic invocation (ISSUE-0677;
-     * design source {@code function-typed-value-materialization-and-dispatch}
-     * M3 item 5 and the dynamic DEAL-body cell contract): a {@code Dynamic}
-     * callee's value must carry the producer rule's dynamic registration or
-     * a same-walk {@code loweredBody} registration — the two classes whose
-     * closed DEAL-body cell form the correlation clauses below tie. Every
-     * other static class (an adapter, a host function, a host-materialized
-     * value, an external function, or a conversion intrinsic) names a
-     * statically known execution class, so such a callee belongs to the
-     * landed {@code Static}/{@code Indirect} arms of the closed table and
-     * never to the {@code Dynamic} spelling: a {@code Dynamic} callee whose
-     * value resolves one is a producer defect. The clause is closed over
-     * both surfaces: an unregistered callee value is the producer rule's
-     * admitted case (the typed-surface form correlation decides it).
-     *
-     * @param unit       the invocation's unit; non-null
-     * @param invocation the dynamic CALLEE/ASYNC_START op; non-null
-     * @param site       the site name for the diagnostic; non-null
-     * @return the failure text, or empty when the clause passes
-     */
     private static Optional<String> dynamicCalleeClassClause(RawUnit unit, RawOp invocation,
                                                              String site) {
         String shape = dynamicCalleeRegistrationShape(unit, invocation);
@@ -3229,12 +2890,7 @@ public final class SemanticIrValidator {
                         + " without exactly one FunctionExecutionBinding"));
             }
         }
-        // ISSUE-0531 reconciliation — callback-delivered and host-response
-        // materialized function identities. Direction (i): every
-        // HostFunctionValue registration's correlation id must resolve to
-        // its producing host crossing (a function-typed HOST_TO_DEAL
-        // boundary op carrying the registered key as its input identity
-        // and the registered descriptor as its checked descriptor).
+
         for (RawBinding binding : unit.bindings()) {
             if (!"hostFunctionValue".equals(binding.shape())) {
                 continue;

@@ -27,8 +27,6 @@ public sealed interface AsyncTokenId extends SemanticId, SemanticValue
      * A canonical token: created exactly once by its owner op and owned by
      * that op's execution context.
      *
-     * @param tokenId the numeric token identity; non-negative
-     * @param owner   the creating owner; non-null
      */
     record Canonical(long tokenId, AsyncTokenOwner owner) implements AsyncTokenId {
 
@@ -49,9 +47,6 @@ public sealed interface AsyncTokenId extends SemanticId, SemanticValue
      * An alias token: created by the referencing op and completing exactly
      * when its canonical referent completes. Alias chains are acyclic.
      *
-     * @param tokenId  the numeric token identity; non-negative
-     * @param referent the referent token; non-null
-     * @param linkKind the closed link kind; non-null
      */
     record Alias(long tokenId, AsyncTokenId referent, AsyncLinkKind linkKind)
         implements AsyncTokenId {

@@ -18,15 +18,6 @@ import java.util.Objects;
  * Cells fill only after every symbol/wrapper exists; the runtime seam
  * performs the atomic fill and export publication.</p>
  *
- * @param moduleKey          the descriptor's module key
- * @param state              the bindings state, {@link
- *                           FfiBindingState#UNBOUND} at construction
- * @param cells              the same-module forward cells keyed by
- *                           export name, in source order
- * @param importedFunctions  the frozen graph-ordered imported
- *                           function-wrapper references
- * @param importedClassPlans the frozen graph-ordered imported
- *                           class-plan references
  */
 public record FfiForwardBindings(
     String moduleKey,

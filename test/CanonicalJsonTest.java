@@ -74,42 +74,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
-/**
- * Verifies the ISSUE-0283 canonical JSON facility: the single
- * {@link CanonicalJson} serializer + parser, the
- * {@link ContractSnapshotCanonicalizer} digest, and the
- * {@link LoweringContextHash} helper (schema S1/S2; foundation F8).
- *
- * <p>Tests:
- * <ol>
- *   <li>Every canonicalization rule: sorted object keys, decimal signed32
- *       integers, unique IEEE-754 hex floats (negative zero, NaN,
- *       ±Infinity), explicit nulls, ordered arrays, minimal string
- *       escaping, UTF-8 — with a stored golden document recomputed in a
- *       fresh JVM invocation (cross-process determinism).</li>
- *   <li>Parser round-trips: every serializer golden, all 55 payload
- *       shapes, the 42-selector digest matrix, and the
- *       {@link RuntimeDescriptor} canonical spellings parse and
- *       re-serialize byte-exactly; a replaced reserved/open enum name
- *       survives the parse as a raw string (no enum conversion).</li>
- *   <li>Decode failures: malformed JSON, invalid UTF-8, non-canonical
- *       numbers, duplicate keys, unpaired surrogates, trailing content,
- *       unknown/missing fields, wrong value types, and a wrong version
- *       raise {@link SemanticIrTextDecodeException} — never E6005.</li>
- *   <li>Digest: the pinned snapshot digest equals a stored SHA-256
- *       golden; a mutation matrix flips each behavior field and changes
- *       the digest; opId/origin-only changes leave it unchanged.</li>
- *   <li>{@code loweringContextHash} golden and the legacy/v1.2 profile
- *       confusion guard (T1's closed {@link SemanticProfile} enum).</li>
- *   <li>Combined T1/T2 integration: the 42-selector matrix, descriptor
- *       spellings, and every {@link SemanticOpKind} payload shape produce
- *       valid digests; a T1/T2 fault is detectable through the pinned
- *       constants.</li>
- *   <li>Structural single-implementation scans: exactly one serializer,
- *       one parser, one digest facility, and one snapshot canonicalizer
- *       exist in production.</li>
- * </ol>
- */
 public class CanonicalJsonTest {
 
     private static int passed = 0;
@@ -366,7 +330,8 @@ public class CanonicalJsonTest {
         byte[] expectedSnap = ContractSnapshotCanonicalizer.serialize(pinnedSnapshot());
         try {
             Process process = new ProcessBuilder(
-                "java", "-cp", "build", "deal.test.CanonicalJsonTest", "--emit")
+                "java", "-cp", System.getProperty("java.class.path"),
+                "deal.test.CanonicalJsonTest", "--emit")
                 .redirectErrorStream(true)
                 .start();
             process.getOutputStream().close();

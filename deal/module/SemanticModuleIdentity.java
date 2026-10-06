@@ -35,10 +35,6 @@ import java.util.Objects;
  * URI (and therefore the identity); deterministic inputs reproduce
  * equal values.</p>
  *
- * @param projectDeploymentIdentity the private deployment identity of the
- *                                  validated project
- * @param canonicalResolvedSourceUri the protected-resolved {@code file:}
- *                                   URI of the source module
  */
 public record SemanticModuleIdentity(ProjectDeploymentIdentity projectDeploymentIdentity,
                                      String canonicalResolvedSourceUri) {

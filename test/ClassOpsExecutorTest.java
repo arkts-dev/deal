@@ -52,71 +52,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * Verifies the ISSUE-0512 {@link ClassOpsExecutor} surface
- * (class-construction-jsonable-operations K-D4/K-D11; parent D16): the
- * single op-level execution form of {@code CLASS_DEFAULT} and
- * {@code CLASS_NEW(LOCAL)} over the closed value view extended with the
- * class variant {@code Class {classId, fields: [Present(Value) |
- * Missing]}} preserving missing versus null, with the pinned delegate
- * seams — the value lookup {@code Map<ValueId, Value>}, the
- * {@link BoundaryCheckRunner} boundary seam, the {@link BodyRunner}
- * default-block seam, and the layout-resolution context
- * {@code ClassId → ClassLayout} — driven by fixture delegates with
- * side-effect probes.
- *
- * <p>Pinned cases (the task verification):
- * <ol>
- *   <li>the closed value view renders the canonical actual kinds and the
- *       class variant preserves the three presence states (missing,
- *       present null, present value); a {@code Present} field carrying
- *       the internal {@code Missing} view is a producer defect;</li>
- *   <li>{@code CLASS_DEFAULT} runs its default block exactly once per
- *       execution through the {@link BodyRunner} seam and publishes the
- *       produced default value (no boundary of its own, policy
- *       {@code NO_DEAL_FAILURE}; repeated execution re-invokes the
- *       block);</li>
- *   <li>{@code CLASS_NEW(LOCAL)} full success: provided values resolve
- *       in literal order; provided-field application and field
- *       validation run in declaration order (the overlay reorder pin
- *       observable through the boundary-input/order probes); the fresh
- *       instance is tagged with the classId; every successful
- *       construction publishes a fresh instance identity; zero return
- *       boundaries;</li>
- *   <li>default application runs only for omitted required-present
- *       fields — a provided field's default block is never executed by
- *       the {@link BodyRunner} fixture;</li>
- *   <li>default application completes before the extra-key scan: a
- *       fixture {@code CLASS_NEW} carrying an extra provided field still
- *       observes the completed default-block effects, then fails E8007
- *       with the exact template {@code extra field '{field}' in class
- *       '{classId}'} at the op origin, first extra key in
- *       provided-source order, with no provided application or field
- *       validation after;</li>
- *   <li>field boundaries run in declaration order through the
- *       {@link BoundaryCheckRunner} seam (the fixture records order and
- *       inputs); a failing boundary publishes no instance and stops
- *       validation at the first failing field (the tag never runs; the
- *       later children never run);</li>
- *   <li>the production-delegate stand-in: the real
- *       {@link BoundaryExecutor} drives the descriptor-kind policies —
- *       an E8001 kind mismatch and an E8010 function-signature mismatch
- *       fail the op at the op origin, and matching values pass;</li>
- *   <li>repeated construction re-executes default blocks so mutable
- *       defaults allocate freshly per instance (the fixture body runner
- *       re-invoked per attempt; two attempts publish two distinct
- *       default-table identities);</li>
- *   <li>fail-closed defects: wrong op kinds/policies, non-{@code LOCAL}
- *       owners, factory refs, unresolvable/mismatched layouts,
- *       unresolvable provided values, wrong-kind values, boundary
- *       children of the wrong kind/parentage/descriptor/policy/input,
- *       child-count/order/kind mismatches, wrong default children, and
- *       duplicate defaults are producer defects, never DEAL projections;
- *       null arguments throw the documented NPEs;</li>
- *   <li>determinism: repeated executions with equal inputs produce
- *       equal results (the executor is stateless).</li>
- * </ol>
- */
 public class ClassOpsExecutorTest {
 
     private static int passed = 0;
@@ -229,7 +164,6 @@ public class ClassOpsExecutorTest {
         return new ClassLayout(CLS, List.of(fields));
     }
 
-    /** A detached CLASS_DEFAULT op (K-D12: no static parent). */
     private static SemanticOp defaultOp(String field, SemanticValue result,
                                         RuntimeDescriptor resultType, FailurePolicyId policy) {
         return op(SemanticOpKind.CLASS_DEFAULT,
@@ -237,7 +171,6 @@ public class ClassOpsExecutorTest {
             result, resultType, policy, null);
     }
 
-    /** A parented field-boundary child (K-D4 parentage pin). */
     private static SemanticOp boundaryChild(OpId parentId, BoundaryKind kind,
             RuntimeDescriptor descriptor, ValueId input, FailurePolicyId policy) {
         return op(SemanticOpKind.BOUNDARY,
@@ -462,11 +395,6 @@ public class ClassOpsExecutorTest {
         return new ClassNewFixture(op, defaultOps, boundaryOps);
     }
 
-    /**
-     * Re-parents the fixture's boundary children to the CLASS_NEW op id
-     * (the children were built before the op id existed) and returns the
-     * boundary lookup — the validator-pinned K-D4 parentage.
-     */
     private static Map<OpId, SemanticOp> reparent(ClassNewFixture fixture,
                                                   List<BoundaryEntry> entries) {
         Map<OpId, SemanticOp> boundaryOps = new LinkedHashMap<>();
@@ -602,10 +530,6 @@ public class ClassOpsExecutorTest {
         expectNpe(() -> ClassOpsExecutor.executeClassDefault(defaultOp, null),
             "executeClassDefault with a null body runner");
     }
-
-    // =========================================================================
-    // 3. CLASS_NEW(LOCAL): the full K-D4 order
-    // =========================================================================
 
     static void testClassNewLocalSuccessReorderAndOverlay() {
         System.out.println("-- CLASS_NEW(LOCAL) success: literal-order resolution, "

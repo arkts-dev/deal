@@ -40,11 +40,6 @@ public final class DiagnosticFormatter {
      * {@code     note: <noteMessage> (at <file>:<sL>:<sC>-<eL>:<eC>, span <n>)}.
      * Notes render in list order, one per line, after the main line.</p>
      *
-     * @param diagnostic the normalized diagnostic to render; must not be
-     *                   null
-     * @return the canonical human rendering: one main line plus one
-     *         indented note line per note
-     * @throws NullPointerException if {@code diagnostic} is null
      */
     public static String format(CompilerDiagnostic diagnostic) {
         Objects.requireNonNull(diagnostic, "diagnostic must not be null");

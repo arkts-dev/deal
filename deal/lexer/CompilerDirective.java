@@ -10,27 +10,6 @@ import deal.diagnostics.DiagnosticRange;
  * the optional declaration anchor through {@link #withDeclarationAnchor}
  * at the ordered anchor-before-clear-before-emission transition (D3).</p>
  *
- * @param eventIndex                    0-based per file, in scan order
- * @param name                          the fixed directive name, or null
- *                                      for an unknown directive (E1044 is
- *                                      emitted at scan time; raw and
- *                                      trimmed arguments are empty)
- * @param rawArgument                   every pre-terminator scalar after
- *                                      the fixed name; "" for unknown
- * @param trimmedArgument               raw with only U+0020 and U+0009
- *                                      stripped from both ends; "" for
- *                                      unknown
- * @param sourceRange                   complete directive comment: first
- *                                      '/' .. first terminator scalar or
- *                                      EOF, half-open
- * @param nameRange                     fixed-name range (excluding '@');
- *                                      recovered name range or
- *                                      '@'+adjacent run for unknown
- * @param precedingNonCommentTokenCount non-comment tokens emitted before
- *                                      this event
- * @param declarationAnchorTokenIndex   the index of the emitted token
- *                                      the event anchors to; null =
- *                                      unanchored
  */
 public record CompilerDirective(
     int eventIndex,

@@ -7,36 +7,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * The decomposition-tail trace/effect/terminal line protocol: the single
- * transport the shared emitters' real artifacts use to publish their
- * execution reports and the differential harness uses to decode them.
- * The semantic oracle produces {@link SemanticRuntimeModel} records
- * directly; the shared LuaJIT artifact re-implements this encoding in its
- * emitted prelude (byte-identical output), and the shared JVM artifact
- * calls these helpers at runtime over its own value model.
- *
- * <p><b>Line grammar (one record per line, {@code |}-separated; every
- * embedded text is scalar-escaped — {@code \\}, {@code \n}, {@code \t},
- * {@code \r}, {@code ;}, {@code |}, and control characters — so parsing
- * is unambiguous):</b></p>
- *
- * <pre>{@code
- * T|&lt;seq&gt;|&lt;module&gt;|&lt;opIdText&gt;|&lt;phase&gt;|&lt;kind&gt;|&lt;digest&gt;|&lt;parentText&gt;
- *   |&lt;input&gt;...|=&gt;&lt;output&gt;|!&lt;error&gt;
- * F|CONSOLE_WRITE|&lt;channel&gt;|&lt;escaped text&gt;
- * R|success|&lt;resultAtom&gt;      or   R|failure|&lt;error&gt;
- * }</pre>
- *
- * <p>{@code opIdText}/{@code parentText} are {@code module#id};
- * {@code -} marks an absent parent. {@code &lt;error&gt;} is the nested
- * {@link SemanticRuntimeModel.ErrorSnapshot#text()} form. Effects and the
- * terminal publish on the same stream as the trace (the dedicated trace
- * channel — never program output), so the global interleaving is exact;
- * the artifact additionally writes real console effect bytes to its
- * program output, which the harness cross-checks against the recorded
- * effects.</p>
- */
 public final class SemanticTraceProtocol {
 
     private SemanticTraceProtocol() {

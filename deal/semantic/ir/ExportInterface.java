@@ -12,8 +12,6 @@ import java.util.Objects;
  * grammar producing the same forms. Pure immutable data of
  * {@code deal.semantic-interface/1}.
  *
- * @param name         the export name; non-null
- * @param declaredType the canonical declared-type text; non-null
  */
 public record ExportInterface(String name, String declaredType) {
 

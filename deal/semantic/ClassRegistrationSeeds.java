@@ -28,60 +28,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * The project-level class registration seeds of one compilation
- * (ISSUE-0631; design sources
- * {@code project-lowering-entry-and-registration-seeds} D4-D6 and the
- * registration-seed contract,
- * {@code luajit-jvm-single-lowering-production-cutover} C1's registration
- * list, and {@code semantic-ir-construct-coverage-cutover} K9 items 3/6
- * and K13 item 1):
- *
- * <pre>{@code
- * ClassRegistrationSeeds { classId -> ClassRegistration {
- *     layout: ClassLayout(classId, fields in declaration order),
- *     owner: the class's closed DefaultOwner member } }
- * }</pre>
- *
- * <p><b>Coverage.</b> Exactly one entry per declared class of every
- * declaration module of the produced {@link HostDeclarationSurface} —
- * host declaration classes with the owner member
- * {@link DefaultOwner#HOST_DEFAULTS}, extern-C declaration classes with
- * {@link DefaultOwner#FFI_PLAN} — plus exactly one compiler-owned builtin
- * {@code Error} entry ({@link ClassId#ERROR}, owner
- * {@link DefaultOwner#BUILTIN_DEFAULTS}). A declaration module without
- * classes contributes no entry.</p>
- *
- * <p><b>Fact sources.</b> The declarations and their field records come
- * from the one declaration surface; the class identity of a declared
- * class is resolved through the compilation's module-path classification
- * (the module-identity layer's single classification surface, the same
- * input the declaration surface's field resolution is seeded with) and
- * projected by {@link DescriptorService#semanticModulePath} — never
- * reconstructed from a dotted path. A host declaration class's fields
- * carry {@code DescriptorService.describe} of the resolved declared
- * {@link deal.types.Type} in declaration order with
- * {@code required = !optional}; an extern-C declaration class's fields
- * come from the validated plan's ordered entries with the plan's
- * canonical descriptors and {@code required = true} (extern-C struct
- * fields are never optional), cross-checked against the declaration
- * surface's own resolution (a declared class without a plan entry, a plan
- * entry without a class, or a field name/order/descriptor mismatch fails
- * closed). The builtin {@code Error} entry derives from the checker's
- * synthesized builtin class declaration
- * ({@link BuiltinErrorDeclaration}) — never from source text, a host
- * declaration, or an interface-index entry.</p>
- *
- * <p><b>Project-level production data.</b> The seeds are immutable,
- * deterministic (the registration order is the compiler-owned builtin
- * {@code Error} entry, then the declaration modules in surface order with
- * the declaration order per class), one entry per {@link ClassId}, and are
- * never merged into a {@link LoweredModuleUnit#classLayouts()} map: each
- * unit keeps carrying only its own declared layouts. A duplicated
- * {@link ClassId} is a producer defect, never a silently overwritten
- * entry. On any producer defect the result carries the first E6005 and no
- * seeds.</p>
- */
 public record ClassRegistrationSeeds(
         Map<ClassId, ClassRegistration> registrations) {
 
@@ -124,10 +70,6 @@ public record ClassRegistrationSeeds(
      * immutable seed set and no diagnostics; on the first producer defect
      * both no seeds and the first E6005.
      *
-     * @param seeds       the produced seeds; null exactly when production
-     *                    failed
-     * @param diagnostics the E6005 diagnostics (empty on success);
-     *                    non-null
      */
     public record Production(
             ClassRegistrationSeeds seeds,
@@ -160,8 +102,6 @@ public record ClassRegistrationSeeds(
      * {@link DefaultOwner} member. The class-level owner and every field's
      * owner must agree: a registration fact is one owner per class.
      *
-     * @param layout the class's layout; non-null
-     * @param owner  the class's closed owner member; non-null
      */
     public record ClassRegistration(ClassLayout layout, DefaultOwner owner) {
 
@@ -200,7 +140,6 @@ public record ClassRegistrationSeeds(
      * carries by default — the builtin layout is identical in every unit's
      * context.
      *
-     * @return the builtin {@code Error} registration; non-null
      */
     public static ClassRegistration builtinErrorRegistration() {
         return new ClassRegistration(ClassLayout.BUILTIN_ERROR,
@@ -215,7 +154,6 @@ public record ClassRegistrationSeeds(
      * builtin class) and the pattern of every project seed set's first
      * entry.
      *
-     * @return the builtin-only seeds; non-null
      */
     public static ClassRegistrationSeeds builtinErrorOnly() {
         Map<ClassId, ClassRegistration> only = new LinkedHashMap<>();
@@ -229,21 +167,6 @@ public record ClassRegistrationSeeds(
      * declaration module of the surface (declaration order) plus exactly
      * one builtin {@code Error} entry, or the first E6005 with no seeds.
      *
-     * @param surface             the compilation's declaration surface
-     *                            (the T1 producer's output); non-null
-     * @param moduleClassification the compilation's module-path
-     *                            classification keyed by module identity
-     *                            (the module-identity layer's single
-     *                            classification surface; a module absent
-     *                            from it, or mapped to null, has no
-     *                            public identity); non-null
-     * @param externCModules      the validated generated metadata of every
-     *                            declaration module the metadata phase
-     *                            classified extern-C, keyed by module
-     *                            identity; non-null
-     * @param builtinError        the compiler-owned builtin {@code Error}
-     *                            declaration; non-null
-     * @return the production outcome (seeds or the first E6005)
      */
     public static Production produce(
             HostDeclarationSurface surface,
@@ -326,7 +249,6 @@ public record ClassRegistrationSeeds(
      * declared type, {@code required = !optional}, and the owner member
      * {@link DefaultOwner#HOST_DEFAULTS}.
      *
-     * @return the failure outcome, or null when every class registered
      */
     private static Production hostRegistrations(
             HostDeclarationSurface.DeclarationFacts facts,
@@ -368,7 +290,6 @@ public record ClassRegistrationSeeds(
      * checked against the declaration surface's resolution, with the owner
      * member {@link DefaultOwner#FFI_PLAN}.
      *
-     * @return the failure outcome, or null when every class registered
      */
     private static Production externCRegistrations(
             HostDeclarationSurface.DeclarationFacts facts,

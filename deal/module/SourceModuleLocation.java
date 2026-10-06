@@ -47,14 +47,6 @@ import java.util.Objects;
  * compiler-internal consumers' inputs only (plans, graph edges, resource
  * identities, semantic digests, import wiring).</p>
  *
- * @param normalizedSourcePath    the absolute normalized (lexical) path
- * @param semanticModuleIdentity  the private semantic identity
- * @param deploymentModuleId      the private deployment module id
- * @param projectIdentity         the optional project module identity,
- *                                or {@code null}
- * @param moduleClassification    the module-level D6 classification, or
- *                                {@code null} when no public module
- *                                identity applies
  */
 public record SourceModuleLocation(String normalizedSourcePath,
                                    SemanticModuleIdentity semanticModuleIdentity,

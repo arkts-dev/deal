@@ -27,10 +27,6 @@ public final class Types {
      * as the public entry point for constructing compound types from
      * user-provided type expressions.</p>
      *
-     * @param type the type to canonicalize
-     * @return the canonical form (may be the same object if already canonical)
-     * @throws IllegalArgumentException if invariants are violated
-     *         (e.g., Nullable(null) or Nullable(Nullable(T)))
      */
     public static Type canonicalize(Type type) {
         Objects.requireNonNull(type, "type must not be null");
@@ -133,8 +129,6 @@ public final class Types {
      *   <li>otherwise false</li>
      * </ul>
      *
-     * @param type the type to inspect (must not be null)
-     * @return true iff bytes occurs in the type structure
      */
     public static boolean containsBytes(Type type) {
         Objects.requireNonNull(type, "type must not be null");
@@ -179,10 +173,6 @@ public final class Types {
      * <p>Return types must match exactly.
      * Async/sync mismatch is rejected.</p>
      *
-     * @param actual the source function type (e.g., the value being assigned)
-     * @param target the destination function type (e.g., the variable/parameter type)
-     * @return true if {@code actual} is assignable to {@code target}
-     *         under arity extension rules
      */
     public static boolean isAssignable(Type.Func actual, Type.Func target) {
         // Async/sync mismatch — always reject
@@ -260,9 +250,6 @@ public final class Types {
     // Null helpers
     // =========================================================================
 
-    /**
-     * Returns true when {@code t} is a null type ({@code Null}).
-     */
     public static boolean isNull(Type t) {
         return t instanceof Type.Null;
     }

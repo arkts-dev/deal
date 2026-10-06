@@ -19,31 +19,6 @@ import deal.types.Types;
 
 import java.util.*;
 
-/**
- * The canonical descriptor service corpus
- * (ISSUE-0315 / canonical-type-system-and-runtime-descriptors D2-D3,
- * descriptor-identity-propagation D6): this suite replaces the retired
- * v1.1 mapping-table consumption ({@code fs/docs/type-descriptor-mapping.md}
- * stays the untouched historical v1.1 reference — never read here) with
- * the canonical service corpus:
- *
- * <ul>
- *   <li>an accept corpus — primitives (including {@code bytes}), arrays,
- *       nullables, exact sync/async functions, and text-opaque class
- *       atoms — round-tripping byte-for-byte through
- *       {@code render(parse(text))}, plus {@code render(parse(encode(T))) == encode(T)}
- *       for a type-built corpus over the identity index;</li>
- *   <li>a legacy-rejection corpus — {@code T[]}, {@code T|null}, rest
- *       sigs, bare class names, dotted class-name-position text, nested
- *       nullables, {@code ?null} — each pinned to its exact
- *       {@link DescriptorSyntaxError.Kind} and never a partial AST;</li>
- *   <li>opaque class-atom rows — dots legal in non-final components,
- *       byte-for-byte atom equality, atoms ending exactly at their
- *       enclosing delimiters;</li>
- *   <li>IR dump rows — every descriptor the dumper emits is the
- *       canonical spelling and never a legacy one.</li>
- * </ul>
- */
 public class TypeDescriptorTest {
 
     private static int passed = 0;

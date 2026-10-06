@@ -28,12 +28,6 @@ import java.util.Objects;
  * entry. The list is defensively copied, so the registration is
  * read-only once assembled.</p>
  *
- * @param module     the distinct resolved imported module identity; non-null
- * @param kind       the closed module-import kind of the module's
- *                   completions; non-null
- * @param aliasCells the ordered alias cells the module's completions
- *                   write; non-null (empty for a module with no named
- *                   cell)
  */
 public record NamespaceRegistration(ModuleId module, ModuleImportKind kind,
                                     List<BindingId> aliasCells) {

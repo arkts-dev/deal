@@ -19,139 +19,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * The unit-producer claiming seam of the container/string construct stage
- * (ISSUE-0232 D9; ISSUE-0387): the activation-gated op-side check of
- * E6005 coverage item 4 with the full-evidence claim derivation and the
- * per-unit claim deferral. This is the construct-epic claim discipline at
- * unit-production time — never a validator rule (the closed validator rule
- * set is unchanged, and R-CAPABILITY's claimed→evidence direction is
- * unchanged).
- *
- * <p><b>The pinned home mapping (D9 item 3).</b> Every op this epic's
- * arms produce has exactly the following home capability rows:</p>
- * <ul>
- *   <li>{@code CONST} (scalar literals, template fragments) and
- *       {@code STRING_CONCAT} → {@code FOUNDATION_VALUES};</li>
- *   <li>{@code ARRAY_NEW}/{@code TABLE_NEW}/{@code ARRAY_LENGTH}/
- *       {@code MEMBER_READ}/{@code FOR_EACH} →
- *       {@code CONTAINERS_AND_STRINGS};</li>
- *   <li>the {@code ARRAY_LITERAL_ELEMENT}/
- *       {@code CONTEXTUAL_TABLE_READ} boundary children →
- *       {@code DESCRIPTORS} and {@code BOUNDARIES} (each a single-family
- *       {@code {BOUNDARY}} row, so one such child fully evidences both
- *       rows);</li>
- *   <li>{@code BINDING_LOAD} → {@code BINDINGS};</li>
- *   <li>{@code BRANCH}/{@code LOOP}/{@code DISCARD} →
- *       {@code EVALUATION_ORDER} (E5's home rows, recorded by E5's
- *       producer under this shared mechanism — the three evidence
- *       families of the catalog row; {@code BREAK}/{@code CONTINUE}/
- *       {@code TRY_CATCH}/{@code THROW} carry no home row).</li>
- *   <li>{@code STDLIB_CALL} → {@code STDLIB_SEMANTICS} (the stdlib
- *       epic's home row, {@code stdlib-operations-and-time-lock} D9: a
- *       single-family {@code {STDLIB_CALL}} catalog row, so one produced
- *       stdlib call fully evidences the row).</li>
- * </ul>
- *
- * <p>Every other op kind and every other boundary kind has no home row in
- * this seam: those ops are other construct epics' (ISSUE-0231/0234/0235…)
- * production and their op-side claim outcomes are recorded by their own
- * producers under this same shared mechanism. In particular no E3 op homes
- * to {@code SIGNED_INT32} — that row's {@code CONST(Int)}/
- * {@code BOUNDARY(int descriptor)} specializations are E2's evidence
- * (D9 item 4).</p>
- *
- * <p><b>Row activation (D9 item 1).</b> Capability C's claiming
- * derivation row activates at the closing gate of the construct epic that
- * lands C's last required family; until then no unit may claim C and C's
- * families are staged. The pinned gate activation states below are the
- * recorded release-registry hand-offs (not in-window flips):</p>
- * <ul>
- *   <li>{@link #E3_WINDOW_ACTIVATION} — the activation during this epic's
- *       tail: {@code SIGNED_INT32} activated at E2's gate (ISSUE-0231's
- *       closing gate); {@code FOUNDATION_VALUES} activates at this epic's
- *       gate, after the tail;</li>
- *   <li>{@link #E3_GATE_ACTIVATION} — the E3-gate hand-off:
- *       {@code FOUNDATION_VALUES} activates with the D9 item 5(a)
- *       claim/check consequence, identical at every later gate;</li>
- *   <li>{@link #E4_GATE_ACTIVATION} — {@code DESCRIPTORS}/
- *       {@code BOUNDARIES} activate for the boundary children (E4's
- *       gate);</li>
- *   <li>{@link #E5_GATE_ACTIVATION} — {@code CONTAINERS_AND_STRINGS} and
- *       {@code EVALUATION_ORDER} activate (E5's gate);</li>
- *   <li>{@link #E6_GATE_ACTIVATION} — {@code BINDINGS} activates for
- *       {@code BINDING_LOAD} (E6's gate).</li>
- * </ul>
- *
- * <p><b>Full-evidence claim derivation (D9 item 2).</b>
- * {@link #deriveClaims} claims capability C exactly when row(C) is active
- * and the unit produces at least one op of every required family of C —
- * the closed {@link CapabilityRequirementCatalog} applied in reverse,
- * kind-level exactly as R-CAPABILITY consumes it. R-CAPABILITY then holds
- * by construction: every claimed family is guaranteed produced
- * mechanically, never by corpus luck. A claim without full evidence is
- * therefore impossible by the derivation; an empty-evidence row
- * ({@code STDLIB_TIME_CONFLICT}, a routing marker only) is never derived
- * and never fully evidenced, and {@link #check} rejects a claim the
- * derivation cannot derive as a producer defect.</p>
- *
- * <p><b>The activation-gated op-side check (D9 item 3).</b>
- * {@link #check} makes one deterministic pass over the produced op set
- * and records exactly one outcome per produced op and per home row:</p>
- * <ul>
- *   <li><b>Row inactive</b> → the op is a recorded
- *       {@link OutcomeKind#STAGED_HAND_OFF}: the unit's claim set excludes
- *       the row. Deterministic; never a silent skip and never a
- *       failure.</li>
- *   <li><b>Row active and fully evidenced by the unit</b> → the
- *       derivation claims the row and the check passes — the recorded
- *       {@link OutcomeKind#CLAIMED} outcome. If the producer nevertheless
- *       omitted the claim, the seam fires the single E6005 condition: the
- *       returned {@link SeamResult#failure()} carries the exact
- *       {@link LoweringFailureDetail} with validatorRule
- *       {@link #OPERATION_OUTSIDE_CLAIMED_CAPABILITY}, capability = the
- *       home row, {@link SemanticProfile#DEAL_V1_2_INT32},
- *       {@code deal.semantic-ir/1}, and the pinned origin — converted to
- *       the E6005 diagnostic through
- *       {@code FailureContractRegistry.e6005} by the producer (the
- *       derivation-invariant guard). The firing position's record is that
- *       failure detail (no outcome entry), the pass continues recording
- *       the remaining positions' outcomes, and the first firing position
- *       in the pinned iteration order wins.</li>
- *   <li><b>Row active but not fully evidenced by the unit</b> → the
- *       recorded, terminal claim outcome is the per-unit
- *       {@link OutcomeKind#DEFERRED} deferral for that immutable unit.
- *       No E6005 — demanding the claim would be impossible by
- *       construction, because R-CAPABILITY rejects a claimed row without
- *       its required operations — and the deferral is never
- *       retroactively converted into a failure.</li>
- * </ul>
- *
- * <p>{@code OPERATION_OUTSIDE_CLAIMED_CAPABILITY} has exactly this one
- * firing condition: an active home row fully evidenced by the unit and
- * left unclaimed.</p>
- *
- * <p><b>E3 tail and the pinned gate claim states (D9 items 4/5).</b>
- * During the tail every E3-produced op's home row is inactive
- * ({@link #E3_WINDOW_ACTIVATION}), so the tail's corpus units derive the
- * empty claim set with every op a recorded staged hand-off; R-CAPABILITY
- * is green (vacuous) and the manifest's plan-time
- * {@code FOUNDATION_VALUES} claim (routing) is untouched. At the E5
- * valid-until gate the pinned full corpus derives exactly claims
- * {@code {DESCRIPTORS, BOUNDARIES}} with per-unit deferrals for
- * {@code FOUNDATION_VALUES} ({@code CONST}/{@code STRING_CONCAT} without
- * {@code UNARY}/{@code BINARY}), {@code CONTAINERS_AND_STRINGS} (the six
- * container ops and {@code FOR_EACH} without
- * {@code INDEX_*}/{@code OPTIONAL_READ}/{@code HAS_FIELD}), and
- * {@code EVALUATION_ORDER} (the corpus's {@code BRANCH}/{@code DISCARD}
- * ops without {@code LOOP} — each records the per-unit
- * {@code EVALUATION_ORDER} deferral under this shared mechanism).</p>
- *
- * <p>The seam is pure and deterministic: one pass over the produced op
- * set, capabilities in the closed declaration order, home rows in the
- * pinned mapping order — identical inputs produce identical derived
- * claims, outcomes, and failure details.</p>
- */
 public final class ContainerClaimingSeam {
 
     /**
@@ -163,16 +30,6 @@ public final class ContainerClaimingSeam {
     public static final String OPERATION_OUTSIDE_CLAIMED_CAPABILITY =
         "OPERATION_OUTSIDE_CLAIMED_CAPABILITY";
 
-    /**
-     * The activation state during this epic's tail (E3's window, D9
-     * items 1/4): {@code SIGNED_INT32} activated at E2's gate (all five
-     * families are ISSUE-0231's); no E3 op homes to it, so every
-     * E3-produced op's home row is inactive and the tail units derive the
-     * empty claim set with every op a recorded staged hand-off.
-     * {@code FOUNDATION_VALUES} activates at this epic's gate, after the
-     * tail — a recorded post-tail release-registry hand-off, never an
-     * in-window flip.
-     */
     public static final Set<SemanticCapability> E3_WINDOW_ACTIVATION =
         Collections.unmodifiableSet(EnumSet.of(SemanticCapability.SIGNED_INT32));
 
@@ -228,24 +85,6 @@ public final class ContainerClaimingSeam {
             SemanticCapability.BOUNDARIES, SemanticCapability.CONTAINERS_AND_STRINGS,
             SemanticCapability.EVALUATION_ORDER, SemanticCapability.BINDINGS));
 
-    /**
-     * The E9-gate activation hand-off (D9 item 5(e); the class epic's
-     * closing gate, ISSUE-0516): {@code CLASSES} activates for the eight
-     * class-op families — a unit producing the full
-     * {@code {CLASS_NEW, CLASS_FACTORY, CLASS_DEFAULT, FIELD_READ,
-     * FIELD_WRITE, FIELD_DELETE, JSON_FROM_CLASS, JSON_TO_CLASS}} family
-     * set must claim {@code CLASSES}; a unit evidencing only a subset
-     * defers per unit (the recorded terminal claim outcome for that
-     * immutable unit). The class epic's producer records its op-side
-     * claim outcomes under this shared mechanism:
-     * {@code HAS_FIELD} homes to {@code CONTAINERS_AND_STRINGS} (the
-     * catalog's required-op row, K-D7 — active since E5's gate, never
-     * {@code CLASSES}), and the class boundary children
-     * ({@code UNTYPED_CLASS_INPUT}/{@code OPTIONAL_FIELD_READ}/
-     * {@code CLASS_FIELD_ASSIGNMENT}/{@code CLASS_LITERAL_FIELD}/
-     * {@code CLASS_DEFAULT_FIELD}) home to {@code DESCRIPTORS} and
-     * {@code BOUNDARIES} (active since E4's gate).
-     */
     public static final Set<SemanticCapability> E9_GATE_ACTIVATION =
         Collections.unmodifiableSet(EnumSet.of(SemanticCapability.SIGNED_INT32,
             SemanticCapability.FOUNDATION_VALUES, SemanticCapability.DESCRIPTORS,
@@ -291,12 +130,6 @@ public final class ContainerClaimingSeam {
      * kind. {@code boundaryKind} is non-null exactly when
      * {@code opKind == BOUNDARY}.
      *
-     * @param opId         the produced op's id; non-null
-     * @param opKind       the produced op's closed kind; non-null
-     * @param boundaryKind the {@code BoundaryKind} of a {@code BOUNDARY}
-     *                     op, {@code null} otherwise
-     * @param home         the pinned home capability row of the op; non-null
-     * @param outcome      the resolved outcome kind; non-null
      */
     public record RecordedOutcome(OpId opId, SemanticOpKind opKind, BoundaryKind boundaryKind,
                                   SemanticCapability home, OutcomeKind outcome) {
@@ -321,13 +154,6 @@ public final class ContainerClaimingSeam {
      * {@code null} on the pass path, non-null exactly when an active home
      * row fully evidenced by the unit was left unclaimed.
      *
-     * @param derivedClaims the full-evidence claim derivation over the
-     *                      produced ops and the active rows; non-null
-     * @param outcomes      the recorded outcomes in pinned pass order;
-     *                      non-null
-     * @param failure       the firing condition's exact
-     *                      {@link LoweringFailureDetail}, or {@code null}
-     *                      on the pass path
      */
     public record SeamResult(Set<SemanticCapability> derivedClaims,
                              List<RecordedOutcome> outcomes,
@@ -339,19 +165,6 @@ public final class ContainerClaimingSeam {
         }
     }
 
-    /**
-     * The pinned home capability rows of one produced op (D9 item 3).
-     * Ops of every other kind (and {@code BOUNDARY} ops of every other
-     * boundary kind) have no home row in this seam — their op-side claim
-     * outcomes are recorded by their producing construct epic's producer
-     * under this same shared mechanism. The returned list preserves the
-     * pinned mapping order ({@code DESCRIPTORS} before {@code BOUNDARIES}
-     * for a boundary child).
-     *
-     * @param op the produced op; non-null
-     * @return the home rows in pinned order (empty when the op has no
-     *         home row in this seam)
-     */
     public static List<SemanticCapability> homeRows(SemanticOp op) {
         Objects.requireNonNull(op, "op must not be null");
         return switch (op.kind()) {
@@ -372,12 +185,7 @@ public final class ContainerClaimingSeam {
             case BINDING_LOAD -> List.of(SemanticCapability.BINDINGS);
             case BRANCH, LOOP, DISCARD -> List.of(SemanticCapability.EVALUATION_ORDER);
             case STDLIB_CALL -> List.of(SemanticCapability.STDLIB_SEMANTICS);
-            // The class epic's home rows (K-D7/K-D11, ISSUE-0516): the
-            // eight class ops home to CLASSES (the catalog's closed
-            // required-op row); HAS_FIELD homes to
-            // CONTAINERS_AND_STRINGS — recorded by the class epic's
-            // producer under this shared claiming mechanism, never to
-            // CLASSES (K-D7).
+
             case CLASS_NEW, CLASS_FACTORY, CLASS_DEFAULT, FIELD_READ, FIELD_WRITE,
                  FIELD_DELETE, JSON_FROM_CLASS, JSON_TO_CLASS ->
                 List.of(SemanticCapability.CLASSES);
@@ -395,9 +203,6 @@ public final class ContainerClaimingSeam {
      * IR) is never fully evidenced — it can never be derived and can
      * never be claimed.
      *
-     * @param ops        the unit's produced operations in source order; non-null
-     * @param capability the closed capability row; non-null
-     * @return true iff every required family has at least one produced op
      */
     public static boolean fullyEvidenced(List<SemanticOp> ops, SemanticCapability capability) {
         Objects.requireNonNull(ops, "ops must not be null");
@@ -441,11 +246,6 @@ public final class ContainerClaimingSeam {
      * the empty-evidence routing marker {@code STDLIB_TIME_CONFLICT} is
      * never claimed.
      *
-     * @param ops        the unit's produced operations in source order; non-null
-     * @param activeRows the then-active capability claiming rows (the
-     *                   release-registry activation hand-off); non-null
-     * @return the derived claim set (unmodifiable; empty when no active
-     *         row is fully evidenced)
      */
     public static Set<SemanticCapability> deriveClaims(List<SemanticOp> ops,
                                                        Set<SemanticCapability> activeRows) {
@@ -486,15 +286,6 @@ public final class ContainerClaimingSeam {
      * {@link IllegalArgumentException} — a claim without full evidence is
      * impossible by the derivation.
      *
-     * @param ops        the unit's produced operations in source order; non-null
-     * @param activeRows the then-active capability claiming rows (the
-     *                   release-registry activation hand-off); non-null
-     * @param unitClaims the claim set the producer recorded on the unit;
-     *                   non-null and a subset of the derived set
-     * @param module     the module whose unit-production seam runs; non-null
-     * @return the deterministic {@link SeamResult}: the derived claims,
-     *         the recorded outcomes in pinned pass order, and the failure
-     *         detail ({@code null} on the pass path)
      */
     public static SeamResult check(List<SemanticOp> ops, Set<SemanticCapability> activeRows,
                                    Set<SemanticCapability> unitClaims, ModuleId module) {

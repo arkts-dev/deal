@@ -219,10 +219,6 @@ public record CompilerDiagnostic(
      * {@code (file,1,1,1,1,0,0,0,SYNTHETIC)} plus the provided
      * construct-naming anchor note (D6).
      *
-     * @param missingAnchorNote the anchor note naming the missing anchor
-     *                          (e.g.
-     *                          {@code "missing anchor: class declaration span for cycle node 'A'"});
-     *                          must not be null or empty
      */
     public static CompilerDiagnostic syntheticError(DiagnosticCode dCode, String message,
                                                     String file, String missingAnchorNote) {

@@ -10,43 +10,6 @@ import deal.descriptors.RuntimeValueModel;
 
 import java.util.Arrays;
 
-/**
- * Tests for the canonical runtime check table (ISSUE-0312):
- * {@link RuntimeTypeMatcher#check(String, Object, RuntimeSourceLocation)}
- * with the single value-model seam {@link RuntimeValueModel}, the
- * {@link RuntimeCheckFailure} carrier, and the
- * {@link RuntimeSourceLocation} record.
- *
- * <p>Coverage:</p>
- * <ul>
- *   <li>Every pinned table row and every pinned message/code, asserted
- *       byte-for-byte: null, boolean, string (with the JVM unpaired
- *       surrogate sub-message), number, int (E8001 non-number/NaN/
- *       infinity/non-integer sub-cases and E8004 at ±(2^53-1) on both
- *       sides), table, class (byte-equal tag compare), array (E8003 at
- *       the first failing index), nullable (inner failure propagates),
- *       function (E8010 on any text delta, E8001 for a non-wrapper),
- *       bytes (hook delegation only), and the defensive unparsable-text
- *       E8001.</li>
- *   <li>Conformant anti-hollow doubles: a class double carries real tag
- *       text, a wrapper double carries a real descriptor string, and an
- *       array double exposes ordered elements.</li>
- *   <li>The dedicated dotted-tag negative pins: a value tagged with the
- *       v1.1 dotted spellings {@code @src.models/User} /
- *       {@code @host.cfg/ServerConfig} checked against the canonical
- *       projection descriptors fails E8001.</li>
- *   <li>The bytes-routing code-level pin: on the {@code bytes} row the
- *       matcher consults only {@code checkBytes(value, range)}, the hook
- *       receives {@code (value, range)}, and its outcome drives the
- *       row.</li>
- *   <li>Combined check with T3: every descriptor is parsed through the
- *       strict canonical parser, so legacy spellings (including dotted
- *       class-name-position text) hit the defensive branch and a parser
- *       regression fails this suite.</li>
- *   <li>Never-throw, no-mutation, unchanged-value, and deep-nesting
- *       bounds; the carrier records' pinned validation contracts.</li>
- * </ul>
- */
 public class RuntimeTypeMatcherTest {
 
     private static int passed = 0;

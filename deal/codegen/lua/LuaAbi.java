@@ -2,34 +2,6 @@ package deal.codegen.lua;
 
 import java.util.Set;
 
-/**
- * Explicit Lua ABI emission layer (ISSUE-0074).
- *
- * <p>Owns the mandated name/key policies for generated Lua code:
- * <ul>
- *   <li>generated {@code $}-identifier references and class artifacts live in
- *       the {@link #NAMESPACE} table ({@code __deal}), so user bindings can
- *       never shadow them;</li>
- *   <li>table-field / member-access / export keys use the dot form iff the
- *       key is a safe Lua identifier, else the bracket-string form;</li>
- *   <li>helper names and export keys are derived per {@link HelperKind}.</li>
- * </ul>
- *
- * <p>The reusable decision surface ({@link #isReserved}, {@link #isSafeIdentifier},
- * {@link #fieldKeyForm}) is parameterized by a caller-supplied keyword set:
- * the Lua backend passes {@link #RESERVED} (the LuaJIT 24-word set), while a
- * future backend supplies its own target keyword set through the same
- * functions — there is no silent Lua-set binding for non-Lua targets.</p>
- *
- * <p>The Lua text composers ({@link #stringKeyLiteral}, {@link #stringLiteral},
- * {@link #memberAccess}, {@link #hasCheck}, {@link #tableField},
- * {@link #exportAssignment}, {@link #generatedRef}, {@link #helperRef},
- * {@link #namespaceAssignment}) are thin Lua-literal wrappers that evaluate
- * the parameterized predicates with {@code RESERVED}.</p>
- *
- * <p>This class is stateless and depends only on the JDK; it never depends
- * on {@code deal.ast}, {@code deal.checker}, or {@code deal.module}.</p>
- */
 public final class LuaAbi {
 
     private LuaAbi() {
@@ -67,9 +39,6 @@ public final class LuaAbi {
     // Backend-neutral decision surface (reusable for future backends)
     // =========================================================================
 
-    /**
-     * Returns true iff {@code name} is in the caller-supplied reserved set.
-     */
     public static boolean isReserved(Set<String> reserved, String name) {
         if (name == null) return false;
         return reserved.contains(name);
@@ -128,10 +97,6 @@ public final class LuaAbi {
     // Lua emission composers (evaluate the predicates with RESERVED)
     // =========================================================================
 
-    /**
-     * Returns a bracketed, quoted, Lua-5.1-escaped string key literal:
-     * {@code ["<escaped key>"]}.
-     */
     public static String stringKeyLiteral(String key) {
         return "[" + stringLiteral(key) + "]";
     }

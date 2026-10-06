@@ -14,55 +14,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 
-/**
- * Discovers stdlib modules under a pinned stdlib surface directory by
- * reading the 6 spec-listed {@code .d.deal} declaration files
- * ({@code <surface>/<module>.d.deal}) — the modules listed in the spec
- * (§Standard library declarations): {@code std/console},
- * {@code std/string}, {@code std/table}, {@code std/json},
- * {@code std/math}, {@code std/time}.
- *
- * <p><b>Surface-rooted reads (ISSUE-0269 migration, design source
- * {@code strict-project-context-resolution-identity} D5/D6 + Failure and
- * operations; ISSUE-0457 distribution discovery,
- * {@code release-distribution-packaging-and-discovery} D3).</b> Export
- * extraction is re-rooted from the legacy CWD-relative std-directory
- * and file-name reads to the resolved
- * {@code ProjectContext.stdlibSurfacePath} surface, so
- * typing exports and source resolution agree on one surface: a caller
- * passes the pinned surface directory path, and this class reads exactly
- * {@code <surface>/<module>.d.deal} for the six spec-listed modules.
- * The resolver-driven overload reads each of the six declaration files
- * through {@link DistributionHome} in the pinned three-tier order —
- * project-local surface, language distribution (classpath resources
- * then the {@code DEAL_HOME} filesystem layout), checkout CWD dev
- * fallback — resource-aware, so an installed distribution without a
- * project-local {@code std/} supplies its declaration bytes from the
- * classpath or the distribution home.
- * A missing surface — or a surface missing a spec-listed file — is
- * <b>not</b> a {@code RuntimeException} "broken installation" path here:
- * the authoritative failure for a missing surface or missing spec-listed
- * file is E2003 at the import span from {@link SourceModuleResolver}
- * (T6's resolution), and this helper simply omits the module from the
- * returned export map (a missing file contributes nothing because no
- * import can resolve to it). The 6-module filter is preserved and stays
- * the single authority ({@link #SPEC_STDLIB_MODULES}).
- *
- * <p>Modules present on disk but absent from the spec ({@code
- * std/coroutine}, {@code std/io}) are excluded from discovery.</p>
- *
- * <p>Results are cached per surface path for the lifetime of the JVM
- * (test-friendly).</p>
- *
- * <p>Usage:
- * <pre>{@code
- * Map<String, Map<String, Type>> exports =
- *     StdlibModuleResolver.stdlibExports(surfacePath);
- * Map<String, Map<String, Type>> distributionExports =
- *     StdlibModuleResolver.stdlibExports(
- *         DistributionHome.forManifestDirectory(manifestDirectory));
- * }</pre>
- */
 public final class StdlibModuleResolver {
 
     private StdlibModuleResolver() {}
@@ -95,12 +46,6 @@ public final class StdlibModuleResolver {
      * authoritative missing-surface failure is E2003 at the import span
      * from {@link SourceModuleResolver}).
      *
-     * @param surfacePath the resolved stdlib surface directory path text
-     *                    ({@code null} = absent surface)
-     * @return unmodifiable map from module path to export-name-to-type
-     *         map for every spec-listed module whose declaration file
-     *         exists and parses under the surface (never null; empty
-     *         for an absent surface)
      */
     public static Map<String, Map<String, Type>> stdlibExports(
             String surfacePath) {
@@ -116,7 +61,6 @@ public final class StdlibModuleResolver {
             return built;
         }
     }
-
 
     /**
      * Returns the export map for all spec-listed stdlib modules,
@@ -134,11 +78,6 @@ public final class StdlibModuleResolver {
      * the surface-path overload). Cached per resolution identity for
      * the lifetime of the JVM.
      *
-     * @param home the distribution resolver for the project's manifest
-     *             directory (never null)
-     * @return unmodifiable map from module path to export-name-to-type
-     *         map for every spec-listed module whose declaration file
-     *         resolves and parses (never null)
      */
     public static Map<String, Map<String, Type>> stdlibExports(
             DistributionHome home) {
@@ -181,16 +120,10 @@ public final class StdlibModuleResolver {
         }
     }
 
-    /**
-     * Returns the 6 spec-listed module paths.
-     */
     public static List<String> specStdlibModules() {
         return SPEC_STDLIB_MODULES;
     }
 
-    /**
-     * Returns true if the given module path is one of the 6 spec-listed stdlib modules.
-     */
     public static boolean isSpecStdlibModule(String modulePath) {
         return SPEC_STDLIB_MODULES.contains(modulePath);
     }
@@ -222,11 +155,9 @@ public final class StdlibModuleResolver {
         return result;
     }
 
-
     // =========================================================================
     // Surface resolution
     // =========================================================================
-
 
     /**
      * The per-surface cache key: the normalized surface path text, or

@@ -42,654 +42,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 
-/**
- * JVM code generator (ISSUE-0091 skeleton, ISSUE-0092 semantic slice —
- * while loops and template literals, ISSUE-0093 functions and direct
- * calls slice, ISSUE-0094 primitive-array slice — array literals,
- * indexing, element assignment, and {@code .length} reads for
- * {@code int[]}, {@code number[]}, {@code string[]}, and
- * {@code boolean[]}, ISSUE-0096 modules/imports/exports slice): a small
- * but real end-to-end JVM backend.
- *
- * <p>Walks the typed AST (the compiler's IR — see {@code deal-compiler-architecture-v1})
- * and emits a self-contained Java class whose static methods implement the
- * module's functions. The Java source is a real JVM artifact: the
- * conformance adapter (the generated-artifact backend tests) compiles
- * it with {@code javac} and executes it with {@code java} in subprocesses;
- * {@code CompilationOrchestrator} phase 4 (backend {@link
- * deal.codegen.Backend#JVM}) writes the {@code .java} source (it does not
- * run {@code javac}/{@code java}, which is exactly why the backend
- * guarantees every artifact it emits is valid Java).
- *
- * <p>Semantic slice scope (ISSUE-0091 skeleton + ISSUE-0092 slice +
- * ISSUE-0093 slice + ISSUE-0094 slice + ISSUE-0095 classes +
- * ISSUE-0096 slice + ISSUE-0097 stdlib-boundary slice + ISSUE-0108
- * nullable slice + ISSUE-0100 host ABI slice + the @jsonable slice
- * (JSON serialization)):
- * functions, {@code let} locals, module fields, literals,
- * int/number/boolean/string arithmetic and comparisons, {@code if}/
- * {@code else}, {@code while} loops, {@code return}, assignment, direct
- * calls, template literals (lowered to string concatenation), the
- * {@code int()}/{@code number()} conversion intrinsics, {@code std/console}
- * output ({@code console.log}/{@code console.error} → {@code System.out}/
- * {@code System.err}), local {@code class} declarations (generated nested
- * static classes with primitive and nullable fields), object-literal
- * class construction, primitive/nullable field reads/writes, minimal
- * {@code table} values, the same-module nominal runtime checks that table
- * boundary reads require (see the ISSUE-0095 paragraph below), primitive
- * arrays — {@code int[]}, {@code number[]}, {@code string[]},
- * {@code boolean[]} — as literals, index reads, element writes, and
- * {@code .length} reads, the nullable value slice (ISSUE-0108):
- * {@code T | null} for the four primitives and local classes in locals,
- * module fields, class fields, parameters, and returns (boxed
- * {@code java.lang.Long}/{@code Double}/{@code Boolean} for the numeric
- * primitives, plain references otherwise), null-check branch narrowing
- * (narrowed reads unbox through the sound {@code !== null} guard),
- * {@code T[] | null} and {@code (T | null)[]} for the primitive and
- * local-class element types, class arrays {@code C[]}, the nullable
- * table-read boundary checks (null passes, a value of the inner type
- * passes, anything else → E8001), and the {@code int}/{@code number}
- * nullable conversion overloads (null → E8001), multi-module
- * compilation (ISSUE-0096): namespace imports
- * ({@code import * as alias from "./lib"}) of compiled project modules,
- * exported functions, and imported direct calls ({@code alias.fn(args)} →
- * a static call on the imported module's emitted class), imported
- * classes and cross-module nominal identity (ISSUE-0109):
- * {@code export class} emits the same generated nested class as a local
- * one (the export only adds the class to the module type), imported
- * class-typed values map to the DECLARING module's generated class
- * ({@code Lib.$C_C} for {@code lib.C}), imported-class construction
- * emits {@code new Lib.$C_<Name>(args)} with declared literal defaults
- * applied inline and provided fields reordered to declaration order,
- * imported qualified type annotations ({@code let p: lib.Point})
- * resolve through the import alias, and a class-typed table read runs
- * the DECLARING module's nominal-check helper ({@code Lib.$checkC(...)})
- * whose {@code $identityOf} unwrap reports the actual module-qualified
- * identity of a foreign instance ({@code expected instance of
- * @modelb/Item, got @modela/Item} — E8001), and the stdlib
- * modules whose declared functions use only those prerequisite value
- * types (ISSUE-0097): {@code std/console} (already the trusted builtin),
- * {@code std/string}, {@code std/math}, and {@code std/time} — every
- * function of those four modules executes with the LuaJIT reference
- * semantics of {@code std/*.lua} for search/replace/{@code trim} and
- * with the spec-v1.2 Unicode scalar-value positions for
- * {@code length}/{@code substring}/{@code split} (ISSUE-0106),
- * {@code sqrt} of a negative number → {@code E8001},
- * {@code nowMillis()} → second-truncated epoch milliseconds like
- * {@code os.time() * 1000}), plus {@code std/table.keys}
- * (ISSUE-0102 — tables now map as first-class values).
- * {@code std/json} joins the supported set (ISSUE-0302): {@code
- * json.parse(s)} lowers to the emitted {@code __jsonParse} +
- * {@code __jsonTableValue} pair returning a fresh {@code
- * $DealRt.Table} (object mode for JSON objects, array mode for JSON
- * arrays, integral numbers as the int carrier), {@code
- * json.stringify(t)} lowers to {@code __jsonStringify}, and both
- * share the runtime the @jsonable slice embeds.
- *
- * <p>ISSUE-0102 (the JVM conformance promotion gate) lifts the
- * remaining imperative surface: C-style {@code for} loops (plain and
- * hoisted-condition forms with per-iteration closure cells for the
- * loop variable), array {@code for-of} (one fresh binding per
- * iteration), {@code break}/{@code continue} (label-routed through the
- * transformed loop forms), {@code try}/{@code catch}/{@code throw} with
- * the builtin {@code Error} reified as the emitted {@code DealError}
- * (DEAL Error values map to {@code RuntimeException}, so caught errors
- * unify across module boundaries; {@code .code}/{@code .message} reads
- * dispatch through the reflective unwrap), {@code delete} and
- * {@code has()} for table fields and optional class fields (presence
- * flags), table field writes (the generic {@code $tPut}) and
- * primitive/function-typed table reads (the shared {@code $check}
- * seam), non-nullable array/table/class class fields with
- * per-construction fresh defaults, nested primitive arrays, function
- * arrays (including nullable elements), function expressions and
- * block-level functions with closure capture (captured bindings lower
- * to {@code final} cells; per-iteration loop bindings capture fresh
- * cells), nested and nullable function signature types, and
- * imported-class arrays ({@code Lib.Point[]}). Tables map to the SHARED
- * {@code $DealRt.Table} class (declared by the entry module's artifact
- * or the standalone adapter), so table values cross module boundaries
- * with shared identity. ISSUE-0301 extends that shared scope into the
- * full runtime value surface: the per-signature function wrapper
- * classes, the per-element-shape array wrapper classes, and the final
- * {@code Bytes} carrier live in the ONE entry-emitted {@code $DealRt},
- * so function values and arrays cross module boundaries unchanged (the
- * {@code JVM-GAP-XMOD-FNVALUE}/{@code JVM-GAP-XMOD-ARRAY} surfaces are
- * retired). Anything outside this scope — nested class
- * declarations, {@code table | null} values, nullable tables, arrays of
- * table elements, async/await, stdlib imports other than the six
- * supported modules — is rejected with a backend {@code E6000}
- * diagnostic, never silently miscompiled.
- *
- * <p>The @jsonable slice (JSON serialization) extends the class
- * surface: an exported {@code // @jsonable} class emits the spec's
- * generated {@code C$fromJson}/{@code C$toJson} module exports plus a
- * per-class field-descriptor table and the recursive
- * {@code $toJsonValue}/{@code $fromJsonValue} helpers on the generated
- * nested class — JSON parse/stringify run through emitted runtime
- * support ({@code __jsonParse}/{@code __jsonStringify}, mirroring
- * {@code std/json.lua}'s escaping and NaN/Infinity E8001 rejection),
- * field values validate per declared type (null on any
- * parse/validation failure — the public export never throws, even on
- * hostile deep-nesting input: the emitted parser converts its
- * StackOverflowError to the DEAL null like LuaJIT's
- * {@code pcall(__json_parse, s)}, the table-value conversion carries a
- * bounded depth guard, and the public {@code C$fromJson} wrapper
- * converts the guard throw and the nested-class recursion exhaustion
- * to the DEAL null), defaults evaluate inline per call, nullable
- * fields preserve the DEAL null, array fields (primitive,
- * nullable-element, and local-class element) roundtrip element-wise,
- * nested class fields recurse through the declaring module's
- * generated helpers (local or imported — the deserialized instance
- * carries the declaring module's module-qualified nominal identity),
- * optional fields keep their three states (absent / present null /
- * present value) through the Missing-sentinel storage and {@code
- * has()} presence checks, table fields map JSON objects to the shared
- * {@code $DealRt.Table} data (nested JSON arrays become array-mode
- * tables) with finite-acyclic JSON-shape validation in toJson, and
- * {@code std/json} shares that JSON runtime. Anything outside this
- * scope — optional table
- * fields of @jsonable classes (their reads yield {@code table | null}),
- * nested class declarations, non-literal default expressions on
- * imported classes (their defaults evaluate in the declaring module's
- * scope under LuaJIT), arrays of non-primitive non-class elements,
- * {@code table | null} values, nullable tables, nested
- * (multi-dimensional) array fields, function-typed fields, stdlib
- * imports other than the six supported modules — is rejected with a
- * backend {@code E6000} diagnostic, never silently miscompiled. The
- * ISSUE-0100 host ABI
- * slice lifts declaration/host-module imports and async/await from
- * that list: a host-module import (a declaration file that is not a
- * spec stdlib module, supplied through the orchestrator's hostModules
- * map — the same classification the LuaJIT use site builds,
- * host-module-abi D5) emits per-alias wrapper methods whose load-time
- * presence check raises E8011 for a missing host class or a missing
- * declared export (extra host exports are ignored), whose sync calls
- * runtime-check the host return against the declared descriptor
- * (E8010 wrong kind, including Java null crossing a non-nullable
- * boundary; E8004 out-of-safe-range int; Java null is the DEAL null
- * sentinel for {@code T | null}), and whose async calls require a
- * {@code java.util.concurrent.CompletableFuture} operation (E8010
- * otherwise) whose completion value is checked at the await site
- * (E8001). Async function DECLARATIONS emit as plain blocking methods
- * (the spec-permitted JVM async lowering); await of a host async call
- * blocks on the operation. ISSUE-0303 (jvm-v12-host-abi-completion
- * D1\u2013D6) extends the wrapper surface to the array/function/class
- * shapes: declared array parameters/returns flow on the shared
- * {@code $DealRt} wrappers, function-typed parameters arrive as the
- * typed {@code $DealRt} wrapper (the host invokes it through the
- * wrapper's typed {@code invoke}; no lambda conversion),
- * function-typed returns are never wrapped (a raw value fails E8010,
- * a properly wrapped {@code $DealRt.FnValue} with a byte-equal
- * descriptor passes), nullable forms pass Java null as the DEAL
- * null, every wrapper parameter is checked against the declared
- * descriptor at the call (E8010 {@code parameter {i} type mismatch},
- * never a masking read-site error — a typed table read materializing
- * a host argument yields the raw value), declared host classes emit
- * one synthesized record per class in the shared {@code $DealRt}
- * scope (canonical externals identity, per-field storage, presence
- * bits, the preserved defaults-map construction seam with E8007 for
- * an extra provided name), and class-typed parameters/returns
- * validate nominal identity (E8001 for a foreign identity). The Lua
- * pre-wrapped sig-table form stays a LuaJIT host-loader mechanism;
- * the JVM prewrapped fixtures execute against declared-shape Java
- * hosts whose declared-descriptor enforcement raises E8010 on the
- * junk return. Bytes parameters/returns arrive on the shared
- * {@code $DealRt.Bytes} carrier (ISSUE-0160 D5, landed in the
- * canonical base); table-typed host shapes stay E6000.
- * ISSUE-0106 adds Unicode scalar-value STRING
- * for-of — one string containing exactly one scalar value per
- * iteration, a fresh binding per iteration (spec-v1.2 §For-of) — and
- * moves the std/string length/substring/split helpers to scalar-value
- * positions (spec-v1.2 §std/string: lengths and positions are
- * measured in Unicode scalar values).
- *
- * <p>Async/await (ISSUE-0099) extends the ISSUE-0100 blocking lowering
- * with the await-site completion check for DEAL async calls and lifts
- * async markers into the ISSUE-0098 function-value machinery: an
- * {@code async function} compiles to a plain static method returning
- * its declared type, and {@code await E} evaluates the direct call
- * {@code E} and applies the declared-return-type completion check at
- * the await site. The blocking call IS the internal async operation:
- * it starts when invoked, completes exactly once with the
- * declared-type value or by raising a {@code DealError} that
- * propagates at the await site (observable through the runner's
- * {@code DEAL_ERROR_CODE} contract), and evaluation before an
- * {@code await} precedes evaluation resumed after it. Int
- * completions route through {@code checkInt} (E8004 — the Java {@code
- * long} representation is wider than the DEAL int safe range); the
- * number/string/boolean/null completion checks are proven redundant by
- * the emitted Java types, which spec-v1.2 §JVM backend contract
- * permits. Async function values reuse the ISSUE-0098 wrapper
- * machinery unchanged: {@code resolveTypeNode} accepts the {@code
- * async} marker on function-type annotations, so a declared async
- * function produces the same shared wrapper class
- * ({@code $DealRt.FnA1_I_R_I} for {@code async (x: int) =&gt; int} —
- * a distinct shape id, so the async descriptor can never share a
- * class with the sync shape) and per-declaration wrapper instance
- * field ({@code value$fn}) the sync
- * slice emits, typed locals/parameters of async function type hold
- * wrapper references, and awaited indirect calls
- * ({@code let f: async (x: int) =&gt; int = value; await f(6);})
- * dispatch through {@code invoke} with the same completion check.
- * Cross-module async function values flow on the shared carriers like
- * sync ones (ISSUE-0301). ISSUE-0304 (jvm-v12-async-expressions D1/D2)
- * lifts the async-expressions lane the same way: an async function
- * expression emits exactly like a sync function expression — an
- * anonymous subclass of the signature's shared wrapper class, carrying
- * the canonical {@code async} descriptor marker, whose {@code invoke}
- * executes the body as a plain blocking method with the async-body
- * awaits as direct blocking calls — and a block-level {@code async
- * function} declares like a block-level sync function (fresh cell plus
- * anonymous wrapper instance at the declaration's source position).
- * An {@code await E;} statement evaluates the awaited call (callee and
- * arguments) exactly once in left-to-right order with the await-site
- * completion check and discards the value. The module-level
- * static-block placement of block-level functions, load-time uses of a
- * not-yet-declared async function, and the reassigned-binding adapter
- * shapes stay E6000. The frontend keeps enforcing every spec-v1.2 async rule
- * (E3012 await outside async, E3013 await on a non-async call, E3014
- * async call without await — the backend never sees a non-conforming
- * await).
- *
- * <p>Stdlib calls (ISSUE-0097) emit either an inline Java-library
- * expression (plain-text {@code contains}/{@code startsWith}/
- * {@code endsWith} on the mapped {@code java.lang.String};
- * {@code java.lang.Math.floor/ceil/abs/min/max}; the second-truncated
- * {@code System.currentTimeMillis()} form for {@code nowMillis}) or a
- * call to an emitted {@code __str*}/{@code __mathSqrt} runtime helper
- * (Unicode scalar-value {@code length}/{@code substring}/{@code split}
- * — ISSUE-0106: {@code length} counts code points,
- * {@code substring} positions are scalar values, and the
- * empty-separator {@code split} yields one part per scalar value;
- * plain-text {@code replace} with the empty-{@code old} guard, the
- * Lua-whitespace {@code trim}, and the negative-input {@code E8001}
- * check of {@code sqrt}). Every helper name starts with {@code __},
- * which {@link #javaName} can never produce (each DEAL underscore
- * escapes to {@code $u}), so a user function can never collide with a
- * stdlib helper. Java's own left-to-right argument evaluation preserves
- * the spec's evaluation order: the helpers are plain static calls whose
- * Java arguments evaluate left to right before the helper body runs,
- * exactly where LuaJIT evaluates the stdlib wrapper's arguments.
- *
- * <p>Module imports (ISSUE-0096) emit a load-time initialization trigger:
- * the import statement becomes {@code static { <ImportedClass>.__init$();
- * }} at the import's source position, and invoking a static method of a
- * class triggers that class's initialization (JLS §12.4.1), which runs the
- * imported module's load-time statements (its own static initializers and
- * field initializers) exactly where LuaJIT runs {@code require} —
- * depth-first in import order, before the importing module's later
- * load-time statements. The trigger is emitted even for an
- * imported-but-unused alias, so the imported module's load-time side
- * effects are never silently dropped. Java's at-most-once class
- * initialization matches LuaJIT's "modules initialize at most once per
- * runtime instance", and runtime import cycles are rejected before codegen
- * by the orchestrator (E2005), so no Java initialization cycle can occur
- * (declaration-only cycles only ever call each other's empty {@code
- * __init$}, which Java's in-progress initialization rule handles without
- * deadlock).
- *
- * <p>Primitive arrays (ISSUE-0094) map to the SHARED
- * {@code $DealRt} mutable wrapper
- * classes ({@code __IntArray}/{@code __NumberArray}/{@code __StringArray}/
- * {@code __BooleanArray} holding a primitive Java array — ISSUE-0301
- * D3), the spec's
- * "specialized primitive array wrapper" JVM representation. The wrapper
- * identity is stable across appends — writing at {@code i == length}
- * grows the wrapped storage in place — so aliases observe every write
- * exactly like LuaJIT's shared 1-based table ({@code let b: int[] = a;}
- * then {@code b[0] = 9;} is visible through {@code a}). Array reads
- * check the index: negative → {@code E8002} (LuaJIT's emitted
- * negative-index check), past the end → {@code E8001} "expected
- * &lt;T&gt;, got null" (LuaJIT reads nil there, and the read site's
- * typed boundary raises {@code E8001} — the JVM read reproduces the
- * boundary failure directly, since a primitive Java array cannot yield
- * nil). Array writes check {@code 0 &lt;= i &lt;= length}
- * ({@code E8002} otherwise), append at {@code i == length}, and
- * runtime-check the stored value against the element type — int
- * elements route through {@code checkInt} ({@code E8004}); the JVM
- * static type system proves the number/string/boolean element checks
- * redundant, which spec-v1.2 §JVM backend contract permits. Evaluation
- * order follows spec-v1.2 §Operational semantics: the receiver, the
- * index, and the assignment RHS all evaluate (left to right) before the
- * LHS write check — the emitted write is a helper call whose Java
- * arguments evaluate left to right before the helper performs the
- * bounds check, element check, and store, and {@code emitOperandsInOrder}
- * keeps that order when an operand hoists side-effecting pre-statements.
- *
- * <p>While loops (ISSUE-0092) emit plain Java {@code while} loops. The
- * condition routes through the emitted {@code loopCond} identity helper so
- * javac never sees a constant-expression condition: per JLS §14.21 a
- * constant-true condition would make statements after the loop
- * unreachable (a javac error after the CLI reported success) and a
- * constant-false condition would make the loop body unreachable. A
- * condition whose evaluation hoisted side-effecting pre-statements (a
- * null-typed call) is emitted as {@code while (true) { pre; if
- * (!loopCond(cond)) break; body }} so the pre-statements — and therefore
- * the whole condition — re-evaluate on every iteration, exactly where
- * LuaJIT re-evaluates the condition each time. The while body is its own
- * scope (block-local {@code let}s match LuaJIT's per-body scope), and
- * {@code while (false)} bodies are emitted (reachable to javac because of
- * {@code loopCond}) and simply never run, matching LuaJIT. Module-level
- * while loops run inside the load-time {@code static} initializer, and a
- * {@code return} nested anywhere inside a module-level while body is
- * rejected with E6000 (Java initializers cannot return).
- *
- * <p>Template literals (ISSUE-0092) emit Java string concatenation over
- * the literal and interpolated parts; interpolated expressions are
- * string-typed by the checker (E3016 otherwise), so no runtime conversion
- * exists — the emitted form is {@code ("a" + expr + "b")}, with empty
- * literal parts elided and single-part templates emitted as the literal
- * itself.
- *
- * <p>Load-time semantics are preserved: non-declaration module-level
- * statements are emitted into {@code static} initializer blocks interleaved
- * in source order with field initializers, exactly where LuaJIT executes
- * them. Null-typed expressions with side effects (e.g.
- * {@code let z: null = console.log("x")}, {@code return helper()},
- * {@code x = console.log("y")} where {@code x: null}) are evaluated for
- * their observable behavior — never discarded — by hoisting the void call
- * into a pre-statement emitted right before the containing statement
- * ({@code System.out.println("x"); Void z = null;} semantics). When a
- * hoisted call has an earlier inline side-effecting sibling in the same
- * statement, that sibling is materialized into a fresh {@code __t<n>}
- * temporary assigned immediately before the hoisted statement, so
- * DEAL/LuaJIT's left-to-right evaluation order holds in every
- * combination position ({@code f(g(), console.log("x"))} runs
- * {@code g()} before the print — including operands that can raise,
- * which must raise before the hoisted call runs). No lambdas are ever
- * emitted, so the artifact stays valid Java even when the call captures
- * locals or parameters that are reassigned later in their scope (a
- * lambda capture of a non-effectively-final local is a javac error).
- * Hoisted side effects inside a non-leading {@code &&}/{@code ||} operand
- * are guarded by the left operand (Java's short-circuit semantics — LuaJIT
- * skips the right operand when the left already decides the result) with
- * a boolean temporary, so {@code false && helper() === null} never calls
- * {@code helper()}. Module-level (load-time) value uses of a variable
- * before its own declaration with no enclosing binding (LuaJIT reads the
- * not-yet-declared global value there — nil unless a prior write
- * established it), forward references to later-declared module fields
- * (Java's illegal-forward-reference rule), writes to a later-declared
- * function-local with no enclosing binding ({@code x = 5; let x: int = 1}
- * inside a function — LuaJIT writes the enclosing scope; Java rejects the
- * forward reference; module-level writes to later-declared fields stay
- * allowed, see below), module-level calls
- * to functions whose bodies (transitively) read a module field declared
- * later than the call site (LuaJIT fails at load with a nil read; Java
- * would silently read the field's default value), and module-level calls
- * that reach a function declared at or after the call site — directly,
- * transitively, or from a field initializer (LuaJIT assigns each function
- * value at its declaration point in source order and fails at load with a
- * nil read; Java hoists methods and would silently run) — are rejected
- * with {@code E6000} so the artifact is always valid Java and never
- * silently miscompiled. Function-body access to a module field declared
- * AFTER the function — read or write — is rejected with E6000 by the
- * write-dominance analysis (see {@link #computeForwardFieldViolations}):
- * LuaJIT does not capture the module-local in a pre-declaration function
- * (the local does not exist when the function value is created), so
- * <em>every</em> access binds to the GLOBAL of the same name at call
- * time. A read without a dominating write inside the function reads the
- * global nil and fails (E8001) while Java would silently read the
- * initialized static field; a write targets LuaJIT's global — the
- * module-local is untouched, so later readers observe the initializer
- * value — while Java would write the static field and pollute every later
- * reader. The write-then-read shape ({@code x = 5; return x;}) is
- * included: the function's own read observes the global write under
- * LuaJIT, but the polluted Java field remains observable by later
- * readers. Reads are governed by dominance along every execution path
- * (a write inside a called function or a taken-only branch does not
- * establish dominance — conservative). Writes to module fields declared
- * BEFORE the function remain the upvalue/static-field write with full
- * parity (pinned by a cross-backend fixture), and module-level writes to
- * later-declared fields stay allowed: LuaJIT's global write is
- * overwritten by the initializer, Java's static-field write is
- * overwritten by the field initializer, and every observer of the
- * intermediate value (module-level pre-declaration reads, pre-declaration
- * function accesses) is already E6000, so the final value is identical on
- * both backends. Dead code after a statement that
- * cannot complete
- * normally — a {@code return}, or an {@code if}/{@code else} whose
- * branches all cannot complete normally (mirroring JLS §14.21) — is never
- * emitted: LuaJIT never executes it and javac rejects it as unreachable,
- * so skipping keeps the artifact valid Java for every checker-accepted
- * program.
- * Standalone non-call/non-assignment expression statements (e.g.
- * {@code x + 1;}) are lowered to a dummy-local declaration so they are
- * evaluated exactly like LuaJIT evaluates them (an int overflow there is
- * an observable E8004), {@code null === null} / {@code z === null}
- * compare with Java's {@code ==}/{@code !=} (all null-typed values are the
- * DEAL null value; spec §Value equality defines {@code null === null} as
- * true), number literals that overflow to ±Infinity render as
- * {@code Double.POSITIVE_INFINITY}/{@code Double.NEGATIVE_INFINITY}
- * (mirroring the Lua backend's {@code (1/0)} — Java has no literal
- * spelling for Infinity), and string ordering compares Unicode scalar
- * values (LuaJIT orders bytewise in UTF-8, which is scalar-value order),
- * including supplementary characters.
- * The DEAL int safe range ±(2^53-1) is enforced at every int-producing
- * site — the emitted {@code checkInt} helper wraps the results of
- * {@code intAdd}/{@code intSub}/{@code intMul}/{@code intDiv}/{@code intMod}/
- * {@code intNeg}/{@code intPow}/{@code intFromNumber} exactly like
- * {@code __rt.check_int} (deal/runtime.lua) wraps {@code __rt.int_add} etc.,
- * and an int literal outside the safe range is checked at its point of use
- * ({@code return 9223372036854775807;} raises E8004, matching the LuaJIT
- * return-boundary check; LuaJIT would silently round such a literal to a
- * double inside arithmetic like {@code 9223372036854775807 % 2}, which the
- * JVM backend refuses to reproduce — it raises E8004 instead of silently
- * computing with a value that is not a valid DEAL int). All {@code java.lang}
- * references in generated code are fully qualified ({@code java.lang.System},
- * {@code java.lang.Math}, {@code java.lang.Double}, {@code java.lang.String},
- * {@code java.lang.Void}, …): DEAL identifiers may be named
- * {@code System}/{@code Math}/{@code Double}/{@code String}/{@code Void}
- * (non-reserved names pass {@link #javaName} unchanged), and an unqualified
- * reference would bind to the user's field or local instead of
- * {@code java.lang}, producing an artifact javac rejects. Use-before-
- * declaration detection walks every condition of an {@code if}/{@code
- * else if} chain (the follow-on conditions are emitted directly by
- * {@code emitIfContinuation}, bypassing the per-statement guard), so a
- * later-declared variable in an {@code else if} condition is rejected
- * with E6000 instead of emitting an illegal forward reference.
- *
- * <p>Function values (ISSUE-0098 slice; ISSUE-0301 shared carriers): a
- * function declaration produces a first-class typed function value — a
- * per-signature abstract wrapper class declared in the SHARED
- * {@code $DealRt} runtime scope ({@code $DealRt.Fn2_I_I_R_I} for
- * {@code (int,int)->int}, one class per compiled project) carrying the
- * complete canonical runtime descriptor string and an {@code invoke}
- * method with the JVM-mapped signature, plus a per-declaration wrapper
- * instance field ({@code add$fn}) emitted at the declaration's source
- * position whose invoke delegates to the static method (the JVM form of
- * the Lua backend's runtime function wrappers). Because the wrapper
- * class is shared, function values cross module boundaries unchanged —
- * the {@code JVM-GAP-XMOD-FNVALUE} surface is retired. Typed/inferred
- * variables, parameters (callbacks), returns, and array/class fields of
- * function type hold wrapper references; indirect calls dispatch through
- * {@code invoke}, including callees that are call results
- * ({@code picker()(41)} → {@code __fn0 = picker(); __fn0.invoke(41L)} —
- * the callee is materialized into a single-assignment temporary at its
- * evaluation position, BEFORE any argument's hoisted pre-statements, so
- * the spec's callee-first evaluation order survives argument hoisting).
- * The int/number
- * conversion intrinsics are wrapped once per module exactly like the Lua
- * backend's top-of-chunk wrappers. Arity extension (a narrower function
- * type in a wider position — the only non-equal assignable shape) lowers
- * to a delegating adapter at variable-initializer and assignment
- * positions (extra parameters silently ignored) and to the runtime
- * signature check LuaJIT performs at callback-argument and return
- * boundaries: a wrapper of the target shape whose construction raises
- * {@code E8010} "function signature mismatch: expected …, got …" where
- * LuaJIT's parameter/return boundary check raises it — including the
- * imported member call's declared parameter targets (ISSUE-0301). At
- * check positions
- * the value expression is evaluated FIRST (materialized into a
- * temporary at its evaluation position) and later call arguments are
- * materialized before the raising construction, so every evaluation
- * completes exactly like LuaJIT's strict left-to-right
- * evaluate-then-check order — a side effect in the checked value is
- * never dropped. Adapters never capture: module functions delegate to
- * their static method, intrinsics to their conversion helper, module
- * fields to their static field read LIVE on every invoke (LuaJIT's
- * adapter body re-reads the binding, so a field reassigned after the
- * adapter's creation retargets the adapter), and a local/parameter to a
- * fresh effectively-final {@code __fn<n>} snapshot temporary only when
- * the enclosing function body never reassigns it (the binding's value
- * is then stable, so the snapshot equals LuaJIT's live read forever).
- * A local/parameter the enclosing body reassigns anywhere and any
- * non-identifier value expression (a call result, which LuaJIT
- * re-evaluates on every invoke) are rejected with E6000, never a silent
- * divergence; no lambda is ever emitted.
- * Function equality is wrapper
- * reference identity (LuaJIT's wrapper-table identity). Load-time value
- * uses of a not-yet-declared function are E6000 (LuaJIT reads the global
- * nil; Java would emit an illegal forward reference to the wrapper
- * field), and module-level indirect calls through function-typed fields
- * are guarded like module-level direct calls: the field's value set at
- * the call site must be statically known (a bare module-function or
- * intrinsic identifier initializer — followed transitively through
- * function-valued fields, with arity-adapter edges read at the call
- * site because the adapter re-reads the inner field live on every
- * invoke — and every preceding module-level assignment to it a bare
- * module-function or intrinsic identifier) and every function the
- * field may hold must not (transitively) read a later-declared field,
- * reach a later-declared function, or use a later-declared import —
- * otherwise E6000, never a silent divergence. Async markers are
- * ISSUE-0099-slice: the same shared wrapper classes (with a distinct
- * shape id per async descriptor), per-declaration wrapper fields,
- * indirect calls, adapters, and guards cover async signatures
- * unchanged (see the ISSUE-0099 paragraph above), with the
- * await-site completion check applied at every await. Function
- * expressions and nested functions emit (ISSUE-0102); function-type
- * ANNOTATIONS carry the complete canonical signature grammar
- * (primitives/string/null, bytes, arrays, classes, nullables, and
- * nested sync/async function types — the shared wrapper machinery,
- * ISSUE-0301 D2), with only table carriers inside the signature staying
- * resolveTypeNode-gated with E6000 (deferred to the ISSUE-0110
- * descriptor join). The recursive bytes-bearing wrapper closure landed
- * with ISSUE-0160: bytes carriers inside signatures are representable
- * through the shared $DealRt wrappers and never E6000 for the bytes
- * reason alone.
- * Async function expressions emit through the same closure machinery
- * with the async descriptor marker (ISSUE-0304), and block-level async
- * function declarations emit through the block-level cell + anonymous
- * wrapper path.
- *
- * <p>JVM value mapping follows the spec's JVM backend contract
- * ({@code docs/spec-v1.2.md} §JVM value mapping / §JVM backend contract —
- * the normative v1.2 spec):
- * {@code int → long} (the v1.1 backend-supported safe range; the
- * ISSUE-0111 signed-int32 migration owns the representation switch),
- * {@code number → double}, {@code boolean → boolean}, {@code string →
- * String} (a {@code java.lang.String} with no unpaired UTF-16 surrogate
- * code units — scalar-string boundaries validate the encoding, ISSUE-0106),
- * {@code null → void}/{@code Void}. The JVM's static type system proves
- * typed boundaries redundant, which the spec explicitly permits ("The JVM
- * backend may use JVM primitive types, final classes, verifier-checked
- * bytecode … to prove typed-boundary checks redundant"); the int safe
- * range is still enforced at runtime because it is observable behavior
- * (E8004) that the type system cannot prove.
- *
- * <p>The emitted class is a module class; when the compilation selected
- * this module as the entry module, it additionally carries the JVM entry
- * point {@code public static void main(String[] args)} that invokes the
- * DEAL {@code main} export (spec-v1.2 §No user-defined globals — see
- * {@link #generate(ProgramNode, CheckResult, String, String, Map, Map,
- * boolean)}). The conformance adapter compiles it together with a small
- * runner class that auto-invokes the zero-arity exported functions in
- * declaration order (the Lua harness iterates {@code pairs()} — an
- * unspecified order — so fixtures must not depend on cross-backend
- * invocation order) and prints non-{@code null} results.
- *
- * <p>Local classes and nominal checks (ISSUE-0095) add the DEAL v1.1
- * nominal record class surface: module-level {@code class} declarations,
- * object-literal construction in class-typed contexts (defaults applied
- * per construction), primitive field reads/writes, and same-module
- * nominal runtime checks. Each DEAL class emits a generated nested
- * static class ({@code $C_<name>}, extending the emitted {@code $Base}
- * identity holder); spec-v1.2 classes are sealed records with no
- * methods and no constructors, so there is no method surface beyond the
- * module functions the earlier slices already support. The only in-slice
- * untyped boundary is the DEAL table ({@code table} read in a contextual
- * target type — the checker types such reads with the expected target),
- * so tables emit a minimal ordered string-key map (the shared
- * {@code $DealRt.Table} class) and a
- * class-typed table read is the one site where a runtime nominal check
- * cannot be proven redundant: {@code $check<C>} verifies the value is a
- * {@code C} instance and raises E8001 otherwise (mirroring LuaJIT's
- * {@code __rt.check_type} class branch: "expected instance of @mod/C,
- * got …" for a wrong-class value, "expected class instance" for a
- * non-class value). The nullable slice (ISSUE-0108) extends this
- * boundary: a nullable-typed table read ({@code C | null}, {@code
- * int | null}, {@code T[] | null}) passes the DEAL null through and
- * otherwise runs the inner check — the nullable nominal class check, a
- * nullable primitive check, or the per-wrapper array gate (all unified
- * behind the {@code $check(descriptor, value)} seam by ISSUE-0110 —
- * see below). Every other class/nullable-typed
- * boundary in the slice
- * (locals, parameters, returns, field reads/writes, construction) is
- * provably typed by the JVM's static type system, which spec-v1.2
- * §JVM backend contract explicitly permits to make typed-boundary checks
- * redundant.
- *
- * <p>Imported classes and cross-module nominal identity (ISSUE-0109)
- * extend the same machinery across module boundaries: an exported class
- * emits the same nested class and check helper as a local one, and the
- * importing module references them through the declaring module's
- * emitted class ({@code Lib.$C_<name>}, {@code Lib.$check<Name>}). The
- * generated nested classes are package-private and every emitted
- * artifact shares the default package, so those references are exactly
- * what javac compiles. Locality is always decided from the
- * {@code Type.Class} MODULE PATH, never the bare class name — a
- * same-named local class never satisfies the guard for a foreign path.
- * Imported construction applies declared literal defaults inline (a
- * non-literal default is E6000: it evaluates in the declaring module's
- * scope under LuaJIT). A wrong-module instance failing a nominal check
- * is not an instance of the checking module's own {@code $Base}, so the
- * check helper reads the actual identity through the emitted
- * {@code $identityOf} unwrap (structural read of the spec ClassDescriptor
- * every {@code $Base} carries) and reports
- * "expected instance of @modelb/Item, got @modela/Item" — exactly the
- * module-qualified identity LuaJIT's {@code actual_class} reports.
- * Out of slice: optional/array/class/table-typed (non-nullable)
- * class fields, nested class declarations, table reads with primitive
- * (non-nullable)/function target types, table field writes, non-literal
- * defaults on imported classes — all E6000, never silently miscompiled.
- *
- * <p>Descriptor and cross-feature integration join (ISSUE-0110) unifies
- * every runtime check the prerequisite slices introduced behind ONE
- * shared descriptor-driven seam: {@link #typeDescriptor(Type)} is the
- * single JVM type-descriptor emitter (spec {@code RuntimeTypeDescriptor}
- * format — primitives, {@code ?T}, {@code [T]}, {@code @module/Name},
- * function and {@code async} operation types),
- * and every untyped table-read boundary emits one call to the single
- * emitted helper {@code $check(descriptor, value)} whose branches carry
- * the exact acceptance semantics the retired per-feature helpers pinned
- * ({@code check_int}/{@code check_nullable}/{@code check_array} parity,
- * the module-qualified nominal messages, and the deterministic
- * {@code "expected <descriptor>, got …"} mismatch shape for anything
- * else). Local classes dispatch in-module; imported classes dispatch on
- * the DECLARING module's seam ({@code Lib.$check("@lib/C", v)}), so the
- * nominal identity machinery stays exactly where ISSUE-0109 placed it.
- * Class identity strings, the seam's branch keys, and the call-site
- * descriptor literals all flow from the same emitter — one spelling, no
- * drift. Function and async-operation descriptors are spelled by the
- * emitter for the later function-value (ISSUE-0098) and async
- * (ISSUE-0099) slices to consume; no untyped function-value boundary
- * exists in this slice yet.
- */
 public final class JvmBackend {
 
-    /**
-     * Result of JVM code generation: the public class name (the
-     * {@code .java} file name is {@code className + ".java"}), the generated
-     * Java source, any backend diagnostics, and the backend-wide int mode
-     * the generating backend stored (ISSUE-0374 profile plumb).
-     * {@link #hasErrors()} gates compilation of the artifact.
-     *
-     * @param int32Mode true when the generating backend ran under the
-     *                  {@code DEAL_V1_2_INT32} semantic profile (the one
-     *                  backend-wide mode derived from
-     *                  {@code profile == DEAL_V1_2_INT32}); the recorded
-     *                  mode is the real stored backend state, never a
-     *                  mirrored constant
-     */
     public record JvmCodegenResult(String className, String source,
                                    List<CompilerDiagnostic> diagnostics,
                                    boolean int32Mode,
@@ -718,33 +72,11 @@ public final class JvmBackend {
         }
     }
 
-    /**
-     * The reserved argv marker of the async-export host mode (ISSUE-0161,
-     * parent D9): the production {@code JvmAsyncExportInvoker} spawns the
-     * entry artifact's generated {@code $AsyncExportHost} launcher with
-     * this exact first argument, and the emitted entry point dispatches
-     * on it. The {@code $} prefix is unreachable from {@link #javaName}
-     * (user {@code $} escapes to {@code $d}), so no source-level surface
-     * can ever collide with or reach the host mode.
-     */
     public static final String ASYNC_EXPORT_HOST_ARG = "$asyncExportHost";
 
-    /**
-     * The binary-name suffix of the reserved generated host-export
-     * launcher class (ISSUE-0161, parent D9): the entry module emits the
-     * nested {@code $AsyncExportHost} launcher whose {@code main} wraps
-     * the entry's first access so module-initialization and {@code main()}
-     * errors classify into the async-export envelope protocol.
-     */
     public static final String ASYNC_EXPORT_HOST_CLASS_SUFFIX =
         "$AsyncExportHost";
 
-    /**
-     * The stdout marker prefix of the shared async-export envelope
-     * protocol (ISSUE-0161): byte-identical to
-     * {@code LuaJitAsyncExportInvoker.RESULT_PREFIX}, so one host runner
-     * can consume both backends' envelopes.
-     */
     public static final String ASYNC_EXPORT_RESULT_PREFIX =
         "DEAL_ASYNC_EXPORT_RESULT:";
 
@@ -774,7 +106,6 @@ public final class JvmBackend {
     private static final CanonicalClassIdentityIndex STATIC_DESCRIPTOR_INDEX =
         ModuleIdentityResolver.buildIndex(Map.of(
             "", CanonicalModuleIdentity.BuiltinModule.INSTANCE));
-
 
     /**
      * The one canonical descriptor service behind the public static
@@ -815,107 +146,28 @@ public final class JvmBackend {
     }
     private final boolean isEntry;
 
-    /** True when this artifact must carry the shared $DealRt runtime
-     * scope (ISSUE-0102 tables; ISSUE-0301 function/array/bytes
-     * carriers) — the orchestrator's selected entry module or the
-     * standalone single-module adapter. */
     private final boolean emitSharedTable;
 
-    /** The orchestrator's collected project-wide shape set (ISSUE-0301
-     * D4), pre-registered in {@link #generateProgram} after the module
-     * pre-scan; empty for the standalone single-module adapter. */
     private final List<Type> collectedShapes;
 
-    /** The compilation-wide class-declaration identity surface
-     * (ISSUE-0301 D4 shared-scope emission): canonical class identity
-     * &rarr; declaring module path for every class of every checked
-     * project module, supplied by the orchestrator's collection seam.
-     * The entry module's shared-scope wrapper pre-registration resolves
-     * a collected shape's class reference through this surface when the
-     * declaring module is one the entry does not import directly (its
-     * own {@link #importAliases}/{@link #importedClasses} maps cannot
-     * name it), so every emitted wrapper references the real declaring
-     * module's emitted class. Empty for the standalone single-module
-     * adapter, whose collected set contains only shapes of its own
-     * module. */
     private final Map<CanonicalClassIdentity, String> sharedClassDeclarations;
 
-    /**
-     * The backend-wide int mode derived from the invocation's
-     * project-wide semantic profile (ISSUE-0374 profile plumb): true
-     * exactly when the profile passed to {@link #generate} was
-     * {@link SemanticProfile#DEAL_V1_2_INT32}. One derivation per
-     * backend instance — no static/global flag, no system property, and
-     * no source, CLI, or environment selection surface exists. The mode
-     * is recorded on the emitted {@link JvmCodegenResult} so tests
-     * observe the real stored backend state; no int32 emission branches
-     * off it yet, so every emitted artifact stays byte-identical to the
-     * legacy emission.
-     */
     private final boolean int32Mode;
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
-    /** The generated Java source accumulator. Swapped to a temporary
-     * buffer while an inline function-expression body emits (ISSUE-0102),
-     * so it cannot be final. */
+
     private StringBuilder out = new StringBuilder();
     private int indent = 0;
 
-    /**
-     * Import alias → module path of the imported module ({@code console →
-     * std/console}, {@code str → std/string}, {@code math → std/math},
-     * {@code time → std/time} for the supported stdlib builtins,
-     * {@code lib → lib} for a compiled project module). The pre-scan
-     * records an alias only for the supported stdlib modules
-     * ({@link #SUPPORTED_STDLIB_MODULES}) and for imports present in
-     * {@link #importResolutions}; every other import — a spec stdlib
-     * module outside the supported set or a declaration/host module —
-     * is rejected with E6000 at the import statement (ISSUE-0091
-     * rework, ISSUE-0096, ISSUE-0097). {@code std/json} joined the
-     * supported set with the ISSUE-0302 boundary: {@code json.parse}
-     * and {@code json.stringify} route through the emitted shared JSON
-     * runtime over the {@code $DealRt.Table} carrier.
-     */
     private final Map<String, String> importAliases = new LinkedHashMap<>();
 
-    // ISSUE-0544 (the lowering epic): module path → the module's
-    // completed PlannedDefaultClass list (the graph-published plans),
-    // passed by the orchestrator. The emitter consumes the published
-    // CompilerClassDefaultPlan of every module-level class declaration
-    // and realizes the E7 runtime plan: per-class static plan records
-    // ({name, descriptor, optional, evaluator} in class source order)
-    // plus labelled zero-argument static evaluator methods created at
-    // load and invoked once per omitted required entry per construction
-    // attempt. Imported construction consumes the provider module's
-    // plan records after the dependency-ordered initialization trigger.
-    // Empty on the standalone entry points (the inline fallback path
-    // stays).
     private Map<String, List<PlannedDefaultClass>> plansByModulePath =
         Map.of();
 
-    // ISSUE-0544: the realized RuntimeClassDefaultPlans of this module,
-    // in class source order — the carrier-side realization data (the
-    // JVM invocation seam invokes the generated static evaluator method
-    // reflectively once the artifact is compiled; see
-    // jvmInvocationSeam). Attached to the JvmCodegenResult for the
-    // compiler-to-lowerer verification battery and the later FFI
-    // identity consumption.
     private final List<RuntimeClassDefaultPlan> runtimePlans =
         new ArrayList<>();
 
-    // The generated module class name (ISSUE-0544): the JVM invocation
-    // seam resolves the static evaluator methods of the generated
-    // artifact through this class once the artifact is compiled, and
-    // the plan records reference the module class by name.
     private String generatedClassName = null;
 
-    /**
-     * The stdlib modules whose declared functions the JVM slice can
-     * execute (ISSUE-0097): every export of these modules is typed only
-     * with prerequisite value types the slice already supports (int,
-     * number, boolean, string, string[]). {@code std/console} was the
-     * trusted builtin since ISSUE-0091; {@code std/string},
-     * {@code std/math}, and {@code std/time} join it.
-     */
     private static final Set<String> SUPPORTED_STDLIB_MODULES = Set.of(
         "std/console", "std/string", "std/math", "std/time", "std/table",
         "std/json");
@@ -930,31 +182,8 @@ public final class JvmBackend {
      */
     private final Map<String, String> importResolutions;
 
-    /**
-     * Imported module path → (class name → class declaration) for every
-     * compiled project module this module imports (ISSUE-0109): the
-     * imported module's {@code ClassDeclaration}s carry the field order,
-     * field shapes, and default expressions that imported-class
-     * construction needs. Supplied by {@code CompilationOrchestrator}
-     * phase 4 (the same discovery pass that builds
-     * {@link #importResolutions}); empty for the single-module harness
-     * overloads, where no imported class can exist.
-     */
     private final Map<String, Map<String, ClassDeclaration>> importedClasses;
 
-    /**
-     * Imported compiled module path → its declared-boundary surface
-     * (ISSUE-0603 D6, jvm-canonical-error-snapshot-convergence): the
-     * imported module's exported {@link FunctionDeclaration} nodes —
-     * whose parameter and return type annotations carry the spans the
-     * declared-boundary origins name — plus the imported module's
-     * source path, so the importing artifact can emit the callee's
-     * declared-boundary origin including imported companions. Supplied
-     * by {@code CompilationOrchestrator} phase 4 from the same import
-     * discovery pass that builds {@link #importedClasses}; empty for the
-     * single-module harness overloads, where no imported function can
-     * exist.
-     */
     private final Map<String, ImportedModuleSurface> importedSurfaces;
 
     /**
@@ -974,19 +203,6 @@ public final class JvmBackend {
         }
     }
 
-    /**
-     * Raw import path → declared export map (export name → declared
-     * {@link Type}) for every host module this module imports (ISSUE-0100).
-     * Supplied by {@code CompilationOrchestrator} phase 4, exactly like the
-     * LuaJIT use site's hostModules map (host-module-abi D4/D5): imports of
-     * declaration files that are not spec stdlib modules are host modules.
-     * A raw path present here is a host import: its alias maps to a Java
-     * host module class (named {@link #classNameFor} of the raw path) whose
-     * static methods implement the declared function exports. Declaration
-     * and host-module imports previously stayed E6000 at the import
-     * statement; the host ABI slice supports declared function exports with
-     * the primitive/string/nullable parameter and return shapes below.
-     */
     private final Map<String, Map<String, Type>> hostModules;
 
     /**
@@ -1001,75 +217,12 @@ public final class JvmBackend {
      */
     private final Map<String, String> hostAliases = new LinkedHashMap<>();
 
-    /**
-     * Stack of visible local-variable bindings (DEAL name → emitted Java
-     * name). The bottom scope is the module scope (module-level {@code let}s,
-     * recorded in declaration order — the checker resolves them
-     * sequentially); function bodies push a scope with their parameters;
-     * blocks push/pop scopes. Mirrors the NameResolver's hierarchical symbol
-     * table for the constructs the skeleton supports, so an identifier is
-     * classified as a variable (vs. a hoisted function or intrinsic) exactly
-     * when the checker would.
-     *
-     * <p>Shadowing locals get disambiguated names ({@code x$1}, {@code x$2},
-     * …): DEAL allows lexical shadowing, but Java rejects redeclaring a
-     * visible local. The {@code $n} suffix can never collide with a
-     * translation ({@link #javaName} escapes every {@code $} as {@code $d}).
-     * The disambiguation compares EMITTED Java names across every visible
-     * scope (ISSUE-0093 fix): a parameter shadowing a module field is
-     * declared as {@code x$1} in BOTH the method signature and the body
-     * (the signature previously emitted the raw translation while the body
-     * read the disambiguated name — an artifact javac rejected), and a
-     * shadowing declaration never reuses an enclosing binding's emitted
-     * name, so {@code let x: int = x + 1} over a parameter reads the
-     * parameter, exactly like LuaJIT's {@code local x = x + 1}.
-     */
     private final Deque<Map<String, String>> localScopes = new ArrayDeque<>();
 
-    /**
-     * Declared DEAL type per binding scope, parallel to {@link
-     * #localScopes}: every entry records the declared type of the
-     * binding of the same DEAL name in the corresponding scope map.
-     * Nullable-slice reads consult this stack to adapt narrowed
-     * identifier reads to the binding's boxed (nullable) Java
-     * representation (ISSUE-0108).
-     */
     private final Deque<Map<String, Type>> localTypeScopes = new ArrayDeque<>();
 
-    /** The declared return type of the function currently being emitted
-     * ({@code null} at module level). {@link #emitReturn} uses it to
-     * emit {@code return null;} for {@code null}-typed return expressions
-     * inside nullable-returning functions (ISSUE-0108), and it is the
-     * target type for returned function values under arity extension (a
-     * wider declared return signature wraps a narrower actual function,
-     * ISSUE-0098). */
     private Type currentReturnType = null;
 
-    /**
-     * Every emitted Java binding name declared inside the current function
-     * (parameters + function locals, in declaration order): one set per
-     * function, pushed together with the function's parameter scope and
-     * popped together with it. {@link #declareLocal} OVERWRITES a scope-map
-     * key when a function-body top-level {@code let} shadows a parameter of
-     * the same DEAL name (parameters and body-top lets share the function's
-     * scope map), and the overwritten value — the parameter's emitted name,
-     * still in Java scope for the rest of the method (JLS §6.4: an inner
-     * block may not redeclare a method parameter) — must remain reserved
-     * for collision purposes even though no scope map holds it any more.
-     * {@link #emittedNameVisible} consults these sets in addition to the
-     * current scope values, so a deeper shadow never reuses it: in the
-     * triple-deep chain <pre>let g: int = 1;
-     * function f(g: int): int {
-     *   let g: int = g + 10;
-     *   { let g: int = g + 1; }
-     *   return g;
-     * }</pre> the inner block used to emit {@code g$1} over the
-     * parameter's {@code g$1} — an artifact javac rejected ("variable g$1
-     * is already defined in method f(long)") after the CLI reported
-     * success (ISSUE-0093 rework). Nested function declarations are
-     * rejected before this machinery runs, so at most one set is ever on
-     * the deque.
-     */
     private final Deque<Set<String>> functionBindingNames = new ArrayDeque<>();
 
     /** True while emitting direct module-body statements (class members). */
@@ -1131,28 +284,8 @@ public final class JvmBackend {
      * generated names. */
     private int loopLabelCounter = 0;
 
-    /** Counter for jsonable conversion locals ({@code l0}/{@code a0}/
-     * {@code i0}/{@code e0}/{@code cv0}/…): each nesting level of a
-     * nested-array fromJson/toJson conversion allocates a FRESH value
-     * per emitted {@code $fromJsonValue}/{@code $toJsonValue} method
-     * (Java forbids redeclaring a local inside the scope of an
-     * enclosing local — the pre-fix emission reused the outer level's
-     * suffix and javac rejected the artifact). Reset by each method
-     * emission; top-level field conversions keep their field-index
-     * suffixes. */
     private int jsonLocalCounter = 0;
 
-    /**
-     * Per-function closure-capture state (ISSUE-0102): DEAL names of the
-     * current function's locals/parameters that a nested function
-     * (function expression or block-level function declaration) captures.
-     * A captured binding lowers to a {@code final <T>[] <name>$c = { v }}
-     * cell at its declaration; every read and write of the binding —
-     * in the enclosing function body AND in every nested function body —
-     * routes through {@code <name>$c[0]}, so nested functions observe
-     * mutations exactly like LuaJIT's shared upvalues. Pushed and popped
-     * per function in {@link #emitFunction}.
-     */
     private final Deque<Set<String>> capturedNamesStack = new ArrayDeque<>();
 
     /**
@@ -1206,38 +339,10 @@ public final class JvmBackend {
     private final Map<String, ClassDeclaration> moduleClasses =
         new LinkedHashMap<>();
 
-
-    /**
-     * One Java branch per declared class for the shared descriptor-driven
-     * runtime-check seam (ISSUE-0110): each {@code emitClass} run appends
-     * the {@code descriptor.equals(...)} branches for its class descriptor
-     * ({@code @module/Name}), its array descriptor ({@code [@module/Name]}),
-     * and its nullable-element array descriptor ({@code [?@module/Name]});
-     * {@link #emitSharedCheckSeam} emits them inside the single emitted
-     * {@code $check(descriptor, value)} helper, which is emitted AFTER the
-     * module body so every declared class contributes its branches.
-     */
     private final List<String> classCheckBranches = new ArrayList<>();
 
-    /** Per-element-shape {@code [D]} check branches for nested-array,
-     * function-array, and bytes-array element shapes (ISSUE-0301 D5):
-     * every {@link #registerRefArrayShape} call appends the generated
-     * branch text; {@link #emitSharedCheckSeam} emits them inside the
-     * emitted {@code $checkArray} helper. */
     private final List<String> refArrayCheckBranches = new ArrayList<>();
 
-    /**
-     * Host-boundary element-validating rows for the generated
-     * {@code $hostCheckArray} helper (ISSUE-0303 D2): one row per
-     * registered nested-array/function-array element shape, appended
-     * by {@link #registerRefArrayShape} beside the {@code $checkArray}
-     * branch. The host is exactly the producer whose values the
-     * boundary must not trust by construction, so the host rows
-     * iterate the typed wrapper's elements through {@code $check}
-     * (E8003 {@code array element {i} type mismatch} at the first
-     * failing index — the boundary wraps it as E8010) instead of the
-     * identity-only {@code $checkArray} fast path.
-     */
     private final List<String> hostRefArrayCheckBranches =
         new ArrayList<>();
 
@@ -1386,11 +491,6 @@ public final class JvmBackend {
      * indirect-call guards. */
     private List<StatementNode> moduleStatements = List.of();
 
-    /** Emitted function-wrapper shape classes (one abstract class per
-     * distinct signature) for the SHARED $DealRt runtime scope,
-     * accumulated during emission and spliced into the $DealRt body
-     * right after the fixed carrier classes (ISSUE-0301 runtime value
-     * surface: one shared carrier scope per compiled project). */
     private final StringBuilder sharedWrapperClasses = new StringBuilder();
 
     /** Wrapper shapes already registered (one class per shape id). */
@@ -1411,7 +511,6 @@ public final class JvmBackend {
      * effectively final without a lambda. Unreachable from
      * {@link #javaName} (the {@code __} prefix escapes to {@code $u}). */
     private int functionValueTempCounter = 0;
-
 
     /** Function name → module fields read by its body, transitively through
      * calls to other module functions (use-before-declaration detection for
@@ -1434,28 +533,9 @@ public final class JvmBackend {
     private final Map<String, String> forwardReadViolations =
         new LinkedHashMap<>();
 
-    /**
-     * Function name → set of import aliases its body references
-     * transitively (through same-module calls). Used to reject a
-     * module-level call of a function whose body reaches an import
-     * declared at or after the call site: LuaJIT has not run the require
-     * yet and fails at load, while Java would silently initialize the
-     * imported class (ISSUE-0096).
-     */
     private final Map<String, Set<String>> transitiveImportReads =
         new LinkedHashMap<>();
 
-    /** Function name → module functions whose VALUES its body reads
-     * transitively (through calls, the function itself included;
-     * ISSUE-0099). Used to reject a module-level call of a function
-     * that reaches a module function VALUE whose wrapper field is
-     * assigned at a declaration point at or after the call site:
-     * LuaJIT assigns function values at their declaration point and the
-     * load-time read binds to the not-yet-declared global nil, while
-     * Java would silently read the uninitialized static field's default
-     * value. (The v1.2 module shape E1049 gate removes module-level
-     * statements, so the guard is defensive like the sibling load-time
-     * guards; the machinery stays documented for the same reason.) */
     private final Map<String, Set<String>> transitiveFunctionValueReads =
         new LinkedHashMap<>();
 
@@ -1487,18 +567,6 @@ public final class JvmBackend {
     private final Map<String, Set<String>> transitiveAssignedFields =
         new LinkedHashMap<>();
 
-    /**
-     * Function name → the function-valued bindings (module fields,
-     * locals, parameters) its body invokes through INDIRECT calls,
-     * transitively through direct calls to other module functions;
-     * non-identifier function-typed callees contribute
-     * {@link #UNKNOWN_HELD_VALUE}. Used to reject a module-level call of
-     * a function whose (transitive) body contains an indirect call: the
-     * invoked wrapper's value is not statically known to the load-time
-     * guard — LuaJIT fails at load when the held function reaches a
-     * not-yet-declared value, while Java would silently run the hoisted
-     * method. Conservative until ISSUE-0110.
-     */
     private final Map<String, Set<String>> transitiveIndirectCalls =
         new LinkedHashMap<>();
 
@@ -1540,21 +608,6 @@ public final class JvmBackend {
      * module-level calls that transitively read later-declared fields. */
     private int currentModuleStatementIndex = -1;
 
-    /**
-     * ISSUE-0303 D2 read-site deferral: the exact table-read nodes
-     * that are DIRECT host-call argument expressions while a host
-     * call's arguments are being emitted (identity-keyed — a nested
-     * read inside the argument is a different node and never defers).
-     * A typed table read whose value materializes a host argument must
-     * not pre-raise its own E8001 — the direct read yields the raw
-     * value and the host-call boundary raises E8010 (the only
-     * read-shape in the corpus with a changed check site;
-     * let/assignment/return-boundary typed reads and reads nested
-     * inside a host-call argument keep their pinned read-site checks,
-     * so every statically-typed consumption site of a nested read
-     * still receives the checked wrapper and artifacts stay valid
-     * Java).
-     */
     private Set<ExpressionNode> deferredHostArgReads = null;
 
     /**
@@ -1576,19 +629,9 @@ public final class JvmBackend {
      */
     private Set<ExpressionNode> deferredConstructionReads = null;
 
-    /** The host-class identity descriptors whose nominal {@code $check}
-     * branches were already appended to {@link #classCheckBranches}
-     * (ISSUE-0303 D4 — one branch per class identity per module). */
     private final Set<String> emittedHostClassBranches =
         new LinkedHashSet<>();
 
-    /**
-     * Host-class declarations (ISSUE-0303, jvm-v12-host-abi-completion
-     * D4): raw import specifier → class export name → declared field
-     * records (declaration order) with their orchestrator-resolved
-     * types. The JVM backend synthesizes one shared record class per
-     * declared host class from these records.
-     */
     private final Map<String, Map<String,
         List<HostModuleDeclarations.HostField>>> hostClassDeclarations;
 
@@ -1601,13 +644,6 @@ public final class JvmBackend {
     private final Map<String, Map<String,
         List<HostModuleDeclarations.HostField>>> sharedHostClasses;
 
-    /** Import alias → statement index of its import statement (project
-     * modules only; {@code std/console} has no load-time trigger and no
-     * entry). Used to reject module-level uses of an alias before its
-     * import statement: LuaJIT emits the {@code require} at the import's
-     * source position, so an earlier use reads the not-yet-required
-     * global and fails at load, while Java would silently initialize the
-     * imported class (ISSUE-0096). */
     private final Map<String, Integer> importAliasStatementIndices =
         new LinkedHashMap<>();
 
@@ -1687,26 +723,13 @@ public final class JvmBackend {
         this.sharedHostClasses = sharedHostCopy;
         localScopes.push(new LinkedHashMap<>());
         localTypeScopes.push(new LinkedHashMap<>());
-        // ISSUE-0301 D4: the orchestrator's project-wide shape set
-        // (deterministic — dependency order, then source order) is
-        // pre-registered in generateProgram (after the module-class and
-        // import pre-scan) so the entry module's shared $DealRt scope
-        // carries every shape any module references. Null for the
-        // standalone single-module adapter, whose lazy registrations
-        // are the complete one-module set.
+
         this.collectedShapes = sharedShapes == null
             ? List.of() : List.copyOf(sharedShapes);
         this.sharedClassDeclarations = sharedClassDeclarations == null
             ? Map.of() : Map.copyOf(sharedClassDeclarations);
     }
 
-    /**
-     * Pre-registers one collected project shape (ISSUE-0301 D4): a
-     * function-signature shape registers its shared wrapper class, an
-     * array-element shape registers its shared per-element-shape array
-     * carrier class and its {@code [D]} check branch. Registration is
-     * idempotent and never records a diagnostic.
-     */
     private void registerCollectedShape(Type t) {
         if (t instanceof Type.Func f) {
             registerWrapperShape(f);
@@ -1714,11 +737,7 @@ public final class JvmBackend {
         }
         if (t instanceof Type.Array a) {
             Type element = a.element();
-            // bytes[] / (bytes | null)[] use the FIXED shared
-            // __BytesArray / __BytesOrNullArray carriers and the fixed
-            // $checkArray rows (ISSUE-0160 D1/D5) — no generated
-            // per-shape class or [bytes] branch. Nested arrays and
-            // function arrays keep the generated __A$[...] carriers.
+
             if (element instanceof Type.Array
                     || element instanceof Type.Func
                     || (element instanceof Type.Nullable ne
@@ -1728,31 +747,10 @@ public final class JvmBackend {
         }
     }
 
-    // =========================================================================
-    // Project-wide shape collection (ISSUE-0301 D4)
-    // =========================================================================
-
     /** The closed shape set produced by a collection pass; {@code null}
      * during emission. Populated only by {@link #collectModuleShapes}. */
     private LinkedHashSet<Type> collectedShapesOut = null;
 
-    /**
-     * Collects the closed project-shape set of ONE checked module
-     * (ISSUE-0301 D4): every function-signature shape and every
-     * nested-array/function-array/bytes-array element shape the
-     * module's emission can reference — every type annotation
-     * (parameters, returns, locals, fields, array elements, function
-     * signatures), the host declarations, and the two intrinsic
-     * wrappers — closed transitively. Diagnostic-free: the pass
-     * resolves types with a silent mirror of {@link #resolveTypeNode}
-     * and never records an E6000 (the real emission sites own every
-     * diagnostic). The result is deterministic, seeded ONLY through
-     * source-ordered walks (deterministic-diagnostics D4 — hash-bucket
-     * iteration never drives the output): the two intrinsic wrapper
-     * shapes, the host declarations in import-statement order (each
-     * export map in declaration order), then the AST walk in statement
-     * order closing every annotation and expression type.
-     */
     public static List<Type> collectShapes(ProgramNode program,
             CheckResult result, String sourcePath, String modulePath,
             Map<String, String> importResolutions,
@@ -1788,10 +786,7 @@ public final class JvmBackend {
                     if (hostExports != null) {
                         importAliases.put(imp.alias(),
                             imp.modulePath().replace('/', '.'));
-                        // ISSUE-0303 D4: the silent context mirrors the
-                        // real pre-scan's host-alias table too, so a
-                        // qualified host-class type annotation resolves
-                        // through the declared export map.
+
                         hostAliases.put(imp.alias(), imp.modulePath());
                     } else {
                         String resolved = importResolutions.get(
@@ -1911,11 +906,7 @@ public final class JvmBackend {
                 }
             };
             case QualifiedType qt -> {
-                // ISSUE-0303 D4: a qualified type through a host-module
-                // alias names a declared host class — resolve to the
-                // export map's class type (the canonical externals
-                // identity), so the collected shape set carries the
-                // shared-record reference.
+
                 String hostRaw = hostAliases.get(qt.moduleName());
                 if (hostRaw != null) {
                     Map<String, Type> exports = hostModules.get(hostRaw);
@@ -2174,15 +1165,6 @@ public final class JvmBackend {
         return generate(program, result, sourcePath, modulePath, Map.of());
     }
 
-    /**
-     * Profile-aware single-module variant (ISSUE-0374 profile plumb,
-     * harness profile-selection seam): the single-module conformance
-     * adapter is a standalone compiled module — not an entry, but its
-     * artifact emits the shared {@code $DealRt} table class — with the
-     * caller's project-wide {@link SemanticProfile} deriving the emitted
-     * helper bodies. The profile-less overloads above keep the
-     * {@link SemanticProfile#LEGACY_SAFE_INT} default.
-     */
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath, String modulePath,
                                             SemanticProfile semanticProfile) {
@@ -2190,16 +1172,6 @@ public final class JvmBackend {
             Map.of(), Map.of(), false, true, semanticProfile);
     }
 
-    /**
-     * Generates Java source for a checked module with an explicit module
-     * path and the orchestrator's import resolution map (ISSUE-0096).
-     *
-     * @param importResolutions raw import path → module path of the
-     *                          imported compiled module (e.g. {@code "./lib"
-     *                          → lib}); an import whose raw path is absent
-     *                          is rejected with E6000 at the import
-     *                          statement
-     */
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath, String modulePath,
                                             Map<String, String> importResolutions) {
@@ -2207,72 +1179,16 @@ public final class JvmBackend {
             importResolutions, Map.of());
     }
 
-    /**
-     * Generates Java source for a checked module with the orchestrator's
-     * import resolution map and imported class declarations (ISSUE-0109).
-     *
-     * @param importResolutions raw import path → module path of the
-     *                          imported compiled module (e.g. {@code "./lib"
-     *                          → lib}); an import whose raw path is absent
-     *                          is rejected with E6000 at the import
-     *                          statement
-     * @param importedClasses   imported module path → (class name → class
-     *                          declaration); supplies the field order and
-     *                          default expressions for imported-class
-     *                          construction and the defensive locality
-     *                          guard for imported class-typed values
-     */
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath, String modulePath,
                                             Map<String, String> importResolutions,
                                             Map<String, Map<String, ClassDeclaration>> importedClasses) {
-        // The single-module conformance adapter is a standalone compiled
-        // module: it is not an entry (no main gate, no JVM entry point)
-        // but its artifact must be self-contained, so it emits the
-        // shared $DealRt table class (ISSUE-0102).
+
         return generate(program, result, sourcePath, modulePath,
             importResolutions, importedClasses, Map.of(), Map.of(),
             false, true);
     }
 
-    /**
-     * Generates Java source for a checked module with the orchestrator's
-     * import resolution map, imported class declarations, host-module
-     * declarations (ISSUE-0100), and entry status (ISSUE-0106).
-     *
-     * @param hostModules    raw import path → declared export map
-     *                       (export name → declared {@link Type}) of the
-     *                       host modules this module imports; an import
-     *                       whose raw path is present here is a host-module
-     *                       import (declaration files that are not spec
-     *                       stdlib modules, mirroring the LuaJIT use site's
-     *                       hostModules map — host-module-abi D4/D5).
-     *                       Declared function exports with supported
-     *                       parameter/return shapes emit per-alias wrapper
-     *                       methods with load-time presence checks (E8011)
-     *                       and call-time boundary checks (E8010/E8001);
-     *                       unsupported declarations are E6000 at the
-     *                       import statement, never silently miscompiled
-     * @param isEntry        true when this module is the selected entry
-     *                       module of the compilation (the orchestrator
-     *                       passes this for {@code entryFile});
-     *                       spec-v1.2 §No user-defined globals: when a
-     *                       compiler invocation selects an entry module,
-     *                       the backend invokes {@code main()} from that
-     *                       module. The emitted entry module class
-     *                       therefore gets a real JVM entry point —
-     *                       {@code public static void main(String[] args)}
-     *                       — that calls the module's emitted DEAL
-     *                       {@code main} export (a {@code static void
-     *                       main()} method; the checker has verified the
-     *                       non-async {@code (): null} signature when the
-     *                       compilation ran through the entry gate). The
-     *                       DEAL {@code main} function name survives
-     *                       {@link #javaName} unchanged, so the entry
-     *                       method overloads the plain {@code main()}
-     *                       without collision. Non-entry modules emit a
-     *                       plain module class with no JVM entry point
-     */
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath, String modulePath,
                                             Map<String, String> importResolutions,
@@ -2284,13 +1200,6 @@ public final class JvmBackend {
             isEntry);
     }
 
-    /**
-     * The ISSUE-0303 host-declaration-aware full entry: {@code isEntry}
-     * gates the v1.2 entry surface, {@code emitSharedTable} gates the
-     * shared {@code $DealRt} runtime scope, and the default
-     * {@code LEGACY_SAFE_INT} semantic profile keeps the unchanged
-     * callers on legacy behavior.
-     */
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath, String modulePath,
                                             Map<String, String> importResolutions,
@@ -2307,12 +1216,6 @@ public final class JvmBackend {
             SemanticProfile.LEGACY_SAFE_INT);
     }
 
-    /**
-     * The ISSUE-0303 host-declaration-aware profile entry: the declared
-     * host-class field records join the declared export map, and the
-     * backend derives its int mode from the invocation's project-wide
-     * semantic profile (ISSUE-0374 profile plumb).
-     */
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath, String modulePath,
                                             Map<String, String> importResolutions,
@@ -2330,12 +1233,6 @@ public final class JvmBackend {
             semanticProfile, null);
     }
 
-    /**
-     * The ISSUE-0303 host-declaration-aware standalone shapes entry:
-     * like the shared-shapes overload but with the declared host-class
-     * field records (the standalone single-module adapter passes
-     * {@code null} shapes and empty class maps).
-     */
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath, String modulePath,
                                             Map<String, String> importResolutions,
@@ -2360,15 +1257,6 @@ public final class JvmBackend {
             Map.of());
     }
 
-    /**
-     * The ISSUE-0303 host-declaration-aware per-module path: the
-     * declared host-class field records join the declared export map.
-     * Only the selected ENTRY module emits the shared $DealRt runtime
-     * scope (one per compiled project). The unchanged signature
-     * defaults to the LEGACY_SAFE_INT semantic profile (ISSUE-0374
-     * profile plumb), so untouched direct callers keep legacy behavior
-     * by construction.
-     */
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath, String modulePath,
                                             Map<String, String> importResolutions,
@@ -2384,22 +1272,6 @@ public final class JvmBackend {
             SemanticProfile.LEGACY_SAFE_INT);
     }
 
-    /**
-     * The profile-plumbed orchestrator per-module path (ISSUE-0374):
-     * {@code CompilationOrchestrator.codegenAllJvm} passes
-     * {@code invocation.semanticProfile()} here, and the backend derives
-     * and stores one backend-wide int mode from
-     * {@code profile == DEAL_V1_2_INT32} — recorded on the result as
-     * {@link JvmCodegenResult#int32Mode()}. Only the selected ENTRY
-     * module emits the shared $DealRt runtime scope (one per compiled
-     * project).
-     * Source and the CLI gain no profile surface; the existing overloads
-     * without a profile argument keep their signatures and default to
-     * {@link SemanticProfile#LEGACY_SAFE_INT}.
-     *
-     * @param semanticProfile the invocation's project-wide semantic
-     *                        profile; non-null
-     */
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath, String modulePath,
                                             Map<String, String> importResolutions,
@@ -2412,15 +1284,6 @@ public final class JvmBackend {
             isEntry, isEntry, semanticProfile);
     }
 
-    /**
-     * Full generate entry: {@code isEntry} gates the v1.2 entry surface
-     * (E6004 main check, the JVM entry point), {@code emitSharedTable}
-     * gates the shared {@code $DealRt} runtime scope (the
-     * orchestrator's selected entry module and the standalone
-     * single-module adapter).
-     * The unchanged signature defaults to the {@code LEGACY_SAFE_INT}
-     * semantic profile (ISSUE-0374 profile plumb).
-     */
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath, String modulePath,
                                             Map<String, String> importResolutions,
@@ -2433,21 +1296,6 @@ public final class JvmBackend {
             isEntry, emitSharedTable, SemanticProfile.LEGACY_SAFE_INT);
     }
 
-    /**
-     * Full generate entry with the invocation's project-wide semantic
-     * profile (ISSUE-0374 profile plumb): the backend stores one
-     * backend-wide int mode derived from
-     * {@code profile == DEAL_V1_2_INT32} and records it on the result.
-     * {@code isEntry} gates the v1.2 entry surface (E6004 main check,
-     * the JVM entry point), {@code emitSharedTable} gates the shared
-     * {@code $DealRt} runtime scope (the orchestrator's selected entry
-     * module and the standalone single-module adapter). Every overload
-     * without a profile argument defaults to
-     * {@link SemanticProfile#LEGACY_SAFE_INT}.
-     *
-     * @param semanticProfile the invocation's project-wide semantic
-     *                        profile; non-null
-     */
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath, String modulePath,
                                             Map<String, String> importResolutions,
@@ -2461,20 +1309,6 @@ public final class JvmBackend {
             isEntry, emitSharedTable, semanticProfile, null);
     }
 
-    /** Full generate entry with the orchestrator's collected
-     * project-wide shape set (ISSUE-0301 D4):
-     * {@code CompilationOrchestrator.codegenAllJvm} pre-collects the
-     * closed shape set over every checked module (dependency order,
-     * then source order) and passes the SAME list to every module's
-     * generation. The selected entry module's shared {@code $DealRt}
-     * scope then carries every shape any module references; the
-     * standalone single-module adapter passes {@code null}, and its
-     * lazy registrations are the complete one-module set.
-     *
-     * @param sharedShapes   the closed project shape list, or
-     *                       {@code null} for the standalone
-     *                       single-module adapter
-     */
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath, String modulePath,
                                             Map<String, String> importResolutions,
@@ -2495,38 +1329,6 @@ public final class JvmBackend {
             semanticProfile, sharedShapes, Map.of(), Map.of());
     }
 
-    /**
-     * The production identity-carriage generate entry
-     * (descriptor-identity-propagation D1/D2, ISSUE-0301 D4): the
-     * orchestrator passes the compilation's identity index, the
-     * module-path classification, and the collected project shape
-     * list; every class descriptor this backend emits resolves through
-     * {@code index.descriptorTextFor(identity)} — the same projection
-     * the one descriptor service produces — and the selected entry
-     * module's shared {@code $DealRt} scope pre-registers every
-     * collected shape.
-     *
-     * @param sharedShapes the closed project shape list
-     *                     ({@code null} for the standalone
-     *                     single-module adapter, whose lazy
-     *                     registrations are the complete one-module
-     *                     set)
-     * @param sharedClassDeclarations the compilation-wide
-     *                     class-declaration identity surface (canonical
-     *                     class identity &rarr; declaring module path)
-     *                     built by the orchestrator's collection seam;
-     *                     the entry module's shared-scope wrapper
-     *                     pre-registration resolves class references
-     *                     through it when the declaring module is one
-     *                     the entry does not import directly (empty for
-     *                     the standalone single-module adapter)
-     * @param sharedHostClasses the project-wide declared host-class
-     *                     union (raw externals specifier &rarr; class
-     *                     name &rarr; declared field records,
-     *                     ISSUE-0303 D4): the entry module's shared
-     *                     {@code $DealRt} scope emits one synthesized
-     *                     record class per declared host class from it
-     */
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath, String modulePath,
                                             Map<String, String> importResolutions,
@@ -2552,19 +1354,6 @@ public final class JvmBackend {
             sharedClassDeclarations, sharedHostClasses, Map.of(), Map.of());
     }
 
-    /**
-     * Plan-carrying production generate entry (ISSUE-0544): the same
-     * identity-carriage contract as the overload above with the
-     * compilation's completed default plans keyed by module path
-     * ({@code CompilationOrchestrator#completedPlansByModulePath}) —
-     * the published-plan consumption surface of the lowering epic. The
-     * emitter consumes this module's plans for the E7 realization
-     * (static per-class plan records plus labelled zero-argument
-     * evaluator methods) and the imported providers' plans for imported
-     * construction (dependency-ordered initialization holds through the
-     * import trigger). The standalone entry points pass {@code Map.of()}
-     * and keep the inline fallback emission.
-     */
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath, String modulePath,
                                             Map<String, String> importResolutions,
@@ -2615,15 +1404,6 @@ public final class JvmBackend {
         return map;
     }
 
-    /**
-     * Derives the public Java class name for a module path. Every path
-     * segment contributes a capitalized, sanitized segment (ISSUE-0091
-     * rework): {@code main → Main}, {@code app/main → AppMain},
-     * {@code app.sub.main → AppSubMain}. This keeps distinct module paths
-     * collision-free instead of silently overwriting one another's
-     * artifacts (e.g. {@code app/main} and {@code sub/main} no longer both
-     * derive {@code Main}). Falls back to {@code "Main"} for empty input.
-     */
     public static String classNameFor(String modulePath) {
         String path = modulePath == null ? "" : modulePath;
         StringBuilder sb = new StringBuilder();
@@ -2675,19 +1455,7 @@ public final class JvmBackend {
      * parameter types match a helper exactly would emit a duplicate Java
      * method; such declarations are rejected with E6000 instead.
      */
-    /**
-     * Emitted runtime-helper signatures under {@code LEGACY_SAFE_INT} —
-     * the pre-tree base table plus the ISSUE-0158 bytes helpers, whose
-     * carriers match the legacy backend-wide long int mode (the
-     * long-parameter bytesGet/bytesSet arms and the long bytesLength
-     * result). Every entry lists every emitted overload of the helper —
-     * the pre-threading short form and the origin-threading form
-     * (ISSUE-0603/ISSUE-0605) alike, because both are emitted methods and
-     * either would collide. A DEAL function whose translated name and
-     * mapped parameter types match an emitted overload exactly would emit
-     * a duplicate Java method; such declarations are rejected with E6000
-     * instead.
-     */
+
     private static final Map<String, List<List<String>>> LEGACY_RUNTIME_HELPER_SIGNATURES = Map.ofEntries(
         Map.entry("intAdd", List.of(List.of("long", "long"),
             List.of("long", "long", "java.lang.String", "int", "int"))),
@@ -2719,13 +1487,7 @@ public final class JvmBackend {
         Map.entry("numberFromNullable", List.of(List.of("java.lang.Double"),
             List.of("java.lang.Double", "java.lang.String", "int", "int"))),
         Map.entry("checkSig", List.of(List.of("java.lang.String", "java.lang.String"))),
-        // ISSUE-0158 bytes helpers (profile-matched carriers): under
-        // LEGACY_SAFE_INT the backend-wide int carrier is long, so the
-        // emitted bytesGet/bytesSet helpers take long index/value
-        // parameters (with the E8012/E8013 gates before the narrowing)
-        // and bytesLength returns long — matching every emitted bytes
-        // call site exactly, never a javac-rejected long-into-int
-        // argument.
+
         Map.entry("bytesNew", List.of(List.of("long"),
             List.of("long", "java.lang.String", "int", "int"))),
         Map.entry("bytesLength", List.of(List.of("$DealRt.Bytes"),
@@ -2736,14 +1498,6 @@ public final class JvmBackend {
             List.of("$DealRt.Bytes", "long", "long"),
             List.of("$DealRt.Bytes", "long", "long", "java.lang.String", "int", "int"))));
 
-    /**
-     * Emitted runtime-helper signatures under {@code DEAL_V1_2_INT32}
-     * (ISSUE-0375 carrier/range switch, jvm-v12-int32-bytes D1): the
-     * signed32 helper carriers ({@code int}/{@code java.lang.Integer}).
-     * {@link #checkInt} still takes the wider {@code long} carrier — the
-     * D3 boundary seam feeds it wider/boxed/foreign values — while every
-     * other int-typed helper parameter and result is primitive {@code int}.
-     */
     private static final Map<String, List<List<String>>> INT32_RUNTIME_HELPER_SIGNATURES = Map.ofEntries(
         Map.entry("intAdd", List.of(List.of("int", "int"),
             List.of("int", "int", "java.lang.String", "int", "int"))),
@@ -2786,14 +1540,6 @@ public final class JvmBackend {
             List.of("$DealRt.Bytes", "int", "int"),
             List.of("$DealRt.Bytes", "int", "int", "java.lang.String", "int", "int"))));
 
-    /**
-     * The emitted runtime-helper signature table for the backend's
-     * backend-wide int mode (ISSUE-0375): the legacy table under
-     * {@code LEGACY_SAFE_INT} (byte-identical to the pre-tree base) and
-     * the signed32 table under {@code DEAL_V1_2_INT32}. The collision
-     * guard keys on the table matching the helpers the artifact actually
-     * emits for this backend instance.
-     */
     private Map<String, List<List<String>>> runtimeHelperSignatures() {
         return int32Mode ? INT32_RUNTIME_HELPER_SIGNATURES
                          : LEGACY_RUNTIME_HELPER_SIGNATURES;
@@ -2848,43 +1594,12 @@ public final class JvmBackend {
         for (int i = 0; i < statements.size(); i++) {
             StatementNode stmt = statements.get(i);
             if (stmt instanceof ImportDeclaration imp) {
-                // ISSUE-0096: imports of compiled project modules are
-                // supported — the alias maps to the imported module's
-                // module path, and alias.fn(args) emits a static call on
-                // the imported module's emitted class. ISSUE-0097: the
-                // stdlib modules whose functions use only supported value
-                // types (std/console, std/string, std/math, std/time,
-                // std/table, std/json) are accepted as builtins. Any other import — a spec stdlib
-                // module outside the supported set, a declaration/host
-                // module (never an importResolutions entry: the
-                // orchestrator skips declaration files in JVM codegen)
-                // — is out of scope and rejected AT THE IMPORT
-                // STATEMENT itself, even when unused, because the
-                // imported module's require-time side effects have no
-                // JVM slice equivalent and must fail loudly rather than
-                // be silently dropped.
+
                 if (SUPPORTED_STDLIB_MODULES.contains(imp.modulePath())) {
                     importAliases.put(imp.alias(), imp.modulePath());
                     continue;
                 }
-                // ISSUE-0100 host ABI slice: an import whose raw path is a
-                // key of the orchestrator's hostModules map (a declaration
-                // file that is not a spec stdlib module — host-module-abi
-                // D5, the same classification the LuaJIT use site builds)
-                // is a host-module import. Its declared function exports
-                // emit per-alias wrapper methods with load-time presence
-                // checks and call-time boundary checks; ISSUE-0303
-                // (jvm-v12-host-abi-completion D1/D4; ISSUE-0570 lifts
-                // class-element arrays onto the wrapper seam) lifts the
-                // declared array/function/class shapes onto those
-                // wrappers and the synthesized shared records. Declared
-                // exports with shapes the extended boundary still
-                // rejects (table carriers and arrays whose element —
-                // through nullable/nested-array recursion — is a class
-                // other than a declared host class; bytes parameters
-                // and returns ride the shared $DealRt.Bytes carrier) are
-                // E6000 at the import statement, never silently
-                // miscompiled.
+
                 Map<String, Type> hostExports = hostModules.get(imp.modulePath());
                 if (hostExports != null) {
                     if (validateHostExports(imp.modulePath(), hostExports,
@@ -2923,20 +1638,13 @@ public final class JvmBackend {
                 moduleClasses.putIfAbsent(cd.name(), cd);
             } else if (stmt instanceof ExportDeclaration ed
                     && ed.declaration() instanceof ClassDeclaration cd) {
-                // ISSUE-0109: an exported class emits the same generated
-                // nested class as a local one; the export only adds it to
-                // the module type, which importers reference through the
-                // emitting module's class.
+
                 moduleClasses.putIfAbsent(cd.name(), cd);
                 if (cd.isJsonable()) jsonableClasses.add(cd);
             }
         }
         this.moduleStatements = List.copyOf(statements);
-        // ISSUE-0301 D4: pre-register the orchestrator's collected
-        // project-wide shape set now that the pre-scan populated
-        // moduleClasses and importAliases — the entry module's shared
-        // $DealRt scope then carries every shape any module references,
-        // in the deterministic collection order.
+
         for (Type shape : collectedShapes) {
             registerCollectedShape(shape);
         }
@@ -2965,11 +1673,7 @@ public final class JvmBackend {
         indent++;
         emitRuntimeSupport();
         emitHostBindings();
-        // The shared JSON runtime serves both the @jsonable helpers and
-        // the std/json stdlib boundary (ISSUE-0302): a module that
-        // imports std/json emits the parser/stringifier helpers even
-        // without @jsonable classes, so json.parse/json.stringify call
-        // sites resolve to real emitted code.
+
         if (!jsonableClasses.isEmpty()
                 || importAliases.containsValue("std/json")) {
             emitJsonRuntimeSupport();
@@ -3032,9 +1736,6 @@ public final class JvmBackend {
         currentModuleStatementIndex = -1;
         moduleLevel = false;
 
-        // ISSUE-0110: the shared descriptor-driven runtime-check seam is
-        // emitted AFTER the module body so every declared class has
-        // appended its descriptor branches to classCheckBranches.
         emitSharedCheckSeam();
 
         if (isEntry) {
@@ -3044,14 +1745,6 @@ public final class JvmBackend {
         indent--;
         emitLine("}");
 
-        // ISSUE-0102 + ISSUE-0301 D1: the entry module's artifact also
-        // declares the SHARED $DealRt runtime scope (a package-private
-        // top-level class in the same file — every emitted artifact
-        // lives in the default package, so all modules reference the one
-        // class and table/function/array/bytes values cross module
-        // boundaries with shared identity). The name starts with $,
-        // which classNameFor can never produce (sanitizeSegment maps $
-        // to _), so no module class can collide.
         if (emitSharedTable) {
             emitSharedScope();
         }
@@ -3131,32 +1824,6 @@ public final class JvmBackend {
         emitAsyncExportHostSurface(program, className);
     }
 
-    /**
-     * Emits the reserved generated async-export host surface of an entry
-     * module (ISSUE-0161, parent D9; "JVM uses a reserved generated
-     * host-export entry over blocking async lowering"): the export
-     * registry, the selection helper, the orchestration entry, the
-     * closed envelope protocol emitters, and the nested
-     * {@code $AsyncExportHost} launcher the production
-     * {@code JvmAsyncExportInvoker} spawns.
-     *
-     * <p>Contract: module initialization (the static block) runs exactly
-     * once at class load; the DEAL {@code main()} export runs exactly
-     * once from the entry dispatch before the export; exactly one export
-     * is selected and invoked once; the completion is checked through the
-     * emitted {@code $check} seam (the canonical {@code RuntimeTypeMatcher}
-     * realization) against the byte-exact return descriptor; the checked
-     * value is encoded over the JSON-encodable surface. A missing, sync,
-     * parameterized, duplicated, non-function, or descriptor-mismatched
-     * export produces the runtime half's pinned host-failure reason —
-     * never a DEAL code. DEAL errors raised by initialization,
-     * {@code main()}, the operation, or the completion matcher propagate
-     * as {@code deal-error} envelopes with code and message unchanged;
-     * value-encoding failures are {@code representation-failure} and every
-     * other failure is {@code infrastructure-failure}. All {@code $}
-     * names are unreachable from {@link #javaName}, so the reserved entry
-     * is never source-visible and no user declaration can collide.</p>
-     */
     private void emitAsyncExportHostSurface(ProgramNode program,
             String className) {
         // The per-export registry rows in source order and the invocation
@@ -3925,13 +2592,7 @@ public final class JvmBackend {
                 if (importAliasStatementIndices.containsKey(id.name())) {
                     importReads.add(id.name());
                 }
-                // A module function used as a VALUE (not a call callee,
-                // sync or async — ISSUE-0099): the wrapper instance
-                // field is assigned at the function's declaration point,
-                // so a module-level call reaching such a read at or
-                // after that point must be rejected (LuaJIT reads the
-                // not-yet-declared global nil at load; Java would read
-                // the uninitialized static field default).
+
                 if (symbols.resolve(id.name()) instanceof Symbol.FunctionSymbol
                         && moduleFunctions.containsKey(id.name())
                         && !isLocallyBound(locals, id.name())) {
@@ -3967,10 +2628,7 @@ public final class JvmBackend {
             case MemberAccessExpr mae ->
                 collectExprRefs(mae.object(), locals, fieldReads,
                     calledFunctions, importReads, functionValueReads);
-            // An await's callee is a direct async call — walked exactly
-            // like any other call so its callee lands in calledFunctions
-            // and its argument reads land in fieldReads/functionValueReads
-            // (ISSUE-0099).
+
             case AwaitExpression aw ->
                 collectExprRefs(aw.callee(), locals, fieldReads,
                     calledFunctions, importReads, functionValueReads);
@@ -3992,12 +2650,7 @@ public final class JvmBackend {
                         calledFunctions, importReads, functionValueReads);
                 }
             }
-            // Array reads/literals/length are value positions (ISSUE-0094):
-            // the array, the index, and every element are reads. Without
-            // these walks a module-level call whose transitive body reads a
-            // later-declared field through an index or an array literal
-            // would slip past the load-time guard and emit a Java forward
-            // reference (LuaJIT fails at load with a nil read).
+
             case IndexExpr idx -> {
                 collectExprRefs(idx.array(), locals, fieldReads,
                     calledFunctions, importReads, functionValueReads);
@@ -4010,10 +2663,7 @@ public final class JvmBackend {
                         importReads, functionValueReads);
                 }
             }
-            // Object literals: property values are value positions (class
-            // construction provided values and table literal values —
-            // ISSUE-0095); class-construction defaults are value positions
-            // too (evaluated per construction at the construction site).
+
             case ObjectLiteralExpr ol -> {
                 for (Property prop : ol.properties()) {
                     collectExprRefs(prop.value(), locals, fieldReads,
@@ -4164,9 +2814,7 @@ public final class JvmBackend {
                     collectExprFieldAssignments(arg, locals, assigned);
                 }
             }
-            // An await's callee is a direct async call: its argument
-            // positions are value positions exactly like any other
-            // call's (ISSUE-0099).
+
             case AwaitExpression aw ->
                 collectExprFieldAssignments(aw.callee(), locals, assigned);
             case MemberAccessExpr mae ->
@@ -4206,21 +2854,6 @@ public final class JvmBackend {
         }
     }
 
-    /**
-     * Collects into {@code indirect} the function-valued bindings
-     * {@code fd}'s body invokes through indirect calls: every call whose
-     * callee has function type and is not a direct module-function call,
-     * a conversion-intrinsic call, or an imported-module member call
-     * (those carry their own load-time analyses — later-function,
-     * intrinsic, and import-hazard checks). Identifier callees contribute
-     * their name; any other function-typed callee contributes
-     * {@link #UNKNOWN_HELD_VALUE}. Used by
-     * {@link #computeTransitiveFieldReads} for
-     * {@link #transitiveIndirectCalls}: a module-level call of a function
-     * whose (transitive) body invokes a wrapper is rejected — the wrapper
-     * value is not statically known to the load-time guard (conservative
-     * until ISSUE-0110).
-     */
     private void collectBodyIndirectCalls(FunctionDeclaration fd,
             Set<String> indirect) {
         for (StatementNode stmt : fd.body().statements()) {
@@ -4367,12 +3000,6 @@ public final class JvmBackend {
         return null;
     }
 
-    /** The name of an import alias declared at or after {@code callIndex}
-     * that {@code functionName}'s body references transitively, or {@code
-     * null}. LuaJIT emits the {@code require} at the import's source
-     * position, so a module-level call of such a function before that
-     * position reads the not-yet-required global and fails at load, while
-     * Java would silently initialize the imported class (ISSUE-0096). */
     private String laterImportRead(String functionName, int callIndex) {
         for (String alias : transitiveImportReads.getOrDefault(functionName,
                 Set.of())) {
@@ -4397,16 +3024,6 @@ public final class JvmBackend {
         return null;
     }
 
-    /** The name of a module function whose VALUE (the wrapper instance
-     * field, assigned at the function's declaration point) is read
-     * transitively by {@code functionName}'s body, declared at or after
-     * {@code callIndex}, or {@code null} (ISSUE-0099). A module-level
-     * call reaching such a read before the declaration point fails at
-     * load under LuaJIT (the function value is a global nil until the
-     * declaration runs); Java would silently read the uninitialized
-     * static field's default value. Defensive in the v1.2 module shape
-     * (E1049 removes module-level statements), like the sibling
-     * load-time guards. */
     private String laterFunctionValueRead(String functionName, int callIndex) {
         for (String fn : transitiveFunctionValueReads.getOrDefault(
                 functionName, Set.of())) {
@@ -4416,56 +3033,6 @@ public final class JvmBackend {
         return null;
     }
 
-    // =========================================================================
-    // Function-body access to later-declared module fields (reads and
-    // writes — write-dominance analysis)
-    // =========================================================================
-    // =========================================================================
-    // Module-level (load-time) indirect calls through function-valued
-    // fields (ISSUE-0098 slice)
-    // =========================================================================
-
-    /**
-     * Returns the rejection description for a module-level indirect call
-     * through the function-typed field {@code fieldName} at the current
-     * module statement index, or {@code null} when the call is safe.
-     * The field's value set at the call site must be statically known —
-     * its initializer (followed transitively through function-valued
-     * fields, including arity-adapter edges, see
-     * {@link #collectPossibleHeldFunctions}) and every module-level
-     * assignment to it before the call site — including assignments
-     * inside the call's own top-level statement (see
-     * {@link #moduleLevelAssignedFunctions}) and assignments hidden in
-     * any value position (object-literal property values and
-     * class-construction defaults, array-literal elements, index
-     * operands — the scan mirrors {@link #collectExprRefs}) — must be
-     * bare module-function or intrinsic identifiers, and every function
-     * the field may hold gets the same load-time guards as a direct
-     * module-level call:
-     * <ul>
-     * <li>its body must not (transitively) read a module field declared
-     * at or after the call site — LuaJIT fails at load reading the nil
-     * field, Java would silently read the field's default value;</li>
-     * <li>it must not (transitively) reach a module function declared at
-     * or after the call site — LuaJIT fails at load reading the
-     * not-yet-assigned function value, Java would hoist the method;</li>
-     * <li>it must not (transitively) use an import alias declared at or
-     * after the call site — LuaJIT emits the require at the import's
-     * source position and fails at load reading the not-yet-required
-     * global, Java would silently initialize the imported class;</li>
-     * <li>its body must not (transitively) invoke a function-valued
-     * binding (a module field, local, or parameter) through an indirect
-     * call — the invoked wrapper's value is not statically known to
-     * this guard, so the held function's load-time hazards are not
-     * analyzable: LuaJIT fails at load when the invoked function
-     * reaches a not-yet-declared value, Java would silently run the
-     * hoisted method (conservative until ISSUE-0110).</li>
-     * </ul>
-     * A module-level call of another function executed before the read
-     * is a potential assignment source: its body (transitively) may
-     * assign the field (see {@link #exprAssignedFunctions}), and such an
-     * assignment makes the value set not statically known.
-     */
     private String moduleIndirectCallRisk(String fieldName) {
         // The field's runtime value at the call site is statically known
         // only when its initializer AND every module-level assignment to
@@ -5273,11 +3840,7 @@ public final class JvmBackend {
                 walkDominanceExpr(u.expr(), locals, written, fnDeclIdx,
                     readViolations, writeViolations);
             case CallExpr call -> {
-                // Direct callee identifiers are hoisted function names
-                // (FunctionSymbol — the IdentifierExpr walk skips them);
-                // an INDIRECT callee identifier is a read of a
-                // function-typed field and participates in the
-                // later-field dominance analysis (ISSUE-0098 slice).
+
                 if (call.callee() instanceof IdentifierExpr) {
                     walkDominanceExpr(call.callee(), locals, written,
                         fnDeclIdx, readViolations, writeViolations);
@@ -5287,9 +3850,7 @@ public final class JvmBackend {
                         readViolations, writeViolations);
                 }
             }
-            // An await's callee is a direct async call: its argument
-            // positions are value reads exactly like any other call's
-            // (ISSUE-0099).
+
             case AwaitExpression aw ->
                 walkDominanceExpr(aw.callee(), locals, written, fnDeclIdx,
                     readViolations, writeViolations);
@@ -5313,12 +3874,7 @@ public final class JvmBackend {
                         written.add(name);
                     }
                 } else if (ae.target() instanceof IndexExpr idx) {
-                    // An INDEX target's array and index expressions are
-                    // value positions (ISSUE-0094): a later-declared field
-                    // read there binds to LuaJIT's global nil at call time
-                    // (attempt to index nil) while Java would read the
-                    // initialized static field — a read violation unless a
-                    // write inside the function dominates it.
+
                     walkDominanceExpr(idx.array(), locals, written, fnDeclIdx,
                         readViolations, writeViolations);
                     walkDominanceExpr(idx.index(), locals, written, fnDeclIdx,
@@ -5340,11 +3896,7 @@ public final class JvmBackend {
                         readViolations, writeViolations);
                 }
             }
-            // Object literal property values (class construction provided
-            // values and table literal values) and class-construction
-            // defaults are value positions: a later-declared module field
-            // read there is a forward-field violation exactly like a plain
-            // read (ISSUE-0095).
+
             case ObjectLiteralExpr ol -> {
                 for (Property prop : ol.properties()) {
                     walkDominanceExpr(prop.value(), locals, written, fnDeclIdx,
@@ -5387,25 +3939,7 @@ public final class JvmBackend {
         // deployment map).
         emitLine("static final java.lang.String __SRC = "
             + quoteJavaString(sourcePath == null ? "" : sourcePath) + ";");
-        // Every java.lang reference is fully qualified: DEAL identifiers may
-        // be named System, Math, Double, String, Void, Integer, Character,
-        // RuntimeException, ArithmeticException, … (javaName passes
-        // non-reserved names through unchanged), and an unqualified
-        // reference would bind to the user's field/local instead of
-        // java.lang, producing an artifact javac rejects.
-        // The complete DEALRuntimeError field surface (spec §Host error and
-        // debugging; jvm-canonical-error-snapshot-convergence D2): code and
-        // message are always present; the span group (file/line/column) is
-        // carried together or absent — the explicit absent sentinel is
-        // file=null, line=-1, column=-1 (the sanctioned span-less raise);
-        // expected/actual/frames/cause are populated only from real data,
-        // never fabricated. The two-argument constructor is the explicit
-        // absent-origin path every raise site whose per-site origin literal
-        // has not landed yet uses — and the permanent, sanctioned shape of
-        // the locked time selector's declared-int boundary raise (D5); the
-        // five-argument constructor threads an origin (file/line/column)
-        // into the emitted error object, and the nine-argument constructor
-        // adds the closed optional fields.
+
         emitLine("/** DEAL runtime error: the complete DEALRuntimeError field surface. */");
         emitLine("static final class DealError extends java.lang.RuntimeException {");
         emitLine("    final java.lang.String code;");
@@ -5443,11 +3977,7 @@ public final class JvmBackend {
         emitLine("    }");
         emitLine("}");
         if (int32Mode) {
-            // DEAL int: signed 32-bit under DEAL_V1_2_INT32 (ISSUE-0375
-            // carrier/range switch, jvm-v12-int32-bytes D1). checkInt
-            // narrows any wider/boxed value crossing a declared int
-            // boundary: the signed32 gate raises E8004 BEFORE the
-            // narrowing, so the (int) inside checkInt is never silent.
+
             emitLine("// DEAL int: signed 32-bit under DEAL_V1_2_INT32 (jvm-v12-int32-bytes D1).");
             emitLine("// checkInt gates every wider/boxed value crossing a declared int boundary on");
             emitLine("// [-2147483648, 2147483647] (E8004 before the narrowing, never silent).");
@@ -5469,12 +3999,7 @@ public final class JvmBackend {
             emitLine("static int intSub(int a, int b, java.lang.String oFile, int oLine, int oCol) { try { return java.lang.Math.subtractExact(a, b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }");
             emitLine("static int intMul(int a, int b) { return intMul(a, b, null, -1, -1); }");
             emitLine("static int intMul(int a, int b, java.lang.String oFile, int oLine, int oCol) { try { return java.lang.Math.multiplyExact(a, b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }");
-            // Truncating division/remainder: -2147483648 / -1 overflows the
-            // signed32 range (E8004 via the pre-check); the truncated
-            // remainder -2147483648 % -1 is the in-range 0 — the
-            // spec-v1.2 remainder rule, identical to the retained LuaJIT
-            // math.modf reference shape (ISSUE-0394). The E8004 route is
-            // unpinned and keeps today's text.
+
             emitLine("static int intDiv(int a, int b) { return intDiv(a, b, null, -1, -1); }");
             emitLine("static int intDiv(int a, int b, java.lang.String oFile, int oLine, int oCol) { if (b == 0) throw new DealError(\"E8005\", \"integer division by zero\", oFile, oLine, oCol); if (a == java.lang.Integer.MIN_VALUE && b == -1) throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); return a / b; }");
             emitLine("static int intMod(int a, int b) { return intMod(a, b, null, -1, -1); }");
@@ -5679,17 +4204,7 @@ public final class JvmBackend {
         emitLine("    switch (d) {");
         emitLine("        case \"int\":");
         if (int32Mode) {
-            // ISSUE-0397 I6 (int32-host-int-return): under
-            // DEAL_V1_2_INT32 the declared int host boundary accepts the
-            // integer-family carriers — the boxed int carrier AND the
-            // retained long carrier (the legacy host implementations
-            // return Long). The wider long routes through the signed32
-            // checkInt gate, so an out-of-range host return (2147483648)
-            // raises the pinned E8004 int-range error at the boundary
-            // (host-module-abi D2/D3 "E8004 int range"; the LuaJIT
-            // reference check_int shape) instead of the Integer-only
-            // arm's unreachable range check. Wrong kinds (string, null
-            // on non-nullable, …) still fall through to E8010/E8001.
+
             emitLine("            if (v instanceof java.lang.Integer i) return checkInt(i, oFile, oLine, oCol);");
             emitLine("            if (v instanceof java.lang.Long l) return checkInt(l.longValue(), oFile, oLine, oCol);");
         } else {
@@ -5947,13 +4462,7 @@ public final class JvmBackend {
         emitLine("// descriptor branch can validate a dynamically read function");
         emitLine("// value against its runtime descriptor across module boundaries.");
         emitLine();
-        // ---- DEAL JVM function values (ISSUE-0098 slice) ----
-        // The int / number conversion intrinsics are first-class function
-        // values, wrapped exactly like the Lua backend's runtime function
-        // wrappers for the same seeded signatures (number)->int and
-        // (int)->number. Direct intrinsic calls still route to the inline
-        // intFromNumber / numberFromInt helpers; value uses (assignment,
-        // callback arguments, arity adapters) flow through these wrappers.
+
         String intFnShape = registerWrapperShape(new Type.Func(
             List.of(Type.Number.INSTANCE), Type.Int.INSTANCE));
         String numberFnShape = registerWrapperShape(new Type.Func(
@@ -6218,27 +4727,6 @@ public final class JvmBackend {
         emitLine();
     }
 
-    /** Emits the shared DEAL table runtime class (ISSUE-0102) — one
-     * top-level package-private class per compiled project, declared by
-     * the entry module's artifact. The ordered string-key map is the
-     * JVM form of the Lua backend's table. */
-    /**
-     * Emits the SHARED {@code $DealRt} runtime scope (ISSUE-0301 D1) —
-     * one top-level package-private class per compiled project, declared
-     * by the entry module's artifact (or the standalone single-module
-     * adapter). It carries every cross-module value carrier: the DEAL
-     * table (unchanged, ISSUE-0102), the {@code FnValue} interface and
-     * the per-signature function wrapper classes (D2), the
-     * per-element-shape array wrapper classes (D3), the final
-     * {@code Bytes} wrapper over {@code byte[]} (D6 carrier; the
-     * ISSUE-0158 operations lower to the emitted bytes helpers), and
-     * the synthesized
-     * host-class records (the host-abi lane). Every module references
-     * the SAME class, so carrier values cross module boundaries with
-     * shared identity — exactly like LuaJIT's single value types. The
-     * {@code $} in the name is unreachable from {@link #classNameFor}
-     * (sanitizeSegment maps {@code $} to {@code _}).
-     */
     private void emitSharedScope() {
         emitLine("// Shared DEAL runtime value scope (ISSUE-0102 tables; ISSUE-0301");
         emitLine("// function/array/bytes carriers): one per compiled project,");
@@ -6279,19 +4767,9 @@ public final class JvmBackend {
         emitLine("    // carries the complete canonical descriptor text so signature");
         emitLine("    // checks are byte comparisons across module boundaries.");
         emitLine("    interface FnValue { java.lang.String descriptor(); }");
-        // The zero-argument default-evaluator seam (ISSUE-0544, the E7
-        // realization): every plan record's required-entry evaluator is
-        // a method reference to the declaring module's static evaluator
-        // method — a labelled zero-argument closure over the declaring
-        // module's scope, created at load and never invoked there.
+
         emitLine("    interface Fn0 { java.lang.Object invoke(); }");
-        // The static per-class default-plan entry record (ISSUE-0544,
-        // runtime page D1/D3): one ordered entry per declared field —
-        // {name, canonical descriptor, optional, evaluator?} — with an
-        // evaluator exactly on required-present entries (null on
-        // optional entries). The DefaultRuntimeAbiVersion constant is
-        // pinned compiler-side; the record shape is the ABI's JVM
-        // realization.
+
         emitLine("    static final class DefaultPlanEntry {");
         emitLine("        final java.lang.String name;");
         emitLine("        final java.lang.String descriptor;");
@@ -6318,14 +4796,7 @@ public final class JvmBackend {
         emitLine("    static final class __NumberOrNullArray { java.lang.Double[] data; __NumberOrNullArray(java.lang.Double[] data) { this.data = data; } }");
         emitLine("    static final class __StringOrNullArray { java.lang.String[] data; __StringOrNullArray(java.lang.String[] data) { this.data = data; } }");
         emitLine("    static final class __BooleanOrNullArray { java.lang.Boolean[] data; __BooleanOrNullArray(java.lang.Boolean[] data) { this.data = data; } }");
-        // ISSUE-0160 D1: bytes[] and (bytes | null)[] use CONCRETE
-        // shared carriers over $DealRt.Bytes[] storage — reference
-        // elements (alias-observed writes, reference identity); the
-        // (bytes | null)[] form accepts the DEAL null element (Java
-        // null). Named like the primitive carriers so the pinned
-        // typed read/write helpers and the $checkArray rows key on
-        // them; nested bytes arrays (bytes[][]) still use the generic
-        // __A$[...] wrappers with per-element instance proofs.
+
         emitLine("    static final class __BytesArray { Bytes[] data; __BytesArray(Bytes[] data) { this.data = data; } }");
         emitLine("    static final class __BytesOrNullArray { Bytes[] data; __BytesOrNullArray(Bytes[] data) { this.data = data; } }");
         emitLine("    // The Object-storage base for per-class array wrappers (each");
@@ -6337,30 +4808,13 @@ public final class JvmBackend {
         emitLine("    // same injective encoding as function shapes, so distinct");
         emitLine("    // element types map to distinct classes (ISSUE-0301 D3).");
         for (Type element : refArrayCheckElements) {
-            // ISSUE-0302: the per-element-shape carriers extend the
-            // shared __RefArray base so __jsonAppend serializes every
-            // nested-array wrapper recursively by element type at any
-            // depth (the generic __RefArray branch iterates data and
-            // recurses).
+
             emitLine("    static final class " + refArrayWrapperId(element)
                 + " extends __RefArray { "
                 + refArrayWrapperId(element)
                 + "(java.lang.Object[] data) { super(data); } }");
         }
-        // ISSUE-0303 D4: one synthesized record class per declared
-        // host class — the project-wide union (raw externals specifier
-        // \u2192 class name \u2192 declared fields), emitted once in the
-        // shared scope. The record carries the canonical externals
-        // identity text, per-field storage in declaration order,
-        // presence bits for optional fields, and a constructor matching
-        // the project-class construction shape; per-construction
-        // defaults apply in the parent D5 phase order at the
-        // construction site (emitHostClassConstruction). The identity
-        // field is read structurally by every module's $identityOf, so
-        // nominal checks and $describe reporting work across module
-        // boundaries. A per-class array wrapper extends __RefArray for
-        // host-class element arrays (e.g. the optional peers field of
-        // presence.Config).
+
         for (Map.Entry<String, Map<String,
                 List<HostModuleDeclarations.HostField>>> e
                 : sharedHostClasses.entrySet()) {
@@ -6379,22 +4833,6 @@ public final class JvmBackend {
         }
     }
 
-    /**
-     * Emits one synthesized host-class record inside the shared
-     * {@code $DealRt} scope (ISSUE-0303 D4): the canonical externals
-     * identity text, per-field storage in declared order (optional
-     * fields carry the boxed slot plus a presence flag), and a
-     * constructor in the project-class shape. Field storage types map
-     * through the diagnostic-free shared-scope mappers, so nested
-     * host-class references (cfg.ServerConfig.endpoint) resolve to the
-     * sibling synthesized records, and the per-class array wrapper
-     * extends the shared {@code __RefArray} for host-class element
-     * arrays (the presence fixture's optional peers field). The
-     * {@code $identity} field is read structurally by every module's
-     * {@code $identityOf}, so nominal checks and {@code $describe}
-     * reporting work across module boundaries. The records are never
-     * bound to the Java host's own classes.
-     */
     private void emitHostClassRecord(String specifier, String className,
             List<HostModuleDeclarations.HostField> fields) {
         String simple = hostRecordSimpleName(specifier, className);
@@ -6453,15 +4891,7 @@ public final class JvmBackend {
             }
         }
         emitLine("        }");
-        // Per-optional-field write helpers (the project-class __optSet$
-        // analog — ISSUE-0102 three-state semantics): a write to an
-        // optional field stores the boxed/nullable slot AND sets the
-        // presence flag, so has() observes the write exactly like the
-        // LuaJIT class machinery. Every module's emitAssignmentCore
-        // routes optional host-class field writes through these
-        // instance helpers (the synthesized record's only assignment
-        // seam), and each returns the stored value so the assignment
-        // keeps its DEAL value in value positions.
+
         for (int i = 0; i < storageNames.size(); i++) {
             if (optionalFlags.get(i)) {
                 emitLine("        " + storageTypes.get(i) + " $optSet$"
@@ -6487,55 +4917,6 @@ public final class JvmBackend {
         emitLine("    }");
     }
 
-    /**
-     * Emits the shared descriptor-driven runtime-check seam
-     * (ISSUE-0110; ISSUE-0301 D5 — the canonical RuntimeTypeMatcher
-     * realization over the shared {@code $DealRt} carriers) at the end
-     * of the generated class (after the module body, so every declared
-     * class has appended its branches): ONE emitted
-     * {@code $check(descriptor, value)} helper that every typed boundary
-     * the JVM type system cannot prove routes through, with the expected
-     * type spelled as its canonical {@code RuntimeTypeDescriptor}
-     * ({@code docs/spec-v1.2.md} §Runtime type descriptor format). A
-     * {@code ?} prefix applies {@code check_nullable} (the DEAL null
-     * passes through); the table/scalar rows carry the pinned messages
-     * (check_int parity for
-     * {@code int} — a Long/Integer passes through {@code checkInt}, an
-     * integral
-     * in-range Double converts, NaN/infinity/non-integral raise E8001,
-     * out-of-safe-range raises E8004; {@code number} accepts every Long
-     * and Double like check_number); {@code string} additionally runs
-     * the
-     * v1.2 boundary string validation — an unpaired UTF-16 surrogate
-     * code
-     * unit raises E8001 (spec-v1.2 §JVM value mapping); the {@code bytes}
-     * row delegates to the shared {@code $DealRt.Bytes} carrier
-     * predicate; the {@code [D]} row dispatches through the generated
-     * recursive {@code $checkArray} — the matching per-element-shape
-     * wrapper passes (identity; the {@code [?T]} widening forms keep the
-     * boxed copy / shared-storage conversions the retired gates
-     * performed), an array-mode {@code $DealRt.Table} (the
-     * {@code __jsonTableValue} output) is accepted as the dynamic array
-     * representation with its elements checked recursively in index
-     * order (E8003 {@code array element {i} type mismatch} at the first
-     * failing index), and any other value raises E8001 {@code expected
-     * array}; the function row accepts a {@code $DealRt.FnValue} whose
-     * carried canonical descriptor equals the expected text
-     * byte-for-byte, raises E8010 {@code function signature mismatch:
-     * expected {D}, got {actual}} on any descriptor delta, and E8001
-     * {@code expected function} for a non-wrapper; the class
-     * branches (collected per declared class during
-     * {@link #emitClass})
-     * carry the module-qualified nominal checks; and every other
-     * descriptor raises the deterministic mismatch shape
-     * {@code "expected <descriptor>, got <$describe(v)>"}.
-     *
-     * <p>The name {@code $check} is unreachable from {@link #javaName}
-     * output (user {@code $} escapes to {@code $d}), so no DEAL function,
-     * class, or field can collide with it — the retired
-     * {@code $check<C>}/{@code $check$Table} collision dance disappears
-     * with the per-kind helpers.
-     */
     private void emitSharedCheckSeam() {
         emitLine();
         emitLine("// ---- Shared descriptor-driven runtime-check seam (ISSUE-0110;");
@@ -6763,12 +5144,7 @@ public final class JvmBackend {
         emitLine("if (descriptor.equals(\"[number]\")) { if (v instanceof $DealRt.__NumberArray a) return a; return $dynamicNumberArray(v, \"[number]\", \"number\", oFile, oLine, oCol); }");
         emitLine("if (descriptor.equals(\"[string]\")) { if (v instanceof $DealRt.__StringArray a) return a; return $dynamicStringArray(v, \"[string]\", \"string\", oFile, oLine, oCol); }");
         emitLine("if (descriptor.equals(\"[boolean]\")) { if (v instanceof $DealRt.__BooleanArray a) return a; return $dynamicBooleanArray(v, \"[boolean]\", \"boolean\", oFile, oLine, oCol); }");
-        // ISSUE-0160 D5: the [bytes] row accepts the concrete shared
-        // __BytesArray carrier (identity) and converts an array-mode
-        // $DealRt.Table with the element-level E8003 wrap; the [?bytes]
-        // row below additionally accepts the widening __BytesArray form
-        // with the same storage copy the retired primitive gates
-        // performed.
+
         emitLine("if (descriptor.equals(\"[bytes]\")) { if (v instanceof $DealRt.__BytesArray a) return a; return $dynamicBytesArray(v, \"[bytes]\", \"bytes\", oFile, oLine, oCol); }");
         emitLine(int32Mode
             ? "if (descriptor.equals(\"[?int]\")) { if (v instanceof $DealRt.__IntOrNullArray a) return a; if (v instanceof $DealRt.__IntArray a) { java.lang.Integer[] nd = new java.lang.Integer[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Integer.valueOf(a.data[i]); return new $DealRt.__IntOrNullArray(nd); } return $dynamicIntOrNullArray(v, \"[?int]\", \"?int\", oFile, oLine, oCol); }"
@@ -6816,31 +5192,7 @@ public final class JvmBackend {
         emitLine("static $DealRt.__StringOrNullArray $dynamicStringOrNullArray(java.lang.Object v, java.lang.String arrayText, java.lang.String elemText, java.lang.String oFile, int oLine, int oCol) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.String[] data = new java.lang.String[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.String) $check(\"?string\", a.get(i), oFile, oLine, oCol); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol, elemText, $kindOf(a.get(i)), null, null); } } return new $DealRt.__StringOrNullArray(data); } throw new DealError(\"E8001\", \"expected array\", oFile, oLine, oCol, arrayText, $kindOf(v), null, null); }");
         emitLine("static $DealRt.__BooleanOrNullArray $dynamicBooleanOrNullArray(java.lang.Object v) { return $dynamicBooleanOrNullArray(v, \"[?boolean]\", \"?boolean\", null, -1, -1); }");
         emitLine("static $DealRt.__BooleanOrNullArray $dynamicBooleanOrNullArray(java.lang.Object v, java.lang.String arrayText, java.lang.String elemText, java.lang.String oFile, int oLine, int oCol) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.Boolean[] data = new java.lang.Boolean[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.Boolean) $check(\"?boolean\", a.get(i), oFile, oLine, oCol); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol, elemText, $kindOf(a.get(i)), null, null); } } return new $DealRt.__BooleanOrNullArray(data); } throw new DealError(\"E8001\", \"expected array\", oFile, oLine, oCol, arrayText, $kindOf(v), null, null); }");
-        // Host-boundary array validation (ISSUE-0303 D2): the host is
-        // exactly the producer whose values the boundary must not trust
-        // by construction — a Java host implementation can construct an
-        // element-mismatched wrapper (e.g. a __StringArray whose data
-        // carries a Java null) and the identity-only $checkArray fast
-        // path would let it cross. $hostCheckArray normalizes the
-        // carrier through the shared $check rows (typed wrapper
-        // identity, the [?T] widening conversions, the dynamic
-        // array-mode Table conversion) and then iterates the wrapper's
-        // elements against the element descriptor through the $check
-        // element row, raising E8003 "array element {i} type mismatch"
-        // at the first failing index — the boundary seams
-        // (__hostCheck/__hostParamCheck) wrap that failure as the
-        // pinned E8010 "parameter {i} type mismatch" / "return value 1
-        // type mismatch" (never an internal E8001/E8003 crossing the
-        // boundary), exactly the LuaJIT check_array -> check_type
-        // reference shape. The ISSUE-0570 class-element rows validate
-        // the $HostArr$ carrier's elements through the nominal record
-        // identity: a foreign-identity element raises E8001 "expected
-        // instance of ..." (the seams propagate it unchanged — the
-        // class-typed identity rule) and a wrong-kind element raises
-        // E8003 (wrapped E8010 by the seams). A descriptor without a
-        // generated row (a class-array descriptor whose carrier $check
-        // gates in its own branches) falls through with the carrier
-        // already validated.
+
         emitLine("static java.lang.Object $hostCheckArray(java.lang.String descriptor, java.lang.Object v) { return $hostCheckArray(descriptor, v, null, -1, -1); }");
         emitLine("static java.lang.Object $hostCheckArray(java.lang.String descriptor, java.lang.Object v, java.lang.String oFile, int oLine, int oCol) {");
         indent++;
@@ -6864,11 +5216,6 @@ public final class JvmBackend {
         indent--;
         emitLine("}");
     }
-
-    // =========================================================================
-    // Function-value wrappers (ISSUE-0098 slice; shared $DealRt carriers
-    // — ISSUE-0301 runtime value surface)
-    // =========================================================================
 
     /**
      * Registers the wrapper class for a function signature and returns
@@ -6895,13 +5242,7 @@ public final class JvmBackend {
         // same signature must produce the same shape id.
         f = normalizeLocalClassIdentities(f);
         String id = fnShapeId(f);
-        // The invoke signature is built through the DIAGNOSTIC-FREE
-        // mapper: pre-registration of the orchestrator's collected
-        // shape set must never invent an E6000, and an unrepresentable
-        // signature (table | null positions and host-class carriers
-        // inside the signature) keeps its E6000 at the call site,
-        // never a broken wrapper class. Bytes carriers are
-        // representable (ISSUE-0160).
+
         if (!isRepresentableSignature(f)) return null;
         if (emittedWrapperShapes.add(id)) {
             StringBuilder body = new StringBuilder();
@@ -6957,15 +5298,6 @@ public final class JvmBackend {
         return "$DealRt." + id;
     }
 
-    /**
-     * True when the signature's invoke method maps every parameter and
-     * the return type to a real Java carrier through the diagnostic-free
-     * mapper — the shape the shared wrapper class can carry without an
-     * E6000. Signatures with table | null positions or classes the
-     * module cannot reference are not representable (their E6000
-     * surfaces at the emission call site, as before the shared-scope
-     * migration); bytes carriers are representable (ISSUE-0160).
-     */
     private boolean isRepresentableSignature(Type.Func f) {
         String ret = silentReturnJavaType(f.returnType());
         if (ret == null) return false;
@@ -7012,20 +5344,12 @@ public final class JvmBackend {
         return arrayWrapperName(element);
     }
 
-    /** A class whose declaring module is a HOST module import of the
-     * current module maps to the shared per-class {@code __RefArray}
-     * subclass emitted beside the synthesized record (ISSUE-0303 D4,
-     * jvm-v12-host-abi-completion): the shared scope can never
-     * reference a host Java class the backend does not emit, so the
-     * wrapper carries the synthesized carrier instead. */
     private String silentClassArrayWrapperName(Type.Class c,
             boolean orNull) {
         String wrapper = orNull
             ? classOrNullArrayWrapperName(c.name())
             : classArrayWrapperName(c.name());
-        // ISSUE-0303 D4: arrays of declared host classes map to the
-        // shared per-class __RefArray subclass emitted beside the
-        // synthesized record.
+
         if (isHostModuleClass(c)) {
             return hostClassArrayWrapperRef(c);
         }
@@ -7041,27 +5365,11 @@ public final class JvmBackend {
         return classNameFor(module) + "." + wrapper;
     }
 
-    /** Diagnostic-free mirror of the class-typed {@link #javaLocalType}
-     * arm (builtin Error, local classes, imported classes). Every
-     * generated class reference is FULLY QUALIFIED with its declaring
-     * module class ({@code Main.$C_C}, {@code Lib.$C_C}): the wrapper
-     * text lives inside the shared {@code $DealRt} scope, where a bare
-     * {@code $C_C} does not resolve. All emitted artifacts share the
-     * default package, so the qualified reference is exactly what javac
-     * compiles. A class of an unknown module (never the case for a
-     * checker-typed collected shape) maps to {@code null}. A class
-     * whose declaring module is a host module import of the current
-     * module maps to the synthesized shared {@code $DealRt} record
-     * (ISSUE-0303 D4, jvm-v12-host-abi-completion): a shared-scope
-     * wrapper may never reference a host Java class the backend does
-     * not emit. */
     private String silentClassJavaType(Type.Class c) {
         if (isBuiltinErrorType(c)) {
             return "java.lang.RuntimeException";
         }
-        // ISSUE-0303 D4: a declared host class references the
-        // synthesized shared record class (emitted once per compiled
-        // project from the project-wide host-class union).
+
         if (isHostModuleClass(c)) {
             return hostRecordJavaRef(c);
         }
@@ -7080,14 +5388,6 @@ public final class JvmBackend {
         return classNameFor(module) + "." + classNameForClass(c.name());
     }
 
-    /** True when the class's carried module identity is an externals
-     * declaration module ({@code ExternalModule(rawImportSpecifier)})
-     * whose raw specifier — or its dotted/raw converted spelling — is
-     * a host module import of the current module
-     * ({@link #hostModules}). Declared host classes map to the
-     * synthesized shared {@code $DealRt} records (ISSUE-0303 D4),
-     * never to a shared-scope wrapper over a never-emitted host Java
-     * class. */
     private boolean isHostModuleClass(Type.Class c) {
         CanonicalModuleIdentity mi = c.identity().moduleIdentity();
         if (mi instanceof CanonicalModuleIdentity.ExternalModule em) {
@@ -7101,12 +5401,7 @@ public final class JvmBackend {
             if (hostModules.containsKey(raw.replace('/', '.'))) {
                 return true;
             }
-            // ISSUE-0303 D4: the project-wide host-class union covers
-            // host classes ANY project module imports — the entry
-            // module's shared-scope pre-registration resolves wrapper
-            // shapes referencing host classes the entry itself does
-            // not import directly (their synthesized records still
-            // exist in the shared scope).
+
             if (sharedHostClasses.containsKey(raw)) {
                 return true;
             }
@@ -7320,40 +5615,15 @@ public final class JvmBackend {
         if (ed.declaration() instanceof FunctionDeclaration fd) {
             emitFunction(fd, true);
         } else if (ed.declaration() instanceof ClassDeclaration cd) {
-            // ISSUE-0109: an exported class emits the same generated
-            // nested class and nominal-check helper as a local class
-            // (spec-v1.2 §Export forms: "Exporting a class exports class
-            // metadata, not a constructor" — the metadata is the class's
-            // generated Java type plus its module-qualified identity
-            // string, which importers consume directly).
+
             emitClass(cd);
         } else {
             unsupported("this export form", ed.span());
         }
     }
 
-    /**
-     * Emits the load-time trigger for a project-module import (ISSUE-0096):
-     * a {@code static { <Class>.__init$(); }} block at the import
-     * statement's source position. Invoking a static method of a class
-     * triggers that class's initialization (JLS §12.4.1), which runs the
-     * imported module's load-time statements — exactly where LuaJIT runs
-     * {@code require} for the import. The trigger is emitted even when the
-     * alias is never used, so the imported module's load-time side effects
-     * are never silently dropped. Stdlib imports have no trigger (the
-     * builtins have no require-time side effects in the slice — ISSUE-0097
-     * extends this from {@code std/console} to the other supported stdlib
-     * modules).
-     */
     private void emitImportTrigger(ImportDeclaration id) {
-        // ISSUE-0100: a host-module import emits a load-time
-        // {@code static { __hostLoad$<alias>(); }} block at the import
-        // statement's source position — the JVM analog of LuaJIT's
-        // {@code __rt.load_host("<raw path>", ...)} require. The block
-        // runs the reflection presence check for every declared export
-        // (missing host class or missing declared export → E8011, a
-        // load-time error), exactly where LuaJIT raises the load-time
-        // E8011 for a missing declared export.
+
         String raw = hostAliases.get(id.alias());
         if (raw != null) {
             emitLine("static {");
@@ -7375,10 +5645,6 @@ public final class JvmBackend {
         indent--;
         emitLine("}");
     }
-
-    // =========================================================================
-    // Host modules (ISSUE-0100): the JVM host ABI slice
-    // =========================================================================
 
     /**
      * Emits the host-module binding section once per generated class,
@@ -7449,13 +5715,7 @@ public final class JvmBackend {
                 }
             }
         }
-        // ISSUE-0307 gate closure: the per-export first-class
-        // function-value carrier fields (the alias-as-value shape — a
-        // host function export read as a VALUE yields the stable shared
-        // wrapper instance whose invoke delegates to the emitted
-        // wrapper method, so the identical argument/async/boundary
-        // checks run on the indirect call). Registration here is
-        // idempotent with the project-wide shape pre-registration.
+
         for (Map.Entry<String, String> e : hostAliases.entrySet()) {
             String alias = e.getKey();
             Map<String, Type> exports = hostModules.get(e.getValue());
@@ -7519,33 +5779,11 @@ public final class JvmBackend {
      * {@link #pendingAwaitCalleeSpan}. */
     private ExpressionNode pendingAwaitCallee;
 
-    /** Emitted name of the per-export first-class function-value carrier
-     * field ({@code $host$<alias>$<fn>$fn}) — a shared {@code $DealRt}
-     * wrapper instance whose {@code invoke} delegates to the emitted
-     * wrapper method (ISSUE-0307 gate closure: the alias-as-value
-     * shape). The {@code $host$} prefix is reserved — {@link #javaName}
-     * can never produce it (DEAL identifiers cannot contain
-     * {@code $}), so no user binding collides. */
     private String hostFnValueFieldName(String alias, String exportName) {
         return "$host$" + javaName(alias) + "$" + javaName(exportName)
             + "$fn";
     }
 
-    /**
-     * Emits the per-export first-class function-value carrier field
-     * (ISSUE-0307 gate closure): a {@code host.fetchValue} member read
-     * used as a VALUE yields this stable wrapper instance, so
-     * {@code op === host.fetchValue} holds across reads exactly like
-     * LuaJIT's single wrapped module-table entry, and every indirect
-     * call through the value dispatches the identical emitted wrapper
-     * method — argument checks (E8010), the async operation shape check
-     * (E8010), the blocking join, and the declared return/completion
-     * check (E8010/E8001) run on the same path the direct call uses.
-     * The invoke body only reads the cached {@code Method} field at
-     * call time, so the field initializer is safe before the import's
-     * load-time static block has run (the wrapper method is only ever
-     * invoked after module load).
-     */
     private void emitHostFnValueField(String alias, String exportName,
                                       Type.Func f, String shape) {
         StringBuilder body = new StringBuilder();
@@ -7611,29 +5849,6 @@ public final class JvmBackend {
         return "$hostDefaults$" + javaName(alias) + "$" + javaName(className);
     }
 
-    /**
-     * Registers the shared-seam branches for one declared host class
-     * (ISSUE-0303 D4; ISSUE-0570 adds the class-element array rows):
-     * the emitted {@code $check(descriptor, v)} helper accepts exactly
-     * the synthesized shared record class and raises E8001 with the
-     * pinned expected/got identity messages for a foreign-identity or
-     * non-class value — the same branch shape {@link #emitClass}
-     * appends for project classes. The class-element ARRAY descriptors
-     * ({@code [<identity>]} / {@code [?<identity>]}) dispatch on the
-     * shared per-class {@code $HostArr$} {@code __RefArray} carrier
-     * (the single wrapper serving both the plain and nullable-element
-     * shapes; a wrong carrier raises E8001 {@code expected array} and
-     * an array-mode {@code $DealRt.Table} converts with element-level
-     * E8003), and the host-boundary {@code $hostCheckArray} rows
-     * re-check the carrier's elements (a Java host can construct the
-     * wrapper with junk elements, so the boundary never trusts it by
-     * construction): a wrong-kind element raises E8003 (the boundary
-     * seams wrap it as the pinned E8010 parameter/return mismatch) and
-     * a foreign-identity element raises the nominal E8001
-     * {@code expected instance of ...} which the boundary seams
-     * propagate unchanged — the class-typed identity rule (D4)
-     * extended to class elements. Registered once per class identity.
-     */
     private void registerHostClassCheckBranch(Type.Class c) {
         String identity = classCheckDescriptor(c);
         if (!emittedHostClassBranches.add(identity)) return;
@@ -7648,12 +5863,7 @@ public final class JvmBackend {
             + quoteJavaString(identity) + ", actualIdentity, null, null);");
         classCheckBranches.add("    throw new DealError(\"E8001\", \"expected class instance\", oFile, oLine, oCol, \"class\", $kindOf(v), null, null);");
         classCheckBranches.add("}");
-        // ISSUE-0570: the class-element array descriptors in the shared
-        // seam — [<identity>] and [?<identity>] dispatch on the shared
-        // per-class $HostArr$ carrier (the same branch shape emitClass
-        // appends for project-class arrays: carrier identity, an
-        // array-mode $DealRt.Table converted element-wise with E8003 at
-        // the first failing index, E8001 "expected array" otherwise).
+
         classCheckBranches.add("if (descriptor.equals("
             + quoteJavaString("[" + identity + "]") + ")) {");
         classCheckBranches.add("    if (v instanceof " + arr + " a) return a;");
@@ -7686,16 +5896,7 @@ public final class JvmBackend {
         classCheckBranches.add("    }");
         classCheckBranches.add("    throw new DealError(\"E8001\", \"expected array\", oFile, oLine, oCol, descriptor, $kindOf(v), null, null);");
         classCheckBranches.add("}");
-        // The host-boundary element re-check rows (ISSUE-0570): the Java
-        // host can construct the $HostArr$ wrapper with junk elements,
-        // so $hostCheckArray re-validates every element through the
-        // nominal record identity. A foreign-identity element raises the
-        // pinned E8001 "expected instance of ..." (the seams propagate
-        // it unchanged — the class-typed identity rule); a wrong-kind
-        // element (or a null element in the plain C[] shape) raises
-        // E8003, which the boundary seams wrap as E8010
-        // "parameter {i} type mismatch" / "return value 1 type
-        // mismatch".
+
         hostRefArrayCheckBranches.add("if (descriptor.equals("
             + quoteJavaString("[" + identity + "]") + ")) {");
         hostRefArrayCheckBranches.add("    " + arr + " w = (" + arr + ") a;");
@@ -7724,24 +5925,6 @@ public final class JvmBackend {
         hostRefArrayCheckBranches.add("}");
     }
 
-    /**
-     * Emits the load-time presence-check method for one host import alias
-     * (ISSUE-0100, spec \u00a7Host ABI): the host module runtime object must
-     * expose every declared export (missing \u2192 load-time error), and extra
-     * host exports are ignored. The JVM host module object is a Java class
-     * (named {@link #classNameFor} of the module path) whose static
-     * methods are the exports: {@code Class.forName} loads it (missing
-     * class \u2192 E8011), and {@code getDeclaredMethod} with the
-     * descriptor-derived parameter classes validates each declared export
-     * (missing or signature-mismatched method \u2192 E8011). Declared host
-     * class exports capture the host's mandatory {@code <C>_defaults}
-     * map (missing or non-map \u2192 E8011) — the synthesized record
-     * construction depends on it (ISSUE-0303 D4). Only declared exports
-     * are ever looked up, so extra methods on the host class are
-     * structurally dropped. The cached {@code Method} values make the
-     * wrapper calls re-execute the load-time validation result without
-     * repeating the lookup.
-     */
     private void emitHostLoadMethod(String alias, String raw,
                                     Map<String, Type> exports) {
         String clsName = classNameFor(raw);
@@ -7783,31 +5966,6 @@ public final class JvmBackend {
         emitLine("}");
     }
 
-    /**
-     * Emits the wrapper method for one declared host function export
-     * (ISSUE-0100; ISSUE-0303 D1\u2013D3). The wrapper's parameters are
-     * {@code java.lang.Object} — every argument is runtime-checked at
-     * the call against the declared parameter descriptor (the
-     * {@code HOST_PARAMETER} boundary, common-semantic-lowering-layer
-     * D13): scalar/string/nullable mismatches, array carrier/element
-     * mismatches, and function descriptor deltas all raise E8010
-     * {@code parameter {i} type mismatch} (never E8001/E8003 from the
-     * boundary); class-typed parameters validate nominal identity
-     * (E8001 for a foreign identity); a typed table read materializing
-     * a host argument yields the raw value, so the boundary check here
-     * is the only check (the corpus's read-site deferral shape). The
-     * checked values cross to the host method reflectively — arrays as
-     * the shared wrapper, function values as the typed {@code $DealRt}
-     * wrapper (no lambda conversion), class values as the synthesized
-     * record, Java null as the DEAL null on nullable parameters — and
-     * the return value is checked against the declared return
-     * descriptor on every call (E8010 wrong kind incl. Java null
-     * crossing non-nullable; E8004 int range; unpaired surrogates;
-     * array carrier/elements; function-typed returns are never
-     * wrapped — a properly wrapped {@code $DealRt.FnValue} with a
-     * byte-equal descriptor passes; nullable returns accept Java null;
-     * class returns validate nominal identity with E8001).
-     */
     private void emitHostWrapperMethod(String alias, String raw,
                                        String exportName, Type.Func f) {
         Type ret = f.returnType();
@@ -7949,25 +6107,6 @@ public final class JvmBackend {
         };
     }
 
-    /**
-     * Validates every declared export of a host module against the
-     * supported shapes (ISSUE-0100; ISSUE-0303 D1/D4 lifts the
-     * array/function/class shapes — jvm-v12-host-abi-completion;
-     * ISSUE-0570 lifts class-element arrays in wrapper positions).
-     * Supported: function exports whose parameters and returns are
-     * int/number/boolean/string/bytes/null, arrays of supported element
-     * shapes, function types, declared host classes, and their nullable
-     * forms — including arrays whose element (through
-     * nullable/nested-array recursion) is a declared host class, which
-     * the wrapper seam carries on the shared per-class
-     * {@code $HostArr$} carrier with the D2 boundary checks; class
-     * exports (declared host classes) whose field types are supported
-     * shapes. Everything else — table carriers, class-element arrays
-     * whose class is not a declared host class, and class-typed
-     * positions naming anything but a declared host class — is an
-     * E6000 at the import statement, never a silently miscompiled
-     * artifact. Returns true when every declared export is supported.
-     */
     private boolean validateHostExports(String raw, Map<String, Type> exports,
                                         Span span) {
         boolean ok = true;
@@ -8023,31 +6162,6 @@ public final class JvmBackend {
         return ok;
     }
 
-    /** True when the declared shape is one the extended host boundary
-     * can validate (ISSUE-0303 D1; ISSUE-0570 lifts class-element
-     * arrays in wrapper positions): primitives/string/null, declared
-     * host classes, arrays of supported elements, function signatures
-     * over supported shapes, and their nullable forms. Table carriers
-     * stay out (E6000); bytes parameters/returns ride the shared
-     * {@code $DealRt.Bytes} carrier (ISSUE-0160 D5). C FFI host
-     * entries stay E6003.
-     *
-     * <p>{@code classArraysSupported} distinguishes the two positions
-     * the gate serves. Function parameters/returns pass {@code false}:
-     * arrays whose element (through nullable/nested-array recursion)
-     * is a DECLARED host class join the wrapper seam on the shared
-     * per-class {@code $DealRt.$HostArr$} {@code __RefArray} carrier
-     * emitted beside the synthesized record (the single wrapper serves
-     * both the {@code C[]} and {@code (C | null)[]} shapes — the
-     * ISSUE-0570 acceptance remediation, jvm-v12-host-abi-completion
-     * D1's blanket gate removal); any other class element still has no
-     * wrapper-seam carrier there and the shape is an import-time E6000,
-     * never a silently miscompiled artifact. Synthesized host-class
-     * record FIELDS pass {@code true}: their storage maps through
-     * {@link #hostRecordFieldJavaType} onto the per-class
-     * {@code $DealRt.$HostArr$...} {@code __RefArray} wrapper emitted
-     * beside the record (the presence fixture's
-     * {@code peers?: Config[]} field). */
     private boolean hostShapeSupported(Type t,
             boolean classArraysSupported) {
         if (t instanceof Type.Null) return true;
@@ -8056,13 +6170,7 @@ public final class JvmBackend {
         }
         if (t instanceof Type.Array a) {
             if (!classArraysSupported) {
-                // ISSUE-0570: declared-host-class element arrays join
-                // the wrapper seam (the shared per-class $HostArr$
-                // carrier emitted beside the synthesized record); any
-                // other class element has no wrapper-seam carrier —
-                // fail the shape closed at the import instead of
-                // publishing an artifact javac rejects after CLI
-                // success.
+
                 Type elem = a.element();
                 Type elemInner = elem instanceof Type.Nullable en
                     ? en.inner() : elem;
@@ -8092,13 +6200,6 @@ public final class JvmBackend {
         };
     }
 
-    /**
-     * True when the class is a declared host-class export of a host
-     * module this module imports (ISSUE-0303 D4): its carried identity
-     * is an externals projection whose raw specifier keys
-     * {@link #hostModules} AND the export map carries the class under
-     * its name.
-     */
     private boolean isDeclaredHostClass(Type.Class c) {
         if (!isHostModuleClass(c)) return false;
         String specifier = hostSpecifierOf(c);
@@ -8164,10 +6265,6 @@ public final class JvmBackend {
         return null;
     }
 
-    /** Java parameter type for a host wrapper parameter (ISSUE-0303
-     * D2): every parameter is {@code java.lang.Object} — the wrapper
-     * checks each argument against the declared descriptor at the call,
-     * so no statically-typed signature can mask the boundary error. */
     private String hostParamJavaType(Type t) {
         return "java.lang.Object";
     }
@@ -8196,13 +6293,7 @@ public final class JvmBackend {
                 : record + ".class";
         }
         return switch (inner) {
-            // ISSUE-0307 gate closure: a nullable primitive parameter
-            // resolves its class literal as the BOXED reference
-            // (spec-v1.2 §JVM value mapping: T | null -> the boxed
-            // reference; Java null is the DEAL null), so the load-time
-            // export check matches the declared host shape — the
-            // pre-closure stripping resolved ?int as the primitive
-            // int.class and rejected the boxed host carriers.
+
             case Type.Int ignored -> t instanceof Type.Nullable
                 ? (int32Mode ? "java.lang.Integer.class"
                     : "java.lang.Long.class")
@@ -8251,16 +6342,6 @@ public final class JvmBackend {
         };
     }
 
-    /** The shared {@code $DealRt} synthesized record class simple name
-     * for one declared host class (ISSUE-0303 D4: deterministic from
-     * the externals specifier and the class name — single emission
-     * point in the shared scope, never bound to the Java host's own
-     * classes). The name derives from the raw (slash) spelling of the
-     * externals specifier, so the host triplets' hand-written
-     * {@code $DealRt.$Host$...} references and every emitted reference
-     * — including the class-identity specifier's dotted typing-name
-     * projection of the corpus externals-identity convention —
-     * resolve to the one synthesized record class. */
     static String hostRecordSimpleName(String specifier,
                                        String className) {
         return "$Host$" + escapedIdentifier(
@@ -8293,17 +6374,6 @@ public final class JvmBackend {
         return "$DealRt.$HostArr$" + escapedIdentifier(specifier) + "$"
             + javaName(c.name());
     }
-
-    // Host-boundary descriptors reuse the canonical ISSUE-0110 static
-    // {@link #typeDescriptor(Type)} emitter — the spec
-    // {@code RuntimeTypeDescriptor} spelling used for load-time
-    // validation messages and the call-time dispatch inside
-    // {@code __hostCheck} (the same descriptor conventions the LuaJIT
-    // host ABI uses).
-
-    // =========================================================================
-    // Classes (ISSUE-0095: local classes and nominal checks)
-    // =========================================================================
 
     /** The emitted Java name of the generated class for DEAL class
      * {@code name}. The {@code $C_} prefix is unreachable from
@@ -8388,46 +6458,10 @@ public final class JvmBackend {
                 return module;
             }
         }
-        // ISSUE-0301 shared-scope emission: a collected shape may
-        // reference a class whose declaring module this backend
-        // instance (the entry) does not import — its own
-        // importAliases/importedClasses maps cannot name it. Resolve
-        // through the compilation-wide identity surface the
-        // orchestrator's collection seam built (canonical class
-        // identity → declaring module path) instead of the entry's
-        // direct imports.
+
         return sharedClassDeclarations.get(cls.identity());
     }
 
-    // =========================================================================
-    // The shared JVM type-descriptor emitter and runtime-check seam
-    // (ISSUE-0110)
-    // =========================================================================
-
-    /**
-     * The ONE JVM type-descriptor emitter (ISSUE-0110, ISSUE-0301
-     * descriptor seam; descriptor-identity-propagation D2): every
-     * {@link Type}&rarr;text production in the backend uses this single
-     * public static emitter, which delegates to the one
-     * {@link CanonicalRuntimeTypeDescriptor#encode(Type)} service over
-     * the identity-carrier projection index (the static
-     * STATIC_DESCRIPTOR_INDEX — descriptorTextFor projects from the
-     * identity carriers, so one empty-classification index serves every
-     * identity) — the canonical runtime-descriptor grammar ({@code [D]}
-     * arrays, {@code ?D} nullables, {@code bytes}, exact
-     * {@code async? (...) -> D} functions) with class atoms projected
-     * byte-for-byte from the carried canonical identity
-     * ({@code @$builtin/Error}, {@code @<configuredRootText>/...},
-     * {@code @$external/<specifier>/<ClassName>}) — never a legacy
-     * spelling ({@code T[]}, {@code T|null}, bare class names). No
-     * second {@code Type}&rarr;text producer exists in the backend.
-     *
-     * <p>The retired per-producer switch's {@code Type.Error} arm is
-     * removed with it: the internal checker sentinel has no canonical
-     * descriptor, so {@code encode} fails closed for it (the pinned
-     * internal invariant violation — never emitted, never an
-     * artifact).</p>
-     */
     public static String typeDescriptor(Type t) {
         if (t == null) return "null";
         return STATIC_DESCRIPTORS.encode(t);
@@ -8465,16 +6499,6 @@ public final class JvmBackend {
         return identityIndex.descriptorTextFor(cls.identity());
     }
 
-    /**
-     * The element descriptor a table-read array target dispatches on
-     * ({@code [int]}, {@code [string]}, {@code [?int]}, {@code [bytes]},
-     * {@code [?bytes]}, {@code [@module/Name]}, {@code [?@module/Name]},
-     * …), or {@code null} for an element type the slice does not
-     * support at the untyped boundary (nested arrays, function arrays,
-     * table elements — the caller records the E6000). Mirrors the
-     * element-type surface of the retired per-wrapper gates exactly;
-     * bytes elements joined with ISSUE-0160.
-     */
     private String elementCheckDescriptor(Type element) {
         return switch (element) {
             case Type.Int ignored -> "int";
@@ -8496,17 +6520,6 @@ public final class JvmBackend {
         };
     }
 
-    /**
-     * The emitted Java class name of the module declaring the imported
-     * class {@code cls} ({@code "lib" → "Lib"}), or {@code null} with an
-     * E6000 recorded when the module is not an imported compiled project
-     * module of this module or its class declaration is unavailable
-     * (ISSUE-0109). The module path recorded in {@code Type.Class} is
-     * the checker's declaring-module path — the same value
-     * {@link #importAliases} and the orchestrator's
-     * {@code importedClasses} map carry — so the guard is exact, never
-     * a bare-name guess.
-     */
     private String importedClassModuleRef(Type.Class cls, Span span) {
         String module = declaringModulePath(cls);
         Map<String, ClassDeclaration> decls = module == null
@@ -8548,13 +6561,7 @@ public final class JvmBackend {
      * The {@code $Array$} prefix is unreachable from {@link #javaName}
      * output for the same reason as {@code $C_} (every user {@code $}
      * escapes to {@code $d}). */
-    /**
-     * ISSUE-0102: the emitted wrapper class name for an array of an
-     * IMPORTED class — the declaring module's per-class array wrapper
-     * ({@code Lib.$Array$C}), or {@code null} when the class is not an
-     * imported compiled project module's class (the caller records the
-     * E6000).
-     */
+
     private String importedArrayWrapperName(Type.Class c) {
         String module = declaringModulePath(c);
         Map<String, ClassDeclaration> decls = module == null
@@ -8566,13 +6573,6 @@ public final class JvmBackend {
         return classNameFor(module) + "." + classArrayWrapperName(c.name());
     }
 
-    /**
-     * The emitted read/write helper reference for a class array element
-     * ({@code read} → {@code $read$C}, {@code readOrNull} →
-     * {@code $readOrNull$C}, {@code write} → {@code $write$C},
-     * {@code writeOrNull} → {@code $writeOrNull$C}), qualified by the
-     * declaring module's class for an imported class (ISSUE-0109).
-     */
     private String classArrayHelper(Type.Class cls, String kind, Span span) {
         if (isLocalClassType(cls)) {
             if (localClassJavaType(cls, span) == null) return null;
@@ -8638,20 +6638,6 @@ public final class JvmBackend {
         return "$classOrNullArrayWrite$" + javaName(name);
     }
 
-    /** True when a checker-inferred {@code Type.Class} refers to a class
-     * of THIS module — the only classes whose generated Java types and
-     * nominal-check helpers exist in the emitted artifact. The checker
-     * records the declaring module path in the type; a local class's
-     * path is the backend-held {@code modulePath} in the orchestrator,
-     * the {@code sourcePath} in the single-module harnesses (where the
-     * checker types with the source filename while codegen runs with
-     * {@code Main}), or empty for the builtin {@code Error} class. Any
-     * other path is an IMPORTED class (ISSUE-0109: mapped to the
-     * declaring module's emitted class) even when
-     * a same-named local class exists — the bare-name
-     * {@code moduleClasses} lookup alone would silently claim a foreign
-     * value for the local generated class (a broken artifact or a
-     * nominal-identity corruption). */
     private boolean isLocalClassType(Type.Class cls) {
         // v1.2 identity carriage: locality is module-identity equality
         // against the backend-held module path or source path (the
@@ -8700,29 +6686,6 @@ public final class JvmBackend {
         return true;
     }
 
-    /**
-     * Emits a module-level (local or exported — ISSUE-0109) DEAL class
-     * declaration: a
-     * generated nested static class carrying the declared fields plus a
-     * runtime nominal-check helper. Spec v1.1 classes are sealed
-     * records with no methods and no constructors — the only callables in
-     * the module are the functions the earlier slices emit, so a class body
-     * contributes no method surface. Required-present primitive
-     * fields ({@code int}/{@code number}/{@code boolean}/{@code string}
-     * with defaults), required-present nullable primitive/class
-     * fields ({@code f: T | null}), and bytes-bearing sync/async
-     * function-typed fields (ISSUE-0549 wrapper references, nullable
-     * form included) are in scope; optional fields and the other shapes are E6000 — except
-     * on an {@code @jsonable} class, where the JSON serialization slice
-     * additionally supports optional fields (Missing-sentinel storage
-     * with {@code has()} presence checks), table fields (JSON-object
-     * data as {@code $DealRt.Table} values, including array-mode tables for nested
-     * JSON arrays), array, nested-class (local or imported), and
-     * {@code null}-typed fields, and emits the per-class
-     * {@code $jsonFields} descriptor plus the {@code $toJsonValue}/
-     * {@code $fromJsonValue} helpers and the public
-     * {@code C$fromJson}/{@code C$toJson} exports.
-     */
     private void emitClass(ClassDeclaration cd) {
         boolean jsonable = cd.isJsonable();
         String gen = classNameForClass(cd.name());
@@ -8758,17 +6721,7 @@ public final class JvmBackend {
             Type fieldType = resolveTypeNode(cf.type());
             if (fieldType == Type.Error.INSTANCE) return;
             if (jsonable) {
-                // @jsonable field support (the JSON serialization
-                // slice): the prior-slice value types plus their array,
-                // nested class, table, and nullable forms. resolveTypeNode
-                // and javaArrayElementType already gate the array element
-                // support (nested arrays, function arrays, imported-class
-                // element arrays stay E6000). An OPTIONAL field stores its
-                // boxed value (or the DEAL null) in a java.lang.Object
-                // slot guarded by the module's Missing sentinel
-                // ($MISSING) — the spec's Missing-sentinel
-                // representation, which keeps the three states of
-                // {@code f?: T | null} distinguishable.
+
                 if (!isJvmJsonableFieldType(fieldType)) {
                     unsupported("@jsonable class fields of type "
                         + typeName(fieldType) + " (the JVM slice supports "
@@ -8778,29 +6731,14 @@ public final class JvmBackend {
                 }
                 if (fieldType instanceof Type.Table) {
                     if (cf.optional()) {
-                        // An OPTIONAL table field is rejected with an
-                        // honest E6000: its read yields `table | null`,
-                        // a value shape the slice keeps out of its typed
-                        // positions (the ISSUE-0108 boundary, pinned by
-                        // the nullable-table gate). The pre-fix emission
-                        // stored the field as the table class and later
-                        // passed the Missing sentinel into that slot,
-                        // leaving an artifact javac rejected ('Object
-                        // cannot be converted to the table class') after
-                        // the CLI reported success — never that.
+
                         unsupported("optional table fields of @jsonable class '"
                             + cd.name() + "' (the read of '" + cf.name()
                             + "' yields `table | null`, which stays out of "
                             + "the slice's typed positions)", cf.span());
                         return;
                     }
-                    // A plain table field stores the shared
-                    // $DealRt.Table reference and maps JSON objects to
-                    // string-keyed table data. The nullable table forms
-                    // (`table | null`, optional or not) fall through to
-                    // the general E6000 gates below: a `table | null`
-                    // VALUE cannot flow through the slice's typed
-                    // positions (the ISSUE-0108 boundary).
+
                     fieldTypes.add("$DealRt.Table");
                     fieldNames.add(javaName(cf.name()));
                     fieldResolved.add(fieldType);
@@ -8818,12 +6756,7 @@ public final class JvmBackend {
                     continue;
                 }
             } else if (cf.optional()) {
-                // Optional field (ISSUE-0102): reads produce the
-                // declared type | null (the checker wraps it), the Java
-                // representation is the boxed/nullable reference of the
-                // inner type plus a <name>$present flag for has().
-                // Inner types: the four primitives (boxed), string,
-                // local classes, arrays, and tables.
+
                 Type inner = fieldType;
                 if (fieldType instanceof Type.Nullable nn) {
                     inner = nn.inner();
@@ -8844,14 +6777,7 @@ public final class JvmBackend {
                 fieldResolved.add(fieldType);
                 continue;
             } else if (cf.nullable()) {
-                // f: T | null — required-present nullable field
-                // (ISSUE-0108). The parser keeps the WHOLE `T | null`
-                // annotation as the field's type node and sets the
-                // nullable flag, so the resolved type is already
-                // Nullable(T). The inner type must be a primitive or a
-                // LOCAL class (the nullable slice scope); the default is
-                // the DEAL null (LuaJIT's __NULL defaults entry), which
-                // the boxed Java reference holds natively.
+
                 if (!(fieldType instanceof Type.Nullable nn)) {
                     unsupported("nullable class fields of type "
                         + typeName(fieldType), cf.span());
@@ -8864,12 +6790,7 @@ public final class JvmBackend {
                     || nn.inner() instanceof Type.Bytes
                     || (nn.inner() instanceof Type.Class cls
                         && isLocalClassType(cls))
-                    // ISSUE-0549 (async bytes closure): a nullable
-                    // field holding a bytes-bearing function value
-                    // (async(bytes)->bytes or its sync counterpart)
-                    // stores the shared wrapper reference — Java null
-                    // is the DEAL null. Non-bytes function fields stay
-                    // E6000 (the ISSUE-0110 descriptor join).
+
                     || (nn.inner() instanceof Type.Func f
                         && Types.containsBytes(f));
                 if (!innerOk) {
@@ -8889,13 +6810,7 @@ public final class JvmBackend {
                     && !(fieldType instanceof Type.Class cls
                         && isLocalClassType(cls)
                         && !isBuiltinErrorType(cls))
-                    // ISSUE-0549 (async bytes closure): a function-typed
-                    // field whose signature carries bytes anywhere
-                    // (async(bytes)->bytes, (bytes[])->?bytes, and their
-                    // containerized/nested forms — the BytesClosure
-                    // signatures) stores the shared wrapper reference.
-                    // Non-bytes function fields stay E6000 (the
-                    // ISSUE-0110 descriptor join).
+
                     && !(fieldType instanceof Type.Func f
                         && Types.containsBytes(f))) {
                 unsupported("class fields of type " + typeName(fieldType)
@@ -8919,9 +6834,7 @@ public final class JvmBackend {
         for (int i = 0; i < fieldNames.size(); i++) {
             emitLine(fieldTypes.get(i) + " " + fieldNames.get(i) + ";");
             if (fieldOptionalFlags.get(i)) {
-                // Presence flag for has()/delete (ISSUE-0102). The $ in
-                // the name is unreachable from javaName (DEAL identifiers
-                // cannot contain $), so no user field can collide.
+
                 emitLine("boolean " + fieldNames.get(i) + "$present;");
             }
         }
@@ -8956,9 +6869,6 @@ public final class JvmBackend {
         indent--;
         emitLine("}");
 
-        // ISSUE-0102: per-optional-field write helpers — the assignment
-        // keeps its DEAL value in value positions and always sets the
-        // presence flag.
         for (int i = 0; i < fieldNames.size(); i++) {
             if (fieldOptionalFlags.get(i)) {
                 emitLine("static <V> V __optSet$" + gen + "$"
@@ -8973,14 +6883,6 @@ public final class JvmBackend {
             }
         }
 
-        // The runtime nominal check now lives in the shared
-        // descriptor-driven seam (ISSUE-0110): this class appends its
-        // descriptor branches — @<identity> (wrong-class values report
-        // "expected instance of <identity>, got <actual identity>",
-        // non-class values "expected class instance", E8001 in both
-        // shapes — the same semantics the retired per-class $check<C>
-        // helper carried) — to the single emitted
-        // $check(descriptor, value) helper.
         classCheckBranches.add("if (descriptor.equals("
             + quoteJavaString(identity) + ")) {");
         classCheckBranches.add("    if (v instanceof " + gen + " b) return b;");
@@ -8991,18 +6893,6 @@ public final class JvmBackend {
         classCheckBranches.add("    throw new DealError(\"E8001\", \"expected class instance\", oFile, oLine, oCol, \"class\", $kindOf(v), null, null);");
         classCheckBranches.add("}");
 
-        // Class arrays (ISSUE-0108): C[] maps to a per-class __RefArray
-        // subclass ($Array$<C>) and (C | null)[] maps to a DISTINCT
-        // per-class subclass ($ArrayOrNull$<C>) so the two array types
-        // are never the same wrapper — a null-containing (C | null)[]
-        // crossing a C[]-typed boundary must fail the gate (LuaJIT's
-        // check_array raises E8003 "array element N type mismatch" on
-        // the null element; the JVM raises the documented
-        // storage-analog E8001 wrong-wrapper failure instead of letting
-        // the null element cross unvalidated). Both share the
-        // __RefArray Object[] storage and the per-class read/write
-        // helpers carrying the nominal E8001 checks. The identity
-        // strings mirror the nominal check helper above.
         emitLine("static final class " + classArrayWrapperName(cd.name())
             + " extends $DealRt.__RefArray {");
         indent++;
@@ -9017,27 +6907,12 @@ public final class JvmBackend {
             + "(java.lang.Object[] data) { super(data); }");
         indent--;
         emitLine("}");
-        // The per-class array gates also live in the shared seam
-        // (ISSUE-0110): [@<identity>] passes only THIS class's ARRAY
-        // wrapper (the wrapper's Object[] storage plus the write-time
-        // nominal checks already prove every element), and [?@<identity>]
-        // additionally passes a plain C[] wrapper with SHARED Object[]
-        // storage — LuaJIT's check_array validates every element against
-        // check_nullable(C) and returns the SAME table, exactly like the
-        // retired per-class gates. Anything else raises E8001 "expected
-        // array, got ...".
+
         classCheckBranches.add("if (descriptor.equals("
             + quoteJavaString("[" + identity + "]") + ")) {");
         classCheckBranches.add("    if (v instanceof " + classArrayWrapperName(cd.name())
             + " a) return a;");
-        // ISSUE-0302 dynamic boundary (jvm-v12-json-completion D2): an
-        // array-mode $DealRt.Table — the __jsonTableValue output of
-        // json.parse — crosses a C[]-typed table read through the
-        // canonical seam: its elements are checked recursively in index
-        // order with E8003 "array element {i} type mismatch" at the
-        // first failing index (the inner nominal failure is suppressed
-        // exactly like LuaJIT's pcall-wrapped element checks), and a
-        // passing table converts into fresh per-class wrapper storage.
+
         classCheckBranches.add("    if (v instanceof $DealRt.Table t && t.$array() != null) {");
         classCheckBranches.add("        java.util.ArrayList<java.lang.Object> a = t.$array();");
         classCheckBranches.add("        java.lang.Object[] data = new java.lang.Object[a.size()];");
@@ -9133,16 +7008,6 @@ public final class JvmBackend {
             emitJsonablePublicHelpers(cd, gen);
         }
 
-        // ISSUE-0544 (the E7 realization): the published compiler
-        // default plan of this module-level class — the static
-        // per-class plan record ({name, descriptor, optional,
-        // evaluator?} in class source order, the DefaultRuntimeAbiVersion
-        // "1" shape) plus the labelled zero-argument static evaluator
-        // methods. The evaluator methods are created at load and never
-        // invoked there; construction sites and the @jsonable
-        // fromJsonValue phase invoke them exactly once per omitted
-        // required entry per attempt. No published plan (the standalone
-        // entry points) keeps the inline fallback emission.
         CompilerClassDefaultPlan plan = publishedPlanFor(cd);
         if (plan != null) {
             emitDefaultPlanRealization(cd, plan);
@@ -9153,17 +7018,6 @@ public final class JvmBackend {
     // @jsonable class helpers (JSON serialization slice)
     // =========================================================================
 
-    /**
-     * True when a resolved field type of an @jsonable class is supported by
-     * the JVM slice: the prior-slice value types ({@code null}, {@code
-     * boolean}, {@code int}, {@code number}, {@code string}, class) plus
-     * their nullable, array, and nested-class forms. Array ELEMENT support
-     * (nested arrays, function arrays, imported-class element arrays) was
-     * already gated by {@code resolveTypeNode} → {@code
-     * javaArrayElementType}; table-typed fields stay out of slice (their
-     * JSON-object mapping and untyped JSON-shaped table data are a later
-     * slice).
-     */
     private boolean isJvmJsonableFieldType(Type t) {
         return switch (t) {
             case Type.Null ignored -> true;
@@ -9247,13 +7101,6 @@ public final class JvmBackend {
         return "$MISSING";
     }
 
-    /** The ClassDeclaration behind a class type — a local module-level
-     * class or an imported compiled-module class — or {@code null} when
-     * the class is unknown (checker-gated unreachable). The jsonable
-     * optional-field sites (has()/reads/writes/delete) branch on the
-     * result: @jsonable classes use Missing-sentinel storage, every
-     * other class uses the ISSUE-0102 boxed slot plus the presence
-     * flag. */
     private ClassDeclaration classDeclFor(Type.Class cls) {
         if (isLocalClassType(cls)) {
             return moduleClasses.get(cls.name());
@@ -9506,13 +7353,7 @@ public final class JvmBackend {
                     + ") " + eVar + ", oFile, oLine, oCol));");
             }
             case Type.Array innerArr -> {
-                // ISSUE-0302 recursive array serialization (toJson side):
-                // a nested array element converts recursively into a
-                // JSON List of its own converted elements, with FRESH
-                // per-level local names (arr{level}/e{level}) so javac
-                // never sees a redeclaration at any depth. The inner
-                // wrapper reference is the shared per-element-shape
-                // carrier; its data holds the next level's wrappers.
+
                 int level = nextJsonLocalIdx();
                 String innerRef = arrayWrapperName(innerArr.element());
                 if (innerRef == null) {
@@ -9615,13 +7456,7 @@ public final class JvmBackend {
             indent--;
             emitLine("}");
         }
-        // Phase 2: omitted required defaults, in declared-field order,
-        // through the published plan's labelled zero-argument
-        // evaluators (ISSUE-0544) — created at load, invoked exactly
-        // once per attempt, the same per-construction freshness the
-        // constructor path implements. An optional field stays ABSENT
-        // ($MISSING): a declared default on an optional field is
-        // checker-validated metadata that NEVER evaluates (D1).
+
         for (int i = 0; i < types.size(); i++) {
             ClassField cf = cd.fields().get(i);
             emitLine("if (!provided" + i + ") {");
@@ -9658,16 +7493,7 @@ public final class JvmBackend {
                     : javaLocalType(declaredType, cf.span());
                 defaultCode = coerceNullValueCode(defaultCode, def,
                     fieldJava, def.span());
-                // ISSUE-0375 D3 seam (completed by ISSUE-0376): the
-                // default expression is a declared int boundary — a
-                // wider int value (the retained time expression)
-                // crosses through the signed32 checkInt before the
-                // typed field slot (int, java.lang.Integer, or the
-                // Object optional slot); a host int value is already
-                // the range-checked carrier (see
-                // intValueCodeIsWiderOrBoxed). javac never sees a
-                // narrowing mismatch and an out-of-range value
-                // raises exactly E8004.
+
                 defaultCode = adaptIntBoundary(def, defaultCode,
                     declaredType);
             } else {
@@ -9815,13 +7641,7 @@ public final class JvmBackend {
                 emitLine(targetVar + " = cv" + idx + ";");
             }
             case Type.Array a -> {
-                // ISSUE-0302 nested-array decoder javac validity: every
-                // conversion level allocates a FRESH local-name suffix
-                // through the per-method counter, so nested arrays
-                // (int[][] and deeper) never redeclare l{}/a{}/i{}/e{}
-                // inside the enclosing scope (Java forbids shadowing a
-                // local; the pre-fix emission reused the outer level's
-                // suffix and javac rejected the artifact).
+
                 int level = nextJsonLocalIdx();
                 String storage = jsonArrayStorageType(a.element());
                 emitLine("if (!(" + rawVar + " instanceof java.util.List<?> l" + level + ")) return null;");
@@ -10583,18 +8403,6 @@ public final class JvmBackend {
         String javaType = javaLocalType(declaredType, vd.span());
         if (javaType == null) return;
 
-        // ISSUE-0091 rework: emit the initializer BEFORE declaring the
-        // local. The checker binds a self-referencing RHS identifier
-        // (`let x: int = x + 1` in an inner scope) to the ENCLOSING binding
-        // — LuaJIT's `local x = x + 1` reads the outer x — so the RHS must
-        // be emitted in the pre-declaration scope; only then is the
-        // (disambiguated) name registered. A self-reference with no
-        // enclosing binding was already rejected by emitStatement (E6000).
-        // D1/D3: a binding with an explicit declared annotation is a
-        // checked declared boundary — the annotation's own span is the
-        // authoritative origin of every boundary raise the initializer
-        // crosses (the contextual-annotation class: table member reads,
-        // array-element wraps, typed function bindings).
         BoundaryOrigin declaredOrigin = vd.typeAnnotation().isPresent()
             ? originOf(vd.typeAnnotation().get(), artifactFileOf(modulePath))
             : null;
@@ -10609,11 +8417,7 @@ public final class JvmBackend {
             declaredType);
         String visibility = moduleLevel ? "static " : "";
         String javaVar = declareLocal(vd.name(), declaredType);
-        // ISSUE-0102 closure capture: a captured local lowers to a
-        // final cell array at the declaration; every read/write routes
-        // through <var>$c[0] (localJavaName). Module-level fields are
-        // static and never cell-ified (nested functions reference them
-        // directly — shared by construction).
+
         boolean cell = !moduleLevel && isCapturedMapped(javaVar);
         if (cell) {
             javaType = javaType + "[]";
@@ -10661,18 +8465,12 @@ public final class JvmBackend {
         }
     }
 
-    /** True when {@code mapped} is a cell-ified binding of the current
-     * function (ISSUE-0102 closure capture). */
     private boolean isCapturedMapped(String mapped) {
         for (Set<String> frame : capturedMappedStack) {
             if (frame.contains(mapped)) return true;
         }
         return false;
     }
-
-    // =========================================================================
-    // Closure capture analysis (ISSUE-0102)
-    // =========================================================================
 
     /**
      * Collects every name a {@code let}/{@code for (let)}/{@code for-of}
@@ -11016,26 +8814,9 @@ public final class JvmBackend {
     }
 
     private void emitFunction(FunctionDeclaration fd, boolean exported) {
-        // ISSUE-0100: async function declarations are supported through the
-        // blocking lowering the spec permits for JVM backends (spec-v1.2
-        // §Async operation semantics: "A JVM backend may implement async
-        // lowering with virtual threads, blocking calls, futures, or
-        // explicit state machines"). The body emits as a plain static
-        // method: every DEAL async call is awaited immediately (the checker
-        // rejects un-awaited async calls), and a host async call's wrapper
-        // blocks on the returned CompletableFuture, so the body is
-        // synchronous Java with DEAL's observable semantics. ISSUE-0099
-        // adds the await-site completion check for DEAL async calls and
-        // lifts async markers into the ISSUE-0098 wrapper machinery, so
-        // async function VALUES emit the same per-declaration wrapper
-        // field as sync ones (below); async function EXPRESSIONS emit
-        // through the same closure machinery with the async descriptor
-        // marker and blocking bodies (ISSUE-0304).
+
         if (!moduleLevel) {
-            // ISSUE-0102: a block-level function declaration is a fresh
-            // first-class function value at its declaration point (a
-            // cell so self-recursion works, exactly like the Lua
-            // backend's local function binding).
+
             emitBlockFunction(fd);
             return;
         }
@@ -11107,16 +8888,6 @@ public final class JvmBackend {
             return;
         }
 
-        // Emit the function's wrapper instance field right before the
-        // method (ISSUE-0098 slice): a function declaration produces a
-        // first-class typed function value (spec §Function values, calls,
-        // and wrappers) whose invoke delegates to the static method —
-        // the JVM form of the Lua backend's runtime function wrapper.
-        // The field sits at the declaration's source position, so
-        // load-time (static-initializer) reads of a later-declared
-        // function's wrapper are illegal Java forward references and
-        // rejected by emitIdentifier's load-time guard, exactly matching
-        // LuaJIT's declaration-point assignment of function values.
         Symbol fnSym = symbols.resolve(fd.name());
         if (fnSym instanceof Symbol.FunctionSymbol fs
                 && fs.funcType() != null) {
@@ -11149,11 +8920,6 @@ public final class JvmBackend {
             emitLine("};");
         }
 
-        // ISSUE-0102 closure captures: cell-ify every local/parameter a
-        // nested function references (the analysis walks all nested
-        // function expressions and block-level declarations at every
-        // depth). The frame must exist BEFORE the parameter declarations
-        // so declareLocal registers the captured parameter names.
         Set<String> topDeclared = new LinkedHashSet<>();
         collectLocalDeclarations(fd.body().statements(), topDeclared);
         for (Parameter p : fd.params()) topDeclared.add(p.name());
@@ -11245,23 +9011,6 @@ public final class JvmBackend {
         emitLine("}");
     }
 
-    // =========================================================================
-    // Function expressions and block-level functions (ISSUE-0102 closures)
-    // =========================================================================
-
-    /**
-     * Block-level function declaration (ISSUE-0102; ISSUE-0304 async):
-     * a fresh first-class function value at its declaration point, bound
-     * through a one-element cell so the body's self-recursion reads the
-     * binding (a direct {@code final} local self-reference would be an
-     * illegal forward reference in Java). Reads and writes of the
-     * binding route through the cell like any other captured binding.
-     * A block-level {@code async function} declares exactly like the
-     * sync form — the wrapper shape carries the async descriptor marker
-     * ({@link #registerWrapperShape} keys on {@link Type.Func#isAsync})
-     * and the body emits as a plain blocking method whose awaits are
-     * direct blocking calls with the await-site completion check.
-     */
     private void emitBlockFunction(FunctionDeclaration fd) {
         if (capturedMappedStack.isEmpty()) {
             // A module-level static block cannot hold a block-level
@@ -11285,14 +9034,7 @@ public final class JvmBackend {
             paramTypes.add(pt);
         }
         if (!ok) return;
-        // ISSUE-0304 (jvm-v12-async-expressions D2): a block-level async
-        // function declares exactly like the block-level sync form — a
-        // fresh cell plus an anonymous wrapper instance assigned at the
-        // declaration's source position — with the async descriptor
-        // marker on the shared carrier shape. The body emits as a plain
-        // blocking method whose awaits are direct blocking calls with
-        // the await-site completion check (the async-declaration
-        // machinery), so the wrapper's invoke executes it synchronously.
+
         Type.Func funcType = new Type.Func(paramTypes, returnType,
             fd.isAsync());
         String shape = registerWrapperShape(funcType);
@@ -11314,24 +9056,8 @@ public final class JvmBackend {
             fd.params(), fd.body(), returnType, fd.span()) + ";");
     }
 
-    /** A function expression (ISSUE-0102; ISSUE-0304 async): an
-     * anonymous subclass of the signature's wrapper class emitted inline
-     * at the expression position. The body captures enclosing locals
-     * through their cells (the enclosing function's analysis cell-ified
-     * every captured binding), and the body's OWN captured locals
-     * (captured by deeper nested functions) cell-ify in their own frame.
-     * An async function expression emits exactly like the sync form with
-     * the async descriptor marker on the registered wrapper shape and a
-     * blocking body whose awaits run the await-site completion check. */
     private String emitFunctionExpr(FunctionExpr fe) {
-        // ISSUE-0304 (jvm-v12-async-expressions D1): an async function
-        // expression emits exactly like a sync function expression — an
-        // anonymous subclass of the signature's shared wrapper class —
-        // with two async-specific differences: the wrapper's canonical
-        // descriptor carries the async marker (the checker's function
-        // type records fe.isAsync(), so registerWrapperShape produces
-        // the distinct async shape id), and the body's awaits compile as
-        // direct blocking calls with the await-site completion check.
+
         Type t = typeOf(fe);
         if (!(t instanceof Type.Func ft)) {
             unsupported("function expression without a function type",
@@ -11523,9 +9249,7 @@ public final class JvmBackend {
     private static boolean statementCompletesNormally(StatementNode stmt) {
         return switch (stmt) {
             case ReturnStatement rs -> false;
-            // ISSUE-0102: a throw cannot complete normally (JLS §14.21)
-            // — statements after a try whose catch always throws are
-            // unreachable to javac, exactly like the return rule.
+
             case ThrowStatement ts -> false;
             // break/continue transfer control and cannot complete
             // normally either (JLS §14.21).
@@ -11666,16 +9390,6 @@ public final class JvmBackend {
         }
     }
 
-    /**
-     * Emits a for-of loop (ISSUE-0106 v1.2 slice). Only string iterables
-     * are supported: the loop iterates Unicode scalar values (spec-v1.2
-     * §For-of — one string containing exactly one scalar value per
-     * iteration, in order), advancing by {@code Character.charCount}
-     * code units per step so a supplementary character yields ONE
-     * iteration. The loop variable is a fresh Java binding per iteration,
-     * scoped to the loop body like LuaJIT's per-iteration local. Array
-     * for-of stays rejected with E6000 (documented slice boundary).
-     */
     private void emitForOf(ForOfStatement fos) {
         Type iterableType = typeOf(fos.iterable());
         if (iterableType instanceof Type.String) {
@@ -11721,17 +9435,6 @@ public final class JvmBackend {
         emitLine("}");
     }
 
-    /**
-     * Array for-of (ISSUE-0102): iterates the array wrapper's storage
-     * in index order, one fresh binding per iteration (spec-v1.2
-     * §For-of — the loop variable is a fresh binding per iteration, so
-     * closures captured inside the body see per-iteration values). The
-     * iterated expression evaluates exactly once, before the loop; the
-     * per-iteration element read runs the element-typed checks the
-     * array read helpers carry (always in-bounds here, so no E8001 can
-     * occur — the helpers still raise E8002 on a negative index, which
-     * never happens for the 0-based scan).
-     */
     private void emitArrayForOf(ForOfStatement fos, Type.Array arr) {
         String iterable = emitExpression(fos.iterable());
         String wrapper = arrayWrapperName(arr.element());
@@ -11829,19 +9532,6 @@ public final class JvmBackend {
         return null;
     }
 
-    /**
-     * C-style for loop (ISSUE-0102). The simple form — no hoisted
-     * side effects in the initializer, condition, or update — emits a
-     * plain Java {@code for (init; loopCond(cond); update)} whose
-     * {@code continue} semantics match DEAL natively (the update runs).
-     * The transformed form re-places the condition test and update
-     * inside a {@code while (true)} body with a labeled body block:
-     * a DEAL {@code continue} becomes {@code break <label>;} so it jumps
-     * past the body to the re-placed update exactly once. A captured
-     * loop variable (closure cells) is declared in the head and gets a
-     * FRESH cell per iteration inside the body (spec-v1.2 §For — each
-     * iteration creates a fresh binding for closures).
-     */
     private void emitFor(ForStatement fs) {
         localScopes.push(new LinkedHashMap<>());
         localTypeScopes.push(new LinkedHashMap<>());
@@ -12007,15 +9697,6 @@ public final class JvmBackend {
         }
     }
 
-    /**
-     * Throw (ISSUE-0102): an Error object literal reifies as the
-     * emitted {@code DealError} (code and message evaluated
-     * left-to-right in literal order); a throw of an existing Error
-     * value rethrows it unchanged (its code survives across catch
-     * boundaries). DEAL Error values map to {@code RuntimeException}
-     * (every emitted module's DealError extends it), so caught errors
-     * from ANY module unify in the catch clause.
-     */
     private void emitThrow(ThrowStatement th) {
         ExpressionNode e = th.expr();
         if (e instanceof ObjectLiteralExpr ol) {
@@ -12037,15 +9718,6 @@ public final class JvmBackend {
         emitLine("throw (" + thrown + ");");
     }
 
-    /**
-     * Try/catch (ISSUE-0102): the try block emits as a plain Java
-     * {@code try}; the catch binds the DEAL catch variable (typed
-     * {@code Error}) to {@code java.lang.RuntimeException}, so DEAL
-     * errors from any module — every emitted module declares its own
-     * nested DealError, and each extends RuntimeException — are caught.
-     * Error values crossing the catch never leak raw foreign exceptions
-     * out of DEAL code.
-     */
     private void emitTry(TryStatement ts) {
         emitLine("try {");
         indent++;
@@ -12059,16 +9731,7 @@ public final class JvmBackend {
         String catchName = declareLocal(ts.catchVar(), errorClassType());
         emitLine("} catch (java.lang.RuntimeException " + catchName + ") {");
         indent++;
-        // ISSUE-0102 closure capture: a catch variable captured by a
-        // nested function inside the catch block (collectLocalDeclarations
-        // declares it, so declareLocal registered the mapped name in the
-        // capture frame) lowers to a final cell at the top of the catch
-        // block, exactly like a captured local or parameter: reads and
-        // writes route through <name>$c[0] (localJavaName), the closure
-        // references the effectively-final cell array, and the catch
-        // parameter itself is never reassigned in Java — DEAL-level
-        // reassignment writes the cell, so LuaJIT's shared-upvalue
-        // semantics hold without a javac effectively-final rejection.
+
         if (isCapturedMapped(catchName)) {
             emitLine("final java.lang.RuntimeException[] " + catchName
                 + "$c = { " + catchName + " };");
@@ -12080,12 +9743,6 @@ public final class JvmBackend {
         emitLine("}");
     }
 
-    /**
-     * Delete (ISSUE-0102): a table field delete removes the key; a
-     * class optional-field delete clears the value and the presence
-     * flag. The receiver evaluates exactly once (materialized into a
-     * temporary when it is not a bare identifier read).
-     */
     private void emitDelete(DeleteStatement ds) {
         if (ds.target() instanceof MemberAccessExpr mae) {
             Type objType = typeOf(mae.object());
@@ -12253,13 +9910,7 @@ public final class JvmBackend {
                 flushPreStatements();
                 if (int32Mode && typeOf(call) instanceof Type.Int
                         && intValueCodeIsWiderOrBoxed(call)) {
-                    // ISSUE-0375 D3 seam: a discarded int-typed call whose
-                    // emitted code is wider/boxed is not a valid Java
-                    // expression statement (the retained time expression
-                    // starts with a parenthesis). Lower it to a
-                    // dummy-local declaration typed by the emitted code
-                    // shape — the value crosses no declared boundary, so
-                    // no checkInt gate runs (never a phantom raise).
+
                     emitLine(intValueEmittedJavaType(call) + " "
                         + nextIgnoredName() + " = " + raw + ";");
                 } else {
@@ -12398,37 +10049,7 @@ public final class JvmBackend {
             case HasExpr he -> emitHas(he);
             case TemplateLiteralExpr tl -> emitTemplateLiteral(tl);
             case AwaitExpression aw -> {
-                // ISSUE-0100 blocking await lowering, extended by
-                // ISSUE-0099 with the await-site completion check for
-                // DEAL async calls: the awaited call is a direct async
-                // function call (the checker enforces both), so emitting
-                // the callee call computes the completion value
-                // synchronously — a DEAL async function's body already
-                // blocked on ITS inner awaits and returns R directly, and
-                // a HOST async function's wrapper validated the operation
-                // shape (E8010), joined the CompletableFuture, and checked
-                // the completion value against the declared return
-                // descriptor (E8001 at this await site). The emitted
-                // await applies the one completion check the blocking
-                // lowering cannot prove from Java types alone: an int
-                // completion routes through checkInt — under
-                // LEGACY_SAFE_INT the Java long representation is wider
-                // than the DEAL int safe range (E8004), and under
-                // DEAL_V1_2_INT32 the completion is already the
-                // primitive int carrier for DEAL async functions and
-                // host async completions alike (the host seam
-                // range-checked the dynamic value), so it passes
-                // through unchanged (ISSUE-0376 D3);
-                // number/string/boolean completions are proven by
-                // the emitted Java types, which spec-v1.2 §JVM backend
-                // contract permits, and a null completion (a
-                // null-returning async function) hoists the void call
-                // into a pre-statement and yields the DEAL null like any
-                // other null-typed call. No suspension point exists in
-                // the emitted Java, so the checker's after-await
-                // narrowing invalidation needs no codegen counterpart
-                // (the type map already holds the un-narrowed types
-                // here).
+
                 Span prevAwaitSpan = pendingAwaitCalleeSpan;
                 ExpressionNode prevAwaitCallee = pendingAwaitCallee;
                 if (aw.callee() instanceof CallExpr) {
@@ -12445,15 +10066,7 @@ public final class JvmBackend {
                 if (!(typeOf(aw) instanceof Type.Int)) {
                     yield raw;
                 }
-                // ISSUE-0376 D3 seam: under DEAL_V1_2_INT32 the
-                // completion's emitted Java code is the primitive int
-                // carrier for DEAL async functions and host async
-                // completions alike (the host seam already
-                // range-checked the dynamic value) — it passes through
-                // unchanged, and the wider-value gate stays at the
-                // async function's own declared-int return boundary.
-                // The legacy path keeps the pre-tree checkInt wrap over
-                // the long completion byte-identical.
+
                 yield int32Mode
                     ? adaptIntBoundary(aw.callee(), raw, Type.Int.INSTANCE)
                     : "checkInt(" + raw + ")";
@@ -12468,12 +10081,7 @@ public final class JvmBackend {
             case LiteralValue.IntLiteral i -> {
                 long v = i.value();
                 if (int32Mode) {
-                    // ISSUE-0394 (retained JVM route, I5): int literal
-                    // emission under DEAL_V1_2_INT32 is direct — the
-                    // profile-aware parser's E1036 gate (ISSUE-0392)
-                    // guarantees every literal reaching the backend is
-                    // inside [-2147483648, 2147483647], so the int32
-                    // branch has no point-of-use literal check.
+
                     yield String.valueOf(v);
                 }
                 if (v > 9007199254740991L || v < -9007199254740991L) {
@@ -12492,10 +10100,6 @@ public final class JvmBackend {
         };
     }
 
-    // =========================================================================
-    // Object literals: class construction and tables (ISSUE-0095)
-    // =========================================================================
-
     /** An object literal is either a class construction (class-typed
      * contextual target — the checker's {@code checkClassConstruction}),
      * a table literal ({@code table} target or no target), or out of
@@ -12506,10 +10110,7 @@ public final class JvmBackend {
             return emitErrorLiteral(ol, ol.span());
         }
         if (t instanceof Type.Class cls) {
-            // ISSUE-0303 D4: a declared host class constructs the
-            // synthesized shared record through the host's captured
-            // defaults map (the preserved defaults-map entry, D5 phase
-            // order).
+
             if (isHostModuleClass(cls)) {
                 return emitHostClassConstruction(cls, ol);
             }
@@ -12523,30 +10124,6 @@ public final class JvmBackend {
         return "null";
     }
 
-    /**
-     * Emits a class construction ({@code new $C_<Name>(args)} for a local
-     * class, {@code new <ModuleClass>.$C_<Name>(args)} for an imported
-     * class — ISSUE-0109). Provided field values are evaluated
-     * left-to-right in literal order (LuaJIT evaluates the
-     * provided-fields table in literal order), defaults are evaluated per
-     * construction exactly as spec-v1.2 §Construction requires (inline,
-     * at the construction site — never shared). The constructor argument
-     * order is field declaration order, with provided values materialized
-     * first so a side-effecting provided value runs in literal order
-     * regardless of declaration order. The checker guarantees provided
-     * names are declared fields and required fields are present; the
-     * defensive branch only ever fires for a program the checker already
-     * rejected.
-     */
-    /** Emits a builtin Error object literal as a DealError construction
-     * (ISSUE-0102): the code and message values evaluate left-to-right
-     * in literal order, exactly where LuaJIT evaluates the literal's
-     * fields. An omitted {@code code} or {@code message} field takes
-     * the builtin default {@code ""} (spec-v1.2 §Error type — the
-     * builtin class declares {@code code: string = ""} and
-     * {@code message: string = ""}), exactly where the LuaJIT emitter
-     * fills the omission from the seeded builtin defaults table
-     * (ISSUE-0307 gate closure — the rtc-015 corpus pin). */
     private String emitErrorLiteral(ObjectLiteralExpr ol, Span originSpan) {
         List<ExpressionNode> values = new ArrayList<>();
         for (Property prop : ol.properties()) {
@@ -12597,21 +10174,6 @@ public final class JvmBackend {
             obj, true, null, publishedPlanFor(cd));
     }
 
-    /**
-     * Emits construction of a declared HOST class (ISSUE-0303 D4): the
-     * synthesized shared {@code $DealRt} record built through the
-     * host's load-time-captured {@code <C>_defaults} map with the
-     * parent D5 phase order — provided fields evaluate left-to-right in
-     * literal order, an extra provided name (absent from the defaults
-     * map) raises E8007 before any default evaluation, omitted required
-     * fields fill from the defaults map (validated against the declared
-     * field type), optional omissions stay absent, and the published
-     * record carries the canonical externals identity. Construction
-     * uses the same materialization machinery as project-class
-     * construction, so a side-effecting provided value runs in literal
-     * order regardless of declaration order. A failed construction
-     * publishes no instance.
-     */
     private String emitHostClassConstruction(Type.Class cls,
                                              ObjectLiteralExpr obj) {
         List<HostModuleDeclarations.HostField> fields = hostFieldsFor(cls);
@@ -12727,11 +10289,6 @@ public final class JvmBackend {
         return "new " + record + "(" + String.join(", ", args) + ")";
     }
 
-    /** The Java storage type of one declared host-class record field
-     * (ISSUE-0303 D4): the diagnostic-free shared-scope mapping —
-     * optional fields store the nullable reference of the inner type
-     * (the DEAL null is the absent value, presence is the separate
-     * flag), required fields store the declared type's JVM mapping. */
     private String hostRecordFieldJavaType(Type inner, boolean optional) {
         if (optional) {
             return silentNullableJavaType(inner);
@@ -12739,19 +10296,6 @@ public final class JvmBackend {
         return silentJavaLocalType(inner);
     }
 
-    /**
-     * Emits construction of an IMPORTED class (ISSUE-0109):
-     * {@code new <ModuleClass>.$C_<Name>(args)} — the declaring module's
-     * generated nested class, whose constructor takes every field in
-     * declaration order (the same order the declaring module emitted).
-     * Only required-present primitive fields are in scope (the same
-     * class-shape restriction as local classes), and defaults are
-     * restricted to literal constants: a non-literal default evaluates
-     * in the DECLARING module's scope under LuaJIT (the defaults table
-     * is built there at load time), so re-emitting it inline in the
-     * importing module's scope would silently bind different
-     * identifiers — E6000, never a silent miscompile.
-     */
     private String emitImportedClassConstruction(Type.Class cls,
                                                  ObjectLiteralExpr obj) {
         String module = declaringModulePath(cls);
@@ -12795,15 +10339,7 @@ public final class JvmBackend {
                 return "null";
             }
         }
-        // ISSUE-0544 (the E7 plan-shape guard lift): when the
-        // provider module's published plan exists for this class, its
-        // labelled zero-argument evaluator methods realize every
-        // required default in the DECLARING module's scope — the
-        // construction site references them instead of re-emitting the
-        // default in the importing module's scope. Without a published
-        // plan (the standalone entry points), non-literal defaults
-        // keep the E6000 guard: an inline re-emission would silently
-        // bind the importing module's identifiers.
+
         for (ClassField cf : cd.fields()) {
             if (cf.defaultExpr().isPresent()
                     && !(cf.defaultExpr().get() instanceof LiteralExpr)
@@ -12828,17 +10364,6 @@ public final class JvmBackend {
      * Shared constructor-call emission for local and imported class
      * constructions (see {@link #emitClassConstruction}).
      *
-     * @param cd            the class declaration (local or imported)
-     * @param ctorExpr      the emitted constructor reference without
-     *                      arguments ({@code "$C_Point"} or
-     *                      {@code "Lib.$C_Point"})
-     * @param obj           the object literal
-     * @param localDefaults true for a local class, whose default
-     *                      expressions were checked by this module's
-     *                      checker (types in the typeMap, boolean
-     *                      boundaries enforced); false for an imported
-     *                      class, whose defaults are literal constants
-     *                      validated by {@code emitImportedClassConstruction}
      */
     private String emitClassConstructorCall(ClassDeclaration cd, String ctorExpr,
                                             ObjectLiteralExpr obj,
@@ -12961,15 +10486,7 @@ public final class JvmBackend {
                 } else if (valueNode != null) {
                     code = coerceNullValueCode(code, valueNode,
                         "java.lang.Object", valueNode.span());
-                    // ISSUE-0375 D3 seam (completed by ISSUE-0376):
-                    // the optional slot is a declared int boundary —
-                    // a wider int value (the retained time
-                    // expression, provided or defaulted) crosses
-                    // through the signed32 checkInt before boxing
-                    // into the Object slot; a host int value is
-                    // already the range-checked carrier. No
-                    // unchecked boxed Long is ever stored and an
-                    // out-of-range value raises exactly E8004.
+
                     code = adaptIntBoundary(valueNode, code,
                         classFieldDeclaredType(cd, cf));
                 }
@@ -12979,24 +10496,14 @@ public final class JvmBackend {
             if (code == null && cf.defaultExpr().isPresent()
                     && !cf.optional()) {
                 if (planForCtor != null) {
-                    // ISSUE-0544: the published plan's labelled
-                    // zero-argument evaluator — created at load in the
-                    // DECLARING module's scope, invoked exactly once per
-                    // omitted required entry per attempt. The evaluator
-                    // method already applies the boolean/null/int
-                    // boundaries, so the construction site passes its
-                    // result through unchanged (valueNode stays null —
-                    // the inline coercion paths below skip).
+
                     code = (providerRef == null ? "" : providerRef + ".")
                         + defaultEvaluatorName(cd.name(), cf.name()) + "()";
                 } else {
                     valueNode = cf.defaultExpr().get();
                     if (localDefaults) {
                         if (typeOf(valueNode) == Type.Error.INSTANCE) {
-                            // The checker records every default subexpression's
-                            // type (ISSUE-0095 rework); Type.Error here means the
-                            // frontend reported errors — record an honest E6000,
-                            // never emit an artifact javac would reject.
+
                             unsupported("default expression of field '" + cf.name()
                                 + "' of class '" + cd.name()
                                 + "' (unresolved default-expression type)",
@@ -13038,14 +10545,7 @@ public final class JvmBackend {
                     && (localDefaults || providedNodes.containsKey(cf.name()))
                     && needsBooleanBoundary(valueNode,
                         classFieldDeclaredType(cd, cf))) {
-                // The boundary keys on the FIELD's declared type: a
-                // nil-capable boolean construction value provided to a
-                // `boolean | null` field stores the DEAL null
-                // (LuaJIT's check_nullable, no failure), while a
-                // `boolean` field raises E8001 exactly where LuaJIT's
-                // check_boolean fails. (The imported-default guard above
-                // is ISSUE-0109: imported defaults are validated literal
-                // constants and emit standalone.)
+
                 code = "booleanNotNull(" + code + ")";
             }
             boolean optional = cf.optional();
@@ -13078,9 +10578,7 @@ public final class JvmBackend {
                 } else {
                     code = coerceNullValueCode(code, valueNode, fieldJava,
                         valueNode.span());
-                    // ISSUE-0375 D3 seam: a class-construction field value
-                    // is a declared int boundary — a wider (time) value
-                    // crosses through the signed32 checkInt.
+
                     code = adaptIntBoundary(valueNode, code, declaredFieldType);
                 }
             }
@@ -13113,15 +10611,6 @@ public final class JvmBackend {
         return false;
     }
 
-    /**
-     * The published compiler plan of this exact class declaration, or
-     * {@code null} when the graph published no plan for it (host
-     * declarations live outside plan space; the standalone entry points
-     * pass no plan surface). The declaration match is reference identity
-     * first — the planner consumed the same AST the emitter walks — with
-     * the name/position pair as the defensive fallback (ISSUE-0544, the
-     * published-plan consumption seam).
-     */
     private CompilerClassDefaultPlan publishedPlanFor(
             ClassDeclaration node) {
         if (node == null || identityIndex == null) {
@@ -13211,18 +10700,6 @@ public final class JvmBackend {
         return text;
     }
 
-    /**
-     * The carrier-side zero-argument invocation seam of a generated JVM
-     * evaluator (ISSUE-0544, runtime page D3): a lazy reflective
-     * invocation of the generated static evaluator method — once the
-     * artifact is compiled and its module class is on the classpath,
-     * {@code invoke()} executes the real generated evaluator exactly
-     * once per call. Nothing in the production pipeline invokes the
-     * seam in-process (the construction sites call the generated method
-     * directly); it carries the real invocation so the
-     * compiler-to-lowerer verification battery exercises the generated
-     * evaluator through the carrier.
-     */
     private RuntimeDefaultEvaluator.Invocation jvmInvocationSeam(
             String methodName) {
         return () -> {
@@ -13249,17 +10726,6 @@ public final class JvmBackend {
         };
     }
 
-    /**
-     * Emits the E7 realization of one published plan (ISSUE-0544): the
-     * labelled zero-argument static evaluator methods (one per
-     * required-present entry, in class source order, each a closure over
-     * the declaring module's static scope) followed by the static
-     * per-class plan record with one ordered
-     * {@code $DealRt.DefaultPlanEntry} per entry — evaluator references
-     * exactly on required entries, {@code null} on optional entries.
-     * The realized {@link RuntimeClassDefaultPlan} carrier (digests,
-     * labels, presence) is appended for the result surface.
-     */
     private void emitDefaultPlanRealization(ClassDeclaration cd,
             CompilerClassDefaultPlan plan) {
         String identityText = identityText(plan.classIdentity());
@@ -13304,11 +10770,7 @@ public final class JvmBackend {
                 }
                 code = coerceNullValueCode(code, def.expressionAst(),
                     javaType, def.expressionAst().span());
-                // ISSUE-0375 D3 seam: the default expression is a
-                // declared int boundary — a wider (time) value crosses
-                // through the signed32 checkInt inside the evaluator,
-                // exactly like the former inline omitted-default phase
-                // did.
+
                 code = adaptIntBoundary(def.expressionAst(), code,
                     fieldType);
             } finally {
@@ -13390,9 +10852,7 @@ public final class JvmBackend {
         List<String> codes = emitOperandsInOrder(valueNodes);
         StringBuilder sb = new StringBuilder("new $DealRt.Table()");
         for (int i = 0; i < ol.properties().size(); i++) {
-            // ISSUE-0375 D3 seam: the Object storage is a dynamic int
-            // boundary — a wider (time) int value crosses through the
-            // signed32 checkInt before boxing (Integer under int32).
+
             String valueCode = adaptIntBoundary(valueNodes.get(i),
                 codes.get(i), typeOf(valueNodes.get(i)));
             sb.append(".put(")
@@ -13442,12 +10902,7 @@ public final class JvmBackend {
                     // per-iteration cell is declared inside the body.
                     return mapped;
                 }
-                // ISSUE-0102 closure capture: a cell-ified binding reads
-                // (and, through the same string, writes) its cell's
-                // element — <mapped>$c[0]. The cell array declaration
-                // happens at the binding's declaration site
-                // (emitVariable/emitFunction's parameter cells), so the
-                // element access is always in scope.
+
                 for (Set<String> frame : capturedMappedStack) {
                     if (frame.contains(mapped)) {
                         return mapped + "$c[0]";
@@ -13486,9 +10941,7 @@ public final class JvmBackend {
         }
         localScopes.peek().put(name, mapped);
         localTypeScopes.peek().put(name, declaredType);
-        // ISSUE-0102 closure capture: a binding captured by a nested
-        // function lowers to a cell. Register the MAPPED name (unique per
-        // binding, so shadowed siblings never share a cell).
+
         if (!capturedNamesStack.isEmpty()
                 && capturedNamesStack.peek().contains(name)) {
             capturedMappedStack.peek().add(mapped);
@@ -13539,10 +10992,7 @@ public final class JvmBackend {
             return adaptNarrowedRead(javaName(id.name()), vs.type(), readType);
         }
         if (sym instanceof Symbol.IntrinsicSymbol) {
-            // The int/number conversion intrinsics are first-class
-            // function values (ISSUE-0098 slice): value uses read the
-            // per-module wrapper fields emitted with the runtime support,
-            // exactly like the Lua backend's top-of-chunk wrappers.
+
             return switch (id.name()) {
                 case "int" -> "_int$fn";
                 case "number" -> "_number$fn";
@@ -13613,29 +11063,6 @@ public final class JvmBackend {
         return null;
     }
 
-    /**
-     * Adapts a read of a binding whose declared type is {@code T | null}
-     * (stored as a boxed reference) to the read's checked type
-     * (ISSUE-0108):
-     * <ul>
-     *   <li>a narrowed-to-{@code int}/{@code number}/{@code boolean} read
-     *       unboxes ({@code n.longValue()} etc. — the narrowing is sound,
-     *       so the boxed value is never null there);</li>
-     *   <li>a read whose checked type is {@code null} is the DEAL null
-     *       value — the plain {@code null} literal — REGARDLESS of the
-     *       declared type: a narrowed nullable read and a binding
-     *       DECLARED {@code null} ({@code let z: null}, a {@code z: null}
-     *       parameter, a {@code null} module field) both read back as
-     *       {@code null}, never as their emitted {@code java.lang.Void}
-     *       name, so they flow into every nullable target
-     *       ({@code int | null}, {@code string | null}, a class, an
-     *       array) whose Java type javac would otherwise reject
-     *       ({@code Void} cannot be converted to {@code Long});</li>
-     *   <li>any other read (still nullable, or narrowed to a reference
-     *       type — string/class/array) keeps the boxed reference, which
-     *       already has the right Java type.</li>
-     * </ul>
-     */
     private String adaptNarrowedRead(String code, Type declared, Type read) {
         if (read instanceof Type.Null) return "null";
         if (!(declared instanceof Type.Nullable)) return code;
@@ -13648,23 +11075,6 @@ public final class JvmBackend {
         };
     }
 
-    /**
-     * Coerces a null-typed ASSIGNMENT expression's emitted code into the
-     * Java type of the surrounding position (ISSUE-0108). The emitted
-     * code of {@code (m = null)} carries the assignment TARGET's Java
-     * type (a boxed {@code java.lang.Long} when {@code m: int | null}),
-     * while the expression's DEAL type is {@code null} — the checker
-     * lets it flow into any nullable or null target, whose Java type can
-     * differ ({@code java.lang.Void}, {@code java.lang.String}, a class
-     * reference, …). Every OTHER null-typed shape already emits the bare
-     * {@code null} literal (a null-typed call is hoisted into a
-     * pre-statement and a null-typed identifier read emits {@code null}
-     * via {@link #adaptNarrowedRead}), which Java accepts for every
-     * reference target — only the assignment carries a mismatched static
-     * type. The runtime value of a null-typed assignment is the DEAL
-     * null, so the Object-mediated cast is sound for every reference
-     * target and evaluates the assignment exactly once.
-     */
     private String coerceNullValueCode(String code, ExpressionNode e,
                                        String targetJavaType, Span span) {
         if (targetJavaType == null) return code;
@@ -13695,18 +11105,6 @@ public final class JvmBackend {
             return emitShortCircuit(bin, op == BinaryOp.AND);
         }
 
-        // Array reads in === / !== operand positions (ISSUE-0094 rework,
-        // ISSUE-0108 class-array extension):
-        // the read-site contract (spec §Bounds and nil behavior) applies
-        // no typed boundary to a comparison operand, so LuaJIT reads nil
-        // past the end and computes the comparison on the nil value
-        // (`nil === v` → false, `nil !== v` → true, `nil === nil` →
-        // true) instead of raising the boundary failure. A primitive Java
-        // read cannot yield nil; the comparison position is emitted with
-        // nullable boxed reads and LuaJIT's nil semantics instead of the
-        // typed read helpers (see emitArrayReadComparison) — local class
-        // array reads (C[]) use the same lowering with the per-class
-        // nullable read and reference identity.
         if (op == BinaryOp.EQ || op == BinaryOp.NEQ) {
             boolean leftRead = isNilCapableArrayRead(bin.left());
             boolean rightRead = isNilCapableArrayRead(bin.right());
@@ -13714,25 +11112,12 @@ public final class JvmBackend {
                     || canYieldNil(bin.right())) {
                 return emitArrayReadComparison(bin, op == BinaryOp.EQ);
             }
-            // Nullable comparisons (ISSUE-0108): T | null ===/!== null,
-            // null ===/!== T | null, and T | null ===/!== T | null with
-            // LuaJIT's null semantics (null === null → true, null === v →
-            // false). The checker enforces identical operand types, so at
-            // most one side can be null-typed and both-nullable operands
-            // share the same inner type.
+
             if (leftType instanceof Type.Nullable
                     || rightType instanceof Type.Nullable) {
                 return emitNullableComparison(bin, op == BinaryOp.EQ);
             }
-            // Reference identity comparisons: T[] === T[], C === C, and
-            // bytes === bytes are value-equality by identity (LuaJIT's
-            // `==` on tables — array wrappers, class instances, and
-            // the runtime bytes carriers are the same shapes there) —
-            // Java `==` on the wrapper/$DealRt.Bytes references is the
-            // pinned reference-identity comparison (ISSUE-0158, the
-            // binary-comparison-selectors B-D7 gate lift): alias === alias
-            // true, distinct buffers false. Operands evaluate left to
-            // right exactly once.
+
             if (leftType instanceof Type.Array
                     || leftType instanceof Type.Class
                     || leftType instanceof Type.Table
@@ -13758,19 +11143,10 @@ public final class JvmBackend {
 
         // Integer arithmetic — always checked, with DEAL error codes.
         if (leftType instanceof Type.Int && rightType instanceof Type.Int) {
-            // ISSUE-0375 D3 seam: int-typed operand positions are
-            // declared int boundaries — a wider (time) or boxed (host)
-            // operand crosses through the signed32 checkInt before the
-            // int-parameterized helper/comparison.
+
             left = adaptIntBoundary(bin.left(), left, Type.Int.INSTANCE);
             right = adaptIntBoundary(bin.right(), right, Type.Int.INSTANCE);
-            // ISSUE-0604 D3: the authoritative origin node of every
-            // raising int operator is the operator expression itself —
-            // the expression start (the left operand), the pinned
-            // convention of int-add-overflow 7:10,
-            // int32-overflow-source 9:18, int-sub-overflow/int-mul-
-            // overflow/int32-pow-overflow 7:10, and the division family
-            // (error-inside-for-of 9:27, closure-error-source 8:12, …).
+
             String origin = originArgs(bin.span());
             return switch (op) {
                 case ADD -> "intAdd(" + left + ", " + right + ", " + origin + ")";
@@ -13867,11 +11243,6 @@ public final class JvmBackend {
             };
         }
 
-        // Function-value equality: wrapper reference identity. Reads of
-        // the same declaration's wrapper field compare equal; distinct
-        // wrappers (including distinct arity adapters) compare unequal —
-        // exactly LuaJIT's table identity over the runtime function
-        // wrappers (ISSUE-0098 slice).
         if (leftType instanceof Type.Func && rightType instanceof Type.Func) {
             return switch (op) {
                 case EQ -> "(" + left + " == " + right + ")";
@@ -13889,28 +11260,6 @@ public final class JvmBackend {
         return "null";
     }
 
-    /**
-     * Emits {@code ===}/{@code !==} where at least one operand has a
-     * nullable declared type (ISSUE-0108), with LuaJIT's null semantics:
-     * {@code T | null === null} → {@code l == null} (a null-typed
-     * operand's value is the DEAL null, and its observable side effects
-     * were already hoisted into pre-statements or materialized here);
-     * {@code T | null === T | null} compares the unboxed values only when
-     * both sides are non-null. Every operand that is NOT pure after
-     * emission (an inline call, an assignment, checked int arithmetic) is
-     * materialized into a fresh temporary first — left then right, so the
-     * evaluation order stays strict left-to-right — because the lowered
-     * comparison references each operand MORE THAN ONCE: an inline
-     * effectful operand inside the ternary would otherwise run twice in
-     * interleaved l,r,l,r order ({@code mark("l",1) === mark("r",2)}
-     * printed l r l r), diverging from LuaJIT, which evaluates each
-     * operand exactly once, strictly. The materialized form references
-     * only inert temporaries, so Java's short-circuit inside the ternary
-     * can never skip a DEAL-visible effect and never re-evaluates one
-     * (LuaJIT evaluates both {@code ===} operands strictly). String
-     * inners compare with {@code equals}, numeric inners unbox, and
-     * class/array inners compare by identity (LuaJIT's `==` on tables).
-     */
     private String emitNullableComparison(BinaryExpr bin, boolean eq) {
         Type leftType = typeOf(bin.left());
         Type rightType = typeOf(bin.right());
@@ -14039,20 +11388,7 @@ public final class JvmBackend {
             preStatementsDeclareTemps = true;
             return temp;
         }
-        // Nil-aware lowering (ISSUE-0094 rework): a past-end boolean[]
-        // read operand is Lua's nil — the operand is falsy and the Lua
-        // result can itself be nil (`nil and x` → nil, `nil or x` → x,
-        // `true and nil` → nil). The result is carried in a boxed
-        // java.lang.Boolean temporary (null = the Lua nil) so a typed
-        // boolean boundary can fail exactly where LuaJIT's
-        // check_boolean(nil) fails, while `!`, nested && / ||, === / !==,
-        // and discards consume the boxed value with Lua's nil semantics.
-        // The left operand's own hoisted statements already precede the
-        // guard (it always evaluates); the right operand's hoisted
-        // statements — including a right-side boxed read's helper call —
-        // stay inside the guard so Java's short-circuit skips them when
-        // the left operand already decides the result, exactly like
-        // LuaJIT's `and`/`or`.
+
         String leftCode = left;
         if (!leftNil && !isPureAfterEmission(bin.left())) {
             // A plain inline-effectful left operand (e.g. a call) is
@@ -14420,10 +11756,7 @@ public final class JvmBackend {
                                            Type target) {
         Type t = typeOf(node);
         if (t instanceof Type.Null) return "java.lang.Object";
-        // ISSUE-0375 D3 seam: a materialized temporary's Java type
-        // follows the emitted code shape — a wider/boxed int code under
-        // int32 declares its real Java type, and the consuming declared
-        // boundary routes the temporary through checkInt.
+
         if (int32Mode && t instanceof Type.Int
                 && intValueCodeIsWiderOrBoxed(node)) {
             return intValueEmittedJavaType(node);
@@ -14440,29 +11773,6 @@ public final class JvmBackend {
         return javaLocalType(t, node.span());
     }
 
-    /**
-     * The declared-int-boundary seam (ISSUE-0375 D3, completed by
-     * ISSUE-0376): under {@code DEAL_V1_2_INT32} any value crossing an
-     * int-typed declared boundary (variable-declaration initializer,
-     * assignment target, return, call/callback argument, await
-     * completion, array element write/read, table-read int target,
-     * class-construction field, array-literal element, table
-     * write/literal value, binary/unary operand, array index) routes
-     * through the signed32 {@code checkInt} whenever the value
-     * expression's emitted Java type is wider than the declared int
-     * carrier — the retained {@code emitStdlibTimeMemberCall} long
-     * expression (the D4 pin) is the one such producer. Boxed and
-     * foreign int values (table reads, host returns, JSON conversions)
-     * are already range-checked by their own shared seams
-     * ({@code $check}/{@code __hostCheck}), whose int branches route
-     * through {@code checkInt} — see
-     * {@link #intValueCodeIsWiderOrBoxed}. The range gate runs BEFORE
-     * any narrowing, so the narrowing inside {@code checkInt} is never
-     * silent; the emission never applies a bare {@code (int)} cast at a
-     * declared boundary and never leaves a narrowing mismatch for
-     * javac. Under {@code LEGACY_SAFE_INT} the
-     * code passes through unchanged (byte-identical base emission).
-     */
     private String adaptIntBoundary(ExpressionNode e, String code,
                                     Type target) {
         if (int32Mode && isIntBoundaryTarget(target)
@@ -14488,26 +11798,6 @@ public final class JvmBackend {
             && n.inner() instanceof Type.Int;
     }
 
-    /**
-     * True when, under {@code DEAL_V1_2_INT32}, the emitted Java code of
-     * the int-typed expression {@code e} is wider relative to the
-     * declared int boundary's primitive {@code int} carrier. The only
-     * such producer in the emitted surface is the retained
-     * {@code std/time.nowMillis} expression ({@code long} — the
-     * byte-identical D4 pin, ISSUE-0376 D3). Host-module call results
-     * are NOT wider or boxed here: under the int32 carriers the host
-     * wrapper returns the primitive {@code int} for a non-nullable int
-     * (its dynamic value already passed the signed32 {@code checkInt}
-     * inside the {@code __hostCheck} seam's int branch) and the boxed
-     * {@code java.lang.Integer} for {@code int | null} — a null-safe
-     * pass-through whose stored value the host boundary already
-     * range-checked (a boundary {@code checkInt(...)} wrap would
-     * auto-unbox the DEAL null and raise a raw NullPointerException
-     * where LuaJIT's check_nullable stores it). Every other int-typed
-     * expression emits exactly {@code int} code under the int32
-     * carriers (checked arithmetic, conversions, array reads,
-     * literals), so it passes through without a redundant gate.
-     */
     private boolean intValueCodeIsWiderOrBoxed(ExpressionNode e) {
         if (!(e instanceof CallExpr call)
                 || !(call.callee() instanceof MemberAccessExpr mae)
@@ -14734,33 +12024,6 @@ public final class JvmBackend {
         return sb.toString();
     }
 
-    /**
-     * Emits the arity-extension adapter expression: an anonymous subclass
-     * of the target wrapper class whose invoke accepts the target
-     * parameters, discards the extra trailing ones, and delegates to the
-     * actual function with the overlapping prefix. The delegation target
-     * never needs a capture:
-     * <ul>
-     * <li>a module function — the static method is called directly;</li>
-     * <li>the int/number intrinsic — the inline conversion helper is
-     * called directly;</li>
-     * <li>a module field — the static field is read LIVE on every
-     * invoke, exactly like LuaJIT's adapter body re-reading the
-     * chunk-local binding, so a field reassigned after the adapter's
-     * creation retargets the adapter;</li>
-     * <li>a local/parameter — its CURRENT value is snapshotted into a
-     * fresh effectively-final {@code __fn<n>} temporary declared right
-     * before the adapter, and this equals LuaJIT's live read only while
-     * the enclosing function body never reassigns the binding (the value
-     * is then stable forever). A binding the enclosing body reassigns
-     * anywhere and any non-identifier value expression (a call result,
-     * which LuaJIT re-evaluates on every invoke) are E6000 until
-     * ISSUE-0110 — never a silent snapshot/once-only divergence.</li>
-     * </ul>
-     * No lambda is ever emitted: the anonymous class body references only
-     * static members or a single-assignment temporary, so javac accepts
-     * the artifact.
-     */
     private String emitArityAdapter(Type.Func target, Type.Func actual,
             ExpressionNode value) {
         String inner;
@@ -14792,13 +12055,7 @@ public final class JvmBackend {
                     + ".invoke("
                     + overlappingAdapterArgs(actual.paramTypes().size()) + ")";
             } else if (mapped != null) {
-                // A local or parameter binding: the snapshot equals
-                // LuaJIT's live read only while the binding never changes
-                // after the adapter's creation — reject any binding the
-                // enclosing function body reassigns anywhere (a Java
-                // anonymous class cannot capture a reassigned local, and
-                // routing every read/write through a shared mutable
-                // holder cell is deferred to ISSUE-0110).
+
                 if (capturedBindingReassignedInBody(id.name())) {
                     unsupported("an arity-extension adapter over the "
                         + "function-typed local/parameter '" + id.name()
@@ -14862,19 +12119,6 @@ public final class JvmBackend {
         return false;
     }
 
-    /**
-     * True when the body of the function currently being emitted contains
-     * an assignment to a local binding named {@code name} — the captured
-     * binding itself or a same-named shadowing binding (conservative).
-     * LuaJIT's adapter reads the captured binding live on every invoke,
-     * so any reassignment after the adapter's creation retargets it; a
-     * Java anonymous class cannot capture a reassigned local, and routing
-     * every read/write of the binding through a shared mutable holder
-     * cell is deferred to ISSUE-0110 — reject instead of silently
-     * snapshotting a value the binding may later outlive (a binding the
-     * body never reassigns has a stable value, so the snapshot equals
-     * LuaJIT's live read forever).
-     */
     private boolean capturedBindingReassignedInBody(String name) {
         if (currentFunctionBody == null) return false;
         Deque<Set<String>> locals = new ArrayDeque<>();
@@ -14984,12 +12228,7 @@ public final class JvmBackend {
                 }
                 yield found;
             }
-            // An await's callee is a direct async call: its argument
-            // positions are value positions exactly like any other
-            // call's, so an assignment hidden inside one (`apply(g =
-            // two, 1)`) reassigns the binding exactly like a bare
-            // statement assignment — the adapter's snapshot would
-            // silently go stale if the scan missed it (ISSUE-0099).
+
             case AwaitExpression aw ->
                 exprAssignsLocal(aw.callee(), locals, name);
             case MemberAccessExpr mae ->
@@ -15101,27 +12340,13 @@ public final class JvmBackend {
             case NEG -> {
                 Type t = typeOf(u.expr());
                 if (t instanceof Type.Int) {
-                    // ISSUE-0375 fold, re-anchored for ISSUE-0392: the
-                    // profile-aware parser folds the immediate-minus
-                    // spelling into the combined literal
-                    // IntLiteral(-2147483648), so the full v1.2 pipeline
-                    // never reaches this arm with the out-of-range half.
-                    // Legacy-parsed ASTs entering the int32 backend
-                    // directly still carry NEG(IntLiteral 2147483648) —
-                    // fold exactly this shape into the Java int literal
-                    // -2147483648 (JLS 3.10.1 admits 2147483648 only as
-                    // the unary-minus operand), so the gate never sees
-                    // the out-of-range half. The legacy profile keeps
-                    // its byte-identical intNeg(2147483648L) emission
-                    // untouched.
+
                     if (int32Mode && u.expr() instanceof LiteralExpr lit
                             && lit.value() instanceof LiteralValue.IntLiteral i
                             && i.value() == 2147483648L) {
                         yield "-2147483648";
                     }
-                    // ISSUE-0604 D3: the authoritative origin node is the
-                    // unary expression itself (int-neg-min 7:10,
-                    // int-neg-min-source 8:22).
+
                     yield "intNeg("
                         + adaptIntBoundary(u.expr(), emitExpression(u.expr()),
                             Type.Int.INSTANCE)
@@ -15136,13 +12361,7 @@ public final class JvmBackend {
 
     private String emitCall(CallExpr call) {
         if (call.callee() instanceof MemberAccessExpr mae) {
-            // ISSUE-0549 (async bytes closure): a direct call through a
-            // function-typed class field (`h.cb(args)` — the field
-            // stores the shared wrapper reference for bytes-bearing
-            // sync/async signatures) dispatches the FIELD's invoke, the
-            // same shape the local/parameter indirect-call path emits,
-            // so `await h.cb(args)` applies the identical await-site
-            // completion check.
+
             Type calleeType = typeOf(mae);
             if (calleeType instanceof Type.Func
                     && typeOf(mae.object()) instanceof Type.Class) {
@@ -15153,15 +12372,7 @@ public final class JvmBackend {
         if (call.callee() instanceof IdentifierExpr id) {
             String mapped = localJavaName(id.name());
             if (mapped != null) {
-                // A visible variable binding (local, parameter, or module
-                // field). Function-typed bindings are indirect calls
-                // (ISSUE-0098 slice): they dispatch through the wrapper
-                // instance's invoke method — the same `.f(...)` shape the
-                // Lua backend emits. An async function-typed binding is
-                // the same shape (ISSUE-0099): `await f(args)` over a
-                // typed local/parameter/module field dispatches through
-                // invoke, and the await site applies the completion
-                // check. Anything else is not callable.
+
                 Type calleeType = typeOf(call.callee());
                 if (calleeType instanceof Type.Func f) {
                     // Module-level (load-time) indirect calls through a
@@ -15261,13 +12472,7 @@ public final class JvmBackend {
                         + "the imported class)", call.span());
                     return "null";
                 }
-                // An indirect call inside a function invoked at load
-                // time: the invoked wrapper's value is not statically
-                // known to the load-time guards, so the held function's
-                // hazards cannot be checked (LuaJIT fails at load when
-                // the invoked function reaches a not-yet-declared value;
-                // Java would silently run the hoisted method) —
-                // conservative rejection until ISSUE-0110.
+
                 String indirect = transitiveIndirectCalls
                     .getOrDefault(id.name(), Set.of()).stream().findFirst()
                     .orElse(null);
@@ -15282,16 +12487,7 @@ public final class JvmBackend {
                         + "silently run the hoisted method)", call.span());
                     return "null";
                 }
-                // A function VALUE read inside a function invoked at
-                // load time (ISSUE-0099): the read wrapper field is
-                // assigned at its declaration point, so a read of a
-                // function declared at or after the call site binds to
-                // the not-yet-declared global nil under LuaJIT while
-                // Java would silently read the uninitialized static
-                // field's default value. Defensive like the sibling
-                // guards: the v1.2 module shape E1049 gate removes
-                // module-level statements, so the shape cannot reach a
-                // backend today.
+
                 String laterFnValue = laterFunctionValueRead(id.name(),
                     currentModuleStatementIndex);
                 if (laterFnValue != null) {
@@ -15352,15 +12548,7 @@ public final class JvmBackend {
         // temporary is single-assignment and effectively final).
         Type calleeType = typeOf(call.callee());
         if (calleeType instanceof Type.Func f) {
-            // Module-level (load-time) indirect calls through a
-            // non-identifier callee (a call or assignment producing a
-            // function value): the produced value is not statically
-            // known to the load-time guard — LuaJIT fails at load when
-            // the produced function reads or reaches a not-yet-declared
-            // value (the chunk-local is nil until its declaration runs),
-            // while Java would silently read the uninitialized static
-            // wrapper field (a bare NullPointerException) or run the
-            // hoisted method. Conservative rejection until ISSUE-0110.
+
             if (currentModuleStatementIndex >= 0) {
                 unsupported("module-level indirect calls through "
                     + "non-identifier callees (a call-result or "
@@ -15403,27 +12591,6 @@ public final class JvmBackend {
         return "null";
     }
 
-    /**
-     * A direct call through a function-typed class field
-     * ({@code h.cb(args)} — ISSUE-0549, ISSUE-0548 callee-first): the
-     * field stores the shared wrapper reference, so the call emits a
-     * FIELD-READ materialization into a wrapper temporary followed by
-     * a dispatch through that temporary's {@code invoke}. The receiver
-     * (the field-read object) evaluates exactly once BEFORE the field
-     * read, and the FIELD READ itself runs at the callee's evaluation
-     * position — before every argument (spec-v1.2 §Operational
-     * semantics rule 1: LuaJIT evaluates {@code h.cb} completely
-     * first, so an argument side effect that reassigns the called
-     * field must not change the invoked value): an effectful receiver
-     * materializes into a fresh temporary immediately after its
-     * evaluation, the field read materializes into a wrapper
-     * temporary declared next — before any argument hoist — and the
-     * dispatch goes through that temporary. Arguments route through
-     * the same declared-parameter boundary adaptation every indirect
-     * call uses, and the await site keeps its pinned completion checks
-     * (a bytes completion is proven by the emitted wrapper return type
-     * — spec-v1.2 §JVM backend contract).
-     */
     private String emitClassFieldCall(MemberAccessExpr mae, CallExpr call,
             Type.Func f) {
         String obj = emitExpression(mae.object());
@@ -15463,17 +12630,6 @@ public final class JvmBackend {
             + ")";
     }
 
-    /**
-     * A member access used as a direct call: {@code alias.fn(args)}.
-     * {@code std/console} aliases map {@code log}/{@code error} to
-     * {@code System.out}/{@code System.err}; the supported stdlib aliases
-     * (ISSUE-0097) map to inline Java-library expressions or to emitted
-     * {@code __str*}/{@code __mathSqrt} helpers; project-module aliases
-     * (ISSUE-0096) map to a static call on the imported module's emitted
-     * class ({@code lib.add(a, b)} → {@code Lib.add(a, b)}), which also
-     * triggers the imported module's class initialization exactly where
-     * LuaJIT's require has already run it (the import statement's trigger).
-     */
     private String emitMemberAccessCall(MemberAccessExpr mae, CallExpr call) {
         if (!(mae.object() instanceof IdentifierExpr id)) {
             unsupported("member access on non-identifier objects", mae.span());
@@ -15481,26 +12637,7 @@ public final class JvmBackend {
         }
         String module = importAliases.get(id.name());
         if (module == null) {
-            // ISSUE-0548: a call through a class field holding a
-            // bytes-bearing function value (`box.cb(args)`) dispatches
-            // through the field's shared wrapper reference — the
-            // receiver is an identifier (the non-identifier gate above
-            // stays) and the checker typed the member as the field's
-            // declared function type. The callee is the FIELD READ
-            // `(box).cb`, not the identifier read alone: an argument
-            // side effect can reassign the called field, so the read
-            // must run at the callee's evaluation position — BEFORE
-            // every argument's hoisted pre-statements — exactly like
-            // the sibling non-identifier callee path materializes
-            // `picker()` into a fresh temporary declared at its
-            // evaluation position (spec §Operational semantics rule 1:
-            // LuaJIT evaluates `box.cb` completely before any
-            // argument). The temporary lands first in the ordered
-            // preStatements list, so the field read precedes any
-            // argument hoist (e.g. a `?bytes` table-read argument's
-            // Object materialization). The nullable-receiver unwrap
-            // mirrors the member value read (the checker-gated
-            // `!== null` guard protects the dereference).
+
             Type memberObjType = typeOf(mae.object());
             if (memberObjType instanceof Type.Nullable nn
                     && nn.inner() instanceof Type.Class) {
@@ -15536,12 +12673,7 @@ public final class JvmBackend {
                 + "std/time — and host modules are supported)", mae.span());
             return "null";
         }
-        // ISSUE-0100: a member call through a host-module alias routes to
-        // the per-alias wrapper method emitted by emitHostBindings. The
-        // wrapper runs the load-time-validated reflective call plus the
-        // declared-return boundary check; the checker already verified the
-        // export exists (E2004) and typed every argument, so the emitted
-        // static call is guaranteed to match the wrapper's signature.
+
         String hostRaw = hostAliases.get(id.name());
         if (hostRaw != null) {
             if (currentModuleStatementIndex >= 0) {
@@ -15563,21 +12695,7 @@ public final class JvmBackend {
                     + hostRaw + "'", mae.span());
                 return "null";
             }
-            // ISSUE-0303 D2: the wrapper's parameters are
-            // java.lang.Object and the wrapper checks each argument
-            // against the declared parameter descriptor at the call
-            // (E8010 'parameter {i} type mismatch' — the HOST_PARAMETER
-            // boundary). The read-site target stays the declared
-            // parameter type, but a table read whose value IS the whole
-            // host-call argument yields the raw value (the
-            // identity-keyed deferral set below — ONLY the direct read
-            // defers; a read nested inside the argument expression is a
-            // different node and keeps its pinned read-site check), so
-            // the boundary — never the read site — raises the mismatch
-            // exactly like the LuaJIT untyped-read reference. Nested
-            // reads keep their typed $check, which keeps every
-            // statically-typed consumption site (index-read receiver,
-            // array-literal element, helper-call argument) javac-valid.
+
             List<Type> argTargets = new ArrayList<>(call.args().size());
             for (int i = 0; i < call.args().size(); i++) {
                 argTargets.add(f.paramTypes().get(i));
@@ -15657,10 +12775,7 @@ public final class JvmBackend {
             return emitStdlibTimeMemberCall(mae, call);
         }
         if ("std/table".equals(module)) {
-            // ISSUE-0102: std/table.keys(t) — the JVM backend now maps
-            // tables as first-class values, so the module's only export
-            // (keys(t): string[]) executes with the LuaJIT reference
-            // semantics (insertion-order string keys).
+
             if ("keys".equals(mae.field())) {
                 List<String> argCodes = withBoundaryOrigin(
                     originOfExpression(call, artifactFileOf(modulePath)),
@@ -15672,17 +12787,7 @@ public final class JvmBackend {
             return "null";
         }
         if ("std/json".equals(module)) {
-            // ISSUE-0302: std/json joins the supported stdlib set over
-            // the emitted shared JSON runtime. json.parse(s) lowers to
-            // __jsonParse + __jsonTableValue and returns the DEAL table
-            // ($DealRt.Table: object mode for JSON objects, array mode
-            // for JSON arrays, integral numbers as the int carrier);
-            // json.stringify(t) lowers to __jsonStringify. A parse
-            // failure raises E8001 with the decoder's message (the
-            // pcall-equivalent inside the emitted $jsonParse helper),
-            // and stringify rejections raise the std/json.lua E8001
-            // family (NaN/Infinity, non-scalar-valid UTF-8, unsupported
-            // types, cycles).
+
             if ("parse".equals(mae.field())) {
                 List<String> argCodes = emitOperandsInOrder(call.args());
                 // The call-expression origin (D3): a parse rejection
@@ -15703,11 +12808,7 @@ public final class JvmBackend {
                 mae.span());
             return "null";
         }
-        // Project-module import (ISSUE-0096): a static call on the imported
-        // module's emitted class. The checker has already verified the
-        // export exists (E2004) and typed the member as the exported
-        // function, so the emitted method is guaranteed to be declared by
-        // the imported module's artifact.
+
         if (currentModuleStatementIndex >= 0) {
             Integer importIdx = importAliasStatementIndices.get(id.name());
             if (importIdx != null && importIdx > currentModuleStatementIndex) {
@@ -15720,17 +12821,7 @@ public final class JvmBackend {
             }
         }
         String className = classNameFor(module);
-        // ISSUE-0301 shared carriers: the checker typed the member as
-        // the exported function, so its declared signature — parameter
-        // Java types included — is visible here as {@code typeOf(mae)}.
-        // Function values cross the module boundary on the shared
-        // $DealRt wrappers (no conversion adapter, reference identity
-        // preserved), and the parameter-boundary E8010 check the
-        // same-module path emits applies here identically: a
-        // narrower arity-extension argument raises
-        // "function signature mismatch: expected {D}, got {actual}" at
-        // the call, with the argument value evaluated first (spec
-        // §Operational semantics rule 2).
+
         Type.Func exported = typeOf(mae) instanceof Type.Func f ? f : null;
         List<Type> argTargets = exported == null
             ? null : exported.paramTypes();
@@ -15769,22 +12860,6 @@ public final class JvmBackend {
         return sb.append(')').toString();
     }
 
-    /**
-     * Emits a {@code std/string} member call (ISSUE-0097, ISSUE-0106 v1.2
-     * scalar strings). The checker has already verified the export exists
-     * (E2004) and typed every argument, so arity and types are
-     * guaranteed. Plain-text search predicates map to the mapped {@code
-     * java.lang.String} directly (whole-string matching coincides between
-     * the scalar-value and UTF-16 views); {@code length}/{@code
-     * substring}/{@code split} route through the emitted helpers whose
-     * lengths and positions are measured in Unicode scalar values
-     * (spec-v1.2 \u00a7String lengths and positions are measured in
-     * Unicode scalar values), and {@code replace}/{@code trim} route
-     * through helpers for the empty-{@code old} guard and the Lua
-     * {@code %s} whitespace set.
-     * The helper call's Java arguments evaluate left to right before the
-     * helper body runs, preserving the spec's evaluation order.
-     */
     private String emitStdlibStringMemberCall(MemberAccessExpr mae, CallExpr call) {
         // D1/D3 (stdlib declared-parameter boundary): the call
         // expression's own start is the authoritative origin of a
@@ -15822,25 +12897,6 @@ public final class JvmBackend {
         return sb.toString();
     }
 
-    /**
-     * Emits a {@code std/math} member call (ISSUE-0097). {@code floor}/
-     * {@code ceil}/{@code absNumber}/{@code minInt}/{@code maxInt} map to
-     * {@code java.lang.Math} (the same IEEE 754 semantics as LuaJIT's
-     * {@code math.*} over doubles); {@code absInt} re-checks its result
-     * with {@code checkInt} exactly like LuaJIT's {@code
-     * check_int(math.abs(x))} — under {@code DEAL_V1_2_INT32} the
-     * int-carrier operand is promoted to {@code long} before
-     * {@code java.lang.Math.abs}, so the MIN_VALUE magnitude
-     * (2147483648) reaches the int32 {@code checkInt} gate and raises
-     * E8004 instead of {@code Math.abs(int)}'s silent MIN_VALUE
-     * round-trip (the LuaJIT-matching long magnitude;
-     * ISSUE-0397 I6 int32-math-abs-min). Under
-     * {@code LEGACY_SAFE_INT} the emission stays byte-identical.
-     * {@code sqrt} routes through {@code __mathSqrt} for the
-     * negative-input E8001 (std/math.lua). All
-     * {@code java.lang} references are fully qualified so a user binding
-     * named {@code Math} can never shadow them.
-     */
     private String emitStdlibMathMemberCall(MemberAccessExpr mae, CallExpr call) {
         // D1/D3 (stdlib declared-parameter boundary): the call
         // expression's own start is the authoritative origin of a
@@ -15854,11 +12910,7 @@ public final class JvmBackend {
             case "ceil" -> "java.lang.Math.ceil(" + a0 + ")";
             case "sqrt" -> "__mathSqrt(" + a0 + ")";
             case "absInt" -> int32Mode
-                // D11: the absInt result gate's E8004 arm pins “int out of
-                // safe range” (the stdlib/math/int-abs-min-overflow
-                // sidecar), the same literal as every other checkInt route.
-                // ISSUE-0604 D3: the authoritative origin node is the
-                // intrinsic-call expression (int-abs-min-overflow 9:10).
+
                 ? "checkInt(java.lang.Math.abs((long) " + a0 + "), "
                     + originArgs(call.span()) + ")"
                 : "checkInt(java.lang.Math.abs(" + a0 + "), "
@@ -15880,13 +12932,6 @@ public final class JvmBackend {
         };
     }
 
-    /**
-     * Emits a {@code std/time} member call (ISSUE-0097). {@code
-     * nowMillis()} reproduces LuaJIT's {@code os.time() * 1000}: the
-     * current epoch milliseconds truncated to whole seconds — never the
-     * raw {@code System.currentTimeMillis()}, whose sub-second precision
-     * would diverge from the reference implementation.
-     */
     private String emitStdlibTimeMemberCall(MemberAccessExpr mae, CallExpr call) {
         if (!"nowMillis".equals(mae.field())) {
             unsupported("export '" + mae.field() + "' of std/time", mae.span());
@@ -15895,32 +12940,11 @@ public final class JvmBackend {
         return "(java.lang.System.currentTimeMillis() / 1000L) * 1000L";
     }
 
-    /**
-     * A member access used as a value (not a call): the array
-     * {@code .length} intrinsic (ISSUE-0094), a declared class field
-     * read (spec-v1.2 §Field access — the checker guarantees the field is
-     * declared and returns its declared type), or a table field read in a
-     * contextual target type — the slice's one untyped boundary, where the
-     * runtime nominal check runs (see {@link #emitTableRead}). Everything
-     * else is E6000.
-     */
-    /**
-     * Table field write (ISSUE-0102): {@code $tPut(<obj>, "f",
-     * <boxed value>)} with the receiver and value evaluated
-     * left-to-right. Values box to the table's Object storage (Long /
-     * Double / Boolean for the numeric primitives, plain references
-     * otherwise — null-typed values store Java null, the DEAL null);
-     * the generic return keeps the assignment's DEAL value, and the
-     * unbox suffix restores the primitive Java type the assignment
-     * expression carries in value positions.
-     */
     private String emitTableWrite(MemberAccessExpr mae, ExpressionNode value) {
         Type valueType = typeOf(value);
         List<String> codes = emitOperandsInOrder(
             List.of(mae.object(), value));
-        // ISSUE-0375 D3 seam: the Object storage is a dynamic int
-        // boundary — a wider (time) int value crosses through the
-        // signed32 checkInt before boxing (Integer under int32).
+
         String valueCode = adaptIntBoundary(value, codes.get(1), valueType);
         String boxed = switch (valueType) {
             case Type.Int ignored ->
@@ -15945,16 +12969,6 @@ public final class JvmBackend {
             + quoteJavaString(mae.field()) + ", " + boxed + ")" + unbox;
     }
 
-    /**
-     * has() — an optional class field's presence. A NON-@jsonable
-     * class stores the ISSUE-0102 boxed slot plus a {@code
-     * <name>$present} flag; an @jsonable class stores the Missing
-     * sentinel, so presence is the sentinel inequality (the DEAL null
-     * is PRESENT — only the sentinel is absent). The checker
-     * restricts has() to optional class fields (E4005); the receiver
-     * materializes into a temporary when it is not pure after
-     * emission, so an effectful receiver evaluates exactly once.
-     */
     private String emitHas(HasExpr he) {
         Type objType = typeOf(he.object());
         if (objType instanceof Type.Class cls
@@ -15978,8 +12992,7 @@ public final class JvmBackend {
                     + " = " + obj + ";", 0));
                 recv = tmp;
             }
-            // ISSUE-0303 D4: a declared host class stores the boxed
-            // slot plus the presence flag exactly like a project class.
+
             if (isHostModuleClass(cls)) {
                 return "(" + recv + ")." + javaName(he.field())
                     + "$present";
@@ -16008,16 +13021,7 @@ public final class JvmBackend {
     private String emitMemberAccessValue(MemberAccessExpr mae) {
         Type objType = typeOf(mae.object());
         if (mae.object() instanceof IdentifierExpr id) {
-            // ISSUE-0307 gate closure: a HOST module's function export
-            // used as a VALUE reads the per-export wrapper-carrier field
-            // ({@code $host$<alias>$<fn>$fn}) — the shared $DealRt
-            // wrapper with the canonical descriptor, so the value flows
-            // into function-typed locals/parameters and an indirect call
-            // through it runs the identical emitted wrapper method the
-            // direct call uses (argument checks, the async operation
-            // shape check E8010, the blocking join, and the declared
-            // return/completion check E8010/E8001 — the
-            // host-async-shape-value corpus pin).
+
             String hostRaw = hostAliases.get(id.name());
             if (hostRaw != null) {
                 if (currentModuleStatementIndex >= 0) {
@@ -16053,13 +13057,7 @@ public final class JvmBackend {
             if (module != null
                     && !SUPPORTED_STDLIB_MODULES.contains(module)
                     && !hostAliases.containsKey(id.name())) {
-                // ISSUE-0301 cross-module function values: an imported
-                // project module's function used as a VALUE reads the
-                // declaring module's wrapper instance field
-                // ({@code Lib.<fn>$fn}) — the shared $DealRt wrapper
-                // class, so the value crosses the module boundary with
-                // its complete canonical descriptor and reference
-                // identity.
+
                 if (typeOf(mae) instanceof Type.Func f
                         && registerWrapperShape(f) != null) {
                     return classNameFor(module) + "."
@@ -16073,41 +13071,23 @@ public final class JvmBackend {
         }
         if (objType instanceof Type.Nullable nn
                 && nn.inner() instanceof Type.Class) {
-            // ISSUE-0302 residual closure (jvm-v12-json-completion D4):
-            // a member read through a nullable CROSS-MODULE class
-            // reference — the checker restricts the nullable-receiver
-            // unwrap to foreign classes (the conformance-gap-02 seam),
-            // where the surrounding `!== null` guard protects the
-            // dereference — emits the ordinary class field read on the
-            // boxed reference. LuaJIT emits `obj.field` here too: a
-            // null receiver crashes the guarded-only-legal program the
-            // same way a raw dereference does.
+
             objType = nn.inner();
         }
         if (objType instanceof Type.Bytes
                 && "length".equals(mae.field())) {
-            // v1.2 bytes .length (ISSUE-0158): the compiler-resolved
-            // immutable logical allocation length as DEAL int — not a
-            // class/table lookup. The receiver evaluates exactly once
-            // in Java, mirroring the Lua bytes_length lowering.
+
             String obj = emitExpression(mae.object());
             return "bytesLength(" + obj + ")";
         }
         if (objType instanceof Type.Array && "length".equals(mae.field())) {
             String obj = emitExpression(mae.object());
-            // ISSUE-0375 carrier switch: array length is DEAL int —
-            // primitive int under DEAL_V1_2_INT32 (Java array lengths are
-            // signed 32-bit, so the narrowing is exact and silent
-            // truncation is impossible), the retained long carrier under
-            // LEGACY_SAFE_INT.
+
             return int32Mode ? obj + ".data.length"
                 : "((long) " + obj + ".data.length)";
         }
         if (objType instanceof Type.Class cls && isBuiltinErrorType(cls)) {
-            // ISSUE-0102: Error values are RuntimeExceptions from
-            // arbitrary emitted modules; .code dispatches through the
-            // reflective unwrap (the same shape the runner's reportError
-            // uses) and .message reads getMessage().
+
             String obj = emitExpression(mae.object());
             if ("code".equals(mae.field())) {
                 return "__errorCode(" + obj + ")";
@@ -16120,13 +13100,7 @@ public final class JvmBackend {
         }
         if (objType instanceof Type.Class cls
                 && isHostModuleClass(cls)) {
-            // ISSUE-0303 D4: a declared host-class field read on the
-            // synthesized shared record — the checker guaranteed the
-            // field is declared and typed the read as its declared type
-            // (optional reads wrap as T | null and read the boxed slot
-            // directly: absent and present-null both yield the DEAL
-            // null, presence stays distinguishable through has()). The
-            // receiver evaluates exactly once.
+
             ClassField cf = hostClassField(cls, mae.field());
             if (cf == null) {
                 unsupported("host class member other than a declared "
@@ -16190,7 +13164,7 @@ public final class JvmBackend {
                         + " == " + sentinel + " ? null : (" + readJava
                         + ") " + recv + "." + javaName(mae.field()) + ")";
                 }
-                // ISSUE-0102 boxed slot: absent is Java null already.
+
                 return "(" + recv + ")." + javaName(mae.field());
             }
             String obj = emitExpression(mae.object());
@@ -16203,58 +13177,10 @@ public final class JvmBackend {
         return "null";
     }
 
-    // =========================================================================
-    // Primitive arrays (ISSUE-0094): literals, index reads, element writes
-    // =========================================================================
-
-    /**
-     * Emits a read of {@code array[index]} where {@code array: T[]} and
-     * {@code T} is one of the four primitive element types, a local
-     * class, or a nullable element form. The receiver
-     * and the index are emitted with {@link #emitOperandsInOrder} (the
-     * spec's strict left-to-right evaluation order holds even when one of
-     * them hoists side-effecting pre-statements), and the emitted helper
-     * call performs the read-site checks: negative index → E8002 (LuaJIT's
-     * emitted negative-index check), index past the end → E8001
-     * "expected &lt;T&gt;, got null" for the non-nullable elements
-     * (LuaJIT reads nil there and the read
-     * site's typed boundary fails with that shape — spec §Bounds and nil
-     * behavior), while {@code (T | null)[]} reads yield the DEAL null
-     * past the end (a valid nullable element, no boundary failure) and
-     * {@code C[]} reads run the per-class nominal check. Comparison
-     * positions ({@code ===}/{@code !==} operands)
-     * do not route through this method: their read site applies no typed
-     * boundary, so {@link #emitArrayReadComparison} boxes the read and
-     * computes LuaJIT's nil-comparison semantics instead. Tables and
-     * other indexable forms stay out of scope.
-     *
-     * <p>The {@code target} parameter is the read site's contextual
-     * target type — the type the IMMEDIATE consumer expects (a
-     * declaration initializer's declared type, an assignment RHS target,
-     * a call parameter, a return type, a class field, an array-literal
-     * element, a class-construction value). The spec checks the read
-     * result against the TARGET type at the read site (spec §Bounds and
-     * nil behavior — "Optional nullable arrays follow target typing"), so
-     * a past-end read of a non-nullable {@code T[]} consumed at a
-     * {@code T | null} target must YIELD the DEAL null: LuaJIT reads nil
-     * there and the target's {@code check_nullable} accepts it (the
-     * reviewer's probes: {@code let n: int | null = xs[9]} prints 11
-     * under LuaJIT while the pre-fix JVM raised the element-typed
-     * E8001). The nil-yielding boxed read (the per-class nullable read
-     * for {@code C[]}) still raises E8002 for a negative index, and a
-     * read whose target does not match exactly keeps the element-typed
-     * helper (a non-nullable target's boundary fails on the nil with
-     * E8001, which the element helper raises directly).
-     */
     private String emitIndexRead(IndexExpr idx, Type target) {
         Type arrayType = typeOf(idx.array());
         if (arrayType instanceof Type.Bytes) {
-            // v1.2 bytes read (ISSUE-0158): b[i] lowers to
-            // bytesGet(b, i) — the receiver and index evaluate left to
-            // right (emitOperandsInOrder), the index is a declared int
-            // boundary, and the helper raises E8001 for a null carrier,
-            // E8012 outside [0, b.length), and returns the unsigned
-            // 0..255 byte value.
+
             List<String> codes = emitOperandsInOrder(
                 List.of(idx.array(), idx.index()));
             String indexCode = adaptIntBoundary(idx.index(),
@@ -16274,11 +13200,7 @@ public final class JvmBackend {
             // the element-typed E8001.
             String nilHelper = null;
             if (element instanceof Type.Class cls) {
-                // A local class uses the per-class nullable read helper
-                // in this artifact; an imported class (ISSUE-0109)
-                // dispatches on the DECLARING module's helper
-                // (Lib.$readOrNull$C) — never an unqualified helper
-                // javac would reject.
+
                 nilHelper = classArrayHelper(cls, "readOrNull",
                     idx.span());
             } else {
@@ -16333,30 +13255,12 @@ public final class JvmBackend {
             + ", " + readHelperOrigins(element, idx.span()) + ")";
     }
 
-    /**
-     * The origin arguments of an element-read helper call (ISSUE-0605).
-     * Every read helper takes the index-expression origin (the E8002
-     * negative-index raise, exactly the span the Lua lane's read
-     * lowering carries); the helpers that raise the past-end E8001
-     * boundary failure ({@link #arrayReadHelper} shapes) additionally
-     * take the CONSUMER's boundary-check origin — the span the Lua
-     * lane's typed boundary check carries: the active declared-boundary
-     * origin while one is pushed (the declared contextual target
-     * annotation for an annotated binding initializer — the pinned
-     * {@code let value: int = values[2];} 8:14 convention — the
-     * returned expression for a return boundary, the callee's declared
-     * parameter annotation for a checked call argument), the read
-     * expression itself otherwise.
-     */
     private String readHelperOrigins(Type element, Span indexSpan) {
         String origins = originArgs(indexSpan);
         if (arrayReadHelper(element) == null) return origins;
         return origins + ", " + boundaryCheckOriginArgs(indexSpan);
     }
 
-    /** The consumer's boundary-check origin as emitted arguments
-     * (ISSUE-0605): the active declared-boundary origin, else the
-     * fallback node's own span. */
     private String boundaryCheckOriginArgs(Span fallback) {
         BoundaryOrigin origin = currentBoundaryOrigin();
         if (origin == null) return originArgs(fallback);
@@ -16364,14 +13268,6 @@ public final class JvmBackend {
             + origin.column();
     }
 
-    /**
-     * True when {@code e} is an index read of one of the four supported
-     * primitive array types or a bytes[] read (ISSUE-0160) — together
-     * with the local class reads of {@link #isClassArrayRead}, the
-     * in-scope read shapes that can yield the LuaJIT nil past the end.
-     * Table indexing and out-of-slice element types are not affected
-     * (they are E6000 elsewhere).
-     */
     private boolean isPrimitiveArrayRead(ExpressionNode e) {
         if (!(e instanceof IndexExpr idx)) return false;
         if (!(typeOf(idx.array()) instanceof Type.Array arr)) return false;
@@ -16447,19 +13343,6 @@ public final class JvmBackend {
             && !isPrimitiveArrayRead(e);
     }
 
-    /**
-     * Emits the boxed read helper call for a primitive array read into a
-     * fresh pre-statement temporary and returns the temporary name: the
-     * boxed read yields {@code null} past the end (the LuaJIT nil) and
-     * still raises E8002 for a negative index (LuaJIT raises that
-     * unconditionally at the read). The receiver and the index are
-     * emitted with {@link #emitOperandsInOrder} first, so the read's
-     * evaluation order holds even when one of them hoists side-effecting
-     * pre-statements. The call carries the read's index-expression origin
-     * (ISSUE-0605): the helper's negative-index E8002 raise is the read's
-     * own failure, so it transports the same span the sibling
-     * nil-yielding read of {@link #emitIndexRead} does.
-     */
     private String emitBoxedReadTemp(IndexExpr idx) {
         Type element = ((Type.Array) typeOf(idx.array())).element();
         List<String> ops = emitOperandsInOrder(
@@ -16622,17 +13505,7 @@ public final class JvmBackend {
      */
     private String materializeIfEffectful(String code, ExpressionNode v) {
         if (isPureAfterEmission(v)) return code;
-        // The temporary's Java type follows the EMITTED code shape, not
-        // just the static type (ISSUE-0376 D3 seam): a null-typed
-        // effectful value (an assignment like `(m = null)` whose emitted
-        // code carries the boxed target's Java type) materializes into
-        // an Object temporary (the DEAL null fits any reference and the
-        // temp is consumed only for its evaluation effects), and an
-        // int-typed value whose emitted code is wider under
-        // DEAL_V1_2_INT32 (the retained time expression) declares its
-        // real emitted Java type — a static-type int temporary
-        // (`int __t1 = <long expression>`) is exactly the
-        // javac-rejected artifact D3 forbids.
+
         String javaType = materializationTempType(v, null);
         if (javaType == null) return code; // diagnostic already recorded
         String temp = nextEvalTempName();
@@ -16674,9 +13547,7 @@ public final class JvmBackend {
      * a {@code boolean} parameter fails with E8001. */
     private String boundaryArgCode(ExpressionNode arg, String code,
                                    Type paramType) {
-        // ISSUE-0375 D3 seam: an int-typed call/callback argument is a
-        // declared int boundary — a wider (time) or boxed (host) value
-        // crosses through the signed32 checkInt.
+
         Type intTarget = paramType != null ? paramType : typeOf(arg);
         code = adaptIntBoundary(arg, code, intTarget);
         if (needsBooleanBoundary(arg, paramType)) {
@@ -16794,24 +13665,6 @@ public final class JvmBackend {
         return sb.append("})").toString();
     }
 
-    /**
-     * A table field read whose contextual target type comes from the
-     * checker's type map. Every supported target now routes through the
-     * ONE shared descriptor-driven runtime-check seam (ISSUE-0110): the
-     * read emits {@code $check("<spec RuntimeTypeDescriptor>", value)}
-     * with the descriptor spelled by {@link #runtimeTypeDescriptor} —
-     * class-typed targets run the nominal check of the class descriptor
-     * ({@code @module/Name}; imported classes dispatch on the DECLARING
-     * module's seam via {@code Lib.$check(...)}, whose {@code
-     * instanceof} test and module-qualified identity strings compare
-     * against the declaring module's generated class, E8001 for a
-     * wrong-class or non-class value — never a silent cast),
-     * table-typed targets check {@code "table"}, nullable targets spell
-     * {@code ?T} and pass the DEAL null through (check_nullable),
-     * array targets spell {@code [T]}/{@code [?T]} and gate on the
-     * emitted wrapper. Primitive (non-nullable) and function target
-     * types stay out of slice (E6000) — never a silent miscompile.
-     */
     private String emitTableRead(MemberAccessExpr mae) {
         String obj = emitExpression(mae.object());
         Type target = typeOf(mae);
@@ -16820,21 +13673,7 @@ public final class JvmBackend {
                 && deferredHostArgReads.contains(mae))
                 || (deferredConstructionReads != null
                     && deferredConstructionReads.contains(mae))) {
-            // ISSUE-0303 D2 read-site deferral: ONLY a typed table read
-            // whose value is the whole (direct) host-call argument
-            // yields the raw value — the host-call boundary raises
-            // E8010 at the call, never a masking read-site E8001/E8003
-            // (the only read-shape in the corpus with a changed check
-            // site). A read nested inside the argument expression is a
-            // different node and keeps its pinned read-site check, so
-            // its statically-typed consumers still receive the checked
-            // carrier (pre-fix, the depth counter deferred every nested
-            // read too and a checker-legal program published an
-            // artifact javac rejected: Object cannot be converted to
-            // __StringArray). The receiver evaluates exactly once in
-            // order, exactly like the checked nullable/array branches
-            // below. The same deferral applies to a construction
-            // provided value whose field validates at phase 3 (D5).
+
             String temp = nextEvalTempName();
             preStatements.add(new PreLine(
                 "java.lang.Object " + temp + " = " + get + ";", 0));
@@ -16842,20 +13681,7 @@ public final class JvmBackend {
             return temp;
         }
         if (target instanceof Type.Class cls) {
-            // Locality is decided from the Type.Class MODULE PATH, then
-            // the name-keyed lookup — a same-named local class must not
-            // satisfy the guard for a foreign path (the read would run
-            // the LOCAL nominal check against a lib.C value, corrupting
-            // the nominal identity). An imported class (ISSUE-0109)
-            // dispatches on the DECLARING module's shared seam
-            // ({@code Lib.$check("@lib/C", v)}): its {@code instanceof}
-            // test and module-qualified identity string compare against
-            // the declaring module's generated class, so a genuine
-            // instance passes and a same-name sibling from another
-            // module reports E8001 "expected instance of @lib/C, got
-            // @other/C". A declared host class (ISSUE-0303 D4)
-            // dispatches on THIS module's seam against the synthesized
-            // shared record.
+
             if (isHostModuleClass(cls)) {
                 String record = hostRecordJavaRef(cls);
                 if (record == null) return "null";
@@ -16886,10 +13712,7 @@ public final class JvmBackend {
                 + ")";
         }
         if (target instanceof Type.Int) {
-            // ISSUE-0102: primitive table reads route through the
-            // descriptor-driven seam — a Long passes (checked against
-            // the int safe range), an integral in-range Double
-            // converts, anything else raises E8001.
+
             return int32Mode
                 ? "((java.lang.Integer) " + checkCall("\"int\"", get)
                     + ").intValue()"
@@ -16905,10 +13728,7 @@ public final class JvmBackend {
                 + ").booleanValue()";
         }
         if (target instanceof Type.Func f) {
-            // ISSUE-0102: a function-typed table read checks the stored
-            // wrapper's runtime descriptor through the shared seam's
-            // function branch ($FnValue) — a non-function or
-            // wrong-signature value raises E8001.
+
             String shape = registerWrapperShape(f);
             if (shape == null) {
                 unsupported("table field reads with target type "
@@ -16919,30 +13739,17 @@ public final class JvmBackend {
                 + checkCall(quoteJavaString(typeDescriptor(f)), get) + ")";
         }
         if (target instanceof Type.String) {
-            // ISSUE-0106 (v1.2 boundary string validation): a string
-            // crossing the table boundary must be a java.lang.String with
-            // no unpaired surrogate code units — the seam's "string"
-            // branch runs the surrogate scan.
+
             return "((java.lang.String) " + checkCall("\"string\"", get)
                 + ")";
         }
         if (target instanceof Type.Bytes) {
-            // ISSUE-0160 D5 (dynamic boundaries): a table-held bytes
-            // read routes through the canonical $check realization —
-            // the bytes row accepts exactly a $DealRt.Bytes and raises
-            // E8001 "expected bytes, got {actual}" otherwise. The write
-            // side stores the raw wrapper reference (emitTableWrite), so
-            // the roundtrip preserves reference identity.
+
             return "(($DealRt.Bytes) " + checkCall("\"bytes\"", get)
                 + ")";
         }
         if (target instanceof Type.Nullable nn) {
-            // Nullable boundary checks (ISSUE-0108, unified ISSUE-0110):
-            // the read materializes the table lookup into an Object
-            // temporary (the receiver must evaluate exactly once) and the
-            // seam's ?T prefix applies check_nullable — null passes as
-            // the DEAL null, a value of the inner type passes, anything
-            // else raises E8001.
+
             String temp = nextEvalTempName();
             preStatements.add(new PreLine(
                 "java.lang.Object " + temp + " = " + get + ";", 0));
@@ -16977,21 +13784,12 @@ public final class JvmBackend {
                         temp) + ")";
             }
             if (inner instanceof Type.Bytes) {
-                // ISSUE-0160 D5: the ?bytes row — Java null (the
-                // DEAL null) passes the ? prefix strip, exactly a
-                // $DealRt.Bytes passes, anything else raises E8001
-                // "expected bytes, got {actual}".
+
                 return "(($DealRt.Bytes) " + checkCall("\"?bytes\"", temp)
                     + ")";
             }
             if (inner instanceof Type.Func f) {
-                // ISSUE-0550 (dynamic boundary rows): a ?(bytes)->bytes
-                // read routes through the canonical seam's ? strip plus
-                // the function row — Java null (the DEAL null) passes,
-                // a wrapper whose carried descriptor byte-equals the
-                // expected canonical text passes, a descriptor delta
-                // raises E8010 and a non-wrapper raises E8001 "expected
-                // function".
+
                 String shape = registerWrapperShape(f);
                 if (shape == null) {
                     unsupported("table field reads with target type "
@@ -17021,13 +13819,7 @@ public final class JvmBackend {
         if (target instanceof Type.Array arr) {
             String elementDesc = elementCheckDescriptor(arr.element());
             if (elementDesc == null) {
-                // ISSUE-0301 D5: nested-array, function-array, and
-                // bytes-array table reads route through the generated
-                // recursive $checkArray — the per-element-shape branch
-                // accepts the matching shared wrapper (identity) and an
-                // array-mode $DealRt.Table (elements checked recursively
-                // in index order, E8003 at the first failing index,
-                // converted into fresh wrapper storage).
+
                 if (arrayWrapperName(arr.element()) != null
                         && (arr.element() instanceof Type.Array
                             || arr.element() instanceof Type.Func
@@ -17065,13 +13857,7 @@ public final class JvmBackend {
         ExpressionNode arg = call.args().get(0);
         Type argType = typeOf(arg);
         String emitted = emitExpression(arg);
-        // ISSUE-0604 D3: the conversion intrinsic's authoritative origin
-        // node is the intrinsic-call expression itself (int-convert-
-        // fraction 7:10, int-convert-infinity/-nan 9:10,
-        // int-conversion-out-of-range 7:10, runtime/int-convert-range
-        // 8:10 under the legacy profile, runtime/int-convert-null 8:10,
-        // runtime/int-convert-noninteger 7:10, runtime/number-convert-
-        // null 8:10).
+
         String origin = originArgs(call.span());
         return switch (name) {
             case "int" -> {
@@ -17091,13 +13877,7 @@ public final class JvmBackend {
             }
             case "number" -> {
                 if (argType instanceof Type.Int) {
-                    // ISSUE-0375 D3 seam: the int argument is a
-                    // declared int boundary — a wider (time) or
-                    // boxed (host) int value routes through the
-                    // signed32 checkInt before numberFromInt, so the
-                    // int32 carrier overload (numberFromInt(int))
-                    // never meets a narrower-incompatible Java value
-                    // and an out-of-range value raises exactly E8004.
+
                     yield "numberFromInt("
                         + adaptIntBoundary(arg, emitted,
                             Type.Int.INSTANCE) + ")";
@@ -17112,12 +13892,7 @@ public final class JvmBackend {
                 yield "0.0";
             }
             case "bytes" -> {
-                // v1.2 bytes allocation (ISSUE-0158): the checker pins
-                // exactly one int argument; the emitted length is a
-                // declared int boundary — a wider (time) value crosses
-                // through the signed32 checkInt inside adaptIntBoundary
-                // before bytesNew, whose own checkInt/negative/E8012
-                // gates then allocate the zero-filled byte[].
+
                 if (argType instanceof Type.Int) {
                     yield "bytesNew("
                         + adaptIntBoundary(arg, emitted,
@@ -17196,18 +13971,7 @@ public final class JvmBackend {
         }
         if (ae.target() instanceof IndexExpr idx) {
             if (typeOf(idx.array()) instanceof Type.Bytes) {
-                // v1.2 bytes write (ISSUE-0158): b[i] = v lowers to
-                // bytesSet(b, i, v). The receiver, the index, and the
-                // assignment RHS all evaluate (left to right) BEFORE the
-                // write validation — emitOperandsInOrder keeps that
-                // order when any operand hoists side-effecting
-                // pre-statements, and the emitted helper call's Java
-                // arguments evaluate left to right before bytesSet
-                // performs the E8012 index check, the E8013 value check,
-                // and the store. A failed write changes no storage; the
-                // helper returns the stored unsigned value, so the
-                // assignment expression keeps its DEAL value in value
-                // positions.
+
                 List<String> codes = emitOperandsInOrder(
                     List.of(idx.array(), idx.index(), ae.value()),
                     Arrays.asList(null, null, Type.Int.INSTANCE));
@@ -17218,10 +13982,7 @@ public final class JvmBackend {
                 return "bytesSet(" + codes.get(0) + ", " + indexCode
                     + ", " + rhs + ", " + originArgs(idx.span()) + ")";
             }
-            // Array element write `xs[i] = v` (ISSUE-0094). The checker
-            // enforces int indexes and element-type assignability
-            // (E3007/E3001), so only the four primitive element arrays
-            // reach this branch.
+
             Type indexType = typeOf(idx);
             if (indexType instanceof Type.Table) {
                 unsupported("table indexing", idx.span());
@@ -17285,11 +14046,7 @@ public final class JvmBackend {
             // storage type (the write helper's parameter type).
             rhs = coerceNullValueCode(rhs, ae.value(),
                 javaArrayElementType(indexType, ae.span()), ae.span());
-            // ISSUE-0375 D3 seam: the stored element value and the
-            // array index are int-typed declared boundaries — a wider
-            // (time) value crosses through the signed32 checkInt, and a
-            // wider index code narrows the same way instead of leaving
-            // javac a long→int mismatch.
+
             rhs = adaptIntBoundary(ae.value(), rhs, indexType);
             String indexCode = adaptIntBoundary(idx.index(), codes.get(1),
                 Type.Int.INSTANCE);
@@ -17299,13 +14056,7 @@ public final class JvmBackend {
         if (ae.target() instanceof MemberAccessExpr mae) {
             Type objType = typeOf(mae.object());
             if (objType instanceof Type.Table) {
-                // ISSUE-0102 table field write: the receiver and the
-                // value evaluate left-to-right before the store (spec
-                // §Operational semantics rule 1), the stored value
-                // boxes to the table's Object storage, and the
-                // expression keeps its DEAL value in value positions
-                // (the generic $tPut returns the stored value; the
-                // unbox suffix restores the primitive Java type).
+
                 return emitTableWrite(mae, ae.value());
             }
             if (objType instanceof Type.Class) {
@@ -17340,23 +14091,6 @@ public final class JvmBackend {
                     }
                 }
 
-                // A declared class field write (spec-v1.2 §Class assignment
-                // semantics): the checker guarantees the field is declared
-                // and the value matches its type. Spec §Operational
-                // semantics rule 1 makes evaluation strict and
-                // left-to-right: the receiver expression runs before the
-                // assignment RHS. emitOperandsInOrder keeps that order
-                // when the value hoists side-effecting pre-statements (a
-                // null-typed call argument, a boxed nil-aware read),
-                // materializing the receiver into a temporary assigned
-                // before the hoisted statements — the same hazard the
-                // array-write branch handles. The emitted assignment
-                // expression keeps its DEAL value in value positions
-                // (`return p.x = 5;`, `f(p.x = 5)`).
-                // ISSUE-0303 host-class field writes: the declared host
-                // field record carries the orchestrator-resolved declared
-                // type — the read-site target and the storage coercion
-                // the project-class path derives from moduleClasses.
                 HostModuleDeclarations.HostField hostField = null;
                 if (isHostModuleClass(ccls)) {
                     List<HostModuleDeclarations.HostField> hostFields =
@@ -17417,10 +14151,7 @@ public final class JvmBackend {
                     return "(" + codes.get(0) + ")."
                         + javaName(mae.field()) + " = " + value;
                 }
-                // ISSUE-0102: an optional field write also sets the
-                // presence flag — routed through the per-class generic
-                // helper so the assignment keeps its DEAL value in value
-                // positions (the helper returns the stored value).
+
                 Type.Class cls = (Type.Class) objType;
                 ClassDeclaration cd = moduleClasses.get(cls.name());
                 if (cd != null) {
@@ -17468,9 +14199,7 @@ public final class JvmBackend {
             if (!(t instanceof Type.Nullable)) return null;
         }
         if (cf.optional() && !(t instanceof Type.Nullable)) {
-            // ISSUE-0102: an optional field reads as its declared type |
-            // null (the checker wraps the read); the Java field holds the
-            // boxed/nullable reference.
+
             return new Type.Nullable(t);
         }
         return t;
@@ -17688,13 +14417,7 @@ public final class JvmBackend {
                 case "string" -> Type.String.INSTANCE;
                 case "table" -> Type.Table.INSTANCE;
                 case "bytes" -> {
-                    // v1.2 bytes annotation (ISSUE-0158 int32-bytes
-                    // lane): a bytes-spelled named type resolves to the
-                    // canonical Type.Bytes primitive. bytes is not a
-                    // DEAL keyword, so a checker-accepted user class
-                    // named bytes resolves to its ClassSymbol and wins
-                    // over the primitive (the same class-symbol-first
-                    // guard the Lua sibling uses).
+
                     Symbol sym = symbols.resolve(nt.name());
                     if (sym instanceof Symbol.ClassSymbol
                             && moduleClasses.containsKey(nt.name())) {
@@ -17703,12 +14426,7 @@ public final class JvmBackend {
                     yield Type.Bytes.INSTANCE;
                 }
                 default -> {
-                    // A local module-level class (the checker's hoisted
-                    // ClassSymbol). The builtin Error stays out of slice
-                    // (Error values cannot be produced — throw/catch is
-                    // E6000); imported classes resolve through QUALIFIED
-                    // annotations (alias.C, ISSUE-0109), never a bare
-                    // name.
+
                     Symbol sym = symbols.resolve(nt.name());
                     if (sym instanceof Symbol.ClassSymbol
                             && moduleClasses.containsKey(nt.name())) {
@@ -17716,8 +14434,7 @@ public final class JvmBackend {
                     }
                     if ("Error".equals(nt.name())
                             && sym instanceof Symbol.ClassSymbol) {
-                        // ISSUE-0102: the builtin Error class type maps
-                        // to RuntimeException (see javaLocalType).
+
                         yield errorClassType();
                     }
                     unsupported("type '" + nt.name() + "' (only local classes "
@@ -17726,11 +14443,7 @@ public final class JvmBackend {
                 }
             };
             case QualifiedType qt -> {
-                // ISSUE-0303 D4: a qualified type through a host-module
-                // alias names a DECLARED host class — resolve to the
-                // export map's class type carrying the canonical
-                // externals identity (the synthesized shared record),
-                // never a compiled-module class.
+
                 String hostRaw = hostAliases.get(qt.moduleName());
                 if (hostRaw != null) {
                     Map<String, Type> exports = hostModules.get(hostRaw);
@@ -17744,11 +14457,7 @@ public final class JvmBackend {
                         + "export)", qt.span());
                     yield Type.Error.INSTANCE;
                 }
-                // ISSUE-0109: `alias.Class` annotations name the imported
-                // module's exported class. The alias maps through the
-                // same importAliases table every imported member call
-                // uses; the declaration must come from the orchestrator's
-                // imported-class map (stdlib aliases export no classes).
+
                 String module = importAliases.get(qt.moduleName());
                 Map<String, ClassDeclaration> decls =
                     module == null ? null : importedClasses.get(module);
@@ -17794,21 +14503,7 @@ public final class JvmBackend {
                 yield new Type.Nullable(inner);
             }
             case FunctionType ft -> {
-                // Function-type annotations (ISSUE-0098 slice), with the
-                // async marker lifted by ISSUE-0099: build the internal
-                // Type.Func from the complete canonical signature
-                // surface — primitives/string/null, bytes, arrays,
-                // classes, nullables, and nested sync/async function
-                // types (ISSUE-0301 D2: the shared per-signature
-                // wrapper machinery carries every shape the injective
-                // encoding covers), preserving the marker so the
-                // wrapper machinery carries async function values
-                // unchanged. Bytes carriers inside the signature are
-                // representable (the recursive bytes-bearing wrapper
-                // closure landed with ISSUE-0160); table carriers stay
-                // rejected here (deferred to the ISSUE-0110 descriptor
-                // join) — E6000, never a silent miscompile (DEAL v1.2
-                // function types carry no rest arm).
+
                 List<Type> paramTypes = new ArrayList<>();
                 boolean ok = true;
                 for (FunctionTypeParam p : ft.params()) {
@@ -17842,15 +14537,6 @@ public final class JvmBackend {
         };
     }
 
-    /** True when the type tree carries a {@code table} carrier anywhere
-     * inside it (arrays, nullables, and nested function signatures
-     * recurse): table carriers stay rejected at function-type
-     * annotations for the ISSUE-0110 descriptor join (E6000). Every
-     * other shape — primitives/string/null, bytes, arrays, classes,
-     * nullables, and nested sync/async function types — is carried by
-     * the shared per-signature wrapper machinery (ISSUE-0301 D2); the
-     * recursive bytes-bearing wrapper closure (ISSUE-0160) makes
-     * bytes-bearing signatures representable. */
     private static boolean hasTableCarrier(Type t) {
         if (t instanceof Type.Table) {
             return true;
@@ -17873,9 +14559,7 @@ public final class JvmBackend {
     /** Java type for a local/parameter/field. {@code null} when unsupported. */
     private String javaLocalType(Type t, Span span) {
         return switch (t) {
-            // ISSUE-0375 carrier switch: primitive int under
-            // DEAL_V1_2_INT32 (jvm-v12-int32-bytes D1), the retained
-            // long carrier under LEGACY_SAFE_INT.
+
             case Type.Int ignored -> int32Mode ? "int" : "long";
             case Type.Number ignored -> "double";
             case Type.Boolean ignored -> "boolean";
@@ -17889,19 +14573,11 @@ public final class JvmBackend {
             }
             case Type.Table ignored -> "$DealRt.Table";
             case Type.Class c -> {
-                // ISSUE-0102: the builtin Error class maps to
-                // java.lang.RuntimeException — every emitted module's
-                // nested DealError extends it, so Error values thrown,
-                // caught, returned, and stored unify across module
-                // boundaries. code/message reads dispatch through the
-                // reflection/accessor helpers in emitMemberAccessValue.
+
                 if (isBuiltinErrorType(c)) {
                     yield "java.lang.RuntimeException";
                 }
-                // ISSUE-0303 D4: a declared host class maps to the
-                // synthesized shared $DealRt record class (single
-                // emission point, canonical externals identity) — never
-                // to the Java host's own class.
+
                 if (isHostModuleClass(c)) {
                     String record = hostRecordJavaRef(c);
                     if (record == null) {
@@ -17912,17 +14588,7 @@ public final class JvmBackend {
                     }
                     yield record;
                 }
-                // Locality is decided from the Type.Class MODULE PATH —
-                // a same-named local class must not satisfy the guard
-                // for a foreign path (lib.C would then be declared as
-                // the LOCAL $C_C and javac would reject the incompatible
-                // assignment). A local class maps to this module's
-                // generated nested class; an imported class (ISSUE-0109)
-                // maps to the declaring module's emitted class
-                // ({@code Lib.$C_C}): the generated nested classes are
-                // package-private, and every emitted artifact shares the
-                // default package, so the cross-module reference is
-                // exactly what javac compiles.
+
                 if (isLocalClassType(c)) {
                     if (!moduleClasses.containsKey(c.name())) {
                         unsupported("values of class type '" + c.name()
@@ -17947,23 +14613,12 @@ public final class JvmBackend {
                 yield nullableJavaType(n.inner(), span);
             }
             case Type.Bytes ignored -> {
-                // v1.2 bytes value (ISSUE-0158 int32-bytes lane): the
-                // shared $DealRt.Bytes carrier — reference identity for
-                // assignment/aliasing/equality, canonical descriptor
-                // "bytes", non-jsonable. Allocation/indexing/mutation
-                // lower to the emitted bytesNew/bytesLength/bytesGet/
-                // bytesSet helpers.
+
                 yield "$DealRt.Bytes";
             }
             case Type.Error ignored -> null;
             case Type.Func f -> {
-                // Function values (ISSUE-0098 slice; ISSUE-0301 shared
-                // carrier): the shared $DealRt per-signature wrapper
-                // class whose invoke method carries the JVM-mapped
-                // signature. The JVM type system proves the parameter and
-                // return checks the spec's runtime wrappers perform (the
-                // spec's JVM backend contract explicitly permits this);
-                // the int safe range stays enforced inside the functions.
+
                 String shape = registerWrapperShape(f);
                 if (shape == null) {
                     unsupported("function values whose signature contains "
@@ -17984,17 +14639,7 @@ public final class JvmBackend {
     /** Java type of a LOCAL class value: only local module-level classes
      * have emitted Java types (see {@link #isLocalClassType}). */
     private String localClassJavaType(Type.Class c, Span span) {
-        // Only LOCAL module-level classes have emitted Java types. A
-        // checker-inferred class type can name an IMPORTED class (an
-        // annotation-less declaration like `let c = lib.getC()`):
-        // emitting its generated class reference without the class would
-        // leave a symbol javac rejects after the CLI reported success.
-        // Locality is decided from the Type.Class MODULE PATH — a
-        // same-named local class must not satisfy the guard for a foreign
-        // path (lib.C would then be declared as the LOCAL $C_C and javac
-        // would reject the incompatible assignment). Imported classes /
-        // cross-module nominal identity are deferred to ISSUE-0109 —
-        // E6000, never a broken artifact.
+
         if (!isLocalClassType(c)) {
             unsupported("values of imported class type '" + c.name()
                 + "' (imported classes / cross-module nominal identity "
@@ -18010,37 +14655,20 @@ public final class JvmBackend {
         return classNameForClass(c.name());
     }
 
-    /** Java type of a {@code T | null} value (ISSUE-0108): the boxed
-     * reference for primitive {@code T}, the plain reference for
-     * string/class/array {@code T}. {@code null} (with an E6000 recorded)
-     * for any out-of-slice inner type. */
     private String nullableJavaType(Type inner, Span span) {
         return switch (inner) {
-            // ISSUE-0375 carrier switch: boxed Integer at dynamic
-            // boundaries under DEAL_V1_2_INT32 (jvm-v12-int32-bytes D1).
+
             case Type.Int ignored ->
                 int32Mode ? "java.lang.Integer" : "java.lang.Long";
             case Type.Number ignored -> "java.lang.Double";
             case Type.Boolean ignored -> "java.lang.Boolean";
             case Type.String ignored -> "java.lang.String";
             case Type.Class c -> {
-                // ISSUE-0307 gate closure: the builtin Error inner maps
-                // to java.lang.RuntimeException exactly like the
-                // non-nullable arm of {@link #javaLocalType} — the
-                // nullable catch-probe local shape (Error | null)
-                // stores the DEAL null as the plain Java reference.
+
                 if (isBuiltinErrorType(c)) {
                     yield "java.lang.RuntimeException";
                 }
-                // A nullable imported class (C | null where C is declared
-                // by an imported module) maps to the DECLARING module's
-                // generated nested class — the same reference the
-                // non-nullable imported-class path emits (ISSUE-0109).
-                // The @jsonable slice depends on this: the spec's
-                // generated {@code C$fromJson} returns {@code C | null},
-                // and an imported class's helper returns the imported
-                // nullable class reference here. A declared host class
-                // (ISSUE-0303 D4) maps to the synthesized shared record.
+
                 if (isHostModuleClass(c)) {
                     String record = hostRecordJavaRef(c);
                     if (record == null) {
@@ -18068,8 +14696,7 @@ public final class JvmBackend {
                 yield null;
             }
             case Type.Func f -> {
-                // ISSUE-0102: a nullable function value holds the
-                // wrapper reference (Java null is the DEAL null).
+
                 String shape = registerWrapperShape(f);
                 if (shape == null) {
                     unsupported("function values whose signature contains "
@@ -18081,8 +14708,7 @@ public final class JvmBackend {
                 yield shape;
             }
             case Type.Bytes ignored -> {
-                // v1.2 bytes | null (ISSUE-0158): the plain reference
-                // carrier — Java null is the DEAL null.
+
                 yield "$DealRt.Bytes";
             }
             default -> {
@@ -18093,10 +14719,6 @@ public final class JvmBackend {
             }
         };
     }
-
-    // =========================================================================
-    // Primitive array type mapping (ISSUE-0094)
-    // =========================================================================
 
     /**
      * Java storage element type for a supported array element type, or
@@ -18125,9 +14747,7 @@ public final class JvmBackend {
                 case Type.String ignored -> "java.lang.String";
                 case Type.Boolean ignored -> "java.lang.Boolean";
                 case Type.Class c -> {
-                    // ISSUE-0570: declared host-class elements — plain
-                    // and nullable-element — store Object references
-                    // inside the shared per-class $HostArr$ carrier.
+
                     if (isDeclaredHostClass(c)) {
                         yield "java.lang.Object";
                     }
@@ -18135,17 +14755,11 @@ public final class JvmBackend {
                     yield "java.lang.Object";
                 }
                 case Type.Bytes ignored -> {
-                    // ISSUE-0160 container step: (bytes | null)[]
-                    // stores the shared $DealRt.Bytes reference — Java
-                    // null is the DEAL null element, so the OrNull
-                    // carrier reuses the same reference storage as the
-                    // plain bytes[] form.
+
                     yield "$DealRt.Bytes";
                 }
                 case Type.Func f -> {
-                    // ISSUE-0102 nullable function elements — Object
-                    // storage; null is the DEAL null element. The shared
-                    // $DealRt scope carries the per-signature wrapper.
+
                     yield "java.lang.Object";
                 }
                 default -> {
@@ -18159,10 +14773,7 @@ public final class JvmBackend {
                 }
             };
             case Type.Class c -> {
-                // ISSUE-0570: declared host-class elements store Object
-                // references inside the shared per-class $HostArr$
-                // __RefArray carrier emitted beside the synthesized
-                // record.
+
                 if (isDeclaredHostClass(c)) {
                     yield "java.lang.Object";
                 }
@@ -18174,16 +14785,11 @@ public final class JvmBackend {
                 yield "java.lang.Object";
             }
             case Type.Bytes ignored -> {
-                // ISSUE-0160 container step: bytes[] stores the shared
-                // $DealRt.Bytes references ($DealRt.Bytes[] storage
-                // inside the __BytesArray carrier).
+
                 yield "$DealRt.Bytes";
             }
             case Type.Array inner -> {
-                // ISSUE-0102 nested arrays; ISSUE-0301 shared carrier:
-                // Object storage inside the per-element-shape shared
-                // $DealRt wrapper class; the per-element-shape helpers
-                // check each element.
+
                 if (arrayWrapperName(inner) == null) {
                     unsupported("nested arrays with element type "
                         + typeName(element), span);
@@ -18192,9 +14798,7 @@ public final class JvmBackend {
                 yield "java.lang.Object";
             }
             case Type.Func f -> {
-                // ISSUE-0102 function arrays; ISSUE-0301 shared carrier:
-                // Object storage; the per-signature helpers check each
-                // element.
+
                 yield "java.lang.Object";
             }
             default -> {
@@ -18208,16 +14812,6 @@ public final class JvmBackend {
         };
     }
 
-    /** Emitted wrapper class reference for a supported element type:
-     * the shared {@code $DealRt.__X} carrier classes for the primitive,
-     * nullable-primitive, nested-array, function, and bytes element
-     * shapes (ISSUE-0301 runtime value surface — one class per compiled
-     * project, so array values cross module boundaries with shared
-     * identity), and the per-module per-class wrappers for class
-     * elements (which extend the shared {@code $DealRt.__RefArray}).
-     * Callers gate on {@link #javaArrayElementType} first, so a
-     * {@code null} here only ever accompanies an already-recorded E6000.
-     */
     private String arrayWrapperName(Type element) {
         switch (element) {
             case Type.Int ignored -> {
@@ -18239,11 +14833,7 @@ public final class JvmBackend {
                     case Type.String ignored -> "$DealRt.__StringOrNullArray";
                     case Type.Boolean ignored -> "$DealRt.__BooleanOrNullArray";
                     case Type.Class c -> {
-                        // ISSUE-0570: declared host classes — plain and
-                        // nullable-element — share the one per-class
-                        // $HostArr$ __RefArray subclass emitted beside
-                        // the synthesized record (the same carrier the
-                        // record fields use).
+
                         if (isDeclaredHostClass(c)) {
                             yield hostClassArrayWrapperRef(c);
                         }
@@ -18256,11 +14846,7 @@ public final class JvmBackend {
                 };
             }
             case Type.Class c -> {
-                // ISSUE-0570: a declared host class element maps to the
-                // shared per-class $HostArr$ __RefArray subclass emitted
-                // beside the synthesized record (the same carrier the
-                // record fields use) — the wrapper seam and typed
-                // positions carry it across the host boundary.
+
                 if (isDeclaredHostClass(c)) {
                     return hostClassArrayWrapperRef(c);
                 }
@@ -18268,12 +14854,7 @@ public final class JvmBackend {
                     ? classArrayWrapperName(c.name())
                     : importedArrayWrapperName(c);
             }
-            // ISSUE-0102 nested arrays (T[][]), function arrays
-            // ((...)=>T []), and bytes arrays (ISSUE-0301 D3): one
-            // shared per-element-shape wrapper class named by the same
-            // injective encoding as function shapes; reads/writes route
-            // through the per-element-shape helpers below, whose runtime
-            // checks prove every element.
+
             case Type.Array inner -> {
                 return "$DealRt." + refArrayWrapperId(element);
             }
@@ -18447,10 +15028,6 @@ public final class JvmBackend {
         };
     }
 
-    // =========================================================================
-    // Nested-array and function-array helpers (ISSUE-0102)
-    // =========================================================================
-
     /**
      * Per-shape helper text for nested arrays and function arrays,
      * accumulated on demand and spliced with the wrapper classes at
@@ -18461,15 +15038,6 @@ public final class JvmBackend {
     private final StringBuilder arrayHelpers = new StringBuilder();
     private final Set<String> emittedArrayHelpers = new LinkedHashSet<>();
 
-    /**
-     * Read-helper name for a nested-array or function-array element
-     * type, or {@code null} (with E6000 recorded) for any other shape.
-     * The helper carries the bounds checks and the per-element runtime
-     * proof. The outer storage is the shared per-element-shape
-     * {@code $DealRt.__A$...} carrier (ISSUE-0301); helper names are
-     * keyed by the identifier-safe inner wrapper id, so cross-module
-     * helper-name agreement is by construction.
-     */
     private String refArrayReadHelper(Type element, Span span) {
         if (element instanceof Type.Array inner) {
             Type innerElem = inner.element();
@@ -18578,17 +15146,6 @@ public final class JvmBackend {
         return null;
     }
 
-    /**
-     * Registers the per-element-shape {@code [D]} check branch for a
-     * nested-array or function-array element shape
-     * (ISSUE-0301 D5): the emitted {@code $checkArray} accepts the
-     * matching shared wrapper (identity) and an array-mode
-     * {@code $DealRt.Table} (the {@code __jsonTableValue} dynamic array
-     * representation — elements checked recursively in index order via
-     * {@code $check}, E8003 {@code array element {i} type mismatch} at
-     * the first failing index, converted into fresh wrapper storage),
-     * and raises E8001 {@code expected array} for any other value.
-     */
     private void registerRefArrayShape(Type element) {
         if (refArrayCheckElements.add(element)) {
             String elemDesc = typeDescriptor(element);
@@ -18617,10 +15174,7 @@ public final class JvmBackend {
                 if (line.isEmpty()) continue;
                 refArrayCheckBranches.add("    " + line);
             }
-            // ISSUE-0303 D2: the host-boundary row for the same shape —
-            // $hostCheckArray re-checks the typed wrapper's elements
-            // through the $check element row, so a host-supplied
-            // element-mismatched wrapper never crosses a host boundary.
+
             StringBuilder hostBody = new StringBuilder();
             hostBody.append("if (descriptor.equals(")
                 .append(quoteJavaString("[" + elemDesc + "]"))

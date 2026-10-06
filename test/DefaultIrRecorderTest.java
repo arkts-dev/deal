@@ -33,18 +33,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * The focused typed-evaluator-IR walker battery of ISSUE-0541 (the
- * supplementary unit half; the orchestrator-level planner battery is
- * {@code test/DefaultSemanticPlannerTest}): the complete IR walk over
- * synthetic checked facts — nested contextual class literals, including
- * a literal directly inside an array literal (typed by the checked facts
- * the way the contextual checker records them), nested literals inside
- * literal fields, call arguments, the ordered occurrence records with
- * first-occurrence ranges and semantic-resource-identity deduplication,
- * resolved bindings, and the E3020 sync gate (await at evaluator scope
- * rejected; await inside a nested function-expression body legal).
- */
 public final class DefaultIrRecorderTest {
 
     private static int passed = 0;

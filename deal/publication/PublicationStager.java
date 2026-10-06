@@ -127,8 +127,6 @@ public final class PublicationStager implements AutoCloseable {
          * IOException the stager must survive per the D2 recovery
          * branches.
          *
-         * @param step the pinned step name
-         * @throws IOException the injected failure
          */
         void at(String step) throws IOException;
     }
@@ -277,7 +275,6 @@ public final class PublicationStager implements AutoCloseable {
      * The published set: the frozen snapshot the successful
      * {@link #publish()} swapped into the live root.
      *
-     * @throws IllegalStateException when nothing was published yet
      */
     public ArtifactSet publishedSet() {
         if (!published) {
@@ -296,16 +293,6 @@ public final class PublicationStager implements AutoCloseable {
      * publication root, creating the staging tree (and acquiring the
      * per-root lock) at the first staging operation of this stager.
      *
-     * @param relativePath the final {@code '/'}-separated relative path
-     *                     (the {@link Artifact} canonical grammar)
-     * @param content      the artifact bytes
-     * @throws IOException              on a staging write failure (D4:
-     *                                  nothing is published; the caller
-     *                                  renders the pinned publish
-     *                                  diagnostic)
-     * @throws IllegalArgumentException on a non-canonical relative path
-     * @throws IllegalStateException    when the stager was discarded or
-     *                                  already published
      */
     public void stage(String relativePath, byte[] content)
             throws IOException {
@@ -325,13 +312,6 @@ public final class PublicationStager implements AutoCloseable {
      * returned path; the path is registered as staged, so the set's
      * snapshot reads the bytes the writer produced.
      *
-     * @param relativePath the final {@code '/'}-separated relative path
-     *                     (the {@link Artifact} canonical grammar)
-     * @return the stage-tree-resolved path (parents created)
-     * @throws IOException              on a staging failure
-     * @throws IllegalArgumentException on a non-canonical relative path
-     * @throws IllegalStateException    when the stager was discarded or
-     *                                  already published
      */
     public Path stagePath(String relativePath) throws IOException {
         Objects.requireNonNull(relativePath, "relativePath");
@@ -350,12 +330,6 @@ public final class PublicationStager implements AutoCloseable {
      * fallback (no project-local location is pinned for the runtime,
      * D6).
      *
-     * @param runtimeFileName the runtime file name ({@code
-     *                        deal/runtime.lua} or {@code deal/runtime.js})
-     * @param home            the project's distribution resolver
-     * @return the resolved source, or empty when the runtime is absent
-     *         at every tier (the caller's E6000 owns that failure)
-     * @throws IOException on a staging write failure
      */
     public Optional<DistributionHome.ResolvedSource> stageRuntimeCopy(
             String runtimeFileName, DistributionHome home)
@@ -381,14 +355,6 @@ public final class PublicationStager implements AutoCloseable {
      * CWD dev fallback (D6) — so a project-local {@code std/} override
      * always stages its own bytes.
      *
-     * @param moduleName the stdlib module bare name ({@code console},
-     *                   {@code string}, {@code table}, {@code json},
-     *                   {@code math}, {@code time})
-     * @param extension  {@code lua} or {@code js}
-     * @param home       the project's distribution resolver
-     * @return the resolved source, or empty when the module is absent
-     *         at every tier (omission semantics, unchanged)
-     * @throws IOException on a staging write failure
      */
     public Optional<DistributionHome.ResolvedSource> stageStdlibCopy(
             String moduleName, String extension, DistributionHome home)
@@ -422,10 +388,6 @@ public final class PublicationStager implements AutoCloseable {
      * the stage tree is removed) and a {@link PublishFailure} carries
      * the reason.
      *
-     * @throws PublishFailure      on a publish-step I/O failure
-     * @throws IOException         on a recovery/staging failure
-     * @throws IllegalStateException when the stager was discarded or
-     *                               already published
      */
     public void publish() throws IOException {
         if (discarded) {

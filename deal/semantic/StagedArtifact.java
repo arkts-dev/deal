@@ -22,8 +22,6 @@ import java.util.Objects;
  * construction and on every access, so no consumer can mutate a staged
  * artifact after staging.</p>
  *
- * @param name  the artifact's relative path inside the staging tree; non-null
- * @param bytes the artifact content; non-null
  */
 public record StagedArtifact(String name, byte[] bytes) {
 

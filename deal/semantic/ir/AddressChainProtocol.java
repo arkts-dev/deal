@@ -131,9 +131,6 @@ public final class AddressChainProtocol {
      * unit without chain ops passes vacuously (non-chain ops are outside
      * this authority's domain).
      *
-     * @param unit the lowered unit; non-null
-     * @return empty on pass, otherwise the first E6005
-     * @throws NullPointerException if {@code unit} is null
      */
     public static Optional<CompilerDiagnostic> validate(LoweredModuleUnit unit) {
         Objects.requireNonNull(unit, "unit must not be null");

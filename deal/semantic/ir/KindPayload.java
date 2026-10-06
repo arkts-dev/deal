@@ -3,25 +3,6 @@ package deal.semantic.ir;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * The closed kind-payload family of {@code deal.semantic-ir/1} (parent
- * "Closed operation kinds and execution contracts"; schema S4). Every
- * {@link SemanticOpKind} has exactly one mandatory payload shape — the
- * corresponding nested record below, one per kind, with the parent
- * operation table's exact fields. The typed records are the only typed
- * construction surface: every mandatory payload field is a constructor
- * parameter (a missing field cannot compile) and is null-checked, so the
- * closed shapes cannot be bypassed through typed construction. Cross-field
- * constraints (which selector subsets are admissible per kind, which
- * boundary triples are in the closed table, where
- * {@code ELIDED_BY_ADAPTER} may appear, …) are validator checks (T6), not
- * construction checks.
- *
- * <p>Execution contracts of these payloads are the construct epics'
- * (ISSUE-0234..0239); this sealed family pins shapes only. {@code opId},
- * source coordinates, and trace phase stay outside the snapshot digest;
- * payload fields are inside it.</p>
- */
 public sealed interface KindPayload
     permits KindPayload.ConstPayload,
             KindPayload.UnaryPayload,
@@ -931,33 +912,6 @@ public sealed interface KindPayload
         }
     }
 
-    /**
-     * {@code CLASS_NEW} — classId, layout, provided fields in literal
-     * order, the closed {@code defaultOwner}, the optional
-     * {@code CLASS_DEFAULT} child op ids (LOCAL), the optional factory ref
-     * (SHARED_FACTORY/RETAINED_ABI), and the field boundary ids in
-     * declaration order. D16 construction order: provided values (literal
-     * order) → default application → provided application with extra-key
-     * rejection → field validation (declaration order) → tag; zero return
-     * boundaries.
-     *
-     * <p>The closed owner set's {@code HOST_DEFAULTS}, {@code FFI_PLAN},
-     * and {@code BUILTIN_DEFAULTS} members are the project lowering's class
-     * registration seeds (ISSUE-0631). {@code BUILTIN_DEFAULTS} is the
-     * builtin {@code Error} construction (ISSUE-0619) and
-     * {@code HOST_DEFAULTS} the host declaration class construction over
-     * the loaded {@code <C>_defaults} entry (ISSUE-0624): provided fields
-     * in literal order, one {@code CLASS_LITERAL_FIELD} boundary per
-     * provided field in declaration order, the null factory ref, and the
-     * empty default-op list. {@code FFI_PLAN} is the extern-C C-struct
-     * construction over the loaded {@code <C>_plan} entry (ISSUE-0666):
-     * the same provided-field boundaries, the null factory ref, the empty
-     * default-op list, and no {@code CLASS_DEFAULT_FIELD} boundary — the
-     * omitted fields' evaluators are the loaded plan's. {@code RETAINED_ABI}
-     * is never produced on the production path; a payload carrying an
-     * unrealized owner is rejected fail-closed by the validator and by
-     * every emitter/oracle owner arm.</p>
-     */
     record ClassNewPayload(ClassId classId, ClassLayout layout, List<ProvidedField> providedFields,
                            DefaultOwner defaultOwner, List<OpId> classDefaultOpIds,
                            ClassFactoryId classFactoryRef, List<FieldBoundary> fieldBoundaries)
@@ -1086,11 +1040,6 @@ public sealed interface KindPayload
      * record set and the closed {@code SemanticOpKind} set are unchanged,
      * and the {@code deal.semantic-ir/1} version text is unchanged.
      *
-     * @param rawSpecifier   the raw specifier as written; non-null
-     * @param resolvedModule the resolved module identity; non-null
-     * @param kind           the closed module-import kind; non-null
-     * @param aliasCells     the ordered alias cells the completion
-     *                       writes; non-null (empty for none)
      */
     record ModuleImportPayload(String rawSpecifier, ModuleId resolvedModule, ModuleImportKind kind,
                                List<BindingId> aliasCells)

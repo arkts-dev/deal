@@ -49,10 +49,6 @@ public interface CanonicalClassIdentityIndex {
      * <p>The lookup key is the identity's structural
      * {@code (moduleIdentity, className)} pair.</p>
      *
-     * @param identity the registered canonical class identity
-     * @return the index-registered descriptor text, never {@code null}
-     * @throws IllegalStateException when the identity is absent from the
-     *         index (pinned internal invariant violation for the caller)
      */
     String descriptorTextFor(CanonicalClassIdentity identity);
 
@@ -61,11 +57,6 @@ public interface CanonicalClassIdentityIndex {
      * descriptor text, matched byte-for-byte (no path normalization, no
      * case folding, no boundary inference).
      *
-     * @param descriptorText the full class descriptor text, including the
-     *                       leading {@code '@'}
-     * @return the registered identity, never {@code null}
-     * @throws IllegalStateException when the text is absent from the
-     *         index (pinned internal invariant violation for the caller)
      */
     CanonicalClassIdentity identityForDescriptorText(String descriptorText);
 }

@@ -46,48 +46,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * Verifies the ISSUE-0234 A-D1/A-D3/A-D9 surface: {@link AddressChainProtocol}
- * as the closed address-chain shape authority of {@code deal.semantic-ir/1}
- * and {@link NormalizedSlot} as the closed {@code INDEX_NORMALIZE} slot
- * computation.
- *
- * <p>Corpus:</p>
- * <ol>
- *   <li>NormalizedSlot: the ARRAY_READ present/absent decisions, the
- *       ARRAY_WRITE append decision exactly at {@code index ==
- *       currentLength}, total representation of negative/out-of-range
- *       indices (never a failure), table-slot key identity with no
- *       coercion, the table-mode computation ignoring {@code currentLength}
- *       (the surface takes none), the pinned result types, the closed
- *       sealed shapes, and the fail-closed mode dispatch.</li>
- *   <li>Positives: one unit per closed A-D9 shape — the plain and
- *       adapter VARIABLE chains, TABLE_SLOT member/index writes,
- *       ARRAY_SLOT write (with its ARRAY_LENGTH lengthOp), CLASS_FIELD
- *       write, TABLE_SLOT member/index deletes, ARRAY_SLOT delete,
- *       CLASS_FIELD delete — plus a nested chain (an inner ASSIGN as the
- *       valueOp of an outer chain), a multi-chain unit with no shared
- *       children, a vacuous unit without chain ops, and an
- *       INDEX_NORMALIZE-only unit (non-chain ops are outside the
- *       protocol's domain).</li>
- *   <li>Negatives, each rejected with exactly one E6005 through
- *       {@code FailureContractRegistry} naming module, capability
- *       {@code EVALUATION_ORDER}, the pinned rule, profile
- *       {@code DEAL_V1_2_INT32}, IR version {@code deal.semantic-ir/1},
- *       and the offending op origin: wrong child order, wrong child kind,
- *       wrong boundary kind, wrong boundary policy, wrong normalize mode,
- *       missing lengthOp on an array chain, commit not last, boundary
- *       after the commit, missing VARIABLE_ASSIGNMENT boundary
- *       ({@code ADDRESS_CHAIN_SHAPE}); a producing child referenced by
- *       two chains and a duplicated producing child op
- *       ({@code SINGLE_EVALUATION}).</li>
- *   <li>Foundation regression: {@code INDEX_NORMALIZE → NO_DEAL_FAILURE}
- *       stays pinned by the foundation validator (R-POLICY-KIND) and the
- *       closed 14-condition rule set is unchanged — the protocol adds no
- *       {@code SemanticIrValidator} rule.</li>
- *   <li>Determinism: repeated validation is byte-identical.</li>
- * </ol>
- */
 public class AddressChainProtocolTest {
 
     private static int passed = 0;

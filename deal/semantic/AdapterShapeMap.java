@@ -12,46 +12,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
 
-/**
- * The closed {@code FUNCTION_ADAPT} mode shape map of the BINDINGS
- * capability (ISSUE-0450 shape-map child, sequencing item 7; design B7,
- * parent D15 "Lowering shape map"): every adapted source receives
- * exactly one mode from checker facts — never from target, route, or
- * emitter knowledge.
- *
- * <p><b>The closed map (B7/D15, exactly).</b></p>
- * <ul>
- *   <li><b>SHARED_CELL</b> — the source is a function-typed binding
- *       reference without a {@link BindingImmutabilityProof} (a
- *       reassignable local or parameter, a function name, or another
- *       identifier-resolved function-typed binding). This is the map's
- *       fallback arm for bindings: VALUE is admissible for a binding
- *       only with the recorded proof, so an unproven binding source is
- *       SHARED_CELL.</li>
- *   <li><b>VALUE</b> — (a) an already-materialized function-value
- *       operand: a function expression (the {@code CLOSURE_NEW} result)
- *       or an intrinsic function value ({@code int}/{@code number}
- *       first-class values); or (b) a binding with a recorded
- *       {@link BindingImmutabilityProof}.</li>
- *   <li><b>REEVALUATE_THUNK</b> — every other (non-identifier)
- *       expression: call results, member/field/index reads,
- *       conditionals, conversions, and any other composite source. A
- *       host/external import read such as
- *       {@code let h: (a:int,b:int)=>int = host.g;} is a non-identifier
- *       member-read expression and maps here; there is no VALUE
- *       carve-out for import reads — the host/external producer facts
- *       come from the registry child's materialization seam (T4) and
- *       the arm stays the same closed non-identifier arm, never a
- *       target-derived special case.</li>
- * </ul>
- *
- * <p><b>Determinism and purity.</b> The map is a pure function over its
- * facts: the same shape and proof facts always select the same mode, so
- * repeated lowering emits identical adapter modes (byte-identical
- * lowering's shape-map half). The selection surface accepts checker
- * facts only — no {@code Target}, no {@code ModuleRoutePlan}, and no
- * emitter input appears in any entry point of this class.</p>
- */
 public final class AdapterShapeMap {
 
     /**
@@ -99,12 +59,6 @@ public final class AdapterShapeMap {
      * non-identifier arm owns member reads, so a host/external import
      * read classifies here — no VALUE carve-out exists).
      *
-     * @param source  the adapted source expression; non-null
-     * @param resolve the checker symbol resolver (name → root symbol);
-     *                non-null — the intrinsic fact is the checker's
-     *                {@link Symbol.IntrinsicSymbol} binding, never a
-     *                spelling match
-     * @return the closed source shape
      */
     public static SourceShape sourceShapeOf(ExpressionNode source,
                                             Function<String, Symbol> resolve) {
@@ -165,13 +119,6 @@ public final class AdapterShapeMap {
      * reclassified (the payload's {@code proof} is present iff VALUE's
      * operand is a binding load, B8).</p>
      *
-     * @param shape the closed source shape; non-null
-     * @param proof the recorded proof fact of a binding source (absent
-     *              for every non-binding shape); non-null
-     * @return exactly one closed {@link CaptureMode}
-     * @throws IllegalArgumentException if a proof is supplied for a
-     *                                  non-binding shape (producer
-     *                                  defect)
      */
     public static CaptureMode selectMode(SourceShape shape,
                                          Optional<BindingImmutabilityProof> proof) {
@@ -209,9 +156,6 @@ public final class AdapterShapeMap {
      * → SHARED_CELL — the same closed fallback arm as the checker-fact
      * surface, so the two surfaces never disagree.
      *
-     * @param proof the recorded proof fact of the loaded binding (absent
-     *              for an unproven binding); non-null
-     * @return VALUE with the proof, SHARED_CELL without it
      */
     public static CaptureMode selectModeOverBindingLoad(
             Optional<BindingImmutabilityProof> proof) {
@@ -234,16 +178,6 @@ public final class AdapterShapeMap {
      * materialization site; they never reclassify the arm and never
      * select the mode.
      *
-     * @param producingKind the source value's producing op kind (the
-     *                      source ops the values/calls epics' producers
-     *                      emit); non-null
-     * @param producerFacts the registry child's materialization facts of
-     *                      a host/external function-value source (absent
-     *                      otherwise); non-null
-     * @return exactly one closed {@link CaptureMode}
-     * @throws IllegalArgumentException for a producing kind outside the
-     *                                  closed function-value producer set
-     *                                  (producer defect)
      */
     public static CaptureMode selectModeOverProducedSource(
             SemanticOpKind producingKind,

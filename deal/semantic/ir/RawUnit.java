@@ -15,15 +15,6 @@ import java.util.Objects;
  * with every closed enum position carried as a raw string. The closed
  * 14-condition rule engine consumes exactly this model on both surfaces.
  *
- * @param modulePath          the module identity path; non-null
- * @param semanticProfile     the raw semantic-profile name; non-null
- * @param interfaceHash       the interface index digest the unit was checked against; non-null
- * @param loweringContextHash the pinned lowering-context digest; non-null
- * @param requiredCapabilities the raw claimed capability names; non-null
- * @param coverage            the recorded construct-coverage rows; non-null
- * @param bindings            the function execution bindings keyed by
- *                            allocation identity; non-null
- * @param ops                 the produced operations in source order; non-null
  */
 public record RawUnit(
     String modulePath,
@@ -58,8 +49,6 @@ public record RawUnit(
      * the invalid-value classes are injectable only through the text
      * surface.
      *
-     * @param unit the typed unit; non-null
-     * @return the raw unit
      */
     public static RawUnit fromTyped(LoweredModuleUnit unit) {
         List<String> capabilities = new ArrayList<>();

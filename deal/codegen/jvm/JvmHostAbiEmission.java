@@ -21,50 +21,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * The JVM host ABI emission surface of the production project artifact
- * (ISSUE-0650; design source
- * {@code host-module-load-and-host-call-realization} H1, H2 items 1-2 and
- * H7's carrier set; the host-load contract;
- * {@code luajit-jvm-single-lowering-production-cutover} C2's "the JVM
- * artifact additionally carries the host ABI surface and the synthesized
- * host-record scope it needs").
- *
- * <p>One instance of this unit covers one production project compile and
- * emits, from the compile's host declaration surface alone:</p>
- *
- * <ol>
- *   <li>the module-keyed load entry of every host import (idempotent per
- *       module; the implementation class resolved through the landed
- *       {@link JvmBackend#classNameFor(String)} derivation, each declared
- *       function export bound as a {@code java.lang.reflect.Method}
- *       through the landed declared-parameter-class projection, each
- *       declared class export's mandatory {@code <C>_defaults} map
- *       captured) and the per-export wrappers with the declared parameter
- *       cells and the declared return cell (the pinned E8010 projections
- *       at the call origin);</li>
- *   <li>the shared boundary-check seam of those cells (the parameter and
- *       return projections, the closed runtime-kind projection, and the
- *       malformed-string reason) — the emitted wrapper is the single check
- *       authority for the host cells;</li>
- *   <li>the synthesized top-level {@code $DealRt} host-record and
- *       host-carrier scope: one {@code $Host$<specifier>$<Class>} record
- *       per declared host class (declared fields in declaration order,
- *       settled carriers), the declared element-shape array carriers
- *       (including the per-class {@code $HostArr$} wrappers), {@code
- *       Bytes}, the {@code FnValue} interface, and one per-signature
- *       wrapper class per declared function position (the landed
- *       {@link JvmBackend#fnShapeId(Type.Func)} /
- *       {@link JvmBackend#escapedIdentifier(String)} derivation), so the
- *       deployed host implementations compile unchanged.</li>
- * </ol>
- *
- * <p><b>Unreachability.</b> This unit reads the validated project's
- * {@code MODULE_IMPORT} facts, the compile's host declaration surface,
- * and the static name/descriptor derivations only: no AST, no checker
- * result, no route input, no retained backend generation entry point, and
- * no host code at compile time.</p>
- */
 final class JvmHostAbiEmission {
 
     /** One host import of the closure: the resolved module identity, the raw specifier, and the declaration facts. */
@@ -87,13 +43,6 @@ final class JvmHostAbiEmission {
                              String descriptorText, boolean optional) {
     }
 
-    /**
-     * The construction facts of one declared host class (ISSUE-0624;
-     * {@code semantic-ir-construct-coverage-cutover} K10): the synthesized
-     * record's simple name, the load-time-captured {@code <C>_defaults}
-     * field, the canonical identity text, and the declared fields in
-     * declaration order.
-     */
     record HostClassFacts(String recordSimpleName, String defaultsField,
                           String identityText, List<HostFieldFacts> fields) {
     }
@@ -216,12 +165,6 @@ final class JvmHostAbiEmission {
         return JvmBackend.escapedIdentifier(modulePath);
     }
 
-    /**
-     * The construction facts of one declared host class (ISSUE-0624; K10),
-     * or {@code null} when the class identity is not a declared host class
-     * of this compile's surface — the fail-closed resolution the host
-     * construction arm requires.
-     */
     HostClassFacts hostClassFacts(ClassId classId) {
         Objects.requireNonNull(classId, "classId must not be null");
         RecordInfo record = recordsByIdentity.get(classId.text());
@@ -700,17 +643,6 @@ final class JvmHostAbiEmission {
         emitCrossings(out);
     }
 
-    /**
-     * Emits one module-keyed load entry: idempotent per module (a second
-     * alias of one module binds nothing new), resolving the
-     * implementation class through the landed
-     * {@link JvmBackend#classNameFor(String)} derivation, binding one
-     * {@code java.lang.reflect.Method} per declared function export in
-     * declaration order with the declared parameter-class projection
-     * (E8011 through the closed {@code HOST_LOAD_MISSING_EXPORT} arm), and
-     * capturing one declared class export's mandatory
-     * {@code <C>_defaults} map (E8011 when missing).
-     */
     private void emitLoadEntry(StringBuilder out, HostModule module) {
         String key = key(module.modulePath());
         String raw = module.rawSpecifier();
@@ -761,15 +693,7 @@ final class JvmHostAbiEmission {
                     + " producer defect)");
             }
         }
-        // The loaded module's surface is the host import's namespace
-        // value and the surface the reads child's EXPORT_READ resolves
-        // (ISSUE-0651; H1 and H2 item 1): the module table carries one
-        // production FunctionValue carrier per declared function export,
-        // bridging the emitted per-export wrapper (the host-to-DEAL half
-        // of H7's function crossing). The surface is written only after
-        // every load-time binding and defaults capture succeeded, so a
-        // failed load leaves no partial surface; a class export's entry
-        // is the declaration-owned construction child's.
+
         List<Map.Entry<String, Type>> functionExports = new ArrayList<>();
         for (Map.Entry<String, Type> export : module.facts().exports().entrySet()) {
             if (export.getValue() instanceof Type.Func) {
@@ -1097,23 +1021,6 @@ final class JvmHostAbiEmission {
     // Emission: the host-boundary crossing projections (H7)
     // =========================================================================
 
-    /**
-     * Emits the host-boundary crossing projections (ISSUE-0651;
-     * {@code host-module-load-and-host-call-realization} H7 and the
-     * host-boundary carrier projection contract): the DEAL-to-host
-     * parameter projection (the declared host-facing carrier: the
-     * per-signature function bridge and the declared element-shape array
-     * carrier), the host-to-DEAL declared-return projection (the
-     * production function carrier and the materialized
-     * {@link JvmRuntime.Array}), and the normal-return copy-back of a
-     * declared array parameter's host element writes. The declared
-     * descriptor already fixed the carrier class, so every projection is
-     * a per-crossing materialization, never a runtime path selection. A
-     * nullable declared position's descriptor text carries the {@code ?}
-     * prefix while the declared element-shape carrier keys are the
-     * un-prefixed array descriptors, so the array dispatch and the
-     * copy-back match the stripped descriptor text.
-     */
     private void emitCrossings(StringBuilder out) {
         out.append("  // ---- The host-boundary crossing projections (ISSUE-0651; H7) ----\n");
         out.append("  static final java.util.IdentityHashMap<java.lang.Object, java.lang.Object> __hostBytesOutMap = new java.util.IdentityHashMap<>();\n");
@@ -1629,19 +1536,6 @@ final class JvmHostAbiEmission {
         out.append("  }\n");
     }
 
-    /**
-     * The {@link JvmRuntime.ClassInstance} surface of one synthesized
-     * record (ISSUE-0624; K10): the closed field-op entry the production
-     * arms already speak — {@code FIELD_READ} reads the presence-aware
-     * field with the production value carriers projected back (an absent
-     * field is {@link JvmRuntime#MISSING}), {@code FIELD_WRITE} stores the
-     * boundary-checked production value, {@code FIELD_DELETE} clears an
-     * optional field, and {@code HAS_FIELD} resolves presence — with the
-     * declared field's host-facing storage as the record's own state the
-     * deployed host implementation reads directly. A required-field delete
-     * is unreachable from the checker (E4004) and stays a fail-closed
-     * producer defect.
-     */
     private void emitRecordClassInstance(StringBuilder out, RecordInfo record) {
         out.append("    @Override public java.lang.String classIdText() { return $identity; }\n");
         out.append("    @Override public boolean isPresent(java.lang.String key) {\n");
@@ -1747,17 +1641,6 @@ final class JvmHostAbiEmission {
             expression, artifactClass + ".__hostProjectArg");
     }
 
-    /**
-     * The production carrier &#8594; record storage projection of one
-     * declared field (the {@code FIELD_WRITE} and construction-argument
-     * direction, ISSUE-0624/K10): the declared host-facing projection
-     * ({@code __hostProjectArg}) then the storage's own unboxing/cast — the
-     * one producer the record's {@code write} surface and the production
-     * construction arm share. The projection helper's reference is qualified
-     * explicitly inside the {@code $DealRt} scope (the artifact class owns
-     * the crossing helpers) and unqualified inside the artifact class's own
-     * emitted members.
-     */
     static String hostFieldWriteProjection(String descriptorText, String storageType,
                                            String expression, String projectArgRef) {
         String projected = projectArgRef + "(" + javaString(descriptorText)
@@ -1772,7 +1655,6 @@ final class JvmHostAbiEmission {
         };
     }
 
-    /** One per-signature function wrapper class (the landed shape id). */
     private void emitShape(StringBuilder out, String shapeId, Type.Func func) {
         out.append("  // DEAL function-value wrapper for descriptor ")
             .append(descriptorText(func)).append(".\n");
@@ -1793,17 +1675,7 @@ final class JvmHostAbiEmission {
         }
         out.append(");\n");
         out.append("  }\n\n");
-        // The declared bridge of this signature (ISSUE-0651; H7): the
-        // host-facing wrapper class over one production function carrier —
-        // its typed invoke runs the carrier (the DEAL body's own frames and
-        // return cell) and applies the declared return cell's projection.
-        // The carrier is resolved the way JvmRuntime.invokeAdapter resolves
-        // its source: a production JvmRuntime.AdapterValue runs the D15
-        // protocol (JvmRuntime.invokeAdapter resolves the source per the
-        // capture mode, runs the source-signature check, and pushes the
-        // source body's frame); every other carrier runs its own function id
-        // pushed around the invocation, so a host-invoked DEAL body's error
-        // snapshot carries the closure's own frame.
+
         out.append("  static final class __Bridge$").append(shapeId)
             .append(" extends ").append(shapeId).append(" {\n");
         out.append("    final JvmRuntime.FunctionValue $carrier;\n");

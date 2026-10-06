@@ -30,22 +30,6 @@ import java.util.Objects;
  * only, so the retained (and later serialized) plan never exposes
  * deployment paths.</p>
  *
- * @param classIdentityText             the class's canonical descriptor
- *                                      identity text (the plan-map key)
- * @param entries                       the ordered field entries in class
- *                                      source order
- * @param canonicalPlanContent          the complete canonical plan
- *                                      serialization (CanonicalJson)
- * @param semanticDefaultContents       the canonical semantic-default
- *                                      content (identity digests, provider
- *                                      digests, descriptors, ranges)
- * @param evaluatorImplementationContents the canonical evaluator
- *                                      implementation content
- *                                      (per-entry deferred evaluator
- *                                      serializations)
- * @param planDigest                    SHA-256 over
- *                                      {@code canonicalPlanContent}
- *                                      (an index only)
  */
 public record FfiCompilerClassDefaultPlan(
     String classIdentityText,
@@ -72,16 +56,6 @@ public record FfiCompilerClassDefaultPlan(
      * canonical deferred evaluator content the lowering child consumes.
      * No evaluator is ever invoked by this record.
      *
-     * @param name               the field name exactly as declared
-     * @param canonicalDescriptor the field's canonical runtime descriptor
-     * @param optional           true iff the field is optional (for
-     *                           extern-C structs always false — optional
-     *                           fields are E7002)
-     * @param hasDefaultEvaluator true iff the field carries a deferred
-     *                           default evaluator
-     * @param evaluatorContent   the canonical deferred evaluator content,
-     *                           null exactly when
-     *                           {@code hasDefaultEvaluator} is false
      */
     public record Entry(String name, String canonicalDescriptor,
                         boolean optional, boolean hasDefaultEvaluator,

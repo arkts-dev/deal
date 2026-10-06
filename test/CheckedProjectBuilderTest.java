@@ -69,70 +69,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
 
-/**
- * Verifies the ISSUE-0288 foundation surface: {@link CheckedProjectBuilder}
- * producing exactly one {@link CheckedProjectInput} and one
- * {@link ProjectInterfaceIndex} per compile in dependency order — the
- * canonical type text (checked-{@code Type} rendering + the pinned
- * {@code TypeNode → CanonicalTypeText} grammar with one shared
- * parenthesization rule), the pinned population rule (input =
- * implementation modules only; index = full closure with
- * IMPLEMENTATION|STDLIB|HOST produced), the STDLIB/HOST declaration-entry
- * derivation, the {@code constructionEntry} derivation through
- * {@code SemanticIdAllocator} ordering, the E6005 guards through
- * {@code FailureContractRegistry} with {@code INDEX_INTERNAL_ERROR_SENTINEL},
- * no frontend mutation, and byte-identical determinism.
- *
- * <p>Tests:
- * <ol>
- *   <li>Real fixture: orchestrator phase 3 + builder on
- *       {@code declaration-only-import-compile.deal} — the HOST index
- *       entry for {@code declaration_only_lib} carries
- *       {@code exports = [declaredAdd: (int, int) => int]},
- *       {@code classes = []}, {@code imports = []},
- *       {@code initialization = ONCE_AFTER_DEPENDENCIES}, the importing
- *       module's {@code ResolvedImport} records {@code kind = HOST}, and
- *       the input covers the implementation modules only (every entry
- *       {@code kind = IMPLEMENTATION} with {@code checks}).</li>
- *   <li>Real fixture: importing {@code std/time} yields a STDLIB entry
- *       with {@code exports = [nowMillis: () => int]},
- *       {@code imports = []}, {@code initialization =
- *       ONCE_AFTER_DEPENDENCIES}.</li>
- *   <li>Grammar: every sealed TypeNode variant — six primitives,
- *       {@code Error → @/Error}, nested arrays ({@code int[][]},
- *       {@code (int | null)[]}, {@code (() => null)[]}), nullables
- *       ({@code int[] | null}, {@code ((int) => int) | null}),
- *       sync/async function forms, qualified types
- *       ({@code V.Vec → @cc_class/Vec}) — and checked-Type rendering
- *       parity (byte-identical text for the same shapes).</li>
- *   <li>Defect guards: {@code Type.Error}, an unresolvable qualified
- *       alias, a chained {@code T | null | null}, and an unknown
- *       non-primitive NamedType raise the rendering defect.</li>
- *   <li>E6005 guards: a synthetic {@code Type.Error} export fact, an
- *       out-of-grammar declaration annotation, and an input entry without
- *       a {@code CheckResult} each raise E6005 through the registry with
- *       {@code validatorRule INDEX_INTERNAL_ERROR_SENTINEL} (payload
- *       asserted on the diagnostic).</li>
- *   <li>No-mutation: {@code IrDumper} output before and after the build is
- *       byte-identical for the entry program and the declaration file;
- *       the shared {@code ast}/{@code checks} instances are preserved.</li>
- *   <li>{@code constructionEntry} derivation: allocator ordering —
- *       dependency order, exported classes in declaration order, role
- *       CLASS_FACTORY, synthetic ordinal 0; the index never records a
- *       route.</li>
- *   <li>Determinism: two builds produce byte-identical canonical index
- *       JSON and equal digests, pinned against a stored golden —
- *       STDLIB/HOST declaration entries included.</li>
- *   <li>Combined T1/T2/T3/T4/T5/T7: a real end-to-end compile with the
- *       explicit invocation (the builder records its
- *       {@code releaseStateHash} verbatim — asserted equal, and a wrong
- *       recorded hash is rejected at record construction), the allocator
- *       ordering (asserted), the digest golden (asserted), the E6005
- *       payload (asserted), and the T2 ID types
- *       ({@code ClassId @modulePath/ClassName},
- *       {@code ClassFactoryId}).</li>
- * </ol>
- */
 public class CheckedProjectBuilderTest {
 
     private static int passed = 0;
@@ -237,11 +173,7 @@ public class CheckedProjectBuilderTest {
         try {
             Path modulesDir = Path.of("test/conformance/backend-runtime/modules")
                 .toAbsolutePath().normalize();
-            // ISSUE-0273: the production orchestrator must lex header-free
-            // sources — materialize stripped copies into the temp project
-            // (the shared harness metadata seam, the same producer-side
-            // rule the JVM harness applies), leaving the corpus bytes
-            // untouched.
+
             Path strippedDir = tmp.resolve("stripped");
             Files.createDirectories(strippedDir);
             for (String name : List.of("declaration-only-import-compile.deal",
@@ -254,10 +186,6 @@ public class CheckedProjectBuilderTest {
             Path entry = strippedDir.resolve("declaration-only-import-compile.deal");
             Path output = tmp.resolve("build");
 
-            // ISSUE-0643 P10 item 3: the fixture imports a declaration-only
-            // host module (a HOST-kind MODULE_IMPORT), so the in-process
-            // compile resolves the harness invocation and keeps the
-            // harness arm — the builder facts below are arm-independent.
             CompilationOrchestrator orchestrator = new CompilationOrchestrator(
                 entry, output, false, false, false, false, Backend.LUAJIT,
                 null, List.of(strippedDir),
@@ -269,13 +197,6 @@ public class CheckedProjectBuilderTest {
             check(ok, "declaration-only-import-compile.deal compiles through phase 3 + builder: "
                 + orchestrator.diagnostics());
 
-            // ISSUE-0656: the release-owned production invocation realizes
-            // the same HOST-declaration-kind import through the host load of
-            // the module init walk, so the production compile succeeds and
-            // publishes its one project artifact under the probe output (the
-            // fixture carries no call and no construction), while the
-            // harness invocation above keeps the builder facts
-            // arm-independent.
             Path prodOutput = tmp.resolve("prod-build");
             CompilationOrchestrator production = new CompilationOrchestrator(
                 entry, prodOutput, false, false, false, false, Backend.LUAJIT,
@@ -336,13 +257,6 @@ public class CheckedProjectBuilderTest {
                 "the implementation entry's exports render the Phase-3-corrected export "
                     + "map in declaration order; got " + entryModule.exports());
 
-            // Index: every module in the closure, dependency order, HOST entry
-            // derived from the declaration AST. ISSUE-0269: the unlisted
-            // declaration module's internal wiring name is its private
-            // deploymentModuleId ("m" + 16 hex — the lossy computeModulePath
-            // dotted path is retired), so the HOST entry key has the pinned
-            // deployment-module-id shape and agrees with the import's
-            // resolvedModuleId instead of the legacy dotted stem.
             Map<ModuleId, ExternalModuleInterface> indexModules = index.modules();
             List<ModuleId> indexKeys = new ArrayList<>(indexModules.keySet());
             check(indexKeys.size() == 2
@@ -680,11 +594,6 @@ public class CheckedProjectBuilderTest {
             new SymbolTable(), emptyChecks());
         assertE6005(typeErrorFact, new ModuleId("main"), "Type.Error in a declared-type position");
 
-        // (a2) The bytes primitive — the v1.2 type and value semantics
-        // landed with the bytes epic (Type.Bytes + the backend carriers),
-        // so the structural-descriptors reservation ("until the type and
-        // value semantics exist") lifts: a declared-type position carrying
-        // bytes renders the primitive name in the index, never an E6005.
         Map<String, Type> bytesExports = new LinkedHashMap<>();
         bytesExports.put("main", Types.func(List.of(), Type.Null.INSTANCE));
         bytesExports.put("bad", Type.Bytes.INSTANCE);
@@ -788,11 +697,6 @@ public class CheckedProjectBuilderTest {
         Path entryPath = modulesDir.resolve("declaration-only-import-compile.deal");
         Path declPath = modulesDir.resolve("declaration_only_lib.d.deal");
 
-        // Real phase-3 pipeline for the entry module (lexer/parser/NameResolver/
-        // TypeChecker), mirroring the orchestrator's typeCheckAll. ISSUE-0273:
-        // classification headers are stripped before the lexer (the shared
-        // harness metadata seam — corpus bytes must never reach a lexer with
-        // directive-shaped classification lines).
         String entrySource = ConformanceHarnessMetadata
             .stripClassificationHeaders(Files.readString(entryPath));
         LexResult entryLex = new Lexer(entrySource, entryPath.toString()).tokenize();
@@ -875,10 +779,7 @@ public class CheckedProjectBuilderTest {
         try {
             Path src = tmp.resolve("src");
             Files.createDirectories(src);
-            // ISSUE-0269: the class-bearing declaration is
-            // externals-listed (an unlisted declaration class is E2010 at
-            // the class name span), so the fixture routes through
-            // production ProjectLocator with the externals wiring.
+
             Files.writeString(src.resolve("lib.d.deal"),
                 "export class A { x: int; }\n"
                     + "export class B { y: string; opt?: int; note: string | null; "
@@ -991,14 +892,6 @@ public class CheckedProjectBuilderTest {
     private static final String PINNED_INDEX_DIGEST =
         "25b6e4816b1e2ade780ce9c0582a547756d07a285e61ed9ef9257b69b5bac336";
 
-    /**
-     * Writes the combined fixture as an exact-v1.2 project whose
-     * declaration module is externals-listed (ISSUE-0269: an unlisted
-     * declaration carrying classes is E2010 at the class name span, so
-     * declaration-bearing fixtures wire their declarations through the
-     * externals map — the ExternalModule classification admits classes
-     * with the {@code @$external} identity form).
-     */
     private static Path writeCombinedFixture(Path dir) throws Exception {
         Path src = dir.resolve("src");
         Files.createDirectories(src);
@@ -1019,8 +912,6 @@ public class CheckedProjectBuilderTest {
         return src.resolve("main.deal").toAbsolutePath();
     }
 
-    /** Locates the combined fixture's manifest through production
-     * ProjectLocator (the ISSUE-0269 production path). */
     private static ProjectContext locateCombinedFixture(Path entry) {
         ProjectLocator.LocateResult located =
             ProjectLocator.locate(entry.toString(), null);
@@ -1170,9 +1061,7 @@ public class CheckedProjectBuilderTest {
     private static boolean allocatorOrderingWorks(Path tmp) throws Exception {
         Path src = tmp.resolve("src2");
         Files.createDirectories(src);
-        // ISSUE-0269: the class-bearing declaration is externals-listed
-        // (an unlisted declaration class is E2010), routed through
-        // production ProjectLocator.
+
         Files.writeString(src.resolve("lib.d.deal"),
             "export class A { x: int; }\n"
                 + "export class B { y: string; }\n");

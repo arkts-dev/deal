@@ -27,7 +27,6 @@ public record LexResult(List<Token> tokens, List<CompilerDiagnostic> diagnostics
         this(tokens, diagnostics, List.of());
     }
 
-    /** Returns true if any error-level diagnostics were produced. */
     public boolean hasErrors() {
         return diagnostics.stream().anyMatch(d -> "error".equals(d.severity()));
     }

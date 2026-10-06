@@ -17,21 +17,6 @@ import java.util.Objects;
  * order as the stable tie-break, so a consumer module's wrappers/plans
  * exist before any depending evaluator runs.</p>
  *
- * @param importAlias             the import alias exactly as written at
- *                                the consuming site
- * @param exportName              the referenced exported function name
- * @param importedModulePath      the provider module's dotted module
- *                                path
- * @param canonicalDescriptor     the provider function's canonical
- *                                runtime descriptor
- * @param providerContractDigest  SHA-256 over the canonical provider
- *                                signature content (behavior-bearing:
- *                                a changed provider signature changes the
- *                                digest)
- * @param graphOrder              the provider module's dependency-order
- *                                position
- * @param sourceRange             the consuming site's complete scalar
- *                                range
  */
 public record FfiImportedFunctionReference(
     String importAlias,

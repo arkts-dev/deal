@@ -13,15 +13,6 @@ package deal.semantic.ir;
  * construction and the instantiated message; this record is only the
  * payload carrier.</p>
  *
- * @param module the dotted module path (ModuleId) of the module whose
- *               common-lowering contract failed
- * @param capability the semantic capability involved in the failure
- * @param validatorRule the failing validator rule ID (R-*) or the
- *                      producer's fact-defect identifier (e.g.
- *                      {@code INDEX_INTERNAL_ERROR_SENTINEL})
- * @param semanticProfile the invocation's project semantic profile
- * @param irVersion the pinned {@code deal.semantic-ir/1} schema version
- * @param origin the producing component or origin description
  */
 public record LoweringFailureDetail(
     String module,

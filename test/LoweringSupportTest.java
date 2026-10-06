@@ -50,70 +50,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
-/**
- * Verifies the ISSUE-0289 foundation surface: {@link LoweringSupport}
- * computing exactly one {@link SemanticRequirementManifest} per
- * implementation module over T8's checked project — the closed
- * capability claims (every module claims {@code FOUNDATION_VALUES}; the
- * {@code std/time.nowMillis} reference claims through the landed
- * cataloged-call arm since K7, and the superseded four-part
- * {@code STDLIB_TIME_CONFLICT} detector is retired) — plus the
- * reachable-construct coverage rows over T2's closed construct→op
- * detector table, E6005 on inconsistent checked facts via T5/T1, and
- * byte-identical determinism.
- *
- * <p>Tests:
- * <ol>
- *   <li>The K7 cataloged-call claim: a direct
- *       {@code time.nowMillis()} call claims {@code STDLIB_SEMANTICS}
- *       (never {@code STDLIB_TIME_CONFLICT}), and a
- *       value-position access ({@code let f: () => int =
- *       time.nowMillis; f();}) claims nothing from the read.</li>
- *   <li>The retired table-alias shapes: {@code let t = time;
- *       let g: () => int = t.nowMillis; g();} and a
- *       table-typed parameter passthrough carry no conflict claim (the K15
- *       namespace-value slice owns their lowering).</li>
- *   <li>The retired closure shapes: the cross-module table escape and
- *       the table re-export chain carry no conflict claim at any site;
- *       the wrappers' roots still claim no conflict.</li>
- *   <li>The retired propagation: wrapper escape and propagation chains
- *       through re-exporting intermediates carry no conflict claim in
- *       any module.</li>
- *   <li>Negatives: a {@code std/time} importer without any
- *       {@code nowMillis} access claims exactly FOUNDATION_VALUES +
- *       MODULES; an alias bound to {@code std/time} claims
- *       STDLIB_SEMANTICS through the cataloged call, an
- *       identically-named alias bound to another module does not.</li>
- *   <li>The retired over-claim direction: a direct importer or a closure
- *       member reading an unrelated table's {@code nowMillis}, and a
- *       module importing a nowMillis-using module, all carry no conflict
- *       claim.</li>
- *   <li>{@code constructCoverage}: one real module exercising every one
- *       of the 23 rows carrying a required common form (the
- *       {@code std/time.nowMillis} row included) records exactly
- *       those T2 rows with the verbatim mapped op kinds; a synthetic
- *       {@link LoweredModuleUnit} built from the manifest rows carries
- *       them on its own enum-keyed {@code constructCoverage} (the S1
- *       coverage fact).</li>
- *   <li>E6005: an import resolving outside the dependency-ordered index
- *       raises E6005 through T5 with the prescribed payload (module,
- *       capability {@code FOUNDATION_VALUES}, validatorRule
- *       {@code MANIFEST_INTERNAL_ERROR_SENTINEL}, semanticProfile,
- *       irVersion, origin) — a T8 wrong-index-fact fault fails this
- *       suite; the record guards reject a manifest without
- *       {@code FOUNDATION_VALUES}, a T2-corrupted coverage row, and a
- *       coverage row diverging from the closed mapped op kinds (the
- *       formerly excluded {@code STDLIB_TIME_NOW_MILLIS} row included);
- *       a T8 input entry without {@code checks} is
- *       rejected at record construction; the T1 capability enum admits
- *       exactly the closed set.</li>
- *   <li>Determinism: two orchestrator compiles of the same fixture
- *       produce byte-identical manifest canonical texts and equal
- *       digests; recomputation over the same checked project is
- *       identical and leaves the frontend facts byte-unchanged
- *       (IrDumper output equal before and after).</li>
- * </ol>
- */
 public class LoweringSupportTest {
 
     private static int passed = 0;
@@ -163,14 +99,7 @@ public class LoweringSupportTest {
      * the manifest phase) and returns the manifest result; null when the
      * compile or the checked project failed.
      */
-    /**
-     * The harness invocation of this suite's compiles (ISSUE-0643 P10
-     * item 3): the fixtures carry later-slice constructs
-     * ({@code time.nowMillis}, function-typed values) the release-owned
-     * production invocation fails closed, while the suite's subject —
-     * the checked project, the manifests, and the read-only recomputation
-     * — is arm-independent.
-     */
+
     private static CompilationOrchestrator harnessOrchestrator(Path entry,
                                                                Path output) {
         return new CompilationOrchestrator(entry, output, false, false, false,
@@ -181,28 +110,12 @@ public class LoweringSupportTest {
                 SemanticProfile.DEAL_V1_2_INT32));
     }
 
-    /**
-     * The release-owned production invocation (ISSUE-0643 P10 item 2):
-     * the probe resolves the same record {@code deal.Main} and
-     * {@code CompilationOrchestrator.defaultInvocation()} resolve, so
-     * the compile dispatches to the production arm.
-     */
     private static CompilerInvocation productionInvocation() {
         return CompilerProfileProvider.resolve(
             ReleaseConfiguration.CURRENT_RELEASE_STATE,
             ReleaseConfiguration.releaseCapabilityRegistry());
     }
 
-    /**
-     * ISSUE-0623 (K7): the {@code time.nowMillis} fixture drives through
-     * the release-owned production invocation to exactly one project
-     * artifact that executes under the real toolchain with the pinned
-     * E8004 {@code int out of safe range} terminal — the declared
-     * {@code int} boundary is the single terminal of the target-clock
-     * read. The value-position export-read shape
-     * ({@code let f: () => int = time.nowMillis}) belongs to the export-read
-     * slice (E10/K2) and is not this slice's fixture.
-     */
     static void testProductionInvocationTimeDrive() throws Exception {
         System.out.println("-- The release-owned production invocation of the"
             + " time.nowMillis fixture: one artifact, the pinned E8004 terminal"
@@ -224,14 +137,6 @@ public class LoweringSupportTest {
         }
     }
 
-    /**
-     * The release-owned production acceptance of one covered fixture
-     * (ISSUE-0619): the fixture compiles through the production invocation
-     * to exactly one project artifact, the artifact exists, and the
-     * artifact executes under its real toolchain with the pinned terminal —
-     * the empty success output, or the canonical
-     * {@code DEAL_ERROR_CODE: <code>} terminal of the declared failure.
-     */
     private static void productionAccept(Path tmp, Map<String, String> sources,
                                          String entryName, String what,
                                          String expectedFailureCode)
@@ -322,13 +227,6 @@ public class LoweringSupportTest {
         return null;
     }
 
-    /**
-     * The K7 retirement pin: no manifest claims the inert
-     * {@code STDLIB_TIME_CONFLICT} routing marker — the superseded
-     * four-part line trigger and its planning claim are retired, and a
-     * {@code std/time.nowMillis} reference claims through the landed
-     * cataloged-call arm instead.
-     */
     private static boolean noConflictClaim(SemanticRequirementManifest manifest) {
         return manifest != null
             && !manifest.capabilities().contains(SemanticCapability.STDLIB_TIME_CONFLICT);
@@ -351,13 +249,6 @@ public class LoweringSupportTest {
             && manifest.capabilities().equals(EnumSet.of(SemanticCapability.FOUNDATION_VALUES));
     }
 
-    /**
-     * The ISSUE-0239 MODULES import claim plus FOUNDATION_VALUES: an
-     * importing module with no other trigger claims exactly these two
-     * capabilities (the reserved parent verification-3 plan-time edge
-     * reroute condition; an export declaration or the entry delegation
-     * never claims it).
-     */
     private static boolean claimsFoundationAndModules(SemanticRequirementManifest manifest) {
         return manifest != null
             && manifest.capabilities().equals(EnumSet.of(
@@ -371,7 +262,6 @@ public class LoweringSupportTest {
                 SemanticCapability.FOUNDATION_VALUES, SemanticCapability.SIGNED_INT32));
     }
 
-    /** I3 signed32 plus the ISSUE-0239 MODULES arms (importing/imported-by). */
     private static boolean claimsSignedInt32AndModules(
             SemanticRequirementManifest manifest) {
         return manifest != null
@@ -1563,11 +1453,6 @@ public class LoweringSupportTest {
         }
     }
 
-    // =========================================================================
-    // 11. ISSUE-0239 E10 plan-time arms: bytes values, class literals,
-    //     dynamic calls, nested functions, adapters, uncalled declarations
-    // =========================================================================
-
     static void testE10BytesValueArm() throws Exception {
         System.out.println("-- ISSUE-0239 E10 arm: bytes-typed values claim "
             + "CONTAINERS_AND_STRINGS --");
@@ -1598,11 +1483,7 @@ public class LoweringSupportTest {
                 "the bytes(...) call and the bytes .length read claim "
                     + "CONTAINERS_AND_STRINGS (ISSUE-0158 boundary, never E6005): "
                     + manifestOf(result, "main").capabilities());
-            // ISSUE-0626: the bytes-bearing fixture's Error half landed with
-            // ISSUE-0619 and its bytes element contract is production-covered
-            // in this slice, so the same source compiles through the
-            // release-owned production pipeline to its one project artifact
-            // and the artifact executes under its real toolchain.
+
             productionAccept(tmp.resolve("production"),
                 Map.of("main.deal", bytesFixture), "main.deal",
                 "the bytes-bearing E10 arm", null);
@@ -1630,9 +1511,7 @@ public class LoweringSupportTest {
                         + "literal position (no declaring declaration exists): "
                         + manifestOf(result, "main").capabilities());
             }
-            // ISSUE-0619: the fixture's only remaining blocker was the builtin
-            // Error construct, so the same source compiles through the
-            // release-owned production pipeline and its artifact executes.
+
             productionAccept(tmp.resolve("production"), Map.of("main.deal", """
                 export function main(): null {
                   throw { code: "TEST_FAIL", message: "boom" }
@@ -1768,13 +1647,7 @@ public class LoweringSupportTest {
                         + "FOUNDATION_VALUES + SIGNED_INT32 (one call site, no CALLS "
                         + "claim): " + manifestOf(called, "main").capabilities());
             }
-            // The declaration-order-independence pin (ISSUE-0239 E10):
-            // the identical module with the entry function declared
-            // first (the conventional v1.2 layout) counts the call site
-            // exactly like the callee-first layout — the call accounting
-            // collects the called symbols over the whole statement walk
-            // and the never-called arm runs after it, so a call site
-            // walked before the callee's declaration is never lost.
+
             RequirementManifestResult calledMainFirst =
                 compileAndCompute(tmp.resolve("called-main-first"),
                 Map.of("main.deal", """
@@ -1872,11 +1745,6 @@ public class LoweringSupportTest {
         }
     }
 
-    // =========================================================================
-    // 12. ISSUE-0574 bytes guard: the bytesBearing marker and its
-    //     canonical JSON key (determinism + the unchanged claim arm)
-    // =========================================================================
-
     static void testBytesBearingMarkerDeterminism() throws Exception {
         System.out.println("-- ISSUE-0574 bytes guard: bytesBearing is a fixed "
             + "per-module boolean with a byte-identical canonical JSON key --");
@@ -1897,11 +1765,7 @@ public class LoweringSupportTest {
                   return null;
                 }
                 """;
-            // ISSUE-0626: the bytes-bearing fixture (its Error half landed
-            // with ISSUE-0619) compiles through the release-owned production
-            // pipeline to its one project artifact and the artifact executes
-            // under its real toolchain — the plan-time marker's module is the
-            // production-covered module.
+
             productionAccept(tmp.resolve("production"),
                 Map.of("main.deal", bytesSource), "main.deal",
                 "the bytes-bearing marker arm", null);

@@ -81,7 +81,6 @@ public class LuaJitAsyncExportInvoker {
     /** Temp-directory prefix for the per-invocation materialization. */
     static final String TEMP_DIR_PREFIX = "deal-async-export-invoker-";
 
-
     // =========================================================================
     // Public API
     // =========================================================================
@@ -97,13 +96,6 @@ public class LuaJitAsyncExportInvoker {
         /**
          * The matcher-validated completion (D2/D6/D7).
          *
-         * @param returnDescriptor the byte-exact canonical descriptor the
-         *                         completion was matched against
-         * @param valueJson        the completion value as its exact JSON
-         *                         text over the JSON-encodable surface
-         *                         (null, booleans, {@code %.17g} numbers,
-         *                         UTF-8 strings, arrays, class/plain
-         *                         objects)
          */
         record Value(String returnDescriptor, String valueJson)
                 implements Result {
@@ -146,11 +138,6 @@ public class LuaJitAsyncExportInvoker {
      * Invokes one exact async export under one fresh real-LuaJIT
      * process. See the class contract for the full outcome mapping.
      *
-     * @param request the three-field request; non-null
-     * @return {@link Result.Value}, {@link Result.DealError}, or
-     *         {@link Result.HostFailure} — never {@code null}
-     * @throws LuaJitAsyncExportInvocationException for infrastructure,
-     *         containment, and value-representation failures
      */
     public Result invoke(AsyncExportInvocationRequest request) {
         Objects.requireNonNull(request, "request must not be null");
@@ -271,10 +258,6 @@ public class LuaJitAsyncExportInvoker {
      * <p>Overridable in tests to hide both lookup sources and exercise
      * the missing-driver hard-failure path.</p>
      *
-     * @return an open stream over the driver text, or {@code null} when
-     *         neither lookup source carries it
-     * @throws IOException when the working-tree file exists but cannot
-     *         be opened
      */
     protected InputStream locateDriverResource() throws IOException {
         InputStream stream = getClass().getClassLoader()
@@ -298,8 +281,6 @@ public class LuaJitAsyncExportInvoker {
      * ancestor containing {@code deal/runtime.lua} — the orchestrator's
      * deployment marker ({@code deal/module/CompilationOrchestrator.java:1582}).
      *
-     * @return the nearest ancestor deployment root, or {@code null} when
-     *         no ancestor carries the marker
      */
     static Path deriveDeploymentRoot(Path entryArtifact) {
         Path dir = entryArtifact.getParent();
@@ -395,12 +376,7 @@ public class LuaJitAsyncExportInvoker {
 
         /** A codec failure: malformed conventional JSON text. */
         public static final class ParseException extends RuntimeException {
-            /**
-             * Public construction (ISSUE-0161): the JVM async-export
-             * invoker validates the shared closed envelope schema with
-             * this same codec from {@code deal.codegen.jvm}, so its
-             * schema validation failures are this exception type.
-             */
+
             public ParseException(String message) {
                 super(message);
             }
@@ -453,10 +429,6 @@ public class LuaJitAsyncExportInvoker {
         /**
          * Parses conventional JSON text into the value model.
          *
-         * @param text the JSON text; non-null
-         * @return the parsed value, never {@code null}
-         * @throws ParseException on malformed text, duplicate keys,
-         *         unpaired surrogates, or trailing content
          */
         public static Value parseValue(String text) {
             Objects.requireNonNull(text, "text must not be null");
@@ -473,10 +445,6 @@ public class LuaJitAsyncExportInvoker {
          * Parses conventional JSON text as an object (the envelope
          * protocol's only top-level shape).
          *
-         * @param text the JSON object text; non-null
-         * @return the parsed object, never {@code null}
-         * @throws ParseException on malformed text or a non-object
-         *         top-level value
          */
         public static ObjectValue parseObject(String text) {
             Value value = parseValue(text);

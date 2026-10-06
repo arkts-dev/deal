@@ -31,10 +31,6 @@ public final class StagedArtifactSet {
     /**
      * Builds the set from the staged artifacts in write order.
      *
-     * @param artifacts the staged artifacts; non-null
-     * @throws IllegalArgumentException when two artifacts carry the same
-     *         name (fail closed — the published set must have exactly one
-     *         artifact per name)
      */
     public StagedArtifactSet(List<StagedArtifact> artifacts) {
         Objects.requireNonNull(artifacts, "artifacts must not be null");
@@ -79,8 +75,6 @@ public final class StagedArtifactSet {
      * Whether an artifact with the given name was staged — the
      * {@code loadKey} resolution gate.
      *
-     * @param name the artifact name; non-null
-     * @return true iff the set contains that artifact
      */
     public boolean contains(String name) {
         return artifacts.containsKey(name);

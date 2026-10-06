@@ -27,9 +27,9 @@ JACOCO_DIR=/path/to/jacoco ./coverage.sh --jobs 1
 ```
 
 Coverage executes the same test runner and instruments Java subprocesses
-without Java startup-option environment variables. Only classes originating
-from production `deal/` sources enter the report; test helpers and generated
-probe classes are excluded. Lua/JS execution is not counted by JaCoCo.
+without Java startup-option environment variables. Production classes compile into `build/deal`; test classes compile separately
+into `build/test-classes`. Only `build/deal` enters the report; test helpers
+and generated probe classes are excluded. Lua/JS execution is not counted by JaCoCo.
 Minimum production coverage is **80% lines** and **69% branches**.
 Reports are written to `build/coverage.csv`, `build/coverage.xml`, and
 `build/coverage-html/index.html`.

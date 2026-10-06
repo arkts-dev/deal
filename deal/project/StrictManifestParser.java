@@ -131,12 +131,6 @@ public final class StrictManifestParser {
      * filesystem access occurs for any input, so parsing content whose
      * referenced files do not exist is not an error.
      *
-     * @param manifestPath        the manifest's path as reported in
-     *                            diagnostics (may be null, then the empty
-     *                            string)
-     * @param strictlyDecodedText the strictly UTF-8-decoded manifest text
-     *                            (ProjectLocator D1 step 3)
-     * @return the parsed manifest, or exactly one E2010
      */
     public static StrictManifestParseResult parse(String manifestPath,
                                                   String strictlyDecodedText) {

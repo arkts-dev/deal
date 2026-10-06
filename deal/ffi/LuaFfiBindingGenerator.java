@@ -157,12 +157,6 @@ public final class LuaFfiBindingGenerator {
      * {@code BYTES} never yields a single expression — callers expand it
      * into the pinned two-slot form.
      *
-     * @param type               the FFI row
-     * @param moduleKey          the descriptor's module key (struct-name
-     *                           digest domain)
-     * @param structFieldsByName class name &rarr; validated struct field
-     *                           rows of this module
-     * @return the C type expression
      */
     public static String ctypeOf(FfiType type, String moduleKey,
             Map<String, List<FfiFieldDescriptor>> structFieldsByName) {
@@ -235,12 +229,6 @@ public final class LuaFfiBindingGenerator {
      * the imported reference lists are frozen in the graph order the
      * validator established. No evaluator is invoked anywhere.</p>
      *
-     * @param descriptor           the validated immutable descriptor
-     * @param importedFunctions    the graph-ordered imported
-     *                             function-wrapper references
-     * @param importedClassPlans   the graph-ordered imported class-plan
-     *                             references
-     * @return the generated bundle, retained plans, and bindings
      */
     public static GeneratedBindings generate(FfiModuleDescriptor descriptor,
             List<FfiImportedFunctionReference> importedFunctions,

@@ -10,7 +10,6 @@ package deal.semantic.ir;
  * blocks); block IDs are behavior-referenced semantic IDs and therefore
  * live inside operation-contract snapshot digests.</p>
  *
- * @param id the numeric identity; non-negative
  */
 public record BlockId(long id) implements SemanticId {
 

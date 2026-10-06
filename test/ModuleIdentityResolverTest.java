@@ -22,69 +22,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * The test battery for {@link ModuleIdentityResolver}'s pure classifier
- * and representability predicates (ISSUE-0266 T5, design source
- * {@code strict-project-context-resolution-identity} D6, verification
- * items 5–6 plus the combined T1+T4 dependency gate):
- *
- * <ul>
- *   <li>Shapes: {@link ProjectModuleIdentity} immutability and field
- *       semantics; the three {@link CanonicalModuleIdentity} forms with
- *       structural value equality; the
- *       {@link ModuleIdentityResolver.ModuleClassification} provenance
- *       invariant.</li>
- *   <li>Containment (fabricated, no filesystem): roots {@code src},
- *       {@code lib}, {@code lib/utils} — sources at each depth select
- *       the longest contained root; a file at {@code src/lib/x.deal}
- *       selects {@code src/lib} under nested roots; a file outside all
- *       roots selects none; component-wise prefixing (no
- *       {@code srcx}-style false containment); a symlink target outside
- *       its lexical root is not contained; exact
- *       {@code relativeModuleComponents}.</li>
- *   <li>Most-specific selection and the defensive equal-root tie:
- *       strictly maximal containment wins; two contained roots with
- *       equal containment report
- *       {@link ModuleIdentityResolver.Issue#EQUAL_ROOT_TIE} and publish
- *       no identity (never a silent pick).</li>
- *   <li>Classification precedence: pinned stdlib file → BuiltinModule;
- *       a symlinked spec-listed stdlib file under a project-local
- *       surface keeps BuiltinModule for its canonical resolved target
- *       (canonical-file keying on both sides); absent surface → never
- *       builtin; same-named {@code .d.deal} elsewhere → none;
- *       externals declaration URI →
- *       ExternalModule(that key) even under a configured root; rooted
- *       {@code .deal} → ProjectModule; rooted non-externals
- *       {@code .d.deal} → none; relative non-externals {@code .d.deal}
- *       → none; non-spec-listed {@code .d.deal} inside the std
- *       directory → none; spelling-independence at the canonical-URI
- *       level; the both-match state reports
- *       {@link ModuleIdentityResolver.Issue#STDLIB_EXTERNAL_OVERLAP}
- *       and publishes no identity.</li>
- *   <li>Purity: classification over fabricated URIs whose context paths
- *       do not exist (no filesystem access, results derived lexically);
- *       equal inputs → equal results; non-{@code file:} and malformed
- *       URIs classify as none without throwing.</li>
- *   <li>Representability: every pinned allowed and forbidden character
- *       class per component; {@code %}, non-reserved {@code $}, and
- *       backslash valid; {@code $external}/{@code $builtin} reserved as
- *       exact first components of a root only; contiguous {@code ->};
- *       {@code .}/{@code ..}/empty components; identifier-shaped class
- *       names per the lexer grammar
- *       {@code [a-zA-Z_$][a-zA-Z0-9_$]*}.</li>
- *   <li>Combined T1+T4 gate: a real temp deployment located through
- *       {@link ProjectLocator} with roots {@code src}, {@code lib},
- *       {@code lib/utils}, an externals entry, and a project-local
- *       {@code std/} — real resolved files classified per every rule,
- *       a symlink-outside-root source receiving no project identity,
- *       disjointness of the externals and stdlib predicates across the
- *       published context, and the overlap fixture rejected at locate
- *       (E2010, T4 step 4(b)) before the classifier ever sees it.</li>
- * </ul>
- *
- * <p>Runs via main() using the repository's plain check()-helper
- * convention; exits non-zero on failure.</p>
- */
 public final class ModuleIdentityResolverTest {
 
     private ModuleIdentityResolverTest() {

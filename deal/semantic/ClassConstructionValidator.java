@@ -37,174 +37,22 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * The production-time class-construction validator of
- * {@code deal.semantic-ir/1} (class-construction-jsonable-operations
- * K-D11; ISSUE-0516): validates one {@link LoweredModuleUnit} together
- * with the class epic's production records — the
- * {@link StructuredBodyTable} block membership, the
- * {@link ClassFactoryRegistry} factory registrations, the
- * {@link JsonDefaultChildTable} per-site default children, the module's
- * own {@link ExternalModuleInterface} entry (the pre-allocated
- * {@code constructionEntry} facts), and the imported-construction
- * {@link SharedFactoryFacts} context — against the pinned class-op
- * coherence contracts, producing E6005 outside the foundation
- * validator's closed 14-condition rule set (the
- * {@link ControlFlowValidator}/{@link BindingsProductionValidator}
- * precedent).
- *
- * <p><b>Scope.</b> The validator consumes only the unit, the production
- * records, and interface facts — no target knowledge, no AST, no
- * checker state. It never executes operations; it checks the structural
- * coherence the {@link deal.semantic.ir.ClassOpsExecutor}'s
- * fail-closed discipline pins (the executor defects are the runtime
- * mirror of these production checks). The foundation validator's pinned
- * schema subsets (the {@code CLASS_FACTORY} {@code CLASS_CONSTRUCTION}
- * policy row, the {@code JSON_FROM_NULL}/{@code JSON_TO_ERROR} rows,
- * the {@code CLASS_LITERAL_FIELD}/{@code CLASS_DEFAULT_FIELD}
- * descriptor-kind cells, and the
- * {@code UNTYPED_CLASS_INPUT}/{@code OPTIONAL_FIELD_READ}/
- * {@code CLASS_FIELD_ASSIGNMENT} cells) stay the foundation's checks:
- * this validator adds no rules to the closed 14-condition set.</p>
- *
- * <p><b>Pinned checks (first-failure order).</b></p>
- * <ol>
- *   <li>{@link #FACTORY_COHERENCE} — the factory&#8596;constructionEntry
- *       bijection for exported classes and the factory payload shape
- *       (K-D2/K-D5): every exported class's pre-allocated
- *       {@code constructionEntry} registers exactly one
- *       {@code CLASS_FACTORY} op; every registry key is exactly one
- *       exported class's entry; every produced {@code CLASS_FACTORY}
- *       op is registered; the factory op is a detached static op (no
- *       {@code parentOpId}), carries {@code CLASS_CONSTRUCTION}, the
- *       class's id, a {@link ValueId} result of the class descriptor,
- *       zero boundary children, and {@code classDefaultOpIds} = exactly
- *       the required-present defaulted fields' {@code CLASS_DEFAULT}
- *       op ids in declaration order; the unit carries exactly one
- *       {@code CLASS_DEFAULT} op per defaulted {@code (classId,
- *       field)}.</li>
- *   <li>{@link #CONSTRUCTION_COHERENCE} — the {@code CLASS_NEW} payload
- *       coherence (K-D4): the layout carries the payload's classId and
- *       resolves to exactly the payload's layout; the default-owner
- *       shape is closed (LOCAL for same-module classes with the
- *       omitted-default child list; SHARED_FACTORY for imported classes
- *       with the interface's {@code constructionEntry} and empty child
- *       list; RETAINED_ABI is never produced — E10's; the builtin
- *       {@code Error} construction is the compiler-owned
- *       BUILTIN_DEFAULTS shape of ISSUE-0619; and the host
- *       declaration class construction is the HOST_DEFAULTS shape of
- *       ISSUE-0624 — the class resolves in the compilation's class
- *       registration seeds with the {@code HOST_DEFAULTS} owner member,
- *       the payload layout is exactly the registered declaration
- *       layout, the factory ref is null, the default-op list is empty,
- *       and the boundary entries are exactly the provided fields'
- *       {@code CLASS_LITERAL_FIELD} children; and the extern-C
- *       declaration class construction is the {@code FFI_PLAN} shape of
- *       ISSUE-0666 over the same seed-layout resolution — the class
- *       resolves in the seeds with the {@code FFI_PLAN} owner member,
- *       the payload layout is exactly the registered C-struct layout,
- *       the factory ref is null, the default-op list is empty, and the
- *       boundary entries are exactly the provided fields'
- *       {@code CLASS_LITERAL_FIELD} children with no
- *       {@code CLASS_DEFAULT_FIELD} — the omitted fields' evaluators are
- *       the loaded plan entry's); every provided
- *       name is a declared field; {@code fieldBoundaries} = exactly one
- *       {@code CLASS_LITERAL_FIELD} per provided field plus one
- *       {@code CLASS_DEFAULT_FIELD} per omitted required-present
- *       defaulted field in declaration order; each boundary child
- *       resolves, is parented to the {@code CLASS_NEW} op, carries the
- *       field's declared descriptor, the descriptor-kind policy, a
- *       {@code RuntimeValidation} realization, and the pinned K-D4
- *       input wiring (the provided value op for literal fields; the
- *       field's {@code CLASS_DEFAULT} child result for LOCAL defaulted
- *       fields; the owner {@code CLASS_FACTORY} op's result
- *       {@link ValueId} for SHARED_FACTORY defaulted fields); and the
- *       op's boundary children are exactly the payload's listed ids in
- *       order.</li>
- *   <li>{@link #FIELD_OPERATION_SHAPE} — the field-operation child
- *       shapes (K-D6): {@code FIELD_READ} children =
- *       {@code [UNTYPED_CLASS_INPUT, OPTIONAL_FIELD_READ]},
- *       {@code FIELD_WRITE} children =
- *       {@code [UNTYPED_CLASS_INPUT, CLASS_FIELD_ASSIGNMENT]},
- *       {@code FIELD_DELETE} children =
- *       {@code [UNTYPED_CLASS_INPUT]} — each parented to the op with
- *       the pinned descriptors/inputs/policies and no other boundary
- *       children; the class id and the field resolve in the layout
- *       context; required-field deletes never appear.</li>
- *   <li>{@link #DEFAULT_BLOCK_ADMISSION} — the default-block admission
- *       (K-D3): every binding reference of a {@code CLASS_DEFAULT}
- *       block's closure (direct loads, nested closure captures, and
- *       adapter-thunk captures) resolves to an allocation inside the
- *       default closure itself or in the module-init block — an
- *       enclosing-region free reference is invalid.</li>
- *   <li>{@link #JSON_LAYOUT_COHERENCE} — the JSON-walker coherence
- *       (K-D8/K-D10): the {@code JSON_FROM_CLASS}/
- *       {@code JSON_TO_CLASS} policies; the payload layout is exactly
- *       the unit's own layout of a {@code @jsonable} class; the
- *       {@code JsonDefaultChildTable} entry of every
- *       {@code JSON_FROM_CLASS} op lists exactly the class's
- *       required-present defaulted fields' {@code CLASS_DEFAULT} child
- *       ids in declaration order (no orphans); and every nested
- *       class-typed field of every jsonable layout resolves — own
- *       classes through the unit's layouts (exported own classes with a
- *       registered factory, the JSON nested-factory trigger), imported
- *       classes through the {@link SharedFactoryFacts} context.</li>
- * </ol>
- *
- * <p><b>Failure and determinism.</b> Every rejection is exactly one E6005
- * ({@code BACKEND_LOWERING}) carrying a {@link LoweringFailureDetail} with
- * {@code capability CLASSES}, the failing rule name, the unit's
- * {@code semanticProfile}, {@code irVersion deal.semantic-ir/1}, the
- * module, and the {@code ClassConstructionValidator} origin, built by
- * {@link FailureContractRegistry#e6005(LoweringFailureDetail)}. Checks
- * traverse the unit's ops in op order and the records in map iteration
- * order; equal inputs produce byte-identical diagnostics. The pass is
- * pure (no mutation) and linear in ops plus the block/boundary edges of
- * the default-block closures.</p>
- */
 public final class ClassConstructionValidator {
 
-    /** The factory/registry bijection and factory payload rule (K-D2/K-D5). */
     public static final String FACTORY_COHERENCE = "FACTORY_COHERENCE";
 
-    /** The {@code CLASS_NEW} payload, layout, boundary, and input-wiring rule (K-D4). */
     public static final String CONSTRUCTION_COHERENCE = "CONSTRUCTION_COHERENCE";
 
-    /** The field-operation boundary-child shape rule (K-D6). */
     public static final String FIELD_OPERATION_SHAPE = "FIELD_OPERATION_SHAPE";
 
-    /** The default-block reference admission rule (K-D3). */
     public static final String DEFAULT_BLOCK_ADMISSION = "DEFAULT_BLOCK_ADMISSION";
 
-    /** The JSON-walker default-child and nested-layout resolution rule (K-D8/K-D10). */
     public static final String JSON_LAYOUT_COHERENCE = "JSON_LAYOUT_COHERENCE";
 
     private ClassConstructionValidator() {
         // Static surface; no instances.
     }
 
-    /**
-     * Validates one unit plus the class epic's production records and
-     * interface facts against the pinned class-op coherence contracts.
-     * The first violation in the pinned rule order is the returned
-     * E6005; {@code empty} on the pass path.
-     *
-     * @param unit            the lowered module unit; non-null
-     * @param table           the produced block-membership table; non-null
-     * @param factories       the produced factory registrations; non-null
-     * @param jsonDefaults    the produced JSON default-child table; non-null
-     * @param ownInterface    the module's own interface index entry (the
-     *                        pre-allocated {@code constructionEntry} ids
-     *                        and the {@code hasDefault} facts); non-null
-     * @param sharedFactories the imported-construction facts by
-     *                        {@link ClassId} — the imported classes'
-     *                        layouts, interface entries, factory op ids,
-     *                        and factory results; must cover every
-     *                        imported class the unit's class constructs
-     *                        reference (constructions and nested
-     *                        jsonable fields alike); non-null
-     * @return the first E6005 diagnostic, or {@code empty}
-     */
     public static Optional<CompilerDiagnostic> validate(
             LoweredModuleUnit unit,
             StructuredBodyTable table,
@@ -216,25 +64,6 @@ public final class ClassConstructionValidator {
             sharedFactories, Map.of());
     }
 
-    /**
-     * The declaration-class seam of {@link #validate(LoweredModuleUnit,
-     * StructuredBodyTable, ClassFactoryRegistry, JsonDefaultChildTable,
-     * ExternalModuleInterface, Map)} (ISSUE-0624;
-     * {@code semantic-ir-construct-coverage-cutover} K10 and the K10
-     * contract): the project lowering's class registration seeds projected
-     * to their {@code ClassId&#8594;ClassLayout} entries, so a host
-     * declaration class's construction and field operations resolve
-     * through exactly the registered declaration layout — the same layout
-     * the {@code CLASS_NEW} payload carries and the emitters execute. The
-     * overload without the context keeps the fail-closed behavior for a
-     * declaration-class owner (the unit-local validation windows).
-     *
-     * @param declarationClasses the declaration classes' registered layouts
-     *                           and owner members by {@link ClassId} (empty
-     *                           when the unit's validation window carries
-     *                           none); non-null
-     * @return the first E6005 diagnostic, or {@code empty}
-     */
     public static Optional<CompilerDiagnostic> validate(
             LoweredModuleUnit unit,
             StructuredBodyTable table,
@@ -296,11 +125,6 @@ public final class ClassConstructionValidator {
         /** The unit's produced ops by {@link OpId} (pinned lookup). */
         private final Map<OpId, SemanticOp> opsById = new LinkedHashMap<>();
 
-        /**
-         * The layout-resolution context (K-D11): the unit's own
-         * {@code classLayouts} overlaid by the imported classes' owner
-         * layouts.
-         */
         private final Map<ClassId, ClassLayout> layoutContext = new LinkedHashMap<>();
 
         /**
@@ -325,20 +149,12 @@ public final class ClassConstructionValidator {
                 opsById.put(op.opId(), op);
             }
             layoutContext.putAll(unit.classLayouts());
-            // The declaration classes' registered layouts (K10; ISSUE-0624):
-            // a host declaration class is not a unit-declared class, so its
-            // registered layout is the one construction and field-operation
-            // entry (the same layout the CLASS_NEW payload carries).
+
             for (Map.Entry<ClassId, ClassRegistrationSeeds.ClassRegistration> entry
                     : this.declarationClasses.entrySet()) {
                 layoutContext.putIfAbsent(entry.getKey(), entry.getValue().layout());
             }
-            // The compiler-owned builtin Error layout (ISSUE-0619; K13 item
-            // 1): the builtin class is a compiler-owned layout entry in
-            // every unit's resolution context — the same entry the project
-            // lowering seeds — so the Error literal's CLASS_NEW resolves its
-            // classId exactly like a declared class and the payload's layout
-            // is checkable against the one authority.
+
             layoutContext.put(ClassId.ERROR, ClassLayout.BUILTIN_ERROR);
             for (Map.Entry<ClassId, SharedFactoryFacts> entry : this.sharedFactories
                     .entrySet()) {
@@ -396,7 +212,6 @@ public final class ClassConstructionValidator {
             return null;
         }
 
-        /** The pinned {@code OPTIONAL_FIELD_READ} result descriptor wrap (K-D6). */
         private static RuntimeDescriptor readResultDescriptorOf(
                 ClassLayout.FieldLayout field) {
             RuntimeDescriptor declared = field.descriptor();
@@ -762,10 +577,7 @@ public final class ClassConstructionValidator {
                 providedNames.add(field.name());
                 providedIds.put(field.name(), field.valueOpId());
             }
-            // Provided-field declarations: every provided name is a
-            // declared field of the layout (K-D11 — the E8007 extra-key
-            // projection remains the executor's unvalidated-input
-            // contract, unreachable on a validated unit).
+
             for (String name : providedNames) {
                 if (fieldOf(resolved, name) == null) {
                     return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
@@ -862,17 +674,7 @@ public final class ClassConstructionValidator {
                         + "this epic — the lowerer defers with RETAINED_ABI_DEFERRED");
                 }
                 case HOST_DEFAULTS -> {
-                    // The host declaration class construction (ISSUE-0624;
-                    // {@code semantic-ir-construct-coverage-cutover} K10 and
-                    // the K10 contract): the owner is admissible for exactly
-                    // a declared host class of the project's class
-                    // registration seeds, over exactly the registered
-                    // declaration layout, with the null factory ref, the
-                    // empty default-op list (the omitted fields' values are
-                    // the loaded {@code <C>_defaults} data, never in-project
-                    // default expressions), and exactly one
-                    // {@code CLASS_LITERAL_FIELD} boundary per provided
-                    // field.
+
                     ClassRegistrationSeeds.ClassRegistration registration =
                         declarationClasses.get(payload.classId());
                     if (registration == null
@@ -926,20 +728,7 @@ public final class ClassConstructionValidator {
                     }
                 }
                 case FFI_PLAN -> {
-                    // The extern-C declaration class construction (ISSUE-0666;
-                    // {@code luajit-ffi-struct-plan-construction-and-oracle-projection}
-                    // F2 and the C-struct construction contract): the owner is
-                    // admissible for exactly a declared extern-C C_STRUCT class
-                    // of the project's class registration seeds, over exactly
-                    // the registered seed layout, with the null factory ref,
-                    // the empty default-op list (the omitted fields' values are
-                    // the loaded {@code <C>_plan} entry's deferred evaluators,
-                    // never in-project default expressions), and exactly one
-                    // {@code CLASS_LITERAL_FIELD} boundary per provided field.
-                    // The omitted fields get no boundary and no default child
-                    // — the shared tail's {@code expectedDefaults} stays empty
-                    // for this owner — so the pinned boundary list is exactly
-                    // the provided fields in declaration order.
+
                     ClassRegistrationSeeds.ClassRegistration registration =
                         declarationClasses.get(payload.classId());
                     if (registration == null
@@ -995,13 +784,7 @@ public final class ClassConstructionValidator {
                     }
                 }
                 case BUILTIN_DEFAULTS -> {
-                    // The builtin Error construction (ISSUE-0619; K13 items
-                    // 2-4): the owner is admissible for exactly the builtin
-                    // class identity, over exactly the compiler-owned
-                    // layout, with the null factory ref, the empty
-                    // default-op list, and no CLASS_DEFAULT_FIELD boundary
-                    // (the omitted fields take the compiler constant empty
-                    // string at the construction site).
+
                     if (!ClassId.ERROR.equals(payload.classId())) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                             + " carries defaultOwner BUILTIN_DEFAULTS for class "
@@ -1122,7 +905,7 @@ public final class ClassConstructionValidator {
                 }
                 KindPayload.BoundaryPayload boundaryPayload =
                     (KindPayload.BoundaryPayload) child.payload();
-                // The K-D4 input wiring.
+
                 ValueId pinnedInput;
                 if (entry.kind() == BoundaryKind.CLASS_LITERAL_FIELD) {
                     pinnedInput = providedIds.get(entry.field());
@@ -1301,20 +1084,14 @@ public final class ClassConstructionValidator {
             // class's registered layout is the same entry K10 resolves).
             ClassLayout layout = unit.classLayouts().get(payload.classId());
             if (layout == null && ClassId.ERROR.equals(payload.classId())) {
-                // The builtin Error field surface (ISSUE-0619; K13 items 3
-                // and 4): the receiver resolves through the compiler-owned
-                // builtin layout exactly like a locally declared class's —
-                // the same layout entry every unit's context carries.
+
                 layout = ClassLayout.BUILTIN_ERROR;
             }
             if (layout == null) {
                 ClassRegistrationSeeds.ClassRegistration declaration =
                     declarationClasses.get(payload.classId());
                 if (declaration != null) {
-                    // A declaration class's registered layout (ISSUE-0624;
-                    // K10): the field write on a host declaration class
-                    // instance resolves through exactly the registered
-                    // declaration layout.
+
                     layout = declaration.layout();
                 }
             }
@@ -1722,16 +1499,6 @@ public final class ClassConstructionValidator {
             return checkNestedJsonable(layout, new LinkedHashSet<>());
         }
 
-        /**
-         * The nested-jsonable layout/factory resolvability of one
-         * jsonable layout (K-D8 step 6/K-D10 recursion): every
-         * class-typed field resolves to a layout in the context and —
-         * for imported classes — to the {@link SharedFactoryFacts}
-         * context; an own exported nested class's constructionEntry
-         * must be registered (the JSON nested-factory trigger). Bytes
-         * and function-typed fields are checker-rejected (E4007) and
-         * fail closed here.
-         */
         private Optional<CompilerDiagnostic> checkNestedJsonable(ClassLayout layout,
                                                                  Set<ClassId> visited) {
             if (!visited.add(layout.classId())) {
@@ -1789,10 +1556,7 @@ public final class ClassConstructionValidator {
                         }
                         ClassInterface ownEntry = interfaceContext.get(nested);
                         if (ownEntry != null) {
-                            // An own exported nested class: the JSON nested
-                            // decode triggers its CLASS_FACTORY (K-D8 step
-                            // 6), so the constructionEntry must be
-                            // registered.
+
                             if (factories.factoryFor(ownEntry.constructionEntry())
                                     == null) {
                                 yield fail(JSON_LAYOUT_COHERENCE, "jsonable class "

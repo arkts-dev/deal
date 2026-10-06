@@ -104,12 +104,6 @@ public final class DistributionHome {
      * a non-materializable resource surface contributes nothing here and
      * the next tier is consulted).
      *
-     * @param tier     the pinned tier name ({@link
-     *                 #TIER_PROJECT_LOCAL}, {@link
-     *                 #TIER_CLASSPATH_RESOURCES}, {@link
-     *                 #TIER_DISTRIBUTION_HOME}, or {@link
-     *                 #TIER_CWD_FALLBACK})
-     * @param pathText the resolved surface directory path text
      */
     public record ResolvedSurface(String tier, String pathText) {
         public ResolvedSurface {
@@ -268,9 +262,6 @@ public final class DistributionHome {
      * project-local first, then classpath resources, then the
      * distribution home, then the CWD dev fallback. Cached per JVM.
      *
-     * @param moduleName the stdlib module bare name ({@code console},
-     *                   {@code string}, {@code table}, {@code json},
-     *                   {@code math}, {@code time})
      */
     public Optional<ResolvedSource> resolveStdlibDeclaration(
             String moduleName) {

@@ -12,43 +12,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-/**
- * The compiler-owned builtin {@code Error} class declaration — the
- * checker's synthesized root class of every module scope
- * ({@link NameResolver#seedIntrinsics}): the intrinsic
- * {@code BuiltinModule}/{@code Error} identity and exactly the two
- * declared fields {@code code} and {@code message}, both {@code string}
- * required-present with the constant empty-string default.
- *
- * <pre>{@code
- * BuiltinErrorDeclaration {
- *   identity: CanonicalClassIdentity(BuiltinModule, "Error"),
- *   fields: [ { declaration: ClassField(code,  string, required, ""), type: string },
- *             { declaration: ClassField(message, string, required, ""), type: string } ]
- * }
- * }</pre>
- *
- * <p><b>One authority (ISSUE-0631; design sources
- * {@code project-lowering-entry-and-registration-seeds} D6 and the
- * registration-seed contract).</b> {@link NameResolver#seedIntrinsics()}
- * defines its root {@code Error} binding from
- * {@link #synthesized(Span)}, and the project lowering derives the builtin
- * {@code Error} layout seed from the same declaration — so the builtin
- * layout is never derived from source text, from a host declaration, or
- * from an interface-index entry, and the two surfaces cannot diverge:
- * every {@link Field} carries both the declaration AST record (the name,
- * the optional flag, the constant empty-string default) and the resolved
- * declared {@link Type} authored once.</p>
- *
- * <p><b>Compile-time data only.</b> No evaluator runs, no library loads,
- * no symbol resolves, and no host code executes on any path here; the
- * record is immutable and deterministic.</p>
- *
- * @param identity the intrinsic builtin class identity
- *                 ({@code BuiltinModule}/{@code Error}); non-null
- * @param fields   the declared fields in declaration order
- *                 ({@code code}, {@code message}); non-null
- */
 public record BuiltinErrorDeclaration(
         CanonicalClassIdentity identity,
         List<Field> fields) {
@@ -65,8 +28,6 @@ public record BuiltinErrorDeclaration(
      * presence — the constant empty-string default) plus the resolved
      * declared {@link Type}.
      *
-     * @param declaration the declaration AST's field record; non-null
-     * @param type        the resolved declared type; non-null
      */
     public record Field(ClassField declaration, Type type) {
 
@@ -98,10 +59,6 @@ public record BuiltinErrorDeclaration(
      * {@code string} spelling and the resolved {@link Type.String} fact
      * are authored here, together, exactly once.
      *
-     * @param span the span of the synthesized declaration (the checker's
-     *             synthetic root span of the module being resolved);
-     *             non-null
-     * @return the synthesized declaration; non-null
      */
     public static BuiltinErrorDeclaration synthesized(Span span) {
         Objects.requireNonNull(span, "span must not be null");

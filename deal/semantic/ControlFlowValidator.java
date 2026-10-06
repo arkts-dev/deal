@@ -25,115 +25,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * The production-time control-flow validator of {@code deal.semantic-ir/1}
- * (control-flow-structures decision C-D2; ISSUE-0408): validates one
- * {@link LoweredModuleUnit} plus its {@link StructuredBodyTable} against
- * the pinned block tree, dominance, and exit checks, producing E6005
- * outside the foundation validator's closed 14-condition rule set.
- *
- * <p><b>Scope.</b> The validator consumes only the unit, the table, and
- * interface facts — no target knowledge, no AST, no checker state. It
- * does not execute blocks, does not decide binding cell mechanics (E6),
- * and does not decide {@code RETURN} framing execution (E7) — only their
- * block-terminator placement and targeting. The foundation's pinned
- * subsets stay the foundation's checks ({@code LOOP} selector
- * {@code WHILE|FOR} with {@code NO_DEAL_FAILURE}, {@code THROW →
- * THROW_TRANSFER}, {@code FOR_EACH} policies): this validator adds no
- * rules to the closed 14-condition set.</p>
- *
- * <p><b>Block universe.</b> The block <em>tree</em> is built from the
- * control-flow payload positions only — a {@code BRANCH} selected/alternate
- * block, a {@code LOOP} init/body/update block, a {@code TRY_CATCH}
- * try/catch block, and a {@code FOR_EACH} body. The tree roots are the
- * unit's {@code LoweredFunction.body} blocks and the
- * {@code ModuleInitPlan.initBlock}. Blocks referenced only by other
- * epics' payload positions ({@code CALL.bodyBlock},
- * {@code CLASS_DEFAULT.defaultBlock}, {@code BINDING_ALLOC.scope}, a
- * {@code FUNCTION_ADAPT} thunk block, a
- * {@code FunctionExecutionBinding.LoweredBody} block, or a
- * {@code MODULE_INIT} payload block) are outside this validator's tree:
- * they are existence-checked like every payload-referenced block and they
- * are never orphans, but their ownership semantics belong to their own
- * epics (E6/E7/E9). Module-level ops ({@code MODULE_INIT},
- * {@code EXTERNAL_ENTRY}, {@code CLASS_FACTORY}, {@code CALLBACK_INVOKE},
- * {@code ENTRY_INVOKE}) are not ops of a lowered function and may be
- * absent from the table, and the invocation-owned return record of a
- * dynamic {@code CALL}/{@code ASYNC_START} (a {@code RETURN} whose
- * {@code enclosingInvocationOpId} names the dynamic invocation and whose
- * {@code returnBoundaryOpId} is its recorded DEAL-body return cell;
- * ISSUE-0657) is likewise no op of a lowered function: the invocation op
- * executes the recorded cell and the record is never executed by a block
- * walk, so it lives outside the block tree. Every other produced op of
- * the unit is a pinned
- * member of exactly one block (C-D1 — "every op of a lowered function
- * belongs to exactly one block"); the completeness check below enforces
- * that unit-to-table direction.</p>
- *
- * <p><b>Pinned checks (first-failure order).</b></p>
- * <ol>
- *   <li>Block tree ({@link #CONTROL_BLOCK_TREE}):
- *     <ol>
- *       <li>membership — every op listed in the table (block lists and
- *           inverse map) is a produced op of the unit;</li>
- *       <li>single membership — every op appears in at most one block
- *           (an op in two blocks, or listed twice in one block, is a
- *           defect);</li>
- *       <li>inverse consistency — the inverse map is exactly the inverse
- *           of the block lists (missing, conflicting, or extra inverse
- *           entries are defects);</li>
- *       <li>root existence — every function body block, the module init
- *           block, and every {@code LoweredBody} binding block is a block
- *           of the table;</li>
- *       <li>payload-block existence — every {@code BlockId} referenced by
- *           any payload position (control-flow and foreign alike) is a
- *           block of the table;</li>
- *       <li>tree shape — every structure op that references a child block
- *           is itself a member of a block; no control position references
- *           a root block; every non-root block is referenced by at most
- *           one control position;</li>
- *       <li>completeness — every produced op of the unit whose kind is
- *           not one of the five module-level kinds ({@code MODULE_INIT},
- *           {@code EXTERNAL_ENTRY}, {@code CLASS_FACTORY},
- *           {@code CALLBACK_INVOKE}, {@code ENTRY_INVOKE}) and which is
- *           not a dynamic invocation's call-owned return record is a
- *           member of exactly one block (present in the block lists and
- *           in the inverse map); absence from the table is admitted only
- *           for those five kinds and for that invocation-owned
- *           record;</li>
- *       <li>orphan blocks and acyclicity — no table block is a non-root
- *           block referenced by no payload position of any kind, and the
- *           parent chain is acyclic.</li>
- *     </ol></li>
- *   <li>Dominance ({@link #CONTROL_BLOCK_TREE}): within each block's
- *       ordered op list, no op appears after a terminator
- *       ({@code RETURN}/{@code BREAK}/{@code CONTINUE}/{@code THROW}) in
- *       that block.</li>
- *   <li>Exits ({@link #CONTROL_EXIT}): a {@code BREAK}/{@code CONTINUE}
- *       {@code loopId} must be the {@code OpId} of a {@code LOOP} or
- *       {@code FOR_EACH} op that encloses the op's block in the tree
- *       (nearest-loop semantics is the lowerer's recorded target; an
- *       invalid recorded target indicates a malformed or decoded unit —
- *       E6005, never a silent fallthrough); a {@code RETURN}'s named
- *       function must be the containing function (the block's ancestor
- *       chain terminates at that function's body block), while a dynamic
- *       invocation's call-owned return record is outside the block tree
- *       and therefore outside this check.</li>
- * </ol>
- *
- * <p><b>Failure and determinism.</b> Every rejection is exactly one E6005
- * ({@code BACKEND_LOWERING}) carrying a {@link LoweringFailureDetail} with
- * {@code capability EVALUATION_ORDER}, the failing rule name,
- * {@code semanticProfile} (the unit's profile),
- * {@code irVersion deal.semantic-ir/1}, the module, and the
- * {@code ControlFlowValidator} origin, built by
- * {@link FailureContractRegistry#e6005(LoweringFailureDetail)}. Checks
- * traverse the table in map iteration order and the unit's ops in op
- * order; equal inputs produce byte-identical diagnostics. The pass is
- * pure (no mutation of the unit or the table) and linear in ops plus
- * block edges (enclosing-op lists and chain terminals are memoized per
- * block).</p>
- */
 public final class ControlFlowValidator {
 
     /** The block-tree/membership/dominance rule (C-D2 a/b). */
@@ -164,9 +55,6 @@ public final class ControlFlowValidator {
      * on failure. No mutation; deterministic; linear in ops plus block
      * edges.
      *
-     * @param unit  the lowered module unit; non-null
-     * @param table the block-membership table of the unit; non-null
-     * @return empty on pass, otherwise the first E6005
      */
     public static Optional<CompilerDiagnostic> validate(LoweredModuleUnit unit,
                                                         StructuredBodyTable table) {
@@ -353,30 +241,6 @@ public final class ControlFlowValidator {
         }
     }
 
-    /**
-     * The call-owned return records of the unit's dynamic invocation
-     * shapes (ISSUE-0657; design source
-     * {@code dynamic-call-shape-production-and-emission} Y1/Y4 and the
-     * dynamic call/async-start shape contracts;
-     * {@code semantic-ir-construct-coverage-cutover} K12's form (b)): a
-     * {@code RETURN} whose {@code enclosingInvocationOpId} names a
-     * dynamic {@code CALL}/{@code ASYNC_START} of the unit and whose
-     * {@code returnBoundaryOpId} is that invocation's recorded DEAL-body
-     * return cell (the CALL's {@code dealBodyBoundaryOpId}; the
-     * {@code ASYNC_START}'s single recorded task cell).
-     *
-     * <p>Such a record is owned by the invocation, not by a lowered
-     * function: it exists to parent the recorded cell (the landed
-     * validator's parent rule) and the invocation op executes the cell —
-     * the record is never executed by a block walk, exactly like the
-     * module-level invocation records. It is therefore admitted outside
-     * the block tree, and every other {@code RETURN} keeps the full
-     * completeness and exit rules.</p>
-     *
-     * @param unitOps the unit's ops by op id; non-null
-     * @return the call-owned return record op ids; empty when the unit
-     *         carries no dynamic invocation
-     */
     private static Set<OpId> callOwnedReturnRecords(Map<OpId, SemanticOp> unitOps) {
         Set<OpId> records = new LinkedHashSet<>();
         for (SemanticOp op : unitOps.values()) {
@@ -453,7 +317,6 @@ public final class ControlFlowValidator {
         return blocks;
     }
 
-    /** The foreign (other-epic-owned) block positions of an op (existence-checked only). */
     private static List<BlockId> foreignPositionsOf(SemanticOp op) {
         List<BlockId> blocks = new ArrayList<>(1);
         switch (op.kind()) {
@@ -603,14 +466,6 @@ public final class ControlFlowValidator {
             }
         }
 
-        // Completeness (C-D1, unit-to-table direction): every produced op of
-        // the unit whose kind is not one of the five module-level kinds is a
-        // member of exactly one block. The single-membership and
-        // inverse-consistency checks above have already proven the at-most-one
-        // and cross-map directions for every listed op, so absence from the
-        // inverse map means absence from every block list. The call-owned
-        // return records of the dynamic invocation shapes are invocation-owned
-        // structural records, not ops of a lowered function (ISSUE-0657).
         for (SemanticOp op : ctx.unit.ops()) {
             if (!MODULE_LEVEL_KINDS.contains(op.kind())
                     && !ctx.callOwnedReturns.contains(op.opId())

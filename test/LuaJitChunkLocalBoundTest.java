@@ -19,40 +19,6 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * ISSUE-0716: the production LuaJIT chunk stores its function factories,
- * detached class-default functions, and adapter thunk re-executors as
- * fields of one chunk-level local table ({@code __factories}), never as
- * one pre-declared chunk-level local per factory.
- *
- * <p>LuaJIT bounds one function at 200 local variables. The chunk's shared
- * prelude, hoisted scratch temps, and runtime helpers already consume the
- * larger part of that budget, so a program with enough functions, class
- * defaults, or thunk re-executors crosses the limit as soon as the
- * emitter pre-declares one local per factory — the unchanged skill example
- * ({@code skills/write-deal/examples/src/main.deal}) already does. The
- * bounded store keeps the chunk's local count independent of the factory
- * count while the field assignment stays the declaration form, so a body
- * emitted before a later factory's assignment still resolves the field at
- * call time (one captured table, never a nil global and never one upvalue
- * per factory).</p>
- *
- * <ol>
- *   <li>the growing-factory fixture (300 exported functions, a calling
- *       group, one default producer, and a 150-field defaulted class —
- *       more than 450 factories, far beyond the 200-local budget)
- *       compiles through the release-owned production invocation, carries
- *       no per-factory chunk local, and executes under real
- *       {@code luajit} with the fixture marker and exit 0;</li>
- *   <li>the unchanged skill example compiles through the production
- *       invocation and executes under real {@code luajit} with exit 0 and
- *       no output (its own checks throw on mismatch).</li>
- * </ol>
- *
- * <p>Both probes fail on the pre-fix emitter, whose factory
- * pre-declaration line crosses LuaJIT's 200-local limit at load time
- * ({@code main function has more than 200 local variables}).</p>
- */
 public class LuaJitChunkLocalBoundTest {
 
     /** LuaJIT's per-function local-variable limit. */
@@ -283,7 +249,6 @@ public class LuaJitChunkLocalBoundTest {
         return entries;
     }
 
-    /** The release-owned production invocation (the epic's production record). */
     private static CompilerInvocation productionInvocation() {
         return CompilerProfileProvider.resolve(
             ReleaseConfiguration.CURRENT_RELEASE_STATE,

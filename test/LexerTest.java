@@ -78,7 +78,6 @@ public class LexerTest {
                 context, expectedCode, diags));
     }
 
-    /** Returns the first diagnostic with the given code, or null. */
     private static CompilerDiagnostic findDiag(LexResult r, String code) {
         for (CompilerDiagnostic d : r.diagnostics()) {
             if (d.code().equals(code)) {
@@ -1240,10 +1239,6 @@ public class LexerTest {
         check(tokens.size() == 2, "'await': expected 2 tokens (keyword + EOF)");
         assertToken(tokens.get(0), TokenType.AWAIT, "await", 1, 1);
     }
-
-    // =========================================================================
-    // Directive event tests (ISSUE-0273, fixed-name-directive-events D1-D3)
-    // =========================================================================
 
     static void testDirectiveComments() {
         System.out.println("-- Directive Events --");

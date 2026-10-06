@@ -8,7 +8,6 @@ package deal.semantic.ir;
  * {@link SourceOrigin} carries one anchor; the anchor links the semantic
  * op back to the copied source location without retaining any AST node.</p>
  *
- * @param id the numeric identity; non-negative
  */
 public record AnchorId(long id) implements SemanticId {
 

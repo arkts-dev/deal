@@ -3,31 +3,6 @@ package deal.semantic.ir;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * The closed canonical value view a {@code BOUNDARY} op's executor
- * consumes (ISSUE-0233 design D3): pure classification data, never a
- * target representation.
- *
- * <p>Shape (D3, exact):
- * {@code {kind: ActualKind, classId?, numberValue?, functionSignature?,
- * elements:[BoundaryValueView]?}}. The {@code kind} is one of the closed
- * 14 canonical actual kinds ({@link ActualKind}); the payload fields are
- * present exactly when the kind names them:
- * {@code classId} for {@code CLASS} (the canonical {@code @modulePath/Name}
- * atom text), {@code numberValue} for {@code NUMBER} (any IEEE-754 double,
- * NaN/infinity included) and optionally for {@code INT} (an in-range
- * signed32 integral carrier), {@code functionSignature} for
- * {@code FUNCTION} (the carried signature), and {@code elements} for
- * {@code ARRAY} (the element views in index order). Every other field is
- * {@code null} for a kind that does not carry it, and construction fails
- * closed for an inconsistent shape.</p>
- *
- * <p>The view is realized by the oracle's value model and the shared
- * emitters' adapter layers; the executor interprets classifications only
- * (no representation unification, no {@code deal.types} dependency). The
- * view carries no identity edges, so a cycle cannot be expressed in it;
- * cycle detection for JSON serialization is the machine's fact.</p>
- */
 public record BoundaryValueView(
     ActualKind kind,
     String classId,

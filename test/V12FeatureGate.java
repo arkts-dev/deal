@@ -43,47 +43,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Stream;
 
-/**
- * The dedicated production-path ISSUE-0111 feature/native/cross-backend
- * release gate (E13): the only ISSUE-0111 production executor.
- *
- * <p>Execution model, per validated catalog record and mandatory
- * backend:</p>
- * <ol>
- *   <li>materialize a temporary exact-v1.2 project — a parent
- *       {@code deal.json} with the JSON string {@code "1.2"}, explicit
- *       {@code moduleRoots}, the production {@code backend} and
- *       {@code output} fields (or, when the record targets a
- *       malformed-manifest E2010, the record's
- *       {@code manifest-inject.json} bytes published verbatim as
- *       {@code deal.json}, with the sidecar's pinned
- *       {@code manifestErrorFragment} required in the resulting E2010
- *       message — a manifest-discovery E2010 can never pass on a
- *       code-only match) — with the fixture sources copied
- *       byte-identically (never rewritten);</li>
- *   <li>compile through production {@code ProjectLocator} and the full
- *       {@code CompilationOrchestrator} constructor under the documented
- *       pre-activation v1.2 invocation
- *       ({@code COMMON_SHADOW + DEAL_V1_2_INT32}, zero shadow requests —
- *       the same production compile path the conformance harnesses use
- *       for v1.2 fixtures, activation-mechanism-and-legacy-regression-
- *       authority A5);</li>
- *   <li>execute runtime records through the production runtime —
- *       {@code direct-main} via the compiled LuaJIT entry or the
- *       emitted JVM entry class compiled with {@code javac} and run
- *       with {@code java}; {@code synthetic-main} via a gate-generated
- *       typed entry that imports the unchanged fixture source, calls the
- *       declared oracle once through a normal typed boundary, and
- *       returns null; {@code async-export} via the production
- *       {@link LuaJitAsyncExportInvoker} host ABI — with every tool and
- *       fixture process run directly with a bounded timeout.</li>
- * </ol>
- *
- * <p>Fail-closed rules: a missing, hung, or wrong tool, a backend omission,
- * a compile-only runtime record, a wrong DEAL error code, or an infrastructure
- * error reported as a DEAL error fails the gate nonzero — never a skip, never
- * a retry, never a downgrade.</p>
- */
 public final class V12FeatureGate {
 
     private static final long PROCESS_TIMEOUT_SECONDS = 60;
@@ -1494,21 +1453,6 @@ public final class V12FeatureGate {
         }
     }
 
-    /**
-     * The staged first-class sync bytes-function evidence step
-     * (int32/bytes page D8, BYTES_SYNC_FUNCTION): compiles the committed
-     * sync-bytes oracle through the production orchestrator on LuaJIT
-     * and executes it once through the gate-owned runner — the oracle
-     * assigns, containerizes (nullable + array), invokes, and asserts a
-     * first-class {@code (bytes)->bytes} value through typed boundaries,
-     * with reference identity preserved across the call. The JVM leg of
-     * BYTES_SYNC_FUNCTION stays an honest E6000 in this revision (the
-     * ISSUE-0160 recursive bytes-bearing wrapper closure is a sibling
-     * lane, absent from the canonical tree), so the matrix-mandated
-     * both-backends record lands with that lane; this step keeps the
-     * LuaJIT half executed through the production pipeline, never
-     * silent.
-     */
     private void syncFunctionEvidence() {
         String label = "sync-bytes-function [luajit, evidence]";
         try {
@@ -2032,10 +1976,6 @@ public final class V12FeatureGate {
         sb.append("print(\"").append(CFFI_OK_MARKER).append("\")\n");
         return sb.toString();
     }
-
-    // =========================================================================
-    // Generated-module serialization (the ISSUE-0425 emission shape)
-    // =========================================================================
 
     private void serializeModule(StringBuilder sb, int index,
                                  V12FeatureMetadata.NativeEntry nativeEntry,
@@ -2692,9 +2632,7 @@ public final class V12FeatureGate {
             .append(")\n")
             .append("assert(o4_ == 1, \"dlopen refcounting never re-runs ")
             .append("the constructor for the same library\")\n");
-        // Cdef registration failure caching: a malformed private entry
-        // fails, the exact failed bundle re-raises the cached error, and
-        // previously published modules remain callable.
+
         sb.append("-- ===== cdef registration failure caching =====\n")
             .append("local bad_key_ = \"ffi:@$external/native/bad\"\n")
             .append("local bad_bundle_ = {\n")

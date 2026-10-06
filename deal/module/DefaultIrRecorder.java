@@ -56,39 +56,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * The shared typed-evaluator-IR recorder of the default planning epics
- * (ISSUE-0541; {@code provider-versioned-default-plans} D2/D3/D4):
- * records one default expression as a structured typed evaluator IR
- * ({@link DefaultIrNode}) over the checked facts — resolved types from
- * the checker's type map, resolved bindings from the declaration scope,
- * and complete scalar ranges — and walks that IR completely, publishing
- * ordered provisional {@link DefaultResourceOccurrence} records for
- * imported runtime resources and applying the E3020 sync gate to
- * evaluator-scope {@code await}.
- *
- * <p>The walk covers the complete checked expression: nested literals,
- * nested contextual class literals, call arguments, and the statement
- * grammar of function-expression and function-declaration bodies nested
- * inside the default. Occurrences are recorded in pre-order (the
- * consuming construct before its children), so a call whose callee is an
- * imported function records the call-site range before the callee's
- * member-access node would record the member range; deduplication by
- * semantic resource identity keeps the first (call-site) range.
- * References are published exactly for the two pinned forms:
- * a call whose callee resolves to a function declared in an imported
- * module (call-site range) or an imported function referenced as a
- * first-class value (member-access range), and a contextual class
- * literal typed as a plan-bearing class declared in an imported module
- * (literal range). Type-only references publish nothing. Class
- * declarations nested in walked function bodies are not descended into:
- * their defaults are planned separately as their own plan.</p>
- *
- * <p>The E3020 gate applies exactly at evaluator scope: any
- * {@code await} node outside a nested function-expression or
- * function-declaration body. Await inside a nested async function
- * expression body stays legal.</p>
- */
 final class DefaultIrRecorder {
 
     /**
@@ -490,23 +457,6 @@ final class DefaultIrRecorder {
             null, obj, obj.span());
     }
 
-    /**
-     * Records one function body as ordered statement IR nodes (the
-     * serializer-owned provider-body entry, ISSUE-0542; design source
-     * {@code provider-versioned-default-plans} D9): the body
-     * statements walk at non-evaluator scope (await inside the body is
-     * legal — the E3020 gate applies only at evaluator scope), and
-     * imported-resource reference sites record as ordered occurrences
-     * exactly like the default walk. Class declarations nested in the
-     * body are not descended into: their defaults are planned
-     * separately as their own plan.
-     *
-     * @param fd          the function declaration whose body to record
-     * @param moduleScope the module root scope (the synthetic-fallback
-     *                    parent when the pass-1 resolver recorded no
-     *                    body scope)
-     * @return the ordered body statement IR nodes
-     */
     List<DefaultIrNode> recordFunctionBody(FunctionDeclaration fd,
             SymbolTable moduleScope) {
         SymbolTable bodyScope = scopeMap.get(fd.body());
@@ -828,7 +778,7 @@ final class DefaultIrRecorder {
                 return entry.getKey();
             }
         }
-        // Defensive: never null in a landed occurrence.
+
         return provider.modulePath();
     }
 

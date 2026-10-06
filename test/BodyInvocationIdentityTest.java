@@ -64,40 +64,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * ISSUE-0635: the body-invocation identity takeover and the never-called
- * guard removal
- * ({@code project-lowering-entry-and-registration-seeds} D9 and the
- * body-invocation identity contract;
- * {@code luajit-jvm-single-lowering-production-cutover} C10;
- * {@code semantic-ir-construct-coverage-cutover} K12's lowering side).
- *
- * <ol>
- *   <li>five purpose-built minimal checked projects lower through
- *       {@link SemanticLowerer#lowerProject} with zero
- *       {@code CONSTRUCT_UNLOWERED}: a non-exported declaration with zero
- *       call sites whose identity is its {@code CLOSURE_NEW} result, a
- *       never-invoked stored function expression in its declaration form,
- *       its assigned form (the address chain's value child is the
- *       creation op), its slot-written forms (TABLE_SLOT, ARRAY_SLOT,
- *       CLASS_FIELD chains), and a never-invoked recursive-group member
- *       whose identity is the {@code RECURSIVE_GROUP_INIT}
- *       publication;</li>
- *   <li>each body's {@code RETURN} identity resolves in the project
- *       closure to exactly one emitted op, and each body carries exactly
- *       one body-local {@code FUNCTION_RETURN} cell — parented to the
- *       body's {@code RETURN}, on the allocated function's declared return
- *       descriptor under the descriptor-kind rule;</li>
- *   <li>the carrier-slice entry ({@code lowerModuleFullProgram}) carries
- *       the deleted uncalled-declaration guard's successor: the same
- *       finalization materializes a never-called body's identity there
- *       too, so the entry produces a validating unit;</li>
- *   <li>the producer-defect negatives: a body-local identity on a body
- *       with an assigned invocation shape and a body-local boundary
- *       outside its body's {@code RETURN} fail the closed gate with
- *       {@code R-BOUNDARY-TRIPLE}.</li>
- * </ol>
- */
 public class BodyInvocationIdentityTest {
 
     private static int passed = 0;
@@ -167,7 +133,7 @@ public class BodyInvocationIdentityTest {
                     assertBodyLocalCell(result, unit, payload.function(), creation);
                 }
             }
-            // The other body (the entry main) keeps the landed discipline.
+
             check(bodyLocal.size() != 1 || moduleFunctionCount(unit) == 2,
                 "the module lowers exactly the declaration and the entry body; got "
                     + moduleFunctionCount(unit));
@@ -445,15 +411,6 @@ public class BodyInvocationIdentityTest {
     private static final ModuleId CARRIER_MODULE = new ModuleId("carrier");
     private static final String CARRIER_SOURCE_ID = "carrier.deal";
 
-    /**
-     * The carrier-slice fixture checked without the orchestrator: the
-     * production orchestrator requires the entry module to export
-     * {@code main}, and the carrier-slice entry carries no export arm
-     * (EXPORT_* is the E7 entry's), so the checked module comes from the
-     * real frontend chain directly (lexer, parser, name resolution, type
-     * check, checked-project builder, requirement manifest) exactly like
-     * the decomposition-tail carrier matrices.
-     */
     private static void testCarrierSliceEntryAcceptsNeverCalledDeclaration()
             throws Exception {
         System.out.println("-- the carrier-slice entry: a never-called declaration "
@@ -656,14 +613,6 @@ public class BodyInvocationIdentityTest {
         return bodyLocal;
     }
 
-    /**
-     * Asserts the closed address chains of the produced unit: every
-     * {@code ASSIGN}/{@code DELETE} chain child named by the payload
-     * resolves to an emitted op of the unit (the address-chain protocol's
-     * child-resolution requirement — the regression's direct measure: a
-     * chain referencing a body's creation op keeps resolving after the
-     * identity takeover).
-     */
     private static void assertChainChildrenResolve(LoweredModuleUnit unit) {
         int chains = 0;
         for (SemanticOp op : unit.ops()) {

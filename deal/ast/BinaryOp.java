@@ -3,12 +3,12 @@ package deal.ast;
 /** Binary operators used in {@link BinaryExpr}. */
 public enum BinaryOp {
     ADD,   // +
-    SUB,   // -
-    MUL,   // *
-    DIV,   // /
+    SUB,
+    MUL,
+    DIV,
     MOD,   // %
-    POW,   // **
-    EQ,    // ===
+    POW,
+    EQ,
     NEQ,   // !==
     LT,    // <
     LTE,   // <=

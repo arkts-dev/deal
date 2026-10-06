@@ -26,10 +26,6 @@ import java.util.Objects;
  * value (the only CLI value the user named). The range is always
  * non-null.</p>
  *
- * @param message the deterministic user-facing message (paths may appear
- *                in messages; private identity values never do)
- * @param range   the canonical synthetic diagnostic range anchored at the
- *                entry-file value
  */
 public record CliDiagnostic(String message, DiagnosticRange range) {
 

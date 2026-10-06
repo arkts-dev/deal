@@ -38,47 +38,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * ISSUE-0650: the host module load and the JVM host ABI emission surface
- * (design source {@code host-module-load-and-host-call-realization} H1,
- * H2 items 1-2, H7's carrier set, and the host-load contract;
- * {@code luajit-jvm-single-lowering-production-cutover} C2).
- *
- * <ol>
- *   <li><b>LuaJIT load.</b> The {@code MODULE_IMPORT(HOST)} op emits the
- *       load inline at its position in the module init walk
- *       ({@code __exportSurfaces[<resolved module>] = ... or
- *       __rt.load_host(<rawSpecifier>, { <declared map> }, file, line,
- *       column)}), with the declared map in declaration order and the
- *       import statement's span as the origin; the loaded table is
- *       published in the same registry {@code EXPORT_PUBLISH}/
- *       {@code EXPORT_READ} use; exactly one load happens per imported
- *       module per program (a two-alias import produces one load and one
- *       shared surface value).</li>
- *   <li><b>LuaJIT defects.</b> The pinned E8011 failures (missing
- *       declared export at the import origin, class identity mismatch,
- *       missing {@code <C>_defaults}) fail the importing module's init
- *       with the host-module-abi texts.</li>
- *   <li><b>JVM surface.</b> The artifact carries the module-keyed load
- *       entry (idempotent per module; {@code Class.forName} of the
- *       {@code classNameFor(rawSpecifier)} derivation), the declared
- *       function bindings with the declared parameter-class projection,
- *       the {@code <C>_defaults} captures, the per-export wrappers with
- *       the declared parameter/return cells and the pinned E8010 texts,
- *       and the synthesized {@code $DealRt} host-record and host-carrier
- *       scope the deployed host fixtures compile against.</li>
- *   <li><b>Real toolchains.</b> The chunk executes under {@code luajit}
- *       (the host module loads once, both aliases observe one surface);
- *       the class compiles with {@code javac --release 25 -proc:none}
- *       together with the deployed {@code test/conformance/host-fixtures}
- *       sources, and the emitted wrappers run under {@code java} with the
- *       pinned E8010 parameter/return texts.</li>
- *   <li><b>Signature extension.</b> The production emitter entries take
- *       the host declaration surface (the single declared-map source) and
- *       {@code ProductionProjectEmission.run} passes its received surface
- *       through to both.</li>
- * </ol>
- */
 public class HostModuleLoadEmissionTest {
 
     private static int passed = 0;
@@ -244,13 +203,6 @@ public class HostModuleLoadEmissionTest {
         Map<String, String> externals) {
     }
 
-    /**
-     * The harness invocation of the fixture compile: the orchestrator builds
-     * the checked project and the declaration surface through its harness
-     * arm, while this test drives the one project lowering and the
-     * production emitter entries directly (the ISSUE-0656 guard replacement
-     * lets a host import reach the production arm).
-     */
     private static CompilerInvocation harnessInvocation() {
         return CompilerProfileProvider.resolveCommonShadow(
             deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32,

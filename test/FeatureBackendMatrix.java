@@ -2,38 +2,6 @@ package deal.test.feature;
 
 import java.util.List;
 
-/**
- * The architecture-owned ISSUE-0111 backend/invocation matrix
- * (declarations page D12, the authoritative table): the matrix — not the
- * sidecar — selects the mandatory backends, invocation shape, and linked
- * records for every feature id.
- *
- * <pre>{@code
- * | FeatureId                          | mandatory backends/invocation |
- * |------------------------------------|-------------------------------|
- * | SIGNED_INT32, BYTES_CORE,          | same runtime behavior on      |
- * | BYTES_DEFAULTS, BYTES_DESCRIPTORS, | LuaJIT and JVM; direct-main   |
- * | BYTES_SYNC_FUNCTION                | or typed synthetic-main       |
- * | BYTES_ASYNC_FUNCTION               | same semantic record on       |
- * |                                    | LuaJIT and JVM with           |
- * |                                    | async-export                  |
- * | DIRECTIVES, DIAGNOSTIC_RANGE,      | compiler record on each       |
- * | PROJECT_CONFIG                     | applicable backend pipeline   |
- * | C_FFI                              | LuaJIT runtime record plus    |
- * |                                    | linked JVM compile-error      |
- * |                                    | E6006 record                  |
- * | C_FFI_DECLARATION_ERROR            | compile-error on both         |
- * |                                    | pipelines unless              |
- * |                                    | backend-specific              |
- * }</pre>
- *
- * <p>{@link #validate(V12FeatureMetadata)} is the catalog's pre-compilation
- * gate: a sidecar backend set must equal the matrix result; omission,
- * addition, a missing linked E6006 record, an illegal invocation shape,
- * or a sync invocation for an async record fails catalog validation
- * before any compilation. The matrix is a closed switch — no feature id
- * can pass validation through a default or fallback row.</p>
- */
 public final class FeatureBackendMatrix {
 
     /** The exact dual-backend set of the parity features. */

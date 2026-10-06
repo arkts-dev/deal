@@ -10,86 +10,8 @@ import deal.types.Type;
 
 import java.util.Objects;
 
-/**
- * The pre-E4 descriptor bridge of the container/string construct stage
- * (ISSUE-0232 D2): the single E3-owned {@code Type}→{@link
- * RuntimeDescriptor} derivation for exactly the descriptor positions the
- * stage's payload shapes introduce —
- *
- * <ul>
- *   <li>{@link #elementDescriptorOf(Type)} — the element descriptor of an
- *       array-typed literal's {@code ARRAY_NEW} payload (one derivation
- *       per element type, shared by every element boundary child);</li>
- *   <li>{@link #resultDescriptorOf(Type)} — the result descriptor of a
- *       table-read's contextual type ({@code MEMBER_READ} +
- *       {@code CONTEXTUAL_TABLE_READ} child) and of the fixed
- *       {@code string}/{@code int}/{@code table} result types of the
- *       stage's operations.</li>
- * </ul>
- *
- * <p>These are exactly the two derivation positions of this component —
- * nothing else: there is no third {@code Type}→{@link RuntimeDescriptor}
- * derivation surface here, and no general-purpose describe entry point
- * exists on this bridge.</p>
- *
- * <p><b>Mapping (D2, the verbatim DescriptorService table).</b> Each
- * derivation produces exactly the table below, recursively — no added
- * row, no removed row, no folding and no invented spelling:</p>
- *
- * <ul>
- *   <li>{@link Type.Null} → the null descriptor;</li>
- *   <li>{@link Type.Boolean} → the boolean descriptor;</li>
- *   <li>{@link Type.Int} → the signed32 int descriptor;</li>
- *   <li>{@link Type.Number} → the number descriptor;</li>
- *   <li>{@link Type.String} → the string descriptor;</li>
- *   <li>{@link Type.Table} → the table descriptor;</li>
- *   <li>{@code Class(name, modulePath)} → the class descriptor with
- *       {@code new ClassId(modulePath, name)};</li>
- *   <li>{@code Array(T)} → the array descriptor with the recursively
- *       derived element descriptor;</li>
- *   <li>{@code Nullable(T)} → the nullable descriptor with the
- *       recursively derived inner descriptor (both type hierarchies
- *       enforce the same invariants);</li>
- *   <li>{@code Func(paramTypes, returnType, isAsync)} → the function
- *       descriptor with parameter descriptors in source order, the
- *       recursively derived return descriptor, and the async marker.</li>
- * </ul>
- *
- * <p>The bridge realizes the table by delegating to {@link
- * DescriptorService#describe(Type)} — the one production component that
- * owns the table — rather than duplicating the mapping (D2 explicitly
- * rejects duplicating an E4-owned component). The observable mapping of
- * the two positions is therefore the verbatim DescriptorService table by
- * construction.</p>
- *
- * <p><b>Fail closed (D2).</b> {@link Type.Error}
- * — at any depth of a supported variant — has no descriptor member in
- * {@code deal.semantic-ir/1} and must never be represented
- * ({@link Type.Bytes} maps to {@link RuntimeDescriptor.Bytes} since
- * ISSUE-0158). Both derivations never invent a descriptor and never
- * crash: they raise {@link Defect} (internal control flow), and
- * {@link #loweringFailureDetail(ModuleId, Defect)} produces the named
- * {@code DESCRIPTOR_UNREPRESENTABLE} failure carrying the exact
- * {@link LoweringFailureDetail} fields — {@code module}, {@code
- * capability CONTAINERS_AND_STRINGS}, {@code validatorRule
- * DESCRIPTOR_UNREPRESENTABLE}, {@code semanticProfile DEAL_V1_2_INT32},
- * {@code irVersion deal.semantic-ir/1}, {@code origin} — and nothing
- * else. The conversion of that detail into the E6005 diagnostic through
- * {@code FailureContractRegistry.e6005} happens at the unit-production
- * seam (the stage's claiming seam, C5, wires it); this bridge constructs
- * no diagnostic itself.</p>
- *
- * <p>The component is static, pure, deterministic, stateless, and
- * executes no host code.</p>
- */
 public final class ContainerPayloadDescriptors {
 
-    /**
-     * The fact-defect identifier carried in the {@code validatorRule}
-     * field of the E6005 diagnostic for an unrepresentable type
-     * ({@link Type.Error}; {@link Type.Bytes} is representable since
-     * ISSUE-0158's bytes descriptor member).
-     */
     public static final String DESCRIPTOR_UNREPRESENTABLE = "DESCRIPTOR_UNREPRESENTABLE";
 
     private ContainerPayloadDescriptors() {
@@ -122,12 +44,6 @@ public final class ContainerPayloadDescriptors {
      * supported variants; {@link Type.Error} — at any depth —
      * raises {@link Defect} (fail closed, never an invented descriptor).
      *
-     * @param elementType the checked array element type; non-null
-     * @return the mapped {@code RuntimeDescriptor} (D2 table); its
-     *         {@link RuntimeDescriptor#canonicalSpecText()} is the
-     *         schema-owned canonical text
-     * @throws Defect when {@code elementType} is, or contains,
-     *         {@link Type.Error}
      */
     public static RuntimeDescriptor elementDescriptorOf(Type elementType) {
         Objects.requireNonNull(elementType, "elementType must not be null");
@@ -147,12 +63,6 @@ public final class ContainerPayloadDescriptors {
      * {@link Type.Error} — at any depth — raises
      * {@link Defect} (fail closed, never an invented descriptor).
      *
-     * @param resultType the checked result type; non-null
-     * @return the mapped {@code RuntimeDescriptor} (D2 table); its
-     *         {@link RuntimeDescriptor#canonicalSpecText()} is the
-     *         schema-owned canonical text
-     * @throws Defect when {@code resultType} is, or contains,
-     *         {@link Type.Error}
      */
     public static RuntimeDescriptor resultDescriptorOf(Type resultType) {
         Objects.requireNonNull(resultType, "resultType must not be null");
@@ -178,12 +88,6 @@ public final class ContainerPayloadDescriptors {
      * {@code FailureContractRegistry.e6005(detail)}; this bridge
      * constructs no diagnostic and no descriptor on this path.
      *
-     * @param module the module whose unit-production seam hit the defect;
-     *               non-null
-     * @param defect the defect raised by {@link #elementDescriptorOf(Type)}
-     *               or {@link #resultDescriptorOf(Type)}; non-null
-     * @return the exact {@code LoweringFailureDetail} of the
-     *         {@code DESCRIPTOR_UNREPRESENTABLE} failure
      */
     public static LoweringFailureDetail loweringFailureDetail(ModuleId module, Defect defect) {
         Objects.requireNonNull(module, "module must not be null");

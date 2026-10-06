@@ -6,104 +6,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * The single op-level execution form of the six container/string
- * operations of {@code deal.semantic-ir/1} (ISSUE-0384 component C3;
- * ISSUE-0232 design D6; parent closed operation rows
- * {@code TABLE_NEW}, {@code ARRAY_NEW}, {@code MEMBER_READ},
- * {@code ARRAY_LENGTH}, {@code STRING_CONCAT}, and
- * {@code FOR_EACH(STRING_SCALARS)}): a static, pure, deterministic,
- * stateless executor over the semantic value model — the
- * first-insertion-order {@link SemanticTable} (D4), the closed
- * {@link UnicodeScalars} scalar model (D5), and the ordered
- * {@link SemanticArray} element list — plus the value lookup for the
- * payload-referenced prior steps. The semantic oracle (E11) composes this
- * executor with the E2 value-op executor and E4's {@link BoundaryExecutor}
- * into the full interpreter; shared emitters may implement the same
- * contracts over target representations.
- *
- * <p><b>Interpretation surface.</b> The executor interprets only
- * validated op shapes ({@link SemanticOp} records whose kind/payload
- * pairing the {@code SemanticOp} constructor has already enforced) and
- * the closed {@link Value} view — never AST nodes, never target
- * representations, never host code, never identity-keyed checker state.
- * A shape outside the pinned contracts — a wrong op kind, a non-pinned
- * failure policy, an unresolvable prior-step value, a wrong-kind
- * receiver/iterable/fragment, a boundary child of the wrong kind or
- * parentage, an element-boundary count mismatch, an {@code Invalid}
- * fragment inside {@code STRING_CONCAT}, a non-{@code STRING_SCALARS}
- * mode, or a loop-binding load carrying a generation other than the
- * payload's initial generation — fails closed as a producer
- * {@link Defect}, never as a DEAL projection and never as a crash (the
- * same fail-closed discipline as {@link BoundaryExecutor} and
- * {@link SemanticArray}).</p>
- *
- * <p><b>Value lookup.</b> Every payload-referenced prior step —
- * {@code TABLE_NEW} entry values, {@code ARRAY_NEW} element values, the
- * {@code MEMBER_READ}/{@code ARRAY_LENGTH} receiver, the
- * {@code STRING_CONCAT} fragments, and the {@code FOR_EACH} iterable —
- * is resolved through the caller-supplied {@code Map<ValueId, Value>}
- * before the op's behavior runs. A referenced prior step the lookup does
- * not resolve is a producer defect (prior steps complete before operation
- * START in the validated machine, so the oracle's lookup always
- * resolves).</p>
- *
- * <p><b>Boundary orchestration (D3, pinned).</b> The executor creates no
- * boundary projection: every boundary child is driven through the
- * {@link BoundaryCheckRunner} delegate seam
- * ({@code (BoundaryPayload, Value) → Pass | Fail}). {@code ARRAY_NEW}
- * resolves all element values first (all element prior steps completed),
- * then runs its element-boundary children strictly in payload order; the
- * first failing child fails the op with that child's failure and no
- * partial instance is published (no allocation); only after every child
- * passes does the fresh array allocate. {@code MEMBER_READ} performs the
- * missing-aware read first and then runs its single
- * {@code CONTEXTUAL_TABLE_READ} child; the child publishes the checked
- * value (missing→null for a nullable descriptor, present value checked,
- * E8001 {@code expected {expected}, got missing} for non-nullable
- * missing) — that projection is the delegate's (E4's
- * {@code BoundaryExecutor}), this epic pins the orchestration only. E3's
- * unit tests use pass-through/fail-first fixtures; E4 wires
- * {@code BoundaryExecutor} as the production delegate.</p>
- *
- * <p><b>{@code FOR_EACH(STRING_SCALARS)} (D5/D6, pinned).</b> The op
- * validates the complete scalar sequence before the first binding — the
- * op's own {@code TYPE_DESCRIPTOR} terminal check, never a
- * {@code BOUNDARY} child. An {@code Invalid} iterable fails the op with
- * the E8001 projection {@code expected string, got invalid Unicode scalar
- * encoding} (expected {@code string}, actual kind
- * {@code invalid-unicode}, instantiated from the registry's pinned
- * {@code TYPE_DESCRIPTOR} row) at the op's origin and executes no body
- * step. A {@code Valid} iterable yields one single-scalar string per
- * iteration in scalar order to the {@link BodyRunner} callback, each
- * iteration bound to a fresh generation of the loop binding
- * (initial + iteration index); an empty string yields zero iterations.
- * The body-runner callback executes the loop body (E5/E6 control and
- * binding machinery); this epic pins only the iteration protocol, the
- * yield stream, and the loop-binding load-resolution rule (D1): a
- * {@code BINDING_LOAD} of the loop binding inside the body carries the
- * {@code FOR_EACH} payload's {@code generation} field (the initial
- * generation), and at execution the effective generation is
- * {@code initial + current iteration index} — the executor supplies the
- * {@link LoopLoadResolver} that the body-runner applies before the
- * generation check; the payload itself is never rewritten per
- * iteration.</p>
- *
- * <p><b>Failure rows.</b> Every op-level failure renders the declared
- * {@link FailureContractRegistry} arm bound to its row's template through
- * {@link FailureContractRegistry#render} — the executor never selects
- * message text, and consumers never select messages. {@link OpFailure}
- * pairs the structured projection with the executed op's origin (the
- * operation origin of the closed table's rule).</p>
- *
- * <p><b>Purity and bounds.</b> No mutation of the unit, no randomness, no
- * I/O, no host code, no retry, no {@code deal.types} dependency; the
- * executor is linear in the entry count, the element count, the fragment
- * count, and the string length, and delegates descriptor-depth work to
- * the boundary delegate (this component recurses over no descriptor).
- * Fresh arrays and tables carry fresh identities (the model's allocation
- * rule); repeated executions with equal inputs produce equal results.</p>
- */
 public final class ContainerOpsExecutor {
 
     private ContainerOpsExecutor() {
@@ -251,7 +153,6 @@ public final class ContainerOpsExecutor {
             }
         }
 
-
         /**
          * A bytes buffer view (K6 item 10): the same mutable storage as the
          * oracle's bytes value, shared by every alias, so an element write
@@ -328,8 +229,6 @@ public final class ContainerOpsExecutor {
      * exactly one pinned projection — never a partial value and never a
      * retry.
      *
-     * @param <V> the success value type of the op (a table, an array, a
-     *            read value, a signed32 count, an iteration count)
      */
     public sealed interface Outcome<V> permits Outcome.Success, Outcome.Failure {
 
@@ -354,32 +253,12 @@ public final class ContainerOpsExecutor {
     // Boundary-check delegate seam (D3)
     // =========================================================================
 
-    /**
-     * The boundary-check delegate seam (ISSUE-0232 design D3): exactly
-     * {@code (BoundaryPayload, Value) → Pass | Fail} — the closed value
-     * view of the checked element/read outcome in, the published checked
-     * value or the boundary's own failure out. E4's
-     * {@link BoundaryExecutor} is the production delegate; E3's unit
-     * tests use pass-through/fail-first fixtures. The delegate owns every
-     * boundary projection (element descriptor E8003, contextual-read
-     * missing→null / got-missing, present-value checks); the executor
-     * pins only the orchestration (payload order, allocation after all
-     * checks, read before the child).
-     */
     @FunctionalInterface
     public interface BoundaryCheckRunner {
 
         /**
          * Runs one boundary check of the op's orchestration.
          *
-         * @param boundary the child's pinned {@code BOUNDARY} payload
-         *                 (kind, descriptor, input, realization)
-         * @param input    the closed value view the child checks — the
-         *                 resolved element value ({@code ARRAY_NEW}) or
-         *                 the read outcome ({@code MEMBER_READ}:
-         *                 present value or {@link Value.Missing})
-         * @return {@code Pass} with the published checked value, or
-         *         {@code Fail} with the boundary's own failure
          */
         BoundaryResult run(KindPayload.BoundaryPayload boundary, Value input);
     }
@@ -417,52 +296,17 @@ public final class ContainerOpsExecutor {
     // Body-runner seam and the loop-binding load-resolution rule (D1/D6)
     // =========================================================================
 
-    /**
-     * The body-runner callback seam (ISSUE-0232 design D6): executes the
-     * loop body once per iteration with the yielded single-scalar string
-     * bound to a fresh generation of the loop binding (E5/E6 control and
-     * binding machinery execute bodies; this epic pins only the iteration
-     * protocol, the yield stream, and the load-resolution rule). The
-     * executor drives it strictly in scalar order, one call per scalar —
-     * an empty string drives zero calls. A body failure propagates as the
-     * callback's own throw (the oracle's machine owns it), never as a
-     * synthesized projection here.
-     */
     @FunctionalInterface
     public interface BodyRunner {
 
         /**
          * Executes the loop body for one iteration.
          *
-         * @param iterationIndex    the 0-based iteration index in scalar
-         *                          order
-         * @param bindingGeneration the fresh generation the yielded
-         *                          scalar is bound to: the payload's
-         *                          initial generation + iteration index
-         * @param yielded           the one-single-scalar string of this
-         *                          iteration (a valid scalar sequence)
-         * @param loopLoad          the resolver of the loop-binding
-         *                          load-resolution rule for this
-         *                          iteration
          */
         void runBody(int iterationIndex, long bindingGeneration, Value.String yielded,
                      LoopLoadResolver loopLoad);
     }
 
-    /**
-     * The loop-binding load-resolution rule (ISSUE-0232 design D1,
-     * pinned): a {@code BINDING_LOAD} of the for-of loop binding inside
-     * the body carries the enclosing {@code FOR_EACH} payload's
-     * {@code generation} field — the initial generation — and at
-     * execution the body-runner resolves the load's effective generation
-     * as {@code initial + current iteration index} before the generation
-     * check. The payload itself is never rewritten per iteration. The
-     * executor supplies one resolver per iteration; the body-runner
-     * applies it exactly to loads of this loop binding. A carried
-     * generation other than the payload's initial generation is not a
-     * load of this loop binding and fails closed as a producer
-     * {@link Defect}.
-     */
     @FunctionalInterface
     public interface LoopLoadResolver {
 
@@ -470,16 +314,6 @@ public final class ContainerOpsExecutor {
          * Resolves the effective generation of one loop-binding load
          * during the current iteration.
          *
-         * @param carriedGeneration the {@code BINDING_LOAD} payload's
-         *                          generation field — for a load of this
-         *                          loop binding exactly the
-         *                          {@code FOR_EACH} payload's initial
-         *                          generation
-         * @return {@code initial + current iteration index} (the fresh
-         *         binding generation of the current iteration)
-         * @throws Defect if {@code carriedGeneration} is not the
-         *                payload's initial generation (not a load of
-         *                this loop binding)
          */
         long effectiveGeneration(long carriedGeneration);
     }
@@ -497,15 +331,6 @@ public final class ContainerOpsExecutor {
      * its own ({@code NO_DEAL_FAILURE}): a prior-step failure means the
      * executor is never called, and no partial table exists.
      *
-     * @param op          the validated {@code TABLE_NEW} op; non-null
-     * @param priorValues the resolved prior-step values (entry values);
-     *                    non-null, no null entries
-     * @return the fresh table with the entries stored in source order
-     * @throws Defect               if the op is not a
-     *                              {@code TABLE_NEW} carrying
-     *                              {@code NO_DEAL_FAILURE}, or if an
-     *                              entry value does not resolve
-     * @throws NullPointerException if any argument is null
      */
     public static SemanticTable<Value> executeTableNew(SemanticOp op,
                                                        Map<ValueId, Value> priorValues) {
@@ -536,28 +361,6 @@ public final class ContainerOpsExecutor {
      * projection lives here: the delegate (E4's
      * {@link BoundaryExecutor} in production) owns every check.
      *
-     * @param op          the validated {@code ARRAY_NEW} op; non-null
-     * @param priorValues the resolved prior-step values (element values);
-     *                    non-null, no null entries
-     * @param boundaryOps the unit's boundary ops by {@link OpId}; every
-     *                    id of {@code elementBoundaryOpIds} must resolve
-     *                    to a {@code BOUNDARY} op whose origin
-     *                    {@code parentOpId} is this op (validator facts,
-     *                    checked fail closed); non-null
-     * @param checkRunner the boundary-check delegate; non-null
-     * @return {@code Success} with the fresh array after every child
-     *         passed, or {@code Failure} with the first failing child's
-     *         failure (no array is published)
-     * @throws Defect               if the op is not an
-     *                              {@code ARRAY_NEW} carrying
-     *                              {@code NO_DEAL_FAILURE}, if the
-     *                              element-boundary count mismatches the
-     *                              element count, if an element value or
-     *                              a boundary id does not resolve, or if
-     *                              a named child is not a
-     *                              {@code BOUNDARY} op parented to this
-     *                              op
-     * @throws NullPointerException if any argument is null
      */
     public static Outcome<SemanticArray<Value>> executeArrayNew(
             SemanticOp op, Map<ValueId, Value> priorValues,
@@ -604,42 +407,6 @@ public final class ContainerOpsExecutor {
     // MEMBER_READ
     // =========================================================================
 
-    /**
-     * Executes one validated {@code MEMBER_READ} op with the pinned
-     * orchestration (D3): the receiver table resolves exactly once and
-     * the missing-aware read of the constant key completes before the
-     * child starts — the read outcome is the present value or the
-     * internal {@link Value.Missing} — then the single
-     * {@code CONTEXTUAL_TABLE_READ} child runs through the delegate,
-     * which publishes the checked value (missing→null for a nullable
-     * descriptor, present value checked, E8001
-     * {@code expected {expected}, got missing} for non-nullable missing —
-     * the delegate's/E4's projection; this epic pins only the
-     * orchestration). A failing child fails the op with that failure;
-     * the receiver and key are each evaluated exactly once (one lookup of
-     * a constant key, never a key expression).
-     *
-     * @param op              the validated {@code MEMBER_READ} op;
-     *                        non-null
-     * @param priorValues     the resolved prior-step values (the receiver
-     *                        table); non-null, no null entries
-     * @param contextualChild the single {@code CONTEXTUAL_TABLE_READ}
-     *                        child {@code BOUNDARY} op, parented to this
-     *                        op (validator fact, checked fail closed);
-     *                        non-null
-     * @param checkRunner     the boundary-check delegate; non-null
-     * @return {@code Success} with the delegate-published checked value,
-     *         or {@code Failure} with the child's failure
-     * @throws Defect               if the op is not a
-     *                              {@code MEMBER_READ} carrying
-     *                              {@code NO_DEAL_FAILURE}, if the
-     *                              receiver does not resolve to a table,
-     *                              or if the child is not a
-     *                              {@code CONTEXTUAL_TABLE_READ}
-     *                              {@code BOUNDARY} op parented to this
-     *                              op
-     * @throws NullPointerException if any argument is null
-     */
     public static Outcome<Value> executeMemberRead(SemanticOp op,
                                                    Map<ValueId, Value> priorValues,
                                                    SemanticOp contextualChild,
@@ -687,16 +454,6 @@ public final class ContainerOpsExecutor {
      * out-of-range count; the check exists because the closed policy pins
      * it).
      *
-     * @param op          the validated {@code ARRAY_LENGTH} op; non-null
-     * @param priorValues the resolved prior-step values (the receiver
-     *                    array); non-null, no null entries
-     * @return {@code Success} with the signed32 element count, or
-     *         {@code Failure} with the E8004 range projection
-     * @throws Defect               if the op is not an
-     *                              {@code ARRAY_LENGTH} carrying
-     *                              {@code INT32_RESULT}, or if the
-     *                              receiver does not resolve to an array
-     * @throws NullPointerException if any argument is null
      */
     public static Outcome<Integer> executeArrayLength(SemanticOp op,
                                                       Map<ValueId, Value> priorValues) {
@@ -736,17 +493,6 @@ public final class ContainerOpsExecutor {
      * never a second projection — the executor fails closed instead of
      * projecting. A non-string fragment is likewise a producer defect.
      *
-     * @param op          the validated {@code STRING_CONCAT} op; non-null
-     * @param priorValues the resolved prior-step values (the fragments);
-     *                    non-null, no null entries
-     * @return the concatenated valid string value
-     * @throws Defect               if the op is not a
-     *                              {@code STRING_CONCAT} carrying
-     *                              {@code NO_DEAL_FAILURE}, if a fragment
-     *                              does not resolve to a string value, or
-     *                              if any fragment is classified
-     *                              {@code Invalid}
-     * @throws NullPointerException if any argument is null
      */
     public static Value.String executeStringConcat(SemanticOp op,
                                                    Map<ValueId, Value> priorValues) {
@@ -801,28 +547,6 @@ public final class ContainerOpsExecutor {
      * loop-binding load-resolution rule) — the payload is never rewritten
      * per iteration.
      *
-     * @param op          the validated {@code FOR_EACH} op carrying
-     *                    {@code IterationMode.STRING_SCALARS} and policy
-     *                    {@code TYPE_DESCRIPTOR}; non-null
-     * @param priorValues the resolved prior-step values (the iterable);
-     *                    non-null, no null entries
-     * @param bodyRunner  the loop-body callback; non-null
-     * @return {@code Success} with the number of completed iterations
-     *         (the op's own result is none; the count is the observable
-     *         yield stream length), or {@code Failure} with the
-     *         invalid-string projection
-     * @throws Defect               if the op is not a
-     *                              {@code FOR_EACH} carrying
-     *                              {@code TYPE_DESCRIPTOR}, if its mode is
-     *                              not {@code STRING_SCALARS}
-     *                              ({@code FOR_EACH(ARRAY_VALUES)} is
-     *                              E5's and is not executable here), if
-     *                              the iterable does not resolve to a
-     *                              string value, or if a loop-binding
-     *                              load resolver receives a generation
-     *                              other than the payload's initial
-     *                              generation
-     * @throws NullPointerException if any argument is null
      */
     public static Outcome<Integer> executeForEach(SemanticOp op,
                                                   Map<ValueId, Value> priorValues,

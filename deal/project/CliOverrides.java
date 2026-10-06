@@ -16,10 +16,6 @@ package deal.project;
  * no context, and overrides are consulted only after the manifest parsed
  * successfully — an override can never bypass a malformed manifest.</p>
  *
- * @param backend the raw CLI backend value ({@code null} when the flag is
- *                absent)
- * @param output  the raw CLI output value ({@code null} when the flag is
- *                absent)
  */
 public record CliOverrides(String backend, String output) {
 }

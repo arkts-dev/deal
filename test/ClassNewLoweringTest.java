@@ -50,44 +50,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Verifies the ISSUE-0512 {@code CLASS_NEW} LOCAL lowering arm of
- * {@link SemanticLowerer} (class-construction-jsonable-operations K-D4;
- * parent D16): the class-typed object-literal arm's pinned LOCAL payload
- * shape and the executor resolution of the T1-emitted
- * {@code CLASS_DEFAULT} ops.
- *
- * <p>Pinned cases (the task verification):
- * <ol>
- *   <li>a full literal — {@code CLASS_NEW} with the checker-resolved
- *       classId, the declared layout, provided fields in literal source
- *       order, {@code defaultOwner LOCAL}, empty
- *       {@code classDefaultOpIds}, null {@code classFactoryRef},
- *       declaration-order {@code CLASS_LITERAL_FIELD} boundaries with
- *       the pinned kind/input/descriptor/policy/realization/
- *       {@code parentOpId}, policy {@code CLASS_CONSTRUCTION}, the
- *       {@code class:<ClassId>} result descriptor, and zero return
- *       boundaries;</li>
- *   <li>a partial literal — {@code classDefaultOpIds} names the omitted
- *       required-present defaulted fields' {@code CLASS_DEFAULT} op ids
- *       in declaration order only; {@code CLASS_DEFAULT_FIELD}
- *       boundaries wire the {@code CLASS_DEFAULT} op results; omitted
- *       optionals get no boundary and no default op id;</li>
- *   <li>an empty literal — every required-present defaulted field's
- *       default op id in declaration order and an all-{@code
- *       CLASS_DEFAULT_FIELD} boundary list;</li>
- *   <li>the combined T1+T2 scenario — a checked source declaring a
- *       defaulted class (T1's arm) plus a class literal (T2's arm)
- *       lowers to a validated unit whose {@code CLASS_NEW} references
- *       T1-emitted {@code CLASS_DEFAULT} op ids, ties to the exported
- *       class's {@code CLASS_FACTORY} list, and the {@link
- *       ClassOpsExecutor} resolves those ops from the produced unit's
- *       op list when executing the construction (this scenario fails if
- *       T1's layout/factory/default emission is broken);</li>
- *   <li>determinism — two repetitions produce byte-identical
- *       {@link SemanticIrDumper} dumps.</li>
- * </ol>
- */
 public class ClassNewLoweringTest {
 
     private static int passed = 0;

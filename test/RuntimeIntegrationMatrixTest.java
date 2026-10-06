@@ -60,28 +60,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/**
- * The runtime integration matrix of the {@code EVALUATION_ORDER}
- * decomposition tail (ISSUE-0410): every matrix seed is lowered through
- * the real production chain (lexer → parser → checker → checked project →
- * requirement manifest → the carrier's full-program lowerer → the closed
- * validator → the address-chain protocol → the control-flow validator)
- * and then executed on the semantic oracle and BOTH shared emitters'
- * real artifacts (the shared LuaJIT script run by the real {@code luajit}
- * binary; the shared JVM class compiled with the real
- * {@code javac --release 25 -proc:none} and executed by the real
- * {@code java}) via {@link SemanticDifferentialHarness} — the identical
- * validated {@link LoweredModuleUnit} plus its
- * {@link StructuredBodyTable} through all three consumers.
- *
- * <p>The verdict is a real execution comparison report: every event
- * validates against its exact IR operation (snapshot, digest,
- * {@code parentOpId} nesting), the three traces match event-for-event,
- * ordered effects match the wiki projections, and terminals (post-state
- * result and error origin) match — a duplicated evaluation, a wrong
- * selector, or a missing boundary fails the tail even when printed
- * output coincides.</p>
- */
 public class RuntimeIntegrationMatrixTest {
 
     private static int passed = 0;
@@ -1065,15 +1043,6 @@ public class RuntimeIntegrationMatrixTest {
     //     emission shape
     // =========================================================================
 
-    /**
-     * The group-core lowering path (ISSUE-0446's production surface):
-     * the identical validated unit the
-     * {@code RecursiveGroupLoweringTest} path produces — the
-     * {@code RECURSIVE_GROUP_INIT} op appears in the validated unit,
-     * never invented by the seeds (anti-hollow: the harness compares
-     * the three consumers' traces over this real IR, not source
-     * presence).
-     */
     private static SemanticLowerer.GroupCoreResult lowerGroupCore(CheckedSlice slice,
                                                                   String what) {
         if (slice == null) {
@@ -1484,12 +1453,6 @@ public class RuntimeIntegrationMatrixTest {
         }
 
     }
-
-    // =========================================================================
-    // 7. The stdlib matrix (ISSUE-0585): the closed STDLIB_CALL
-    //    realization — cataloged calls and failure projections through
-    //    the semantic oracle and both shared emitters' real artifacts
-    // =========================================================================
 
     private static final String STR = "import * as str from \"std/string\"\n";
     private static final String TBL = "import * as tbl from \"std/table\"\n";

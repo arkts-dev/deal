@@ -22,10 +22,6 @@ public final class LuaJitAsyncExportInvocationException
     /**
      * Constructs the hard failure with the captured process output.
      *
-     * @param message the failure reason (fail-closed, always non-null)
-     * @param stdout  captured child stdout, or {@code null} when the
-     *                process never started or the capture is unreadable
-     * @param stderr  captured child stderr, or {@code null} likewise
      */
     public LuaJitAsyncExportInvocationException(String message,
                                                 String stdout,
@@ -39,11 +35,6 @@ public final class LuaJitAsyncExportInvocationException
      * Constructs the hard failure with a cause and the captured process
      * output.
      *
-     * @param message the failure reason
-     * @param stdout  captured child stdout, or {@code null} when the
-     *                process never started
-     * @param stderr  captured child stderr, or {@code null} likewise
-     * @param cause   the underlying I/O, spawn, or parse failure
      */
     public LuaJitAsyncExportInvocationException(String message,
                                                 String stdout,

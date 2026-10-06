@@ -10,7 +10,6 @@ import java.util.Objects;
  * location or an AST node. Identity is the path string; two
  * {@code ModuleId}s are equal iff their paths are equal.</p>
  *
- * @param path the dotted module path; non-null and non-empty
  */
 public record ModuleId(String path) implements SemanticId {
 

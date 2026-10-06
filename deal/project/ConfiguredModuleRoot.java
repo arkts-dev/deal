@@ -16,14 +16,6 @@ import deal.source.SourceScalarRange;
  * required at locate, and the parser itself performs no filesystem access
  * — this record only pins the shape.
  *
- * @param configuredText         the decoded manifest spelling (not
- *                               percent-encoded, not dotted, not
- *                               reconstructed from the filesystem path)
- * @param absoluteNormalizedPath the protected-resolved absolute normalized
- *                               path, completed only by ProjectLocator
- *                               step 4
- * @param sourceRange            the member value's half-open
- *                               decoded-scalar range
  */
 public record ConfiguredModuleRoot(String configuredText, String absoluteNormalizedPath,
                                    SourceScalarRange sourceRange) {

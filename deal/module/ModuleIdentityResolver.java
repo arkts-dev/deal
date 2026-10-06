@@ -21,164 +21,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
 
-/**
- * The pure classifier of public module identity plus the pinned descriptor
- * representability predicates (ISSUE-0266 T5, design source
- * {@code strict-project-context-resolution-identity} D6,
- * {@code deal-v1.2-int32-and-bytes-architecture} D6).
- *
- * <p>The classifier below performs <b>no source resolution</b>: it is a
- * pure function of a validated
- * {@link ProjectContext} and canonical (symlink-resolved) {@code file:}
- * source URIs, and it performs no filesystem access — every input is
- * pre-resolved by the upstream components (ProjectLocator for roots,
- * externals declaration paths, and the stdlib surface; SourceModuleResolver
- * for source URIs). The classifier is invoked once per resolved source
- * when a {@code SourceModuleLocation} is published, and its result is the
- * provenance of the location's {@code projectIdentity} plus the
- * module-level classification; {@code CanonicalClassIdentity} assembly,
- * eligibility gates, the {@code CanonicalClassIdentityIndex}, and the
- * intrinsic {@code Error} synthesis consume the resolved-source stream
- * through {@link ModuleIdentityAssembly} — the identity-assembly half
- * of this component (epic sequencing item 7).</p>
- *
- * <p>The identity carriers this classifier produces are the neutral
- * JDK-only shapes pinned by {@code deal.identity}
- * ({@link CanonicalModuleIdentity}, {@link ProjectModuleIdentity}) —
- * this layer is their producer and performs the classification; the
- * carrier package itself pins shapes only.</p>
- *
- * <h2>Classifier rules (D6, fixed order)</h2>
- * <ol>
- *   <li>A source whose canonical URI equals the canonical URI of one of
- *       the six spec-listed stdlib declaration files under the pinned
- *       surface — the fully symlink-resolved pinned files published by
- *       ProjectLocator as
- *       {@code ProjectContext.stdlibDeclarationFiles()}
- *       ({@code std/console}, {@code std/string}, {@code std/table},
- *       {@code std/json}, {@code std/math}, {@code std/time} — the
- *       authoritative filter of
- *       {@link StdlibModuleResolver#SPEC_STDLIB_MODULES}) is
- *       {@link CanonicalModuleIdentity.BuiltinModule}, regardless of how
- *       the source was resolved (a symlinked spec-listed file classifies
- *       by its resolved target, exactly the canonical URI every import
- *       spelling resolves to). If the surface is absent no source
- *       carries {@code BuiltinModule}; a same-named {@code .d.deal} in any
- *       other directory is not builtin.</li>
- *   <li>A source whose canonical URI equals an externals entry's
- *       {@code NormalizedDeclarationPath} is
- *       {@link CanonicalModuleIdentity.ExternalModule} carrying that
- *       entry's raw import specifier, regardless of how the source was
- *       resolved.</li>
- *   <li>A {@code .deal} source (never a {@code .d.deal} declaration file)
- *       contained by exactly one configured root with strictly maximal
- *       containment is
- *       {@link CanonicalModuleIdentity.ProjectModule} with a derived
- *       {@link ProjectModuleIdentity}.</li>
- *   <li>Any other source — a relative out-of-root {@code .deal}, a
- *       relative {@code .d.deal} matching no externals entry and not one
- *       of the six pinned stdlib files, a {@code .d.deal} physically
- *       inside the pinned stdlib directory that is not among the six
- *       spec-listed files, a rooted non-externals {@code .d.deal}, or any
- *       other unclassified source — receives no public module
- *       identity.</li>
- * </ol>
- *
- * <p>Predicates (1) and (2) are mutually exclusive for every valid
- * {@code ProjectContext} (ProjectLocator step 4(b) rejects any externals
- * declaration that resolves to a pinned stdlib file), so no runtime
- * precedence between them exists or is needed. The classifier implements
- * the fixed order and, defensively, detects the both-match state —
- * unreachable for valid inputs — and reports it through the result as
- * {@link Issue#STDLIB_EXTERNAL_OVERLAP} instead of silently publishing
- * either form. Likewise the defensive equal-root tie (two distinct
- * contained roots attaining equal maximal containment — unreachable for a
- * valid manifest because duplicate normalized roots are already E2010 at
- * locate) is detected and reported as {@link Issue#EQUAL_ROOT_TIE} rather
- * than silently picking one root; the identity-assembly half
- * ({@link ModuleIdentityAssembly}) maps these outcomes to the pinned
- * E2010-when-required behavior.</p>
- *
- * <h2>Containment (D6)</h2>
- *
- * <p>Containment is computed on symlink-resolved paths on both sides: a
- * source is contained by a root iff its canonical URI path equals the
- * root's {@code normalizedRootPath} or starts with it followed by a path
- * separator (component-wise). The most-specific root is the contained
- * root with the longest {@code normalizedRootPath}. A source whose file is
- * a symlink pointing outside its lexical root has a canonical URI outside
- * the root prefix and is not contained; non-existent roots contain no
- * sources in filesystem reality. All comparisons are lexical over
- * already-resolved absolute paths — no filesystem access occurs here.</p>
- *
- * <h2>Representability (D6, pure over decoded text components)</h2>
- *
- * <p>Every slash-separated component of a configured root text, of the
- * relative module path, and of an externals raw import specifier must be
- * non-empty; not {@code .} or {@code ..}; free of U+0000, C0 controls,
- * DEL, and Unicode whitespace (the full pinned White_Space property —
- * {@code 0009-000D, 0020, 0085, 00A0, 1680, 2000-200A, 2028, 2029,
- * 202F, 205F, 3000} — checked explicitly, since Java's
- * {@code Character.isWhitespace} excludes U+0085 NEXT LINE); free of
- * {@code @ [ ] ? ( ) ,}; and free of contiguous {@code -}{@code >}.
- * {@code %}, non-reserved {@code $}, and a Linux backslash remain
- * byte-identical and valid. {@code $external} and {@code $builtin} are
- * reserved only as <b>exact first components</b>: a root whose first
- * component is exactly one of them is unrepresentable as a project
- * identity. Class names are identifier-shaped by the grammar,
- * {@code [a-zA-Z_$][a-zA-Z0-9_$]*}.</p>
- * <b>Per-compilation identity-index surface (ISSUE-0317):</b> beyond the
- * pure classifier above, this class also publishes the per-compilation
- * identity artifacts the JS descriptor lane consumes (design source
- * {@code strict-project-context-resolution-identity} D6,
- * {@code canonical-type-system-and-runtime-descriptors} D3/D5).
- *
- * <p>The classification itself — which resolved source carries which
- * {@link CanonicalModuleIdentity} (builtin, externals-listed, configured
- * root) — is computed by the compilation seams that hold the resolution
- * inputs (the orchestrator's module map, the configured roots, and the
- * externals manifest entries); this class owns the compiled identity
- * artifacts those seams publish into:</p>
- *
- * <ul>
- *   <li>the per-compilation {@link IdentityIndex} — a concrete
- *       {@link CanonicalClassIdentityIndex} whose
- *       {@code descriptorTextFor(identity)} returns the pinned
- *       descriptor-text projection byte-for-byte:
- *       {@code @&lt;configuredRootText&gt;/&lt;relativeModuleComponents&gt;/&lt;ClassName&gt;}
- *       for project modules,
- *       {@code @$external/&lt;rawImportSpecifier&gt;/&lt;ClassName&gt;} for
- *       externals-listed declarations, and {@code @$builtin/Error} for the
- *       intrinsic builtin {@code Error} class; and</li>
- *   <li>the module-path classification function the per-compilation
- *       {@link CanonicalRuntimeTypeDescriptor} consumes to resolve a
- *       checked {@code Type.Class#modulePath()} into its module
- *       identity.</li>
- * </ul>
- *
- * <p>The index never recomputes or reverse-parses a root boundary from
- * text: projections are derived from the supplied identity carriers
- * only.  Every produced text is validated through the canonical strict
- * parser ({@link CanonicalRuntimeTypeDescriptor#parse(String)}) and must
- * be a byte-identical {@link DescriptorAst.ClassAtom}; an
- * unrepresentable identity (a component outside the pinned alphabet, a
- * non-identifier-shaped class name, or a builtin class other than the
- * pinned {@code Error} projection) is the pinned internal invariant
- * violation — {@link IllegalStateException}, never invented text and
- * never a silent fallback (the eligibility gate that turns these cases
- * into public E2010 diagnostics at declaration sites is the
- * module-identity layer's, {@code strict-project-context-resolution-identity}
- * D6).</p>
- *
- * <p>The reverse accessor {@code identityForDescriptorText(text)}
- * returns the identity registered for a byte-identical produced text.
- * Registration is production-driven: every text produced by
- * {@code descriptorTextFor} registers both directions, so
- * {@code identityForDescriptorText(descriptorTextFor(id))} always
- * round-trips; a text no identity has been produced for is an absent
- * lookup (pinned invariant violation).</p>
-
- */
 public final class ModuleIdentityResolver {
 
     private ModuleIdentityResolver() {
@@ -231,14 +73,6 @@ public final class ModuleIdentityResolver {
      * {@link CanonicalModuleIdentity.ProjectModule}), and the defensive
      * issue marker.
      *
-     * @param moduleIdentity  the canonical module identity, or null when
-     *                        the source has no public module identity
-     * @param projectIdentity the project-module provenance; equal to the
-     *                        {@code ProjectModule}'s identity when the
-     *                        identity is {@code ProjectModule}, null
-     *                        otherwise
-     * @param issue           {@link Issue#NONE}, or one of the two
-     *                        defensive markers (never null)
      */
     public record ModuleClassification(CanonicalModuleIdentity moduleIdentity,
                                        ProjectModuleIdentity projectIdentity,
@@ -275,12 +109,6 @@ public final class ModuleIdentityResolver {
      * URI is not a pinned input and classifies as {@code none} with
      * {@link Issue#NONE} (defensive totality, never an exception).</p>
      *
-     * @param context            the validated immutable project context
-     * @param canonicalSourceUri the canonical symlink-resolved
-     *                           {@code file:} URI text of one resolved
-     *                           source
-     * @return the single classification (identity or none, provenance,
-     *         issue); never null
      */
     public static ModuleClassification classify(ProjectContext context,
                                                 String canonicalSourceUri) {
@@ -528,8 +356,6 @@ public final class ModuleIdentityResolver {
      * <p>Pure over the decoded text: no filesystem access, no shared
      * state.</p>
      *
-     * @param component one slash-separated decoded text component
-     * @return true iff the component is representable in a descriptor
      */
     public static boolean isRepresentableDescriptorComponent(String component) {
         if (component == null || component.isEmpty()) {
@@ -614,10 +440,6 @@ public final class ModuleIdentityResolver {
      * of them is unrepresentable as a project identity. A null text is
      * not representable.
      *
-     * @param configuredRootText the decoded manifest spelling of a
-     *                           configured root
-     * @return true iff the root text is representable in the project
-     *         descriptor form
      */
     public static boolean isRepresentableConfiguredRootText(
             String configuredRootText) {
@@ -642,10 +464,6 @@ public final class ModuleIdentityResolver {
      * A null list is not representable; an empty list (a file directly in
      * its root) is representable.
      *
-     * @param relativeModuleComponents the derived directory components
-     *                                 from the root to the defining file
-     * @return true iff the components are representable in the project
-     *         descriptor form
      */
     public static boolean isRepresentableRelativeModuleComponents(
             List<String> relativeModuleComponents) {
@@ -669,9 +487,6 @@ public final class ModuleIdentityResolver {
      * descriptor's first component. A null specifier is not
      * representable.
      *
-     * @param rawImportSpecifier the externals map key exactly as written
-     * @return true iff the specifier is representable in the
-     *         {@code @$external} descriptor form
      */
     public static boolean isRepresentableExternalSpecifier(
             String rawImportSpecifier) {
@@ -686,8 +501,6 @@ public final class ModuleIdentityResolver {
      * identity's configured root text and its relative module components
      * must both be representable. A null identity is not representable.
      *
-     * @param projectModuleIdentity the derived project module identity
-     * @return true iff the project descriptor form is representable
      */
     public static boolean isRepresentableProjectModuleIdentity(
             ProjectModuleIdentity projectModuleIdentity) {
@@ -704,8 +517,6 @@ public final class ModuleIdentityResolver {
      * (the lexer's identifier grammar, {@code deal/lexer/Lexer.java}).
      * A null or empty name is not identifier-shaped.
      *
-     * @param className a declared class name
-     * @return true iff the name is identifier-shaped by the grammar
      */
     public static boolean isIdentifierShapedClassName(String className) {
         if (className == null || className.isEmpty()) {
@@ -742,9 +553,6 @@ public final class ModuleIdentityResolver {
      * intrinsic builtin {@code Error} module (the checker represents the
      * builtin Error class as {@code Type.Class("Error", "")}).
      *
-     * @param modulePathIdentities the dotted module path &rarr; module
-     *                             identity classification; non-null
-     * @return the per-compilation identity index
      */
     public static IdentityIndex buildIndex(
             Map<String, CanonicalModuleIdentity> modulePathIdentities) {
@@ -784,7 +592,6 @@ public final class ModuleIdentityResolver {
          * {@code null} for a module path the classification does not
          * carry (no public identity).
          *
-         * @return the classification function; never null
          */
         public Function<String, CanonicalModuleIdentity> moduleIdentityLookup() {
             return byModulePath::get;
@@ -899,7 +706,6 @@ public final class ModuleIdentityResolver {
          * The dotted module path &rarr; module identity classification of
          * this index, exposed for diagnostics; never mutated.
          *
-         * @return the classification map (unmodifiable)
          */
         public Map<String, CanonicalModuleIdentity> modulePathIdentities() {
             return byModulePath;
@@ -909,11 +715,6 @@ public final class ModuleIdentityResolver {
          * Convenience: the registered descriptor-text projection for a
          * class declared in the given dotted module path.
          *
-         * @param modulePath the declaring module's dotted path
-         * @param className  the class name
-         * @return the byte-identical canonical descriptor text
-         * @throws IllegalStateException for an unclassified module path or
-         *         an unrepresentable identity
          */
         public String descriptorTextFor(String modulePath, String className) {
             CanonicalModuleIdentity moduleIdentity = byModulePath.get(modulePath);
@@ -937,8 +738,6 @@ public final class ModuleIdentityResolver {
      * D6 — the source suffix and file stem are omitted from identity
      * components).
      *
-     * @param dottedModulePath the dotted module path; non-null
-     * @return the directory components (possibly empty)
      */
     public static List<String> directoryComponents(String dottedModulePath) {
         Objects.requireNonNull(dottedModulePath, "dottedModulePath must not be null");

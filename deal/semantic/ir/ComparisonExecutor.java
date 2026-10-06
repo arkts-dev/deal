@@ -3,107 +3,6 @@ package deal.semantic.ir;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * The single execution form of the closed comparison-semantics table of
- * {@code deal.semantic-ir/1} (ISSUE-0234 design B-D4,
- * binary-comparison-selectors): a static, pure, deterministic, stateless
- * executor over the closed {@link ComparisonOperandView} implementing
- * exactly the B-D2 per-selector semantics table with the B-D1
- * missing≡null rule. The semantic oracle calls it directly; the shared
- * LuaJIT/JVM emitters realize the same table over their target
- * representations (B-D6) and are conformance-tested against it.
- *
- * <p><b>Missing≡null (B-D1, both operand positions).</b> When either
- * operand is {@code Null} or {@code Missing}, every selector compares
- * with the null rules: an equality selector ({@code *_EQ}) yields true
- * exactly when both operands are null/missing, an inequality selector
- * ({@code *_NE}) yields the negation, and every ordering selector
- * ({@code *_LT/LE/GT/GE}) yields false. So {@code missing === missing}
- * is true, {@code missing === v} is false, and {@code missing !== v} is
- * true — the pinned {@code jvm-arr-cmp-past-end-parity} behavior
- * ({@code xs[99] === xs[99]} true) — and no typed boundary runs at a
- * comparison operand, so no E8001 is raised there (B-D1/B-D5). The
- * {@code NULLABLE_NULL_*} row names the nullable operand by side and
- * therefore consults only that operand: EQ is true exactly when the
- * named-side operand is null/missing (NE negated), which coincides with
- * the null rules on every checker-admitted shape (the other operand is
- * the {@code null} literal).</p>
- *
- * <p><b>Value rules (B-D2, exact).</b></p>
- * <ul>
- *   <li>{@code INT32_EQ/NE/LT/LE/GT/GE} — signed32 integral comparison:
- *       EQ/NE by value; orderings signed. No cross-type coercion: the
- *       operands are {@code Int} views.</li>
- *   <li>{@code NUMBER_EQ/NE/LT/LE/GT/GE} — IEEE-754: EQ/NE use IEEE
- *       equality ({@code NaN === NaN} false, {@code NaN !== NaN} true,
- *       {@code -0.0 == 0.0} true); orderings are IEEE predicates — NaN
- *       makes every ordering false, {@code -0.0 < 0.0} false,
- *       {@code -0.0 <= 0.0} true. Never {@code Double.compare}.</li>
- *   <li>{@code STRING_EQ/NE/LT/LE/GT/GE} — Unicode scalar-value sequence
- *       equality; order is scalar (code point) lexicographic — never
- *       byte order, locale, or UTF-16 code-unit order. Operands are
- *       {@code String} views whose {@link UnicodeScalars.Valid} carriers
- *       are validated scalars.</li>
- *   <li>{@code BOOLEAN_EQ/NE} — value equality.</li>
- *   <li>{@code NULL_EQ/NE} — null vs null: EQ true by sentinel identity,
- *       NE false.</li>
- *   <li>{@code NULLABLE_EQ/NE} (side {@code LEFT|RIGHT|BOTH}) — a
- *       null/missing operand follows the null rules above; otherwise the
- *       inner values compare by the inner descriptor's equality rule:
- *       int/number/string/boolean value rules for those inner kinds and
- *       allocation/function identity (both operands {@code Ref} views)
- *       for array/table/class/function/bytes inner kinds; NE is the
- *       negation.</li>
- *   <li>{@code NULLABLE_NULL_EQ/NE} (side {@code LEFT|RIGHT} names the
- *       nullable operand) — EQ true exactly when the named-side operand
- *       is null/missing, else EQ false; NE negated.</li>
- *   <li>{@code REFERENCE_EQ/NE} — one equal checked descriptor with kind
- *       {@code ARRAY|TABLE|CLASS|FUNCTION} (the payload's inner
- *       descriptor, required); compares allocation/function identity by
- *       token equality of the two {@code Ref} views; a null/missing
- *       operand follows the null rules.</li>
- *   <li>{@code BYTES_EQ/NE} — the one equal checked descriptor is the
- *       {@code bytes} descriptor (ISSUE-0158's row; the payload's inner
- *       descriptor, required); compares allocation identity of the two
- *       bytes carriers by token equality of the two {@code Ref} views; a
- *       null/missing operand follows the null rules.</li>
- * </ul>
- *
- * <p><b>Payload requirements.</b> The {@code NULLABLE_*} family requires
- * the payload's inner descriptor (non-null, never {@code null} and never
- * another nullable — the closed {@link RuntimeDescriptor} invariant) and
- * the side mode ({@code LEFT|RIGHT|BOTH} for {@code NULLABLE_EQ/NE};
- * {@code LEFT|RIGHT} for {@code NULLABLE_NULL_EQ/NE}).
- * {@code REFERENCE_*} requires the one equal checked descriptor with
- * kind {@code ARRAY|TABLE|CLASS|FUNCTION}; {@code BYTES_*} requires the
- * {@code bytes} descriptor. The other selectors carry no inner
- * descriptor or side and ignore those arguments.</p>
- *
- * <p><b>Fail-closed discipline.</b> No comparison selector ever raises a
- * DEAL failure (all comparisons are policy {@code NO_DEAL_FAILURE}) and
- * a comparison never consumes an operand twice: the operands are
- * completed views and the result is a plain boolean. A shape outside the
- * closed table — an arithmetic selector (the signed-int32/containers
- * epics own arithmetic execution), a wrong operand family for the
- * selector, a null-literal selector fed value operands, a missing or
- * broken {@code NULLABLE_*}/{@code REFERENCE_*}/{@code BYTES_*} payload,
- * or a wrong inner-value family for the nullable inner descriptor —
- * fails closed as a producer {@link Defect}, never as a DEAL projection
- * and never as a crash (the same fail-closed discipline as the
- * boundary-table projection engine, whose types a comparison never
- * touches). A null/missing operand is never a defect: the null rules
- * return a boolean for every selector.</p>
- *
- * <p><b>Purity and bounds.</b> No mutation, no randomness, no I/O, no
- * retry, no target knowledge, no AST, no checker state; repeated calls
- * with equal inputs return equal results. Integer/boolean/number/reference
- * comparisons are constant-time; string comparison is linear in the
- * scalar count of the two operands. The component depends only on the
- * closed schema (selectors, descriptors, the side mode, the scalar
- * model, and the operand view) and adds no dependency outside the
- * closed schema — the pinned dependency direction stays intact — and
- * the executor executes no boundary op of any kind (B-D5).</p>
- */
 public final class ComparisonExecutor {
 
     private ComparisonExecutor() {
@@ -136,35 +35,6 @@ public final class ComparisonExecutor {
      * boundary execution, no mutation, and each operand is consumed at
      * most once.
      *
-     * @param selector       the closed comparison selector; must be one
-     *                       of the 30 comparison values of
-     *                       {@link BinarySelector}
-     * @param left           the completed left operand view; non-null
-     * @param right          the completed right operand view; non-null
-     * @param innerDescriptor the payload's inner descriptor for the
-     *                        {@code NULLABLE_*} selectors and the one
-     *                        equal checked descriptor for
-     *                        {@code REFERENCE_*}/{@code BYTES_*};
-     *                        {@code null} for every other selector
-     * @param side           the payload's side mode for the
-     *                       {@code NULLABLE_*} selectors; {@code null}
-     *                       for every other selector
-     * @return the boolean result of the B-D2 row with the B-D1
-     *         missing≡null rule applied
-     * @throws Defect               if the selector is an arithmetic
-     *                               selector, if the operand family does
-     *                               not match the selector, if a
-     *                               null-literal selector receives value
-     *                               operands, if a {@code NULLABLE_*},
-     *                               {@code REFERENCE_*}, or
-     *                               {@code BYTES_*} payload field is
-     *                               missing or outside the closed shape,
-     *                               or if a nullable inner value does not
-     *                               match the inner descriptor's kind —
-     *                               a producer defect, never a DEAL
-     *                               projection
-     * @throws NullPointerException if {@code selector}, {@code left}, or
-     *                              {@code right} is null
      */
     public static boolean compare(BinarySelector selector, ComparisonOperandView left,
                                   ComparisonOperandView right, RuntimeDescriptor innerDescriptor,
@@ -439,8 +309,6 @@ public final class ComparisonExecutor {
      * order: a surrogate pair is one scalar, and every supplementary
      * scalar code point orders above every BMP scalar code point.
      *
-     * @return a negative, zero, or positive integer as the left scalar
-     *         sequence orders before, equal to, or after the right one
      */
     private static int stringCompare(ComparisonOperandView left, ComparisonOperandView right) {
         List<Integer> leftScalars = UnicodeScalars.scalars(stringView(left).scalars());

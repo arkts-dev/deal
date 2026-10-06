@@ -42,11 +42,6 @@ public final class ModuleShapeValidator {
     /**
      * Validates the top-level and nested shape of a parsed module.
      *
-     * @param program           the parsed program
-     * @param file              the source file name (for diagnostics)
-     * @param isDeclarationFile true when the file is a {@code .d.deal}
-     *                          declaration file
-     * @return diagnostics for every rule violation, in source order
      */
     public static List<CompilerDiagnostic> validate(ProgramNode program, String file,
                                             boolean isDeclarationFile) {

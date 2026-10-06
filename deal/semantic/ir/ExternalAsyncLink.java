@@ -16,9 +16,6 @@ import java.util.Objects;
  * {@code ASYNC_COMPLETION} boundary validates the crossed value at
  * {@code AWAIT}.</p>
  *
- * @param calleeModuleId the callee module identity; non-null
- * @param exportName     the invoked async export name; non-null
- * @param calleeTokenId  the callee unit's canonical token; non-null
  */
 public record ExternalAsyncLink(ModuleId calleeModuleId, String exportName, AsyncTokenId calleeTokenId) {
 

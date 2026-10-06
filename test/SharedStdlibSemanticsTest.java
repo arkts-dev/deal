@@ -59,67 +59,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-/**
- * The ISSUE-0495 {@code SharedStdlibSemantics} battery: the single
- * stdlib algorithm executor — the 20-id family batteries with every
- * named edge case, the exact failure projections, the console
- * operation-level effect contract, the boundary-precedence and
- * anti-hollow controls, and the combined T2/T1 drive (the landed
- * {@code STDLIB_CALL} lowering battery over the T1 catalog, each
- * produced op executed through {@link SharedStdlibSemantics} on
- * declared-descriptor inputs whose parameters passed the produced
- * {@code STDLIB_PARAMETER} boundaries via the landed
- * {@link BoundaryExecutor}).
- *
- * <p>Tests:
- * <ol>
- *   <li>String family: length (scalar count incl. surrogate pairs),
- *       substring clamping, contains/starts-with/ends-with incl. empty
- *       parts, replace (non-overlapping, empty-{@code from}, literal
- *       replacement), split (empty input/separator, preserved
- *       leading/internal/trailing empties), trim (exactly U+0009–U+000D
- *       and U+0020; U+000B/U+000C trimmed, U+00A0 preserved).</li>
- *   <li>Table keys: first-insertion order; delete removes the slot and
- *       reinsertion appends to the end; overwrite keeps the position.</li>
- *   <li>JSON parse: RFC-8259 values, text object order, duplicate keys
- *       (last value, first position), the signed32 lexical-form mapping
- *       ({@code 2147483647}/{@code -2147483648} → int,
- *       {@code 2147483648}/{@code -2147483649} → number, {@code -0} → 0,
- *       {@code 1.0}/{@code 1e3} → number, {@code -0.0} → number), RFC
- *       escaping incl. surrogate pairs, and every named syntax-defect
- *       class with the exact {@code JSON_PARSE_SYNTAX} template,
- *       metadata, and origin (multi-byte offsets included).</li>
- *   <li>JSON stringify: insertion/index order, RFC-8259 escaping
- *       (quote, backslash, control characters, surrogate pairs),
- *       shortest round-trippable decimals, and the first
- *       declaration-order {@code JSON_TO_ERROR} failure
- *       ({@code {fieldPath}}/{@code {actual}}) incl. cycles and
- *       nonfinite numbers.</li>
- *   <li>Math: IEEE floor/ceil/sqrt (NaN → NaN; {@code -0.0} → -0.0),
- *       {@code SQRT_NEGATIVE} carrying the negative operand,
- *       {@code absInt(-2147483648)} → E8004 at the call origin,
- *       {@code absNumber(-0.0)} → +0.0, min/max equal-operand returns.</li>
- *   <li>Console: capture sinks on both channels assert the exact scalar
- *       UTF-8 bytes plus one ordered {@code \n}, one effect per call,
- *       the null result, and channel identity; a failing sink propagates
- *       as infrastructure (run abort, no DEAL error).</li>
- *   <li>Boundary precedence: the landed {@code BoundaryExecutor} rejects
- *       an invalid scalar encoding at the {@code STDLIB_PARAMETER}
- *       position (exact E8001 {@code expected string, got invalid
- *       Unicode scalar encoding}) before any algorithm runs; the
- *       primitive fails closed (defect) on an invalid carrier.</li>
- *   <li>Combined T2/T1: the 20-id lowered battery's produced
- *       {@code STDLIB_CALL} ops are stamped correctly (id, declared
- *       descriptors, single-source policy) and each executes through
- *       {@link SharedStdlibSemantics} to the parent-table outcome
- *       (fails if the catalog misses/adds an entry, if the lowerer
- *       misstamps, or if the primitive returns a wrong result).</li>
- *   <li>Fail-closed defects: wrong op kind, wrong argument count, wrong
- *       carriers, wrong-channel/absent sinks, and the boundary
- *       admission sets (number parameter admits an int carrier; int
- *       parameter admits an integral number carrier) fail closed.</li>
- * </ol>
- */
 public class SharedStdlibSemanticsTest {
 
     private static int passed = 0;
@@ -1318,15 +1257,6 @@ public class SharedStdlibSemanticsTest {
                 new Value.Number((double) FIXED_CLOCK_MILLIS)));
     }
 
-    /**
-     * The combined T2/T1 battery: lowers the 20-id module through the
-     * landed carrier, validates the produced {@code STDLIB_CALL} ops and
-     * their stamping, drives each declared parameter through the landed
-     * {@code BoundaryExecutor} at the {@code STDLIB_PARAMETER} position,
-     * then executes each op through {@link SharedStdlibSemantics} and
-     * asserts the parent-table outcome. Returns the lowered unit for the
-     * boundary-precedence and defect batteries.
-     */
     static LoweredModuleUnit testCombinedT2T1() throws Exception {
         System.out.println("-- Combined T2/T1: the 21-id battery through SharedStdlibSemantics --");
 
@@ -1467,9 +1397,6 @@ public class SharedStdlibSemanticsTest {
                 check(seed.args().size() == row.parameterDescriptors().size(),
                     function + " seed arity matches the declared descriptor count");
 
-                // Every declared parameter passes its STDLIB_PARAMETER
-                // boundary through the landed BoundaryExecutor at the
-                // descriptor-kind-rule policy before the algorithm runs.
                 for (int i = 0; i < row.parameterDescriptors().size(); i++) {
                     RuntimeDescriptor descriptor = row.parameterDescriptors().get(i);
                     BoundaryOutcome boundary = BoundaryExecutor.check(
@@ -1665,8 +1592,6 @@ public class SharedStdlibSemanticsTest {
             sqrt.origin(), "sqrt(-4.0) through execute carries the operand at the call "
                 + "origin");
     }
-
-    // =========================================================================
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== Shared Stdlib Semantics Tests (ISSUE-0495) ===\n");

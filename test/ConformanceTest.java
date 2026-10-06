@@ -149,7 +149,6 @@ public class ConformanceTest {
         }
     }
 
-
     // =========================================================================
     // Discovery and classification
     // =========================================================================
@@ -413,9 +412,7 @@ public class ConformanceTest {
     @SuppressWarnings("deprecation")
     private static List<CompilerDiagnostic> compileCompanion(TestFile test) {
         try {
-            // ISSUE-0272 D8 item 2a: in-memory seam site — classification
-            // headers are stripped before the lexer; parseMetadata keeps
-            // reading the raw fixture bytes.
+
             String source = ConformanceHarnessMetadata
                 .stripClassificationHeaders(Files.readString(test.path()));
             String filename = test.path().toString();
@@ -720,9 +717,7 @@ public class ConformanceTest {
     @SuppressWarnings("deprecation")
     private static List<CompilerDiagnostic> compileAndGetDiagnostics(TestFile test,
             CompanionCatalog catalog, SemanticProfile profile) throws Exception {
-        // ISSUE-0272 D8 item 2a: in-memory seam site — classification
-        // headers are stripped before the lexer; parseMetadata keeps
-        // reading the raw fixture bytes.
+
         String source = ConformanceHarnessMetadata
             .stripClassificationHeaders(Files.readString(test.path()));
         String filename = test.path().toString();
@@ -832,12 +827,6 @@ public class ConformanceTest {
         CheckResult result = TypeChecker.check(filename, symTable, nr, parseResult.program());
         allDiags.addAll(result.diagnostics());
 
-        // Corpus C FFI externals (ISSUE-0507): the production
-        // FfiDeclarationValidator diagnostics of every candidate/*
-        // import surface on the frontend compile paths (the E7002 C FFI
-        // declaration policy — e.g. an async exported function in a C
-        // FFI declaration file) exactly as the orchestrator's FFI phase
-        // surfaces them.
         for (StatementNode stmt : parseResult.program().statements()) {
             if (stmt instanceof ImportDeclaration imp
                     && deal.test.conformance.CorpusFfi.isFfiImport(
@@ -958,8 +947,6 @@ public class ConformanceTest {
         }
         return name;
     }
-
-
 
     // =========================================================================
     // Lua execution
@@ -1383,10 +1370,7 @@ public class ConformanceTest {
                 String dotted = modulePath.replace('/', '.');
                 return new CanonicalModuleIdentity.ExternalModule(dotted);
             }
-            // Corpus C FFI externals (ISSUE-0507): candidate/* modules
-            // classify as externals whose raw import specifier is the
-            // dotted key — the same pinned @$external/<raw>/<C> atoms
-            // the production externals classification projects.
+
             if (deal.test.conformance.CorpusFfi.isFfiImport(
                     conformanceRoot, modulePath)) {
                 return new CanonicalModuleIdentity.ExternalModule(
@@ -1495,9 +1479,7 @@ public class ConformanceTest {
 
         private Artifact compile(Path file, boolean isEntry) {
             try {
-                // ISSUE-0272 D8 item 2a: in-memory seam site — classification
-                // headers are stripped before the lexer; parseMetadata keeps
-                // reading the raw fixture bytes.
+
                 String source = ConformanceHarnessMetadata
                     .stripClassificationHeaders(Files.readString(file));
                 String filename = file.toString();
@@ -1518,11 +1500,7 @@ public class ConformanceTest {
                 Map<String, String> importResolutions = new LinkedHashMap<>();
                 Set<Path> companionDependencies = new LinkedHashSet<>();
                 Map<String, Map<String, Type>> hostModules = new LinkedHashMap<>();
-                // Corpus C FFI externals (ISSUE-0507): raw import path
-                // -> the production-validated FFIGEN module the
-                // LuaJIT emission path serializes into the
-                // __rt.load_ffi call site (the real load_ffi path —
-                // never load_host, never a raw require, never ffi.C).
+
                 Map<String, deal.ffi.FfiGeneratedModule> ffiModules =
                     new LinkedHashMap<>();
 
@@ -1674,9 +1652,7 @@ public class ConformanceTest {
                     "Module not found: " + modulePath);
             }
             try {
-                // ISSUE-0272 D8 item 2a: in-memory seam site — classification
-                // headers are stripped before the lexer; parseMetadata keeps
-                // reading the raw fixture bytes.
+
                 String source = ConformanceHarnessMetadata
                     .stripClassificationHeaders(Files.readString(decl));
                 String filename = decl.toString();
@@ -1794,9 +1770,7 @@ public class ConformanceTest {
             this.catalog = catalog;
             this.profile = java.util.Objects.requireNonNull(profile,
                 "profile must not be null");
-            // The resolved distribution surface (ISSUE-0269: the
-            // CWD-relative no-arg read is retired; the surface path
-            // is the harness's resolved std directory).
+
             this.stdlibExports = StdlibModuleResolver.stdlibExports(
                 Path.of("std").toAbsolutePath().normalize().toString());
             this.hostRegistry = catalog != null
@@ -1833,11 +1807,6 @@ public class ConformanceTest {
                 return hostRegistry.forModule(modulePath).exports();
             }
 
-            // Corpus C FFI externals (ISSUE-0507): a candidate/*
-            // import resolves through the corpus-owned deal.json wiring
-            // into the real FFI declaration surface — the production
-            // FfiDeclarationValidator + FFIGEN boundary feed the
-            // LuaJIT emission path and the checker-facing exports.
             if (deal.test.conformance.CorpusFfi.isFfiImport(
                     conformanceRoot, modulePath)) {
                 return deal.test.conformance.CorpusFfi.module(
@@ -1867,9 +1836,7 @@ public class ConformanceTest {
                     hostRegistry.forModule(modulePath);
                 return decl.classSymbols().get(className);
             }
-            // Corpus C FFI externals (ISSUE-0507): classes of a
-            // candidate/* module resolve to the declaration's
-            // synthesized ClassSymbols (canonical external identities).
+
             if (deal.test.conformance.CorpusFfi.isFfiImport(
                     conformanceRoot, modulePath)) {
                 return deal.test.conformance.CorpusFfi.module(
@@ -1906,9 +1873,7 @@ public class ConformanceTest {
                         hostRegistry.forModule(ext.rawImportSpecifier());
                     return decl.classSymbols().get(className);
                 }
-                // Corpus C FFI externals (ISSUE-0507): the carried
-                // external identity of a candidate/* module routes back
-                // to the declaration's synthesized class symbols.
+
                 Symbol.ClassSymbol ffiSymbol =
                     deal.test.conformance.CorpusFfi.classSymbol(
                         conformanceRoot, declaringModule, className,
@@ -1954,8 +1919,7 @@ public class ConformanceTest {
                     hostRegistry.forModule(ext.rawImportSpecifier());
                 return decl.exports().containsKey(functionName);
             }
-            // Corpus C FFI externals (ISSUE-0507): the declared export
-            // map of a candidate/* module.
+
             if (deal.test.conformance.CorpusFfi.declaresFunction(
                     conformanceRoot, declaringModule, functionName,
                     profile)) {
@@ -1997,9 +1961,7 @@ public class ConformanceTest {
                     hostRegistry.forModule(modulePath);
                 return resolveHostTypeNode(typeNode, modulePath, decl);
             }
-            // Corpus C FFI externals (ISSUE-0507): field annotations of
-            // a candidate/* class resolve against the declaration's own
-            // class registry (the host-registry shape).
+
             if (deal.test.conformance.CorpusFfi.isFfiImport(
                     conformanceRoot, modulePath)) {
                 return deal.test.conformance.CorpusFfi.resolveTypeNode(
@@ -2095,9 +2057,7 @@ public class ConformanceTest {
                 throws ModuleNotFoundException,
                     CffiImportWithoutNativeLibraryException {
             try {
-                // ISSUE-0272 D8 item 2a: in-memory seam site — classification
-                // headers are stripped before the lexer; parseMetadata keeps
-                // reading the raw fixture bytes.
+
                 String source = ConformanceHarnessMetadata
                     .stripClassificationHeaders(Files.readString(file));
                 String filename = file.toString();

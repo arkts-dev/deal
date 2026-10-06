@@ -15,19 +15,6 @@ import java.util.Comparator;
 import java.util.Map;
 import java.util.List;
 
-/**
- * The ISSUE-0165 catalog/matrix unit gate: pins the strict sidecar
- * conditional rules, the architecture-owned {@link FeatureBackendMatrix}
- * mutation rejections, and the catalog closure rules without compiling
- * anything.
- *
- * <p>Every matrix mutation here is the intentional negative of the
- * declarations-page D12 table: omitting a required JVM record, adding a
- * forbidden JVM FFI runtime record, removing the linked E6006 record, and
- * mislabeling async invocation as direct-main each fail catalog
- * validation before any compilation. Exit 0 iff every case holds; a
- * failure prints its named token and exits nonzero (no skip, no retry).</p>
- */
 public final class V12FeatureGateTest {
 
     private static int passed;
@@ -962,7 +949,6 @@ public final class V12FeatureGateTest {
             }
         });
     }
-
 
     // =========================================================================
     // Run-outcome rules

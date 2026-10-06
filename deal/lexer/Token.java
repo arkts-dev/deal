@@ -20,17 +20,6 @@ import deal.diagnostics.RangeOrigin;
  * the EOF token never carries events, and leftover events at EOF stay in
  * the result's event list as unanchored records.</p>
  *
- * @param type              the token type
- * @param lexeme            the source text of the token
- * @param line              1-based line number
- * @param column            1-based column number
- * @param length            length of the lexeme in UTF-16 characters
- * @param startScalarOffset 0-based scalar offset of the lexeme's first
- *                          decoded scalar, or {@link #UNKNOWN_OFFSET} when
- *                          no offset information is available
- * @param scalarLength      length of the lexeme in decoded Unicode scalars,
- *                          or {@link #UNKNOWN_OFFSET} when no offset
- *                          information is available
  */
 public record Token(
     TokenType type,

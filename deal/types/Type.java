@@ -4,22 +4,6 @@ import deal.identity.CanonicalClassIdentity;
 
 import java.util.List;
 
-/**
- * Sealed hierarchy for internal type representation used during type checking.
- * All canonical forms are covered.
- *
- * <p>Type equality is structural identity for primitives/arrays/nullables,
- * nominal for classes, and exact match for functions (with arity extension).</p>
- *
- * <p>DEAL v1.2: function types have no rest parameters.  A function type is
- * exactly an async marker, a fixed parameter list, and a return type.</p>
- *
- * <p>DEAL v1.2: {@link Bytes} is the canonical bytes primitive
- * (descriptor {@code bytes}, invariant, identity-compared).  The value
- * representation, allocation, indexing, and mutation surface is owned by
- * a later epic; the type layer pins the type and its
- * {@linkplain Types#containsBytes(Type) containsBytes} recursion only.</p>
- */
 public sealed interface Type
     permits Type.Null,
            Type.Boolean,
@@ -113,9 +97,6 @@ public sealed interface Type
      * <p>DEAL v1.2: no rest parameters.  Two function types are equal iff
      * their async markers, parameter lists, and return types match exactly.</p>
      *
-     * @param paramTypes parameter types in order
-     * @param returnType return type
-     * @param isAsync    whether this function type is async
      */
     record Func(
         List<Type> paramTypes,

@@ -44,7 +44,6 @@ public final class ForwardFunctionCell {
     /**
      * Creates one UNBOUND cell for an exported FFI function.
      *
-     * @param exportName the exported DEAL (and C symbol) name
      */
     public ForwardFunctionCell(String exportName) {
         Objects.requireNonNull(exportName, "exportName");
@@ -67,7 +66,6 @@ public final class ForwardFunctionCell {
     /**
      * The guarded {@code UNBOUND -> BINDING} transition.
      *
-     * @throws IllegalStateException when the cell is not UNBOUND
      */
     public synchronized void markBinding() {
         requireState(FfiBindingState.UNBOUND, "markBinding");
@@ -78,8 +76,6 @@ public final class ForwardFunctionCell {
      * The guarded {@code BINDING -> READY} transition installing the
      * typed wrapper key.
      *
-     * @param wrapperKey the installed typed wrapper serialization key
-     * @throws IllegalStateException when the cell is not BINDING
      */
     public synchronized void markReady(String wrapperKey) {
         requireState(FfiBindingState.BINDING, "markReady");
@@ -92,8 +88,6 @@ public final class ForwardFunctionCell {
      * The guarded {@code BINDING -> FAILED} transition retaining the
      * cached initialization error key.
      *
-     * @param errorValueKey the cached initialization error key
-     * @throws IllegalStateException when the cell is not BINDING
      */
     public synchronized void markFailed(String errorValueKey) {
         requireState(FfiBindingState.BINDING, "markFailed");

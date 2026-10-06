@@ -2,37 +2,6 @@ package deal.parser;
 
 import java.util.List;
 
-/**
- * Scalar map for template-interpolation rebasing (ISSUE-0224, D5).
- *
- * <p>One map covers exactly one {@code ${...}} interpolation of one
- * template literal. The map is produced alongside
- * {@code unescapeTemplateExpression}: every decoded Unicode scalar of the
- * sub-lexed expression maps to the raw scalar position of its first raw
- * scalar, and a recognized escape's single decoded scalar maps to the
- * escape's first raw scalar (the backslash).</p>
- *
- * <p>Two directions are exposed:
- * <ul>
- *   <li><b>decoded direction</b> — decoded scalar index {@code d} of the
- *       sub-lexed expression source maps to the raw scalar index
- *       {@code rawStart[d]} (into the template's raw content) of its first
- *       raw scalar; {@code rawEnd[d]} is the raw scalar index just after
- *       the raw run that produced decoded scalar {@code d}. Decoded index
- *       {@code decodedScalarCount()} (past end) maps to the expression-end
- *       raw scalar index.</li>
- *   <li><b>raw direction</b> — a raw scalar index {@code r} (into the
- *       template's raw content) maps to the original source scalar offset
- *       {@code templateTokenStartScalarOffset + 1 + r} and the original
- *       source column {@code baseCol + 1 + r}. Template literals are
- *       single-line (E1003 otherwise), so column arithmetic stays on one
- *       line.</li>
- * </ul>
- *
- * <p>All positions and offsets are measured in decoded Unicode scalars:
- * raw scalar index {@code i} of the raw content names the {@code i}-th
- * scalar after the opening backtick.</p>
- */
 final class TemplateScalarMap {
 
     /** 1-based source line of the template literal (all positions). */

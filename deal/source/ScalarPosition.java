@@ -9,9 +9,6 @@ package deal.source;
  * an unpaired UTF-16 surrogate counts as one recovery unit (one column, one
  * offset unit). CRLF counts as two scalars; a tab counts as one scalar.
  *
- * @param line         1-based line number
- * @param column       1-based scalar column within the line
- * @param scalarOffset 0-based decoded Unicode scalar offset from source start
  */
 public record ScalarPosition(int line, int column, int scalarOffset) {
     public ScalarPosition {

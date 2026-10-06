@@ -19,8 +19,6 @@ final class IdentityDigests {
      * chars. Deterministic: identical bytes always produce the identical
      * digest.
      *
-     * @param input the exact bytes to hash
-     * @return the 64-lowercase-hex-char digest
      */
     static String sha256Hex(byte[] input) {
         MessageDigest digest;

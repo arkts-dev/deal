@@ -84,54 +84,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * Verifies the ISSUE-0515 {@code @jsonable} lowering arm of
- * {@link SemanticLowerer} (class-construction-jsonable-operations
- * K-D8/K-D10; parent D16): the generated synthetic module-level
- * {@code C$fromJson(s: string): C|null} / {@code C$toJson(v: C): string}
- * function bodies (ordinary {@code CLOSURE_NEW} producers with
- * {@code LoweredBody} registrations through the
- * {@link deal.semantic.FunctionBindingRegistry} seam — the parameter
- * {@code BINDING_ALLOC} at the body entry, the parameter
- * {@code BINDING_LOAD}, and exactly one {@code JSON_FROM_CLASS}/
- * {@code JSON_TO_CLASS} op with the validator-pinned policies and
- * result types), the produced {@link JsonDefaultChildTable} record (one
- * per-site {@code CLASS_DEFAULT} child per required-present defaulted
- * field in declaration order), and the combined T1..T5 scenario — an
- * {@code @jsonable} class declaration with defaults and a nested
- * {@code @jsonable} class field lowered to validated units, then the
- * executor drives the generated body ops end-to-end at the unit level
- * (fromJson on a defaulted/partial document, toJson on the produced
- * instance, the nested factory trigger, the roundtrip).
- *
- * <p>Pinned cases (the task verification):
- * <ol>
- *   <li>the generated bodies pinned — exact signatures, {@code
- *       LoweredBody} registrations, parameter load plus the JSON op
- *       wiring, policies, result types, deterministic ids;</li>
- *   <li>{@link JsonDefaultChildTable} pinned — one {@code CLASS_DEFAULT}
- *       child per required-present defaulted field in declaration
- *       order;</li>
- *   <li>a non-{@code @jsonable} class generates no JSON functions and
- *       records no table entry;</li>
- *   <li>the combined T1..T5 scenario — two checked modules (an owner
- *       exporting an {@code @jsonable} class with defaults; a caller
- *       importing it and declaring an {@code @jsonable} class with a
- *       nested class field and defaults plus a no-default {@code
- *       @jsonable} class) lowered through the two-module seam to
- *       validated units, then the executor drives the generated body
- *       ops end-to-end: fromJson on a defaulted/partial document
- *       (defaults via the {@code JsonDefaultChildTable} children, the
- *       nested class field's omitted required defaults through the
- *       nested class's {@code CLASS_FACTORY} in the declaring module —
- *       K-D5 trigger (b), the factory's executed parent = the
- *       {@code JSON_FROM_CLASS} op), toJson on the produced instance,
- *       the K-D9 absent-no-default failure, and the roundtrip (this
- *       scenario fails if any of T1's layouts/defaults, T2/T3's
- *       executor surface, or T4's factory execution breaks);</li>
- *   <li>determinism — two repetitions byte-identical.</li>
- * </ol>
- */
 public class JsonClassLoweringTest {
 
     private static int passed = 0;
@@ -461,10 +413,7 @@ public class JsonClassLoweringTest {
                 || ownerResult.lowering().unit() == null) {
             return null;
         }
-        // The imported-construction facts (the ISSUE-0514 seam): per
-        // exported owner class, the interface entry, the owner unit's
-        // layout, the registry binding's factory op id, and the factory
-        // op's result ValueId.
+
         Map<ClassId, SharedFactoryFacts> facts = new LinkedHashMap<>();
         ExternalModuleInterface ownerInterface = project.index().modules().get(OWNER);
         LoweredModuleUnit ownerUnit = ownerResult.lowering().unit();
@@ -1095,10 +1044,6 @@ public class JsonClassLoweringTest {
                     + "roundtrip text");
         }
 
-        // The nested-factory trigger: Person fromJson with home provided
-        // as {} — the nested Address decode triggers the owner's
-        // CLASS_FACTORY (K-D5 trigger (b)) with the JSON_FROM_CLASS op
-        // as the executed parent.
         List<String> nestedLog = new ArrayList<>();
         Map<ValueId, Value> nestedValues = new LinkedHashMap<>(heap);
         KindPayload.JsonFromClassPayload personPayload =
@@ -1147,14 +1092,11 @@ public class JsonClassLoweringTest {
             "the nested drive's owner defaults evaluated in the declaring module's "
                 + "scope through the factory");
 
-        // The K-D9 failure: Strict's fromJson on {} returns language
-        // null (absent required-present no-default tag).
         Value strictValue = heap.get((ValueId) strictFrom.result());
         check(strictValue instanceof Value.Null,
             "Strict fromJson on {} returns language null (K-D9)");
     }
 
-    /** The nested factory seam's production-shape drive (K-D5 trigger (b)). */
     private static Value fillNested(ClassId classId, Set<String> providedFields,
                                     SemanticOp triggeringOp,
                                     deal.semantic.ir.ClassFactoryRegistry registry,

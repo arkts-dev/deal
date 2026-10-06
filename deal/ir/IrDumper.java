@@ -192,9 +192,6 @@ public final class IrDumper implements Visitor<String> {
         return descriptors.encode(t);
     }
 
-    /**
-     * Returns {@code f.isAsync()}, delegating directly to {@link Type.Func#isAsync()}.
-     */
     private static boolean funcIsAsync(Type.Func f) {
         return f.isAsync();
     }
@@ -444,10 +441,6 @@ public final class IrDumper implements Visitor<String> {
         return sb.toString();
     }
 
-    /**
-     * Returns {@code node.isAsync()}, delegating directly to
-     * {@link FunctionDeclaration#isAsync()}.
-     */
     private static boolean funcDeclIsAsync(FunctionDeclaration node) {
         return node.isAsync();
     }

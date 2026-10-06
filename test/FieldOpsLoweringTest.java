@@ -57,56 +57,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Verifies the ISSUE-0513 field-operation lowering arms of
- * {@link SemanticLowerer} (class-construction-jsonable-operations
- * K-D6/K-D7; parent D16 rows {@code FIELD_READ}/{@code FIELD_WRITE}/
- * {@code FIELD_DELETE}/{@code HAS_FIELD}): the class member-read arm,
- * the class-field assignment/delete chains with the pinned boundary
- * children, the {@code has} arm, the cross-module nullable read shape,
- * and the combined T1+T2+T3 executor drive over one instance.
- *
- * <p>Pinned cases (the task verification):
- * <ol>
- *   <li>a class member read — exactly one {@code FIELD_READ} with the
- *       receiver lowered once, plus two {@code BOUNDARY} children in
- *       order ({@code UNTYPED_CLASS_INPUT} with descriptor
- *       {@code class:<ClassId>} and input = the receiver;
- *       {@code OPTIONAL_FIELD_READ} with the read's checked result
- *       descriptor and input = the {@code FIELD_READ} result) — the
- *       descriptor-kind policies, {@code RuntimeValidation},
- *       {@code parentOpId} = the {@code FIELD_READ} op;</li>
- *   <li>an optional-field read — the nullable-wrapped result
- *       descriptor;</li>
- *   <li>the cross-module nullable class read — the receiver lowers as
- *       checked (nullable) and the runtime null guard is the
- *       {@code UNTYPED_CLASS_INPUT} boundary;</li>
- *   <li>a class field assignment — the closed {@code CLASS_FIELD}
- *       {@code ASSIGN} chain {@code [containerOp, valueOp,
- *       FIELD_WRITE]} (zero chain boundary ops) with the
- *       {@code FIELD_WRITE} commit carrying two {@code BOUNDARY}
- *       children in order ({@code UNTYPED_CLASS_INPUT} +
- *       {@code CLASS_FIELD_ASSIGNMENT} with the field's declared
- *       descriptor and input = the stored value) and the chain passing
- *       {@code AddressChainProtocol} validation;</li>
- *   <li>a class field delete — the closed {@code CLASS_FIELD}
- *       {@code DELETE} chain {@code [containerOp, FIELD_DELETE]} with
- *       one {@code UNTYPED_CLASS_INPUT} child;</li>
- *   <li>{@code has(obj.field)} — exactly one {@code HAS_FIELD} with the
- *       static key, result {@code boolean}, policy
- *       {@code NO_DEAL_FAILURE}, no boundary children, the receiver
- *       lowered once;</li>
- *   <li>the combined T1+T2+T3 scenario — a checked source declaring a
- *       class (T1), constructing it (T2), then reading, writing,
- *       deleting, and {@code has}-checking fields (T3) lowers to a
- *       validated unit, and the executor drives construction plus field
- *       ops over the same instance end-to-end asserting the presence
- *       states (this scenario fails if T1's layout or T2's construction
- *       breaks);</li>
- *   <li>determinism — two repetitions produce byte-identical
- *       {@link SemanticIrDumper} dumps.</li>
- * </ol>
- */
 public class FieldOpsLoweringTest {
 
     private static int passed = 0;

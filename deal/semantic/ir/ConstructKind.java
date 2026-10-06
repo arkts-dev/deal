@@ -2,38 +2,6 @@ package deal.semantic.ir;
 
 import java.util.List;
 
-/**
- * The closed source-construct coverage table of
- * {@code deal.semantic-ir/1} (parent "Source-construct coverage"; schema
- * S4) — reproduced verbatim, exactly the parent page's 23 rows. The
- * parent section is normative and this set never diverges from it.
- *
- * <p>Each of the 23 rows carries a required common form recorded
- * verbatim ({@link #requiredCommonForm()}) together with its mapped
- * op-kind set ({@link #mappedOpKinds()}, the kinds named by the pinned
- * detector row) — the data {@code constructCoverage} obligations consume:
- * a construct recorded in a unit's {@code constructCoverage} must have at
- * least one produced op of a mapped kind (validator R-COVERAGE). The
- * detector rows cover every reachable checked AST kind: {@code call} and
- * {@code cross-module call} cover {@code CallExpr}, {@code
- * unary/arithmetic/comparison} covers {@code UnaryExpr}/{@code BinaryExpr},
- * and {@code function declaration/expression} covers
- * {@code FunctionDeclaration}/{@code FunctionExpr} — so every
- * {@code CALL}/{@code UNARY}/{@code BINARY}/{@code CLOSURE_NEW}/
- * {@code FUNCTION_ADAPT}/{@code RECURSIVE_GROUP_INIT} op has a producing
- * construct. ISSUE-0231..0239 extend only the construct→op detector rows
- * (the precise per-construct op production within these fixed rows), never
- * this closed {@code ConstructKind} set.</p>
- *
- * <p>The {@code std/time.nowMillis} row carries its required common form
- * and op-kind set since K7: the construct is the recognized cataloged
- * call through the closed {@code std.time}/{@code nowMillis} row, it
- * lowers to {@code STDLIB_CALL(TIME_NOW_MILLIS)} with the declared
- * {@code int} return boundary ({@code STDLIB_RETURN}) as its single
- * terminal, and it is recorded in {@code constructCoverage} like every
- * other construct (a data-level constraint enforced at
- * {@link LoweredModuleUnit} construction).</p>
- */
 public enum ConstructKind {
 
     /** Required common form: {@code CONST}. */
@@ -134,15 +102,6 @@ public enum ConstructKind {
     TRY_CATCH_THROW("TRY_CATCH, THROW",
         List.of(SemanticOpKind.TRY_CATCH, SemanticOpKind.THROW)),
 
-    /** Required common form: layout, defaults, factory, and export metadata.
-     * The ISSUE-0231..0239 row-extension authority admits the layout-only
-     * production of this row: a class layout is unit data
-     * ({@code unit.classLayouts}), never an op, so a no-default
-     * non-exported class produces no op of the mapped kinds and the row's
-     * R-COVERAGE obligation is satisfied by the produced layout record —
-     * the op-bearing shapes (defaulted/exported classes) evidence the row
-     * through the produced {@code CLASS_DEFAULT}/{@code CLASS_FACTORY}
-     * ops, and no vacuous op is invented. */
     CLASS_DECLARATION("layout, defaults, factory, and export metadata",
         List.of(SemanticOpKind.CLASS_DEFAULT, SemanticOpKind.CLASS_FACTORY,
             SemanticOpKind.EXPORT_PUBLISH)),

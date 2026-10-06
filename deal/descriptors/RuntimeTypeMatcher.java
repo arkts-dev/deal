@@ -92,8 +92,6 @@ public final class RuntimeTypeMatcher {
     /**
      * Constructs a matcher over the given value-model seam.
      *
-     * @param model the single inspection point for backend-represented
-     *              values (never {@code null})
      */
     public RuntimeTypeMatcher(RuntimeValueModel model) {
         this.model = Objects.requireNonNull(model, "model must not be null");
@@ -108,17 +106,6 @@ public final class RuntimeTypeMatcher {
      * text — including every legacy spelling — fails defensively with
      * E8001 {@code internal: cannot parse type descriptor: {text}}.</p>
      *
-     * @param descriptor canonical descriptor text (the strict grammar is
-     *                   the only accepted dialect)
-     * @param value      the backend-represented value, read only through
-     *                   the seam
-     * @param range      the optional {@code (file, line, column)}
-     *                   location, carried on every failure; {@code null}
-     *                   when no location is supplied
-     * @return the unchanged checked value when it satisfies the table, or
-     *         a {@link RuntimeCheckFailure} with the pinned code, the
-     *         byte-exact pinned message, and {@code range} — never
-     *         {@code null} for a non-null failure and never an exception
      */
     public Object check(String descriptor, Object value, RuntimeSourceLocation range) {
         DescriptorParseResult parsed = CanonicalRuntimeTypeDescriptor.parse(descriptor);

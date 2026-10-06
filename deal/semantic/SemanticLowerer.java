@@ -138,484 +138,11 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * The common lowerer's per-construct shape map inside {@code
- * deal.semantic}: the container/string construct stage (ISSUE-0232
- * D1/D7; ISSUE-0386) producing the six container/string operations, plus
- * the value-operation slice (signed-int32 foundation I3; ISSUE-0395)
- * producing {@code CONST}/{@code UNARY}/{@code BINARY}/
- * {@code INTRINSIC_CALL} with the fixed selector→policy stamping.
- *
- * <p><b>The I3 value-operation slice (pinned).</b> Over checked facts,
- * the slice produces exactly the closed value operations — each with the
- * policy stamped from the single closed selector→policy tables of
- * {@link SemanticIrValidator} ({@code unaryPolicy}/{@code binaryPolicy}/
- * {@code intrinsicPolicy} — never a copy), a complete
- * {@code OperationContractSnapshot} with the T3 digest, and the
- * producing {@code SourceOrigin}:</p>
- *
- * <ul>
- *   <li>scalar {@link LiteralExpr} → one {@code CONST} (all five scalar
- *       kinds; an {@code IntLiteral} is signed32 by the I1 parser
- *       invariant);</li>
- *   <li>{@link UnaryExpr} → one {@code UNARY} with {@code BOOL_NOT} /
- *       {@code INT32_NEG} / {@code NUMBER_NEG} selected by the operator
- *       plus the operand's checked type (the checker's unary rules);
- *       policy {@code INT32_RESULT} for {@code INT32_NEG},
- *       {@code NO_DEAL_FAILURE} otherwise;</li>
- *   <li>{@link BinaryExpr} → one {@code BINARY} with the int32/number
- *       selector families selected by the operator plus the operand
- *       checked types ({@code INT32_ADD/SUB/MUL} →
- *       {@code INT32_RESULT}; {@code INT32_DIV_TRUNC/MOD_TRUNC} →
- *       {@code INT32_DIVISOR_THEN_RESULT}; {@code INT32_POW} →
- *       {@code INT32_EXPONENT_THEN_RESULT}; every {@code NUMBER_*}
- *       arithmetic incl. {@code NUMBER_POW_IEEE} →
- *       {@code NO_DEAL_FAILURE}). The other closed selector families
- *       ({@code STRING_*}, {@code BOOLEAN_*}, {@code NULL_*},
- *       {@code NULLABLE_*}, {@code REFERENCE_*} — the comparison
- *       producer {@link ComparisonSelectorLowering} — and the logical
- *       {@code BRANCH} operators) remain defined-but-not-produced by
- *       this slice; string {@code +} lowers to {@code STRING_CONCAT},
- *       never {@code BINARY};</li>
- *   <li>{@code int(…)}/{@code number(…)} intrinsic calls
- *       ({@code Symbol.IntrinsicSymbol}) → one {@code INTRINSIC_CALL}
- *       with {@code INT_CONVERT}/{@code NUMBER_CONVERT}, zero
- *       {@code BOUNDARY} children, and the conversion policy
- *       ({@code INT_CONVERSION}/{@code NUMBER_CONVERSION}) as the
- *       terminal check.</li>
- * </ul>
- *
- * <p><b>The E5 address-chain arms (pinned).</b> Over checked facts, the
- * arms lower every checked {@link AssignmentExpr}/{@link DeleteStatement}
- * target shape through the closed A-D9 map into one {@code ASSIGN}/
- * {@code DELETE} op with the pinned child order and trace roles (A-D2:
- * receiver → key → RHS → normalize → boundary → commit; VARIABLE: value
- * → boundary → commit; DELETE omits the RHS), the closed boundary
- * production (A-D4), the single-last commit structure (A-D5), the
- * committed-value result (A-D6), and single evaluation (A-D8):
- * {@code IdentifierExpr} targets → {@code ASSIGN VARIABLE}
- * {@code [valueOp, boundaryOp(VARIABLE_ASSIGNMENT),
- * commitOp(BINDING_STORE)]} with the declared target descriptor and the
- * descriptor-kind policy (the {@code FUNCTION_ADAPT} adapter slot stays
- * E6's — this epic produces no adapter children); {@code MemberAccessExpr}
- * on table → {@code TABLE_SLOT [containerOp, valueOp, MEMBER_WRITE]};
- * {@code IndexExpr} on table → {@code TABLE_SLOT [containerOp, keyOp,
- * valueOp, INDEX_NORMALIZE(TABLE_WRITE), INDEX_WRITE]} (the key is
- * statically {@code string} by the checker's E3018 gate);
- * {@code IndexExpr} on array → {@code ARRAY_SLOT [containerOp, keyOp,
- * valueOp, ARRAY_LENGTH, INDEX_NORMALIZE(ARRAY_WRITE),
- * ARRAY_ELEMENT_ASSIGNMENT, INDEX_WRITE]} (the length read pins at
- * normalize time; the append idiom lowers through this standard chain);
- * {@code MemberAccessExpr} on class → {@code CLASS_FIELD [containerOp,
- * valueOp, FIELD_WRITE]}; the four {@code DELETE} rows of A-D9 with the
- * {@code ARRAY_ELEMENT_DELETE + ARRAY_DELETE_BOUNDS} bounds boundary on
- * the array row. {@code ASSIGN} publishes the committed value with
- * {@code resultType} = the target position's checked descriptor;
- * {@code DELETE} publishes none. Every chain child records the chain op
- * as its {@code parentOpId}, nested chains record the enclosing chain
- * op, and the unit-production seam runs {@link AddressChainProtocol}
- * over the produced unit (A-D1).</p>
- *
- * <p><b>I3 profile guard.</b> {@link #lowerModule} refuses any lowering
- * request whose invocation profile is not
- * {@code DEAL_V1_2_INT32} with E6005 {@link #LOWER_LEGACY_PROFILE_REJECTED}
- * before any op is built — {@code LEGACY_SAFE_INT} is inspectable for
- * routing/regression but never lowered; the validator's R-PROFILE is the
- * backstop and {@link LoweredModuleUnit} admits only
- * {@code DEAL_V1_2_INT32} by construction.</p>
- *
- * <p><b>I3 scalar descriptor rows.</b> The value arms admit exactly
- * the pinned one-line scalar descriptor rows (int, number, boolean,
- * null, string, and the nullable rows over int/number/boolean — see
- * {@code ModuleLowerer#valueDescriptorOf}), realized through the single
- * {@code DescriptorService} producer (the verbatim D2 scalar table); no
- * structural descriptor service is built in this slice. The slice
- * performs no evaluation: {@code CONST} carries parser-guaranteed
- * scalars, {@code INTRINSIC_CALL} is a terminal check, and the
- * selector→policy stamping reads the closed table data.</p>
- *
- * <p><b>The D1 shape map (pinned).</b> Every arm below produces exactly
- * the design's closed shape — op kind, payload fields, failure policy,
- * result/operand types, child order, {@code parentOpId}, and origin span.
- * Payload-referenced values are prior ordered steps in source order and
- * these ops carry empty operand lists (schema-pinned); every source
- * subexpression appears exactly once as a producing op; no consumer may
- * infer an omitted source step:</p>
- *
- * <ul>
- *   <li>scalar {@link LiteralExpr} → one {@code CONST
- *       {value: ScalarValue}}, result type {@code D(checked type)},
- *       policy {@code NO_DEAL_FAILURE}, origin = the literal span
- *       (template literal parts reuse this exact arm). An
- *       {@code IntLiteral} whose value is outside signed32
- *       [-2147483648, 2147483647] raises {@link IntLiteralOutOfRange}
- *       — converted at the unit-production seam to E6005
- *       {@code INT32_LITERAL_OUT_OF_RANGE} (capability
- *       {@code SIGNED_INT32}), never a truncated scalar (the E1036
- *       signed32 literal gate is ISSUE-0111's frontend item, not yet
- *       satisfied by the checker);</li>
- *   <li>{@link IdentifierExpr} in an operand position → one
- *       {@code BINDING_LOAD {binding, generation}} per the loop-binding
- *       load-resolution rule: a load of an enclosing for-of loop binding
- *       carries that {@code FOR_EACH} payload's initial generation
- *       ({@link #INITIAL_LOOP_GENERATION}); the payload is never
- *       rewritten per iteration and the body-runner substitutes
- *       initial + iteration index at execution. Every other identifier
- *       is a foreign construct in this stage's window — an unresolvable
- *       identifier is a producer defect (E6005), never an invented op;
- *       binding allocation, non-loop loads, and generation
- *       increments/stores are E6's;</li>
- *   <li>{@link ArrayLiteralExpr} with checked {@code Type.Array(T)} → one
- *       {@code ARRAY_NEW {elementDescriptor: D(T), values: element
- *       ValueIds in source order, elementBoundaryOpIds: child op ids in
- *       the same order}} plus one {@code BOUNDARY} child per element in
- *       the same source order — kind {@code ARRAY_LITERAL_ELEMENT},
- *       descriptor {@code D(T)}, policy
- *       {@code ARRAY_ELEMENT_DESCRIPTOR}, input = the element
- *       {@code ValueId}, realization
- *       {@code RuntimeValidation("runtime-validation")}
- *       ({@link #CANONICAL_RUNTIME_VALIDATION_ID}), {@code parentOpId} =
- *       the {@code ARRAY_NEW} op id, origin = the element expression
- *       span. An empty literal produces zero values and zero children;</li>
- *   <li>{@link ObjectLiteralExpr} with checked {@code Type.Table} → one
- *       {@code TABLE_NEW {entries: [(key, value ValueId) in source
- *       order]}}; keys are the identifier property names; duplicate keys
- *       stay in source order in the payload — the executor's
- *       {@code SemanticTable.put} pins the later value and the first
- *       position;</li>
- *   <li>{@link MemberAccessExpr} {@code .length} on an array-typed
- *       object → one {@code ARRAY_LENGTH {arrayValue}}, result type
- *       {@code int}, policy {@code INT32_RESULT}; the receiver is one
- *       prior step and is never re-evaluated;</li>
- *   <li>{@link MemberAccessExpr} on a table-typed object in a checked
- *       read context → one {@code MEMBER_READ {table, key}} (result type
- *       {@code D(contextual type)}, policy {@code NO_DEAL_FAILURE}, the
- *       receiver {@code ValueId} exactly once, the key the constant
- *       identifier string, never evaluated) plus exactly one
- *       {@code BOUNDARY} child — kind {@code CONTEXTUAL_TABLE_READ},
- *       descriptor {@code D(contextual type)}, policy by the
- *       descriptor-kind rule ({@code TYPE_DESCRIPTOR} for non-function
- *       descriptors, {@code FUNCTION_SIGNATURE} for function
- *       descriptors), input = the {@code MEMBER_READ} result
- *       {@code ValueId}, realization
- *       {@code RuntimeValidation("runtime-validation")},
- *       {@code parentOpId} = the {@code MEMBER_READ} op id, origin = the
- *       member-access span;</li>
- *   <li>{@link BinaryExpr} with {@code BinaryOp.ADD} and checked
- *       {@code Type.String} → one {@code STRING_CONCAT {fragments: [left
- *       ValueId, right ValueId] in source order}} — string {@code +}
- *       never lowers to {@code BINARY};</li>
- *   <li>{@link TemplateLiteralExpr} → per part in source order: each
- *       literal part (even index) is one {@code CONST
- *       {value: ScalarValue.String(part text)}} step and each
- *       interpolation (odd index, string-typed per E3016) is the
- *       interpolation expression's producing op chain; then one
- *       {@code STRING_CONCAT {fragments: [part ValueIds in source
- *       order]}}. A template with no interpolations still produces
- *       {@code STRING_CONCAT} with one fragment — no folding;</li>
- *   <li>{@link ForOfStatement} with a {@code string}-typed iterable →
- *       one {@code FOR_EACH {mode: STRING_SCALARS, iterable, binding,
- *       generation, body}}, result none, policy
- *       {@code TYPE_DESCRIPTOR}, origin = the for-of span; the iterable
- *       expression is one prior step. The body block is lowered
- *       recursively under the loop-binding frame;</li>
- *   <li>{@link ForOfStatement} with an array-typed iterable
- *       ({@code [T]}) → one {@code FOR_EACH {mode: ARRAY_VALUES,
- *       iterable, binding, generation, body}} (control-flow-structures
- *       C-D5: the iterable completes exactly once before START; the op
- *       snapshots the array reference and the initial length and visits
- *       slot indices {@code 0..initialLength-1} in increasing order with
- *       the op's own {@code TYPE_DESCRIPTOR} terminal check against the
- *       element descriptor derived from the recorded array operand type,
- *       {@code [T]} → element {@code T}; a fresh binding per iteration,
- *       mechanics E6). The element type is derived fail-closed through
- *       the {@code ContainerPayloadDescriptors} bridge; a bytes-bearing
- *       element (representable since the ISSUE-0158 schema lift, but
- *       without shared bytes value semantics) is the container pipeline's
- *       {@code CONSTRUCT_UNLOWERED} producer guard, never an invented
- *       descriptor.</li>
- * </ul>
- *
- * <p><b>The E5 control-flow arms (pinned; ISSUE-0409).</b> Over checked
- * facts, the arms lower every checked control-flow construct into the
- * pinned structured ops of control-flow-structures C-D3..C-D8 with the
- * per-op execution contracts recorded for consumers, and produce the
- * {@link StructuredBodyTable} block-membership record for the unit
- * (C-D1):</p>
- *
- * <ul>
- *   <li>{@link IfStatement} → {@code BRANCH(IF) {selector: IF,
- *       condition, selectedBlock, alternateBlock}}: the condition's
- *       producing ops complete in the enclosing block before the
- *       {@code BRANCH} op; exactly one of {@code selectedBlock}/
- *       {@code alternateBlock} executes; the {@code else} branch is
- *       {@code alternateBlock} (an {@code else if} chain nests its
- *       {@code BRANCH} op inside the alternate block); an absent
- *       {@code else} produces {@code alternateBlock = null}; SUCCESS
- *       publishes no result;</li>
- *   <li>{@link BinaryExpr} with {@code &&}/{@code ||} → {@code
- *       BRANCH(LOGICAL_AND/LOGICAL_OR)} (never {@code BINARY}): the
- *       left operand completes before START as the condition; the right
- *       operand's producing ops live in {@code selectedBlock} and
- *       execute only when the left value does not decide the result
- *       (AND: left false → result false, block skipped; OR: left true →
- *       result true, block skipped). The op's result {@code ValueId} is
- *       the right operand's value identity (result type {@code
- *       D(boolean)} — a boolean either way, checker-pinned boolean
- *       operands). Chained {@code &&}/{@code ||} lower to nested
- *       {@code BRANCH}es in source order;</li>
- *   <li>{@link WhileStatement} → {@code LOOP(WHILE) {selector: WHILE,
- *       initBlock = the per-iteration condition block, condition,
- *       bodyBlock, updateBlock = null}}: repeat { execute
- *       {@code initBlock}; evaluate the condition value; if false →
- *       SUCCESS; execute {@code bodyBlock} }; the condition ops are
- *       explicit members of {@code initBlock} (C-D1), never an inferred
- *       subgraph; no speculative body execution;</li>
- *   <li>{@link ForStatement} → {@code LOOP(FOR) {selector: FOR,
- *       initBlock = one-time init including the first condition
- *       production, condition, bodyBlock, updateBlock = [update ops,
- *       condition-producing ops]}}: execute {@code initBlock} once;
- *       repeat { evaluate the condition value; if false → SUCCESS;
- *       execute {@code bodyBlock}; execute {@code updateBlock} }. The
- *       condition {@code ValueId} is produced once in {@code initBlock}
- *       and re-produced by the {@code updateBlock} production (the most
- *       recently produced value of the condition {@code ValueId} wins —
- *       one value identity, re-produced per iteration). A test-less
- *       {@code for (;;)} produces exactly one {@code CONST} op with the
- *       boolean value {@code true} in {@code initBlock} as the
- *       condition production, and {@code updateBlock} carries only the
- *       update ops (no condition production). A {@code let}-declared
- *       for-initializer is E6's {@code BINDING_ALLOC} — fail closed;</li>
- *   <li>{@link TryStatement} → {@code TRY_CATCH {tryBlock,
- *       catchBinding, catchBlock}} (C-D6: execute {@code tryBlock};
- *       success → SUCCESS, catch skipped; a DEAL failure raised inside
- *       {@code tryBlock} is reified as an {@code Error} value bound to
- *       {@code catchBinding} — binding init mechanics E6 — and
- *       {@code catchBlock} executes; a failure raised from
- *       {@code catchBlock} becomes the {@code TRY_CATCH} FAILURE with
- *       its own code/message/origin preserved and {@code cause} = the
- *       original caught failure snapshot). The catch binding identity
- *       is allocated by this stage and a load of the catch variable
- *       inside {@code catchBlock} lowers to {@code BINDING_LOAD}
- *       carrying that binding with the pinned initial generation;</li>
- *   <li>{@link ThrowStatement} → {@code THROW {errorValue}}: the operand
- *       completes before START; the op never succeeds; policy
- *       {@code THROW_TRANSFER} — code/message from the supplied
- *       {@code Error} value's fields, origin = the THROW origin, frames
- *       active; control transfers to the nearest enclosing
- *       {@code TRY_CATCH}, else the error escapes as the host-visible
- *       {@code DEALRuntimeError};</li>
- *   <li>{@link BreakStatement}/{@link ContinueStatement} →
- *       {@code BREAK}/{@code CONTINUE {loopId = the innermost enclosing
- *       loop op ({@code LOOP} or {@code FOR_EACH}) recorded by the
- *       lowerer}} (C-D7: BREAK exits the target loop; CONTINUE — FOR:
- *       execute {@code updateBlock} then re-test; WHILE: execute the
- *       condition block ({@code initBlock}) then re-test; FOR_EACH:
- *       next slot index; transfer across an enclosing {@code TRY_CATCH}
- *       boundary is legal). The checker's E2000 pins source-level loop
- *       placement, so a missing target is a producer defect;</li>
- *   <li>{@link ExpressionStatement} → {@code DISCARD {value}}: the
- *       value's producing ops already completed before the op; START →
- *       SUCCESS with no result; origin kind {@code SYNTHETIC} (C-D8 —
- *       the intentional discard is audited in the op stream and traces,
- *       never inferred away).</li>
- * </ul>
- *
- * <p><b>Block membership (C-D1).</b> Every op the session produces is a
- * member of exactly one block (the block stack of the session); the
- * module-init block is the root block of the unit's module-level
- * statements; every payload-referenced {@code BlockId} exists in the
- * produced {@link StructuredBodyTable} (empty child blocks included);
- * block ops record the enclosing structure op as {@code parentOpId}.
- * The unit-production seam validates the produced unit plus table
- * through {@link ControlFlowValidator} (C-D2 — block tree, dominance,
- * exits; violations are E6005 {@code CONTROL_BLOCK_TREE}/
- * {@code CONTROL_EXIT}). A source statement following a terminator
- * ({@code THROW}/{@code BREAK}/{@code CONTINUE}) in the same block is
- * unreachable and fails closed ({@code CONSTRUCT_UNLOWERED}) — the
- * validated block model never admits an op after a terminator in its
- * block. The condition of a {@code LOOP(FOR)} is re-produced in
- * {@code updateBlock} publishing the same condition {@code ValueId}
- * (the slot-threaded expression lowering below).</p>
- *
- * <p><b>Value-operation arms.</b> The I3 slice adds the value-operation
- * arms to the shape map ({@code CONST} of every scalar kind,
- * {@code UNARY}, {@code BINARY} of the int32/number arithmetic
- * selectors, and {@code INTRINSIC_CALL} of the two conversion
- * intrinsics); see the class-level I3 section. Operands complete
- * left-to-right and appear as the produced op's {@code operands}/
- * {@code operandTypes} in source order — the slice never evaluates,
- * re-emits, or re-reads an operand.</p>
- *
- * <p><b>Fail-closed arms (exactly one outcome each).</b> A construct
- * reaching an arm without a lowering arm raises {@link ConstructUnlowered}
- * — class-typed object literals ({@code CLASS_NEW} is E9's), class
- * member access ({@code FIELD_READ} is E9's), module member access
- * ({@code EXPORT_READ} is E10's), {@code .length} on bytes
- * (ISSUE-0158), comparison binary operators (the comparison producer
- * {@link ComparisonSelectorLowering}'s), ordinary calls ({@code CALL}
- * is E7's), and every other foreign construct. An {@code IntLiteral}
- * outside signed32 at the
- * {@code CONST} arm raises {@link IntLiteralOutOfRange} — the same
- * fail-closed discipline for a scalar outside the closed scalar set
- * (the {@code CONST} contract's "a literal outside the closed scalar
- * set is a producer defect (E6005), never an invented op"), converted
- * at the same seam to E6005 {@code INT32_LITERAL_OUT_OF_RANGE} with
- * capability {@code SIGNED_INT32} — never a truncation. The unit-production
- * seam converts a {@code ConstructUnlowered} defect to the pinned E6005
- * {@code CONSTRUCT_UNLOWERED} diagnostic through
- * {@link FailureContractRegistry} with the exact
- * {@link LoweringFailureDetail} — a hard compile failure in this stage's
- * window, never a reroute; LEGACY routing for modules containing
- * unlowerable constructs is the plan-time capability-gating consequence,
- * never caused by this E6005. Descriptor positions use
- * {@link ContainerPayloadDescriptors}; a {@code Type.Error} derivation
- * converts at the same seam to E6005
- * {@code DESCRIPTOR_UNREPRESENTABLE} — never an invented descriptor,
- * never a crash — and a bytes-bearing container element position derives
- * its descriptor through the same bridge (the bytes descriptor member).</p>
- *
- * <p><b>The binding-core child (ISSUE-0444).</b> {@link
- * #lowerModuleBindingCore} drives the same session in binding-core mode:
- * one {@code BindingId} per declared name, static per-incarnation
- * generation ordinals, {@code BINDING_ALLOC/INIT/LOAD/STORE} with the
- * closed {@code DIRECT|SHARED_CELL} defaults and special cases
- * (for-let per-iteration incarnations and {@code FOR_EACH} iteration
- * bindings are {@code SHARED_CELL}), module-init-top intrinsic bindings,
- * hoisted module-level function ALLOCs, the two-incarnation for-let
- * {@code LOOP} shape, and {@code FOR_EACH} iteration-binding producing
- * allocations — with identifier loads and assignment stores resolving
- * the dominant incarnation through the installed
- * {@link BindingSiteResolver}. The walk consumes the value-expression
- * seam for initializer/assignment/condition value ops and the comparison
- * producer for comparison operands; it implements no expression-value
- * lowering of its own. Closure production, adapter creation, and adapter
- * invocation stay out of this child's window.</p>
- *
- * <p><b>The closure child (ISSUE-0445).</b> {@link
- * #lowerModuleClosureCore} drives the same session in closure-core mode
- * (the binding walk plus the closure arms): {@code CLOSURE_NEW}/
- * {@code LoweredFunction} for every function expression and every size-1
- * non-group function declaration (the group child partitions SCCs),
- * capture-by-binding with the capture set collected in first-reference
- * order during the buffered detached-body walk (the free bindings of the
- * body resolved through the dominant frame entries at the creation site —
- * B3/B9 R2/R3 as the resolution model, so doubly-nested captures resolve
- * transitively along the detaching chain), captures of later-declared
- * module functions resolving to the hoisted module-init ALLOC (B1), the
- * closure-capture arm of the B2 {@code SHARED_CELL} cell-kind upgrade
- * (whole-scope: the finalization re-derivation over the capture-reference
- * union rewrites every affected {@code BINDING_ALLOC} payload through the
- * single {@link CellKindDerivation} — no production path writes a
- * cell-kind literal outside that derivation, and the thunk/adapter arms
- * are registered by the shape-map child, T7), the {@code LoweredBody}
- * {@code functionBindings} registrations through the registry child's
- * registration seam (B5), static function-identity preservation on
- * function-typed loads where the cell's value identity is tracked, and the
- * producer rule's dynamic arm for a function-typed load whose cell value
- * identity is not statically tracked (a parameter, a catch binding, an
- * iteration binding, or a class-field/namespace-held value — the load
- * allocates its own carrier identity and registers exactly one
- * {@code DynamicFunctionValue}, ISSUE-0675, so {@code R-FUNCTION-BINDING}
- * holds by construction). Adapter
- * creation and invocation stay out of this child's window.</p>
- *
- * <p><b>The recursive-group child (ISSUE-0446).</b> {@link
- * #lowerModuleGroupCore} drives the same session in group-core mode
- * (the binding walk plus the closure arms plus the group arms): within
- * one scope the lowerer builds the reference graph over function
- * declarations (name references in bodies) and partitions it into SCCs.
- * An SCC of size >= 2 lowers as exactly one {@code RECURSIVE_GROUP_INIT}
- * op with the declaration-ordered member {@code {bindings, functions}}
- * payload — phase 1 allocates a fresh {@code FunctionAllocationIdentity}
- * per member (pre-assigned at lowering in declaration order, unique per
- * member, deterministic) and registers each member's
- * {@code LoweredBody}; phase 2 publishes every member binding cell
- * atomically (the op has no result slot — the bindings are the observable
- * effect). Member cells are {@code SHARED_CELL} by construction (B2:
- * the closed group payload records no cell-kind field, SCC mutual capture
- * makes every member captured, and no member carries a separate
- * {@code BINDING_ALLOC}/{@code BINDING_INIT}); member loads resolve to
- * the group op as the producing allocation at generation 0 (B1 —
- * {@code BindingProducer.RECURSIVE_GROUP_INIT}). Module-level groups
- * execute at module-init top in declaration order (B4); nested-scope
- * groups execute at the first member's declaration position. Member
- * bodies lower like any function body with captures per the closure
- * contract (B3). A size-1 SCC — including a self-recursive declaration —
- * lowers as {@code CLOSURE_NEW} + {@code BINDING_INIT} at the
- * declaration position (the closure child's arm); no group op is
- * produced. Group execution (allocation/publication) is realized by the
- * oracle/emitters — this child produces the op, the member identities,
- * and the payload; {@code GROUP_SHAPE} validation and member invocation
- * stay out of this child's window.</p>
- *
- * <p><b>The immutability-proof child (ISSUE-0448).</b> {@link
- * #lowerModuleImmutabilityCore} drives the same session in proof-analysis
- * mode (the group walk plus the conservative assignment analysis, B7):
- * every variable assignment the walk resolves defeats exactly the
- * dominant incarnation it names — the for-let update defeats the counter
- * generation 0 while the per-iteration generation 1 keeps its proof,
- * parameters are defeated by any body assignment, function names by any
- * assignment in the module, and the {@code int}/{@code number} intrinsic
- * bindings always carry the proof. Proofs derive over the binding-core
- * incarnation map as the closed {@link
- * deal.semantic.ir.BindingImmutabilityProof} records per
- * {@code {binding, generation}} — the facts the shape-map child's VALUE
- * arm consumes; the {@link BindingImmutabilityAnalysis} production class
- * owns the closed rule, records nothing but checker facts (resolved
- * assignments, declaration/parameter facts, intrinsic-binding facts —
- * never target, route, or emitter knowledge), and never consults
- * narrowing flow state (B3). Mode selection, payload construction, and
- * invocation stay out of this child's window.</p>
- *
- * <p><b>The validation child (ISSUE-0451).</b> {@link
- * #lowerModuleValidationCore} drives the complete shape-map walk and
- * additionally runs the production-time validation stack — the closed
- * schema validator, the address-chain protocol, the control-flow
- * validator (C-D2), and the B9 rule set of {@link
- * BindingsProductionValidator} over the one uniform resolution context
- * (R1-R4); the produced {@code LOOP(FOR)} op sits in the enclosing block
- * with its init/body/update blocks as children (C-D4 placement, the
- * intra-{@code LOOP} sequencing input B9's Basis consumes).</p>
- *
- * <p><b>IDs and determinism (D4/D8/D10).</b> Every id is allocated
- * through the project's {@link SemanticIdAllocator} in the pinned order —
- * dependency order, source order, semantic role, then synthetic ordinal —
- * realized here as one strictly increasing per-module source-ordinal
- * sequence handed out in the pinned emission order (element prior steps
- * before the consuming op; boundary children after their parent op;
- * iterable prior steps before the {@code FOR_EACH} op; body ops after
- * it), with the closed role per id kind. The same checked source lowered
- * twice through fresh allocators produces byte-identical validated units
- * and dumps.</p>
- *
- * <p><b>Claiming (D9 items 2–4, at E5's gate).</b> Units built by this
- * stage derive their claim set through {@link ContainerClaimingSeam} (the
- * unit-producer claiming seam, ISSUE-0387): the full-evidence claim
- * derivation over the produced ops and the then-active rows — at E5's
- * gate the active rows are
- * {@link ContainerClaimingSeam#E5_GATE_ACTIVATION} — checked with
- * the derived set as the unit's claims (the derivation-invariant guard —
- * the E6005 {@code OPERATION_OUTSIDE_CLAIMED_CAPABILITY} firing condition
- * can never trigger inside the producer because the unit claims exactly
- * its derived set). A unit fully evidencing an active row claims it; an
- * under-evidenced row defers per unit and the still-staged rows record
- * staged hand-offs. The manifest's plan-time claims are routing facts and
- * stay untouched.</p>
- */
 public final class SemanticLowerer {
 
     /** The producer fact-defect identifier of the E6005 unlowered-construct arm (D7). */
     public static final String CONSTRUCT_UNLOWERED = "CONSTRUCT_UNLOWERED";
 
-    /**
-     * The producer fact-defect identifier of the E6005 out-of-signed32
-     * int-literal arm (D1's CONST contract — a literal outside the closed
-     * scalar set is a producer defect, never an invented op): the checked
-     * frontend still admits out-of-int32 literals until the E1036
-     * signed32 literal gate (ISSUE-0111) lands, so the {@code CONST} arm
-     * fails closed instead of truncating.
-     */
     public static final String INT32_LITERAL_OUT_OF_RANGE = "INT32_LITERAL_OUT_OF_RANGE";
 
     /**
@@ -640,65 +167,12 @@ public final class SemanticLowerer {
      */
     public static final String CANONICAL_RUNTIME_VALIDATION_ID = "runtime-validation";
 
-    /**
-     * The pinned initial generation of every for-of loop binding (D1/D6),
-     * of every variable-assignment store in this stage's E5 window, and
-     * of every first-incarnation binding of the binding-core child (the
-     * for-let per-iteration incarnation is the pinned generation 1 —
-     * B1): the {@code FOR_EACH} payload's {@code generation} field and
-     * the {@code BINDING_STORE} commit's {@code generation} field carry
-     * this initial generation, never rewritten; loads of the loop binding
-     * inside the body carry it and the body-runner resolves the effective
-     * generation as initial + current iteration index at execution.
-     * Binding allocation and generation ordinals are the binding-core
-     * child's ({@link #lowerModuleBindingCore}, ISSUE-0444/ISSUE-0235);
-     * this stage's E3/E5 window only pins the payload value.
-     */
     public static final long INITIAL_LOOP_GENERATION = 0L;
 
-    /**
-     * The fact-defect identifier of the E6005 default-block admission arm
-     * (class-construction-jsonable-operations K-D3; ISSUE-0511): a
-     * detached per-construction {@code CLASS_DEFAULT} block may reference
-     * only allocations inside the default block itself and module-level
-     * bindings resolved through the module-init block; an
-     * enclosing-region (function-local) free reference is invalid and
-     * fails E6005 with this {@code validatorRule} — the closed
-     * {@code ClassDefaultPayload} records no captures and the closed
-     * schema cannot carry them. The detail carries capability
-     * {@code CLASSES}, the module, and the {@code SemanticLowerer}
-     * origin.
-     */
     public static final String CLASS_DEFAULT_CAPTURE = "CLASS_DEFAULT_CAPTURE";
-    /**
-     * The fact-defect identifier of the E6005 imported-construction
-     * deferral arm (class-construction-jsonable-operations K-D4/K-D5;
-     * ISSUE-0514): a class-typed literal of an imported class whose
-     * owner has no shared factory facts (an owner on a retained route)
-     * defers to E10 (ISSUE-0239, the cross-module factory ABI transport)
-     * and fails E6005 with this {@code validatorRule} — never silently
-     * emitted as {@code SHARED_FACTORY} and never executed here. The
-     * detail carries capability {@code CLASSES}, the module, and the
-     * {@code SemanticLowerer} origin.
-     */
+
     public static final String RETAINED_ABI_DEFERRED = "RETAINED_ABI_DEFERRED";
 
-    // =========================================================================
-    // The binding-core child (ISSUE-0444): incarnations, generations, cell kinds
-    // =========================================================================
-
-    /**
-     * The closed producing-allocation kinds of the binding-core child:
-     * an incarnation is produced by its {@code BINDING_ALLOC} op, by
-     * the {@code FOR_EACH} iteration op (the iteration binding's producing
-     * allocation — {@code FOR_EACH} payloads record no cell kind because
-     * iteration bindings are always {@code SHARED_CELL}, B2), or by the
-     * {@code RECURSIVE_GROUP_INIT} group op (the recursive-group child,
-     * ISSUE-0446: a group member's producing allocation is the group op's
-     * publication phase — members have no separate
-     * {@code BINDING_ALLOC}/{@code BINDING_INIT}, B1/B4, and member cells
-     * are {@code SHARED_CELL} by construction, B2).
-     */
     public enum BindingProducer {
 
         /** The incarnation's producing allocation is its {@code BINDING_ALLOC} op. */
@@ -794,35 +268,6 @@ public final class SemanticLowerer {
         }
     }
 
-    /**
-     * The single cell-kind derivation of the BINDINGS capability's
-     * capture-driven cell-kind rule (B2): the final cell kind of every
-     * binding incarnation is derived exactly here, over the union of the
-     * pinned special cases ({@code FOR_EACH} iteration bindings and
-     * for-let per-iteration incarnations — the binding-core defaults)
-     * and the registered capture references. The complete closed iff
-     * ("{@code SHARED_CELL} iff any function capture resolves to the
-     * incarnation") is enforced by construction: cell kinds are emitted
-     * only from this derivation, never from a literal outside it.
-     *
-     * <p><b>Ownership split (B2's three capture arms).</b> The closure
-     * child (ISSUE-0445) registers the {@code CLOSURE_NEW}/
-     * {@code LoweredFunction.captures} arm through
-     * {@link #registerCaptureReference} and re-derives every
-     * {@code BINDING_ALLOC} payload cell kind after the walk (whole-scope
-     * analysis: a closure anywhere in the enclosing scope referencing the
-     * binding upgrades every incarnation of that binding that a capture
-     * resolves to). The shape-map child (T7) registers the two remaining
-     * arms — {@code REEVALUATE_THUNK} {@code capturedBindings} entries and
-     * {@code FUNCTION_ADAPT(SHARED_CELL)} {@code SharedCell} source
-     * references — through the same registration surface and runs the
-     * final derivation after registering them; this child emits and
-     * claims neither arm.</p>
-     *
-     * <p>Capture references are registered per incarnation instance
-     * (identity semantics): two equal-shaped incarnations of different
-     * bindings never alias in the reference set.</p>
-     */
     public static final class CellKindDerivation {
 
         /** The registered capture references (identity semantics). */
@@ -835,7 +280,6 @@ public final class SemanticLowerer {
          * arms through the same surface): the incarnation the capture
          * resolves to at the capture's creation site.
          *
-         * @param incarnation the resolved incarnation; non-null
          */
         public void registerCaptureReference(BindingCoreIncarnation incarnation) {
             captureReferences.add(Objects.requireNonNull(incarnation,
@@ -859,8 +303,6 @@ public final class SemanticLowerer {
          * alone never forces {@code SHARED_CELL} — the {@code mutable}
          * flag records it independently).
          *
-         * @param incarnation the incarnation; non-null
-         * @return the derived {@code DIRECT|SHARED_CELL} kind
          */
         public BindingCellKind cellKindOf(BindingCoreIncarnation incarnation) {
             Objects.requireNonNull(incarnation, "incarnation must not be null");
@@ -895,11 +337,6 @@ public final class SemanticLowerer {
         }
     }
 
-    /**
-     * One closure's complete fact record (ISSUE-0445 closure child): the
-     * function identity, the exact signature, the body block identity,
-     * and the resolved captures in first-reference order.
-     */
     public record ClosureFacts(FunctionId functionId, RuntimeDescriptor.Func signature,
                                BlockId bodyBlock, List<ClosureCapture> captures) {
 
@@ -929,17 +366,6 @@ public final class SemanticLowerer {
         }
     }
 
-    /**
-     * One group member's complete fact record (ISSUE-0446 recursive-group
-     * child): the declared name, the member's single {@link BindingId}
-     * (no separate {@code BINDING_ALLOC}/{@code BINDING_INIT} — the
-     * group op's publication phase is the producing allocation), the
-     * member function identity, the pre-assigned member allocation
-     * identity (unique per member, declaration order — the key the
-     * registry's {@code LoweredBody} registration consumes, B4/B5), the
-     * exact signature, the body block identity, and the member body's
-     * captures resolved at the group op's creation site (B3).
-     */
     public record GroupMemberFacts(String name, BindingId binding, FunctionId functionId,
                                    ValueId identity, RuntimeDescriptor.Func signature,
                                    BlockId bodyBlock, List<ClosureCapture> captures) {
@@ -956,13 +382,6 @@ public final class SemanticLowerer {
         }
     }
 
-    /**
-     * One produced {@code RECURSIVE_GROUP_INIT} op's complete fact
-     * record (ISSUE-0446 recursive-group child): the op identity, the
-     * declaration-ordered member facts, and the block the group op sits
-     * in (module-init top for module-level groups; the first member's
-     * enclosing block for nested-scope groups — B4).
-     */
     public record GroupFacts(OpId opId, List<GroupMemberFacts> members, BlockId block) {
 
         public GroupFacts {
@@ -993,19 +412,6 @@ public final class SemanticLowerer {
         }
     }
 
-    /**
-     * The result of the immutability-proof entry point (ISSUE-0448 proof
-     * child): the validated lowering result, the binding walk's binding
-     * facts (the incarnation map the proofs derive over), the produced
-     * closures' capture facts, the produced recursive groups' member
-     * facts, and the derived {@code BindingImmutabilityProof} fact
-     * surface — proof records per {@code {binding, generation}} of the
-     * dominant incarnation plus the resolved assignment facts (partial
-     * on failure, complete on success). The unit's
-     * {@code functionBindings} map is populated by the same walk through
-     * the registry child's seam (B5 — the registry-combined proof
-     * surface).
-     */
     public record ImmutabilityCoreResult(
             LoweringResult lowering, BindingCoreFacts bindingFacts,
             List<ClosureFacts> closures, List<GroupFacts> groups,
@@ -1022,20 +428,6 @@ public final class SemanticLowerer {
         }
     }
 
-    /**
-     * The result of the creation-rule entry point (ISSUE-0449
-     * creation-rule child): the validated lowering result, the binding
-     * walk's binding facts, the produced closures' capture facts, the
-     * produced recursive groups' member facts, the derived proof fact
-     * surface, and the creation-rule classification facts — one
-     * {@link AdapterCreationRule.PositionClassification} per classified
-     * function-typed position in walk order (partial on failure,
-     * complete on success). The unit the walk produced contains zero
-     * {@code FUNCTION_ADAPT} ops (mode selection, payload construction,
-     * and emission are the shape-map child's) and the classification is
-     * purely observational: the same walk's emitted ops are
-     * byte-identical to the proof child's for the same checked module.
-     */
     public record CreationRuleCoreResult(
             LoweringResult lowering, BindingCoreFacts bindingFacts,
             List<ClosureFacts> closures, List<GroupFacts> groups,
@@ -1054,26 +446,6 @@ public final class SemanticLowerer {
         }
     }
 
-    /**
-     * One emitted adapter of the shape-map child (ISSUE-0450 sequencing
-     * item 7): the producing {@code FUNCTION_ADAPT} op, its fresh
-     * adapter allocation identity (fresh per creation, stable for the
-     * run — B8), the closed-map capture mode and the closed source
-     * reference the op carries from birth (the map's mode plus its
-     * per-mode payload — B7/B8; no provisional or non-map mode ever
-     * exists), the derived source/target signature pair, the recorded
-     * immutability proof (present exactly for VALUE over a binding
-     * load — B8), and the consumed wiring point (the adapted position's
-     * own {@code VARIABLE_DECLARATION}/{@code VARIABLE_ASSIGNMENT}
-     * boundary op or the inferred declaration's {@code BINDING_INIT} —
-     * B9's creation-wiring target). At creation the adapter result is
-     * the direct input of exactly that boundary chain; after the
-     * commit it flows as an ordinary identity-preserving function
-     * value whose later typed-boundary crossings are ordinary
-     * {@code FUNCTION_SIGNATURE} checks (a later crossing's input
-     * carries the same identity through a load, never through the
-     * adapter's own direct wiring).
-     */
     public record AdapterEmission(
             OpId adaptOpId, ValueId adapterIdentity, CaptureMode mode,
             AdaptSourceRef sourceRef, RuntimeDescriptor.Func sourceSignature,
@@ -1111,19 +483,6 @@ public final class SemanticLowerer {
         }
     }
 
-    /**
-     * The result of the shape-map entry point (ISSUE-0450 shape-map
-     * child): the validated lowering result, the binding walk's binding
-     * facts, the produced closures' capture facts, the produced
-     * recursive groups' member facts, the derived proof fact surface,
-     * the creation-rule classification facts, and the shape-map
-     * emission facts (partial on failure, complete on success). Unlike
-     * the creation-rule child, the produced unit carries exactly one
-     * {@code FUNCTION_ADAPT} op per {@code ADAPT}-classified position —
-     * the closed-map mode with its per-mode payload from birth, wired
-     * as the direct input of the adapted position's own boundary chain
-     * (B6-B9).
-     */
     public record ShapeMapCoreResult(
             LoweringResult lowering, BindingCoreFacts bindingFacts,
             List<ClosureFacts> closures, List<GroupFacts> groups,
@@ -1144,18 +503,6 @@ public final class SemanticLowerer {
         }
     }
 
-    /**
-     * The result of the validation entry point (ISSUE-0451 validation
-     * child, sequencing item 8): the B9-validated lowering result plus
-     * the complete fact surfaces of the six production children
-     * (partial on failure, complete on success). The unit is produced
-     * by the same shape-map walk as {@link ShapeMapCoreResult} and is
-     * additionally validated by the closed schema validator, the
-     * address-chain protocol (A-D1), the control-flow validator
-     * (C-D2 — the block-tree/dominance/exits Basis the B9 rules run
-     * over), and the B9 production-time rule set of
-     * {@link BindingsProductionValidator}.
-     */
     public record ValidationCoreResult(
             LoweringResult lowering, BindingCoreFacts bindingFacts,
             List<ClosureFacts> closures, List<GroupFacts> groups,
@@ -1176,15 +523,6 @@ public final class SemanticLowerer {
         }
     }
 
-    /**
-     * The dominant-incarnation resolver of the binding environment
-     * (ISSUE-0444 binding-core child): the identifier arm and the
-     * variable-assignment arm consult this hook when installed so every
-     * {@code BINDING_LOAD}/{@code BINDING_STORE} they emit names the
-     * dominant incarnation at the site (B9 R1). Absent (the default in
-     * this stage's E3/E5 window), the pre-existing frame/on-demand
-     * resolution is unchanged.
-     */
     @FunctionalInterface
     public interface BindingSiteResolver {
 
@@ -1193,8 +531,6 @@ public final class SemanticLowerer {
          * current site, or {@code null} when the name is not a declared
          * binding of the installed environment.
          *
-         * @param name the source identifier name; non-null
-         * @return the dominant incarnation, or {@code null}
          */
         BindingSite resolve(String name);
     }
@@ -1218,13 +554,6 @@ public final class SemanticLowerer {
         // Static entry points plus the per-module lowering session; no instances.
     }
 
-    /**
-     * A construct reaching an arm of this stage without a lowering arm
-     * (D7): internal control flow, converted at the unit-production seam
-     * to the pinned E6005 {@code CONSTRUCT_UNLOWERED} diagnostic — a hard
-     * compile failure in this stage's window, never a reroute and never a
-     * crash.
-     */
     public static final class ConstructUnlowered extends RuntimeException {
 
         private static final long serialVersionUID = 1L;
@@ -1243,19 +572,6 @@ public final class SemanticLowerer {
         }
     }
 
-    /**
-     * A default-block reference outside the closed admission rule
-     * (class-construction-jsonable-operations K-D3; ISSUE-0511): a
-     * detached per-construction {@code CLASS_DEFAULT} block may reference
-     * only allocations inside the default block itself and module-level
-     * bindings resolved through the module-init block. An
-     * enclosing-region (function-local) free reference is invalid —
-     * the closed {@code ClassDefaultPayload} records no captures and the
-     * closed schema cannot carry them — and converts at the unit-production
-     * seam to the pinned E6005 {@code CLASS_DEFAULT_CAPTURE} diagnostic
-     * (capability {@code CLASSES}) — never a silent capture, never a
-     * reroute, and never a crash.
-     */
     public static final class ClassDefaultCapture extends RuntimeException {
 
         private static final long serialVersionUID = 1L;
@@ -1278,18 +594,6 @@ public final class SemanticLowerer {
         }
     }
 
-    /**
-     * The imported-construction deferral defect of the class-literal arm
-     * (class-construction-jsonable-operations K-D4; ISSUE-0514): a
-     * class-typed literal of an imported class whose owner carries no
-     * shared factory facts — an owner not on the shared route — defers
-     * to E10 (ISSUE-0239, the cross-module factory ABI transport) and
-     * converts at the unit-production seam to the pinned E6005
-     * {@code RETAINED_ABI_DEFERRED} diagnostic (capability
-     * {@code CLASSES}) — never a silent {@code SHARED_FACTORY} emission,
-     * never a silent {@code RETAINED_ABI} emission, and never a crash.
-     * Same-module literals stay LOCAL (T2's arm).
-     */
     public static final class RetainedAbiDeferred extends RuntimeException {
 
         private static final long serialVersionUID = 1L;
@@ -1310,18 +614,6 @@ public final class SemanticLowerer {
         }
     }
 
-    /**
-     * An int literal whose value is outside the closed signed32 scalar
-     * set (D1's CONST contract — "a literal outside the closed scalar
-     * set is a producer defect (E6005), never an invented op"): the
-     * checked frontend still admits out-of-int32 literals until the
-     * E1036 signed32 literal gate (ISSUE-0111) lands, so the
-     * {@code CONST} arm fails closed instead of truncating. Converted at
-     * the unit-production seam to the pinned E6005
-     * {@code INT32_LITERAL_OUT_OF_RANGE} diagnostic — a hard compile
-     * failure in this stage's window, never a truncation, never an
-     * invented scalar, and never a crash.
-     */
     public static final class IntLiteralOutOfRange extends RuntimeException {
 
         private static final long serialVersionUID = 1L;
@@ -1343,29 +635,6 @@ public final class SemanticLowerer {
         }
     }
 
-    /**
-     * The unit-production seam's failure carrier (D2/D7): maps a defect
-     * raised by an arm to its exact {@link LoweringFailureDetail} —
-     * {@code ConstructUnlowered} → E6005 {@code CONSTRUCT_UNLOWERED}
-     * (capability {@code CONTAINERS_AND_STRINGS}, origin
-     * {@code SemanticLowerer CONSTRUCT_UNLOWERED (construct)}),
-     * {@link IntLiteralOutOfRange} → E6005
-     * {@code INT32_LITERAL_OUT_OF_RANGE} (capability
-     * {@code SIGNED_INT32}, origin
-     * {@code SemanticLowerer INT32_LITERAL_OUT_OF_RANGE (defect message)}),
-     * and a {@link ContainerPayloadDescriptors.Defect} → E6005
-     * {@code DESCRIPTOR_UNREPRESENTABLE} through the bridge's pinned
-     * carrier. The caller converts the returned detail into the E6005
-     * diagnostic through {@code FailureContractRegistry.e6005(detail)};
-     * this seam constructs no diagnostic itself.
-     *
-     * @param module the module whose unit-production seam hit the defect;
-     *               non-null
-     * @param defect the defect raised by an arm; non-null
-     * @return the exact {@code LoweringFailureDetail} of the named failure
-     * @throws IllegalArgumentException on a defect kind this stage has no
-     *         E6005 projection for (a producer defect)
-     */
     public static LoweringFailureDetail loweringFailureDetail(ModuleId module,
                                                               RuntimeException defect) {
         Objects.requireNonNull(module, "module must not be null");
@@ -1488,12 +757,6 @@ public final class SemanticLowerer {
      * address-chain protocol violation, or a control-flow validation
      * rejection).
      *
-     * @param unit        the validated {@link LoweredModuleUnit}, or
-     *                    {@code null} on failure
-     * @param table       the produced block-membership table of the unit
-     *                    (C-D1), or {@code null} on failure
-     * @param diagnostics empty on success, otherwise the failure
-     *                    diagnostics
      */
     public record LoweringResult(LoweredModuleUnit unit, StructuredBodyTable table,
                                  List<CompilerDiagnostic> diagnostics) {
@@ -1509,15 +772,6 @@ public final class SemanticLowerer {
         }
     }
 
-    /**
-     * The E7 call-machine lowering result (ISSUE-0236): the validated
-     * lowering result plus the module's recorded {@code EXTERNAL_ENTRY}
-     * and {@code CALLBACK_INVOKE} op ids by export name — the surfaces a
-     * caller module's {@code CALL(EXTERNAL)}/{@code ASYNC_START(EXTERNAL)}
-     * resolution and the scenario host's callback triggering consume. On
-     * failure the lowering result carries the first E6005 and both maps
-     * are empty.
-     */
     public record FullProgramE7Result(LoweringResult lowering,
                                       Map<String, OpId> externalEntries,
                                       Map<String, OpId> callbackInvokes) {
@@ -1531,22 +785,6 @@ public final class SemanticLowerer {
         }
     }
 
-    /**
-     * The class-declaration child's lowering result (ISSUE-0511,
-     * extended by the ISSUE-0515 JSON child): the validated lowering
-     * result plus the two produced production records carried alongside
-     * the unit (K-D2/K-D8 — the
-     * {@link deal.semantic.ir.FunctionBindingRegistry}/
-     * {@link StructuredBodyTable} precedent): the
-     * {@link deal.semantic.ir.ClassFactoryRegistry}
-     * factory-registration record (the
-     * {@code constructionEntry}&#8594;{@code CLASS_FACTORY} op bindings) and the
-     * {@link deal.semantic.ir.JsonDefaultChildTable} record (the
-     * per-site {@code CLASS_DEFAULT} child op ids of every
-     * {@code @jsonable} class's {@code JSON_FROM_CLASS} op in
-     * declaration order). On failure the lowering result carries the
-     * first E6005 and both records are empty.
-     */
     public record ClassDeclarationCoreResult(LoweringResult lowering,
                                              deal.semantic.ir.ClassFactoryRegistry registry,
                                              deal.semantic.ir.JsonDefaultChildTable jsonDefaults) {
@@ -1577,16 +815,6 @@ public final class SemanticLowerer {
         }
     }
 
-    /**
-     * One catch-binding frame of the lowering environment (C-D6): the
-     * enclosing {@code TRY_CATCH}'s catch-variable name and its
-     * producer-allocated {@link BindingId}. A {@code BINDING_LOAD} of
-     * the frame's name carries the frame's binding with the pinned
-     * initial generation; the try/catch arm pushes exactly one frame
-     * while lowering the catch block. Binding init mechanics are E6's
-     * (ISSUE-0235) — this stage pins the binding identity and the load
-     * resolution only.
-     */
     public record CatchFrame(String name, BindingId binding) {
 
         public CatchFrame {
@@ -1595,49 +823,6 @@ public final class SemanticLowerer {
         }
     }
 
-    /**
-     * Lowers one checked implementation module through this stage and
-     * produces the validated unit (the unit-production seam, S1): the
-     * module's top-level statements lower through the positionable
-     * statement arms (for-of statements, the E5 delete arm — transparent
-     * blocks recurse; every other statement is a foreign construct and
-     * fails E6005 {@code CONSTRUCT_UNLOWERED}), the manifest's
-     * construct-coverage rows are recorded onto the unit at lowering
-     * start, descriptor defects convert to E6005
-     * {@code DESCRIPTOR_UNREPRESENTABLE}, and the produced unit must pass
-     * the closed validator, the production-time address-chain protocol
-     * (A-D1), and the production-time control-flow validation of
-     * {@link ControlFlowValidator} over the unit plus its produced
-     * {@link StructuredBodyTable} (C-D2 — block tree, dominance, exits;
-     * the first rejection is the returned diagnostic). At E5's gate the
-     * unit's capability claim set is derived through the claiming seam
-     * under {@link ContainerClaimingSeam#E5_GATE_ACTIVATION} (D9 item
-     * 5(c) — {@code CONTAINERS_AND_STRINGS} and {@code EVALUATION_ORDER}
-     * activate).
-     *
-     * <p><b>I3 profile guard.</b> The invocation profile is a required
-     * input: a lowering request whose profile is not
-     * {@code DEAL_V1_2_INT32} is rejected with E6005
-     * {@link #LOWER_LEGACY_PROFILE_REJECTED} before any op is built —
-     * {@code LEGACY_SAFE_INT} is inspectable for routing/regression but
-     * never lowered; the validator's R-PROFILE is the backstop.</p>
-     *
-     * @param module                the checked implementation module; non-null
-     * @param profile               the invocation's semantic profile
-     *                              (I3 guard: only
-     *                              {@code DEAL_V1_2_INT32} is lowered);
-     *                              non-null
-     * @param constructCoverage     the manifest's reachable-construct rows
-     *                              recorded at lowering start (S1); non-null
-     * @param interfaceHash         the interface index digest the unit is
-     *                              checked against (R-PROFILE); non-null
-     * @param capabilityRegistryHash the invocation's capability-registry
-     *                              digest (R-PROFILE); non-null
-     * @param allocator             the project's semantic-id allocator in
-     *                              dependency order; non-null
-     * @return the validated unit plus its block-membership table, or
-     *         the first E6005 on failure
-     */
     public static LoweringResult lowerModule(CheckedModuleInput module,
                                              SemanticProfile profile,
                                              Map<ConstructKind, List<SemanticOpKind>>
@@ -1680,54 +865,6 @@ public final class SemanticLowerer {
         return finishLowering(lowerer, unit, interfaceHash, capabilityRegistryHash);
     }
 
-    /**
-     * The binding-core child's public lowering entry point (ISSUE-0444
-     * sequencing item 1): lowers one checked implementation module
-     * through the binding walk — one {@code BindingId} per declared name,
-     * static per-incarnation generation ordinals, {@code
-     * BINDING_ALLOC/INIT/LOAD/STORE} production with the closed
-     * {@code DIRECT|SHARED_CELL} defaults and special cases, hoisted
-     * module-level function ALLOCs and module-init-top intrinsic
-     * bindings, the two-incarnation for-let shape, and {@code FOR_EACH}
-     * iteration-binding producing allocations — and produces the validated
-     * unit plus the walk's binding facts.
-     *
-     * <p>The walk consumes the value-expression seam of
-     * {@link ModuleLowerer} for initializer/assignment/condition value
-     * ops (never re-implementing expression-value lowering); comparison
-     * operands lower through the single comparison producer
-     * {@link ComparisonSelectorLowering} (the values epic's producer),
-     * and identifier loads plus variable-assignment stores resolve
-     * through the installed {@link BindingSiteResolver} so every
-     * {@code BINDING_LOAD}/{@code BINDING_STORE} payload names the
-     * dominant incarnation at the site (B9 R1). The produced unit passes
-     * the closed validator, the production-time address-chain protocol,
-     * and the claiming seam under the pinned E6-gate activation
-     * ({@code BINDINGS} activates for {@code BINDING_LOAD}; binding-core
-     * units defer the row per unit because the full family set includes
-     * the closure child's {@code RECURSIVE_GROUP_INIT}/
-     * {@code CLOSURE_NEW}).</p>
-     *
-     * <p>This entry point is driven by the binding-core tests; no
-     * production route change — retained/public compilation paths and
-     * {@link #lowerModule} are untouched.</p>
-     *
-     * @param module                the checked implementation module; non-null
-     * @param profile               the invocation's semantic profile
-     *                              (I3 guard: only
-     *                              {@code DEAL_V1_2_INT32} is lowered);
-     *                              non-null
-     * @param constructCoverage     the manifest's reachable-construct rows
-     *                              recorded at lowering start (S1); non-null
-     * @param interfaceHash         the interface index digest the unit is
-     *                              checked against (R-PROFILE); non-null
-     * @param capabilityRegistryHash the invocation's capability-registry
-     *                              digest (R-PROFILE); non-null
-     * @param allocator             the project's semantic-id allocator in
-     *                              dependency order; non-null
-     * @return the validated unit with the binding facts, or the first
-     *         E6005 with the partial facts on failure
-     */
     public static BindingCoreResult lowerModuleBindingCore(CheckedModuleInput module,
                                                            SemanticProfile profile,
                                                            Map<ConstructKind,
@@ -1781,39 +918,6 @@ public final class SemanticLowerer {
             lowerer.bindingFacts());
     }
 
-    /**
-     * The full-program lowering entry of the decomposition-tail carrier
-     * slice (ISSUE-0410): lowers one checked implementation module
-     * through the unified walk — module-level lets/imports/functions,
-     * every E5 statement and expression arm, the carrier's
-     * {@code CALL(DIRECT)}/console-{@code STDLIB_CALL}/{@code RETURN}
-     * arms inside function bodies, the per-function return-boundary and
-     * call-site reservations, and the module-init-level entry delegation
-     * ({@code CALL(DIRECT main)} + {@code DISCARD}) — and produces the
-     * validated unit plus the block-membership table under the same
-     * validator/address-chain/control-flow gates as {@link #lowerModule}.
-     *
-     * <p>This entry point is driven by the decomposition-tail integration
-     * matrix (the semantic oracle and both shared emitters consume its
-     * output); no production route change — retained/public compilation
-     * paths and {@link #lowerModule}/{@link #lowerModuleBindingCore}/
-     * {@link #lowerModuleClosureCore} are untouched.</p>
-     *
-     * @param module                the checked implementation module; non-null
-     * @param profile               the invocation's semantic profile (I3
-     *                              guard: only {@code DEAL_V1_2_INT32}
-     *                              is lowered); non-null
-     * @param constructCoverage     the manifest's reachable-construct rows
-     *                              recorded at lowering start (S1); non-null
-     * @param interfaceHash         the interface index digest the unit is
-     *                              checked against (R-PROFILE); non-null
-     * @param capabilityRegistryHash the invocation's capability-registry
-     *                              digest (R-PROFILE); non-null
-     * @param allocator             the project's semantic-id allocator in
-     *                              dependency order; non-null
-     * @return the validated unit with its produced block-membership
-     *         table, or the first E6005
-     */
     public static LoweringResult lowerModuleFullProgram(CheckedModuleInput module,
                                                         SemanticProfile profile,
                                                         Map<ConstructKind,
@@ -1835,10 +939,7 @@ public final class SemanticLowerer {
             lowerer.hoistModuleLevelAllocs(module.ast().statements());
             lowerer.statementWalk.walk(module.ast().statements(), true);
             lowerer.emitEntryMainCall();
-            // The walk's invocation-identity finalization materializes a
-            // never-called body's reserved identity with its creation op
-            // (ISSUE-0635), so the entry delegates main and every other
-            // body's RETURN identity resolves in the unit.
+
             lowerer.finalizeInvocationIdentities();
             lowerer.finalizeCellKinds();
         } catch (ConstructUnlowered unlowered) {
@@ -1864,32 +965,6 @@ public final class SemanticLowerer {
         return finishLowering(lowerer, unit, interfaceHash, capabilityRegistryHash);
     }
 
-    /**
-     * The E7 call-machine lowering entry point (ISSUE-0236): the
-     * full-program walk plus the statically-resolved D13/D15 call arms —
-     * {@code CALL(DIRECT)}/{@code CALL(INDIRECT)}/{@code CALL(HOST)}/
-     * {@code CALL(EXTERNAL)}, {@code ASYNC_START}+{@code AWAIT} (DEAL
-     * bodies, async host functions, async externals, and
-     * adapter-over-async), adapter creation at adapted
-     * initializer/assignment positions with the D15 invocation cells,
-     * one {@code EXTERNAL_ENTRY} or {@code CALLBACK_INVOKE} per exported
-     * function, and the {@code ENTRY_INVOKE} delegation of
-     * {@code main}: null.
-     *
-     * <p>The extra facts are all lowering-time: the callee-module route
-     * facts (the {@code ExternalExecutionOwner} resolution),
-     * the callee modules' recorded {@code EXTERNAL_ENTRY} op ids (the
-     * caller-side {@code externalEntryRef} resolution), and the exported
-     * function names the scenario invokes as callbacks. A callee value
-     * with no statically resolvable execution binding lowers the landed
-     * dynamic shape ({@code CALL(INDIRECT)}/{@code ASYNC_START} with
-     * {@code CallCallee.Dynamic} and its recorded return cells —
-     * ISSUE-0657 and the dynamic call/async-start shape contracts): the
-     * runtime resolves the carrier's own class and the effective async
-     * source, while every unresolved or inconsistent callee fact fails
-     * closed here. Adapter-thunk and adapter-of-adapter source selection
-     * stays fail-closed (ISSUE-0531's).</p>
-     */
     public static FullProgramE7Result lowerModuleFullProgramE7(CheckedModuleInput module,
             SemanticProfile profile,
             Map<ConstructKind, List<SemanticOpKind>> constructCoverage,
@@ -1916,10 +991,7 @@ public final class SemanticLowerer {
             lowerer.hoistModuleLevelAllocs(module.ast().statements());
             lowerer.statementWalk.walk(module.ast().statements(), true);
             lowerer.emitE7Terminals();
-            // The walk's invocation-identity finalization materializes a
-            // never-called body's reserved identity with its creation op
-            // (ISSUE-0635), after the terminals have materialized every
-            // exported body's identity.
+
             lowerer.finalizeInvocationIdentities();
             lowerer.finalizeCellKinds();
         } catch (ConstructUnlowered unlowered) {
@@ -1951,142 +1023,15 @@ public final class SemanticLowerer {
             lowerer.recordedEntries(), lowerer.recordedCallbacks());
     }
 
-    /**
-     * A declaration import of the closure has no entry in the supplied
-     * declaration surface: the seeds (and therefore the layouts the
-     * class-literal arm resolves) would be silently incomplete, so the
-     * project entry refuses the input (ISSUE-0634).
-     */
     public static final String DECLARATION_SURFACE_INCOMPLETE =
         "DECLARATION_SURFACE_INCOMPLETE";
 
-    /**
-     * The declaration surface's per-module declaration kind disagrees with
-     * the extern-C generated metadata: the class registration seeds would
-     * take the wrong owner member, so the project entry refuses the input
-     * (ISSUE-0634).
-     */
     public static final String DECLARATION_KIND_MISMATCH =
         "DECLARATION_KIND_MISMATCH";
 
-    /**
-     * A closure module of the checked project carries no requirement
-     * manifest or no interface-index entry: the unit's coverage rows and the
-     * module's own interface facts would be silently absent, so the project
-     * entry refuses the input (ISSUE-0634).
-     */
     public static final String PROJECT_INPUT_INCOMPLETE =
         "PROJECT_INPUT_INCOMPLETE";
 
-    /**
-     * The one project lowering entry of a compilation (ISSUE-0634; design
-     * sources {@code project-lowering-entry-and-registration-seeds}
-     * D1/D2/D4/D8/D11/D12 and the project lowering, registration-seed,
-     * namespace registration, and project validation gate contracts;
-     * {@code luajit-jvm-single-lowering-production-cutover} C1/C4/C7/C10;
-     * {@code semantic-ir-construct-coverage-cutover} K3/K12's lowering
-     * context): it lowers the complete checked implementation closure in
-     * dependency order, through exactly one
-     * {@link SemanticIdAllocator} and exactly one session per module with
-     * every arm active, and produces exactly one validated
-     * {@link deal.semantic.ir.ExecutableLoweredProject} plus the
-     * per-module production records, the class registration seeds, and the
-     * namespace registrations — or the first E6005 and no project, no
-     * tables, no registries, no seeds, and no namespace registrations.
-     *
-     * <p><b>Order of operations.</b> (1) the profile guard before any id
-     * is allocated; (2) the declaration-fact agreement and the class
-     * registration seeds (plus the intrinsic seeds the sessions carry)
-     * before the first unit walk; (3) the namespace registrations created
-     * before the first unit walk in dependency order and completed by each
-     * unit's import arm; (4) per module in dependency order, one session
-     * with the binding, closure, group, full-program call, and class arms
-     * active and the pinned walk order of
-     * {@link ModuleLowerer#lowerProjectModule}, followed by the composed
-     * per-unit closed chain; (5) after the complete closure is lowered,
-     * the project-form gate over the whole closure.</p>
-     *
-     * <p><b>One allocator, no partial result.</b> The allocator orders the
-     * dependency-ordered closure once, so ids are issued once per
-     * compilation in the pinned order (dependency order, then source
-     * order, then role, then synthetic ordinal) and are globally unique
-     * including the cross-unit {@code OpId} module tags. Every failure
-     * returns the first E6005 with its module, capability, validator rule,
-     * profile, IR version, and origin, and a result with no project, no
-     * tables, no registries, no seeds, and no namespace registrations — no
-     * retry and no per-module partial result escape the entry. Repeated
-     * lowerings of the same input yield byte-identical project dumps.</p>
-     *
-     * <p><b>The cross-module facts of the one lowering.</b> The closure
-     * modules' recorded {@code EXTERNAL_ENTRY} op ids accumulate in
-     * dependency order inside the walk (the caller-side
-     * {@code externalEntryRef} resolution), and every cross-module callee
-     * of the closure is a {@code SHARED_BODY} external: no route plan, no
-     * per-module route map, and no retained-ABI execution owner enter the
-     * project lowering. The in-project imported-construction facts
-     * (ISSUE-0636; D10 and the in-project imported-class contract) are
-     * accumulated the same way: one {@link SharedFactoryFacts} per
-     * exported class of every already-lowered implementation module (the
-     * interface entry from the project index, the owner unit's layout,
-     * the owner registry's factory op id for the interface
-     * {@code constructionEntry}, and the factory op's result
-     * {@link ValueId}), supplied to each dependent module's session and to
-     * its class-construction validation, so a checker-valid imported
-     * in-project class literal lowers {@code CLASS_NEW(SHARED_FACTORY)}
-     * with the owner's factory reference and zero
-     * {@code RETAINED_ABI_DEFERRED}.</p>
-     *
-     * <p><b>The dynamic call arms (ISSUE-0657).</b> A checked call or
-     * {@code await} whose callee value has no statically resolvable
-     * execution binding lowers the landed dynamic shape through the same
-     * walk: {@code CALL(INDIRECT)} with {@code CallCallee.Dynamic} and the
-     * three recorded {@code DynamicReturnBoundary} cells (the DEAL-body
-     * cell parented to the call-owned {@code RETURN} that names the call —
-     * K12's form (b)), or {@code ASYNC_START} with
-     * {@code CallCallee.Dynamic} and the recorded DEAL-body task cell,
-     * consumed by the single {@code AWAIT}. No operation kind, payload
-     * record, boundary kind, policy, or route is added, and every
-     * unresolved or inconsistent callee fact stays a fail-closed producer
-     * defect.</p>
-     *
-     * <p><b>Session seeds.</b> Each session receives the class
-     * registration seeds as its layout-resolution context (after the
-     * unit's own declared layouts; the seeds are never merged into
-     * {@code unit.classLayouts}) and the compilation's declared conversion
-     * intrinsics, and each unit's import arm completes the namespace
-     * registrations created before the first walk.</p>
-     *
-     * @param invocation                 the release-owned compiler
-     *                                   invocation (profile guard and
-     *                                   capability-registry hash); non-null
-     * @param checkedProject             the complete checked implementation
-     *                                   closure in dependency order; non-null
-     * @param interfaceIndex             the project interface index; non-null
-     * @param requirementManifests       the per-module requirement manifests
-     *                                   (the construct-coverage rows the
-     *                                   units record); non-null
-     * @param declarationSurface         the declaration surface covering
-     *                                   every declaration import of the
-     *                                   closure; non-null
-     * @param declarationModuleIdentities the compilation's module-path
-     *                                   classification keyed by module
-     *                                   identity (the identity the seeds'
-     *                                   {@code ClassId}s are projected
-     *                                   through); non-null
-     * @param externCModules             the validated generated metadata of
-     *                                   every extern-C declaration module,
-     *                                   keyed by module identity; non-null
-     * @param builtinError               the compiler-owned builtin
-     *                                   {@code Error} declaration; non-null
-     * @param conversionIntrinsics       the compilation's declared
-     *                                   conversion intrinsics (the closed
-     *                                   {@link IntrinsicKind} set the seeds
-     *                                   register); non-null
-     * @param callbackExports            the exported function names the
-     *                                   scenario invokes as callbacks (empty
-     *                                   for production); non-null
-     * @return the one project lowering outcome
-     */
     public static ProjectLoweringResult lowerProject(
             CompilerInvocation invocation,
             CheckedProjectInput checkedProject,
@@ -2224,20 +1169,7 @@ public final class SemanticLowerer {
         Map<ModuleId, deal.semantic.ir.ClassFactoryRegistry> registries =
             new LinkedHashMap<>();
         Map<ModuleId, Map<String, OpId>> calleeExternalEntries = new LinkedHashMap<>();
-        // The in-project imported-construction facts (ISSUE-0636; design
-        // sources {@code project-lowering-entry-and-registration-seeds} D10
-        // and the in-project imported-class contract;
-        // {@code semantic-ir-construct-coverage-cutover} K3): one
-        // {@link SharedFactoryFacts} per exported class of every
-        // already-lowered implementation module, accumulated in dependency
-        // order and supplied to each dependent module's session, so a
-        // checker-valid literal of an in-project class lowers
-        // {@code CLASS_NEW(SHARED_FACTORY)} with the owner's factory
-        // reference. No route fact, no {@code ModuleRoute} plan input, and
-        // no retained-ABI execution owner enter the entry: every
-        // cross-module callee of the closure is a {@code SHARED_BODY}
-        // external and every in-project class owner is a lowered
-        // implementation module.
+
         Map<ClassId, SharedFactoryFacts> inProjectFactoryFacts =
             new LinkedHashMap<>();
 
@@ -2352,19 +1284,6 @@ public final class SemanticLowerer {
     private record DeclaredParameterOrigin(String sourceId, Span span) {
     }
 
-    /**
-     * One module's lowering inside the one project walk (ISSUE-0634): the
-     * session with every arm active under the assembled context, the
-     * composed per-unit closed chain over the produced unit, and the
-     * module's per-walk production records. Internal to
-     * {@link #lowerProject} — no per-module result escapes the entry.
-     *
-     * <p>The in-project shared-factory facts supplied here (ISSUE-0636)
-     * are the dependency-order snapshot of the already-lowered
-     * implementation modules' exported classes; the dependent module's
-     * unit carries only the reference (its own layout map stays the
-     * module's own declared layouts).</p>
-     */
     private static LoweredProjectModule lowerProjectModule(
             CheckedModuleInput module,
             SemanticRequirementManifest manifest,
@@ -2428,34 +1347,6 @@ public final class SemanticLowerer {
             lowerer.pinnedWriteFacts(), List.of());
     }
 
-    /**
-     * Accumulates one already-lowered implementation module's exported
-     * classes' in-project shared-factory facts (ISSUE-0636; design
-     * sources {@code project-lowering-entry-and-registration-seeds} D10
-     * and the in-project imported-class contract;
-     * {@code semantic-ir-construct-coverage-cutover} K3): for each
-     * exported class of the module's own interface entry, the owner
-     * unit's layout, the owner registry's {@code CLASS_FACTORY} op id
-     * registered under the interface {@code constructionEntry}, and the
-     * factory op's result {@link ValueId}. The facts are accumulated in
-     * dependency order, computed once per owner, and read-only; the
-     * dependent module's unit carries only the reference.
-     *
-     * <p><b>Inconsistent facts stay deferred.</b> An interface class
-     * whose owner unit carries no layout, no registered factory, or no
-     * resolvable factory result accumulates no fact; a dependent literal
-     * of such a class then finds no fact and no registration seed and
-     * stays the fail-closed {@code RETAINED_ABI_DEFERRED} deferral —
-     * never a silently emitted {@code SHARED_FACTORY} construction.
-     * Checker-valid in-project input never takes that arm.</p>
-     *
-     * @param ownInterface the lowered module's own interface entry;
-     *                     non-null
-     * @param lowered      the module's produced lowering records;
-     *                     non-null
-     * @param accumulated  the project's accumulating facts map (mutated
-     *                     in dependency order); non-null
-     */
     private static void accumulateInProjectFactoryFacts(
             deal.semantic.ir.ExternalModuleInterface ownInterface,
             LoweredProjectModule lowered,
@@ -2490,32 +1381,6 @@ public final class SemanticLowerer {
         return null;
     }
 
-    /**
-     * The composed per-unit closed chain of the project gate (ISSUE-0634;
-     * design source {@code project-lowering-entry-and-registration-seeds}
-     * D11 and the project validation gate contract): in order, the closed
-     * 14 rules ({@link SemanticIrValidator#validate(LoweredModuleUnit,
-     * SemanticIrValidator.ComparisonFacts)}), the address-chain protocol,
-     * the control-flow validator, the bindings production validator over
-     * the unified unit with the walk's pinned-write facts (including the
-     * intrinsic-seed admission clauses), and the class-construction
-     * validator with the module's interface entry and the in-project
-     * factory facts. Returns empty on pass and exactly the first E6005 on
-     * failure — the chain stops at the first failing rule, so a defective
-     * unit never reaches a later validator.
-     *
-     * @param unit           the produced unit; non-null
-     * @param table          the unit's block-membership table; non-null
-     * @param facts          the comparison facts (interface digest, profile,
-     *                       capability-registry hash); non-null
-     * @param pinnedWrites   the walk's pinned-write binding facts; non-null
-     * @param factories      the module's class-factory registry; non-null
-     * @param jsonDefaults   the module's JSON default-child record; non-null
-     * @param ownInterface   the module's own interface entry; non-null
-     * @param sharedFactories the in-project factory facts by class
-     *                       identity; non-null
-     * @return empty on pass, otherwise the first E6005
-     */
     public static Optional<CompilerDiagnostic> validateProjectUnit(
             LoweredModuleUnit unit,
             StructuredBodyTable table,
@@ -2529,26 +1394,6 @@ public final class SemanticLowerer {
             jsonDefaults, ownInterface, sharedFactories, Map.of());
     }
 
-    /**
-     * The declaration-class seam of {@link #validateProjectUnit(
-     * LoweredModuleUnit, StructuredBodyTable,
-     * SemanticIrValidator.ComparisonFacts,
-     * BindingsProductionValidator.PinnedWriteFacts,
-     * deal.semantic.ir.ClassFactoryRegistry,
-     * deal.semantic.ir.JsonDefaultChildTable,
-     * deal.semantic.ir.ExternalModuleInterface,
-     * Map)} (ISSUE-0624; {@code semantic-ir-construct-coverage-cutover}
-     * K10): the project's class registration seeds, so a host declaration
-     * class's construction and field operations validate against exactly
-     * the registered declaration layout. The project entry passes the
-     * seeds it produced before the walk; a unit-local window passes an
-     * empty context and keeps the fail-closed behavior for a
-     * declaration-class owner.
-     *
-     * @param declarationClasses the class registration seeds' entries by
-     *                           {@link ClassId}; non-null
-     * @return empty on pass, otherwise the first E6005
-     */
     public static Optional<CompilerDiagnostic> validateProjectUnit(
             LoweredModuleUnit unit,
             StructuredBodyTable table,
@@ -2620,29 +1465,6 @@ public final class SemanticLowerer {
             List.copyOf(diagnostics));
     }
 
-    /**
-     * The one project lowering result (ISSUE-0634; design source
-     * {@code project-lowering-entry-and-registration-seeds} D1 and the
-     * project lowering contract): exactly one validated
-     * {@link ExecutableLoweredProject} with its per-module block-membership
-     * tables and class-factory registries, the project-level class
-     * registration seeds, and the project-level namespace registrations;
-     * or, on the first E6005 anywhere in the closure walk or the project
-     * gate, no project, no tables, no registries, no seeds, and no
-     * namespace registrations.
-     *
-     * @param project     the one executable lowered project; null exactly
-     *                    on failure
-     * @param tables      the per-module block-membership tables (empty on
-     *                    failure); non-null
-     * @param registries  the per-module class-factory registries (empty on
-     *                    failure); non-null
-     * @param seeds       the project-level class registration seeds; null
-     *                    exactly on failure
-     * @param namespaces  the project-level namespace registrations; null
-     *                    exactly on failure
-     * @param diagnostics the E6005 diagnostics (empty on success); non-null
-     */
     public record ProjectLoweringResult(
             ExecutableLoweredProject project,
             Map<ModuleId, StructuredBodyTable> tables,
@@ -2691,24 +1513,6 @@ public final class SemanticLowerer {
         }
     }
 
-    /**
-     * One module's per-walk production records inside the one project
-     * lowering (ISSUE-0634). Internal to the closure walk: the records are
-     * collected into the project result and no per-module result escapes
-     * the entry.
-     *
-     * @param unit            the produced unit; null exactly on failure
-     * @param table           the unit's block-membership table; null on
-     *                        failure
-     * @param registry        the module's class-factory registry; null on
-     *                        failure
-     * @param jsonDefaults    the module's JSON default-child record; null
-     *                        on failure
-     * @param externalEntries the module's recorded {@code EXTERNAL_ENTRY}
-     *                        op ids by export name (empty on failure)
-     * @param pinnedWrites    the walk's pinned-write binding facts
-     * @param diagnostics     the E6005 diagnostics (empty on success)
-     */
     private record LoweredProjectModule(
             LoweredModuleUnit unit,
             StructuredBodyTable table,
@@ -2732,57 +1536,6 @@ public final class SemanticLowerer {
         }
     }
 
-    /**
-     * The closure child's public lowering entry point (ISSUE-0445
-     * sequencing item 2): lowers one checked implementation module
-     * through the binding walk plus the closure arms — {@code
-     * CLOSURE_NEW}/{@code LoweredFunction} for every function expression
-     * and every size-1 non-group function declaration, capture-by-binding
-     * resolution at the detaching op's creation site recursively along
-     * the detaching chain, the closure-capture arm of the B2
-     * {@code SHARED_CELL} cell-kind upgrade, and the {@code LoweredBody}
-     * {@code functionBindings} registrations through the registry child's
-     * registration seam — and produces the validated unit plus the
-     * binding facts (final derived cell kinds) and the closure capture
-     * facts.
-     *
-     * <p>The walk consumes the binding-core walk's statement and
-     * value-expression seams (never re-implementing them); function
-     * bodies lower through the same arms with capture collection active
-     * during body walks (B9 R2/R3 as the resolution model: a reference
-     * inside a detached body resolves the innermost frame entry — the
-     * function's own scope chain first, outer frames as captures — and
-     * the capture's producing allocation is the dominant incarnation at
-     * the creation site). Function-typed {@code BINDING_LOAD}s preserve
-     * allocation identity statically: a load of a function-typed binding
-     * publishes the producing allocation identity its cell currently
-     * holds (the pre-allocated identity of a hoisted module-level
-     * function, the tracked identity of an initializer/store) so the
-     * schema-level {@code R-FUNCTION-BINDING} rule holds; a function-typed
-     * load whose cell value identity is not statically known (parameters,
-     * catch bindings, iteration bindings) fails closed as the registry
-     * child's resolution (B5).</p>
-     *
-     * <p>This entry point is driven by the closure tests; no production
-     * route change — retained/public compilation paths and
-     * {@link #lowerModule} are untouched.</p>
-     *
-     * @param module                the checked implementation module; non-null
-     * @param profile               the invocation's semantic profile
-     *                              (I3 guard: only
-     *                              {@code DEAL_V1_2_INT32} is lowered);
-     *                              non-null
-     * @param constructCoverage     the manifest's reachable-construct rows
-     *                              recorded at lowering start (S1); non-null
-     * @param interfaceHash         the interface index digest the unit is
-     *                              checked against (R-PROFILE); non-null
-     * @param capabilityRegistryHash the invocation's capability-registry
-     *                              digest (R-PROFILE); non-null
-     * @param allocator             the project's semantic-id allocator in
-     *                              dependency order; non-null
-     * @return the validated unit with the binding and closure facts, or
-     *         the first E6005 with the partial facts on failure
-     */
     public static ClosureCoreResult lowerModuleClosureCore(CheckedModuleInput module,
                                                            SemanticProfile profile,
                                                            Map<ConstructKind,
@@ -2854,62 +1607,6 @@ public final class SemanticLowerer {
             lowerer.bindingFacts(), lowerer.closureFacts());
     }
 
-    /**
-     * The recursive-group child's public lowering entry point (ISSUE-0446
-     * sequencing item 3): lowers one checked implementation module
-     * through the binding walk plus the closure arms plus the group arms
-     * — per-scope SCC partition over function declarations (name
-     * references in bodies), one {@code RECURSIVE_GROUP_INIT} op per
-     * size>=2 SCC with the declaration-ordered member
-     * {@code {bindings, functions}} payload and pre-assigned unique
-     * member allocation identities (the keys the registry's one
-     * {@code LoweredBody} per member consumes, B4/B5), module-init-top
-     * placement for module-level groups and first-member-position
-     * placement for nested-scope groups, member cells
-     * {@code SHARED_CELL} by construction with no separate
-     * {@code BINDING_ALLOC}/{@code BINDING_INIT} (B1/B2), member bodies
-     * lowering like any function body with captures per the closure
-     * contract (B3), and size-1 SCCs — self-recursive declarations
-     * included — lowering as {@code CLOSURE_NEW} + {@code BINDING_INIT}
-     * at the declaration position (the closure child's arm) — and
-     * produces the validated unit plus the binding facts, the closure
-     * capture facts, and the group member facts.
-     *
-     * <p>Group-core mode implies closure-core and binding-core mode: the
-     * walk consumes the binding walk's statement and value-expression
-     * seams and the closure child's buffered detached-body walk with
-     * capture collection. The group op has no result slot (the member
-     * bindings are the observable effect); member {@code BINDING_LOAD}s
-     * resolve to the group op as the producing allocation at generation
-     * 0 and publish the member's pre-assigned allocation identity, so
-     * the schema-level {@code R-FUNCTION-BINDING} rule holds by
-     * construction for the one {@code LoweredBody} registration per
-     * member. Group execution (phase 1 identity allocation, phase 2
-     * atomic publication) is realized by the oracle/emitters — this
-     * child produces the op, the member identities, and the payload;
-     * {@code GROUP_SHAPE} validation (the validation child) and member
-     * invocation (E7) stay out of this child's window.</p>
-     *
-     * <p>This entry point is driven by the recursive-group tests; no
-     * production route change — retained/public compilation paths and
-     * {@link #lowerModule} are untouched.</p>
-     *
-     * @param module                the checked implementation module; non-null
-     * @param profile               the invocation's semantic profile
-     *                              (I3 guard: only
-     *                              {@code DEAL_V1_2_INT32} is lowered);
-     *                              non-null
-     * @param constructCoverage     the manifest's reachable-construct rows
-     *                              recorded at lowering start (S1); non-null
-     * @param interfaceHash         the interface index digest the unit is
-     *                              checked against (R-PROFILE); non-null
-     * @param capabilityRegistryHash the invocation's capability-registry
-     *                              digest (R-PROFILE); non-null
-     * @param allocator             the project's semantic-id allocator in
-     *                              dependency order; non-null
-     * @return the validated unit with the binding, closure, and group
-     *         facts, or the first E6005 with the partial facts on failure
-     */
     public static GroupCoreResult lowerModuleGroupCore(CheckedModuleInput module,
                                                        SemanticProfile profile,
                                                        Map<ConstructKind,
@@ -2981,58 +1678,6 @@ public final class SemanticLowerer {
             lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts());
     }
 
-    /**
-     * The immutability-proof child's public lowering entry point
-     * (ISSUE-0448 sequencing item 5): lowers one checked implementation
-     * module through the group-core walk — the binding walk plus the
-     * closure arms plus the group arms, the same walk the registry
-     * child's {@code functionBindings} registrations populate (B5) —
-     * with the conservative assignment analysis active on top of it, and
-     * produces the validated unit plus the binding facts, the closure
-     * capture facts, the group member facts, and the derived
-     * {@code BindingImmutabilityProof} fact surface (B7).
-     *
-     * <p><b>Recording.</b> Every variable assignment the walk lowers
-     * resolves to its dominant incarnation through the walk's own
-     * environment and defeats exactly that incarnation's proof
-     * (conservative: any assignment in the enclosing scope after the
-     * declaration, regardless of its position relative to an adaptation
-     * site — the for-let update defeats the counter generation 0, the
-     * per-iteration generation 1 keeps its proof; parameters are
-     * defeated by any body assignment; function names by any assignment
-     * in the module; the {@code int}/{@code number} intrinsic bindings
-     * are always proven, B7). Proofs derive over the binding-core
-     * incarnation map after the walk — one
-     * {@link BindingImmutabilityProof} per {@code {binding,
-     * generation}} of the dominant incarnation at the site; the records
-     * are the closed shape the shape-map child copies into
-     * {@code FUNCTION_ADAPT} payloads. The analysis consumes checker
-     * facts only — resolved assignments, declaration/parameter facts,
-     * intrinsic-binding facts — never target, route, or emitter
-     * knowledge; narrowing (NullNarrowing) never enters (B3).</p>
-     *
-     * <p>This entry point is driven by the proof tests; no production
-     * route change — retained/public compilation paths and
-     * {@link #lowerModule} are untouched, and the binding/closure/group
-     * entry points keep their exact shapes.</p>
-     *
-     * @param module                the checked implementation module; non-null
-     * @param profile               the invocation's semantic profile
-     *                              (I3 guard: only
-     *                              {@code DEAL_V1_2_INT32} is lowered);
-     *                              non-null
-     * @param constructCoverage     the manifest's reachable-construct rows
-     *                              recorded at lowering start (S1); non-null
-     * @param interfaceHash         the interface index digest the unit is
-     *                              checked against (R-PROFILE); non-null
-     * @param capabilityRegistryHash the invocation's capability-registry
-     *                              digest (R-PROFILE); non-null
-     * @param allocator             the project's semantic-id allocator in
-     *                              dependency order; non-null
-     * @return the validated unit with the binding, closure, group, and
-     *         immutability-proof facts, or the first E6005 with the
-     *         partial facts on failure
-     */
     public static ImmutabilityCoreResult lowerModuleImmutabilityCore(
             CheckedModuleInput module,
             SemanticProfile profile,
@@ -3112,68 +1757,6 @@ public final class SemanticLowerer {
             lowerer.proofFacts());
     }
 
-    /**
-     * The creation-rule child's public lowering entry point (ISSUE-0449
-     * sequencing item 6): lowers one checked implementation module
-     * through the binding walk plus the closure arms plus the group
-     * arms plus the proof analysis plus the closed creation-rule
-     * classification (B6) — for every function-typed value flow the
-     * walk classifies the position by checker facts
-     * ({@code CheckResult.typeMap}, {@code Types.equals} /
-     * {@code Types.isAssignable}) before choosing any shape, exactly
-     * per the closed rule: exact-signature initializer/assignment
-     * positions store the value directly with no {@code FUNCTION_ADAPT}
-     * (the direct-store flow is this child's production);
-     * assignable-but-not-exact positions classify to exactly one
-     * adaptation candidate with the derived source signature (the
-     * source expression's checked type) and target signature (the
-     * declared binding signature), the recorded proof fact for the
-     * shape-map child (B7), the prepared wiring point (the adapted
-     * position's own {@code VARIABLE_DECLARATION}/
-     * {@code VARIABLE_ASSIGNMENT} boundary chain — B9's creation-wiring
-     * target), and the producer facts the registry child's
-     * host/external materialization seam supplies; non-assignable
-     * positions record the {@code FUNCTION_SIGNATURE} E8010 failure
-     * expectation at the position's own boundary (the executed check is
-     * E4's machinery); every typed boundary position — parameter,
-     * return, host/external/callback parameter/return, array/table/
-     * class element, JSON, and every other {@link BoundaryKind} — never
-     * adapts (the classifier admits no adaptation arm for any position
-     * other than {@code VARIABLE_DECLARATION}/
-     * {@code VARIABLE_ASSIGNMENT}, and the walk's direct value flow
-     * into the position's boundary slot is the wiring E4's boundary
-     * producer consumes).
-     *
-     * <p><b>Zero emission.</b> The produced unit contains zero
-     * {@code FUNCTION_ADAPT} ops — mode selection, payload construction,
-     * and emission are the shape-map child's obligations, so every
-     * emitted adapter carries its closed-map mode from birth — and the
-     * classification changes no emitted op: the same walk's unit dump
-     * is byte-identical to the proof child's for the same checked
-     * module. Boundary-op production and execution stay E4's; all
-     * invocation phases stay E7's.</p>
-     *
-     * <p>This entry point is driven by the creation-rule tests; no
-     * production route change — retained/public compilation paths and
-     * {@link #lowerModule} are untouched.</p>
-     *
-     * @param module                the checked implementation module; non-null
-     * @param profile               the invocation's semantic profile
-     *                              (I3 guard: only
-     *                              {@code DEAL_V1_2_INT32} is lowered);
-     *                              non-null
-     * @param constructCoverage     the manifest's reachable-construct rows
-     *                              recorded at lowering start (S1); non-null
-     * @param interfaceHash         the interface index digest the unit is
-     *                              checked against (R-PROFILE); non-null
-     * @param capabilityRegistryHash the invocation's capability-registry
-     *                              digest (R-PROFILE); non-null
-     * @param allocator             the project's semantic-id allocator in
-     *                              dependency order; non-null
-     * @return the validated unit with the binding, closure, group,
-     *         proof, and creation-rule classification facts, or the
-     *         first E6005 with the partial facts on failure
-     */
     public static CreationRuleCoreResult lowerModuleCreationRuleCore(
             CheckedModuleInput module,
             SemanticProfile profile,
@@ -3254,66 +1837,6 @@ public final class SemanticLowerer {
             lowerer.proofFacts(), lowerer.creationRuleFacts());
     }
 
-    /**
-     * The shape-map child's public lowering entry point (ISSUE-0450
-     * sequencing item 7): lowers one checked implementation module
-     * through the group-core walk with the creation-rule
-     * classification and the shape-map production active — every
-     * {@code ADAPT}-classified position emits exactly one
-     * {@code FUNCTION_ADAPT} op carrying its closed-map mode and
-     * per-mode payload from birth (B7/B8), produced before the
-     * position's boundary and wired as the direct input of exactly the
-     * adapted position's own
-     * {@code VARIABLE_DECLARATION}/{@code VARIABLE_ASSIGNMENT} boundary
-     * chain (an inferred declaration's result feeds its
-     * {@code BINDING_INIT} directly — B9's creation-wiring rule),
-     * with a fresh adapter allocation identity per creation registered
-     * as an {@code AdapterBinding} through the registry child's seam
-     * (B5), zero {@code BOUNDARY} ops emitted by the adapter (the
-     * adapter adds no second boundary; the N target-signature
-     * parameter-boundary checks belong to the invoking op, E7), and the
-     * B2 cell-kind derivation completed over the union of the closure
-     * child's capture references and this child's two remaining arms
-     * (every {@code REEVALUATE_THUNK} {@code capturedBindings} entry
-     * and every {@code FUNCTION_ADAPT(SHARED_CELL)} {@code SharedCell}
-     * source reference) before the walk's finalization re-derives every
-     * {@code BINDING_ALLOC} payload.
-     *
-     * <p>The walk consumes the expression-lowering seam for the source
-     * ops themselves (the values/calls epics' producers lower
-     * call-result, member-read, conditional, and conversion sources;
-     * this child's thunk builder wraps the already-lowered ops in a
-     * fresh {@link BlockId} — zero evaluation at creation). Source-level
-     * end-to-end lowering of those positions completes through the
-     * declared consumed seams; this child's own tests construct those
-     * source ops at the IR level over the pinned
-     * {@code deal.semantic-ir/1} schema. No invocation execution is
-     * built or verified here (generation-checked loads, thunk
-     * re-execution with {@code ADAPTER_THUNK_STEP} children,
-     * source-signature checks, N-argument projection with trailing
-     * drop, and the per-source-kind single return boundary are E7's).
-     * This entry point is driven by the shape-map tests; no production
-     * route change — retained/public compilation paths and
-     * {@link #lowerModule} are untouched.
-     *
-     * @param module                the checked implementation module; non-null
-     * @param profile               the invocation's semantic profile
-     *                              (I3 guard: only
-     *                              {@code DEAL_V1_2_INT32} is lowered);
-     *                              non-null
-     * @param constructCoverage     the manifest's reachable-construct rows
-     *                              recorded at lowering start (S1); non-null
-     * @param interfaceHash         the interface index digest the unit is
-     *                              checked against (R-PROFILE); non-null
-     * @param capabilityRegistryHash the invocation's capability-registry
-     *                              digest (R-PROFILE); non-null
-     * @param allocator             the project's semantic-id allocator in
-     *                              dependency order; non-null
-     * @return the validated unit with the binding, closure, group,
-     *         proof, creation-rule classification, and shape-map
-     *         emission facts, or the first E6005 with the partial facts
-     *         on failure
-     */
     public static ShapeMapCoreResult lowerModuleShapeMapCore(
             CheckedModuleInput module,
             SemanticProfile profile,
@@ -3395,67 +1918,6 @@ public final class SemanticLowerer {
             lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
     }
 
-    /**
-     * The validation child's public lowering entry point (ISSUE-0451
-     * sequencing item 8): lowers one checked implementation module
-     * through the complete shape-map walk (binding-core, closure,
-     * group, proof, creation-rule, and shape-map production active —
-     * the same walk {@link #lowerModuleShapeMapCore} drives) and
-     * additionally runs the production-time validation stack over the
-     * produced unit plus its block-membership table: the closed
-     * 14-condition schema validator (unchanged, both surfaces), the
-     * address-chain protocol (A-D1), the control-flow validator
-     * (C-D2 — the block-tree/dominance/exits Basis whose structured
-     * edges and intra-{@code LOOP} sequencing the B9 rules consume),
-     * and the B9 rule set of {@link BindingsProductionValidator}
-     * ({@code GROUP_SHAPE}, {@code CAPTURE_RESOLUTION},
-     * {@code BINDING_GENERATION_RESOLUTION}, {@code BINDING_INIT_ONCE},
-     * {@code INIT_DOMINATES_LOAD}, {@code ADAPTER_PAIR},
-     * {@code ADAPTER_SOURCE_SHAPE}, {@code REGISTRY_ONE_TO_ONE},
-     * {@code NO_ADAPTER_AT_BOUNDARY}) over the one uniform resolution
-     * context (R1-R4). The first E6005 of any production-time check is
-     * the returned diagnostic; a passing unit is byte-identical across
-     * repeated lowering of the same checked module (D10).
-     *
-     * <p>The pinned positive shapes validate (size-1 self-recursion,
-     * forward module-function body references, group-member body
-     * loads, parameter/catch/{@code FOR_EACH} entry-transfer captures,
-     * nested size-1 self-recursion, the doubly-nested capture of
-     * {@code nested-closure-mutation.deal}, structured child-block
-     * loads of ancestor bindings, thunk-block captures of closures
-     * created inside thunks, the for-let counter's generation-0
-     * condition/update/body-top references under the intra-{@code
-     * LOOP} sequencing, default-block module-level references,
-     * VALUE-over-proof loads, and the store-to-pre-init shape
-     * {@code let x: int = (x = 1);}); the pinned negatives reject with
-     * E6005 naming the rule ({@code let x: int = x;},
-     * {@code let x: int = g(() => x);}, stale generations, zero or
-     * multiple producing allocations, free references outside
-     * captures, group-shape violations, adapter-pair violations,
-     * adapter-source-shape violations, registry one-to-one
-     * violations, and adapter results wired into non-position
-     * boundaries). This entry point is driven by the validation tests;
-     * no production route change — retained/public compilation paths
-     * and {@link #lowerModule} are untouched, and the binding/closure/
-     * group/proof/creation-rule/shape-map entry points keep their
-     * exact shapes.
-     *
-     * @param module                the checked implementation module; non-null
-     * @param profile               the invocation's semantic profile
-     *                              (I3 guard: only
-     *                              {@code DEAL_V1_2_INT32} is lowered);
-     *                              non-null
-     * @param constructCoverage     the manifest's reachable-construct rows
-     *                              recorded at lowering start (S1); non-null
-     * @param interfaceHash         the interface index digest the unit is
-     *                              checked against (R-PROFILE); non-null
-     * @param capabilityRegistryHash the invocation's capability-registry
-     *                              digest (R-PROFILE); non-null
-     * @param allocator             the project's semantic-id allocator in
-     *                              dependency order; non-null
-     * @return the B9-validated unit with the complete fact surfaces,
-     *         or the first E6005 with the partial facts on failure
-     */
     public static ValidationCoreResult lowerModuleValidationCore(
             CheckedModuleInput module,
             SemanticProfile profile,
@@ -3554,104 +2016,6 @@ public final class SemanticLowerer {
             lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
     }
 
-    /**
-     * The class-declaration child's public lowering entry point
-     * (ISSUE-0511, sequencing item 1): lowers one checked implementation
-     * module through the group walk plus the class-declaration arms —
-     * one {@link deal.semantic.ir.ClassLayout} per declared class in
-     * declaration order keyed by the checker-resolved
-     * {@link ClassId} (field descriptors produced through the single
-     * {@link DescriptorService} producer, {@code required} from the
-     * checker's non-optional field fact, {@code defaultOwner LOCAL} —
-     * default expressions are never part of a layout), one detached
-     * {@code CLASS_DEFAULT} op per defaulted field whose own default
-     * block carries the lowered default expression (only the default
-     * blocks enter the block-membership table; each {@code CLASS_DEFAULT}
-     * op is a member of exactly its own default block; the block's
-     * final producing op publishes the {@code CLASS_DEFAULT} op's
-     * result identity — a function-typed default's result is the
-     * closure identity of a function-literal default or the statically
-     * tracked function identity of a binding-referenced default, each
-     * already carrying its {@code FunctionExecutionBinding};
-     * module-level bindings resolve through the module-init block and
-     * an enclosing-region free reference — direct or through a nested
-     * closure's capture — fails E6005
-     * {@code CLASS_DEFAULT_CAPTURE}), and one detached static
-     * {@code CLASS_FACTORY} op per exported class registered under the
-     * pre-allocated {@code ClassInterface.constructionEntry} id in the
-     * produced {@link deal.semantic.ir.ClassFactoryRegistry} (policy
-     * {@code CLASS_CONSTRUCTION}, zero boundary children, zero return
-     * boundaries, never part of the module-init flow). Non-exported
-     * classes get a layout but never a factory and never a
-     * {@code ClassFactoryId}.
-     *
-     * <p>The default-block walk routes class-typed object literals of
-     * locally declared classes through the {@code CLASS_NEW} arm (K-D4's
-     * closed LOCAL payload shape — provided values in literal order,
-     * {@code classDefaultOpIds} for omitted required-present defaulted
-     * fields in declaration order, field boundaries in declaration order with the
-     * pinned input wiring, {@code CLASS_CONSTRUCTION}, tag-last result) —
-     * the same arm any class-typed literal of the walk uses. A literal of
-     * an imported class with the owner's shared-factory facts lowers
-     * {@code SHARED_FACTORY} (ISSUE-0514, K-D4/K-D5:
-     * {@code classFactoryRef} = the interface's {@code constructionEntry},
-     * empty {@code classDefaultOpIds}, {@code CLASS_DEFAULT_FIELD}
-     * boundaries wired to the owner {@code CLASS_FACTORY} op's result
-     * {@code ValueId}); a literal of an imported class without facts
-     * defers to E10 ({@code RETAINED_ABI_DEFERRED}, never silently
-     * emitted).</p>
-     *
-     * <p>The field-operation arms (ISSUE-0513, K-D6/K-D7) extend the same
-     * window: class member reads lower to {@code FIELD_READ} with the
-     * {@code UNTYPED_CLASS_INPUT} + {@code OPTIONAL_FIELD_READ} boundary
-     * children (the cross-module nullable read lowers the receiver as
-     * checked), class-field assignments/deletes lower the closed
-     * {@code CLASS_FIELD} address chains with the commit-op boundary
-     * children ({@code UNTYPED_CLASS_INPUT} + {@code CLASS_FIELD_ASSIGNMENT}
-     * on {@code FIELD_WRITE}, {@code UNTYPED_CLASS_INPUT} on
-     * {@code FIELD_DELETE}), {@code has(obj.field)} lowers to
-     * {@code HAS_FIELD}, and the class window's expression statements audit
-     * the dropped committed value through {@code DISCARD}.</p>
-     *
-     * <p>The produced unit passes the closed validator, the production-time
-     * address-chain protocol, the control-flow validator (the factory is
-     * detached per the five-module-level-kind rule), and the B9
-     * bindings production validator, and the class-construction validator
- * (ISSUE-0516, K-D11 — factory and construction coherence,
- * field-operation shapes, default-block admission, and nested-jsonable
- * layout resolution). The unit's
-     * {@code constructCoverage} rows are recorded verbatim from the
-     * caller-supplied rows; the {@code CLASS_DECLARATION} row is satisfied
-     * through the produced {@code CLASS_DEFAULT}/{@code CLASS_FACTORY}
-     * ops for defaulted/exported shapes and through the produced layout
-     * record for the layout-only shape (the validator's row-extension
-     * admission).</p>
-     *
-     * <p>This entry point is driven by the class-declaration,
-     * class-construction, and field-operation tests; no
-     * production route change — retained/public compilation paths and
-     * {@link #lowerModule} are untouched.</p>
-     *
-     * @param module                the checked implementation module; non-null
-     * @param profile               the invocation's semantic profile
-     *                              (I3 guard: only
-     *                              {@code DEAL_V1_2_INT32} is lowered);
-     *                              non-null
-     * @param constructCoverage     the manifest's reachable-construct rows
-     *                              recorded at lowering start (S1); non-null
-     * @param interfaceHash         the interface index digest the unit is
-     *                              checked against (R-PROFILE); non-null
-     * @param capabilityRegistryHash the invocation's capability-registry
-     *                              digest (R-PROFILE); non-null
-     * @param ownInterface          the module's own interface index entry
-     *                              (the pre-allocated
-     *                              {@code constructionEntry} ids of the
-     *                              exported classes, K-D2); non-null
-     * @param allocator             the project's semantic-id allocator in
-     *                              dependency order; non-null
-     * @return the validated unit with the factory registry, or the first
-     *         E6005 on failure
-     */
     public static ClassDeclarationCoreResult lowerModuleClassCore(
             CheckedModuleInput module,
             SemanticProfile profile,
@@ -3664,35 +2028,6 @@ public final class SemanticLowerer {
             capabilityRegistryHash, ownInterface, Map.of(), allocator);
     }
 
-    /**
-     * The shared-factory seam of the class walk (ISSUE-0514,
-     * class-construction-jsonable-operations K-D2/K-D4/K-D5): the
-     * full-fact overload of {@link #lowerModuleClassCore} receiving the
-     * imported-construction context — one {@link SharedFactoryFacts} per
-     * imported class (the owner's factory facts: the interface's
-     * pre-allocated {@code constructionEntry} {@link
-     * deal.semantic.ir.ClassFactoryId}, the owner
-     * {@link deal.semantic.ir.ClassFactoryRegistry} binding's
-     * {@code CLASS_FACTORY} op id, and the factory op's result
-     * {@link ValueId}, plus the owner unit's {@link
-     * deal.semantic.ir.ClassLayout} record and the interface entry) — so
-     * a class-typed literal of an imported class emits its
-     * {@code CLASS_NEW} with {@code defaultOwner: SHARED_FACTORY},
-     * {@code classFactoryRef} = the interface's {@code constructionEntry},
-     * empty {@code classDefaultOpIds}, and the {@code CLASS_DEFAULT_FIELD}
-     * boundaries wired to the owner factory op's result {@code ValueId}
-     * (the K-D4 cross-unit D4-global reference). The reference is emitted
-     * deterministically (byte-identical repeats) and is resolvable by the
-     * executor through the layout-resolution context (the unit's
-     * {@code classLayouts} plus the interface facts). A literal of an
-     * imported class without facts — an owner not on the shared route —
-     * defers to E10 (E6005 {@code RETAINED_ABI_DEFERRED}, never a silent
-     * {@code SHARED_FACTORY} emission); same-module literals stay LOCAL.
-     *
-     * @param sharedFactories the imported-construction facts by
-     *                        {@link ClassId} (empty for a module that
-     *                        constructs no imported classes); non-null
-     */
     public static ClassDeclarationCoreResult lowerModuleClassCore(
             CheckedModuleInput module,
             SemanticProfile profile,
@@ -3798,13 +2133,7 @@ public final class SemanticLowerer {
                 new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
                 new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
         }
-        // ISSUE-0516 production-time check (K-D11): the produced class
-        // constructs must pass the class-construction validator — factory
-        // and construction coherence, field-operation shapes, default-block
-        // admission, and nested-jsonable layout resolution; the first
-        // violation is the returned E6005 (FACTORY_COHERENCE |
-        // CONSTRUCTION_COHERENCE | FIELD_OPERATION_SHAPE |
-        // DEFAULT_BLOCK_ADMISSION | JSON_LAYOUT_COHERENCE).
+
         Optional<CompilerDiagnostic> construction =
             ClassConstructionValidator.validate(unit, lowerer.bodyTable(),
                 lowerer.factoryRegistry(), lowerer.jsonDefaultChildren(),
@@ -3933,54 +2262,13 @@ public final class SemanticLowerer {
          */
         private final IdentityHashMap<Symbol.VariableSymbol, BindingId> variableBindings =
             new IdentityHashMap<>();
-        /**
-         * The binding-core mode flag (ISSUE-0444 binding-core child):
-         * {@code true} exactly when the session was created by
-         * {@link SemanticLowerer#lowerModuleBindingCore} — the binding
-         * walk's statement arms, the comparison-operand routing through
-         * the comparison producer, and the binding-environment identifier
-         * resolution are active; {@code false} (the default) preserves
-         * the E3/E5 window behavior byte-for-byte.
-         */
+
         private final boolean bindingCore;
-        /**
-         * The closure-core mode flag (ISSUE-0445 closure child):
-         * {@code true} exactly when the session was created by
-         * {@link SemanticLowerer#lowerModuleClosureCore} — the closure
-         * arms ({@code CLOSURE_NEW} for every function expression and
-         * size-1 non-group function declaration), capture collection
-         * during detached-body walks, and the closure-capture arm of the
-         * B2 cell-kind upgrade are active. Closure-core mode implies
-         * binding-core mode (the closure walk is the binding walk plus
-         * the closure arms).
-         */
+
         private final boolean closureCore;
-        /**
-         * The group-core mode flag (ISSUE-0446 recursive-group child):
-         * {@code true} exactly when the session was created by
-         * {@link SemanticLowerer#lowerModuleGroupCore} — the group arms
-         * (per-scope SCC partition over function declarations and one
-         * {@code RECURSIVE_GROUP_INIT} op per size>=2 SCC with
-         * pre-assigned member identities, module-init-top placement for
-         * module-level groups and first-member-position placement for
-         * nested-scope groups) are active on top of the closure arms.
-         * Group-core mode implies closure-core and binding-core mode (the
-         * group walk is the closure walk plus the group arms).
-         */
+
         private final boolean groupCore;
 
-        /**
-         * The proof-analysis mode flag (ISSUE-0448 proof child):
-         * {@code true} exactly when the session was created by
-         * {@link SemanticLowerer#lowerModuleImmutabilityCore} — the
-         * conservative assignment analysis records every resolved
-         * variable assignment during the walk (the same walk the
-         * registry child populates) and the derived
-         * {@code BindingImmutabilityProof} fact surface is available
-         * through {@link #proofFacts()}. {@code false} (the default in
-         * every other mode) preserves the other walks' behavior
-         * byte-for-byte.
-         */
         private final boolean proofAnalysis;
         /**
          * The conservative binding-immutability analysis of the session
@@ -3991,21 +2279,7 @@ public final class SemanticLowerer {
          */
         private final BindingImmutabilityAnalysis assignmentAnalysis =
             new BindingImmutabilityAnalysis();
-        /**
-         * The creation-rule-analysis mode flag (ISSUE-0449 creation-rule
-         * child): {@code true} exactly when the session was created by
-         * {@link SemanticLowerer#lowerModuleCreationRuleCore} — the
-         * closed creation-rule classification (B6) records one
-         * {@link AdapterCreationRule.PositionClassification} per
-         * function-typed position in walk order, the fact surface
-         * available through {@link #creationRuleFacts()}. The analysis
-         * is purely observational: it emits zero ops, changes no op of
-         * the shared walk, and the produced unit therefore contains
-         * zero {@code FUNCTION_ADAPT} ops (mode selection, payload
-         * construction, and emission are the shape-map child's).
-         * {@code false} (the default in every other mode) preserves the
-         * other walks' behavior byte-for-byte.
-         */
+
         private final boolean creationRuleAnalysis;
         /**
          * The recorded creation-rule position classifications in walk
@@ -4014,24 +2288,7 @@ public final class SemanticLowerer {
          */
         private final List<AdapterCreationRule.PositionClassification>
             creationClassifications = new ArrayList<>();
-        /**
-         * The shape-map-production mode flag (ISSUE-0450 shape-map
-         * child): {@code true} exactly when the session was created by
-         * {@link SemanticLowerer#lowerModuleShapeMapCore} — every
-         * {@code ADAPT}-classified position of the creation-rule walk
-         * emits exactly one {@code FUNCTION_ADAPT} op carrying its
-         * closed-map mode and per-mode payload from birth (B7/B8),
-         * produced before the position's boundary and wired as the
-         * direct input of exactly the adapted position's own
-         * {@code VARIABLE_DECLARATION}/{@code VARIABLE_ASSIGNMENT}
-         * boundary chain (an inferred declaration's result feeds its
-         * {@code BINDING_INIT} directly). The produced unit therefore
-         * carries one {@code FUNCTION_ADAPT} per adapted position and
-         * the adapter result is the direct input of no other
-         * {@code BOUNDARY} op; every other position's flow is
-         * unchanged. {@code false} (the default in every other mode)
-         * preserves the other walks' behavior byte-for-byte.
-         */
+
         private final boolean shapeMapAnalysis;
         /**
          * The recorded adapter emissions in emission order (shape-map
@@ -4084,113 +2341,29 @@ public final class SemanticLowerer {
          * write through.
          */
         private final Map<String, BindingId> importAliasCells = new LinkedHashMap<>();
-        /**
-         * The full-program mode flag (ISSUE-0410 decomposition-tail
-         * carrier slice): {@code true} exactly when the session was
-         * created by {@link SemanticLowerer#lowerModuleFullProgram} —
-         * the unified walk (module-level lets/imports/functions plus
-         * every E5 statement and the carrier's CALL/RETURN/stdlib arms
-         * inside function bodies), the per-function entry/return
-         * reservations, and the module-init-level entry delegation
-         * ({@code CALL(DIRECT main)} + {@code DISCARD}) are active.
-         * Full-program mode implies binding-core and closure-core modes.
-         */
+
         private final boolean fullProgram;
-        /**
-         * The class-declaration mode flag (ISSUE-0511): {@code true}
-         * exactly when the session was created by
-         * {@link SemanticLowerer#lowerModuleClassCore} — the class walk
-         * is the group walk plus the class-declaration arms
-         * ({@code ClassLayout} records, detached {@code CLASS_DEFAULT}
-         * ops with their default blocks, and the exported classes'
-         * {@code CLASS_FACTORY} ops plus the
-         * {@link deal.semantic.ir.ClassFactoryRegistry} registrations).
-         */
+
         private final boolean classCore;
-        /**
-         * The module's own interface index entry (class-core mode): the
-         * pre-allocated {@code ClassInterface.constructionEntry} ids of
-         * the exported classes (K-D2). {@code null} outside class-core
-         * mode.
-         */
+
         private final deal.semantic.ir.ExternalModuleInterface ownInterface;
-        /**
-         * The imported-construction facts of the session (class-core
-         * mode, ISSUE-0514): the {@link SharedFactoryFacts} per imported
-         * {@link ClassId} — the owner's factory facts (the interface's
-         * {@code constructionEntry}, the factory op id, and the factory
-         * result {@code ValueId}) plus the owner layout and interface
-         * entry the {@code CLASS_NEW} arm consumes for
-         * {@code SHARED_FACTORY} lowering (K-D4/K-D5). Empty by default;
-         * a literal of an imported class without facts defers to E10
-         * (never silently emitted).
-         */
+
         private final Map<ClassId, SharedFactoryFacts> sharedFactories;
-        /**
-         * The project-level class registration seeds of the session
-         * (ISSUE-0634; design source
-         * {@code project-lowering-entry-and-registration-seeds} D4-D6 and
-         * the registration-seed contract): the layout resolution context
-         * every unit's session receives before its walk, consulted by the
-         * class-literal arm after the unit's own declared layouts and the
-         * in-project factory facts. The seeds are never merged into
-         * {@link #classLayouts}: the unit keeps carrying its own declared
-         * layouts only (the class-construction validator discriminates a
-         * same-module class by exactly that membership). The default is the
-         * compiler-owned builtin {@code Error} registration alone
-         * (ISSUE-0619, {@code semantic-ir-construct-coverage-cutover} K13
-         * item 1): every session — the project entry's units included —
-         * resolves the builtin class through the same compiler-owned layout
-         * entry; declaration-class seeds exist only inside the project
-         * entry.
-         */
+
         private ClassRegistrationSeeds registrationSeeds =
             ClassRegistrationSeeds.builtinErrorOnly();
-        /**
-         * The declared conversion intrinsics of the compilation
-         * (ISSUE-0634): the closed {@link IntrinsicKind} set the project
-         * entry hands the session — the seed registers exactly these
-         * kinds and fails closed for a module intrinsic outside the
-         * declared set (a compiler-constant disagreement is a producer
-         * defect, never a silently registered third intrinsic). Empty
-         * outside the project entry (the per-module entries keep their
-         * closed two-member seed).
-         */
+
         private List<IntrinsicKind> declaredConversionIntrinsics = List.of();
-        /**
-         * The produced class layouts keyed by {@link ClassId} in
-         * declaration order (K-D2; the unit's {@code classLayouts} map,
-         * built by the class-declaration arm).
-         */
+
         private final java.util.LinkedHashMap<ClassId, deal.semantic.ir.ClassLayout>
             classLayouts = new java.util.LinkedHashMap<>();
-        /**
-         * The produced factory registrations keyed by the pre-allocated
-         * {@link deal.semantic.ir.ClassFactoryId} construction entry in
-         * declaration order (K-D2; the unit-side
-         * {@link deal.semantic.ir.ClassFactoryRegistry} record).
-         */
+
         private final java.util.LinkedHashMap<deal.semantic.ir.ClassFactoryId, OpId>
             factoryRegistry = new java.util.LinkedHashMap<>();
-        /**
-         * The produced per-site JSON default-child registrations keyed by
-         * the {@code @jsonable} classes' {@code JSON_FROM_CLASS} op ids
-         * (K-D8; ISSUE-0515 — the unit-side
-         * {@link deal.semantic.ir.JsonDefaultChildTable} record): each
-         * entry lists the class's required-present defaulted fields'
-         * {@code CLASS_DEFAULT} op ids in declaration order (the same
-         * list the factory payload carries; an omitted
-         * optional-with-default field's default never runs and its op id
-         * never enters the list, K-D4 step 2).
-         */
+
         private final java.util.LinkedHashMap<OpId, List<OpId>> jsonDefaultChildren =
             new java.util.LinkedHashMap<>();
-        /**
-         * One defaulted field's declaration-arm facts: the emitted
-         * {@code CLASS_DEFAULT} op id and its result {@code ValueId}
-         * (the {@code CLASS_DEFAULT_FIELD} boundary input of a later
-         * {@code CLASS_NEW}, K-D4).
-         */
+
         private record ClassDefaultFact(OpId opId, ValueId result) {
 
             private ClassDefaultFact {
@@ -4198,32 +2371,11 @@ public final class SemanticLowerer {
                 Objects.requireNonNull(result, "result must not be null");
             }
         }
-        /**
-         * The produced per-class default facts keyed by {@link ClassId}
-         * then field name in declaration order (class-core mode): the
-         * surface the {@code CLASS_NEW} arm consults for
-         * {@code classDefaultOpIds} and {@code CLASS_DEFAULT_FIELD}
-         * boundary inputs — gated on required-present at the use site
-         * (K-D4 step 2/step 5: an optional-with-default field's fact is
-         * recorded but never wired).
-         */
+
         private final java.util.LinkedHashMap<ClassId,
             java.util.LinkedHashMap<String, ClassDefaultFact>> classDefaults =
             new java.util.LinkedHashMap<>();
-        /**
-         * One open default-block walk's admission context (K-D3): the
-         * default block itself, the blocks allocated inside the walk
-         * (block-internal allocations), and the capture-collector depth
-         * at entry. Every reference of the walk — a direct identifier
-         * reference or a capture resolved by a nested detached walk (a
-         * closure body allocated inside the default) — admits only blocks
-         * in {@code internalBlocks} and the module-init block; the
-         * collector depth decides the dispatch (direct load versus the
-         * nested closure's capture registration), never the admission —
-         * a nested closure's capture resolving to an enclosing-region
-         * binding fails the same {@code CLASS_DEFAULT_CAPTURE} admission
-         * (K-D3's closed rule has no nested-closure bypass).
-         */
+
         private record DefaultContext(BlockId block, Set<BlockId> internalBlocks,
                                       int entryCaptureDepth) {
 
@@ -4282,14 +2434,7 @@ public final class SemanticLowerer {
          * snapshot consumed by the unit producer.
          */
         private final FunctionBindingRegistry registry = new FunctionBindingRegistry();
-        /**
-         * The full-program per-function contexts (ISSUE-0410 carrier
-         * slice): one context per module-level function declaration,
-         * reserved at hoist time — the function identity, the body block,
-         * the exact signature, and the pre-allocated return-boundary and
-         * call-site op identities (forward references across declarations
-         * and call sites resolve deterministically).
-         */
+
         private final IdentityHashMap<BindingCoreIncarnation, FunctionContext>
             functionContexts = new IdentityHashMap<>();
         /**
@@ -4309,14 +2454,7 @@ public final class SemanticLowerer {
          * detection surface), installed by the full-program entry.
          */
         private List<ResolvedImport> moduleImports = List.of();
-        /**
-         * The E7 call-machine mode flag (ISSUE-0236): {@code true}
-         * exactly when the session was created by
-         * {@link SemanticLowerer#lowerModuleFullProgramE7} — the
-         * statically-resolved call arms, adapter creation, async starts,
-         * entries/callbacks, and the {@code ENTRY_INVOKE} delegation are
-         * active.
-         */
+
         private boolean e7Calls;
         /** The module's checked export facts (the E7 entry/callback surface). */
         private List<ExportInterface> moduleExports = List.of();
@@ -4357,14 +2495,7 @@ public final class SemanticLowerer {
          * walk (RETURN resolution).
          */
         private final ArrayDeque<FunctionContext> functionStack = new ArrayDeque<>();
-        /**
-         * One module-level function's carrier facts (ISSUE-0410): the
-         * lowered identity plus the reserved return-boundary/call-site op
-         * ids. The return boundary op is emitted exactly once (at the
-         * first RETURN, or the implicit trailing return); the call-site
-         * op id becomes the single {@code CALL(DIRECT)} that invokes the
-         * function (the entry delegation for {@code main}).
-         */
+
         /** The closed per-function invocation shapes of the E7 call machine. */
         private enum InvocationShape {
             /** Called from source: {@code CALL(DIRECT/INDIRECT)} (sync). */
@@ -4453,14 +2584,6 @@ public final class SemanticLowerer {
                 return span;
             }
 
-            /**
-             * Assigns the function's single invocation shape (the
-             * non-overlapping machine): the first assignment wins and a
-             * conflicting later assignment is a producer defect — the
-             * statically-resolved slice admits exactly one enclosing
-             * invocation shape per function (runtime shape selection is
-             * ISSUE-0531's).
-             */
             void assignShape(InvocationShape candidate, OpId candidateOpId) {
                 if (shape == null) {
                     shape = candidate;
@@ -4524,14 +2647,7 @@ public final class SemanticLowerer {
          * {@code CLOSURE_NEW} op that needs the collected captures.
          */
         private final ArrayDeque<List<SemanticOp>> emitTargets = new ArrayDeque<>();
-        /**
-         * The installed binding-environment resolver (ISSUE-0444): the
-         * identifier arm and the variable-assignment arm consult it
-         * (after the for-of frames, before the legacy on-demand path) so
-         * every {@code BINDING_LOAD}/{@code BINDING_STORE} they emit
-         * names the dominant incarnation at the site. {@code null} in
-         * the E3/E5 window.
-         */
+
         private BindingSiteResolver bindingSiteResolver;
         /**
          * The binding environment's scope frames (binding-core mode),
@@ -4635,12 +2751,6 @@ public final class SemanticLowerer {
          * Creates one lowering session. The module-init block is the
          * session's first allocation (role {@code BLOCK}).
          *
-         * @param module   the module identity; non-null
-         * @param sourceId the stable source identity carried on every
-         *                 op's origin; non-null
-         * @param checks   the module's checked facts (read-only); non-null
-         * @param ids      the project's allocator in dependency order;
-         *                 non-null
          */
         public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
                              SemanticIdAllocator ids) {
@@ -4648,74 +2758,17 @@ public final class SemanticLowerer {
                 new Span(sourceId, 1, 1, 1, 1, Span.UNKNOWN_OFFSET, Span.UNKNOWN_OFFSET));
         }
 
-        /**
-         * Creates one lowering session with the binding-core mode flag
-         * (ISSUE-0444 binding-core child). In binding-core mode the
-         * module scope frame is opened at construction and the
-         * binding-environment resolver is installed, so the identifier
-         * arm and the variable-assignment arm resolve declared bindings
-         * against the walk's dominant incarnations.
-         *
-         * @param module      the module identity; non-null
-         * @param sourceId    the stable source identity carried on every
-         *                    op's origin; non-null
-         * @param checks      the module's checked facts (read-only); non-null
-         * @param ids         the project's allocator in dependency order;
-         *                    non-null
-         * @param bindingCore {@code true} to activate the binding walk's
-         *                    arms and environment
-         */
         public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
                              SemanticIdAllocator ids, boolean bindingCore, Span programSpan) {
             this(module, sourceId, checks, ids, bindingCore, false, programSpan);
         }
 
-        /**
-         * Creates one lowering session with the binding-core mode flag
-         * and the closure-core mode flag (ISSUE-0444 binding-core child;
-         * ISSUE-0445 closure child). Closure-core mode implies
-         * binding-core mode (the closure walk is the binding walk plus
-         * the closure arms).
-         *
-         * @param module      the module identity; non-null
-         * @param sourceId    the stable source identity carried on every
-         *                    op's origin; non-null
-         * @param checks      the module's checked facts (read-only); non-null
-         * @param ids         the project's allocator in dependency order;
-         *                    non-null
-         * @param bindingCore {@code true} to activate the binding walk's
-         *                    arms and environment
-         * @param closureCore {@code true} to activate the closure arms on
-         *                    top of the binding walk
-         * @param programSpan the checked program's span; non-null
-         */
         public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
                              SemanticIdAllocator ids, boolean bindingCore,
                              boolean closureCore, Span programSpan) {
             this(module, sourceId, checks, ids, bindingCore, closureCore, false, programSpan);
         }
 
-        /**
-         * Creates one lowering session with the binding-core, closure-core,
-         * and group-core mode flags (ISSUE-0444 binding-core child;
-         * ISSUE-0445 closure child; ISSUE-0446 recursive-group child).
-         * Group-core mode implies closure-core and binding-core mode (the
-         * group walk is the closure walk plus the group arms).
-         *
-         * @param module      the module identity; non-null
-         * @param sourceId    the stable source identity carried on every
-         *                    op's origin; non-null
-         * @param checks      the module's checked facts (read-only); non-null
-         * @param ids         the project's allocator in dependency order;
-         *                    non-null
-         * @param bindingCore {@code true} to activate the binding walk's
-         *                    arms and environment
-         * @param closureCore {@code true} to activate the closure arms on
-         *                    top of the binding walk
-         * @param groupCore   {@code true} to activate the group arms on
-         *                    top of the closure walk
-         * @param programSpan the checked program's span; non-null
-         */
         public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
                              SemanticIdAllocator ids, boolean bindingCore,
                              boolean closureCore, boolean groupCore, Span programSpan) {
@@ -4723,31 +2776,6 @@ public final class SemanticLowerer {
                 false, programSpan);
         }
 
-        /**
-         * Creates one lowering session with the binding-core, closure-core,
-         * group-core, and proof-analysis mode flags (ISSUE-0444 binding-core
-         * child; ISSUE-0445 closure child; ISSUE-0446 recursive-group child;
-         * ISSUE-0448 proof child). Proof-analysis mode rides on top of the
-         * walk flags (the proof entry point passes all four): it records the
-         * walk's resolved variable assignments and exposes the derived proof
-         * fact surface; it changes no emitted op.
-         *
-         * @param module        the module identity; non-null
-         * @param sourceId      the stable source identity carried on every
-         *                      op's origin; non-null
-         * @param checks        the module's checked facts (read-only); non-null
-         * @param ids           the project's allocator in dependency order;
-         *                      non-null
-         * @param bindingCore   {@code true} to activate the binding walk's
-         *                      arms and environment
-         * @param closureCore   {@code true} to activate the closure arms on
-         *                      top of the binding walk
-         * @param groupCore     {@code true} to activate the group arms on
-         *                      top of the closure walk
-         * @param proofAnalysis {@code true} to activate the conservative
-         *                      assignment analysis on top of the walk
-         * @param programSpan   the checked program's span; non-null
-         */
         public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
                              SemanticIdAllocator ids, boolean bindingCore,
                              boolean closureCore, boolean groupCore,
@@ -4756,39 +2784,6 @@ public final class SemanticLowerer {
                 proofAnalysis, false, programSpan);
         }
 
-        /**
-         * Creates one lowering session with the binding-core, closure-core,
-         * group-core, proof-analysis, and creation-rule-analysis mode
-         * flags (ISSUE-0444 binding-core child; ISSUE-0445 closure child;
-         * ISSUE-0446 recursive-group child; ISSUE-0448 proof child;
-         * ISSUE-0449 creation-rule child). Creation-rule-analysis mode
-         * rides on top of the walk flags (the creation-rule entry point
-         * passes all five): it classifies every function-typed position
-         * the walk reaches by checker facts per the closed B6 rule and
-         * records the classifications; it emits zero ops and changes no
-         * emitted op of the shared walk.
-         *
-         * @param module              the module identity; non-null
-         * @param sourceId            the stable source identity carried on
-         *                            every op's origin; non-null
-         * @param checks              the module's checked facts (read-only);
-         *                            non-null
-         * @param ids                 the project's allocator in dependency
-         *                            order; non-null
-         * @param bindingCore         {@code true} to activate the binding
-         *                            walk's arms and environment
-         * @param closureCore         {@code true} to activate the closure
-         *                            arms on top of the binding walk
-         * @param groupCore           {@code true} to activate the group arms
-         *                            on top of the closure walk
-         * @param proofAnalysis       {@code true} to activate the
-         *                            conservative assignment analysis on
-         *                            top of the walk
-         * @param creationRuleAnalysis {@code true} to activate the closed
-         *                            creation-rule classification on top
-         *                            of the walk
-         * @param programSpan         the checked program's span; non-null
-         */
         public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
                              SemanticIdAllocator ids, boolean bindingCore,
                              boolean closureCore, boolean groupCore,
@@ -4798,56 +2793,6 @@ public final class SemanticLowerer {
                 proofAnalysis, creationRuleAnalysis, false, programSpan);
         }
 
-        /**
-         * Creates one lowering session with the binding-core, closure-core,
-         * group-core, proof-analysis, creation-rule-analysis, and
-         * shape-map mode flags (ISSUE-0444 binding-core child;
-         * ISSUE-0445 closure child; ISSUE-0446 recursive-group child;
-         * ISSUE-0448 proof child; ISSUE-0449 creation-rule child;
-         * ISSUE-0450 shape-map child). Shape-map mode rides on top of the
-         * walk flags (the shape-map entry point passes all six): every
-         * {@code ADAPT}-classified position emits exactly one
-         * {@code FUNCTION_ADAPT} op carrying its closed-map mode and
-         * per-mode payload from birth (B7/B8), produced before the
-         * position's boundary and wired as the direct input of exactly
-         * the adapted position's own
-         * {@code VARIABLE_DECLARATION}/{@code VARIABLE_ASSIGNMENT}
-         * boundary chain (an inferred declaration's result feeds its
-         * {@code BINDING_INIT} directly), with a fresh adapter
-         * allocation identity registered as an {@code AdapterBinding}
-         * through the registry seam, zero {@code BOUNDARY} ops emitted
-         * by the adapter, and the B2 cell-kind derivation completed
-         * over the union of the closure captures and this child's two
-         * remaining capture arms ({@code REEVALUATE_THUNK}
-         * {@code capturedBindings} entries and
-         * {@code FUNCTION_ADAPT(SHARED_CELL)} {@code SharedCell} source
-         * references) before the finalization re-derivation.
-         *
-         * @param module              the module identity; non-null
-         * @param sourceId            the stable source identity carried on
-         *                            every op's origin; non-null
-         * @param checks              the module's checked facts (read-only);
-         *                            non-null
-         * @param ids                 the project's allocator in dependency
-         *                            order; non-null
-         * @param bindingCore         {@code true} to activate the binding
-         *                            walk's arms and environment
-         * @param closureCore         {@code true} to activate the closure
-         *                            arms on top of the binding walk
-         * @param groupCore           {@code true} to activate the group arms
-         *                            on top of the closure walk
-         * @param proofAnalysis       {@code true} to activate the
-         *                            conservative assignment analysis on
-         *                            top of the walk
-         * @param creationRuleAnalysis {@code true} to activate the closed
-         *                            creation-rule classification on top
-         *                            of the walk
-         * @param shapeMapAnalysis    {@code true} to activate the closed
-         *                            shape-map production on top of the
-         *                            walk (the ADAPT arm emits its
-         *                            FUNCTION_ADAPT op)
-         * @param programSpan         the checked program's span; non-null
-         */
         public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
                              SemanticIdAllocator ids, boolean bindingCore,
                              boolean closureCore, boolean groupCore,
@@ -4858,12 +2803,6 @@ public final class SemanticLowerer {
                 false);
         }
 
-        /**
-         * The full-program session constructor (ISSUE-0410 carrier
-         * slice): {@code fullProgram} activates the unified walk strategy
-         * and the entry/return reservations on top of the binding and
-         * closure arms.
-         */
         public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
                              SemanticIdAllocator ids, boolean bindingCore,
                              boolean closureCore, Span programSpan, boolean fullProgram) {
@@ -4871,13 +2810,6 @@ public final class SemanticLowerer {
                 false, false, programSpan, fullProgram);
         }
 
-        /**
-         * The terminal session constructor carrying every mode flag:
-         * the binding-core, closure-core, group-core, proof-analysis,
-         * creation-rule-analysis, and shape-map flags of the
-         * ISSUE-0444..ISSUE-0450 children plus the ISSUE-0410
-         * full-program flag of the decomposition-tail carrier slice.
-         */
         public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
                              SemanticIdAllocator ids, boolean bindingCore,
                              boolean closureCore, boolean groupCore,
@@ -4889,20 +2821,6 @@ public final class SemanticLowerer {
                 fullProgram, false, null, Map.of());
         }
 
-        /**
-         * The class-declaration session constructor (ISSUE-0511, extended
-         * by the ISSUE-0514 shared-factory child): the {@code classCore}
-         * flag activates the class-declaration arms on top of the walk
-         * flags (the class walk is the group walk plus the class arms),
-         * {@code ownInterface} supplies the module's own interface index
-         * entry — the pre-allocated
-         * {@code ClassInterface.constructionEntry} ids the exported
-         * classes' {@code CLASS_FACTORY} ops register under (K-D2) —
-         * and {@code sharedFactories} supplies the imported-construction
-         * facts ({@link SharedFactoryFacts} per imported {@link ClassId})
-         * the {@code CLASS_NEW} arm consumes for SHARED_FACTORY lowering
-         * (K-D4/K-D5).
-         */
         public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
                              SemanticIdAllocator ids, boolean bindingCore,
                              boolean closureCore, boolean groupCore,
@@ -4950,16 +2868,6 @@ public final class SemanticLowerer {
             }
         }
 
-        /**
-         * Installs the binding-environment resolver consulted by the
-         * identifier arm and the variable-assignment arm (ISSUE-0444
-         * binding-core child). Installing a resolver never changes the
-         * E3/E5 window's pre-existing frame/on-demand resolution — the
-         * resolver is consulted only after the for-of frames and only
-         * when it resolves the name.
-         *
-         * @param resolver the dominant-incarnation resolver; non-null
-         */
         public void installBindingSiteResolver(BindingSiteResolver resolver) {
             this.bindingSiteResolver = Objects.requireNonNull(resolver,
                 "resolver must not be null");
@@ -5005,16 +2913,13 @@ public final class SemanticLowerer {
          * an empty op list (C-D1 — every payload-referenced block exists
          * in the produced table, empty blocks included).
          *
-         * @return the fresh block identity
          */
         private BlockId allocateBlock() {
             BlockId block = ids.nextBlockId(module, nextOrdinal++, 0);
             blockOps.put(block, new ArrayList<>());
             blockTerminated.put(block, false);
             if (!defaultContexts.isEmpty()) {
-                // K-D3: a block allocated inside an open default-block
-                // walk is a block-internal allocation of that walk's
-                // admission context.
+
                 defaultContexts.peek().internalBlocks().add(block);
             }
             return block;
@@ -5235,8 +3140,6 @@ public final class SemanticLowerer {
          * slices may arrange frames explicitly to lower operand-position
          * identifiers against enclosing loop bindings.
          *
-         * @param name the loop-binding name; non-null
-         * @return the opened frame
          */
         public ForEachFrame openForEachScope(String name) {
             Objects.requireNonNull(name, "name must not be null");
@@ -5250,7 +3153,6 @@ public final class SemanticLowerer {
          * Closes the innermost for-of loop-binding frame (a producer
          * defect when no frame is open).
          *
-         * @throws IllegalStateException when no frame is open
          */
         public void closeForEachScope() {
             if (frames.isEmpty()) {
@@ -5259,10 +3161,6 @@ public final class SemanticLowerer {
             }
             frames.remove(0);
         }
-
-        // ---------------------------------------------------------------------
-        // The binding-core walk (ISSUE-0444 binding-core child)
-        // ---------------------------------------------------------------------
 
         /**
          * Lowers the module's top-level statements through the
@@ -5274,10 +3172,6 @@ public final class SemanticLowerer {
          * ALLOCs in declaration order (B1) — then the statements in
          * source order.
          *
-         * @param statements the module's top-level statements; non-null
-         * @throws IllegalStateException outside binding-core mode
-         * @throws ConstructUnlowered    on a construct outside the
-         *         binding-core window
          */
         public void lowerBindingModule(List<StatementNode> statements) {
             if (!bindingCore) {
@@ -5290,26 +3184,6 @@ public final class SemanticLowerer {
             finalizeCellKinds();
         }
 
-        /**
-         * The group walk's module entry point (ISSUE-0446 recursive-group
-         * child): the intrinsic bindings and the hoisted module-level
-         * names first (group members register without an ALLOC op and
-         * pre-assign their member allocation identities — B1/B4), then
-         * the module-level {@code RECURSIVE_GROUP_INIT} ops at
-         * module-init top in declaration order (B4: module top level
-         * admits only imports, function declarations, class declarations,
-         * and exports — hoisting the group op is observationally
-         * equivalent to declaration-position execution and places every
-         * member's producing allocation where it dominates every closure
-         * site, B3), then the statements in source order (group members
-         * skip — their bodies were walked at group emission), then the
-         * cell-kind finalization.
-         *
-         * @param statements the module's top-level statements; non-null
-         * @throws IllegalStateException outside group-core mode
-         * @throws ConstructUnlowered    on a construct outside the
-         *         group-core window
-         */
         public void lowerGroupModule(List<StatementNode> statements) {
             if (!groupCore) {
                 throw new IllegalStateException(
@@ -5342,41 +3216,6 @@ public final class SemanticLowerer {
             finalizeCellKinds();
         }
 
-        /**
-         * The project walk's module entry point (ISSUE-0634; design source
-         * {@code project-lowering-entry-and-registration-seeds} D2 and the
-         * project lowering contract): one session per module with every
-         * arm active — the binding, closure, group, full-program call, and
-         * class arms together — in the pinned walk order.
-         *
-         * <p><b>The pinned walk order.</b> (1) the intrinsic seeds (the
-         * module-init-top {@code BINDING_ALLOC}/{@code BINDING_INIT} pair
-         * per declared conversion intrinsic, with its closed
-         * {@code IntrinsicFunction} registration); (2) the hoisted
-         * module-level allocations (function-name and import-alias ALLOCs
-         * in declaration order; module-level group members register
-         * without an ALLOC — the group op's publication phase is their
-         * producing allocation); (3) the module-level recursive groups at
-         * module-init top in declaration order (B4); (4) the statement
-         * walk with the class-declaration and call arms (nested-scope
-         * groups lower at their first member's declaration position);
-         * (5) the E7 terminals (export publications, entries/callbacks,
-         * and the entry delegation); (6) the invocation-identity
-         * finalization (the decision point after the walk and the
-         * terminals, where the set of a body's static invocations is
-         * final); (7) the cell-kind finalization.</p>
-         *
-         * <p>No two walks per module and no double allocation: the
-         * session's single statement walk is the full-program walk (which
-         * owns the class arms and the nested-scope group arms when the
-         * class and group flags are active), so every op is emitted by
-         * exactly one arm and every id is allocated once.</p>
-         *
-         * @param statements the module's top-level statements; non-null
-         * @throws IllegalStateException outside the project session mode
-         * @throws ConstructUnlowered    on a construct outside the closed
-         *         coverage table of the unified walk
-         */
         public void lowerProjectModule(List<StatementNode> statements) {
             Objects.requireNonNull(statements, "statements must not be null");
             if (!bindingCore || !closureCore || !groupCore || !fullProgram || !classCore) {
@@ -5418,7 +3257,6 @@ public final class SemanticLowerer {
          * {@link BindingCoreBinding} per declared name in registration
          * order (partial when the walk failed mid-way).
          *
-         * @return the recorded binding facts; non-null
          */
         public BindingCoreFacts bindingFacts() {
             List<BindingCoreBinding> facts = new ArrayList<>();
@@ -5443,7 +3281,6 @@ public final class SemanticLowerer {
          * consumes (the unit payload alone cannot distinguish these two
          * pinned-write cells).
          *
-         * @return the recorded pinned-write facts; non-null
          */
         public BindingsProductionValidator.PinnedWriteFacts pinnedWriteFacts() {
             return new BindingsProductionValidator.PinnedWriteFacts(parameterBindings,
@@ -5457,7 +3294,6 @@ public final class SemanticLowerer {
          * detaching op's creation site (partial when the walk failed
          * mid-way).
          *
-         * @return the recorded closure facts; non-null
          */
         public List<ClosureFacts> closureFacts() {
             return List.copyOf(closureFactsList);
@@ -5469,7 +3305,6 @@ public final class SemanticLowerer {
          * in creation order, each with its declaration-ordered member
          * facts (partial when the walk failed mid-way).
          *
-         * @return the recorded group facts; non-null
          */
         public List<GroupFacts> groupFacts() {
             return List.copyOf(groupFactsList);
@@ -5484,7 +3319,6 @@ public final class SemanticLowerer {
          * walk order (partial when the walk failed mid-way; the empty
          * surface outside proof-analysis mode).
          *
-         * @return the proof fact surface; non-null
          */
         public BindingImmutabilityAnalysis.BindingImmutabilityFacts proofFacts() {
             if (!proofAnalysis) {
@@ -5501,7 +3335,6 @@ public final class SemanticLowerer {
          * when the walk failed mid-way; the empty surface outside
          * creation-rule-analysis mode).
          *
-         * @return the classification fact surface; non-null
          */
         public AdapterCreationRule.CreationRuleFacts creationRuleFacts() {
             if (!creationRuleAnalysis) {
@@ -5517,7 +3350,6 @@ public final class SemanticLowerer {
          * walk failed mid-way; the empty surface outside shape-map
          * mode).
          *
-         * @return the adapter emission fact surface; non-null
          */
         public ShapeMapFacts shapeMapFacts() {
             if (!shapeMapAnalysis) {
@@ -5561,13 +3393,7 @@ public final class SemanticLowerer {
          * republishes.</p>
          */
         private void seedIntrinsicBindings() {
-            // The declared conversion intrinsics of the compilation
-            // (ISSUE-0634): the project entry hands the session the closed
-            // set the seed registers; the per-module entries keep the
-            // closed two-member compiler constant. A module intrinsic
-            // outside the declared set is a compiler-constant disagreement
-            // — a producer defect, never a silently registered third
-            // intrinsic.
+
             List<IntrinsicKind> declared = declaredConversionIntrinsics.isEmpty()
                 ? List.of(IntrinsicKind.values()) : declaredConversionIntrinsics;
             for (String name : List.of("int", "number")) {
@@ -5617,17 +3443,7 @@ public final class SemanticLowerer {
                 registry.registerIntrinsic(
                     new FunctionAllocationIdentity(intrinsicValue.id()), kind,
                     (RuntimeDescriptor.Func) DescriptorService.describe(intrinsic.type()));
-                // The seed's incarnation carries the tracked
-                // function identity (J1): a function-typed load of the
-                // intrinsic binding publishes the seeded identity
-                // unchanged (identity preservation — the load's
-                // registration is the seed's own IntrinsicFunction
-                // keyed by the same identity), and every alias load
-                // republishes the same identity, so the producer
-                // rule's typed-load arm (ISSUE-0675) never allocates a
-                // second, dynamic record for the seeded value. The
-                // load's carrier emission is the function-value
-                // child's (J2).
+
                 functionIdentity.put(incarnation, intrinsicValue);
                 emitUserNullOp(SemanticOpKind.BINDING_INIT,
                     new KindPayload.BindingInitPayload(binding, INITIAL_LOOP_GENERATION,
@@ -5652,18 +3468,6 @@ public final class SemanticLowerer {
             hoistModuleLevelAllocs(statements, Set.of());
         }
 
-        /**
-         * Hoists the module-level names with the given module-level group
-         * members excluded from {@code BINDING_ALLOC} emission (ISSUE-0446
-         * group walk): a group member's name still registers — one
-         * {@link BindingId} per declared name (B1) — with the
-         * {@code RECURSIVE_GROUP_INIT} producing-allocation kind, the
-         * pinned {@code SHARED_CELL} cell kind (B2: the closed group
-         * payload records no cell-kind field, SCC mutual capture makes
-         * every member captured, and members have no separate ALLOC/INIT),
-         * and the member's pre-assigned allocation identity (the key the
-         * registry's one {@code LoweredBody} per member consumes, B4/B5).
-         */
         private void hoistModuleLevelAllocs(List<StatementNode> statements,
                                             Set<FunctionDeclaration> groupMembers) {
             for (StatementNode statement : statements) {
@@ -5766,27 +3570,6 @@ public final class SemanticLowerer {
             }
         }
 
-        /**
-         * The binding-core statement walk (ISSUE-0444): exactly the
-         * binding-relevant statement arms — let declarations, function
-         * declarations (hoisted name ALLOCs plus parameter ALLOCs at the
-         * body block's entry), the two-incarnation for-let shape, for-of
-         * iteration bindings, try/catch bindings, import aliases (hoisted
-         * — no position ops), and nested blocks. Every other statement is
-         * a foreign construct in this child's window
-         * ({@link ConstructUnlowered}).
-         *
-         * <p><b>Group-core mode (ISSUE-0446).</b> The walk partitions the
-         * scope's function declarations into SCCs over the body-reference
-         * graph first (B4): a size>=2 SCC lowers as one
-         * {@code RECURSIVE_GROUP_INIT} op — nested-scope groups at the
-         * first member's declaration position, module-level groups at
-         * module-init top (already emitted by
-         * {@link #lowerGroupModule}, so the walk skips every member) —
-         * and a size-1 SCC — self-recursive declarations included —
-         * lowers as {@code CLOSURE_NEW} + {@code BINDING_INIT} at the
-         * declaration position (the closure child's arm).</p>
-         */
         private void lowerBindingStatements(List<StatementNode> statements,
                                            boolean moduleLevel) {
             if (!groupCore) {
@@ -5815,16 +3598,6 @@ public final class SemanticLowerer {
             }
         }
 
-        /**
-         * The per-scope recursive-group membership of one statement list
-         * (ISSUE-0634, the group walk's B4 partition): every size&gt;=2 SCC's
-         * members mapped to their declaration-ordered SCC. Size-1 SCCs
-         * carry no entry (the closure-arm lowers them at their declaration
-         * position) and an empty map is returned outside group-core mode.
-         *
-         * @param statements the scope's statements; non-null
-         * @return the member-to-group map in first-member declaration order
-         */
         private Map<FunctionDeclaration, List<FunctionDeclaration>> groupMembership(
                 List<StatementNode> statements) {
             if (!groupCore) {
@@ -5857,11 +3630,6 @@ public final class SemanticLowerer {
          * once); a module-level group was emitted at module-init top by the
          * walk entry, so its members are skipped here.
          *
-         * @param function       the declared function; non-null
-         * @param memberGroups   the scope's member-to-group map; non-null
-         * @param moduleLevel    whether the declaration sits at module top
-         * @return {@code true} when the declaration was handled by the group
-         *         arm (the caller must not lower it as a closure)
          */
         private boolean skipGroupedFunctionDecl(FunctionDeclaration function,
                 Map<FunctionDeclaration, List<FunctionDeclaration>> memberGroups,
@@ -5892,9 +3660,7 @@ public final class SemanticLowerer {
                 case ForOfStatement forOf -> lowerBindingForOf(forOf);
                 case TryStatement tryStatement -> lowerBindingTry(tryStatement);
                 case ImportDeclaration ignored -> {
-                    // The alias ALLOC was hoisted to module-init top
-                    // (B1); the MODULE_IMPORT completion write is the
-                    // modules epic's (ISSUE-0239).
+
                 }
                 case deal.ast.ExpressionStatement expressionStatement ->
                     lowerBindingExprStatement(expressionStatement);
@@ -5955,52 +3721,6 @@ public final class SemanticLowerer {
             lowerExpression(statement.expr());
         }
 
-        // ---------------------------------------------------------------------
-        // The class-declaration arms (ISSUE-0511 declaration arm): class
-        // layouts, CLASS_DEFAULT emission, CLASS_FACTORY registration, and
-        // the CLASS_NEW literal arm (K-D2/K-D3/K-D4)
-        // ---------------------------------------------------------------------
-
-        /**
-         * The class-declaration arm (K-D2/K-D3): one
-         * {@link deal.semantic.ir.ClassLayout} per declared class keyed by
-         * the checker-resolved {@link ClassId} in declaration order —
-         * fields in declaration order with the declared descriptor
-         * produced through the single {@link DescriptorService} producer,
-         * the required-present marker ({@code !optional}), and
-         * {@code defaultOwner LOCAL} (default expressions are never part
-         * of a layout). For each defaulted field the arm emits exactly
-         * one detached {@code CLASS_DEFAULT} op whose own default block
-         * carries the lowered default expression — the
-         * {@code CLASS_DEFAULT} op is a member of exactly its own default
-         * block, the default-block ops record it as {@code parentOpId},
-         * and only these default blocks enter the block-membership table
-         * (K-D3). For an exported class the arm additionally emits one
-         * detached static {@code CLASS_FACTORY} op (policy
-         * {@code CLASS_CONSTRUCTION}, zero boundary children, zero return
-         * boundaries, never part of the module-init flow) registered under
-         * the pre-allocated
-         * {@code ClassInterface.constructionEntry} id in the produced
-         * {@link deal.semantic.ir.ClassFactoryRegistry} (K-D2);
-         * non-exported classes get a layout but never a factory and never
-         * a {@code ClassFactoryId}. Default application is gated on
-         * required-present (K-D4 step 2: "applies defaults for omitted
-         * required-present fields"): the factory payload's
-         * {@code classDefaultOpIds} lists only required-present defaulted
-         * fields' {@code CLASS_DEFAULT} op ids in declaration order — an
-         * omitted optional-with-default field stays missing and its
-         * default never runs, so its op id never enters the factory
-         * payload (the {@code CLASS_DEFAULT} op itself is still emitted,
-         * one per defaulted field per class).
-         *
-         * @param declaration the checked class declaration; non-null
-         * @param exported    whether the declaration is module-level
-         *                    export-wrapped
-         * @throws ConstructUnlowered    on a fact defect (duplicate class,
-         *         missing interface entry, unrepresentable field type)
-         * @throws ClassDefaultCapture   on a default-block reference to an
-         *         enclosing-region binding
-         */
         private void lowerClassDeclaration(ClassDeclaration declaration, boolean exported) {
             ClassId classId = classIdOf(declaration);
             if (classLayouts.containsKey(classId)) {
@@ -6008,8 +3728,7 @@ public final class SemanticLowerer {
                     + declaration.name() + "' (the checker rejects duplicate class names; "
                     + "a second layout for " + classId + " is a fact defect)");
             }
-            // The layout: one FieldLayout per declared field in declaration
-            // order (K-D2).
+
             List<deal.semantic.ir.ClassLayout.FieldLayout> fields = new ArrayList<>();
             Map<String, RuntimeDescriptor> descriptors = new LinkedHashMap<>();
             for (ClassField field : declaration.fields()) {
@@ -6030,10 +3749,6 @@ public final class SemanticLowerer {
                 new deal.semantic.ir.ClassLayout(classId, fields);
             classLayouts.put(classId, layout);
 
-            // CLASS_DEFAULT emission: one detached op per defaulted field in
-            // declaration order (K-D3); only these default blocks enter the
-            // block-membership table and each CLASS_DEFAULT op is a member of
-            // exactly its own default block.
             List<OpId> classDefaultOpIds = new ArrayList<>();
             LinkedHashMap<String, ClassDefaultFact> defaults = new LinkedHashMap<>();
             for (ClassField field : declaration.fields()) {
@@ -6045,9 +3760,7 @@ public final class SemanticLowerer {
                 ValueId slot = ids.nextValueId(module, nextOrdinal++, 0);
                 AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
                 OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
-                // The detached structural op (K-D12: SYNTHETIC; no static
-                // parent — the nesting owner is the triggering CLASS_NEW /
-                // CLASS_FACTORY recorded in their payloads).
+
                 SourceOrigin origin = new SourceOrigin(sourceId,
                     toSourceSpan(defaultExpr.span()), SourceOriginKind.SYNTHETIC,
                     anchor, null);
@@ -6065,23 +3778,7 @@ public final class SemanticLowerer {
                 ValueId produced;
                 try {
                     emit(op);
-                    // The default expression's final producing op publishes
-                    // the CLASS_DEFAULT op's result slot (the slot-threaded
-                    // production — one value identity re-produced per
-                    // construction execution, the LOOP(FOR) condition
-                    // precedent). A function-typed default whose final
-                    // producing op publishes the statically tracked
-                    // function identity instead of the threaded slot — a
-                    // function-typed binding reference's load — rebuilds
-                    // the CLASS_DEFAULT op with that identity as its
-                    // result, so R-FUNCTION-BINDING resolves the op's
-                    // result through the identity's own
-                    // FunctionExecutionBinding (K-D3:
-                    // binding-referenced defaults pass the referenced
-                    // value by reference; loads preserve allocation
-                    // identity). The function-literal default's
-                    // CLOSURE_NEW publishes the threaded slot itself, so
-                    // no rebuild fires there.
+
                     produced = lowerExpression(defaultExpr, slot);
                     if (!produced.equals(slot)) {
                         op = buildOp(opId, SemanticOpKind.CLASS_DEFAULT,
@@ -6109,10 +3806,6 @@ public final class SemanticLowerer {
             }
             classDefaults.put(classId, defaults);
 
-            // The generated C$fromJson/C$toJson function bodies (K-D8/
-            // K-D10, ISSUE-0515): emitted for every @jsonable class
-            // (exported or not) — the checker defines the synthetic
-            // function symbols for every @jsonable class.
             if (declaration.isJsonable()) {
                 lowerJsonFunctions(declaration, classId, layout, classDefaultOpIds);
             }
@@ -6120,10 +3813,7 @@ public final class SemanticLowerer {
             if (!exported) {
                 return;
             }
-            // CLASS_FACTORY emission for exported classes (K-D2): the
-            // pre-allocated constructionEntry from the module's own interface
-            // index entry; zero boundary children and zero return boundaries;
-            // detached static op, never part of the module-init flow.
+
             deal.semantic.ir.ClassInterface interfaceEntry = null;
             for (deal.semantic.ir.ClassInterface candidate : ownInterface.classes()) {
                 if (candidate.classId().equals(classId)) {
@@ -6154,52 +3844,6 @@ public final class SemanticLowerer {
             factoryRegistry.put(interfaceEntry.constructionEntry(), opId);
         }
 
-        /**
-         * The generated {@code @jsonable} function bodies (ISSUE-0515,
-         * class-construction-jsonable-operations K-D8/K-D10; the
-         * {@code js-v12-jsonable-completion}/{@code jvm-v12-json-completion}
-         * generated {@code C$fromJson}/{@code C$toJson} shapes): for
-         * every {@code @jsonable} class exactly two synthetic
-         * module-level {@link LoweredFunction}s —
-         * {@code C$fromJson(s: string): C|null} and
-         * {@code C$toJson(v: C): string} — emitted as ordinary
-         * {@code CLOSURE_NEW} producers (the closure-seam precedent: the
-         * {@code CLOSURE_NEW} op at the declaration position, the
-         * {@code LoweredFunction} record in {@code unit.functions}, and
-         * the {@code FunctionExecutionBinding.LoweredBody} registration
-         * through the {@link FunctionBindingRegistry} seam). The {@code $}
-         * sigil names are compiler-reserved (the spec {@code $} rule;
-         * the checker already defines the synthetic function symbols in
-         * the root scope). Each body block carries exactly the parameter
-         * {@code BINDING_ALLOC} at the body entry (the pinned parameter
-         * model), the parameter {@code BINDING_LOAD}, and one JSON op:
-         * {@code JSON_FROM_CLASS {layout, jsonString = the parameter
-         * load result}} with policy {@code JSON_FROM_NULL} and result
-         * type {@code ?class:<ClassId>}, or {@code JSON_TO_CLASS
-         * {classValue = the parameter load result, layout}} with policy
-         * {@code JSON_TO_ERROR} and result type {@code string} (the
-         * validator-pinned policies and result types). The
-         * {@code JSON_FROM_CLASS} op's per-site {@code CLASS_DEFAULT}
-         * children are recorded in the produced
-         * {@link deal.semantic.ir.JsonDefaultChildTable} record — the
-         * class's required-present defaulted fields'
-         * {@code CLASS_DEFAULT} op ids in declaration order (the
-         * {@code classDefaultOpIds} list; the schema payload carries no
-         * child list, K-D8 step 5). Export publication of the generated
-         * functions is E10's — not emitted here. All ids/origins are
-         * deterministic synthetic values, so repeated lowering is
-         * byte-identical.
-         *
-         * @param declaration       the checked {@code @jsonable} class
-         *                          declaration; non-null
-         * @param classId           the checker-resolved class identity;
-         *                          non-null
-         * @param layout            the produced layout record of the
-         *                          class; non-null
-         * @param classDefaultOpIds the class's required-present defaulted
-         *                          fields' {@code CLASS_DEFAULT} op ids in
-         *                          declaration order; non-null
-         */
         private void lowerJsonFunctions(ClassDeclaration declaration, ClassId classId,
                                         deal.semantic.ir.ClassLayout layout,
                                         List<OpId> classDefaultOpIds) {
@@ -6343,47 +3987,6 @@ public final class SemanticLowerer {
             return jsonOpId;
         }
 
-        /**
-         * {@code CLASS_NEW} — the class-typed object-literal arm of the
-         * class walk (K-D4's closed payload shape; ISSUE-0511, extended
-         * by the ISSUE-0514 SHARED_FACTORY arm): the provided-value
-         * operands complete in literal order before the op, the payload
-         * records {@code providedFields} in literal order,
-         * {@code classDefaultOpIds} for omitted required-present
-         * defaulted fields in declaration order (LOCAL default
-         * application, K-D4 step 2 — empty under SHARED_FACTORY, whose
-         * defaults transfer to the owner's {@code CLASS_FACTORY}), and
-         * {@code fieldBoundaries} in declaration order —
-         * {@code CLASS_LITERAL_FIELD} per provided field with input =
-         * the provided value, {@code CLASS_DEFAULT_FIELD} per omitted
-         * required-present defaulted field with input = the field's
-         * {@code CLASS_DEFAULT} child result (LOCAL, K-D4 input wiring)
-         * or the owner {@code CLASS_FACTORY} op's result {@code ValueId}
-         * (SHARED_FACTORY, the K-D4 cross-unit D4-global reference —
-         * the executor's extraction rule reads the transferred
-         * instance's named field); omitted optional fields get no
-         * boundary and no default op id, defaulted or not — an
-         * optional-with-default field's default never runs at
-         * construction and the field stays missing.
-         * The op carries policy {@code CLASS_CONSTRUCTION} and publishes a
-         * fresh tagged-instance value ({@code class:<ClassId>}); the
-         * boundary children record the {@code CLASS_NEW} op as
-         * {@code parentOpId}. A literal of an imported class with the
-         * owner's shared-factory facts lowers {@code defaultOwner:
-         * SHARED_FACTORY} with {@code classFactoryRef} = the interface's
-         * pre-allocated {@code constructionEntry} (K-D4/K-D5); a literal
-         * of an imported class without facts defers to E10
-         * ({@code RETAINED_ABI_DEFERRED}) and is never silently emitted
-         * as SHARED_FACTORY. Same-module literals stay LOCAL.
-         *
-         * @param literal the checked class-typed object literal; non-null
-         * @param slot    the result slot of the final producing op, or
-         *                {@code null} to allocate one
-         * @return the produced {@code ValueId} (the slot when given)
-         * @throws ConstructUnlowered on a shape outside this arm
-         * @throws RetainedAbiDeferred on an imported class without the
-         *         owner's shared-factory facts (the E10 deferral)
-         */
         private ValueId lowerClassLiteral(ObjectLiteralExpr literal, ValueId slot) {
             Type type = checkedType(literal);
             if (!(type instanceof Type.Class classType)) {
@@ -6393,16 +3996,7 @@ public final class SemanticLowerer {
             }
             ClassId classId = new ClassId(
                 DescriptorService.semanticModulePath(classType.identity()), classType.name());
-            // The closed owner lookup order (ISSUE-0634; design sources
-            // {@code project-lowering-entry-and-registration-seeds} D4 and
-            // the project lowering contract): the unit's own declared layout
-            // -> LOCAL (a locally declared class stays LOCAL, T2's arm); the
-            // in-project factory facts -> SHARED_FACTORY (K-D4/K-D5); a
-            // project registration seed -> the seed's owner member; none ->
-            // the fail-closed E10 deferral (never silently emitted and never
-            // executed here). The seeds are the project-level layout
-            // resolution context, consulted after the unit's own declared
-            // layouts and never merged into them.
+
             deal.semantic.ir.ClassLayout layout = classLayouts.get(classId);
             DefaultOwner defaultOwner = DefaultOwner.LOCAL;
             deal.semantic.ir.ClassFactoryId classFactoryRef = null;
@@ -6421,30 +4015,12 @@ public final class SemanticLowerer {
                     if (seed == null) {
                         throw new RetainedAbiDeferred(classId.text());
                     }
-                    // A registration seed: the class's layout and its closed
-                    // owner member (HOST_DEFAULTS for a host declaration
-                    // class, FFI_PLAN for an extern-C declaration class,
-                    // BUILTIN_DEFAULTS for the builtin Error). The emitted
-                    // CLASS_NEW carries the seed's owner fact. The builtin
-                    // Error construction is realized by the builtin arm
-                    // (K13): provided fields in literal order, one
-                    // CLASS_LITERAL_FIELD boundary per provided field, no
-                    // default child (the omitted fields take the compiler
-                    // constant empty string at the construction site), the
-                    // null factory ref, and the empty default-op list. The
-                    // host declaration class construction (ISSUE-0624; K10)
-                    // is realized by the host arm: the same provided-field
-                    // boundaries over the seed layout with the loaded
-                    // {@code <C>_defaults} data supplying the omitted
-                    // fields — no default child and the null factory ref. The
-                    // extern-C FFI_PLAN owner stays fail-closed until the FFI
-                    // child lands — a registration fact is never silently
-                    // executed as another owner.
+
                     layout = seed.layout();
                     defaultOwner = seed.owner();
                 }
             }
-            // Provided values complete in literal order (K-D4 step 1).
+
             List<KindPayload.ProvidedField> providedFields = new ArrayList<>();
             Map<String, ValueId> providedValues = new LinkedHashMap<>();
             Map<String, Span> providedSpans = new LinkedHashMap<>();
@@ -6457,13 +4033,7 @@ public final class SemanticLowerer {
             ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
-            // Default application and field validation in declaration order
-            // (K-D4 steps 2 and 5): the boundary children are built first so
-            // the payload names their op ids, then emitted as children.
-            // LOCAL wires the field's CLASS_DEFAULT child result;
-            // SHARED_FACTORY wires the owner CLASS_FACTORY op's result
-            // ValueId (the K-D4 cross-unit D4-global reference) and records
-            // no classDefaultOpIds (the owner's factory carries them).
+
             List<OpId> classDefaultOpIds = new ArrayList<>();
             List<KindPayload.FieldBoundary> boundaries = new ArrayList<>();
             List<SemanticOp> children = new ArrayList<>();
@@ -6479,13 +4049,7 @@ public final class SemanticLowerer {
                     continue;
                 }
                 if (defaultOwner == DefaultOwner.SHARED_FACTORY) {
-                    // An omitted required-present field of an imported class
-                    // is always defaulted (the checker's E4001 rejects a
-                    // no-default omitted required field); the owner's factory
-                    // fills exactly those fields, so the boundary wires the
-                    // factory result (the K-D4 extraction rule). The
-                    // interface fact is re-checked fail closed — never
-                    // inferred.
+
                     if (field.required()) {
                         if (!sharedFacts.hasDeclaredDefault(field.name())) {
                             throw new ConstructUnlowered("omitted required-present field '"
@@ -6528,14 +4092,6 @@ public final class SemanticLowerer {
             return result;
         }
 
-        /**
-         * Builds (without emitting) one {@code CLASS_NEW} field-boundary
-         * child (K-D4 step 5): kind, the field's declared descriptor, the
-         * pinned input, the descriptor-kind policy, the canonical
-         * runtime-validation realization, {@code parentOpId} = the
-         * {@code CLASS_NEW} op id, and a {@code SYNTHETIC} origin at the
-         * given span (the {@code ARRAY_NEW} element-boundary precedent).
-         */
         private SemanticOp buildFieldBoundary(BoundaryKind kind, RuntimeDescriptor descriptor,
                                               ValueId input, Span span, OpId classNewOpId) {
             return buildNullOp(SemanticOpKind.BOUNDARY,
@@ -6546,22 +4102,6 @@ public final class SemanticLowerer {
                 classNewOpId);
         }
 
-        /**
-         * The checker-resolved class identity of one class declaration
-         * (ISSUE-0634; design sources
-         * {@code project-lowering-entry-and-registration-seeds} D4 and
-         * the project lowering contract): the checked
-         * {@code ClassSymbol}'s canonical identity projected through the
-         * single {@link DescriptorService} module-path producer — the
-         * same producer the class-literal, field-access, and
-         * class-descriptor arms use, so a unit's own
-         * {@code classLayouts} key, its {@code CLASS_NEW} payloads, its
-         * class-typed descriptors, and the interface index's
-         * {@code ClassInterface} are one identity ({@code ClassSymbol}'s
-         * {@code modulePath} is the private deployment wiring key and
-         * never renders descriptor text). A declaration without a
-         * checked {@code ClassSymbol} is a producer defect.
-         */
         private ClassId classIdOf(ClassDeclaration declaration) {
             SymbolTable scope = currentCheckerScope();
             Symbol symbol = scope == null ? null : scope.resolve(declaration.name());
@@ -6599,15 +4139,6 @@ public final class SemanticLowerer {
             }
         }
 
-        /**
-         * The checked {@link Type} of a class-field annotation (K-D2: the
-         * layout descriptors are produced from the checked field types
-         * through {@link DescriptorService}): the checker-fact mirror of
-         * {@code NameResolver.resolveTypeNode} resolved against the
-         * current checker scope (the scope the checker resolved the
-         * annotation in — D4: no {@code NameResolver} instance is
-         * retained). An unresolvable annotation is a producer defect.
-         */
         private Type fieldTypeOf(deal.ast.TypeNode node) {
             return switch (node) {
                 case deal.ast.NamedType named -> resolveNamedFieldType(named);
@@ -6683,22 +4214,11 @@ public final class SemanticLowerer {
             return scope == null ? null : scope.resolve(name);
         }
 
-        /**
-         * The produced factory-registration record of the session (K-D2):
-         * the insertion-ordered {@code constructionEntry}&#8594;factory
-         * bindings of the exported classes.
-         */
         public deal.semantic.ir.ClassFactoryRegistry factoryRegistry() {
             return new deal.semantic.ir.ClassFactoryRegistry(
                 new LinkedHashMap<>(factoryRegistry));
         }
 
-        /**
-         * The produced JSON default-child record of the session (K-D8):
-         * the insertion-ordered {@code JSON_FROM_CLASS}&#8594;per-site
-         * {@code CLASS_DEFAULT} child bindings of the {@code @jsonable}
-         * classes.
-         */
         public deal.semantic.ir.JsonDefaultChildTable jsonDefaultChildren() {
             return new deal.semantic.ir.JsonDefaultChildTable(
                 new LinkedHashMap<>(jsonDefaultChildren));
@@ -6889,10 +4409,6 @@ public final class SemanticLowerer {
          * the B2 derivation through the walk's registration surface —
          * the shape-map child's thunk arm).</p>
          *
-         * @param decl        the adapted declaration; non-null
-         * @param binding     the declared name's {@link BindingId}; non-null
-         * @param incarnation the declared name's generation-0
-         *                    incarnation; non-null
          */
         private void lowerAdaptedVarDecl(VariableDeclaration decl, BindingId binding,
                                          BindingCoreIncarnation incarnation) {
@@ -6995,8 +4511,6 @@ public final class SemanticLowerer {
          * creation site (the ops execute only when E7's protocol
          * re-executes the thunk).
          *
-         * @param source the function-typed source expression; non-null
-         * @return the detached thunk source (block, ordered ops, captures)
          */
         private ThunkSource lowerThunkSource(ExpressionNode source) {
             BlockId thunkBlock = allocateBlock();
@@ -7038,9 +4552,6 @@ public final class SemanticLowerer {
          * {@link AdaptSourceRef.Thunk} records (fail closed on a
          * malformed source op list).
          *
-         * @param thunk the detached thunk source; non-null
-         * @return the closed {@code Thunk {BlockId, capturedBindings}}
-         *         source reference
          */
         private AdaptSourceRef.Thunk thunkSourceRef(ThunkSource thunk) {
             List<BindingGeneration> pinned = new ArrayList<>();
@@ -7064,21 +4575,6 @@ public final class SemanticLowerer {
          * {@code AdapterBinding} registration through the registry
          * child's seam keyed by the adapter identity.
          *
-         * @param mode            the closed-map capture mode; non-null
-         * @param sourceRef       the closed source reference; non-null
-         * @param sourceSignature the derived source signature; non-null
-         * @param targetSignature the derived target signature; non-null
-         * @param proof           the recorded proof (present iff VALUE's
-         *                        operand is a binding load); nullable
-         * @param operands        the mode's operand set (VALUE: exactly
-         *                        one; SHARED_CELL/REEVALUATE_THUNK:
-         *                        zero); non-null
-         * @param operandTypes    the operand descriptors in operand order
-         *                        (the source signature for VALUE);
-         *                        non-null
-         * @param span            the position's origin span; non-null
-         * @return the emitted op's identity plus its fresh adapter
-         *         allocation identity
          */
         private EmittedAdapter emitFunctionAdapt(CaptureMode mode, AdaptSourceRef sourceRef,
                                                  RuntimeDescriptor.Func sourceSignature,
@@ -7300,31 +4796,6 @@ public final class SemanticLowerer {
             }
         }
 
-        /**
-         * The binding walk's function-declaration arm: the module-level
-         * name ALLOC was hoisted (B1); a nested-scope declaration emits
-         * its name ALLOC at the declaration position in the enclosing
-         * block. The body then gets its block identity, the parameter
-         * ALLOCs at the body block's entry (generation 0, {@code DIRECT},
-         * no BINDING_INIT — the parameter-transfer write is the invoking
-         * machinery's, E7), and the body statements through the binding
-         * walk.
-         *
-         * <p><b>Closure-core mode (ISSUE-0445).</b> Every size-1
-         * non-group declaration additionally produces {@code CLOSURE_NEW}
-         * + {@code BINDING_INIT} at the declaration position (B4): the
-         * body walks first into a buffer with capture collection active
-         * (the capture set is the body's free bindings in first-reference
-         * order, resolved at the creation site through the dominant frame
-         * entries — B3/B9 R2), then the {@code CLOSURE_NEW} op publishes
-         * the pre-allocated function-allocation identity (module-level
-         * names reuse the hoist-time identity so captures of
-         * later-declared module functions resolve to the hoisted ALLOC —
-         * B1; nested names pre-allocate at the declaration), the
-         * {@code BINDING_INIT} commits it to the name binding as the
-         * immediate commit after the closure creation, and the buffered
-         * body ops flush after the pair.</p>
-         */
         private void lowerBindingFunctionDecl(FunctionDeclaration function,
                                               boolean moduleLevel) {
             BindingCoreIncarnation nameIncarnation = null;
@@ -7469,44 +4940,6 @@ public final class SemanticLowerer {
             emitTarget().addAll(bodyOps);
         }
 
-        /**
-         * Lowers one size>=2 SCC of function declarations as exactly one
-         * {@code RECURSIVE_GROUP_INIT} op (ISSUE-0446 recursive-group
-         * child, B4): the payload carries the declaration-ordered member
-         * {@code {bindings, functions}} lists; the op has no result slot
-         * (the member bindings are the observable effect).
-         *
-         * <p><b>Identities first (phase 1).</b> Every member's
-         * allocation identity is pre-assigned at lowering — unique per
-         * member, deterministic, declaration order — before any member
-         * body walks, so a sibling reference inside a member body
-         * resolves to the sibling's incarnation (generation 0, producing
-         * allocation = the group op) and publishes the pre-assigned
-         * member identity; the one {@code LoweredBody} registration per
-         * member is keyed by that identity (B4/B5, the keys the registry
-         * consumes). Module-level members reuse the hoist-time
-         * registration and pre-assigned identity (B1); nested-scope
-         * members register at the group position with no
-         * {@code BINDING_ALLOC}/{@code BINDING_INIT} — the publication
-         * phase (phase 2) publishes every member binding cell atomically,
-         * all-or-nothing, after every member identity is allocated.</p>
-         *
-         * <p>Member bodies lower like any function body with captures per
-         * the closure contract (B3): the buffered detached-body walk with
-         * capture collection resolves each body's free bindings at the
-         * group op's creation site. Member cells are {@code SHARED_CELL}
-         * by construction (B2). The group op is emitted at the given
-         * site — module-init top for module-level groups, the first
-         * member's declaration position for nested-scope groups (B4) —
-         * and the member body ops flush after it in declaration order.
-         * Group execution (allocation/publication) is realized by the
-         * oracle/emitters.</p>
-         *
-         * @param members     the SCC's members in declaration order
-         *                    (size >= 2); non-null
-         * @param moduleLevel {@code true} for a module-level group whose
-         *                    op sits at module-init top
-         */
         private void lowerGroup(List<FunctionDeclaration> members, boolean moduleLevel) {
             List<BindingId> memberBindings = new ArrayList<>();
             List<FunctionId> memberFunctions = new ArrayList<>();
@@ -7551,12 +4984,7 @@ public final class SemanticLowerer {
             List<RuntimeDescriptor.Func> signatures = new ArrayList<>();
             List<List<CapturedCell>> capturedLists = new ArrayList<>();
             for (FunctionDeclaration member : members) {
-                // The full-program session's reserved facts win for a
-                // module-level member (ISSUE-0634): the hoist's per-function
-                // context is the member's single identity, so the group
-                // registration and any call of the member resolve the same
-                // function id and body block. Outside the full-program
-                // session the group arm allocates its own.
+
                 FrameEntry hoistedEntry = moduleLevel ? frameEntryOf(member.name()) : null;
                 FunctionContext reservedContext = fullProgram && moduleLevel
                         && hoistedEntry != null
@@ -7583,12 +5011,7 @@ public final class SemanticLowerer {
                     checkerScopeNodes.push(member.body());
                     boolean bodyComplete = false;
                     try {
-                        // The session's statement walk owns the member-body
-                        // arms: the binding walk outside the project session,
-                        // the unified full-program walk inside it (the
-                        // project walk lowers every body the same way, so a
-                        // member body carries its RETURN and its single
-                        // return boundary like any other body; ISSUE-0635).
+
                         statementWalk.walk(member.body().statements(), false);
                         bodyComplete = true;
                     } finally {
@@ -7707,25 +5130,6 @@ public final class SemanticLowerer {
                 + "producer defect)");
         }
 
-        /**
-         * The binding walk's for-let arm (B1): exactly two incarnations
-         * of one {@link BindingId} — the counter (generation 0, ALLOC +
-         * INIT in the {@code LOOP} init block with the first condition
-         * production; condition/update references and the body-top INIT
-         * operand name generation 0) and the per-iteration incarnation
-         * (generation 1, {@code SHARED_CELL}, ALLOC at the top of the
-         * body block, INIT from the generation-0 load; body references
-         * resolve generation 1) — the retained per-iteration copy shape
-         * ({@code deal/codegen/lua/LuaBackend.java:1489-1492}). The
-         * {@code LOOP(FOR)} op carries
-         * {@code {initBlock, condition, bodyBlock, updateBlock}} with the
-         * init block = one-time init including the first condition
-         * production and the update block = update ops + condition
-         * re-production (the control-flow epic's placement contract,
-         * {@code control-flow-structures} C-D4). A for without a let
-         * initializer, without a condition, or with a non-assignment
-         * update is outside this child's window.
-         */
         private void lowerBindingForLet(ForStatement statement) {
             if (statement.init().isEmpty()
                     || !(statement.init().get() instanceof ForInit.VarDecl varDecl)) {
@@ -7800,15 +5204,7 @@ public final class SemanticLowerer {
             ValueId condition = fullProgram
                 ? lowerExpression(statement.condition().get(), conditionSlot)
                 : lowerExpression(statement.condition().get());
-            // The LOOP op itself sits in the enclosing block (the
-            // control-flow epic's placement contract, C-D4): the init
-            // block is the one-time init child including the first
-            // condition production — the op is not a member of its own
-            // init child block (C-D2 block-tree shape). Pop before the
-            // emission so the op lands in the enclosing block; the
-            // full-program carrier emits the op at the top of this arm
-            // instead (its condition slot is threaded through
-            // init/update productions).
+
             blockStack.pop();
             if (!fullProgram) {
                 emitUserNullOp(SemanticOpKind.LOOP,
@@ -7874,20 +5270,6 @@ public final class SemanticLowerer {
             checkerScopeNodes.pop();
         }
 
-        /**
-         * The binding walk's for-of arm: the iterable's prior steps, the
-         * {@code FOR_EACH} op (the iteration binding's producing
-         * allocation — no {@code BINDING_ALLOC} exists for it; the
-         * payload's binding generation is the incarnation's ordinal, and
-         * the fresh per-iteration cell comes from the op's per-iteration
-         * allocation semantics, never a new ordinal), then the body
-         * statements under the iteration-binding frame. The iteration
-         * binding is classified {@code SHARED_CELL} (B2 — the
-         * per-iteration cell exists precisely for capture semantics; the
-         * payload records no cell kind). A string-typed iterable lowers
-         * ({@code STRING_SCALARS}); an array iterable is the
-         * control-flow epic's ({@code FOR_EACH(ARRAY_VALUES)}).
-         */
         private void lowerBindingForOf(ForOfStatement statement) {
             Type iterableType = checkedType(statement.iterable());
             if (iterableType instanceof Type.Array) {
@@ -7922,16 +5304,6 @@ public final class SemanticLowerer {
             popBindingFrame();
         }
 
-        /**
-         * The binding walk's try/catch arm: the {@code TRY_CATCH} op
-         * carrying the try block, the catch binding (this child's single
-         * {@link BindingId} for the catch name), and the catch block;
-         * the catch binding's ALLOC sits at the catch block's entry
-         * (generation 0, {@code DIRECT}, mutable, no BINDING_INIT — the
-         * catch-entry write is {@code TRY_CATCH}'s, ISSUE-0234). The
-         * control-flow epic refines the op's execution; this child
-         * supplies the binding model the structure operates on.
-         */
         private void lowerBindingTry(TryStatement statement) {
             BlockId tryBlock = allocateBlock();
             BlockId catchBlock = allocateBlock();
@@ -7980,10 +5352,6 @@ public final class SemanticLowerer {
             checkerScopeNodes.pop();
         }
 
-        // ---------------------------------------------------------------------
-        // The recursive-group SCC partition (ISSUE-0446, B4)
-        // ---------------------------------------------------------------------
-
         /**
          * Partitions one scope's function declarations into SCCs over the
          * body-reference graph (B4): an edge {@code D -> D'} exists iff
@@ -7996,9 +5364,6 @@ public final class SemanticLowerer {
          * by first member's declaration order — deterministic,
          * byte-identical lowering.
          *
-         * @param declarations the scope's function declarations in
-         *                     declaration order; non-null
-         * @return the SCCs (size-1 self-recursive SCCs included)
          */
         private static List<List<FunctionDeclaration>> partitionFunctionDeclarations(
                 List<FunctionDeclaration> declarations) {
@@ -8632,10 +5997,6 @@ public final class SemanticLowerer {
          * produced subexpression ops precede the consuming op in
          * {@link #ops()}.
          *
-         * @param expr the checked expression; non-null
-         * @return the produced {@link ValueId}
-         * @throws ConstructUnlowered on a construct without an arm in this
-         *         stage's window
          */
         public ValueId lowerExpression(ExpressionNode expr) {
             return lowerExpression(expr, null);
@@ -8654,12 +6015,6 @@ public final class SemanticLowerer {
          * producing op takes the slot; every intermediate op allocates
          * its own value.
          *
-         * @param expr the checked expression; non-null
-         * @param slot the result slot of the final producing op, or
-         *             {@code null} to allocate a fresh value
-         * @return the produced {@link ValueId} (the slot when given)
-         * @throws ConstructUnlowered on a construct without an arm in this
-         *         stage's window
          */
         public ValueId lowerExpression(ExpressionNode expr, ValueId slot) {
             Objects.requireNonNull(expr, "expr must not be null");
@@ -8705,10 +6060,6 @@ public final class SemanticLowerer {
          * {@link ConstructUnlowered} ({@code FOR_EACH(ARRAY_VALUES)} is
          * E5's).
          *
-         * @param stmt the checked for-of statement; non-null
-         * @return the produced {@code FOR_EACH} op id
-         * @throws ConstructUnlowered on a non-string iterable or on a
-         *         body statement without an arm
          */
         public OpId lowerForOfStatement(ForOfStatement stmt) {
             Objects.requireNonNull(stmt, "stmt must not be null");
@@ -8857,10 +6208,6 @@ public final class SemanticLowerer {
          * {@code parentOpId} and each source subexpression appears
          * exactly once as a producing op.
          *
-         * @param assignment the checked assignment expression; non-null
-         * @return the committed value's {@link ValueId} (A-D6)
-         * @throws ConstructUnlowered on a target shape outside the closed
-         *         A-D9 map
          */
         public ValueId lowerAssignment(AssignmentExpr assignment) {
             return lowerAssignment(assignment, null);
@@ -8871,10 +6218,6 @@ public final class SemanticLowerer {
          * the slot threads to the RHS expression's final producing op,
          * whose value identity the {@code ASSIGN} op publishes (A-D6).
          *
-         * @param assignment the checked assignment expression; non-null
-         * @param slot       the committed-value slot, or {@code null} to
-         *                   allocate fresh
-         * @return the committed value's {@link ValueId}
          */
         public ValueId lowerAssignment(AssignmentExpr assignment, ValueId slot) {
             Objects.requireNonNull(assignment, "assignment must not be null");
@@ -8932,9 +6275,6 @@ public final class SemanticLowerer {
          * the pinned order receiver → key → normalize → [array bounds
          * boundary] → commit; the result is {@code none} (A-D6).
          *
-         * @param delete the checked delete statement; non-null
-         * @throws ConstructUnlowered on a target shape outside the closed
-         *         A-D9 map
          */
         public void lowerDelete(DeleteStatement delete) {
             Objects.requireNonNull(delete, "delete must not be null");
@@ -8972,20 +6312,6 @@ public final class SemanticLowerer {
                 + " (no closed A-D9 delete shape)");
         }
 
-        /**
-         * ASSIGN VARIABLE — the single closed shape
-         * {@code [valueOp, boundaryOp(VARIABLE_ASSIGNMENT),
-         * commitOp(BINDING_STORE)]}: the value child, then exactly one
-         * {@code VARIABLE_ASSIGNMENT} boundary carrying the target
-         * binding's declared descriptor and the descriptor-kind policy
-         * with input = the committed value, then the {@code BINDING_STORE}
-         * commit storing {@code {binding, generation, committed value}}
-         * (A-D4/A-D5). The optional {@code FUNCTION_ADAPT} adapter slot
-         * between the value and the boundary is E6's creation rule — this
-         * epic produces no adapter children. The {@code ASSIGN} result is
-         * the committed value with {@code resultType} = the declared
-         * target descriptor (A-D6).
-         */
         private ValueId lowerVariableAssign(AssignmentExpr assignment, IdentifierExpr target) {
             if (closureCore) {
                 return lowerVariableAssignClosure(assignment, target);
@@ -9010,9 +6336,7 @@ public final class SemanticLowerer {
                 binding = frame.binding();
                 generation = frame.generation();
             } else if (site != null) {
-                // The binding-environment hook (ISSUE-0444 binding-core
-                // child): the store commits the dominant incarnation at
-                // the assignment site (B9 R1).
+
                 binding = site.binding();
                 generation = site.generation();
             } else if (checks.symbolTable().resolve(target.name())
@@ -9161,13 +6485,6 @@ public final class SemanticLowerer {
          * preserve it — the adapter is an ordinary function value after
          * the commit).
          *
-         * @param assignment the adapted assignment; non-null
-         * @param target     the target identifier; non-null
-         * @param binding    the target binding's identity; non-null
-         * @param generation the target's dominant generation; non-null
-         * @param sourceType the RHS's checked function type; non-null
-         * @param targetType the target's checked function type; non-null
-         * @return the committed adapter identity (A-D6)
          */
         private ValueId emitAdaptedVariableAssignChain(AssignmentExpr assignment,
                                                        IdentifierExpr target,
@@ -9537,25 +6854,6 @@ public final class SemanticLowerer {
             return value;
         }
 
-        /**
-         * ASSIGN CLASS_FIELD write — {@code [containerOp, valueOp,
-         * commitOp(FIELD_WRITE)]}: zero chain boundary ops (the write
-         * check lives in the commit op, A-D4). The E4/E5 window keeps
-         * the zero-boundary {@code FIELD_WRITE} shape
-         * ({@code CLASS_FIELD_ASSIGNMENT} stays admissible but is
-         * produced by E9, never here). The class window (K-D6) produces
-         * the pinned boundary children parented to the commit op: (1)
-         * {@code UNTYPED_CLASS_INPUT} with descriptor
-         * {@code class:<ClassId>} and input = the resolved receiver;
-         * (2) {@code CLASS_FIELD_ASSIGNMENT} with the field's declared
-         * descriptor (the unit's local layout) and input = the stored
-         * value — both with the descriptor-kind policy, the canonical
-         * runtime-validation realization, a {@code SYNTHETIC} origin at
-         * the access span, and {@code parentOpId} = the
-         * {@code FIELD_WRITE} op (K-D12). The store commits only after
-         * both pass; the receiver and the key are never re-evaluated
-         * (the key is the static field name).
-         */
         private ValueId lowerClassFieldAssign(AssignmentExpr assignment,
                                               MemberAccessExpr access, Type.Class classType) {
             return lowerClassFieldAssign(assignment, access, classType, null);
@@ -9567,10 +6865,7 @@ public final class SemanticLowerer {
             RuntimeDescriptor fieldDescriptor =
                 ContainerPayloadDescriptors.resultDescriptorOf(checkedType(access));
             ClassId classId = new ClassId(DescriptorService.semanticModulePath(classType.identity()), classType.name());
-            // The class window's pinned CLASS_FIELD_ASSIGNMENT descriptor
-            // (K-D6): the field's declared descriptor from the unit's
-            // local layout — never the checker's optional-read nullable
-            // wrap, which write contexts do not carry here anyway.
+
             RuntimeDescriptor declaredDescriptor = null;
             RuntimeDescriptor classDescriptor = null;
             if (classCore) {
@@ -9802,20 +7097,6 @@ public final class SemanticLowerer {
                 null, null, FailurePolicyId.NO_DEAL_FAILURE, origin));
         }
 
-        /**
-         * DELETE CLASS_FIELD — {@code [containerOp,
-         * commitOp(FIELD_DELETE)]}: no key, no normalize, no bounds
-         * boundary (table and class targets run no bounds boundary;
-         * A-D9). The E4/E5 window keeps the zero-boundary
-         * {@code FIELD_DELETE} shape. The class window (K-D6) produces
-         * the pinned boundary child parented to the commit op: exactly
-         * one {@code UNTYPED_CLASS_INPUT} boundary with descriptor
-         * {@code class:<ClassId>} and input = the resolved receiver —
-         * the descriptor-kind policy, the canonical runtime-validation
-         * realization, a {@code SYNTHETIC} origin at the access span,
-         * and {@code parentOpId} = the {@code FIELD_DELETE} op (K-D12).
-         * Required-field deletes never reach the IR (checker E4004).
-         */
         private void lowerClassFieldDelete(DeleteStatement delete, MemberAccessExpr access,
                                            Type.Class classType) {
             ClassId classId = new ClassId(DescriptorService.semanticModulePath(classType.identity()), classType.name());
@@ -9908,30 +7189,6 @@ public final class SemanticLowerer {
         // Unit production (S1)
         // ---------------------------------------------------------------------
 
-        /**
-         * Builds the immutable unit over the session's produced
-         * operations: the manifest's construct-coverage rows recorded at
-         * lowering start (each row must carry the closed construct→op
-         * detector table verbatim, S4), the capability claim set derived
-         * through the claiming seam's full-evidence derivation under
-         * {@link ContainerClaimingSeam#E5_GATE_ACTIVATION} (D9 item 5(c):
-         * {@code CONTAINERS_AND_STRINGS} and {@code EVALUATION_ORDER}
-         * activate at E5's gate — this epic's gate; a unit fully
-         * evidencing an active row claims it, an under-evidenced row
-         * defers per unit), the module-init plan over the session's init
-         * block, and the produced operations in source order.
-         *
-         * @param constructCoverage      the manifest's reachable-construct
-         *                               rows; non-null
-         * @param imports                the module's resolved imports in
-         *                               dependency order; non-null
-         * @param interfaceHash          the interface index digest
-         *                               (R-PROFILE); non-null
-         * @param capabilityRegistryHash the invocation's
-         *                               capability-registry digest
-         *                               (R-PROFILE); non-null
-         * @return the immutable unit
-         */
         public LoweredModuleUnit buildUnit(Map<ConstructKind, List<SemanticOpKind>>
                                                constructCoverage,
                                            List<ModuleId> imports,
@@ -9976,16 +7233,7 @@ public final class SemanticLowerer {
                 }
                 coverage.put(entry.getKey(), List.copyOf(entry.getValue()));
             }
-            // The MODULE_INIT envelope op (E3/E8; ISSUE-0590): one
-            // detached module-level op per unit whose payload carries
-            // the module's resolved imports and the init block (the
-            // ModuleInitPlan carrier) — the MODULES R-CAPABILITY
-            // required operation, so no dead schema row remains. The op
-            // is not a member of any block (a module-level kind, the
-            // C-D1 completeness exemption): every consumer executes it
-            // as the envelope around the unit's init-block walk
-            // (UNINITIALIZED -> INITIALIZING -> INITIALIZED, FAILED(error)
-            // on failure, no export publication on failure).
+
             AnchorId moduleInitAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId moduleInitOpId = ids.nextOpId(module, nextOrdinal++, 0);
             SourceOrigin moduleInitOrigin = new SourceOrigin(sourceId,
@@ -10033,8 +7281,6 @@ public final class SemanticLowerer {
          * {@link ControlFlowValidator} at the unit-production seam
          * (C-D2).
          *
-         * @return the produced block-membership table (defensively
-         *         copied by the record)
          */
         public StructuredBodyTable bodyTable() {
             Map<BlockId, List<OpId>> ordered = new java.util.LinkedHashMap<>();
@@ -10048,10 +7294,6 @@ public final class SemanticLowerer {
             return new StructuredBodyTable(ordered, inverse);
         }
 
-        // ---------------------------------------------------------------------
-        // The full-program carrier arms (ISSUE-0410 decomposition tail)
-        // ---------------------------------------------------------------------
-
         /**
          * Installs the module's resolved import facts (the console-stdlib
          * detection surface of the full-program entry).
@@ -10060,29 +7302,11 @@ public final class SemanticLowerer {
             this.moduleImports = List.copyOf(imports);
         }
 
-        /**
-         * Installs the project-level class registration seeds as the
-         * session's layout resolution context (ISSUE-0634; design source
-         * {@code project-lowering-entry-and-registration-seeds} D4 and the
-         * registration-seed contract): each unit's layout context is the
-         * unit's own declared layouts first, then the seeds — the seeds
-         * are never merged into the unit's {@code classLayouts} map.
-         *
-         * @param seeds the project's class registration seeds; non-null
-         */
         public void setRegistrationSeeds(ClassRegistrationSeeds seeds) {
             this.registrationSeeds = Objects.requireNonNull(seeds,
                 "seeds must not be null");
         }
 
-        /**
-         * Installs the declared conversion intrinsics of the compilation
-         * (ISSUE-0634): the seed registers exactly these closed
-         * {@link IntrinsicKind}s and fails closed for a module intrinsic
-         * outside the declared set.
-         *
-         * @param kinds the declared conversion-intrinsic kinds; non-null
-         */
         public void setDeclaredConversionIntrinsics(List<IntrinsicKind> kinds) {
             Objects.requireNonNull(kinds, "kinds must not be null");
             this.declaredConversionIntrinsics = List.copyOf(kinds);
@@ -10292,20 +7516,6 @@ public final class SemanticLowerer {
             emitTarget().add(op);
         }
 
-        /**
-         * {@code CALL(DIRECT)} — the carrier's single-call-site direct
-         * call arm: the callee is a declared function binding (the
-         * checker's function-typed binding fact); arguments complete
-         * left-to-right before the CALL START; one
-         * {@code FUNCTION_PARAMETER} boundary per argument in one-based
-         * order (descriptor-kind rule) parented to the CALL; the CALL
-         * names the callee's reserved return boundary and its body block
-         * ({@code LoweredBody}); the callee's {@code RETURN} executes the
-         * single {@code FUNCTION_RETURN} boundary and the CALL terminal
-         * records the checked value without re-checking. Exactly one
-         * CALL site per callee in this slice — the general D13 shape
-         * (indirect/host/external/async and multiple sites) is E7's.
-         */
         private ValueId lowerUserCall(CallExpr call, ValueId slot) {
             if (call.callee() instanceof IdentifierExpr identifier) {
                 BindingSite site = bindingSiteResolver == null
@@ -10334,16 +7544,7 @@ public final class SemanticLowerer {
                     && isModuleSymbol(alias.name())) {
                 return lowerUserCallImport(call, slot, access, alias);
             }
-            // The dynamic arm: a callee value with no statically resolvable
-            // execution binding — a member/index read, a call result, or any
-            // other callee expression — evaluates to its own value first
-            // (left-to-right before the arguments), and the call lowers the
-            // landed dynamic shape over that value. A callee expression whose
-            // value carries a statically classified registration (an adapter,
-            // a host function or host-materialized value, an external
-            // function, or an intrinsic) belongs to the static/indirect arms
-            // of the closed table, so it resolves through them over the same
-            // evaluated value.
+
             ValueId dynamicCallee = lowerExpression(call.callee());
             FunctionExecutionBinding registration = registry.bindings().get(
                 new FunctionAllocationIdentity(dynamicCallee.id()));
@@ -10358,32 +7559,6 @@ public final class SemanticLowerer {
                 dynamicCallee);
         }
 
-        /**
-         * {@code CALL(DIRECT)} — the declared-function-binding arm (the
-         * D13 machine's direct cell): the callee is a declared function
-         * binding (the checker's function-typed binding fact); arguments
-         * complete left-to-right before the CALL START; one
-         * {@code FUNCTION_PARAMETER} boundary per argument in one-based
-         * order (descriptor-kind rule) parented to the CALL; the CALL
-         * names the callee's reserved return boundary and its body block
-         * ({@code LoweredBody}); the callee's {@code RETURN} executes the
-         * single {@code FUNCTION_RETURN} boundary and the CALL terminal
-         * records the checked value without re-checking. The E7 surface
-         * admits any number of call sites per callee (recursion
-         * included).
-         *
-         * <p>A callee whose hoisted invocation shape is the exported
-         * function's {@code EXTERNAL_ENTRY} (ISSUE-0654) has exactly one
-         * return boundary — the single {@code EXTERNAL_RETURN} run by its
-         * {@code RETURN} — so a source call of it realizes the closed
-         * {@code CALL(EXTERNAL)} {@code SHARED_BODY} cell
-         * ({@code EXTERNAL_PARAMETER} parameters, no caller-side return
-         * boundary, the callee's entry as the external entry ref) instead
-         * of claiming a second invocation shape the closed machine
-         * rejects. The body keeps exactly one invocation identity and
-         * one return boundary; no new op kind, boundary kind, or policy
-         * is introduced.</p>
-         */
         private ValueId lowerDirectCall(CallExpr call, ValueId slot, IdentifierExpr identifier,
                                         FunctionContext context) {
             boolean entryInvocation = e7Calls
@@ -10511,31 +7686,13 @@ public final class SemanticLowerer {
                     + " has no registered FunctionExecutionBinding (producer defect)");
             }
             if (binding instanceof FunctionExecutionBinding.DynamicFunctionValue) {
-                // The producer rule's callee: a dynamic registration is
-                // admissible exactly as a Dynamic call callee (the landed
-                // callee-position exclusivity), so the tracked identity
-                // carrying it takes the closed dynamic arm over the same
-                // carrier read.
+
                 return lowerDynamicCall(call, slot, identifier.name(), calleeValue);
             }
             return lowerIndirectCall(call, slot, binding, calleeValue, identifier.name(),
                 valueCarriedClosure(binding));
         }
 
-        /**
-         * True iff the callee binding is a value-carried closure whose body
-         * carries creation-site captures (the per-creation cell sources of
-         * the capture contract): the captured cells are reachable only
-         * through the closure value the binding holds, so the invocation
-         * records {@code CallCallee.Indirect} over the callee value — the
-         * emitters run that value's own invoker (the cells its creation
-         * published) and the oracle installs the value's captured cells —
-         * instead of re-creating the factory at the call site, whose
-         * capture arguments would re-resolve a per-iteration incarnation to
-         * the loop's latest one. A capture-free body's factory re-creation
-         * is the landed direct-invocation shape (its invocation installs no
-         * captures).
-         */
         private boolean valueCarriedClosure(FunctionExecutionBinding binding) {
             if (!(binding instanceof FunctionExecutionBinding.LoweredBody body)) {
                 return false;
@@ -10564,24 +7721,6 @@ public final class SemanticLowerer {
                 resolution.entry(), null);
         }
 
-        /**
-         * {@code CALL(INDIRECT)} — the dynamic arm (ISSUE-0657; design
-         * source {@code dynamic-call-shape-production-and-emission} Y1
-         * and the dynamic call shape contract;
-         * {@code semantic-ir-construct-coverage-cutover} K5/K12): a
-         * checked call whose callee value has no statically resolvable
-         * execution binding lowers one {@code CALL(INDIRECT)} with
-         * {@code CallCallee.Dynamic(calleeValue)}, one declared-signature
-         * {@code FUNCTION_PARAMETER} boundary per argument in one-based
-         * order, and the three recorded return cells — a
-         * {@code FUNCTION_RETURN} on the declared return descriptor
-         * parented to the call-owned {@code RETURN} that names the CALL
-         * (the K12 form (b) cell, never parented to the CALL op), the
-         * {@code HOST_TO_DEAL}+{@code HOST_SYNC_RETURN} cell, and the
-         * {@code EXTERNAL_RETURN} cell. The runtime selects the cell of
-         * the resolved carrier's class at execution; the CALL terminal
-         * publishes the checked value without re-checking.
-         */
         private ValueId lowerDynamicCall(CallExpr call, ValueId slot, String calleeName,
                                          ValueId calleeValue) {
             RuntimeDescriptor.Func signature = dynamicCalleeSignature(call.callee(),
@@ -10608,14 +7747,7 @@ public final class SemanticLowerer {
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(call.span()),
                 SourceOriginKind.USER, anchor, currentParent());
-            // The K12 form decision (M6): the callee value's produced
-            // registration decides the recorded DEAL-body cell's closed
-            // form. A same-walk body (an in-place function-expression
-            // callee and any callee value whose body this walk produced)
-            // records the body's own RETURN-materialized cell through the
-            // landed reserved-identity hand-off; every other callee value
-            // (the producer rule's dynamic record or an unregistered
-            // value) records the landed call-owned record.
+
             FunctionContext calleeBody = sameWalkCalleeBody(calleeValue);
             OpId callOpId;
             OpId dealBodyBoundaryOpId;
@@ -10664,21 +7796,6 @@ public final class SemanticLowerer {
             return result;
         }
 
-        /**
-         * The same-walk callee body of one dynamic callee value (the K12
-         * form decision, M6): the callee value's produced registration is a
-         * {@code LoweredBody} whose body this same walk lowered and whose
-         * return cell a {@code RETURN} of that body materialized (the
-         * callee-owned form's recorded cell). Any other callee value — a
-         * {@code DynamicFunctionValue} registration, an unregistered
-         * value, a registration whose body another walk produced, or a
-         * never-returning body whose cell is materialized by its
-         * invocation op rather than a {@code RETURN} — records the landed
-         * call-owned record.
-         *
-         * @param calleeValue the evaluated callee value; non-null
-         * @return the same-walk body's lowering context, or {@code null}
-         */
         private FunctionContext sameWalkCalleeBody(ValueId calleeValue) {
             FunctionExecutionBinding binding = registry.bindings().get(
                 new FunctionAllocationIdentity(calleeValue.id()));
@@ -10830,15 +7947,6 @@ public final class SemanticLowerer {
             return entry;
         }
 
-        /**
-         * The fail-closed producer defect of a dynamic function value
-         * resolved by a statically classified site: this slice registers
-         * the closed {@code DynamicFunctionValue} binding only — a call or
-         * await whose callee resolves to it takes the closed dynamic arm
-         * (its execution class is resolved from the runtime value's
-         * producing registration), so no statically classified site may
-         * resolve one (producer defect).
-         */
         private static ConstructUnlowered dynamicCarrierDefect(
                 FunctionExecutionBinding.DynamicFunctionValue dynamic, String site) {
             return new ConstructUnlowered("the dynamic function value produced by op "
@@ -11001,15 +8109,7 @@ public final class SemanticLowerer {
                     }
                 }
                 case FunctionExecutionBinding.IntrinsicFunction intrinsic ->
-                    // The conversion intrinsic's value call (ISSUE-0679;
-                    // design source
-                    // {@code conversion-intrinsic-function-values} J3): the
-                    // seeded identity's registration is a boundary-shaped
-                    // callable, so its indirect call records exactly the host
-                    // cell family — one DEAL_TO_HOST + HOST_PARAMETER cell per
-                    // declared parameter (the intrinsic's declared parameter
-                    // descriptor is the argument domain before any conversion
-                    // runs).
+
                     hostParameterBoundaries(intrinsic.descriptor(), args, call,
                         callOpId, parameterBoundaryOps, parameterBoundaryIds);
                 case FunctionExecutionBinding.DynamicFunctionValue dynamic ->
@@ -11076,17 +8176,7 @@ public final class SemanticLowerer {
                             }
                         }
                         case FunctionExecutionBinding.IntrinsicFunction intrinsic ->
-                            // The adapter-over-intrinsic D15 path (ISSUE-0680;
-                            // design source
-                            // {@code conversion-intrinsic-function-values} J5):
-                            // the adapter's recorded source is the seeded
-                            // intrinsic identity whose class is HOST
-                            // ({@link DynamicReturnBoundaryProtocol#kindOf}),
-                            // so the adapted call records the same single
-                            // return cell its own indirect arm records — the
-                            // HOST_TO_DEAL + HOST_SYNC_RETURN cell run by the
-                            // call op (the adapter's xN target-signature
-                            // FUNCTION_PARAMETER cells were recorded above).
+
                             returnBoundaryOpId = emitHostReturnBoundary(
                                 intrinsic.descriptor(), result, call.span(),
                                 callOpId).opId();
@@ -11227,14 +8317,6 @@ public final class SemanticLowerer {
          * facts (the call-machine and project entries), and a route-less
          * carrier session fails closed.</p>
          *
-         * @param access the checked import-member access; non-null
-         * @param alias  the access's base identifier (the import alias);
-         *               non-null
-         * @param slot   the position's pre-allocated result slot, or
-         *               {@code null} to allocate a fresh value
-         * @return the produced read value with its descriptor and, for a
-         *         function descriptor, the registered binding
-         * @throws ConstructUnlowered on any fail-closed guard above
          */
         private ImportMaterialization materializeImportRead(MemberAccessExpr access,
                                                             IdentifierExpr alias,
@@ -11582,27 +8664,6 @@ public final class SemanticLowerer {
                 describeDynamicCallee(call.callee()), dynamicCallee);
         }
 
-        /**
-         * {@code ASYNC_START} + {@code AWAIT} — the dynamic arm
-         * (ISSUE-0657; design source
-         * {@code dynamic-call-shape-production-and-emission} Y4 and the
-         * dynamic async start contract;
-         * {@code semantic-ir-construct-coverage-cutover} K5/K12): an
-         * awaited callee value with no statically resolvable execution
-         * binding lowers one {@code ASYNC_START} with
-         * {@code CallCallee.Dynamic(calleeValue)}, the recorded source
-         * {@code DEAL_BODY} (the payload's constructor rule — the only
-         * resolution whose caller-recorded return boundary executes), one
-         * declared-signature {@code FUNCTION_PARAMETER} boundary per
-         * argument in one-based order, and the single recorded task cell —
-         * a {@code FUNCTION_RETURN} on the declared completion descriptor
-         * parented to the call-owned {@code RETURN} that names the
-         * {@code ASYNC_START} (never parented to the start op). The
-         * runtime resolves the effective source and the operation shape
-         * from the callee's carrier; the single {@code AWAIT} drains the
-         * token and runs the single {@code ASYNC_COMPLETION} boundary on
-         * the completion value.
-         */
         private ValueId lowerDynamicAwait(CallExpr call, ValueId slot, Span awaitSpan,
                                          String calleeName, ValueId calleeValue) {
             RuntimeDescriptor.Func signature = dynamicCalleeSignature(call.callee(),
@@ -11626,11 +8687,7 @@ public final class SemanticLowerer {
             RuntimeDescriptor completion = signature.returnType();
             ValueId awaitResult = slot != null ? slot
                 : ids.nextValueId(module, nextOrdinal++, 0);
-            // The K12 form decision (M6): the callee value's produced
-            // registration decides the recorded task cell's closed form —
-            // the same-walk body's own RETURN-materialized cell through the
-            // landed reserved-identity hand-off, or the landed call-owned
-            // record for every other callee value.
+
             FunctionContext calleeBody = sameWalkCalleeBody(calleeValue);
             OpId startOpId;
             OpId taskCellOpId;
@@ -11826,17 +8883,7 @@ public final class SemanticLowerer {
                     throw new ConstructUnlowered("adapter-over-async lower via "
                         + "lowerAdapterOverAsync (producer defect)");
                 case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
-                    // The intrinsic's async form (ISSUE-0680; design source
-                    // {@code conversion-intrinsic-function-values} J3: the
-                    // conversion intrinsics are synchronous values, so an
-                    // async use is a checker rejection — E3013 — and this arm
-                    // is the deterministic closed treatment of a doctored
-                    // site): the closed DEAL_BODY task runs the one conversion
-                    // ladder over the checked arguments and completes
-                    // immediately with the converted value; the single AWAIT
-                    // runs the landed ASYNC_COMPLETION cell on the completion
-                    // (zero return boundaries — never a fail-closed producer
-                    // defect).
+
                     source = AsyncStartSource.DEAL_BODY;
                     startOpId = ids.nextOpId(module, nextOrdinal++, 0);
                     token = new AsyncTokenId.Canonical(
@@ -11981,17 +9028,7 @@ public final class SemanticLowerer {
                     throw new ConstructUnlowered("nested adapter source of '" + calleeName
                         + "' (adapter-of-adapter invocation is ISSUE-0531's)");
                 case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
-                    // The adapter-over-async site over the seeded intrinsic
-                    // identity (ISSUE-0680; design source
-                    // {@code conversion-intrinsic-function-values} J5): the
-                    // conversion intrinsics are synchronous boundary-shaped
-                    // callables, so the nested source start is the closed
-                    // DEAL_BODY task whose task body is the one conversion
-                    // ladder over the leading-M recorded operands — the task
-                    // completes immediately with the converted value and the
-                    // single AWAIT runs the landed ASYNC_COMPLETION cell on
-                    // the completion (the async table runs zero return
-                    // boundaries here; never a fail-closed producer defect).
+
                     if (sourceSignature.paramTypes().size()
                             != intrinsic.descriptor().paramTypes().size()) {
                         throw new ConstructUnlowered("the adapter-over-async source of '"
@@ -12193,22 +9230,9 @@ public final class SemanticLowerer {
             terminateBlock();
         }
 
-        /**
-         * The unified full-program statement walk (ISSUE-0410 carrier
-         * slice): module-level lets/imports/functions plus every E5
-         * statement and the RETURN arm — function bodies recurse through
-         * this same walk, so chains, comparisons, control flow, calls,
-         * and returns lower together in one session.
-         */
         private void lowerFullStatements(List<StatementNode> statements,
                                          boolean moduleLevel) {
-            // The unified walk's per-scope recursive-group partition
-            // (ISSUE-0634): the group arms are active in the same session,
-            // so every scope partitions its function declarations exactly
-            // as the group walk does — a module-level group was emitted at
-            // module-init top (lowerProjectModule) and its members are
-            // skipped here; a nested-scope group emits at its first
-            // member's declaration position.
+
             Map<FunctionDeclaration, List<FunctionDeclaration>> groupMembership =
                 groupCore ? groupMembership(statements) : Map.of();
             for (StatementNode statement : statements) {
@@ -12464,16 +9488,6 @@ public final class SemanticLowerer {
             return false;
         }
 
-        /**
-         * The E7 unit terminal: one {@code EXTERNAL_ENTRY} or
-         * {@code CALLBACK_INVOKE} op per exported function (from the
-         * checked export facts) plus the {@code ENTRY_INVOKE}
-         * delegation of {@code main}: null. A non-exported declared
-         * function keeps its reserved invocation identity until the
-         * walk's finalization materializes it with the body's
-         * function-value creation op when no source call site took it
-         * over (ISSUE-0635; the never-called guard is deleted).
-         */
         private void emitE7Terminals() {
             for (Map.Entry<String, FunctionContext> entry
                     : moduleFunctionContexts.entrySet()) {
@@ -12499,32 +9513,6 @@ public final class SemanticLowerer {
             emitNeverReturningBodyBoundaries();
         }
 
-        /**
-         * The return cells of never-returning bodies (ISSUE-0619;
-         * {@code semantic-ir-construct-coverage-cutover} K13's throw/body
-         * coverage): a body whose walk ended terminated by a
-         * {@code THROW} carries no {@code RETURN}, so neither the source
-         * return arm nor the implicit-trailing-return arm ever emitted the
-         * body's single return boundary — while every statically
-         * materialized invocation of the body (the source {@code CALL},
-         * the {@code ASYNC_START} body task, the {@code EXTERNAL_ENTRY}, the
-         * {@code CALLBACK_INVOKE}, or the entry delegation) pins that boundary id
-         * in its payload and the closed call cell requires it to resolve to
-         * a {@code BOUNDARY} op. The boundary is emitted here once, at the
-         * finalization position (after every invocation op exists),
-         * parented to the invocation op whose shape the body was assigned —
-         * the closed table's invocation cell — with the body's declared
-         * return descriptor and the per-shape boundary kind.
-         *
-         * <p>The cell is never executed: the body's only terminator is the
-         * {@code THROW}, so no value can reach the return position. Its
-         * input identity is therefore the cell's reserved operand —
-         * allocated for the closed payload contract (a {@code BOUNDARY}
-         * always carries an input) and never produced or read, exactly like
-         * the body's return position. The op is a payload-owned child of its
-         * invocation op, so the block walk skips it and no consumer executes
-         * or emits it.</p>
-         */
         private void emitNeverReturningBodyBoundaries() {
             List<FunctionContext> pending = new ArrayList<>();
             for (FunctionContext context : contextsByFunctionId.values()) {
@@ -12556,48 +9544,6 @@ public final class SemanticLowerer {
                 null, null, policy, origin));
         }
 
-        /**
-         * The invocation-identity finalization of the unified walk
-         * (ISSUE-0634; design sources
-         * {@code project-lowering-entry-and-registration-seeds} D2/D9 and
-         * {@code semantic-ir-construct-coverage-cutover} K12's lowering
-         * side). It is the decision point after the walk and the E7
-         * terminals, where the set of a body's statically materialized
-         * invocations is final:
-         *
-         * <ul>
-         *   <li>every lowered body's reserved invocation identity is
-         *       materialized by exactly one emitted op of the unit — an
-         *       exported function's hoisted shape op, an
-         *       entry/callback op, or the first source call site that took
-         *       over the reserved call-site identity (the landed
-         *       discipline);</li>
-         *   <li>when no statically materialized invocation took over, the
-         *       body's function-value creation op materializes the
-         *       identity and the body's {@code RETURN} ops are re-keyed to
-         *       that op's own op id: the body's {@code CLOSURE_NEW} is the
-         *       creation op, or the body's group's single
-         *       {@code RECURSIVE_GROUP_INIT} publication is (the group arm
-         *       issues exactly one op per SCC). The creation op is never
-         *       re-keyed: it is an ordinary value producer other ops
-         *       reference by op id.</li>
-         * </ul>
-         *
-         * <p>A body with neither a statically materialized invocation nor
-         * a function-value creation op is a producer defect of this walk:
-         * the body's {@code RETURN} would name an identity that resolves
-         * to no op and the closed gate would reject the produced unit. It
-         * is reported here as {@code CONSTRUCT_UNLOWERED} so the failure
-         * names the body, never a dangling identity. No second walk, no
-         * synthetic invocation op, and no payload change exist.</p>
-         *
-         * <p>The body set is the session's complete function-context index
-         * ({@link #contextsByFunctionId}): every module-level declaration
-         * and every function expression carries exactly one reserved
-         * identity, and both the walk and the terminals have already run,
-         * so the set of a body's statically materialized invocations is
-         * final.</p>
-         */
         private void finalizeInvocationIdentities() {
             Map<OpId, Integer> occurrences = new LinkedHashMap<>();
             for (SemanticOp op : ops) {
@@ -12626,45 +9572,6 @@ public final class SemanticLowerer {
             }
         }
 
-        /**
-         * The creation-op takeover of one body whose reserved invocation
-         * identity no statically materialized invocation took over
-         * (ISSUE-0635; design source
-         * {@code project-lowering-entry-and-registration-seeds} D9 and the
-         * body-invocation identity contract, and
-         * {@code semantic-ir-construct-coverage-cutover} K12's lowering
-         * side):
-         *
-         * <ul>
-         *   <li>a {@code CLOSURE_NEW} whose {@code function} equals the
-         *       body's function id is the body's creation op: the body's
-         *       {@code RETURN} ops are re-keyed from the reserved identity
-         *       to the creation op's own op id, so the op that publishes
-         *       the body's function value materializes the body's
-         *       invocation identity and every reference to that op — the
-         *       value child of an address chain storing the body's
-         *       function value included — stays resolvable;</li>
-         *   <li>a {@code RECURSIVE_GROUP_INIT} whose publication includes
-         *       the body's function id is the member's creation op: the
-         *       member's {@code RETURN} ops are re-keyed from the reserved
-         *       id to the group op id (one group op publishes every member,
-         *       so the publication — not a per-member reserved id — is the
-         *       member's materialized identity).</li>
-         * </ul>
-         *
-         * <p>The identity is materialized under the creation op's own op
-         * id, never by re-keying the creation op: a creation op is an
-         * ordinary value producer that other ops reference by op id (the
-         * closed address chains list their value child by op id), so
-         * moving the op would invalidate those references. The reserved
-         * identity stays the body's identity for the statically invoked
-         * case only, where the invocation op carries it.</p>
-         *
-         * @param context the body's function context; non-null
-         * @return the op id materializing the body's invocation identity
-         * @throws ConstructUnlowered when the body carries no function-value
-         *         creation op (a producer defect)
-         */
         private OpId materializeCreationIdentity(FunctionContext context) {
             for (int i = 0; i < ops.size(); i++) {
                 SemanticOp op = ops.get(i);
@@ -12689,20 +9596,6 @@ public final class SemanticLowerer {
                 + " carries exactly one (producer defect)");
         }
 
-        /**
-         * Re-keys one body's {@code RETURN} ops from the body's reserved
-         * invocation identity to the op id materializing it (the
-         * creation-op takeover): every {@code RETURN} of the function that
-         * does not already name the identity names it afterwards, so the
-         * closed boundary-assignment table's body-local return cell
-         * resolves the body's creation op through the {@code RETURN}. The
-         * creation op itself is never re-keyed — it keeps its own op id,
-         * so every op-id reference to it stays resolvable.
-         *
-         * @param function the body's function identity; non-null
-         * @param identity the op id materializing the body's identity (the
-         *                 body's creation op); non-null
-         */
         private void rekeyReturnIdentity(FunctionId function, OpId identity) {
             for (int j = 0; j < ops.size(); j++) {
                 SemanticOp candidate = ops.get(j);
@@ -12890,16 +9783,6 @@ public final class SemanticLowerer {
             emitEntryMainCallOp(main, result, callOrigin);
         }
 
-        /**
-         * The entry delegation of the carrier slice: when the module
-         * declares {@code main} with the pinned non-async signature
-         * {@code (): null}, the module-init block's trailing ops are one
-         * {@code CALL(DIRECT main)} (the entry call, using main's
-         * reserved call-site identity) and one {@code DISCARD} of its
-         * result — the decomposition-tail realization of
-         * {@code ENTRY_INVOKE → CALL(DIRECT) to main(): null} (the
-         * ENTRY_INVOKE op itself is the modules epic's production).
-         */
         private void emitEntryMainCall() {
             FunctionContext main = entryMainForDelegation(
                 "module init (the carrier slice admits exactly one CALL site"
@@ -13185,30 +10068,6 @@ public final class SemanticLowerer {
                 null, null, FailurePolicyId.NO_DEAL_FAILURE, origin));
         }
 
-        /**
-         * {@code TRY_CATCH} — the try/catch arm (C-D6): execute
-         * {@code tryBlock}; success → SUCCESS (catch skipped, no
-         * result); a DEAL failure (an E8 error) raised inside
-         * {@code tryBlock} is reified as an {@code Error} value
-         * ({@code {code, message}}) bound to {@code catchBinding}
-         * (binding init mechanics E6 — this stage allocates the binding
-         * identity) and {@code catchBlock} executes; a failure raised
-         * from {@code catchBlock} becomes the {@code TRY_CATCH} FAILURE
-         * with its own code/message/origin preserved and
-         * {@code cause} = the original caught failure snapshot. Only
-         * DEAL failures are catchable. A load of the catch variable
-         * inside {@code catchBlock} lowers to {@code BINDING_LOAD}
-         * carrying the catch binding with the pinned initial
-         * generation. The {@code TRY_CATCH} op precedes its child block
-         * ops in the unit list (payload order: try, catch). Block ops
-         * record the {@code TRY_CATCH} as {@code parentOpId}. The closed
-         * terminator analysis marks the enclosing block after the
-         * sub-block walks: a {@code try} whose protected block and catch
-         * block both cannot complete normally terminates it (the two
-         * blocks combine by AND on the return/throw facet, exactly like
-         * the {@code if}/{@code else} arm; one catch block per
-         * {@code TRY_CATCH}).
-         */
         private void lowerTryCatch(TryStatement statement) {
             BlockId tryBlock = allocateBlock();
             BlockId catchBlock = allocateBlock();
@@ -13226,13 +10085,7 @@ public final class SemanticLowerer {
             catchFrames.add(0, new CatchFrame(statement.catchVar(), catchBinding));
             pushBlock(catchBlock);
             try {
-                // The catch binding's ALLOC sits at the catch block's entry
-                // (generation 0, DIRECT, mutable, no BINDING_INIT — the
-                // catch-entry write is TRY_CATCH's, ISSUE-0234): the catch
-                // body's loads resolve own-region exactly like a FOR_EACH
-                // iteration binding's, and the bindings validator's
-                // INIT_DOMINATES_LOAD finds the pinned catch-entry write
-                // (BindingsProductionValidator's catch-block arm).
+
                 BindingCoreIncarnation catchIncarnation = new BindingCoreIncarnation(
                     INITIAL_LOOP_GENERATION, catchBlock, BindingCellKind.DIRECT,
                     true, BindingProducer.BINDING_ALLOC, false);
@@ -13342,17 +10195,6 @@ public final class SemanticLowerer {
         // The per-construct arms (D1)
         // ---------------------------------------------------------------------
 
-        /**
-         * {@code CONST} — the scalar-literal and template-fragment arm.
-         * An {@code IntLiteral} outside signed32 [-2147483648,
-         * 2147483647] raises {@link IntLiteralOutOfRange} (D1's CONST
-         * contract — a literal outside the closed scalar set is a
-         * producer defect, never an invented op): the checked frontend
-         * still admits out-of-int32 literals until the E1036 signed32
-         * literal gate (ISSUE-0111) lands, so this arm fails closed
-         * instead of truncating — no {@code CONST} is produced for the
-         * out-of-range value, and the in-range cast is exact.
-         */
         private ValueId lowerConst(LiteralExpr literal) {
             return lowerConst(literal, null);
         }
@@ -13379,26 +10221,6 @@ public final class SemanticLowerer {
                 FailurePolicyId.NO_DEAL_FAILURE, slot);
         }
 
-        /**
-         * {@code BINDING_LOAD} — the identifier arm with the loop-binding
-         * load-resolution rule: the load carries the innermost matching
-         * enclosing {@code FOR_EACH} payload's initial generation; any
-         * other identifier is a foreign construct (E6005).
-         *
-         * <p><b>Closure-core mode (ISSUE-0445).</b> The load resolves
-         * the declared binding of the walk's environment through the
-         * frame walk (the function's own scope chain first — B9 R2), and
-         * a reference resolving outside the innermost open detached-body
-         * walk registers the capture (B3: the capture set is the body's
-         * free bindings in first-reference order). A load of a
-         * function-typed binding publishes the incarnation's statically
-         * tracked function identity (loads preserve allocation identity);
-         * a function-typed load whose identity is not statically known
-         * (parameters, catch bindings, iteration bindings — dynamic
-         * function values) allocates its own carrier identity and
-         * registers exactly one {@code DynamicFunctionValue} keyed by it
-         * (the producer rule's typed-load arm, M2 item 2).</p>
-         */
         private ValueId lowerBindingLoad(IdentifierExpr identifier) {
             return lowerBindingLoad(identifier, null);
         }
@@ -13436,18 +10258,7 @@ public final class SemanticLowerer {
                 }
             }
             if (!defaultContexts.isEmpty()) {
-                // The default-block admission rule (K-D3, ISSUE-0511):
-                // every reference of the open default walk — a direct
-                // identifier reference or a capture resolved by a nested
-                // detached walk (a closure body inside the default) —
-                // admits only block-internal allocations (blocks allocated
-                // inside the walk) and module-level bindings resolved
-                // through the module-init block; an enclosing-region
-                // (function-local) free reference is invalid — the closed
-                // ClassDefaultPayload records no captures — and fails
-                // E6005 CLASS_DEFAULT_CAPTURE, never a silent capture. A
-                // nested closure's capture collector is no bypass: its
-                // captures resolve against the same closed admission set.
+
                 DefaultContext context = defaultContexts.peek();
                 FrameResolution resolution = resolveFrame(identifier.name());
                 if (resolution == null) {
@@ -13462,13 +10273,7 @@ public final class SemanticLowerer {
                     throw new ClassDefaultCapture(identifier.name());
                 }
                 if (captureCollectors.size() <= context.entryCaptureDepth()) {
-                    // A direct reference of the walk: the load publishes
-                    // the threaded slot when one is threaded (the
-                    // slot-threaded production — the CLASS_DEFAULT op's
-                    // result identity, K-D3); a function-typed load
-                    // publishes the incarnation's statically tracked
-                    // function identity instead (loads preserve
-                    // allocation identity).
+
                     return emitResolvedLoad(identifier, type, resolution.entry(), slot);
                 }
                 // A nested detached walk's reference (a closure body
@@ -13489,10 +10294,7 @@ public final class SemanticLowerer {
                 maybeRegisterCapture(identifier.name(), resolution);
                 return emitResolvedLoad(identifier, type, resolution.entry());
             }
-            // The binding-environment hook (ISSUE-0444 binding-core child):
-            // every declared binding of the walk's environment resolves to
-            // its dominant incarnation at the site, so the emitted load
-            // names {binding, generation} of that incarnation (B9 R1).
+
             if (bindingSiteResolver != null) {
                 BindingSite site = bindingSiteResolver.resolve(identifier.name());
                 if (site != null) {
@@ -13508,29 +10310,6 @@ public final class SemanticLowerer {
                 + "loads, and generation increments/stores are E6's, ISSUE-0235)");
         }
 
-        /**
-         * Emits one resolved {@code BINDING_LOAD} (closure-core mode):
-         * the payload names the dominant incarnation's
-         * {@code {binding, generation}}; the result publishes the
-         * incarnation's statically tracked function identity for
-         * function-typed loads (identity preservation — a threaded slot
-         * never replaces the tracked identity, because the identity is
-         * the {@code ValueId} whose {@code FunctionExecutionBinding}
-         * resolves the load under R-FUNCTION-BINDING) or a fresh
-         * {@code ValueId} otherwise. A non-function load with a threaded
-         * slot ({@code slot} non-null) publishes the slot instead of
-         * allocating one — the slot-threaded production of the default
-         * walk's direct identifier reference (the {@code CLASS_DEFAULT}
-         * op's result identity, K-D3). A function-typed load whose cell
-         * value identity is not statically tracked (parameters, catch
-         * bindings, iteration bindings, and class-field or namespace-held
-         * values) allocates its own carrier identity and registers exactly
-         * one {@code DynamicFunctionValue} keyed by the load's result
-         * identity with the load's checked descriptor — the closed
-         * producer rule's typed-load arm (M2 item 2), reached by the
-         * value-position load and by the dynamic call/await arm's callee
-         * carrier read alike (one arm, no admission flag).
-         */
         private ValueId emitResolvedLoad(IdentifierExpr identifier, Type type,
                                          FrameEntry entry) {
             return emitResolvedLoad(identifier, type, entry, null);
@@ -13577,9 +10356,6 @@ public final class SemanticLowerer {
          * republishes an already-allocated identity never reaches this
          * seam.
          *
-         * @param result          the producing op's result identity; non-null
-         * @param materializingOpId the producing op's identity (the correlation id); non-null
-         * @param descriptor      the producing op's result descriptor; non-null
          */
         private void registerDynamicMaterialization(ValueId result, OpId materializingOpId,
                                                     RuntimeDescriptor descriptor) {
@@ -13604,12 +10380,6 @@ public final class SemanticLowerer {
          * no statically known class and registers the closed dynamic record
          * (M2 item 2).
          *
-         * @param result             the call's result identity; non-null
-         * @param callOpId           the call op (the dynamic record's correlation
-         *                           id); non-null
-         * @param hostCrossing       the emitted host return crossing, or null
-         * @param hostCrossingModule the crossing's owning host module, or null
-         * @param resultType         the call's declared result descriptor; non-null
          */
         private void registerCallResultMaterialization(ValueId result, OpId callOpId,
                 SemanticOp hostCrossing, ModuleId hostCrossingModule,
@@ -13646,22 +10416,6 @@ public final class SemanticLowerer {
             return result;
         }
 
-        /**
-         * {@code CLOSURE_NEW} — the function-expression arm (closure-core
-         * mode, ISSUE-0445): every function expression produces exactly
-         * one {@code CLOSURE_NEW} publishing a fresh function identity
-         * with the function expression's exact checked signature, the
-         * body's captures in first-reference order (collected during the
-         * buffered body walk — B3), and the {@code LoweredBody} binding.
-         * The body ops flush after the {@code CLOSURE_NEW} op (the
-         * buffered walk runs first so the captures are known when the
-         * payload is built). A threaded result slot ({@code slot}
-         * non-null) becomes the {@code CLOSURE_NEW} result identity — the
-         * closure identity <em>is</em> the {@code CLASS_DEFAULT} op's
-         * result for a function-literal default (K-D3), and the
-         * {@code LoweredBody} binding registers under that identity so
-         * R-FUNCTION-BINDING resolves it.
-         */
         private ValueId lowerClosureExpr(FunctionExpr functionExpr) {
             return lowerClosureExpr(functionExpr, null);
         }
@@ -13688,15 +10442,7 @@ public final class SemanticLowerer {
                 blockStack.push(bodyBlock);
                 FunctionContext reservedClosureContext = null;
                 if (e7Calls) {
-                    // The E7 closure reservation: RETURNs inside the
-                    // closure body lower against a per-closure-site
-                    // context whose reserved return boundary/call-site
-                    // identities the CALL(INDIRECT) resolves. The body's
-                    // invocation shape is assigned by its first statically
-                    // materialized invocation; a closure never invoked from
-                    // source keeps the reserved identity for the
-                    // creation-op takeover of the walk's finalization
-                    // (ISSUE-0635).
+
                     reservedClosureContext = new FunctionContext(functionId, bodyBlock,
                         signature, ids.nextOpId(module, nextOrdinal++, 0),
                         ids.nextOpId(module, nextOrdinal++, 0),
@@ -13851,17 +10597,7 @@ public final class SemanticLowerer {
          * Table index reads stay E2's (the carrier slice lowers array
          * index reads only).
          */
-        /**
-         * The bytes element read (K6 item 2): the landed array-read shape
-         * over a byte receiver — {@code ARRAY_LENGTH(byteReceiver)} then
-         * {@code INDEX_NORMALIZE(BYTES_READ, rawKey = the index child's
-         * result, currentLength = the length read's result)} then
-         * {@code INDEX_READ(container, normalize, boundaryOpId)} with the
-         * {@code BYTE_ELEMENT_READ} boundary child under the
-         * {@code BYTES_READ} policy (E8012 {@code bytes index out of
-         * bounds} at the index expression, for {@code i < 0} and
-         * {@code i >= b.length}). The result is the byte as {@code int}.
-         */
+
         private ValueId lowerBytesIndexRead(IndexExpr index, ValueId slot) {
             RuntimeDescriptor intDescriptor =
                 ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE);
@@ -13997,11 +10733,7 @@ public final class SemanticLowerer {
             }
             if (classCore && objectType instanceof Type.Nullable nullable
                     && nullable.inner() instanceof Type.Class innerClassType) {
-                // The checker's cross-module nullable-class read unwrap
-                // (a receiver of checked type ?C over a foreign identity):
-                // the receiver lowers as checked (nullable) and the
-                // runtime null guard is the FIELD_READ op's
-                // UNTYPED_CLASS_INPUT boundary (K-D6).
+
                 return lowerFieldRead(access, innerClassType, slot);
             }
             if (objectType instanceof Type.Bytes) {
@@ -14020,49 +10752,11 @@ public final class SemanticLowerer {
                 + "in this stage's window)");
         }
 
-        /**
-         * Whether the identifier resolves to a module alias in the
-         * current checker site scope (the scope the checker resolved the
-         * access's base identifier in — the module root table at module
-         * level, the innermost per-scope table inside a body), never a
-         * root-table-only fact: a nested-scope binding shadowing an
-         * import alias keeps its landed receiver-shape arm.
-         */
         private boolean isModuleSymbol(String name) {
             SymbolTable scope = currentCheckerScope();
             return scope != null && scope.resolve(name) instanceof Symbol.ModuleSymbol;
         }
 
-        /**
-         * {@code FIELD_READ} — the class member-read arm of the class
-         * walk (K-D6): exactly one {@code FIELD_READ} op whose receiver
-         * lowers exactly once as a prior step and whose key is the
-         * static field name (never evaluated), plus two {@code BOUNDARY}
-         * children in order — (1) the nominal receiver boundary, kind
-         * {@code UNTYPED_CLASS_INPUT}, descriptor {@code class:<ClassId>},
-         * input = the receiver; (2) the field boundary, kind
-         * {@code OPTIONAL_FIELD_READ}, descriptor = the read's checked
-         * result descriptor (the checker's nullable-wrapped type for
-         * optional fields), input = the {@code FIELD_READ} result. Both
-         * children carry the descriptor-kind policy, the canonical
-         * runtime-validation realization, a {@code SYNTHETIC} origin at
-         * the access span, and {@code parentOpId} = the
-         * {@code FIELD_READ} op (K-D12). A cross-module nullable class
-         * read lowers the receiver as checked (nullable) — the runtime
-         * null guard is the {@code UNTYPED_CLASS_INPUT} boundary. The op
-         * carries policy {@code NO_DEAL_FAILURE} and publishes the
-         * read's checked result descriptor.
-         *
-         * @param access    the checked class member access; non-null
-         * @param classType the class the receiver's checked type names
-         *                  (the inner class of a cross-module nullable
-         *                  receiver); non-null
-         * @param slot      the result slot of the final producing op, or
-         *                  {@code null} to allocate one
-         * @return the produced {@code ValueId} (the slot when given)
-         * @throws ConstructUnlowered on an unrepresentable receiver
-         *         descriptor (a fact defect)
-         */
         private ValueId lowerFieldRead(MemberAccessExpr access, Type.Class classType,
                                        ValueId slot) {
             ClassId classId = new ClassId(
@@ -14109,19 +10803,6 @@ public final class SemanticLowerer {
             return result;
         }
 
-        /**
-         * {@code HAS_FIELD} — the {@code has(obj.field)} arm of the class
-         * walk (K-D7): exactly one {@code HAS_FIELD} op whose receiver
-         * lowers exactly once as a prior step and whose key is the
-         * static field name (never evaluated). The op runs no boundary
-         * children, publishes {@code boolean}, and carries policy
-         * {@code NO_DEAL_FAILURE}.
-         *
-         * @param has  the checked has expression; non-null
-         * @param slot the result slot of the final producing op, or
-         *             {@code null} to allocate one
-         * @return the produced {@code ValueId} (the slot when given)
-         */
         private ValueId lowerHasField(HasExpr has, ValueId slot) {
             ValueId receiver = lowerExpression(has.object());
             return emitValueOp(SemanticOpKind.HAS_FIELD,
@@ -14164,16 +10845,6 @@ public final class SemanticLowerer {
             return lowerMemberRead(access, null);
         }
 
-        /**
-         * Lowers one call argument of a declared callee: the callee's
-         * parameter cell performs the contextual member read's kind check
-         * (the unchanged reference defers the check to the declared
-         * parameter, whose origin is the declaration-owned annotation), so
-         * a scalar contextual member read lowers to its raw read and
-         * composes no boundary of its own. A composite/carrier read keeps
-         * its landed pass-through boundary and a nullable read its optional
-         * envelope.
-         */
         private ValueId lowerCallArgument(ExpressionNode argument) {
             if (!(argument instanceof MemberAccessExpr access)) {
                 return lowerExpression(argument);
@@ -14282,14 +10953,6 @@ public final class SemanticLowerer {
             return readResult;
         }
 
-        /**
-         * Whether one contextual read descriptor's kind check belongs to the
-         * consuming declared cell: the scalar/kind descriptors defer when the
-         * read is a call argument of a declared callee (the parameter cell
-         * owns the projection), while the composite/carrier descriptors keep
-         * their landed pass-through boundary (the emitters' and oracle's
-         * identical {@code defersContextualCheck} rule).
-         */
         private static boolean consumingCellOwnsKindCheck(RuntimeDescriptor descriptor) {
             return !(descriptor instanceof RuntimeDescriptor.Func)
                 && !(descriptor instanceof RuntimeDescriptor.Array)
@@ -14313,13 +10976,7 @@ public final class SemanticLowerer {
                 return lowerArithmeticBinary(binary, slot);
             }
             if (bindingCore && isComparisonOperator(binary.op())) {
-                // The binding walk consumes the single comparison producer
-                // (the values epic's producer) for condition/initializer
-                // comparison operands — this child never implements
-                // comparison-selector lowering itself. The carrier slice
-                // threads the result slot (the LOOP(FOR) condition
-                // re-production publishes one condition value identity,
-                // C-D4).
+
                 return lowerComparisonBinary(binary, slot);
             }
             throw new ConstructUnlowered("binary selector " + binary.op()
@@ -14328,7 +10985,6 @@ public final class SemanticLowerer {
                 + "ComparisonSelectorLowering's; string + lowers to "
                 + "STRING_CONCAT, never BINARY)");
         }
-
 
         /** True iff the operator is one of the six comparison operators (B-D3). */
         private static boolean isComparisonOperator(BinaryOp op) {
@@ -14619,9 +11275,6 @@ public final class SemanticLowerer {
          * {@code bytes}/{@code has} intrinsics — maps to no conversion
          * kind.
          *
-         * @param name the root intrinsic binding's name; non-null
-         * @return the conversion kind, or {@code null} for a non-conversion
-         *         intrinsic
          */
         private static IntrinsicKind conversionIntrinsicKind(String name) {
             return switch (name) {
@@ -14631,20 +11284,6 @@ public final class SemanticLowerer {
             };
         }
 
-        /**
-         * The pinned one-line scalar descriptor rows of the value-operation
-         * slice (I3): the slice admits exactly these rows —
-         * null, boolean, signed32 int, number, string, and the nullable
-         * rows over int/number/boolean (the nullable descriptor over the
-         * same inner row) — for exactly
-         * the descriptor positions its arms introduce (the conversion
-         * intrinsics admit nullable int/number inputs). The rows realize
-         * through the single {@link DescriptorService} producer (the
-         * verbatim D2 scalar table — the slice builds no structural
-         * descriptor service, ISSUE-0233 is excluded here); every other
-         * checked type reaching a value-op descriptor position is a
-         * producer defect ({@link ConstructUnlowered}).
-         */
         private static RuntimeDescriptor valueDescriptorOf(Type type) {
             boolean admissible = switch (type) {
                 case Type.Null ignored -> true;

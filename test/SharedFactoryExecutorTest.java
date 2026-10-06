@@ -50,63 +50,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * Verifies the ISSUE-0514 {@link ClassOpsExecutor} cross-unit default
- * filling surface (class-construction-jsonable-operations K-D5 and the
- * K-D4 SHARED_FACTORY transfer; parent D16): the
- * {@code CLASS_FACTORY} execution contract — the
- * {@code CLASS_NEW(SHARED_FACTORY)} trigger, the
- * {@code ClassFactoryId}-resolved transfer, the declaration-order
- * default application with the skip-provided rule, the untagged
- * internal transfer instance, zero boundaries and zero return
- * boundaries, the executed cross-unit {@code parentOpId} pin, and the
- * owner-scope default evaluation — plus the caller-side
- * {@code CLASS_NEW(SHARED_FACTORY)} order: literal-order provided-value
- * resolution before the transfer (the
- * {@code jvm-xmod-class-construction-eval-order} pin), the transfer,
- * extra-key E8007 rejection after the completed defaults,
- * declaration-order provided overlay (the
- * {@code jvm-xmod-class-construction-defaults} reorder pin), the
- * {@code CLASS_DEFAULT_FIELD} extraction rule (the boundary's input
- * naming the owner factory result {@code ValueId} is the wiring; the
- * checked value is the transferred instance's named field), and the
- * tag-last fresh caller-side publication.
- *
- * <p>Pinned cases (the task verification):
- * <ol>
- *   <li>the trigger resolves the owner factory by
- *       {@code ClassFactoryId}; the factory executes its children in
- *       declaration order skipping provided fields (the fixture body
- *       runner records order and omission — a provided field's default
- *       never runs) and returns the default-filled untagged transfer
- *       instance;</li>
- *   <li>the factory's executed {@code parentOpId} equals the caller
- *       {@code CLASS_NEW} op id (cross-unit modules) — a non-{@code
- *       CLASS_NEW} trigger and a self-trigger are producer defects;</li>
- *   <li>the caller overlays provided fields in declaration order onto
- *       the transferred instance (the reorder pin asserted via the
- *       field-state result); the extraction rule checks the transferred
- *       instance's named field values through the boundary delegate;
- *       tag and publish only after all validation; zero return
- *       boundaries;</li>
- *   <li>a failing default child fails the caller op (no caller
- *       instance, completed default-block effects remain);</li>
- *   <li>a default referencing an owner-module binding resolves in the
- *       owner's scope (the body runner executes exactly the owner
- *       unit's {@code CLASS_DEFAULT} op instance);</li>
- *   <li>the extra-key scan runs after the completed transfer and
- *       publishes the exact E8007 template at the op origin with no
- *       boundary run;</li>
- *   <li>fail-closed defects — wrong owners/policies, a null factory
- *       ref, non-empty {@code classDefaultOpIds}, unresolvable
- *       registry/factory ops, wrong factory class/kind/policy/result,
- *       wiring mismatches, missing transferred fields — are producer
- *       defects, never DEAL projections; null arguments throw the
- *       documented NPEs;</li>
- *   <li>determinism — repeated drives with equal inputs produce equal
- *       results (the executor is stateless).</li>
- * </ol>
- */
 public class SharedFactoryExecutorTest {
 
     private static int passed = 0;
@@ -218,7 +161,6 @@ public class SharedFactoryExecutorTest {
         return new ClassLayout(CLS, List.of(fields));
     }
 
-    /** A detached owner-side CLASS_DEFAULT op (K-D12: no static parent). */
     private static SemanticOp defaultOp(String field, SemanticValue result,
                                         RuntimeDescriptor resultType, FailurePolicyId policy) {
         return opIn(OWNER, SemanticOpKind.CLASS_DEFAULT,
@@ -226,7 +168,6 @@ public class SharedFactoryExecutorTest {
             result, resultType, policy, null);
     }
 
-    /** A parented field-boundary child (K-D4 parentage pin). */
     private static SemanticOp boundaryChild(ModuleId module, OpId parentId, BoundaryKind kind,
             RuntimeDescriptor descriptor, ValueId input, FailurePolicyId policy) {
         return opIn(module, SemanticOpKind.BOUNDARY,
@@ -256,11 +197,6 @@ public class SharedFactoryExecutorTest {
     private record SharedNewFixture(SemanticOp op, Map<OpId, SemanticOp> boundaryOps) {
     }
 
-    /**
-     * Builds a validated-shape caller-side CLASS_NEW(SHARED_FACTORY) op
-     * with the pinned children, then re-parents the boundary children to
-     * the CLASS_NEW op id (the validator-pinned K-D4 parentage).
-     */
     private static SharedNewFixture sharedNewFixture(ClassLayout layout,
             List<ProvidedEntry> provided, ClassFactoryId factoryRef,
             List<BoundaryEntry> entries) {
@@ -457,8 +393,6 @@ public class SharedFactoryExecutorTest {
                 + "is never executed by the BodyRunner fixture (the skip-provided "
                 + "rule); got " + log);
 
-        // The executed parentOpId pin (K-D5/K-D12): the factory executes
-        // keyed to the triggering caller op — cross-unit modules.
         check(caller.opId().module().equals(CALLER) && factory.opId().module().equals(OWNER),
             "the triggering caller op belongs to the caller module and the factory to "
                 + "the owner module (the cross-unit parentOpId shape)");
@@ -854,9 +788,6 @@ public class SharedFactoryExecutorTest {
                 pass, body),
             "a factory op without a ValueId result");
 
-        // A CLASS_DEFAULT_FIELD wiring mismatch: the boundary input must
-        // name the owner factory result ValueId (the K-D4 cross-unit
-        // reference).
         ValueId wrongResult = nextValue();
         List<BoundaryEntry> wrongWiring = List.of(new BoundaryEntry("a",
             BoundaryKind.CLASS_DEFAULT_FIELD,

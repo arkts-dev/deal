@@ -156,17 +156,6 @@ public final class TargetAbiValidator {
      * coverage and every ABI record against the staged artifact set, the
      * route plan, the interface index, and the project profile.
      *
-     * @param stagedSet     the staged artifact set the records' load keys
-     *                      resolve against; non-null
-     * @param routePlan     the deterministic route plan of the invocation;
-     *                      non-null
-     * @param abiEdges      the complete ABI records — plan-time records
-     *                      completed during staging plus emitted
-     *                      SHARED-owner manifests; non-null
-     * @param interfaceIndex the project interface index; non-null
-     * @param projectProfile the invocation's project semantic profile; non-null
-     * @return empty on pass; otherwise the first E6005 in deterministic
-     *         order (capability MODULES)
      */
     public static Optional<CompilerDiagnostic> validate(
             StagedArtifactSet stagedSet,

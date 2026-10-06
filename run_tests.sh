@@ -22,14 +22,15 @@ esac
 echo "=== DEAL test parallelism: jobs=$JOBS ==="
 source tools/gate-manifest.sh
 rm -rf build
-mkdir -p build
+mkdir -p build/test-classes
 
 echo "=== Compiling all DEAL sources and tests ==="
 mapfile -d '' PROD_SOURCES < <(find deal -name '*.java' -print0 | sort -z)
 mapfile -d '' TEST_SOURCES < <(find test -path 'test/conformance/host-fixtures' -prune -o -name '*.java' -print0 | sort -z)
-javac --release 25 -proc:none -d build \
-  -cp /usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar \
-  "${PROD_SOURCES[@]}" "${TEST_SOURCES[@]}"
+javac --release 25 -proc:none -d build "${PROD_SOURCES[@]}"
+javac --release 25 -proc:none -d build/test-classes \
+  -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar \
+  "${TEST_SOURCES[@]}"
 
 # Coverage uses a silent PATH wrapper for java, including Java subprocesses.
 for record in "${TEST_MAINS[@]}"; do
@@ -44,6 +45,8 @@ for record in "${TEST_MAINS[@]}"; do
   case "$record_class" in
     bg|fg)
       read -r -a record_args <<< "$record_command"
+      # Manifest Java commands start with java -ea -cp build[:...].
+      record_args[3]="${record_args[3]}:build/test-classes"
       # All Java suites run sequentially; --jobs controls nested suite work.
       java "-Ddeal.test.jobs=$JOBS" "${record_args[@]:1}"
       ;;

@@ -67,59 +67,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * Verifies the ISSUE-0516 production component
- * {@link ClassConstructionValidator}
- * (class-construction-jsonable-operations K-D11; the epic's
- * decomposition tail): the production-time class-op coherence checks —
- * factory&#8596;constructionEntry bijection, {@code CLASS_NEW} payload/
- * layout/boundary/input-wiring coherence, the field-operation child
- * shapes, the default-block admission, and the nested-jsonable layout
- * resolution — producing exactly one E6005 with
- * {@code capability CLASSES}, the pinned {@code validatorRule}, the
- * module, and the {@code ClassConstructionValidator} origin outside the
- * foundation validator's closed 14-condition rule set.
- *
- * <p>Pinned cases (the task verification):
- * <ol>
- *   <li>Positive corpus: lowerer-produced units over the whole pipeline
- *       (declaration arm, LOCAL/SHARED_FACTORY construction, field
- *       operations, {@code has()}, and the generated {@code @jsonable}
- *       bodies) each validate; the production seam
- *       ({@link SemanticLowerer#lowerModuleClassCore}) runs the
- *       validator internally (every listed slice lowers).</li>
- *   <li>Factory negatives, each exactly one E6005
- *       {@code FACTORY_COHERENCE}: an unregistered exported class, a
- *       fabricated registry key, a reordered factory
- *       {@code classDefaultOpIds}, a parented factory, a duplicate
- *       {@code CLASS_DEFAULT} op, and a default op for a non-defaulted
- *       field.</li>
- *   <li>Construction negatives, each exactly one E6005
- *       {@code CONSTRUCTION_COHERENCE}: a layout carrying a foreign
- *       classId, an undeclared provided field, a swapped
- *       field-boundary order, a tampered boundary input, a wrong
- *       boundary kind, a LOCAL shape with a factory ref, and a
- *       RETAINED_ABI owner (E10's shape, never produced).</li>
- *   <li>Field-operation negatives, each exactly one E6005
- *       {@code FIELD_OPERATION_SHAPE}: a FIELD_READ with a dropped
- *       OPTIONAL_FIELD_READ child, a tampered receiver descriptor, an
- *       extra boundary child, and a required-field delete.</li>
- *   <li>Default-block admission negatives, exactly one E6005
- *       {@code DEFAULT_BLOCK_ADMISSION}: a binding load inside the
- *       default closure referencing an enclosing-function allocation,
- *       and a nested closure capture of the same shape.</li>
- *   <li>JSON negatives, each exactly one E6005
- *       {@code JSON_LAYOUT_COHERENCE}: a dropped per-site default
- *       child, an orphan table entry, an unresolvable nested class
- *       layout, and a bytes-typed jsonable field.</li>
- *   <li>The pinned detail fields (code, capability, rule, profile,
- *       version, module, origin) and determinism.</li>
- *   <li>Dump/snapshot wiring: the produced class unit dumps through the
- *       canonicalizer and re-validates from the dump text (the class-op
- *       payload snapshots survive the text round-trip), and every
- *       class op's digest equals the recomputed canonical digest.</li>
- * </ol>
- */
 public class ClassConstructionValidatorTest {
 
     private static int passed = 0;

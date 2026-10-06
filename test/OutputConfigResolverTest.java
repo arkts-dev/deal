@@ -10,31 +10,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
-/**
- * The test battery for {@link OutputConfigResolver} (ISSUE-0264 T3,
- * design source {@code strict-project-context-resolution-identity} D3,
- * verification item 4): backend precedence for every combination (CLI
- * alias {@code lua|luajit|jvm|js} over a valid manifest; manifest
- * {@code luajit}/{@code jvm}/{@code js}; absence → {@code luajit});
- * output precedence (CLI &gt; manifest &gt; backend-dependent default);
- * classification of absolute, relative, bare, {@code ./}, {@code ../},
- * and NUL-containing values under both sources; default paths resolving
- * from the manifest directory; filesystem behavior with real temp
- * directories (a non-existent output path classifies successfully with
- * its existing prefix resolved; a symlinked existing prefix resolves on
- * the longest existing directory prefix; the module performs no writes
- * and creates no directory); the conversion-failure shape
- * ({@code source}, {@code reason}, {@code sourceRange} for NUL-bearing
- * and unrepresentable winning values); purity/determinism (identical
- * inputs → identical results, no state); and the combined T1+T2+T3
- * dependency gate (parse a valid manifest through T2, feed its validated
- * backend/output values into T3 with a real temp manifest directory and
- * process CWD, assert the effective backend and the
- * T1-prefix-resolved {@code absoluteNormalizedPath}).
- *
- * <p>Runs via main() using the repository's plain check()-helper
- * convention; exits non-zero on failure.</p>
- */
 public final class OutputConfigResolverTest {
 
     private OutputConfigResolverTest() {

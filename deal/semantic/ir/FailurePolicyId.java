@@ -64,7 +64,6 @@ public enum FailurePolicyId {
         "STDLIB_RETURN"
     );
 
-    /** Returns true iff {@code name} is a reserved (invalid) policy name. */
     public static boolean isReservedName(String name) {
         return RESERVED_NAMES.contains(name);
     }

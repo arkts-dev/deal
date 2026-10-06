@@ -60,63 +60,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * ISSUE-0626: bytes coverage and the bytes element contract
- * ({@code semantic-ir-construct-coverage-cutover} K6, K9 item 1, and the
- * bytes element contract).
- *
- * <ol>
- *   <li><b>The corpus pins.</b> Every {@code backend-runtime/bytes} sidecar
- *       keeps its pinned outcome: the fourteen failure rows with their code,
- *       message, line, and column (the negative allocation length, the
- *       index-below-zero read, the read at {@code i == b.length}, the write
- *       below zero, the write at {@code i == b.length}, the write range,
- *       the bytes-bearing signature rows, and the two
- *       {@code source-location/bytes-*} pins), and the runtime-ok fixtures
- *       their zero exit and empty streams.</li>
- *   <li><b>The corpus drive through the production entry.</b> Each
- *       driveable corpus fixture (classification headers stripped, the
- *       corpus entry shim replaced by the drive's own entry that calls the
- *       fixture's test export) compiles through the real orchestrator,
- *       lowers through the production project entry with zero diagnostics,
- *       and passes the closed schema and bindings gates; the pinned row
- *       surfaces on the oracle, the shared LuaJIT artifact under real
- *       {@code luajit}, and the shared JVM artifact under {@code javac
- *       --release 25 -proc:none} plus {@code java}, at the pinned origin
- *       (the raw sidecar line rebased by the stripped header lines).</li>
- *   <li><b>The read shape and the write chain.</b> The bytes element read
- *       carries its length read ({@code ARRAY_LENGTH} then
- *       {@code INDEX_NORMALIZE(BYTES_READ)} with {@code currentLength}
- *       referencing it then {@code INDEX_READ} with the
- *       {@code BYTE_ELEMENT_READ} child) and the write carries the
- *       seven-child chain with the length child at position 3, the
- *       normalize's {@code currentLength} referencing it, and the
- *       {@code BYTE_ELEMENT_ASSIGNMENT} child under {@code BYTES_WRITE};
- *       the read at {@code i == b.length} fails the pinned E8012.</li>
- *   <li><b>The oracle realization.</b> The oracle allocates zero-filled
- *       buffers, mutates them in place so an alias observes the write,
- *       keeps the logical length fixed, crosses a bytes value over a typed
- *       boundary, and compares two buffers by allocation identity
- *       ({@code BYTES_EQ}/{@code BYTES_NE}).</li>
- *   <li><b>Zero bytes CONSTRUCT_UNLOWERED.</b> Every checker-valid bytes
- *       fixture — the nested-declaration shapes, the host-module fixture,
- *       the adapter and dynamic-function-value shapes, and the emitter
- *       family — compiles and lowers with zero diagnostics, and no
- *       fixture is skipped by any drive.</li>
- *   <li><b>The host-ABI fixture.</b> The host-importing integration
- *       fixture's async export executes on the oracle (a bytes-aware host
- *       responder), the shared LuaJIT production artifact (a deployed Lua
- *       host module), and the shared JVM production artifact (a deployed
- *       host class over the emitted {@code $DealRt} host ABI), each
- *       running the fixture's own assertions.</li>
- *   <li><b>The async-entry fixture.</b> The async-closure fixture's own
- *       test export executes on the oracle's async-entry invocation, the
- *       shared three-consumer async matrix (the trace parity of the oracle
- *       and the two shared artifacts), and both production project
- *       artifacts' async dispatch entries, running the fixture's own
- *       TEST_FAIL battery and its bytes-typed dynamic dispatch.</li>
- * </ol>
- */
 public class BytesCoverageTest {
 
     private static int passed = 0;
@@ -271,12 +214,6 @@ public class BytesCoverageTest {
             "test_bytes_class_default_integration", "int", List.of(), null, null, 0, 0),
         ok("bytes-fn-xmod", "test_bytes_fn_xmod", "int", "bytes-fn-xmod-lib"));
 
-    /**
-     * The fixtures whose closure carries a nested function declaration (the
-     * CALLS family's nested-declaration arm, landed): the nested bodies own
-     * their lowering contexts, so the closure lowers and executes like every
-     * other fixture (the generic drive asserts it).
-     */
     private static final List<String> NESTED_DECLARATION_FIXTURES = List.of(
         "bytes-boundary-order");
 
@@ -1083,12 +1020,6 @@ public class BytesCoverageTest {
     /** The async test export of the host-importing integration fixture. */
     private static final String HOST_EXPORT = "test_bytes_class_default_integration";
 
-    /**
-     * The deployed Lua host of the bytes fixture ({@code host/bytes_roundtrip}):
-     * the landed runtime's bytes carrier is the one representation, one fresh
-     * buffer per {@code makeBytes}, one retained buffer for {@code sharedBytes},
-     * and the fixture's phase-order counter.
-     */
     private static final String HOST_BYTES_ROUNDTRIP_LUA = """
         local rt = require("deal.runtime")
         local calls = 0

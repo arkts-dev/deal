@@ -131,35 +131,6 @@ public final class FfiDeclarationValidator {
      * Validates one extern-C declaration module and publishes its
      * descriptor.
      *
-     * @param program                        the parsed program with
-     *                                       effective
-     *                                       {@code FileDirectives.externC}
-     * @param modulePath                     the module's dotted module
-     *                                       path
-     * @param location                       the module's resolved source
-     *                                       location (private semantic
-     *                                       identity)
-     * @param canonicalExternalModuleIdentity the externals descriptor
-     *                                       namespace text
-     *                                       {@code @$external/&lt;raw&gt;}
-     * @param identityAssembly               the compilation's identity
-     *                                       assembly (class identities
-     *                                       registered in phase 1)
-     * @param descriptorEncoder              the compilation's single
-     *                                       Type&rarr;text encoder over the
-     *                                       identity index (provider
-     *                                       canonical descriptors)
-     * @param nativeLibraryKind              the classified library kind,
-     *                                       or null
-     * @param nativeLibraryLoaderText        the exact loader text, or
-     *                                       null
-     * @param dependencyOrder                the compilation's check order
-     *                                       (module paths in dependency
-     *                                       order)
-     * @param importTargets                  import alias &rarr; resolved
-     *                                       provider surface
-     * @return the diagnostics plus the descriptor (null on error) and
-     *         the graph-ordered imported references
      */
     public static Result validate(
             ProgramNode program,

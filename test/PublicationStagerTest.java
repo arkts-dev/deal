@@ -23,25 +23,6 @@ import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 
-/**
- * The transactional publication contract suite (ISSUE-0458, design
- * source {@code whole-project-artifact-publication} Verification 1-7):
- * the forced-failure stage test, fresh-root publish + whole-set
- * semantics, stale-set purge, crash recovery under the per-root lock,
- * concurrency serialization, IR-dump transactionality, out-of-checkout
- * distribution copies, the injected publish I/O failure path with the
- * pinned deterministic diagnostic, and the {@link ArtifactSet} model
- * contract.
- *
- * <p>Every assertion is a real compilation through
- * {@link CompilationOrchestrator} (or a real {@link PublicationStager}
- * publish over a real staging tree), so the {@code run_tests.sh}
- * registration executes the proofs — never dead code. The suite runs
- * from the repository root: the checkout CWD dev-fallback tier of
- * {@link DistributionHome} supplies the committed {@code std/*} and
- * {@code deal/runtime.*} bytes wherever a test does not pin a
- * distribution tier explicitly.</p>
- */
 public class PublicationStagerTest {
 
     private static int passed = 0;
@@ -203,13 +184,6 @@ public class PublicationStagerTest {
         return true;
     }
 
-    /**
-     * One orchestrator compile of a single-source-dir project. The
-     * compile resolves the harness invocation (ISSUE-0643 P10 item 3):
-     * the suite's subject — the staging/publication transaction over the
-     * per-module artifact set — is arm-independent, and the identical
-     * compile inputs keep every artifact assertion.
-     */
     private static boolean compileProject(Path srcDir, Path outputDir,
             Backend backend, boolean dumpIr, boolean sourceMap,
             StringBuilder capturedErr) throws IOException {

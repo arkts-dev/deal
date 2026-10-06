@@ -42,49 +42,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * The recursive-group child's lowering tests (ISSUE-0446 sequencing item
- * 3): per-scope SCC partition over function declarations and one
- * {@code RECURSIVE_GROUP_INIT} op per size>=2 SCC with the
- * declaration-ordered member {@code {bindings, functions}} payload,
- * pre-assigned unique member allocation identities, module-init-top
- * placement for module-level groups and first-member-position placement
- * for nested-scope groups, member loads resolving to the group op as the
- * producing allocation at generation 0 with no separate
- * {@code BINDING_ALLOC}/{@code BINDING_INIT}, member bodies lowering
- * like any function body with captures (B3), and size-1 SCCs —
- * self-recursive declarations included — lowering as {@code CLOSURE_NEW}
- * + {@code BINDING_INIT} at the declaration position — driven through
- * the child's public lowering entry point
- * ({@link SemanticLowerer#lowerModuleGroupCore}) with the produced
- * units validated by the closed validator and the address-chain
- * protocol under the pinned E6-gate activation.
- *
- * <p><b>Coverage.</b></p>
- * <ul>
- *   <li>a mutual-recursion pair lowers to exactly one group op with
- *       declaration-ordered member lists and unique pre-assigned member
- *       identities;</li>
- *   <li>a self-recursive function lowers to {@code CLOSURE_NEW} +
- *       {@code BINDING_INIT} with no group op;</li>
- *   <li>a module-level group's op sits at module-init top;</li>
- *   <li>a nested-scope group's op sits at the first member's declaration
- *       position;</li>
- *   <li>member references inside member bodies resolve to
- *       {@code {binding, generation 0}} with the group op as the
- *       producing allocation; no member has a separate ALLOC/INIT;</li>
- *   <li>an unreferenced sibling declaration is not grouped (minimal SCC
- *       partition);</li>
- *   <li>a module-level group whose member body captures a later-declared
- *       module function resolves the capture to the hoisted ALLOC and
- *       the group op still precedes the capturing closure site
- *       (combined with the binding-core and closure children — fails if
- *       either earlier module is broken);</li>
- *   <li>determinism: repeated lowering produces byte-identical dumps;</li>
- *   <li>fail-closed negatives: a foreign statement inside a member body
- *       and the legacy profile guard convert to the pinned E6005.</li>
- * </ul>
- */
 public class RecursiveGroupLoweringTest {
 
     private static int passed = 0;

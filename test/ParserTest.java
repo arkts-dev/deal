@@ -37,8 +37,7 @@ public class ParserTest {
 
     private static ParseResult parse(String source) {
         LexResult lex = new Lexer(source, "test.deal").tokenize();
-        // ISSUE-0273: the events-carrying constructor — file-directive
-        // evaluation and binding run exactly as in production.
+
         return new Parser(lex.tokens(), "test.deal",
             lex.directiveEvents()).parse();
     }
@@ -208,7 +207,6 @@ public class ParserTest {
         testMultipleStatements();
         testSemicolons();
 
-        // @jsonable directive tests (ISSUE-0046)
         testJsonableExportClass();
         testJsonableExportFunction();
         testJsonableStandaloneClass();
@@ -231,7 +229,6 @@ public class ParserTest {
         // @deal-version file directive value validation (DEAL v1.2)
         testDealVersionDirectives();
 
-        // ISSUE-0273 directive binding pins (D4/D7/D10)
         testExternCWrongFileKind();
         testExternCDuplicateAndPlacement();
         testCMarkerOutsideExternC();
@@ -239,7 +236,6 @@ public class ParserTest {
         testDeclarationFileJsonableNoEffect();
         testTemplateEmbeddedDirectives();
 
-        // Ranged diagnostic anchors (ISSUE-0223 verification 3)
         testTrailingDirectiveEofAnchor();
         testParserDiagnosticScalarExactness();
 
@@ -391,10 +387,6 @@ public class ParserTest {
         }
     }
 
-    // =========================================================================
-    // Ranged diagnostic anchor fixtures (ISSUE-0223 verification 3)
-    // =========================================================================
-
     static void testTrailingDirectiveEofAnchor() {
         System.out.println("-- Trailing directive comment: end-of-input error anchors at the real EOF --");
 
@@ -488,7 +480,6 @@ public class ParserTest {
                     + d.range().startLine() + "," + d.range().startColumn() + ")");
         }
     }
-
 
     // =========================================================================
     // Statement form tests
@@ -1801,15 +1792,6 @@ public class ParserTest {
         }
     }
 
-    /**
-     * ISSUE-0224 verification 5: template-interpolation scalar rebasing.
-     * Every sub-lexed diagnostic inside ${...} carries a SOURCE range with
-     * exact original scalar offsets; the rebased sub-parser EOF token anchors
-     * end-of-input errors at the expression-end raw position; E1042
-     * pseudo-token and D16 placeholder ranges are raw-positioned. Each
-     * expectation is cross-checked against an independent ScalarSourceCursor
-     * recomputation of the original source.
-     */
     static void testTemplateInterpolationRangeAnchors() {
         System.out.println("-- Template Literal: interpolation range anchors (ISSUE-0224) --");
 
@@ -2161,10 +2143,6 @@ public class ParserTest {
         assertStmtCount(r3.program(), 1, "1 stmt without semicolon at EOF");
     }
 
-    // =========================================================================
-    // @jsonable directive tests (ISSUE-0046)
-    // =========================================================================
-
     static void testJsonableExportClass() {
         System.out.println("-- @jsonable export class -> isJsonable=true --");
 
@@ -2198,10 +2176,6 @@ public class ParserTest {
             check(warnDiag.message().contains("export class"),
                 "message mentions export class: " + warnDiag.message());
 
-            // ISSUE-0273: the E1043 anchor is the complete directive
-            // comment range (parent D6) — line 1, column 1 through column
-            // 13, offsets (0,12) — never the EXPORT token and never
-            // SYNTHETIC (1,1).
             check(warnDiag.range().origin() == RangeOrigin.SOURCE,
                 "E1043 range must be SOURCE, got " + warnDiag.range().origin());
             check(warnDiag.line() == 1 && warnDiag.column() == 1,
@@ -2533,11 +2507,6 @@ public class ParserTest {
         check(lex.tokens().get(0).type() == TokenType.LET,
             "end-to-end: LET is the first token");
     }
-
-
-    // =========================================================================
-    // ISSUE-0273 directive binding pins (D4/D7/D10)
-    // =========================================================================
 
     static void testExternCWrongFileKind() {
         System.out.println("-- @extern-c wrong file kind -> E1046 --");

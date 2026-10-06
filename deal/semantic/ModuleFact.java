@@ -28,21 +28,6 @@ import java.util.Objects;
  * {@code checkResult == null} by construction: they are never
  * type-checked and never populate the checked project input.</p>
  *
- * @param sourcePath         the resolved source file path; non-null
- * @param moduleId           the dotted module path; non-null
- * @param isDeclarationFile  whether the module is a declaration file
- * @param isSpecStdlibModule the orchestrator's spec-stdlib classification
- *                           fact ({@code isSpecStdlibModuleInfo})
- * @param ast                the parsed program AST; non-null
- * @param exports            the Phase-3-corrected resolved export map in
- *                           insertion order (implementation modules) or
- *                           the signature-extractor map (declaration
- *                           files, used only for the {@code @jsonable}
- *                           synthetic-exports rule); non-null
- * @param symbolTable        the module symbol table; null for declaration files
- * @param checkResult        the checked facts; null for declaration files
- * @param imports            the orchestrator's resolved imports in source
- *                           order; non-null
  */
 public record ModuleFact(
     String sourcePath,

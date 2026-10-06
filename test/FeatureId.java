@@ -2,15 +2,6 @@ package deal.test.feature;
 
 import java.util.Set;
 
-/**
- * The closed ISSUE-0111 feature-id set (declarations page D12, the
- * architecture-owned {@code FeatureBackendMatrix} key space).
- *
- * <p>The ids are normative and fixed: an unknown feature id in a sidecar
- * is a catalog failure, never a typo-tolerant match. The set deliberately
- * has no extensibility surface — adding a feature requires editing both
- * this enum and {@link FeatureBackendMatrix} in one coupled change.</p>
- */
 public enum FeatureId {
 
     /** Signed-int32 literals/arithmetic/conversions (int32 page D1-D2). */

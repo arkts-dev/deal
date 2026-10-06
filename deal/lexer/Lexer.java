@@ -128,8 +128,6 @@ public final class Lexer {
     /**
      * Creates a new lexer for the given source text.
      *
-     * @param source the DEAL source text
-     * @param file   the file path (for diagnostics)
      */
     public Lexer(String source, String file) {
         this.source = source;
@@ -145,8 +143,6 @@ public final class Lexer {
     /**
      * Tokenizes the entire source and returns the result.
      *
-     * @return a {@link LexResult} containing all tokens, any diagnostics,
-     *         and the ordered directive events
      */
     public LexResult tokenize() {
         List<Token> tokens = new ArrayList<>();

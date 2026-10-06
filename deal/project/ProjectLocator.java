@@ -234,13 +234,6 @@ public final class ProjectLocator {
      * filesystem reads: no directory or artifact is created, no native
      * code is loaded, and no override is applied on failure.</p>
      *
-     * @param entryFile    the CLI-supplied entry-file value (may be any
-     *                     string; null and empty are
-     *                     {@link CliDiagnostic}s)
-     * @param cliOverrides the raw CLI overrides (backend/output), or null
-     *                     for no overrides
-     * @return one immutable context, or exactly one E2010 /
-     *         {@link CliDiagnostic}; never null, never throws
      */
     public static LocateResult locate(String entryFile, CliOverrides cliOverrides) {
         CliOverrides overrides = cliOverrides == null
@@ -492,8 +485,6 @@ public final class ProjectLocator {
      * (e.g. a dangling symlink, a symlink loop, or an I/O race) is not
      * "regular after resolution" and is skipped.</p>
      *
-     * @param entryRealText the symlink-resolved entry path text
-     * @return the candidate manifest paths (fully resolved), nearest first
      */
     private static List<String> discoverManifests(String entryRealText) {
         List<String> candidates = new ArrayList<>();
@@ -573,9 +564,6 @@ public final class ProjectLocator {
      * text is the pinned anchor position ("the UTF-16 index equal to the
      * length of the strictly decoded valid prefix").</p>
      *
-     * @param bytes the exact manifest bytes
-     * @return the decoded text, or the decoded prefix plus the first
-     *         malformed sequence's start offset and length
      */
     private static StrictDecode strictUtf8Decode(byte[] bytes) {
         CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
@@ -688,10 +676,6 @@ public final class ProjectLocator {
      * symlinked spec-listed file under a project-local surface keeps its
      * pinned {@code BuiltinModule} classification.</p>
      *
-     * @param stdlibSurface the pinned surface directory path text, or
-     *                      {@code null} when absent
-     * @return the canonical declaration-file path texts in pinned module
-     *         order (never null; empty when the surface is absent)
      */
     private static List<String> resolveStdlibDeclarationFiles(String stdlibSurface) {
         List<String> files = new ArrayList<>();
@@ -744,11 +728,6 @@ public final class ProjectLocator {
      * directive-recognition authority), never a textual scan, and is
      * stateless: one scan per externals entry, no caching, no retries.
      *
-     * @param declarationPathText the fully symlink-resolved declaration
-     *                            path (existence/readability already
-     *                            verified by the step 4(b) loop)
-     * @return true iff the declaration lexes with at least one
-     *         {@code EXTERN_C} directive event
      */
     private static boolean declaresExternC(String declarationPathText) {
         byte[] bytes;

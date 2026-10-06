@@ -55,23 +55,6 @@ import java.util.Set;
  * operation-free synthetic units and delegates to the full constructor
  * with an empty list.</p>
  *
- * @param formatVersion         the pinned {@link #FORMAT_VERSION}; non-null
- * @param semanticProfile       must be {@link SemanticProfile#DEAL_V1_2_INT32}
- *                              — no constructor path admits any other value
- * @param moduleId              the module identity; non-null
- * @param interfaceHash         the interface index digest this unit was
- *                              checked against; non-null
- * @param loweringContextHash   the pinned lowering-context digest; non-null
- * @param requiredCapabilities  the closed capability claims of the module; non-null
- * @param constructCoverage     the enum-keyed coverage fact recorded at
- *                              lowering start; non-null
- * @param classLayouts          the class layouts of the module; non-null
- * @param functions             the lowered functions of the module; non-null
- * @param moduleInit            the module-initialization plan; non-null
- * @param exportPlan            the export plan of the module; non-null
- * @param functionBindings      the function execution bindings keyed by
- *                              allocation identity; non-null
- * @param ops                   the produced operations in source order; non-null
  */
 public record LoweredModuleUnit(
     String formatVersion,

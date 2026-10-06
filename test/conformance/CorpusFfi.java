@@ -49,48 +49,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * The corpus C FFI support surface (ISSUE-0507 FFI candidate fixture
- * conformance): the closed externals wiring of
- * {@code test/conformance/backend-runtime/ffi/deal.json}, the GCC
- * native-library bootstrap over
- * {@code backend-runtime/ffi/support/native.c}, the production
- * declaration validation ({@link FfiDeclarationValidator}), the
- * production FFIGEN boundary
- * ({@link LuaFfiBindingGenerator#generate}), and the checker-facing
- * export/class-symbol surface every lane's module resolver consumes.
- *
- * <p>The wiring is corpus-owned: the harness reads the on-disk
- * {@code deal.json} (schema: the {@code externals} map of raw import
- * specifier &rarr; {@code declaration} + {@code nativeLibrary}) and
- * derives every resolution from it — no import path, declaration, or
- * library is hardcoded in code. The {@code nativeLibrary} loader text
- * names a library under {@code support/}; the bootstrap GCC-compiles
- * {@code support/native.c} into the ignored {@code build/} directory
- * once per JVM and the loader text is re-pointed at that
- * symlink-resolved absolute artifact (kind {@code ABSOLUTE_PATH}), so
- * the generated {@code load_ffi} call sites open the real library at
- * runtime and the committed tree is never mutated. A loader text whose
- * basename is not the bootstrapped library's basename names a library
- * that is never built — the honest missing-library wiring of the
- * {@code candidate/native-missing-library} entry (the runtime open is
- * the existence check).</p>
- *
- * <p>The per-declaration identity surface is the real production one:
- * a {@link ProjectContext} with the externals entry, a
- * {@link ModuleIdentityAssembly} over it, and a
- * {@link SourceModuleLocation} classified as the
- * {@code ExternalModule(raw)} declaration — the validator's
- * class-identity gates therefore run exactly as they do under the
- * orchestrator. The bootstrap is fail-closed: a missing GCC, a failed
- * fixture compile, or an unreadable wiring file fails the lane
- * honestly (an {@link IllegalStateException} the caller records as a
- * fixture/harness failure), never a skip.</p>
- *
- * <p>The component is test-side only: production code never depends on
- * corpus artifacts, and no production FFI behavior is added beyond the
- * codegen seam the real emission path exposes.</p>
- */
 public final class CorpusFfi {
 
     /** The corpus-relative FFI directory (slash form). */

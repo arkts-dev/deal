@@ -13,70 +13,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Objects;
 
-/**
- * The production JVM host half of {@code BackendAsyncExportInvoker}
- * (ISSUE-0161, parent D9): executes a compiled entry artifact under the
- * real JVM, runs module initialization and {@code main()} exactly once in
- * one fresh runtime instance through the entry artifact's reserved
- * generated host-export entry ({@code $AsyncExportHost} over the blocking
- * async lowering), then selects exactly one exact
- * {@code async()-&gt;R} export, invokes it once, validates the completion
- * through the emitted canonical matcher, and maps the outcome.
- *
- * <h2>Invocation shape</h2>
- * Every {@link #invoke(AsyncExportInvocationRequest)} call:
- * <ol>
- *   <li>validates the request: the entry artifact must be a regular
- *       compiled {@code .class} file whose class name is the file stem,
- *       and the artifact root is its parent directory (the orchestrator's
- *       flat JVM layout); the launcher
- *       {@code <ClassName>$AsyncExportHost.class} must exist next to it —
- *       a missing entry artifact or launcher is a hard failure before any
- *       spawn;</li>
- *   <li>validates the return descriptor through the production canonical
- *       parser ({@link CanonicalRuntimeTypeDescriptor#parse(String)}): a
- *       non-canonical descriptor is the runtime half's pinned
- *       {@code HostInvocationFailure} ({@code "return descriptor is not a
- *       canonical descriptor: <text>"}) — byte-identical to the LuaJIT
- *       runtime's protocol validation — with no process spawned;</li>
- *   <li>spawns exactly one non-detached
- *       {@code java -cp <artifactRoot> <ClassName>$AsyncExportHost
- *       $asyncExportHost <exportName> <returnDescriptor>} — argv only, no
- *       shell, working directory = artifact root — with stdout/stderr
- *       redirected to temp capture files (no pipe deadlock), waits for
- *       exit, imposes no deadline, and builds no containment;</li>
- *   <li>parses the last stdout line with the exact marker prefix
- *       {@code DEAL_ASYNC_EXPORT_RESULT:} through the shared strict
- *       conventional-JSON envelope codec
- *       ({@link EnvelopeJson}, the closed schema also consumed by
- *       {@code LuaJitAsyncExportInvoker}) and maps the outcome;</li>
- *   <li>deletes the per-invocation temp directory (capture files) in a
- *       {@code finally} block.</li>
- * </ol>
- *
- * <h2>Outcome mapping</h2>
- * <ul>
- *   <li>{@code value} envelope → {@link Result.Value} — the
- *       matcher-validated completion as its exact JSON text plus the
- *       descriptor it was matched against;</li>
- *   <li>{@code deal-error} envelope → {@link Result.DealError} with
- *       code/message propagated unchanged (the JVM emitted errors carry
- *       no source location, so the location fields stay {@code null});</li>
- *   <li>{@code host-failure} envelope → {@link Result.HostFailure} with
- *       the pinned reason verbatim — missing, sync, parameterized,
- *       duplicate, descriptor-mismatched, non-wrapper, and malformed
- *       protocol input exports;</li>
- *   <li>{@code representation-failure} and {@code infrastructure-failure}
- *       envelopes, a missing/malformed envelope, an unknown status or
- *       field, and a nonzero exit without one of the three invocation
- *       envelopes → {@link JvmAsyncExportInvocationException} with the
- *       captured process output — never an expected DEAL code.</li>
- * </ul>
- *
- * <p>The component is stateless: one process per invoke, no retry, no
- * state shared between invokes, and concurrent invokes are isolated
- * processes.</p>
- */
 public class JvmAsyncExportInvoker {
 
     /**
@@ -104,8 +40,6 @@ public class JvmAsyncExportInvoker {
     /** Temp-directory prefix for the per-invocation capture files. */
     static final String TEMP_DIR_PREFIX = "deal-jvm-async-export-invoker-";
 
-
-
     // =========================================================================
     // Public API
     // =========================================================================
@@ -121,12 +55,6 @@ public class JvmAsyncExportInvoker {
         /**
          * The matcher-validated completion.
          *
-         * @param returnDescriptor the byte-exact canonical descriptor the
-         *                         completion was matched against
-         * @param valueJson        the completion value as its exact JSON
-         *                         text over the JSON-encodable surface
-         *                         (null, booleans, ints, numbers, strings,
-         *                         lists, maps, tables, arrays)
          */
         record Value(String returnDescriptor, String valueJson)
                 implements Result {
@@ -168,11 +96,6 @@ public class JvmAsyncExportInvoker {
      * Invokes one exact async export under one fresh JVM process. See the
      * class contract for the full outcome mapping.
      *
-     * @param request the parent's canonical three-field request; non-null
-     * @return {@link Result.Value}, {@link Result.DealError}, or
-     *         {@link Result.HostFailure} — never {@code null}
-     * @throws JvmAsyncExportInvocationException for infrastructure,
-     *         containment, and value-representation failures
      */
     public Result invoke(AsyncExportInvocationRequest request) {
         Objects.requireNonNull(request, "request must not be null");

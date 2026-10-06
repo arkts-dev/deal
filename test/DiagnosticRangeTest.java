@@ -43,60 +43,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * Tests for the non-lossy diagnostic range foundation (ISSUE-0216 /
- * ISSUE-0217 / ISSUE-0218 / ISSUE-0219).
- *
- * <p>This file is the home of the ISSUE-0216/ISSUE-0217/ISSUE-0218/
- * ISSUE-0219 verification suites. It holds the {@link ScalarSourceCursor} /
- * {@link ScalarPosition} section (hand-computed walk expectations for
- * astral characters, tabs, LF, CRLF, and CR line endings, unpaired
- * surrogates, mark/reset lookahead, and the {@code scalarCount}
- * overloads), the Token/Span scalar-offset section (the UNKNOWN_OFFSET
- * sentinel on convenience constructors, {@code hasScalarOffsets()},
- * verbatim offset preservation through {@code Token.withDirectives},
- * {@code Span.synthetic} UNKNOWN offsets, scalar-count recomputation
- * against {@code ScalarSourceCursor}, parser span-helper propagation, the
- * empty-program (0,0) span, and the past-end {@code peek()} pseudo-EOF
- * position carrying), and the ISSUE-0218 carrier section
- * ({@link DiagnosticRange}/{@link RangeOrigin}/{@link DiagnosticNote}/
- * {@link CompilerDiagnostic} record invariants, the D4
- * {@code Span.range()}/{@code Token.range()} conversions including the
- * UNKNOWN→SYNTHETIC origin pins, the SOURCE-implies-known-offsets
- * invariant, the D6 synthetic contract with anchor notes, the D9
- * normalization pins, and the D5 factory surface), and the ISSUE-0219
- * formatter/structured section ({@link DiagnosticFormatter} exact human
- * renderings for multi-line and zero-length SOURCE ranges, the canonical
- * SYNTHETIC shape, and both note renderings; {@link
- * DiagnosticStructuredOutput} exact deterministic JSON field order and
- * values; the formatted-vs-structured cross-check; and the {@code
- * CompilerDiagnostic.toString()} canonical-formatter delegation), and the
- * ISSUE-0224 template-interpolation rebasing section (sub-lexed
- * diagnostic ranges inside ${...} rebased to exact original scalar
- * offsets, the rebased sub-parser EOF token anchoring end-of-input errors
- * at the expression-end raw position, and raw-positioned E1042/D16
- * anchor ranges — each cross-checked against an independent
- * {@link ScalarSourceCursor} recomputation), the ISSUE-0225
- * checker/validator producer section (name/type error ranges after
- * astral characters, tabs, and CRLF line endings and over multi-line
- * expression spans, each cross-checked against an independent cursor
- * recomputation and against the formatted and structured surfaces),
- * the combined program-span anchor section (E2010/E2011 entry-main
- * validation and JvmBackend E6004 sharing the program-span anchor: a
- * non-(1,1) first statement carries the exact non-zero start scalar
- * offset and an empty/whitespace-only entry pins
- * {@code (file,1,1,1,1,0,0,0,SOURCE)} — never SYNTHETIC, no anchor
- * note), and the ISSUE-0220
- * JsonRangeLexer section ({@link JsonRangeLexer} token/member/fault
- * ranges — every asserted range is an exact half-open
- * {@link SourceScalarRange} recomputed against an independent
- * {@link ScalarSourceCursor} — the pinned permissive acceptance surface,
- * the never-throws sweep, and the {@code deal/source} JDK-only package
- * scan). Later capabilities extend this file with the DealConfig
- * migration and producer-migration sections.
- *
- * <p>Runs via main() using the check() helpers; exits non-zero on failure.
- */
 public class DiagnosticRangeTest {
 
     private static int passed = 0;
@@ -868,10 +814,6 @@ public class DiagnosticRangeTest {
         }
     }
 
-    // =========================================================================
-    // ISSUE-0224: template-interpolation scalar rebasing
-    // =========================================================================
-
     private static ParseResult parseTemplateSource(String source) {
         LexResult lex = new Lexer(source, "test.deal").tokenize();
         return new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
@@ -901,15 +843,6 @@ public class DiagnosticRangeTest {
                 + expectedLine + "," + expectedColumn + ")");
     }
 
-    /**
-     * ISSUE-0224 verification 5: every sub-lexed diagnostic inside ${...}
-     * rebases through the TemplateScalarMap to exact original scalar
-     * offsets; the adjusted sub-parser token list retains a rebased EOF
-     * token so end-of-input errors anchor at the expression-end raw
-     * position; E1042 pseudo-token and D16 placeholder ranges are
-     * raw-positioned. Each expectation is cross-checked against an
-     * independent ScalarSourceCursor recomputation of the original source.
-     */
     private static void testTemplateInterpolationRebasing() {
         System.out.println("-- Template interpolation scalar rebasing (ISSUE-0224) --");
 
@@ -1075,17 +1008,11 @@ public class DiagnosticRangeTest {
         }
     }
 
-    // =========================================================================
-    // ISSUE-0225 checker/validator producer migration (verification 6)
-    // =========================================================================
-
     /** Full frontend checker pipeline: name resolution + type checking. */
     private static List<CompilerDiagnostic> checkerDiagnostics(String source,
                                                                 String filename) {
         LexResult lex = new Lexer(source, filename).tokenize();
-        // ISSUE-0273: the events-carrying parser — the @jsonable fixtures
-        // here need production directive binding (E4008 keys on the
-        // derived isJsonable accessor).
+
         ParseResult parse = new Parser(lex.tokens(), filename,
             lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
@@ -1188,17 +1115,6 @@ public class DiagnosticRangeTest {
             context + ": structured carries the same range fields: " + json);
     }
 
-    /**
-     * ISSUE-0225 verification 6: name-resolution and type errors carry
-     * SOURCE ranges that are scalar-exact after astral characters, tabs,
-     * and CRLF line endings and over multi-line expression spans — each
-     * cross-checked against an independent {@link ScalarSourceCursor}
-     * recomputation and against the formatted and structured surfaces
-     * (D8) — the recorded-span E4008 cycle anchors at the class
-     * declaration span, and an E4008 cycle without a recorded span yields
-     * the canonical synthetic range plus a note naming the cycle-node
-     * class.
-     */
     private static void testCheckerProducerRanges() throws Exception {
         System.out.println("-- Checker/validator producer ranges (ISSUE-0225) --");
 
@@ -1663,10 +1579,6 @@ public class DiagnosticRangeTest {
         }
         return null;
     }
-
-    // =========================================================================
-    // ISSUE-0218 carrier section (verification 1 minus formatter/JSON)
-    // =========================================================================
 
     private static void testCarrierRecords() {
         System.out.println("-- Carrier records: DiagnosticRange, RangeOrigin, DiagnosticNote --");
@@ -2320,10 +2232,6 @@ public class DiagnosticRangeTest {
         }
         check(threw, "error(null DiagnosticCode, ...) must throw IAE");
     }
-
-    // =========================================================================
-    // ISSUE-0219 formatter/structured section (verification 1)
-    // =========================================================================
 
     /** The shared multi-line SOURCE fixture: (2,5)-(3,9), offsets [20,24), span 4. */
     private static CompilerDiagnostic multiLineDiagnostic() {

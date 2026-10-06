@@ -9,8 +9,6 @@ import java.util.Objects;
  * source. Without the proof, a binding source must be
  * {@code SHARED_CELL} — the closed D15 lowering shape map.
  *
- * @param binding    the proven binding identity; non-null
- * @param generation the generation observed by the proof; non-negative
  */
 public record BindingImmutabilityProof(BindingId binding, long generation) {
 

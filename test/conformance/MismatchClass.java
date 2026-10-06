@@ -1,18 +1,5 @@
 package deal.test.conformance;
 
-/**
- * The closed verdict mismatch classes of the v1.2 differential gate
- * (ISSUE-0353; design {@code v12-zero-skip-conformance-gate} G6).
- *
- * <p>The set is closed: no other mismatch kind exists. DEAL outcome
- * mismatches ({@link #TRANSCRIPT_MISMATCH},
- * {@link #ERROR_SNAPSHOT_MISMATCH}, {@link #COMPILE_DIAGNOSTIC_MISMATCH},
- * {@link #EXIT_CODE_MISMATCH}, {@link #COMPILE_REJECT_MISMATCH}) are
- * differential failures; the remaining five are infrastructure outcomes
- * ({@link #infrastructure()}), labeled separately and never satisfying a
- * case. Every class is gate-fatal — there is no warning tier and no
- * skip state.</p>
- */
 public enum MismatchClass {
     /** First differing transcript byte with bounded context (G4.5). */
     TRANSCRIPT_MISMATCH,

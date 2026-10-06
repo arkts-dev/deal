@@ -25,11 +25,6 @@ import java.util.Objects;
  * invocation's recorded field. The module list covers the implementation
  * modules only, in dependency (check) order.</p>
  *
- * @param invocation      the release-owned compiler invocation; non-null
- * @param entryModule     the entry module's dotted module path; non-null
- * @param modules         the implementation modules in dependency order; non-null
- * @param releaseStateHash the invocation's derived release-state hash
- *                        recorded verbatim (F1/F2); non-null
  */
 public record CheckedProjectInput(
     CompilerInvocation invocation,

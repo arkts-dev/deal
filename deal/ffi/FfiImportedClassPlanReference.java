@@ -13,21 +13,6 @@ import java.util.Objects;
  * source order, ordered by the provider module's dependency-order
  * position.
  *
- * @param importAlias             the import alias exactly as written at
- *                                the consuming site
- * @param className               the referenced exported class name
- * @param importedModulePath      the provider module's dotted module
- *                                path
- * @param canonicalDescriptor     the provider class's canonical class
- *                                atom
- * @param providerContractDigest  SHA-256 over the canonical provider
- *                                plan-identity content (a changed
- *                                provider class identity changes the
- *                                digest)
- * @param graphOrder              the provider module's dependency-order
- *                                position
- * @param sourceRange             the consuming site's complete scalar
- *                                range
  */
 public record FfiImportedClassPlanReference(
     String importAlias,

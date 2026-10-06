@@ -36,14 +36,6 @@ import java.util.*;
 import java.util.function.Function;
 import deal.diagnostics.DiagnosticCode;
 
-/**
- * Lua code generator (ISSUE-0007). Walks the typed AST and emits Lua source code
- * with runtime type checks on every typed boundary.
- *
- * <p>Implements {@link Visitor}{@code <Void>} with one visit method per node type,
- * exhaustive per sealed interface. Uses the type map from the type checker to
- * determine when to insert runtime checks.</p>
- */
 public final class LuaBackend implements Visitor<Void> {
 
     private final Map<ExpressionNode, Type> typeMap;
@@ -80,19 +72,11 @@ public final class LuaBackend implements Visitor<Void> {
 
     private final Map<String, String> exportedValues = new LinkedHashMap<>();
 
-    // ISSUE-0050: deferred @jsonable class metadata for two-pass emission
     private final List<JsonableClassMeta> deferredJsonables = new ArrayList<>();
 
     private Type currentReturnType = null;
     private String sourceFilePath = "unknown.deal";
 
-    // ISSUE-0082 (runtime-class-identity D2(0)): the module path of the
-    // module being generated. Seeded by the static entry points and the
-    // public instance constructor; {@link #qualifiedClassName} falls back to
-    // {@code sourceFilePath} when null. Every class emission site that has
-    // only the AST name (META export, @jsonable helpers) derives its
-    // qualified identity string from this path, byte-identical to the
-    // checker's module path (NameResolver is seeded with the same value).
     private String modulePath = null;
 
     private String currentContinueLabel = null;
@@ -101,46 +85,20 @@ public final class LuaBackend implements Visitor<Void> {
     private String tryReturnFlag = null;
     private String tryReturnVal = null;
 
-    // Break/continue flag support (ISSUE-0011): flag-based pattern for
-    // break/continue inside try within loops. Allocated at every TryStatement
-    // level when inside a loop, with save/restore for nesting.
     private String tryBreakFlag = null;
     private String tryContinueFlag = null;
 
     private int functionDepth = 0;
 
-    // Retained for potential assertions and future use; no longer used
-    // for break/continue detection (ISSUE-0011 replaced that with flag-based pattern).
     private int insideTryDepth = 0;
 
-    // Import resolution map: raw import path → Lua require path
     private Map<String, String> importResolutions = Map.of();
 
-    // Host module declarations (ISSUE-0082, host-module-abi D4):
-    // raw import path → (declared export name → Type).  When an import path
-    // has an entry here, the import emits `local <alias> = __rt.load_host(
-    // "<raw import path byte-for-byte>", { <name> = "<descriptor>", ... })`
-    // instead of the raw require — the first argument is never the dotted
-    // importResolutions value for that key.
     private Map<String, Map<String, Type>> hostModules = Map.of();
 
-    // ISSUE-0544 (the lowering epic): module path → the module's
-    // completed PlannedDefaultClass list (the graph-published plans),
-    // passed by the orchestrator. The emitter consumes the published
-    // CompilerClassDefaultPlan of every visited class declaration and
-    // realizes the runtime plan (entry order, canonical descriptors,
-    // optional flags, evaluators only on required-present entries) plus
-    // the labelled evaluator closures. Empty on the standalone
-    // entry points (the synthesized fallback path stays).
     private Map<String, List<PlannedDefaultClass>> plansByModulePath =
         Map.of();
 
-    // ISSUE-0544: the realized RuntimeClassDefaultPlans of this module,
-    // in class source order — the carrier-side realization data (the
-    // evaluator invocation seams execute inside the generated artifact,
-    // never in-process; see runtimePlans()). Attached to the
-    // GenerationResult for the compiler-to-lowerer verification battery
-    // and the later FFI identity consumption.
     private final List<RuntimeClassDefaultPlan> runtimePlans =
         new ArrayList<>();
 
@@ -171,9 +129,6 @@ public final class LuaBackend implements Visitor<Void> {
     private final Map<String, Set<String>> ffiAliasFunctions =
         new HashMap<>();
 
-    // ISSUE-0009: for-loop shadow-local lowering.
-    // When non-null, all IdentifierExpr nodes with this name in condition
-    // and update expressions are remapped to "_name" (the outer counter).
     private String forLoopShadowVar = null;
 
     // v1.2 entry contract: when true, this module is the selected entry
@@ -186,28 +141,8 @@ public final class LuaBackend implements Visitor<Void> {
     // the E6004 entry-contract diagnostic at the declaration itself.
     private Span mainDeclSpan = null;
 
-    // Module-scope flag: true while walking statements at Lua chunk scope.
-    // Module-level class artifacts are emitted into the __deal namespace
-    // table; classes declared inside functions or control-flow constructs
-    // keep scope-local artifact locals (ISSUE-0074 D2.6).
     private boolean moduleScope = true;
 
-    // Nested-class declaration tracking (ISSUE-0077, lua-abi-emission-layer
-    // D2.6): counts how many non-module-level class declarations of each
-    // name are lexically visible in the generated Lua at the current
-    // emission point. The frames mirror exactly the Lua scope boundaries
-    // emitted during statement walking: function bodies, each then/
-    // elseif/else branch of an if chain, while/for/do loop blocks, the
-    // try pcall closure, and the catch if-block. Bare blocks emit no Lua
-    // scope of their own, so their declarations register in the enclosing
-    // frame (or stay visible for the rest of the chunk at chunk level) —
-    // exactly the visibility of the emitted `local <C>_defaults`. When
-    // emitClassConstruction resolves a root ClassSymbol whose name has a
-    // visible nested declaration, it references the bare <C>_defaults local
-    // so Lua lexical scoping resolves to the scope-local artifact, exactly
-    // as the pre-namespace backend did. The same visibility decides the
-    // deferred @jsonable pass's artifact references and the export values
-    // for non-module-level class declarations.
     private final Map<String, Integer> nestedClassDeclCount = new HashMap<>();
     private final Deque<List<String>> nestedClassDeclFrames = new ArrayDeque<>();
 
@@ -281,9 +216,6 @@ public final class LuaBackend implements Visitor<Void> {
         return nestedClassDeclCount.getOrDefault(name, 0) > 0;
     }
 
-    /**
-     * Entry point: generate Lua source for a complete program.
-     */
     public static String generate(ProgramNode program, CheckResult result,
                                    String sourcePath) {
         return generateWithImports(program, result, sourcePath, Map.of());
@@ -342,11 +274,6 @@ public final class LuaBackend implements Visitor<Void> {
             importResolutions, Map.of());
     }
 
-    /**
-     * Entry point with import resolution mapping and host module
-     * declarations (ISSUE-0082, host-module-abi D4); the module path
-     * defaults to the source path.
-     */
     public static String generateWithImports(ProgramNode program, CheckResult result,
                                               String sourcePath,
                                               Map<String, String> importResolutions,
@@ -355,22 +282,6 @@ public final class LuaBackend implements Visitor<Void> {
             importResolutions, hostModules);
     }
 
-    /**
-     * Entry point with import resolution mapping, an explicit module path,
-     * and host module declarations (ISSUE-0082, host-module-abi D4).
-     *
-     * @param importResolutions raw import path → Lua require path mapping
-     * @param modulePath        seeds the module-qualified class identity
-     *                          strings (runtime-class-identity D2(0));
-     *                          production passes the same value that seeds
-     *                          the NameResolver, so tags and checker
-     *                          descriptors stay byte-identical
-     * @param hostModules       raw import path → (declared export name → Type);
-     *                          imports whose raw path has an entry here emit
-     *                          the {@code __rt.load_host} loader instead of a
-     *                          raw require (the entry wins over the
-     *                          importResolutions value for that key)
-     */
     public static String generateWithImports(ProgramNode program, CheckResult result,
                                               String sourcePath, String modulePath,
                                               Map<String, String> importResolutions,
@@ -510,14 +421,6 @@ public final class LuaBackend implements Visitor<Void> {
             entryModule, smg, identityIndex, semanticProfile, Map.of());
     }
 
-    /**
-     * Plan-carrying generation core (ISSUE-0544): the orchestrator
-     * passes the compilation's completed default plans keyed by module
-     * path ({@code CompilationOrchestrator#completedPlansByModulePath});
-     * the backend consumes this module's published plans for every
-     * visited class declaration. The standalone entry points pass
-     * {@code Map.of()} and keep the synthesized fallback emission.
-     */
     private static GenerationResult generateResult(ProgramNode program,
             CheckResult result, String sourcePath, String modulePath,
             Map<String, String> importResolutions,
@@ -556,17 +459,6 @@ public final class LuaBackend implements Visitor<Void> {
             backend.diagnostics(), backend.runtimePlans());
     }
 
-    /**
-     * The realized {@link RuntimeClassDefaultPlan}s of this module in
-     * class source order (ISSUE-0544): one per published plan the
-     * emitter consumed, with per-entry semantic digests (the compiler
-     * plan's), implementation digests over the generated evaluator
-     * artifact text, and the carrier-side zero-argument invocation seam.
-     * The invocation seam is the carrier-side shape of the generated
-     * Lua closure — the real evaluator executes inside the generated
-     * artifact on every construction attempt, so an in-process
-     * {@code invoke()} call is a lowering-contract misuse and raises.
-     */
     private List<RuntimeClassDefaultPlan> runtimePlans() {
         return List.copyOf(runtimePlans);
     }
@@ -596,9 +488,6 @@ public final class LuaBackend implements Visitor<Void> {
             importResolutions, Map.of(), smg);
     }
 
-    /**
-     * Source-map variant with host module declarations (ISSUE-0082 D4).
-     */
     public static String generateWithSourceMap(ProgramNode program, CheckResult result,
                                                 String sourcePath,
                                                 Map<String, String> importResolutions,
@@ -608,11 +497,6 @@ public final class LuaBackend implements Visitor<Void> {
             importResolutions, hostModules, smg);
     }
 
-    /**
-     * Source-map variant with host module declarations (ISSUE-0082 D4) and
-     * an explicit module path (runtime-class-identity D2(0)); both default
-     * in the overload above.
-     */
     public static String generateWithSourceMap(ProgramNode program, CheckResult result,
                                                 String sourcePath, String modulePath,
                                                 Map<String, String> importResolutions,
@@ -643,8 +527,6 @@ public final class LuaBackend implements Visitor<Void> {
      * Generate Lua source and write it to the output path.
      * Runtime library is copied to {@code outputRoot/deal/runtime.lua}.
      *
-     * @param outputRoot the root output directory (runtime lands at outputRoot/deal/runtime.lua)
-     * @param outputPath the full path for this module's .lua file
      */
     public static void generateToFile(ProgramNode program, CheckResult result,
                                        String sourcePath, Path outputRoot,
@@ -656,9 +538,6 @@ public final class LuaBackend implements Visitor<Void> {
      * Generate Lua source and write it to the output path, optionally producing
      * a source map sidecar file.
      *
-     * @param outputRoot the root output directory
-     * @param outputPath the full path for this module's .lua file
-     * @param emitSourceMap if true, a {@code .deal.map.json} sidecar is written
      */
     public static void generateToFile(ProgramNode program, CheckResult result,
                                        String sourcePath, Path outputRoot,
@@ -672,10 +551,6 @@ public final class LuaBackend implements Visitor<Void> {
      * Generate Lua source and write it to the output path, optionally producing
      * a source map sidecar file, with import resolution mapping.
      *
-     * @param outputRoot        the root output directory
-     * @param outputPath        the full path for this module's .lua file
-     * @param emitSourceMap     if true, a {@code .deal.map.json} sidecar is written
-     * @param importResolutions raw import path → Lua require path mapping
      */
     public static void generateToFile(ProgramNode program, CheckResult result,
                                        String sourcePath, Path outputRoot,
@@ -700,10 +575,6 @@ public final class LuaBackend implements Visitor<Void> {
             outputPath, emitSourceMap, importResolutions, Map.of());
     }
 
-    /**
-     * File-writing variant with host module declarations (ISSUE-0082 D4);
-     * the module path defaults to the source path.
-     */
     public static void generateToFile(ProgramNode program, CheckResult result,
                                        String sourcePath, Path outputRoot,
                                        Path outputPath, boolean emitSourceMap,
@@ -733,16 +604,6 @@ public final class LuaBackend implements Visitor<Void> {
             semanticProfile);
     }
 
-    /**
-     * File-writing variant with an explicit module path, host module
-     * declarations, and import resolution mapping.
-     *
-     * @param modulePath        seeds the module-qualified class identity
-     *                          strings (runtime-class-identity D2(0))
-     * @param importResolutions raw import path → Lua require path mapping
-     * @param hostModules       raw import path → (declared export name → Type)
-     *                          (ISSUE-0082, host-module-abi D4)
-     */
     public static void generateToFile(ProgramNode program, CheckResult result,
                                        String sourcePath, String modulePath,
                                        Path outputRoot, Path outputPath,
@@ -884,13 +745,6 @@ public final class LuaBackend implements Visitor<Void> {
             entryModule, identityIndex, semanticProfile, Map.of());
     }
 
-    /**
-     * Plan-carrying staged-write production seam (ISSUE-0544): the same
-     * staged-write contract as the overload above, with the
-     * compilation's completed default plans keyed by module path
-     * ({@code CompilationOrchestrator#completedPlansByModulePath}) —
-     * the published-plan consumption surface of the lowering epic.
-     */
     public static GenerationResult generateToFile(ProgramNode program,
                                        CheckResult result,
                                        String sourcePath, String modulePath,
@@ -962,15 +816,7 @@ public final class LuaBackend implements Visitor<Void> {
         Path runtimeDest = outputRoot.resolve("deal/runtime.lua");
         if (!Files.exists(runtimeDest)) {
             Files.createDirectories(runtimeDest.getParent());
-            // The deployment copy resolves through the pinned
-            // three-tier distribution order (ISSUE-0457,
-            // release-distribution-packaging-and-discovery D3):
-            // classpath resources, then the DEAL_HOME filesystem
-            // layout, then the checkout CWD dev fallback — no implicit
-            // CWD-only read remains. The project-local tier never
-            // applies to runtime sources, so the manifest directory is
-            // irrelevant (the empty-text resolver keys the same JVM
-            // caches).
+
             Optional<DistributionHome.ResolvedSource> runtime =
                 DistributionHome.forManifestDirectory("")
                     .resolveRuntimeSource("deal/runtime.lua");
@@ -1070,15 +916,6 @@ public final class LuaBackend implements Visitor<Void> {
             hostModules, Map.of(), "");
     }
 
-    /**
-     * Instance generation with the extern-C module surface (ISSUE-0507
-     * FFI candidate fixture conformance; emitter page D6): the metadata
-     * phase's generated modules keyed by raw import path drive the
-     * emitted {@code __rt.load_ffi} call sites, and the manifest
-     * directory text is the base of manifest-relative native-library
-     * loader-text resolution (seam S3). The overload above keeps the
-     * FFI-free default.
-     */
     public String generateFromInstance(ProgramNode program, boolean entryModule,
             Map<String, String> importResolutions,
             Map<String, Map<String, Type>> hostModules,
@@ -1119,10 +956,6 @@ public final class LuaBackend implements Visitor<Void> {
         return generateFromInstance(program);
     }
 
-    /**
-     * Returns the source map JSON string, or null if source map generation
-     * was not enabled.
-     */
     public String getSourceMapJson(String sourcePath, String generatedPath) {
         if (sourceMapGenerator == null || !sourceMapGenerator.hasMappings()) {
             return null;
@@ -1130,9 +963,6 @@ public final class LuaBackend implements Visitor<Void> {
         return sourceMapGenerator.toJson(sourcePath, generatedPath);
     }
 
-    /**
-     * Returns the SourceMapGenerator for inspection in tests.
-     */
     public SourceMapGenerator sourceMapGenerator() {
         return sourceMapGenerator;
     }
@@ -1287,7 +1117,6 @@ public final class LuaBackend implements Visitor<Void> {
         diagnostics.add(CompilerDiagnostic.error(code, message, span));
     }
 
-    /** Returns the current 1-based line number in the output buffer. */
     private int currentGeneratedLine() {
         int line = 1;
         for (int i = 0; i < out.length(); i++) {
@@ -1296,7 +1125,6 @@ public final class LuaBackend implements Visitor<Void> {
         return line;
     }
 
-    /** Returns the current 1-based column number in the output buffer. */
     private int currentGeneratedColumn() {
         int lastNewline = out.lastIndexOf("\n");
         if (lastNewline == -1) return out.length() + 1;
@@ -1484,11 +1312,7 @@ public final class LuaBackend implements Visitor<Void> {
             case Type.Table ignored ->
                 "__rt.check_table(" + valueExpr + ", " + spanParam + ")";
             case Type.Bytes ignored ->
-                // v1.2 bytes boundary (emitter page D3): the canonical
-                // matcher's "bytes" primitive row validates the FFI-backed
-                // carrier (__kind == "bytes") and raises E8001 with the
-                // forwarded span otherwise. The bytes runtime landed in the
-                // value-model step, so no checked program fails this arm.
+
                 "__rt.check_type(\"bytes\", " + valueExpr + ", "
                     + spanParam + ")";
             case Type.Array arr ->
@@ -1663,16 +1487,6 @@ public final class LuaBackend implements Visitor<Void> {
         return null;
     }
 
-    /**
-     * The published compiler plan of this exact class declaration, or
-     * {@code null} when the graph published no plan for it (host
-     * declarations live outside plan space; a checker-error program
-     * publishes no plan and the compilation fails before codegen). The
-     * declaration match is reference identity first — the planner
-     * consumed the same AST the emitter walks — with the name/position
-     * pair as the defensive fallback (ISSUE-0544, the published-plan
-     * consumption seam).
-     */
     private CompilerClassDefaultPlan publishedPlanFor(
             ClassDeclaration node) {
         if (identityIndex == null) {
@@ -1696,18 +1510,6 @@ public final class LuaBackend implements Visitor<Void> {
         return null;
     }
 
-    /**
-     * Emits the runtime default-plan table of a published compiler plan
-     * (ISSUE-0544, runtime page D1/D2): one entry per plan entry in
-     * class source order with {@code name}, the plan's canonical
-     * {@code descriptor}, the {@code optional} flag, and an
-     * {@code evaluator} exactly on required-present entries — a
-     * labelled zero-argument closure over the declaring module's scope,
-     * created here at load and never invoked during lowering or load.
-     * Every evaluator label is a Lua comment directly above the
-     * closure; the realized {@link RuntimeClassDefaultPlan} carrier
-     * (digests, labels, presence) is appended for the result surface.
-     */
     private String emitPublishedPlan(CompilerClassDefaultPlan plan) {
         String identityText = identityText(plan.classIdentity());
         List<RuntimeDefaultPlanLowering.EvaluatorRealization>
@@ -1747,16 +1549,6 @@ public final class LuaBackend implements Visitor<Void> {
         return table.toString();
     }
 
-    /**
-     * The carrier-side zero-argument invocation seam of a generated
-     * Lua evaluator (ISSUE-0544): the real evaluator is the generated
-     * closure — it executes inside the artifact exactly once per
-     * omitted required entry per construction attempt — so an
-     * in-process {@code invoke()} is a lowering-contract misuse and
-     * raises. Nothing in the production pipeline invokes the seam
-     * in-process; it carries the label so the misuse names its
-     * evaluator.
-     */
     private RuntimeDefaultEvaluator.Invocation artifactInvocationSeam(
             String label) {
         return () -> {
@@ -2327,13 +2119,6 @@ public final class LuaBackend implements Visitor<Void> {
             return null;
         }
 
-        // Host-module branch (ISSUE-0082, host-module-abi D4): the declared
-        // exports drive the runtime loader.  The first argument is the raw
-        // import specifier byte-for-byte — never the dotted importResolutions
-        // value for that key (the dotted module path is the typing/class-
-        // identity name only).  Declared-map keys route through the LuaAbi
-        // table-constructor key-form policy (Lua-keyword export names and
-        // "$" synthetic exports emit bracket-string keys).
         Map<String, Type> declared = hostModules.get(node.modulePath());
         if (declared != null) {
             emitLine("local " + node.alias() + " = __rt.load_host(\""
@@ -2352,10 +2137,7 @@ public final class LuaBackend implements Visitor<Void> {
                     quotedTypeDescriptor(entry.getValue())) + ",");
             }
             indent--;
-            // Converged lane contract (ISSUE-0598): the loader receives
-            // the import statement's span, so every E8011 load-time
-            // rejection reports the import site (the pinned corpus
-            // sidecar shape — host-missing-export).
+
             emitLine("}, " + spanArgs(node.span()) + ")");
             return null;
         }
@@ -2410,7 +2192,6 @@ public final class LuaBackend implements Visitor<Void> {
                 }
                 visit(cd);
 
-                // ISSUE-0050: @jsonable deferred codegen
                 if (cd.isJsonable()) {
                     // Record metadata for deferred emission
                     deferredJsonables.add(new JsonableClassMeta(
@@ -2538,11 +2319,7 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("local " + node.catchVar());
         emitLine("if type(__err) == \"table\" and __err.code ~= nil then");
         indent++;
-        // Converged lane contract (ISSUE-0598): the reified Error
-        // preserves the original error's source location, so a rethrow
-        // of the caught value carries the original throw span (the
-        // pinned rethrow-preserves-code / rethrow-across-function-
-        // boundary sidecar shape).
+
         emitLine(node.catchVar() + " = __rt.error_value(__err.code,"
             + " __err.message, __err.file, __err.line, __err.column)");
         indent--;
@@ -2569,7 +2346,6 @@ public final class LuaBackend implements Visitor<Void> {
             indent--;
         }
 
-        // ---- Try-break/continue flag checks (ISSUE-0011) ----
         if (inLoop) {
             if (functionDepth > 0) {
                 // Continue the elseif chain
@@ -2768,12 +2544,6 @@ public final class LuaBackend implements Visitor<Void> {
             };
         }
 
-        // v1.2 bytes equality (ISSUE-0158, the binary-comparison-selectors
-        // B-D7 gate lift): equal bytes-typed operands compare by reference
-        // identity — the runtime bytes value is one tagged table with no
-        // __eq metamethod, so native Lua `==`/`~=` is identity (alias ===
-        // alias true, distinct buffers false, copied references keep one
-        // identity). Operands evaluate left to right exactly once.
         if (leftType instanceof Type.Bytes && rightType instanceof Type.Bytes) {
             if (op == BinaryOp.EQ) return "(" + left + " == " + right + ")";
             if (op == BinaryOp.NEQ) return "(" + left + " ~= " + right + ")";
@@ -2907,13 +2677,7 @@ public final class LuaBackend implements Visitor<Void> {
             }
         }
         if (calleeType instanceof Type.Func) {
-            // Converged lane contract (ISSUE-0598): every function-typed
-            // call forwards the literal call-site span triplet — the JS
-            // sibling's shape (js-backend-emitter emitCall). Raw Lua
-            // function bodies ignore trailing extras; the checked
-            // wrappers (from_lua_function, the stdlib function_ bodies)
-            // split and forward the span so boundary errors report the
-            // call site byte-exact.
+
             return emitExpression(call.callee()) + ".f(" + args.toString()
                 + (args.length() == 0 ? "" : ", ") + spanArgs(call.span())
                 + ")";
@@ -3081,15 +2845,7 @@ public final class LuaBackend implements Visitor<Void> {
             } else if (isDeclaredInThisModule(cls)
                     && !cls.identity().moduleIdentity().equals(
                         CanonicalModuleIdentity.BuiltinModule.INSTANCE)) {
-                // Same-module class that is not in the root symbol
-                // table: a nested declaration (block/function-local).
-                // Reference the scope-local <C>_plan artifact when it
-                // is lexically visible at the construction site
-                // (lua-abi-emission-layer D2.6) — the checker
-                // (ISSUE-0318 seam) now types these literals as class
-                // constructions. A non-visible reference can only come
-                // from a checker-error program, so the {} fallback
-                // mirrors the imported-class defensive arm.
+
                 planRef = hasVisibleNestedClassDeclaration(className)
                     ? className + "_plan"
                     : "{}";
@@ -3402,13 +3158,7 @@ public final class LuaBackend implements Visitor<Void> {
         String innerCall = valueLua + ".f("
             + buildOverlappingArgs(valueFunc.paramTypes().size()) + ")";
         if (targetFunc.isAsync()) {
-            // An async adapter returns the inner async operation handle
-            // untouched: the declared return type is enforced at the
-            // await site once the runtime resumes the awaiting
-            // coroutine with the completion value (mirroring the
-            // __rt.from_lua_function async dispatch rule). Checking the
-            // handle here would raise E8001 against the operation table
-            // before the inner operation ever completes (ISSUE-0099).
+
             sb.append(innerCall);
         } else {
             sb.append(emitCheckExpr(innerCall, targetFunc.returnType(), span));
@@ -3435,11 +3185,6 @@ public final class LuaBackend implements Visitor<Void> {
     @Override public Void visit(ArrayType node) { return null; }
     @Override public Void visit(NullableType node) { return null; }
     @Override public Void visit(FunctionType node) { return null; }
-
-    // =========================================================================
-    // ISSUE-0050: @jsonable codegen — deferred two-pass emission with
-    // topological sort
-    // =========================================================================
 
     /**
      * Metadata for a single @jsonable class, recorded during statement
@@ -3895,9 +3640,6 @@ public final class LuaBackend implements Visitor<Void> {
         };
     }
 
-    /**
-     * Returns the Lua reference for the defaults table of a class-typed field.
-     */
     private String defaultsRefForTypeNode(TypeNode typeNode) {
         return switch (typeNode) {
             case NamedType nt -> visibleNestedArtifactRef(nt.name(),
@@ -3908,9 +3650,6 @@ public final class LuaBackend implements Visitor<Void> {
         };
     }
 
-    /**
-     * Returns the Lua reference for the fields descriptor table of a class-typed field.
-     */
     private String fieldsRefForTypeNode(TypeNode typeNode) {
         return switch (typeNode) {
             case NamedType nt -> visibleNestedArtifactRef(nt.name(),

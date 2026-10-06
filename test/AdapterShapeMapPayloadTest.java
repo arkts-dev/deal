@@ -66,88 +66,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * The shape-map child's tests (ISSUE-0450 sequencing item 7): the
- * closed mode shape map (B7) and per-mode capture-mode payload
- * construction (B8), with every {@code FUNCTION_ADAPT} op emitted from
- * birth carrying its closed-map mode and payload — wired as the direct
- * input of exactly the adapted position's own
- * {@code VARIABLE_DECLARATION}/{@code VARIABLE_ASSIGNMENT} boundary
- * chain, fresh stable adapter identities, {@code AdapterBinding}
- * registration through the registry child's seam, the host/external
- * import-read arm pinned through the registry child's materialization
- * seam (T4), and the final cell-kind derivation completing the closed
- * B2 iff. Driven through the child's public lowering entry point
- * ({@link SemanticLowerer#lowerModuleShapeMapCore}) — the group-core
- * walk with the creation-rule classification, the proof analysis, and
- * the shape-map production active.
- *
- * <p><b>Coverage.</b></p>
- * <ul>
- *   <li>the closed map: a plain reassignable binding source →
- *       {@code SHARED_CELL} with {@code SharedCell} naming the dominant
- *       {@code {binding, generation}}; a proved binding source →
- *       {@code VALUE} over the single proved load with the proof
- *       present naming that binding/generation; a function-expression
- *       source → {@code VALUE} over the {@code CLOSURE_NEW} result; an
- *       intrinsic source → {@code VALUE} over the intrinsic
- *       function-value identity; call-result/member-read/conditional/
- *       conversion sources → {@code REEVALUATE_THUNK} (the closed
- *       non-identifier arm — classified at the checker-fact level and
- *       wrapped at the IR level);</li>
- *   <li>the host/external import read → {@code REEVALUATE_THUNK} (no
- *       VALUE) — exercised through the registry child's materialization
- *       seam: the seam's producer facts for the member-read op feed the
- *       map and the thunk wraps the IR-level member-read op (combined
- *       with T4 — fails if the seam breaks);</li>
- *   <li>emission from birth: every {@code FUNCTION_ADAPT} op the child
- *       produces carries its closed-map mode and per-mode payload (one
- *       adapter per {@code ADAPT}-classified position; no provisional
- *       or non-map mode exists);</li>
- *   <li>zero evaluation at creation: SHARED_CELL and REEVALUATE_THUNK
- *       positions contain no source evaluation in the creation flow —
- *       the source ops appear only inside the thunk block for
- *       REEVALUATE_THUNK and no {@code BINDING_LOAD} of the shared
- *       binding precedes the adapter for SHARED_CELL; VALUE's operand
- *       appears exactly once in the unit as the adapter's operand;</li>
- *   <li>identity: two adaptation positions produce two distinct
- *       adapter allocation identities, each with exactly one
- *       registered {@code AdapterBinding}; loads preserve the adapter
- *       identity (the {@code FunctionAllocationIdentity} contract);</li>
- *   <li>wiring: every adapter result is the direct input of exactly
- *       its own position's {@code VARIABLE_DECLARATION}/
- *       {@code VARIABLE_ASSIGNMENT} boundary chain and of no other
- *       {@code BOUNDARY} op; adapter creation emits zero
- *       {@code BOUNDARY} ops (the adapter adds no second boundary —
- *       the N target-signature parameter-boundary checks belong to the
- *       invoking op, E7);</li>
- *   <li>cell-kind iff across all three capture kinds: a
- *       closure-captured incarnation {@code SHARED_CELL} (closure
- *       child), a thunk-captured incarnation {@code SHARED_CELL}, a
- *       SHARED_CELL-adapter-referenced incarnation
- *       {@code SHARED_CELL}, an uncaptured incarnation
- *       {@code DIRECT}, a VALUE-adapted proved binding stays
- *       {@code DIRECT} unless otherwise captured, the pinned special
- *       cases stay {@code SHARED_CELL}, and the derivation never
- *       downgrades;</li>
- *   <li>negatives: a proof-less binding never receives VALUE; the
- *       mode-selection seam accepts checker facts only (no
- *       target/route/emitter input in its interface);</li>
- *   <li>combined: a corpus covering all three modes using the
- *       binding-core generations, the closure child's function values,
- *       the registry child's registration and seam, the proof child's
- *       records, and the creation-rule child's classification/wiring —
- *       any break in an earlier module fails the corpus — plus
- *       byte-identical repeated lowering.</li>
- * </ul>
- *
- * <p>No invocation execution is built or verified here: generation-
- * checked loads, thunk re-execution with {@code ADAPTER_THUNK_STEP}
- * children, source-signature checks, the N-argument projection with
- * trailing drop, and the per-source-kind single return boundary are
- * E7's (ISSUE-0236); the payloads this child builds are the exact
- * inputs E7's protocol consumes.</p>
- */
 public class AdapterShapeMapPayloadTest {
 
     private static int passed = 0;
@@ -1070,9 +988,6 @@ public class AdapterShapeMapPayloadTest {
                 Optional.of(materialization)) == CaptureMode.REEVALUATE_THUNK,
             "an export-read materialization maps to the same non-identifier arm");
 
-        // The thunk wraps the IR-level member-read op (constructed over
-        // the pinned schema — the producing op the values epic emits):
-        // the receiver load of the import alias, then the MEMBER_READ.
         BlockId thunkBlock = new BlockId(7001L);
         ValueId aliasLoad = new ValueId(7101L);
         ValueId hostValue = new ValueId(7102L);

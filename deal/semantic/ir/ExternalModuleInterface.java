@@ -24,12 +24,6 @@ import java.util.Objects;
  * {@code DECLARATION} kind has no producer under the current
  * orchestrator classification.</p>
  *
- * @param moduleId       the module identity; non-null
- * @param kind           the closed external-module kind; non-null
- * @param imports        the resolved import entries in source order; non-null
- * @param exports        the export entries in declaration order; non-null
- * @param classes        the class entries in declaration order; non-null
- * @param initialization the pinned initialization mode; non-null
  */
 public record ExternalModuleInterface(
     ModuleId moduleId,

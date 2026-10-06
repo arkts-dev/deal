@@ -6,104 +6,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * The single execution form of the closed boundary-assignment table at the
- * {@code BOUNDARY}-op level (ISSUE-0233 design D3): a static, pure,
- * deterministic projection engine over the closed value view.
- *
- * <p><b>Closed 13-policy subset.</b> A {@code BOUNDARY} op can carry
- * exactly these policies and the executor has a projection for exactly
- * these:
- *
- * <pre>{@code
- * TYPE_DESCRIPTOR, FUNCTION_SIGNATURE, HOST_PARAMETER, HOST_SYNC_RETURN,
- * ASYNC_COMPLETION, ARRAY_ELEMENT_DESCRIPTOR, ARRAY_READ_INDEX_THEN_DESCRIPTOR,
- * ARRAY_WRITE_BOUNDS_THEN_ELEMENT, ARRAY_DELETE_BOUNDS, BYTES_READ, BYTES_WRITE,
- * JSON_FROM_NULL, JSON_TO_ERROR
- * }</pre>
- *
- * Any other policy is never a {@code BOUNDARY} policy — the validator's
- * closed table rejects it — and {@link #check} rejects it fail closed as a
- * producer {@link Defect} (never a DEAL projection). Totality is exactly
- * the validator-accepted cells (the D5 tie): every validator-accepted
- * cell has a defined projection here and no other cell does.</p>
- *
- * <p><b>Projections (normative, D3).</b> The descriptor-kind rule: a
- * non-function descriptor check projects wrong kinds as the closed
- * suffix-less E8001 kind arm {@code expected {kind}} (the arm's kind text;
- * a nullable descriptor projects its inner descriptor's text) with the
- * closed typed-boundary actual projection as the actual field; the
- * {@code int} path follows the pinned order
- * (kind → NaN → infinity → non-integer → E8004 {@code int out of safe range});
- * a string view classified {@code invalid-unicode} projects the pinned
- * {@code expected string, got invalid Unicode scalar encoding}; a class
- * descriptor requires the tagged atom text byte-equal; an array descriptor
- * checks elements in increasing index order and projects the first
- * failure as E8003 {@code array element {oneBasedIndex} type mismatch}
- * with the element descriptor as expected, the leaf actual kind as
- * actual, and the leaf failure as cause; a nullable descriptor passes
- * language null and propagates the inner failure unchanged. A function
- * descriptor check projects a differing carried signature as E8010
- * {@code function signature mismatch: expected {expected}, got {actual}}
- * (actual = the carried signature's canonical text) and a non-function
- * value as E8001. {@code HOST_PARAMETER} projects every failure through
- * the single pinned E8010 composite
- * {@code parameter {index} type mismatch: {inner}} with the host
- * inner-reason render as its {@code {inner}} parameter; {@code
- * HOST_SYNC_RETURN} through
- * {@code return value 1 type mismatch: expected {expected}, got nothing}
- * (no value) or the composite {@code return value 1 type mismatch: {inner}}
- * (wrong value);
- * {@code ASYNC_COMPLETION} mismatches as E8001
- * {@code expected {expected}} with the cell's actual kind (a numeric
- * completion carrier is the single {@code number} kind — the pinned corpus
- * completion-cell transcript; operation-failure precedence
- * is the {@code AWAIT} machine's — ISSUE-0236 — never this op's). The
- * array cells enforce {@code negative array index} (read),
- * {@code array index out of bounds} (write/delete, index {@code < 0} or
- * {@code > length}) before any element check, and the executor never
- * commits a mutation. The bytes cells (K6) enforce the pinned E8012
- * bounds ({@code index < 0} or {@code index >= length}) before the
- * element check; the write's E8013 value range and its single mutation
- * are the enclosing commit's (this executor commits nothing). {@code JSON_FROM_NULL} swallows every failure into
- * language null (never a DEAL failure); {@code JSON_TO_ERROR} projects the
- * first unsupported/wrong-identity/missing/nonfinite value as E8001
- * {@code value at {fieldPath} is not JSON serializable: {actual}} (the
- * declared sibling-owned walk arm's landed rendering).
- * Every other failure renders the declared
- * {@link FailureContractRegistry} arm bound to its template — the executor
- * never selects message text, never instantiates a retained row template
- * behind its arm's back, and never composes an expected/actual token.</p>
- *
- * <p><b>Missing.</b> A {@code missing} view against a nullable descriptor
- * maps to language null and passes — the {@code OPTIONAL_FIELD_READ} and
- * {@code CONTEXTUAL_TABLE_READ} cells' pinned missing→null mapping
- * (the optional read additionally pre-maps missing to null at the op, so
- * its boundary sees null; a non-nullable optional field therefore
- * projects {@code expected {expected}, got null} after the pre-mapping).
- * A {@code missing} view against a non-nullable descriptor projects
- * {@code expected {expected}, got missing} — the
- * {@code CONTEXTUAL_TABLE_READ} non-nullable decision and every other
- * cell's classification. In validator-accepted IR a {@code missing} view
- * reaches a nullable descriptor only at the two named cells, so the rule
- * is exact over the table's cells.</p>
- *
- * <p><b>Realization independence.</b> {@link #check} never consults the
- * realization: a {@code RuntimeValidation} boundary runs the check. A
- * {@code RepresentationProof} boundary is not executed —
- * {@link #execute} returns {@code Pass} with the value unchanged and
- * never enters check logic on that path (the D4 proof-eligibility rule
- * makes a failing proved boundary unreachable for admissible cells).</p>
- *
- * <p><b>Purity and bounds.</b> No mutation, no retry, no target
- * mechanics; recursion is bounded by descriptor length plus element
- * count. The component depends only on the schema itself (descriptors,
- * actual kinds, policies, the closed view) — no {@code deal.types}
- * dependency. The executor implements no oracle value model, no
- * shared-emitter adapters, no invocation state machine (context fields
- * are inputs), and no address-chain ordering — those are
- * ISSUE-0240/0239/0236/0234's.</p>
- */
 public final class BoundaryExecutor {
 
     private BoundaryExecutor() {
@@ -153,19 +55,6 @@ public final class BoundaryExecutor {
      * missing→null mapping), or {@code Fail} with the registry row's
      * pinned, instantiated projection.
      *
-     * @param policy     the boundary's failure policy; must be a member of
-     *                   the closed 11-policy subset
-     * @param descriptor the boundary's checked descriptor; non-null
-     * @param view       the completed input operand's closed value view;
-     *                   non-null
-     * @param context    the minimal context the cell names; non-null
-     * @return {@code Pass} or {@code Fail}, deterministic
-     * @throws Defect               if {@code policy} is outside the closed
-     *                              11-policy subset, if a context-bearing
-     *                              cell lacks its required context field, or
-     *                              if a descriptor/policy pairing is not a
-     *                              validator-accepted cell
-     * @throws NullPointerException if any argument is null
      */
     public static BoundaryOutcome check(FailurePolicyId policy, RuntimeDescriptor descriptor,
                                         BoundaryValueView view, BoundaryContext context) {
@@ -211,18 +100,6 @@ public final class BoundaryExecutor {
      * {@link #check}. The check logic itself never consults the
      * realization.
      *
-     * @param policy      the boundary's failure policy; must be a member of
-     *                    the closed 11-policy subset
-     * @param descriptor  the boundary's checked descriptor; non-null
-     * @param view        the completed input operand's closed value view;
-     *                    non-null
-     * @param context     the minimal context the cell names; non-null
-     * @param realization the op payload's realization; non-null
-     * @return {@code Pass} for a proved boundary (value unchanged), or the
-     *         {@code check} outcome for a runtime validation
-     * @throws Defect               if {@code policy} is outside the closed
-     *                              11-policy subset
-     * @throws NullPointerException if any argument is null
      */
     public static BoundaryOutcome execute(FailurePolicyId policy, RuntimeDescriptor descriptor,
                                           BoundaryValueView view, BoundaryContext context,
@@ -533,13 +410,6 @@ public final class BoundaryExecutor {
         };
     }
 
-    /**
-     * JSON_TO_ERROR: the first declaration-order unsupported value projects
-     * E8001. The {@code JSON_TO_WALK} arm is declared with its projection
-     * binding sibling-owned (P7): its landed row-template rendering is kept
-     * here and the {@code @jsonable} sibling binds the projection and the
-     * origin cell in its own slice.
-     */
     private static BoundaryOutcome checkJsonToError(RuntimeDescriptor descriptor,
                                                     BoundaryValueView view,
                                                     BoundaryContext context) {
@@ -638,11 +508,7 @@ public final class BoundaryExecutor {
             case RuntimeDescriptor.Table ignored ->
                 view.kind() == ActualKind.TABLE ? pass(view) : kindFail(descriptor, view);
             case RuntimeDescriptor.Bytes ignored ->
-                // K6 item 11: the bytes descriptor's boundary projection is
-                // the kind arm — a bytes view passes, every other view
-                // projects the closed kind text {@code expected bytes} with
-                // the value's typed-boundary actual token (the sibling bytes
-                // sub-epic renders this arm; no separate bytes text exists).
+
                 view.kind() == ActualKind.BYTES ? pass(view)
                     : kindFail(descriptor, view);
             case RuntimeDescriptor.Class cls -> coreClass(cls, view);

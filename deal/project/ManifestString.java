@@ -15,11 +15,6 @@ import deal.source.SourceScalarRange;
  * the {@code deal.source.JsonRangeLexer} substrate are never used as
  * strict values.
  *
- * @param value       the strictly decoded string value
- * @param sourceRange the value's half-open decoded-scalar range
- *                    ({@link SourceScalarRange}); the file-less
- *                    content-only carrier — consumers that publish
- *                    diagnostics supply the manifest path themselves
  */
 public record ManifestString(String value, SourceScalarRange sourceRange) {
 }

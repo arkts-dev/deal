@@ -11,59 +11,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * The declaration surface of one compilation (ISSUE-0630; design source
- * {@code project-lowering-entry-and-registration-seeds} D3 and the
- * declaration-surface contract): the per-declaration-module facts the one
- * project lowering entry and its registration seeds consume, covering
- * every host and extern-C declaration module the compilation imports.
- *
- * <pre>{@code
- * HostDeclarationSurface { moduleId -> DeclarationFacts {
- *     kind: HOST | EXTERN_C,
- *     exports: name -> checked Type (declaration order),
- *     classes: class name -> DeclaredClass {
- *         kind, fields: [DeclaredField{class field AST, resolved declared Type}]
- *     } } }
- * }</pre>
- *
- * <p><b>Producer.</b> {@link #produce(List)} is the single production
- * path: it turns the per-module declaration facts the orchestrator
- * extracts from the declaration ASTs into the immutable surface. The
- * export map is the existing {@code deal.module.ExportExtractor}
- * resolution seeded with the compilation's module-path classification
- * (so a same-module class field type carries the declaring module's
- * canonical class identity, never a dotted-path reconstruction); the
- * per-class field records carry the declaration AST's
- * {@link ClassField} (name, optional, nullable, default-expression
- * presence, the declaration order) plus the extractor's
- * {@code resolveFieldType} result — all resolved in the declaring
- * module's own context. The declaration kind is the compilation's
- * closed classification: {@link DeclarationKind#EXTERN_C} for a module
- * the metadata phase classifies extern-C, {@link DeclarationKind#HOST}
- * otherwise.</p>
- *
- * <p><b>Compile-time data only.</b> No evaluator runs, no library loads,
- * no symbol resolves, and no host code executes on any path here. The
- * surface is never silently partial: every given declaration module
- * contributes exactly one entry (a repeated module identity is a
- * producer defect), every declaration-order relation is preserved, and a
- * declared class field whose resolved declared type has no runtime
- * representation ({@link Type.Error}) fails production through the
- * existing descriptor path ({@link DescriptorService#describe} &rarr;
- * {@link DescriptorService#e6005}) with the first E6005 and no surface —
- * never a dropped field, a partial class, or an invented descriptor.</p>
- *
- * <p><b>Coverage boundary.</b> The surface carries host and extern-C
- * declaration modules — the declaration imports the host ABI and the C
- * FFI classify. The spec stdlib declaration modules are not host
- * declarations: they keep their {@code BuiltinModule} classification and
- * their existing consumer surfaces, and they declare no classes.</p>
- *
- * @param modules the per-declaration-module facts by module identity, in
- *                the compilation's declaration-module visit order;
- *                frozen, never merged into a unit's own class layouts
- */
 public record HostDeclarationSurface(
         Map<ModuleId, DeclarationFacts> modules) {
 
@@ -80,13 +27,6 @@ public record HostDeclarationSurface(
         modules = Collections.unmodifiableMap(frozen);
     }
 
-    /**
-     * The closed declaration-module kind (ISSUE-0630; design source
-     * {@code project-lowering-entry-and-registration-seeds} D5): a host
-     * declaration class takes {@code HOST_DEFAULTS} and an extern-C
-     * declaration class takes {@code FFI_PLAN} as its default owner, so
-     * the kind is the registration-seed discriminator.
-     */
     public enum DeclarationKind {
 
         /**
@@ -109,13 +49,6 @@ public record HostDeclarationSurface(
      * {@link Type}s in declaration order, and its declared classes with
      * their per-class declaration kind and fields in declaration order.
      *
-     * @param moduleId the declaration module's dotted module path;
-     *                 non-null
-     * @param kind     the module's declaration kind; non-null
-     * @param exports  the declared export names with their checked
-     *                 types, in declaration order; non-null
-     * @param classes  the declared classes by name, in declaration
-     *                 order; non-null
      */
     public record DeclarationFacts(
             ModuleId moduleId,
@@ -162,9 +95,6 @@ public record HostDeclarationSurface(
      * One declared class of a declaration module: the class name, its
      * declaration kind, and its fields in declaration order.
      *
-     * @param name   the class name exactly as declared; non-null
-     * @param kind   the declaring module's declaration kind; non-null
-     * @param fields the declared fields in declaration order; non-null
      */
     public record DeclaredClass(
             String name,
@@ -188,11 +118,6 @@ public record HostDeclarationSurface(
      * the retained host consumers read, so the host projection stays
      * byte-identical.
      *
-     * @param declaration the declaration AST's field record (name,
-     *                    optional, nullable, default-expression
-     *                    presence); non-null
-     * @param type        the resolved declared type, resolved in the
-     *                    declaring module's own context; non-null
      */
     public record DeclaredField(ClassField declaration, Type type) {
 
@@ -209,10 +134,6 @@ public record HostDeclarationSurface(
      * field whose resolved type has no runtime representation, both no
      * surface and the first E6005 produced through the descriptor path.
      *
-     * @param surface     the produced surface; null exactly when
-     *                    production failed
-     * @param diagnostics the E6005 diagnostics (empty on success);
-     *                    non-null
      */
     public record Production(
             HostDeclarationSurface surface,
@@ -251,9 +172,6 @@ public record HostDeclarationSurface(
      * {@link DescriptorService#describe} — the existing descriptor path
      * — so the surface can never carry an unrepresentable field type.</p>
      *
-     * @param facts the per-declaration-module facts in the compilation's
-     *              visit order; non-null, no null entries
-     * @return the production outcome (surface or the first E6005)
      */
     public static Production produce(List<DeclarationFacts> facts) {
         Objects.requireNonNull(facts, "facts must not be null");
@@ -292,8 +210,6 @@ public record HostDeclarationSurface(
      * covered by construction, so a missing entry can never be a
      * legitimate state and is never silently defaulted).
      *
-     * @param moduleId the declaration module's identity; non-null
-     * @return the module's declaration facts; non-null
      */
     public DeclarationFacts require(ModuleId moduleId) {
         Objects.requireNonNull(moduleId, "moduleId must not be null");

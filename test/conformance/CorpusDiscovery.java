@@ -22,32 +22,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Stream;
 
-/**
- * Corpus discovery, classification, and module-import resolution for the
- * v1.2 differential gate core (ISSUE-0353).
- *
- * <p>Discovery walks every {@code .deal} file under the conformance root
- * except the {@code host-fixtures} subtree and classifies each fixture
- * exactly once from {@code compile-ok}, {@code compile-error CODE},
- * {@code runtime-ok}, {@code runtime-error CODE}, and {@code companion}.
- * A missing/unknown {@code @expected} or a missing/stale {@code @spec}
- * (the SPEC_HEADINGS gate) is a classification failure. There is no
- * fallback branch. {@code @expected: host-fixture} is reserved for the
- * excluded host-fixtures subtree and fails anywhere else.</p>
- *
- * <p>Module-import resolution derives a runtime fixture's compilation set
- * — the fixture plus its transitively imported corpus modules — by
- * walking relative imports ({@code ./}, {@code ../}) through the real
- * lexer/parser, resolving each import against the importing module's
- * corpus directory with the {@code .deal}/{@code .d.deal} extension
- * fallback (the resolution rules of the existing
- * companion-catalog/module-discovery machinery,
- * {@code test/ConformanceTest.java resolveCompanionPath}); stdlib and
- * host imports resolve outside the corpus and contribute no module. The
- * compilation set feeds the sidecar validator's {@code sourceFile}
- * compilation-graph check and the divergent-form {@code @extern-c} check
- * (T1's {@link SidecarSchemaValidator} component).</p>
- */
 public final class CorpusDiscovery {
 
     private CorpusDiscovery() {
@@ -88,16 +62,6 @@ public final class CorpusDiscovery {
         }
     }
 
-    /**
-     * One discovered corpus fixture: its absolute file, canonical
-     * corpus-relative slash path, phase (first path component), the five
-     * metadata header fields, its raw source bytes and its
-     * classification-header-stripped source (every compiler-facing
-     * surface consumes header-free source; the metadata still reads the
-     * raw bytes — ISSUE-0272 D8), the stripped header-line count (line
-     * pins are authored in raw-file coordinates and rebased by it), and
-     * the classification ({@code null} when classification failed).
-     */
     public record Fixture(
         Path file,
         String corpusPath,
@@ -394,11 +358,7 @@ public final class CorpusDiscovery {
                     inProgress);
             }
         }
-        // Corpus C FFI externals (ISSUE-0507): a candidate/* import
-        // resolves through the corpus-owned FFI wiring into its support
-        // declaration — the module carrying the @extern-c directive the
-        // divergent sidecar's C6 trigger check requires in the
-        // compilation set.
+
         for (String importPath : ffiImportPaths(source)) {
             CorpusFfi.Wiring wiring = CorpusFfi.wiringFor(conformanceRoot,
                 importPath);

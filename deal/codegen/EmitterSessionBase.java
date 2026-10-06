@@ -61,7 +61,7 @@ public abstract class EmitterSessionBase {
     protected final Map<ModuleId, LoweredModuleUnit> units = new LinkedHashMap<>();
     protected final Map<ModuleId, StructuredBodyTable> tables = new LinkedHashMap<>();
     protected final Map<ModuleId, ClassFactoryRegistry> registries = new LinkedHashMap<>();
-    /** The union class-layout resolution context (K-D11). */
+
     protected final Map<ClassId, ClassLayout> classLayouts = new LinkedHashMap<>();
     /** Each block id to its owning unit's membership table. */
     protected final Map<BlockId, StructuredBodyTable> blockTableOf = new LinkedHashMap<>();
@@ -305,12 +305,6 @@ public abstract class EmitterSessionBase {
         return result;
     }
 
-    /**
-     * The pinned boundary child of one field op (K-D12): the child
-     * parented to the field op with the closed boundary kind. A
-     * missing child is a producer defect, fail closed before any
-     * emission.
-     */
     protected final SemanticOp boundaryChildOfKind(SemanticOp op, BoundaryKind kind) {
         for (SemanticOp candidate : opsById.values()) {
             if (candidate.kind() == SemanticOpKind.BOUNDARY
@@ -360,15 +354,6 @@ public abstract class EmitterSessionBase {
         return factoryOpId;
     }
 
-    /**
-     * Whether one recorded DEAL-body cell is the call-owned form
-     * (ISSUE-0677; design source
-     * {@code function-typed-value-materialization-and-dispatch} M6): its
-     * parent {@code RETURN} names no lowered body of the emitted closure
-     * (the landing record shape). The callee-owned form's parent
-     * {@code RETURN} names the callee body in the closure's function set,
-     * and that body's own {@code RETURN} runs the cell.
-     */
     protected final boolean callOwnedCell(SemanticOp cell) {
         OpId parentId = cell.origin() == null ? null : cell.origin().parentOpId();
         SemanticOp parent = parentId == null ? null : opsById.get(parentId);
@@ -479,26 +464,6 @@ public abstract class EmitterSessionBase {
         return false;
     }
 
-    /**
-     * The private state of one lowered body's invocation (ISSUE-0654):
-     * the value slots its ops produce or consume and its
-     * {@code DIRECT} cells (parameters, locals, and per-iteration
-     * cells) — the state an invocation owns. {@code SHARED_CELL}
-     * state (a captured binding, a group function binding, a module
-     * cell) is shared by identity and never saved or restored: a
-     * closure holds the cell table itself.
-     *
-     * <p>The session carries one field per slot and cell (the emitted
-     * bodies share the class' state), so a nested invocation of the
-     * same body would otherwise overwrite the enclosing invocation's
-     * own state: a recursive body (the
-     * {@code modules/imported-recursive-export} shape) would re-read
-     * its parameter cell and its half-computed slots after the nested
-     * call returned. The invoking arm therefore saves the callee
-     * body's private state before the invocation and restores it on
-     * every path — the per-invocation semantics the semantic oracle
-     * models with its cell overlays.</p>
-     */
     protected final List<String> bodyStateKeys(FunctionId functionId) {
         List<String> cached = bodyStateKeyCache.get(functionId);
         if (cached != null) {
@@ -639,15 +604,6 @@ public abstract class EmitterSessionBase {
         }
     }
 
-    /**
-     * The recorded callee-unit {@code EXTERNAL_ENTRY} of one
-     * {@code SHARED_BODY} external call: resolved by the payload's
-     * statically recorded {@code externalEntryRef} inside the callee
-     * module's unit (ISSUE-0634's accumulation). A missing unit, a
-     * ref outside the callee unit, a non-entry op, an async entry for
-     * a sync call, or a divergent export name is a fail-closed
-     * producer defect — never a silently missing invocation.
-     */
     protected final SemanticOp resolveExternalEntry(SemanticOp op,
             KindPayload.CallPayload payload,
             FunctionExecutionBinding.ExternalFunction external,

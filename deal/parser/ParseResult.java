@@ -16,7 +16,6 @@ public record ParseResult(ProgramNode program, List<CompilerDiagnostic> diagnost
         if (diagnostics == null) throw new IllegalArgumentException("diagnostics must not be null");
     }
 
-    /** Returns true if any error-level diagnostics were produced. */
     public boolean hasErrors() {
         return diagnostics.stream().anyMatch(d -> "error".equals(d.severity()));
     }

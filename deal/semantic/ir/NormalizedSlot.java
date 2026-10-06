@@ -69,12 +69,6 @@ public sealed interface NormalizedSlot
      * currentLength}; {@code append = index == currentLength} for
      * {@code ARRAY_WRITE}, always {@code false} for {@code ARRAY_READ}).
      *
-     * @param index   the raw array index, signed 32-bit exactly (a Java
-     *                {@code int}; no safe-range representation exists)
-     * @param present {@code index < currentLength} — the {@code ARRAY_READ}
-     *                decision (present/absent)
-     * @param append  {@code index == currentLength} — the
-     *                {@code ARRAY_WRITE} append decision
      */
     record ArraySlot(int index, boolean present, boolean append) implements NormalizedSlot {
 
@@ -92,10 +86,6 @@ public sealed interface NormalizedSlot
      * is the boundary's pinned E8012; negative and out-of-range indices
      * are represented exactly (the computation never enforces bounds).
      *
-     * @param index   the raw bytes index, signed 32-bit exactly (a Java
-     *                {@code int}; no safe-range representation exists)
-     * @param present {@code index < currentLength} — the
-     *                {@code BYTES_READ}/{@code BYTES_WRITE} bounds decision
      */
     record BytesSlot(int index, boolean present) implements NormalizedSlot {
 
@@ -111,7 +101,6 @@ public sealed interface NormalizedSlot
      * key). Total over lowering-reachable targets by A-D10's E3018
      * static-string gate.
      *
-     * @param key the raw string key; non-null
      */
     record TableSlot(String key) implements NormalizedSlot {
 
@@ -129,7 +118,6 @@ public sealed interface NormalizedSlot
      * The {@code INDEX_NORMALIZE} result type this slot pins (A-D3):
      * {@code int} for array modes, {@code string} for table modes.
      *
-     * @return the pinned result-type descriptor
      */
     RuntimeDescriptor resultType();
 
@@ -148,14 +136,6 @@ public sealed interface NormalizedSlot
      *       {@code append = true}).</li>
      * </ul>
      *
-     * @param mode          the normalize mode; must be {@code ARRAY_READ}
-     *                      or {@code ARRAY_WRITE}
-     * @param index         the raw array index (signed32)
-     * @param currentLength the array length read at normalize time
-     * @return the computed {@link ArraySlot}
-     * @throws IllegalArgumentException if {@code mode} is a table mode (an
-     *         internal producer error — the closed table-mode computation
-     *         is {@link #tableSlot(IndexMode, String)})
      */
     static ArraySlot arraySlot(IndexMode mode, int index, int currentLength) {
         Objects.requireNonNull(mode, "mode must not be null");
@@ -177,15 +157,6 @@ public sealed interface NormalizedSlot
      * are represented exactly — enforcement happens only in the named
      * boundary policies ({@code BYTES_READ}/{@code BYTES_WRITE}).
      *
-     * @param mode          the normalize mode; must be {@code BYTES_READ}
-     *                      or {@code BYTES_WRITE}
-     * @param index         the raw bytes index (signed32)
-     * @param currentLength the bytes length read at normalize time
-     * @return the computed {@link BytesSlot}
-     * @throws IllegalArgumentException if {@code mode} is not a bytes mode
-     *         (an internal producer error — the closed array/table
-     *         computations are {@link #arraySlot(IndexMode, int, int)} and
-     *         {@link #tableSlot(IndexMode, String)})
      */
     static BytesSlot bytesSlot(IndexMode mode, int index, int currentLength) {
         Objects.requireNonNull(mode, "mode must not be null");
@@ -204,14 +175,6 @@ public sealed interface NormalizedSlot
      * the computation (no length read occurs for table targets) and is
      * therefore absent from this surface.
      *
-     * @param mode the normalize mode; must be {@code TABLE_READ} or
-     *             {@code TABLE_WRITE}
-     * @param key  the raw string key; non-null
-     * @return the computed {@link TableSlot} carrying the identical key
-     * @throws NullPointerException     if {@code mode} or {@code key} is null
-     * @throws IllegalArgumentException if {@code mode} is an array mode (an
-     *         internal producer error — the closed array-mode computation
-     *         is {@link #arraySlot(IndexMode, int, int)})
      */
     static TableSlot tableSlot(IndexMode mode, String key) {
         Objects.requireNonNull(mode, "mode must not be null");

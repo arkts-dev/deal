@@ -14,101 +14,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * The closed failure-policy registry of {@code deal.semantic-ir/1}
- * (schema S5; parent "Closed failure policies and canonical visible
- * errors"): exactly one immutable {@link FailurePolicyRow} per
- * {@link FailurePolicyId}, and the registry-owned construction of every
- * E6005 diagnostic.
- *
- * <p>Closed rows. The table maps each of the 27 policies to exactly one
- * row — no missing row, no extra row, and no fallback. The row data
- * (code, templates, metadata keys, origin rule, cause rule, frame
- * rule, precedence) is the parent's closed table with the corrections of
- * the canonical failure-projection authority, including
- * the exact visible-error templates (E8001
- * {@code expected {kind}} — the suffix-less typed-boundary kind arm,
- * whose {@code {kind}} is the closed kind text — plus the invalid-Unicode
- * variant, the class-identity text
- * {@code expected instance of {expected}, got {actual}}, the two
- * inner-only host string-carrier texts, the {@code ASYNC_COMPLETION}
- * cell's corpus-aligned
- * {@code expected {expected}} — the completion check's pinned transcript
- * text, whose numeric actual kind is the single number kind — E8002
- * {@code negative array index} /
- * {@code array index out of bounds}, E8003
- * {@code array element {oneBasedIndex} type mismatch}, E8004
- * {@code int out of safe range}, E8005 {@code integer division by zero},
- * E8006 {@code integer exponent must be non-negative}, E8007
- * {@code extra field '{field}' in class '{classId}'}, the E8010
- * signature/parameter/return/async variants, the six E8011 host-load
- * templates, the JSON parse template with
- * {@code {oneBasedByteOffset}}/{@code {reason}} metadata,
- * {@code sqrt of negative number}, and the propagation/preserve/infrastructure
- * rows). Consumers receive the resolved record in the operation snapshot
- * and never select messages.</p>
- *
- * <p>Closed arm table. {@link #arm(FailureArmId)} owns the closed
- * DEAL-visible projection arms beside the rows (canonical
- * failure-projection authority P1): each arm names its row and template
- * index, its named parameters with their sources, its expected-token
- * source or absence, its actual projection or absence, its origin
- * convention, its render scope (top-level, or host-inner-only for the
- * two host string-carrier arms), and its own DEAL-visible code where the
- * multi-code bytes row pins one beside the row's (E8013 for the
- * {@code BYTES_WRITE} value-range arm). Every retained row template is
- * bound to exactly one arm of its row, and each row's template list
- * equals its declared arms' templates in arm order (fail-closed).</p>
- *
- * <p>Field shapes are enforced at the render ({@link #render}): the arm's
- * declared expected/actual fields must be present exactly when the arm
- * declares them and must lie inside the arm's declared token shape (its
- * pinned text, the closed kind tokens, a canonical class atom, a
- * descriptor text, the closed typed-boundary/carrier-kind vocabularies,
- * the fixed tokens, or the canonical floating-point text). A
- * caller-supplied token the arm's declaration does not produce is a
- * producer defect — the renderer never publishes a fabricated field, and
- * {@link #renderAtTemplate} (the row-position entry point behind
- * {@code BoundaryFailure.fromRow}) cannot instantiate a retained template
- * behind its arm's back.</p>
- *
- * <p>Reserved policy names are not rows. The four reserved names
- * {@code EXTERNAL_PARAMETER}, {@code EXTERNAL_RETURN},
- * {@code STDLIB_PARAMETER}, {@code STDLIB_RETURN} are not members of the
- * closed {@link FailurePolicyId} enum (they are valid
- * {@link BoundaryKind} values whose policies are selected by the
- * descriptor-kind rule), so constructing behavior for a reserved name is
- * impossible at the type level: the registry's only lookup key is the
- * enum type, there is no string-keyed row lookup and no fallback row, and
- * {@code FailurePolicyId.valueOf("EXTERNAL_PARAMETER")} fails closed.</p>
- *
- * <p>E6005 ownership. E6005 is
- * {@code E6005(Phase.BACKEND_LOWERING, "Common semantic lowering failed")}
- * in {@code deal.diagnostics.DiagnosticCode} (parent D11). This registry
- * owns the {@code LoweringFailureDetail} → instantiated E6005 message
- * construction: every foundation component submits the immutable detail
- * record to {@link #e6005(LoweringFailureDetail)} and receives the
- * diagnostic — no consumer hand-crafts an E6005 message. E6000 remains
- * distinct: intentional retained-target rejections produce E6000, never
- * E6005.</p>
- *
- * <p>E6005 coverage (parent D11) has exactly one producing component per
- * item ({@link #e6005CoverageItems()}):</p>
- * <ol>
- *   <li>missing checked facts → {@code CheckedProjectBuilder};</li>
- *   <li>invalid semantic IR → {@code SemanticIrValidator} (the closed
- *       14-condition rule set);</li>
- *   <li>unknown or reserved closed selector/policy →
- *       {@code SemanticIrValidator} R-ENUM / R-RESERVED-NAME;</li>
- *   <li>an operation outside a claimed capability → the construct epics
- *       at unit-production time (ISSUE-0231..0239) against the S4
- *       capability catalog — not a validator rule;</li>
- *   <li>missing boundary realization → the construct epics' boundary
- *       production (ISSUE-0233..0236) per parent D7;</li>
- *   <li>ABI mismatch after compatibility was claimed →
- *       {@code TargetAbiValidator} at stage time.</li>
- * </ol>
- */
 public final class FailureContractRegistry {
 
     private FailureContractRegistry() { /* closed data table + E6005 owner */ }
@@ -133,13 +38,6 @@ public final class FailureContractRegistry {
             "propagation only: a propagated child/operand failure keeps its own frames",
             "only already-started child/operand failure may propagate"));
 
-        // Five projections share the row (the canonical failure-projection
-        // authority P1): template 0 is the general descriptor-kind
-        // projection (a bytes descriptor projects its closed kind text
-        // {@code expected bytes}, the sibling bytes sub-epic's own arm
-        // rendering through this arm), template 1 the invalid-Unicode-string
-        // variant, template 2 the class-identity arm, and templates 3/4 the
-        // two inner-only host string-carrier arms.
         rows.put(FailurePolicyId.TYPE_DESCRIPTOR, makeRow(FailurePolicyId.TYPE_DESCRIPTOR,
             DiagnosticCode.E8001,
             List.of("expected {kind}",
@@ -391,12 +289,6 @@ public final class FailureContractRegistry {
      * closed enum — reserved names cannot be expressed — and a missing row
      * fails closed instead of returning any fallback.
      *
-     * @param policy the closed failure policy; must not be null
-     * @return the row
-     * @throws NullPointerException     if {@code policy} is null
-     * @throws IllegalArgumentException if no row exists (never for a
-     *                                  closed enum member — fail-closed
-     *                                  backstop)
      */
     public static FailurePolicyRow row(FailurePolicyId policy) {
         Objects.requireNonNull(policy, "policy must not be null");
@@ -495,11 +387,6 @@ public final class FailureContractRegistry {
             FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
             FailureArm.OriginConvention.DELETE_TARGET, FailureArm.RenderScope.TOP_LEVEL));
 
-        // The bytes rows the sibling bytes sub-epic retained: each retained
-        // template is bound to exactly one declared arm of its row (the
-        // fail-closed consistency invariant), and the bytes cells render the
-        // sibling row's own text — never a bytes-specific text or a new
-        // projection.
         declared.add(arm(FailureArmId.BYTES_ALLOCATE, FailurePolicyId.BYTES_ALLOCATE, 0,
             FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
             FailureArm.OriginConvention.CALL_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));
@@ -717,9 +604,6 @@ public final class FailureContractRegistry {
      * unbound retained template, a foreign template, a duplicate binding,
      * or a missing/extra arm fails this check as a producer defect.
      *
-     * @param rows the row table; must not be null
-     * @param arms the declared arms; must not be null
-     * @throws IllegalStateException if the invariant does not hold
      */
     public static void checkArmConsistency(Map<FailurePolicyId, FailurePolicyRow> rows,
                                            List<FailureArm> arms) {
@@ -834,11 +718,6 @@ public final class FailureContractRegistry {
      * The single declared arm of one closed arm id; an unknown id cannot be
      * expressed at the type level and a missing entry fails closed.
      *
-     * @param id the closed arm id; must not be null
-     * @return the arm
-     * @throws NullPointerException     if {@code id} is null
-     * @throws IllegalArgumentException if no arm exists (a fail-closed
-     *                                  backstop — never for a closed member)
      */
     public static FailureArm arm(FailureArmId id) {
         Objects.requireNonNull(id, "id must not be null");
@@ -854,11 +733,6 @@ public final class FailureContractRegistry {
      * template/arm binding of the consistency invariant. A retained
      * template with no bound arm fails closed.
      *
-     * @param policy        the row's policy; must not be null
-     * @param templateIndex the retained template index; must be in range
-     * @return the bound arm
-     * @throws NullPointerException     if {@code policy} is null
-     * @throws IllegalArgumentException if no arm is bound to the template
      */
     public static FailureArm armForTemplate(FailurePolicyId policy, int templateIndex) {
         for (FailureArm arm : ARMS.values()) {
@@ -881,18 +755,6 @@ public final class FailureContractRegistry {
      * arm fails closed as a producer defect — never a fallback text, never
      * a composed suffix.
      *
-     * @param id         the arm to render; must not be null
-     * @param parameters the arm's named-parameter values (its keys must be
-     *                   exactly the arm's declared parameters); must not be
-     *                   null
-     * @param expected   the arm's expected field, or {@code null} exactly
-     *                   when the arm declares no expected field
-     * @param actual     the arm's actual field, or {@code null} exactly
-     *                   when the arm declares no actual field
-     * @param cause      the leaf failure where the row pins one, else
-     *                   {@code null}
-     * @return the rendered boundary failure
-     * @throws BoundaryExecutor.Defect if the render is not the arm's own
      */
     public static BoundaryFailure render(FailureArmId id, Map<String, String> parameters,
                                          String expected, String actual,
@@ -913,32 +775,6 @@ public final class FailureContractRegistry {
             actual, metadataOf(arm, parameters), cause);
     }
 
-    /**
-     * One arm render addressed by its retained template position — the
-     * legacy {@code (policy, templateIndex, fields)} entry point. The bound
-     * arm's own template, its own code, and its declared field contract are
-     * the render: a caller cannot instantiate a retained row template behind
-     * its arm's back, so the arm's declared expected/actual shapes, its
-     * parameters, and its render scope can never be bypassed in production.
-     * The supplied metadata map is the render's metadata verbatim (the walk's
-     * internal position keys included) — it is never re-derived here.
-     *
-     * <p>The one sibling-owned arm ({@code JSON_TO_WALK}) keeps its landed
-     * row-template rendering: this slice declares it so the row's retained
-     * template has a bound arm, and its projection binding and origin cell
-     * are bound by the {@code @jsonable} sibling (P7).</p>
-     *
-     * @param policy        the row's policy; must not be null
-     * @param templateIndex the retained template index; must be in range
-     * @param expected      the expected field, or {@code null} exactly when
-     *                      the arm declares none
-     * @param actual        the actual field, or {@code null} exactly when the
-     *                      arm declares none
-     * @param metadata      the render's metadata; may be empty, never null
-     * @param cause         the leaf failure where the row pins one, else null
-     * @return the rendered boundary failure
-     * @throws BoundaryExecutor.Defect if the render is not the arm's own
-     */
     public static BoundaryFailure renderAtTemplate(FailurePolicyId policy, int templateIndex,
                                                    String expected, String actual,
                                                    Map<String, String> metadata,
@@ -948,10 +784,7 @@ public final class FailureContractRegistry {
         Map<String, String> supplied = metadata == null
             ? new LinkedHashMap<>() : metadata;
         if (arm.isSiblingOwned()) {
-            // The landed sibling-owned walk rendering: the retained row
-            // template with the supplied fields and metadata, no projection
-            // claim (the sibling binds the arm's projection and origin, so
-            // this slice enforces no field shape for it).
+
             String message = instantiate(row(policy).templates().get(templateIndex), expected,
                 actual, supplied);
             return new BoundaryFailure(policy, codeOfArm(arm), message, expected, actual,
@@ -1141,11 +974,6 @@ public final class FailureContractRegistry {
         throw shapeDefect(arm, "actual", token, "a closed typed-boundary token");
     }
 
-    /**
-     * A class spelling: the canonical atom the typed-boundary projection
-     * carries, or the {@code class:} IR/trace spelling the landed Error
-     * carrier keeps (its identity is not corpus-pinned in this slice).
-     */
     private static boolean isClassSpelling(String token) {
         if (token.startsWith("class:")) {
             return token.length() > "class:".length();
@@ -1172,14 +1000,6 @@ public final class FailureContractRegistry {
         }
     }
 
-    /**
-     * A descriptor text: the canonical descriptor spelling (the one decoder
-     * {@link RuntimeDescriptor#parseCanonicalText(String)}) with the
-     * emitters' internal dialect spellings ({@code array(…)}/…
-     * {@code nullable(…)}/{@code function(p;r)}) accepted where a landed
-     * site still carries them. A signature may additionally be the empty
-     * carried-signature-less spelling.
-     */
     private static void requireDescriptorText(FailureArm arm, String field, String value,
                                               boolean signatureMayBeEmpty) {
         if (value.isEmpty()) {
@@ -1192,9 +1012,7 @@ public final class FailureContractRegistry {
             RuntimeDescriptor.parseCanonicalText(value);
             return;
         } catch (RuntimeException decodeFailure) {
-            // The emitters' internal descriptor dialect (never a DEAL-visible
-            // text of its own): accepted so the arm's declared source still
-            // holds for the landed sites that pass it.
+
         }
         if (!isDialectDescriptorText(value)) {
             throw shapeDefect(arm, field, value, "a canonical descriptor text");
@@ -1272,10 +1090,6 @@ public final class FailureContractRegistry {
      * consuming arm substitutes for its {@code {inner}} parameter.
      * Rendering a top-level arm here fails closed.
      *
-     * @param id         the inner-only arm; must not be null
-     * @param parameters the arm's named-parameter values; must not be null
-     * @return the rendered inner message
-     * @throws BoundaryExecutor.Defect if the arm is not INNER_ONLY
      */
     public static String renderInner(FailureArmId id, Map<String, String> parameters) {
         FailureArm arm = arm(id);
@@ -1297,9 +1111,6 @@ public final class FailureContractRegistry {
      * fail-closed producer defect, so a host inner reason is never derived
      * from an unvalidated string.
      *
-     * @param descriptorText the descriptor text; must not be null
-     * @return the kind arm's text for the descriptor's closed kind
-     * @throws BoundaryExecutor.Defect if the text is not a closed descriptor
      */
     public static String descriptorKindReason(String descriptorText) {
         Objects.requireNonNull(descriptorText, "descriptorText must not be null");
@@ -1431,12 +1242,6 @@ public final class FailureContractRegistry {
      * E6005 template carrying every {@link LoweringFailureDetail} field,
      * deterministically, with no other content.
      *
-     * @param detail the lowering-failure detail; must not be null and
-     *               every field must be non-null
-     * @return the instantiated message
-     * @throws NullPointerException if {@code detail} or any of its fields
-     *                              is null (fail closed — a broken detail
-     *                              never renders)
      */
     public static String instantiateMessage(LoweringFailureDetail detail) {
         Objects.requireNonNull(detail, "detail must not be null");
@@ -1463,11 +1268,6 @@ public final class FailureContractRegistry {
      * the canonical synthetic range (the detail carries a producer name,
      * not a source span).
      *
-     * @param detail the lowering-failure detail; must not be null and
-     *               every field must be non-null
-     * @return the E6005 diagnostic
-     * @throws NullPointerException if {@code detail} or any of its fields
-     *                              is null
      */
     public static CompilerDiagnostic e6005(LoweringFailureDetail detail) {
         return CompilerDiagnostic.error(DiagnosticCode.E6005, instantiateMessage(detail),

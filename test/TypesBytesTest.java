@@ -13,16 +13,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Types-layer tests for the DEAL v1.2 canonical bytes primitive
- * (ISSUE-0308): {@link Type.Bytes} singleton identity, the
- * {@link Types#equals(Type, Type)} structural arm, canonicalize
- * identity, the {@link Types#containsBytes(Type)} D8 recursion over
- * nested Array/Nullable/Function trees at depth &gt;= 50, and the
- * pinned {@code bytes} descriptor text at every Type-to-text producer.
- *
- * <p>Runs via main() using assertions. Enable with -ea JVM flag.</p>
- */
 public class TypesBytesTest {
 
     private static int passed = 0;
@@ -379,8 +369,6 @@ public class TypesBytesTest {
     static void testDescriptorTextPins() {
         System.out.println("-- descriptor text pins --");
 
-        // JvmBackend.typeDescriptor is the public static producer —
-        // the ONE JVM Type-to-text emitter (ISSUE-0301 descriptor seam).
         check("bytes".equals(deal.codegen.jvm.JvmBackend.typeDescriptor(
                 Type.Bytes.INSTANCE)),
             "JvmBackend.typeDescriptor(bytes) == \"bytes\"");
@@ -411,9 +399,6 @@ public class TypesBytesTest {
             fail("LuaBackend.typeDescriptor reflection failed: " + t);
         }
 
-        // The canonical per-compilation descriptor service — the one
-        // Type-to-text producer the JS backend consumes since
-        // ISSUE-0317 retired JsBackend.jsTypeDescriptor.
         deal.module.ModuleIdentityResolver.IdentityIndex index =
             deal.module.ModuleIdentityResolver.buildIndex(
                 Map.of("", deal.identity.CanonicalModuleIdentity.BuiltinModule.INSTANCE));

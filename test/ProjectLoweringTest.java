@@ -71,72 +71,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * ISSUE-0634: the one project lowering entry, the one allocator, and the
- * composed validator chain
- * ({@code project-lowering-entry-and-registration-seeds} D1/D2/D4/D8/D11/
- * D12 and the project lowering, registration-seed, namespace registration,
- * and project validation gate contracts;
- * {@code luajit-jvm-single-lowering-production-cutover} C1/C4/C7/C10;
- * {@code semantic-ir-construct-coverage-cutover} K3/K12's lowering
- * context), extended by ISSUE-0636 with the in-project imported-class
- * resolution ({@code project-lowering-entry-and-registration-seeds} D10
- * and the in-project imported-class contract; K3).
- *
- * <ol>
- *   <li>a real multi-module checked project (an entry module, an imported
- *       implementation module, and an imported host declaration module)
- *       built by the production checked-project builder lowers through
- *       {@link SemanticLowerer#lowerProject} to exactly one project with
- *       the complete closure in dependency order, the entry module
- *       present, globally unique ids from one allocator, and byte-identical
- *       repeated project dumps;</li>
- *   <li>the result carries exactly one block-membership table and one
- *       class-factory registry per module, the class registration seeds
- *       (one layout per declared class plus the builtin {@code Error}
- *       layout), the closed {@code IntrinsicFunction} bindings of the two
- *       conversion intrinsics, and one namespace registration per distinct
- *       imported module with the alias cells its {@code MODULE_IMPORT}
- *       completions name (dump-visible);</li>
- *   <li>the composed per-unit chain (the closed 14 rules, the address-chain
- *       protocol, the control-flow validator, the bindings production
- *       validator, and the class-construction validator) accepts the
- *       E7-armed unified units, so the unsupplied-facts chain members are
- *       re-asserted directly over the produced units and tables;</li>
- *   <li>the unified walk's class arm: an implementation module declares an
- *       exported and a local class and constructs both in the one session,
- *       so the unit's own {@code classLayouts} entries, the
- *       {@code CLASS_NEW(LOCAL)} constructions, and the exported class's
- *       {@code CLASS_FACTORY} registration are asserted over the produced
- *       unit and the composed chain re-runs over it;</li>
- *   <li>the in-project imported-class resolution (ISSUE-0636; D10 and the
- *       in-project imported-class contract; K3): the dependent module's
- *       checker-valid literals of two imported in-project classes lower
- *       {@code CLASS_NEW(SHARED_FACTORY)} with each owner's
- *       {@code constructionEntry} factory reference, an empty
- *       {@code classDefaultOpIds} list, the literal-order provided fields
- *       and the declaration-order boundaries (the omitted defaulted field
- *       wired to the owner factory op's result), zero
- *       {@code RETAINED_ABI_DEFERRED}, and the composed chain re-run with
- *       the in-project facts; the same project's cross-module call resolves
- *       through the accumulated {@code EXTERNAL_ENTRY} records as a
- *       {@code SHARED_BODY} external, and the inconsistent-fact seed (an
- *       owner outside the closure and outside the declaration set) still
- *       returns the deferral with no project;</li>
- *   <li>the four negative seeds (a corrupted unit, a missing module, a
- *       non-v1.2 invocation, an alias without a resolved import fact)
- *       return the first E6005 and no project, no tables, no registries, no
- *       seeds, and no registrations;</li>
- *   <li>the declaration-class fail-closed acceptance: a checker-valid
- *       literal of a host declaration class and of an extern-C declaration
- *       class resolves to the seed's owner member and fails closed at the
- *       class-construction validator — never a silent construction and
- *       never an artifact — while the builtin {@code Error} literal
- *       lowers its {@code CLASS_NEW(BUILTIN_DEFAULTS)} through the one
- *       project entry (ISSUE-0619; {@code semantic-ir-construct-coverage-
- *       cutover} K13) and passes the composed chain.</li>
- * </ol>
- */
 public class ProjectLoweringTest {
 
     private static int passed = 0;
@@ -281,15 +215,6 @@ public class ProjectLoweringTest {
         }
         """;
 
-    /**
-     * The imported in-project class resolution fixture (ISSUE-0636;
-     * design sources {@code project-lowering-entry-and-registration-seeds}
-     * D10 and the in-project imported-class contract;
-     * {@code semantic-ir-construct-coverage-cutover} K3): the owner module
-     * declares an exported class with an omitted defaulted field and an
-     * exported factory function; the dependent module constructs the
-     * imported class and calls the imported function in one project walk.
-     */
     private static final String IMPORTED_CLASS_UTIL_SOURCE = """
         export class Point {
           x: int = 0;
@@ -403,11 +328,7 @@ public class ProjectLoweringTest {
             externals.put(extra.getKey(),
                 proj.resolve(extra.getValue()).toAbsolutePath().toString());
         }
-        // ISSUE-0643 P10 item 3: the fixture project carries host and
-        // extern-C declaration imports and cross-module calls, while the
-        // suite's subject — the one project lowering entry — is
-        // arm-independent, so the compile resolves the harness invocation
-        // and keeps the harness arm.
+
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entry, output, false, false, false, false, Backend.LUAJIT, externals,
             List.of(proj.resolve("src").toAbsolutePath()),
@@ -993,10 +914,6 @@ public class ProjectLoweringTest {
         }
     }
 
-    // =========================================================================
-    // 4b. In-project imported-class resolution (ISSUE-0636)
-    // =========================================================================
-
     private static void testImportedInProjectClassResolution() throws Exception {
         System.out.println("-- the in-project imported-class construction: "
             + "CLASS_NEW(SHARED_FACTORY) with the owner's factory reference --");
@@ -1278,13 +1195,6 @@ public class ProjectLoweringTest {
     // 5. The declaration-class construction acceptance
     // =========================================================================
 
-    /**
-     * The host declaration class construction (ISSUE-0624;
-     * {@code semantic-ir-construct-coverage-cutover} K10): the literal
-     * resolves to the seed and lowers the {@code HOST_DEFAULTS} shape through
-     * the one project entry with zero diagnostics — the retargeted pin of the
-     * pre-slice fail-closed acceptance.
-     */
     private static void testDeclarationClassConstruction() throws Exception {
         System.out.println("-- a host declaration class literal resolves to the "
             + "seed and lowers CLASS_NEW(HOST_DEFAULTS) through the one project "
@@ -1460,14 +1370,6 @@ public class ProjectLoweringTest {
         }
     }
 
-    /**
-     * The extern-C declaration class construction (ISSUE-0666;
-     * {@code luajit-ffi-struct-plan-construction-and-oracle-projection}
-     * F1/F2): the literal resolves to the seed and lowers
-     * {@code CLASS_NEW(FFI_PLAN)} through the one project entry with zero
-     * diagnostics — the retargeted pin of the pre-slice fail-closed
-     * acceptance.
-     */
     private static void testExternCDeclarationClassConstruction() throws Exception {
         System.out.println("-- an extern-C declaration class literal resolves to "
             + "the FFI_PLAN seed and lowers CLASS_NEW(FFI_PLAN) through the one "

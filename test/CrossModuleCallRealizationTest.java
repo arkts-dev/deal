@@ -51,50 +51,6 @@ import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * ISSUE-0654: the cross-module sync call realization through the callee
- * unit's {@code EXTERNAL_ENTRY}
- * ({@code cross-module-call-realization} X1/X4/X5, the cross-module sync
- * call contract, and the entry record contract;
- * {@code luajit-jvm-single-lowering-production-cutover} C2/C7;
- * {@code semantic-ir-construct-coverage-cutover} K4).
- *
- * <ol>
- *   <li>the six named corpus fixtures
- *       ({@code modules/imported-recursive-export},
- *       {@code import-alias-member-access},
- *       {@code cross-module-class-factory},
- *       {@code exported-class-function-combo}, {@code imported-class-array},
- *       {@code modid-class-identity-control}) materialize in the lane
- *       layout, lower through {@link SemanticLowerer#lowerProject}, and
- *       emit one project artifact per target through the production arm;</li>
- *   <li>each fixture's exported zero-arity probe executes under real
- *       {@code luajit} and real {@code javac --release 25 -proc:none} +
- *       {@code java} through the artifact's published export surface, and
- *       the observed transcript (exit code, stdout, stderr) equals the
- *       fixture's pinned {@code .expect.json} sidecar;</li>
- *   <li>the caller-side cell shape: exactly one {@code EXTERNAL_PARAMETER}
- *       boundary child per argument in one-based order and no caller-side
- *       return boundary for the {@code SHARED_BODY} call; the callee unit
- *       records exactly one {@code EXTERNAL_ENTRY} whose single
- *       {@code EXTERNAL_RETURN} boundary is run by the callee body's
- *       {@code RETURN} under the declared return descriptor;</li>
- *   <li>the oracle and both conformance emitters agree event-for-event
- *       over the same projects (the differential harness), and the
- *       oracle's entry events parent to the caller's {@code CALL} op and
- *       carry the callee module while the caller's own terminal keeps the
- *       caller's module;</li>
- *   <li>the module context is restored after a successful and after a
- *       failing callee (the failure carries the callee's origin, the
- *       caller's {@code CALL} FAILURE carries the caller's module);</li>
- *   <li>the fail-closed seeds: an {@code externalEntryRef} naming a module
- *       outside the closure, an {@code externalEntryRef} resolving to a
- *       non-entry op, and a {@code RETAINED_ABI} external each fail closed
- *       with nothing emitted; the production arm's E6005
- *       {@code SHARED_EMITTER_COVERAGE} mapping of an emitter rejection and
- *       its staging-after-success order stay pinned.</li>
- * </ol>
- */
 public class CrossModuleCallRealizationTest {
 
     private static int passed = 0;
@@ -193,7 +149,6 @@ public class CrossModuleCallRealizationTest {
         String entryModule) {
     }
 
-    /** The release-owned production invocation (the epic's production record). */
     private static CompilerInvocation productionInvocation() {
         return CompilerProfileProvider.resolve(ReleaseConfiguration.CURRENT_RELEASE_STATE,
             ReleaseConfiguration.releaseCapabilityRegistry());
@@ -985,10 +940,6 @@ public class CrossModuleCallRealizationTest {
             assertEmitterRejects("the ref resolving to a non-entry op",
                 nonEntryRef, result.tables(), result.registries(), fixture);
 
-            // (c) A RETAINED_ABI external keeps its landed rejection: the one
-            // project lowering records every module of the closure SHARED,
-            // so this hand-built owner never arises from a checker-valid
-            // program.
             KindPayload.CallPayload probePayload = (KindPayload.CallPayload) call.payload();
             FunctionExecutionBinding.ExternalFunction shared =
                 (FunctionExecutionBinding.ExternalFunction)
@@ -1124,12 +1075,6 @@ public class CrossModuleCallRealizationTest {
         }
     }
 
-    /**
-     * The landed rejection of a {@code RETAINED_ABI} external: both
-     * production emitters refuse to emit a call arm for it (the retained
-     * per-module ABI surface has no place in the one project artifact).
-     * The oracle's host request seam is outside this seed's subject.
-     */
     private static void assertRetainedOwnerRejected(String what,
             ExecutableLoweredProject project,
             Map<ModuleId, StructuredBodyTable> tables,

@@ -35,38 +35,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * The versioned canonical serializer of typed default semantics
- * (ISSUE-0542, design source
- * {@code provider-versioned-default-plans} D5/D6/D8/D9): the
- * expression grammar over the complete checked construct set, the
- * statement-level {@code CanonicalFunctionSemantics} grammar for
- * provider function bodies, SHA-256 digests as indexes with
- * full-content equality, {@code canonicalPlanContent}/
- * {@code planDigest}, the {@code semanticDefaultContents} projection,
- * and the completion of the plan-embedded
- * {@link ResolvedDefaultExpression#runtimeResources()} with the
- * computed provider digests.
- *
- * <p><b>Invocation contract (task-pinned):</b> digest computation is
- * demand-driven and is invoked only for compilations whose merged
- * runtime-edge occurrence structure is acyclic — the production
- * pipeline invokes this serializer only after the graph epic's
- * (ISSUE-0543) digest-free SCC pass rejects runtime SCCs with E2005,
- * so digest equations are well-founded (D9). The graph epic
- * (ISSUE-0543) owns the orchestrator phase that invokes this
- * serializer after its digest-free SCC pass, demanding the ordinary
- * runtime-use occurrences through the additional-demand overload
- * ({@link #serialize(Map, Map, List)}). A defensive reentrant-demand
- * guard fails closed with a deterministic E6005 error at the first
- * reentrant provider — never a hang, never a placeholder — so a broken
- * acyclicity gate fails loudly.</p>
- *
- * <p><b>Boundary (task-pinned):</b> this epic completes
- * {@code runtimeResources} only. It constructs no
- * {@link RuntimeImportDependency} record, merges no edge set, runs no
- * graph, and emits no E2005.</p>
- */
 public final class DefaultSemanticSerializer {
 
     private DefaultSemanticSerializer() {
@@ -84,23 +52,6 @@ public final class DefaultSemanticSerializer {
     // Result shapes
     // =========================================================================
 
-    /**
-     * One serialized class: the completed compiler plan (every entry's
-     * default carries canonical content, semantic digest, and ordered
-     * digest-bearing runtime resources; {@code runtimeDependencies}
-     * stays empty — the graph epic's seam) plus the three pinned
-     * content projections (D6).
-     *
-     * @param completedPlan            the completed compiler plan
-     * @param canonicalPlanContent     the complete canonical plan
-     *                                 serialization
-     * @param planDigest               SHA-256 over
-     *                                 {@code canonicalPlanContent} (an
-     *                                 index only)
-     * @param semanticDefaultContents  the ordered per-entry canonical
-     *                                 semantic-default content
-     *                                 projection
-     */
     public record SerializedDefaultClass(
         CompilerClassDefaultPlan completedPlan,
         String canonicalPlanContent,
@@ -173,14 +124,6 @@ public final class DefaultSemanticSerializer {
      * no raw exception escapes and no placeholder digest is ever
      * produced.</p>
      *
-     * @param modules        module source path &rarr; the read-only
-     *                       per-module facts
-     * @param plannedClasses module source path &rarr; the planned
-     *                       classes with their provisional occurrence
-     *                       data (the planner output, in planning
-     *                       order)
-     * @return the diagnostics, the serialized classes, and the
-     *         computed provider digests
      */
     public static Result serialize(
             Map<String, DefaultSerializerModuleInput> modules,
@@ -190,38 +133,6 @@ public final class DefaultSemanticSerializer {
         return new Serializer(modules, plannedClasses, List.of()).run();
     }
 
-    /**
-     * The graph epic's (ISSUE-0543) demand overload: serializes every
-     * planned class exactly like {@link #serialize(Map, Map)} and then
-     * additionally demands the provider digest of every given
-     * provisional occurrence (the ordinary runtime-use occurrences of
-     * an acyclic compilation, which the planned-class flow alone never
-     * demands), so {@link Result#providerDigests()} covers both the
-     * planner's default edges and the ordinary edges the graph merges
-     * with them. The additional demands never change the serialized
-     * classes or the canonical contents — they only extend the
-     * demanded-digest projection. Demand failure (a broken occurrence,
-     * an unresolvable provider, a reentrant demand) fails closed with
-     * E6005 and publishes nothing, exactly like the main flow.
-     *
-     * <p>The production pipeline invokes this overload only after the
-     * graph's digest-free SCC pass succeeded (a runtime SCC fails the
-     * compilation with E2005 before any digest demand), so digest
-     * equations stay well-founded (D9).</p>
-     *
-     * @param modules                 module source path &rarr; the
-     *                                read-only per-module facts
-     * @param plannedClasses          module source path &rarr; the
-     *                                planned classes (the planner
-     *                                output, in planning order)
-     * @param additionalDigestDemands the ordinary runtime-use
-     *                                occurrences whose provider
-     *                                digests to demand additionally
-     *                                (possibly empty)
-     * @return the diagnostics, the serialized classes, and the
-     *         computed provider digests (covering the additional
-     *         demands)
-     */
     public static Result serialize(
             Map<String, DefaultSerializerModuleInput> modules,
             Map<String, List<PlannedDefaultClass>> plannedClasses,
@@ -329,8 +240,6 @@ public final class DefaultSemanticSerializer {
         private record DigestMemo(String digest, String content) {
         }
 
-        /** The additional digest demands (the graph epic's ordinary
-         * runtime-use occurrences), demanded after the main flow. */
         private final List<DefaultResourceOccurrence> additionalDemands;
 
         Serializer(Map<String, DefaultSerializerModuleInput> modules,
@@ -374,12 +283,7 @@ public final class DefaultSemanticSerializer {
                 return new Result(List.copyOf(diagnostics), Map.of(),
                     Map.of(), Map.of());
             }
-            // The graph epic's additional digest demands (ISSUE-0543):
-            // every ordinary runtime-use occurrence demands its
-            // provider digest after the planned-class flow completed,
-            // so the providerDigests projection covers both edge sets.
-            // Demand failure fails closed with E6005 and publishes
-            // nothing — the same fail-closed contract as the main flow.
+
             for (DefaultResourceOccurrence occurrence
                     : additionalDemands) {
                 if (failed) {
@@ -825,11 +729,6 @@ public final class DefaultSemanticSerializer {
         /**
          * Produces the canonical node of one IR node.
          *
-         * @param isRoot    true exactly for the default expression root
-         *                  (its range is the E3001 anchor)
-         * @param inheritedScope the lexical scope for statement-side
-         *                  resolution, or null in expression-only
-         *                  positions
          */
         private CanonicalNode serializeNode(DefaultIrNode node,
                 DefaultSerializerModuleInput input, Set<Site> siteSet,

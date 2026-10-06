@@ -76,16 +76,6 @@ public enum ActualKind {
      * non-empty class id; every other kind renders its fixed token and
      * never accepts a class name (target class names never appear).
      *
-     * @param kind    the actual kind; must not be null
-     * @param classId the class id for {@link #CLASS}, otherwise {@code null}
-     * @return the canonical token text
-     * @throws NullPointerException     if {@code kind} is null, or if
-     *                                  {@code kind == CLASS} and
-     *                                  {@code classId} is null
-     * @throws IllegalArgumentException if {@code kind == CLASS} and
-     *                                  {@code classId} is empty, or if
-     *                                  {@code kind != CLASS} and
-     *                                  {@code classId} is non-null
      */
     public static String canonicalToken(ActualKind kind, String classId) {
         Objects.requireNonNull(kind, "kind must not be null");

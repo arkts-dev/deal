@@ -26,12 +26,6 @@ import java.util.Objects;
  * it is represented to shared dependants by {@link ExternalModuleInterface}
  * plus the target ABI record (foundation F5/F6).</p>
  *
- * @param semanticProfile must be {@link SemanticProfile#DEAL_V1_2_INT32}
- * @param interfaceIndex  the project interface index; non-null
- * @param modules         the complete implementation closure keyed by
- *                        {@link ModuleId}, in dependency order; non-null
- * @param entryModule     the entry module identity (present in
- *                        {@code modules}); non-null
  */
 public record ExecutableLoweredProject(
     SemanticProfile semanticProfile,

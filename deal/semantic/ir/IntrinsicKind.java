@@ -61,7 +61,6 @@ public enum IntrinsicKind {
      * descriptor admissible in a {@code FunctionExecutionBinding
      * .IntrinsicFunction} shape of this kind.
      *
-     * @return the intrinsic's declared signature descriptor; non-null
      */
     public RuntimeDescriptor.Func declaredSignature() {
         return switch (this) {

@@ -20,35 +20,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * The gate's backend-neutral frontend compilation (ISSUE-0353;
- * corpus-aware arm added by the gate-integration child ISSUE-0357): the
- * real lexer → parser → module shape gate → name resolution → type
- * checker pipeline, mirroring the {@code backend-test}
- * frontend-gate path and the legacy runners' compile-stage surface.
- * Returns every error diagnostic in pipeline order; a bypassed stage
- * yields no diagnostics, so a compile-error pin can never be satisfied
- * by a hollow pipeline.
- *
- * <p>Two arms:</p>
- * <ul>
- *   <li>The stub-resolver arm
- *       ({@link #errorDiagnostics(String, String)}): the module resolver
- *       rejects every module import — the surface the Compile Diagnostic
- *       comparison uses (the pinned Diagnostics fixtures are standalone
- *       compile-error units, and an import would add an {@code E2003}
- *       diagnostic — a second error diagnostic the comparison reports
- *       instead of hiding).</li>
- *   <li>The corpus-aware arm
- *       ({@link #errorDiagnostics(String, String, SemanticProfile,
- *       ModuleResolver)}): the gate's frontend-corpus execution (G1 —
- *       {@code compile-ok} fixtures compile, {@code compile-error}
- *       fixtures reject with their pinned code) compiles with the
- *       per-fixture A5 profile and a real corpus module resolver
- *       (stdlib exports, relative corpus imports), mirroring the
- *       legacy runners' compile-stage resolution.</li>
- * </ul>
- */
 public final class FrontendCompiler {
 
     private FrontendCompiler() {
@@ -146,11 +117,6 @@ public final class FrontendCompiler {
             parseResult.program());
         collectErrors(result.diagnostics(), errors);
 
-        // Corpus C FFI externals (ISSUE-0507): the production
-        // FfiDeclarationValidator diagnostics the corpus-aware resolver
-        // collected while resolving candidate/* imports surface on the
-        // fixture's compile verdict (the E7002 C FFI declaration
-        // policy).
         if (resolver instanceof CorpusFrontendResolver corpusResolver) {
             collectErrors(corpusResolver.ffiDiagnostics(), errors);
         }

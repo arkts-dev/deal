@@ -136,23 +136,6 @@ public final class OutputConfigResolver {
     /**
      * The classified, converted effective output (parent D11 shape).
      *
-     * @param source                 the winning value's provenance
-     * @param kind                   the pinned classification
-     * @param decodedText            the winning decoded text: the manifest
-     *                               spelling, the trimmed CLI override, or
-     *                               the backend-dependent default
-     *                               {@code build/lua}/{@code build/jvm}/
-     *                               {@code build/js}
-     * @param absoluteNormalizedPath the protected prefix-resolved
-     *                               absolute path (D4 output row:
-     *                               longest-existing-directory-prefix
-     *                               symlink resolution; existence never
-     *                               required)
-     * @param sourceRange            the manifest value range for a
-     *                               MANIFEST-source result; null for a
-     *                               CLI-source result (no source scalar
-     *                               range exists) and for the derived
-     *                               default
      */
     public record OutputRef(Source source, Kind kind, String decodedText,
                             String absoluteNormalizedPath,
@@ -170,12 +153,6 @@ public final class OutputConfigResolver {
      * into E2010 (MANIFEST source) or CliDiagnostic (CLI source) is
      * ProjectLocator's D1 step-5 duty.
      *
-     * @param source      the failing value's provenance
-     * @param reason      the pinned deterministic reason of the D4 output
-     *                    row conversion
-     * @param sourceRange the manifest value range for a MANIFEST-source
-     *                    failure; null for a CLI-source failure (no
-     *                    source scalar range exists)
      */
     public record OutputPathFailure(Source source, String reason,
                                     SourceScalarRange sourceRange) {
@@ -211,25 +188,6 @@ public final class OutputConfigResolver {
      * Selects the effective backend and classifies + converts the
      * effective output from validated values.
      *
-     * @param manifestBackend   the D2-validated manifest backend
-     *                          {@code "luajit"} | {@code "jvm"} |
-     *                          {@code "js"} (null is treated as the
-     *                          absent-field default {@code "luajit"})
-     * @param manifestOutput    the D2-validated manifest output value, or
-     *                          null when absent
-     * @param cliBackendAlias   the D1 step-3-validated CLI backend alias
-     *                          {@code "lua"} | {@code "luajit"} |
-     *                          {@code "jvm"} | {@code "js"}, or null when
-     *                          absent
-     * @param cliOutput         the D1 step-3-validated, trimmed CLI
-     *                          output string, or null when absent
-     * @param manifestDirectory the manifest's directory (non-null;
-     *                          normalized absolute before joining)
-     * @param processCwd        the process working directory (non-null;
-     *                          normalized absolute before joining)
-     * @return the effective backend plus the classified output or the
-     *         classified conversion failure; never null, never emits a
-     *         diagnostic, never creates a directory
      */
     public static Resolution resolve(String manifestBackend,
                                      ManifestString manifestOutput,

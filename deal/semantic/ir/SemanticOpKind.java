@@ -1,19 +1,5 @@
 package deal.semantic.ir;
 
-/**
- * The closed operation-kind set of {@code deal.semantic-ir/1} (parent
- * "Closed operation kinds and execution contracts"; schema S4).
- *
- * <p>Closed set — exactly the 55 values below in the pinned order; no open
- * or unknown fallback member and no external extension point exist, so a
- * consumer-private operation kind cannot be expressed through typed
- * construction, and an unknown kind in the versioned text protocol fails
- * validation (R-ENUM/R-PRIVATE-STEP). Every kind's mandatory payload shape
- * is exactly the corresponding {@link KindPayload} record
- * ({@link #payloadClass()}); {@link SemanticOp} rejects a kind/payload
- * mismatch at construction. Execution contracts are the construct epics'
- * (ISSUE-0234..0239); the validator accepts only these shapes.</p>
- */
 public enum SemanticOpKind {
 
     CONST,

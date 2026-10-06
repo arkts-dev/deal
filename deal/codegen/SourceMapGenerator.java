@@ -69,16 +69,10 @@ public final class SourceMapGenerator {
         ));
     }
 
-    /**
-     * Returns an unmodifiable view of all recorded mappings.
-     */
     public List<Mapping> mappings() {
         return Collections.unmodifiableList(mappings);
     }
 
-    /**
-     * Returns {@code true} if at least one mapping has been recorded.
-     */
     public boolean hasMappings() {
         return !mappings.isEmpty();
     }
@@ -86,11 +80,6 @@ public final class SourceMapGenerator {
     /**
      * Serializes all recorded mappings into the JSON sidecar format.
      *
-     * @param sourcePath    the original DEAL source file path
-     *                      (e.g. {@code "src/main.deal"})
-     * @param generatedPath the generated Lua output path
-     *                      (e.g. {@code "build/lua/main.lua"})
-     * @return the complete source map JSON string
      */
     public String toJson(String sourcePath, String generatedPath) {
         StringBuilder sb = new StringBuilder();

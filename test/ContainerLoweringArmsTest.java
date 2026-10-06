@@ -104,61 +104,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * Verifies the ISSUE-0386 container/string lowering arms of the common
- * lowerer ({@link SemanticLowerer}): the D1 closed construct→op shape map
- * for {@code CONST} (scalar literals and template fragments),
- * {@code BINDING_LOAD} (the loop-binding load-resolution rule),
- * {@code ARRAY_NEW} (+ {@code ARRAY_LITERAL_ELEMENT} children),
- * {@code TABLE_NEW}, {@code ARRAY_LENGTH}, {@code MEMBER_READ}
- * (+ {@code CONTEXTUAL_TABLE_READ} child), {@code STRING_CONCAT}
- * (string {@code +} and templates), and {@code FOR_EACH(STRING_SCALARS)},
- * plus the fail-closed E6005 arms and the combined dependency step over
- * the produced validated unit executed through
- * {@link ContainerOpsExecutor} with a fixture
- * {@link BoundaryCheckRunner}.
- *
- * <p>Pinned cases (the task verification; wiki Verification 1 and 7 layer 2):
- * <ol>
- *   <li>per-construct checked-source slices — scalar literals (each
- *       closed scalar), identifier (loop-binding load carrying the
- *       enclosing {@code FOR_EACH} payload's initial generation), array
- *       literals (empty, nested, and the side-effecting
- *       {@code a, b, i, c, v} source-order shape), table literals
- *       (duplicate keys), string {@code +}, templates (multi-part with
- *       interpolation at both ends and the single-fragment no-fold
- *       shape), array {@code .length}, table member reads in checked
- *       contextual positions, and string for-of — each asserted against
- *       the exact op kind, payload fields, policy, result/operand types,
- *       child order, {@code parentOpId}, and origin spans;</li>
- *   <li>negatives — string {@code +} never emits {@code BINARY}; an
- *       array for-of raises E6005 {@code CONSTRUCT_UNLOWERED} as a hard
- *       failure with the exact {@link LoweringFailureDetail} (and the
- *       same hard failure for class-typed literals, class/member access,
- *       and the bytes {@code .length} arm's receiver); the module member
- *       access arm is the
- *       value position of the one import-member read production
- *       (ISSUE-0659) — with the resolved import fact installed and a
- *       declaration matching the closed catalog row it produces the
- *       realized {@code EXPORT_READ}, while a declaration diverging from
- *       the catalog row's declared descriptor fails closed with the
- *       descriptor-equality guard; a
- *       {@code Type.Error} descriptor position raises E6005
- *       {@code DESCRIPTOR_UNREPRESENTABLE} with the exact detail (the bytes
- *       element position lowers: its descriptor is representable and the
- *       bytes construct is production-covered);</li>
- *   <li>the combined dependency step — an array literal with
- *       side-effecting elements and a table literal with duplicate keys
- *       lowered to their validated unit and executed through
- *       {@link ContainerOpsExecutor} (C3) with a fixture
- *       {@link BoundaryCheckRunner}, asserting the allocate-after-checks
- *       order and the pinned first-insertion table order — this test
- *       fails if C3's executor or C4's descriptor bridge is broken;</li>
- *   <li>the module-level seam — the positionable string spine lowers to
- *       a validated ∅-claim unit with byte-identical repeated dumps, and
- *       an uncovered row fails R-COVERAGE.</li>
- * </ol>
- */
 public class ContainerLoweringArmsTest {
 
     private static int passed = 0;
@@ -597,10 +542,6 @@ public class ContainerLoweringArmsTest {
             checkIntLiteralRangeDetail("int literal " + value, defect);
         }
 
-        // (c) The checker-valid end-to-end trigger: the frontend still
-        // admits 2147483648 (the E1036 signed32 literal gate is
-        // ISSUE-0111's not-yet-satisfied item), so the CONST arm is the
-        // fail-closed gate — never a silently corrupted ScalarValue.Int.
         CheckedSlice slice = checkSlice("""
             function f(): null {
               let n = 2147483648
@@ -631,15 +572,6 @@ public class ContainerLoweringArmsTest {
             }
         }
 
-        // (d) The min-int spelling stays untouched: -2147483648 parses as
-        // NEG(IntLiteral 2147483648) (the pinned in-tree frontend
-        // contract). With the I3 value-operation slice landed the unary
-        // negation routes through the UNARY(INT32_NEG) arm, and the
-        // operand's CONST arm then fails closed on the out-of-range
-        // literal — the defensive gate (E1036 rejects the literal under
-        // DEAL_V1_2_INT32 before lowering; the legacy parse contract
-        // still admits it) — so no ops are produced and the hard failure
-        // stays.
         CheckedSlice negated = checkSlice("""
             function f(): null {
               let n = -2147483648
@@ -1444,12 +1376,6 @@ public class ContainerLoweringArmsTest {
     static void testConstructUnloweredNegatives() {
         System.out.println("-- Fail-closed arms: CONSTRUCT_UNLOWERED --");
 
-        // (a) Index read — the array index read arm is the
-        // EVALUATION_ORDER carrier's (ISSUE-0410, INDEX_NORMALIZE/
-        // INDEX_READ); this stage's window still fails hard on the seed's
-        // parameter identifier (the E5 window resolves only enclosing
-        // for-of/catch bindings), with no ops produced — never a partial
-        // unit.
         CheckedSlice indexRead = checkSlice("""
             function f(xs: int[]): null {
               let n: int = xs[0]
@@ -1536,12 +1462,6 @@ public class ContainerLoweringArmsTest {
             }
         }
 
-        // (d) Module member access — the value-position arm of the one
-        // import-member read production (ISSUE-0659): with a declaration
-        // matching the closed catalog row and the resolved import fact
-        // installed, the arm produces the realized EXPORT_READ; keeping
-        // the stub's diverging declaration, it fails closed with the
-        // descriptor-equality guard.
         {
             StubModuleResolver resolver = new StubModuleResolver();
             CheckedSlice moduleAccess = checkSlice("""
@@ -1639,11 +1559,6 @@ public class ContainerLoweringArmsTest {
             }
         }
 
-        // (e) .length on bytes (ISSUE-0626 retargeted this pin): the bytes
-        // .length arm is the landed ARRAY_LENGTH read over the byte receiver,
-        // so the synthetic access no longer fails closed for bytes — its only
-        // remaining defect is the synthetic receiver's own binding-load arm
-        // (the fixture carries no binding fact), never a bytes-owned guard.
         {
             IdentifierExpr bytesObject = new IdentifierExpr(
                 new Span(SOURCE_ID, 1, 1, 1, 2), "b");
@@ -1679,10 +1594,6 @@ public class ContainerLoweringArmsTest {
     static void testDescriptorNegatives() {
         System.out.println("-- Descriptor negatives: DESCRIPTOR_UNREPRESENTABLE --");
 
-        // (a) An array of bytes at the element-descriptor position (ISSUE-0626
-        // retargeted this pin): the bytes element descriptor is representable
-        // and the shared container pipeline emits the ARRAY_NEW with it — the
-        // position is no longer excluded.
         {
             Span span = new Span(SOURCE_ID, 1, 1, 1, 5);
             ArrayLiteralExpr literal = new ArrayLiteralExpr(span, List.of());
@@ -1786,9 +1697,6 @@ public class ContainerLoweringArmsTest {
                 + "ARRAY_LITERAL_ELEMENT boundary children fully evidence both "
                 + "single-family rows; the other active rows are under-evidenced)");
 
-        // The lowerer appends one detached module-level MODULE_INIT envelope
-        // op per unit (ISSUE-0590 E3/E8); the slice's own ops are the 15
-        // below.
         List<SemanticOp> ops = unit.ops().stream()
             .filter(op -> op.kind() != SemanticOpKind.MODULE_INIT)
             .toList();

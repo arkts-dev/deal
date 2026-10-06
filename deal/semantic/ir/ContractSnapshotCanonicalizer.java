@@ -89,8 +89,6 @@ public final class ContractSnapshotCanonicalizer {
      * carried {@code canonicalDigest} field is not part of the mapping —
      * the digest is computed over the eight pinned fields only.
      *
-     * @param snapshot the snapshot; non-null
-     * @return the canonical JSON object
      */
     public static CanonicalJson.Value toJson(OperationContractSnapshot snapshot) {
         Objects.requireNonNull(snapshot, "snapshot must not be null");
@@ -113,8 +111,6 @@ public final class ContractSnapshotCanonicalizer {
      * Serializes the snapshot to its canonical JSON bytes (UTF-8, sorted
      * keys, explicit nulls).
      *
-     * @param snapshot the snapshot; non-null
-     * @return the canonical JSON bytes
      */
     public static byte[] serialize(OperationContractSnapshot snapshot) {
         return CanonicalJson.serializeBytes(toJson(snapshot));
@@ -133,8 +129,6 @@ public final class ContractSnapshotCanonicalizer {
      * source coordinates, or trace phase (fields that live outside the
      * snapshot) does not.
      *
-     * @param snapshot the snapshot; non-null
-     * @return the lowercase 64-character hex digest
      */
     public static String digest(OperationContractSnapshot snapshot) {
         return CanonicalJson.sha256Hex(serialize(snapshot));
@@ -145,8 +139,6 @@ public final class ContractSnapshotCanonicalizer {
      * carried {@code canonicalDigest} (R-DIGEST's recomputation, without
      * being a validator rule itself).
      *
-     * @param snapshot the snapshot; non-null
-     * @return true iff the carried digest equals the recomputed digest
      */
     public static boolean matchesCarriedDigest(OperationContractSnapshot snapshot) {
         return digest(snapshot).equals(snapshot.canonicalDigest());
@@ -165,8 +157,6 @@ public final class ContractSnapshotCanonicalizer {
      * serializer, so whole documents and snapshots can never diverge in
      * encoding rules (S2; foundation F8).
      *
-     * @param value the canonical JSON value; non-null
-     * @return the canonical JSON bytes
      */
     public static byte[] serializeJson(CanonicalJson.Value value) {
         return CanonicalJson.serializeBytes(Objects.requireNonNull(value, "value must not be null"));
@@ -176,8 +166,6 @@ public final class ContractSnapshotCanonicalizer {
      * Serializes an arbitrary canonical JSON value to canonical JSON text
      * (UTF-8; debug/observation surface only).
      *
-     * @param value the canonical JSON value; non-null
-     * @return the canonical JSON text
      */
     public static String serializeText(CanonicalJson.Value value) {
         return new String(serializeJson(value), java.nio.charset.StandardCharsets.UTF_8);
@@ -194,11 +182,6 @@ public final class ContractSnapshotCanonicalizer {
      * No closed-enum, reserved-name, policy, boundary-assignment, or
      * profile validation happens here.
      *
-     * @param utf8 the serialized snapshot bytes; non-null
-     * @return the intermediate record
-     * @throws SemanticIrTextDecodeException on malformed JSON, invalid
-     *         UTF-8, a duplicate/unknown/missing field, a wrong value type,
-     *         or a wrong version
      */
     public static SnapshotJsonRecord parseSnapshot(byte[] utf8) {
         CanonicalJson.Value value = CanonicalJson.parse(utf8);
@@ -214,9 +197,6 @@ public final class ContractSnapshotCanonicalizer {
      * Parses a serialized snapshot text back through the single canonical
      * JSON parser.
      *
-     * @param text the serialized snapshot text; non-null
-     * @return the intermediate record
-     * @throws SemanticIrTextDecodeException as in {@link #parseSnapshot(byte[])}
      */
     public static SnapshotJsonRecord parseSnapshot(String text) {
         return parseSnapshot(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -645,7 +625,6 @@ public final class ContractSnapshotCanonicalizer {
         return CanonicalJson.intValue((int) id);
     }
 
-
     // =========================================================================
     // Closed kind-payload shapes (one JSON object per SemanticOpKind)
     // =========================================================================
@@ -658,8 +637,6 @@ public final class ContractSnapshotCanonicalizer {
      * explicit nulls. The single production payload mapping — the dumper
      * and validator consume it through this component only.
      *
-     * @param payload the payload; non-null
-     * @return the pinned JSON object
      */
     public static CanonicalJson.Value payloadJson(KindPayload payload) {
         Objects.requireNonNull(payload, "payload must not be null");
@@ -941,9 +918,6 @@ public final class ContractSnapshotCanonicalizer {
      * {@code {semanticProfile, entryModule, modules}} — the project-level
      * positions carried as raw strings.
      *
-     * @param semanticProfile the raw project semantic-profile name; non-null
-     * @param entryModule     the entry module path; non-null
-     * @param modules         the parsed raw units in serialized order; non-null
      */
     public record ParsedProject(String semanticProfile, String entryModule,
                                 List<RawUnit> modules) {
@@ -960,10 +934,6 @@ public final class ContractSnapshotCanonicalizer {
      * framing, closed-enum, or profile validation happens here beyond the
      * JSON value model itself — those are the validator's rules (T6).
      *
-     * @param text the canonical JSON text; non-null
-     * @return the parsed value tree
-     * @throws SemanticIrTextDecodeException on malformed JSON (the single
-     *         parser's transport-level rejection)
      */
     public static CanonicalJson.Value parseValidationText(String text) {
         return CanonicalJson.parse(text);
@@ -978,11 +948,6 @@ public final class ContractSnapshotCanonicalizer {
      * out-of-set and reserved names survive byte-intact and reach the
      * validator's rule checks.
      *
-     * @param obj the unit text object; non-null
-     * @return the raw unit
-     * @throws SemanticIrTextDecodeException on a pinned framing/
-     *         field/value-type/version mismatch (transport-level, never
-     *         E6005)
      */
     public static RawUnit parseUnit(CanonicalJson.Obj obj) {
         checkKeys(obj, "formatVersion", "semanticProfile", "moduleId", "interfaceHash",
@@ -1053,9 +1018,6 @@ public final class ContractSnapshotCanonicalizer {
      * Decodes a project text object ({@code {semanticProfile, entryModule,
      * modules}}) into its raw records with the entry-module framing check.
      *
-     * @param obj the project text object; non-null
-     * @return the parsed project
-     * @throws SemanticIrTextDecodeException on a framing mismatch
      */
     public static ParsedProject parseProject(CanonicalJson.Obj obj) {
         checkKeys(obj, "semanticProfile", "entryModule", "modules");
@@ -1141,8 +1103,6 @@ public final class ContractSnapshotCanonicalizer {
      * (R-DIGEST's recomputation): {@code SHA-256(canonical JSON bytes)} of
      * exactly the eight pinned snapshot fields.
      *
-     * @param snapshot the raw 8-field snapshot object (no canonicalDigest); non-null
-     * @return the lowercase 64-character hex digest
      */
     public static String recomputeSnapshotDigest(CanonicalJson.Obj snapshot) {
         return CanonicalJson.sha256Hex(CanonicalJson.serializeBytes(snapshot));
@@ -1407,8 +1367,6 @@ public final class ContractSnapshotCanonicalizer {
      * every present key must be pinned and every pinned key must be
      * present. Any deviation is a transport-level decode failure.
      *
-     * @param obj    the object; non-null
-     * @param pinned the pinned field names; non-null
      */
     public static void checkKeys(CanonicalJson.Obj obj, String... pinned) {
         Set<String> set = new LinkedHashSet<>(List.of(pinned));

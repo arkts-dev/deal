@@ -15,11 +15,6 @@ import java.util.Objects;
  * {@code hasDefault} from {@code defaultExpr} presence). Pure immutable
  * data of {@code deal.semantic-interface/1}.
  *
- * @param name         the field name; non-null
- * @param declaredType the canonical declared-type text; non-null
- * @param optional     whether the field is optional (may be omitted)
- * @param nullable     whether the declared field type admits null
- * @param hasDefault   whether the field carries a default expression
  */
 public record FieldInterface(String name, String declaredType, boolean optional,
                              boolean nullable, boolean hasDefault) {
@@ -34,7 +29,6 @@ public record FieldInterface(String name, String declaredType, boolean optional,
      * single mapping the interface index and the {@code TargetModuleAbi}
      * class-layout serialization both use.
      *
-     * @return the canonical JSON object
      */
     public CanonicalJson.Value toCanonicalJson() {
         return CanonicalJson.obj(

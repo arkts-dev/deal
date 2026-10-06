@@ -31,9 +31,6 @@ public final class SymbolTable {
         this.parent = parent;
     }
 
-    /**
-     * Returns the parent scope, or {@code null} if this is the root (module) scope.
-     */
     public SymbolTable parent() {
         return parent;
     }
@@ -42,7 +39,6 @@ public final class SymbolTable {
      * Defines a symbol in this scope. Throws if the name is already defined
      * in this scope. (Shadowing outer scopes is allowed.)
      *
-     * @throws IllegalStateException if the name is already defined in this scope
      */
     public void define(String name, Symbol symbol) {
         if (symbols.containsKey(name)) {
@@ -71,7 +67,6 @@ public final class SymbolTable {
     /**
      * Resolves a name by walking the scope chain.
      *
-     * @return the symbol, or {@code null} if not found
      */
     public Symbol resolve(String name) {
         Symbol s = symbols.get(name);
@@ -118,7 +113,6 @@ public final class SymbolTable {
      *
      * <p>Mutations of the returned map never affect this table.</p>
      *
-     * @return a defensive insertion-ordered copy of this scope's symbols
      */
     public Map<String, Symbol> symbols() {
         return new LinkedHashMap<>(symbols);

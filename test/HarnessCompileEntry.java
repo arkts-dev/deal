@@ -16,32 +16,6 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 
-/**
- * The test-scope harness compile entry (ISSUE-0643; design source
- * {@code production-project-emission-and-atomic-cutover} P10 item 3 — the
- * gate-path allocation, mechanism 1).
- *
- * <p>{@link #run(String[])} mirrors {@code deal.Main}'s CLI surface — the
- * entry path, {@code --backend lua|luajit|jvm|js}, {@code --output
- * <dir>}, {@code --dump-ir}, {@code --source-map}, {@code --verbose}, and
- * {@code --diagnostics-json} — but resolves the <b>harness</b> invocation
- * ({@code COMMON_SHADOW} / {@code DEAL_V1_2_INT32}, {@link
- * ConformanceHarnessMetadata#invocation}) in place of the release-owned
- * production invocation. Every compile it drives therefore keeps the
- * harness arm (phase 3.7 route planning, the per-module route dispatch,
- * the retained loops and counters, the mixed-edge validation, the
- * per-module production emission, and the retained source-map behavior),
- * exactly as the gate paths it serves asserted before the ISSUE-0643
- * phase-4 dispatch activated the production arm.</p>
- *
- * <p><b>Scope.</b> This class is {@code test/**} only: it is compiled
- * into {@code build} by {@code run_tests.sh}'s {@code TEST_SOURCES} list
- * and is outside the production source set. It adds no CLI option to
- * {@code deal.Main}, changes no {@code deal/**} source, and never selects
- * the production arm — a release-owned production compile is reachable
- * only through {@code deal.Main} (or an orchestrator constructed with the
- * release-owned record).</p>
- */
 public final class HarnessCompileEntry {
 
     private HarnessCompileEntry() {

@@ -56,68 +56,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * ISSUE-0675 — the closed producer rule's lowering arms (wiki
- * {@code function-typed-value-materialization-and-dispatch} M2 items 1-3
- * and 5; wiki {@code semantic-ir-construct-coverage-cutover} K11/K12).
- *
- * <p>Every function-typed result registers exactly one
- * {@code FunctionExecutionBinding}: the static class where the class is
- * known and {@code DynamicFunctionValue} where it is not. This suite drives
- * the dynamic arms over the real production walk and asserts, per arm, that
- * exactly one {@code DynamicFunctionValue} is keyed by the arm's producing
- * op result identity, correlated to that op, and carrying that op's result
- * descriptor — and that the produced unit passes the schema rules (typed
- * and canonical text surfaces) and the bindings production rules in one
- * pass, so a broken gate clause fails the drive.</p>
- *
- * <ol>
- *   <li><b>The typed-load arm.</b> A value-position function-typed
- *       {@code BINDING_LOAD} whose cell value identity is not statically
- *       tracked (a parameter, a catch binding, an iteration binding, and a
- *       class-field or namespace-held value) registers exactly one dynamic
- *       record keyed by the load's result identity with the load's checked
- *       descriptor; the alias load of the resulting tracked cell republishes
- *       that identity and never registers again.</li>
- *   <li><b>The read arms.</b> A {@code MEMBER_READ}, an {@code INDEX_READ},
- *       and a {@code FIELD_READ} with a function-typed result register
- *       exactly one dynamic record each, keyed by the read's result
- *       identity; a module-namespace member read flows through the same
- *       member-read arm (the table-held namespace value's function-typed
- *       entry). The optional-read envelope publishes a nullable
- *       descriptor — not a function-typed result — so no record is keyed by
- *       it; the narrowed value-position load of the guarded cell registers
- *       the record the call dispatches on.</li>
- *   <li><b>The call arm.</b> A {@code CALL} result with a function-typed
- *       result registers exactly one dynamic record, whatever call arm
- *       allocated it (a direct call, a dynamically resolved call, an
- *       imported call, and the callee value of a call-of-call).</li>
- *   <li><b>The awaited-completion arm.</b> The {@code AWAIT} op — the op
- *       that allocates and publishes the completion value identity — with a
- *       function-typed completion registers exactly one dynamic record; the
- *       {@code ASYNC_START} result is the token under
- *       {@code INTERNAL_ASYNC} and registers nothing.</li>
- *   <li><b>Preserved static classes.</b> A tracked alias load and an
- *       imported function-typed export read (host/STDLIB
- *       {@code HostFunction}, compiled {@code ExternalFunction
- *       (SHARED_BODY)}) keep their landed static registration: no dynamic
- *       re-registration, no duplicate key.</li>
- *   <li><b>Negative seeds.</b> A dropped dynamic registration fails
- *       R-FUNCTION-BINDING; a dynamic registration keyed by a static
- *       position (a closure production) fails REGISTRY_ONE_TO_ONE; a
- *       duplicate key is rejected at the registry.</li>
- * </ol>
- *
- * <p><b>Boundary.</b> The seeded conversion intrinsic's
- * identity-preserving tracking (a function-typed load of the intrinsic
- * binding republishes the seeded identity) and the gate refinements its
- * alias declarations require are the conversion-intrinsic child's (wiki
- * {@code conversion-intrinsic-function-values} J1). Until that tracking
- * lands, the intrinsic binding's cell value identity is not statically
- * tracked, so a function-typed load of it takes this task's typed-load arm
- * — the same rule every other untracked cell follows; the seed's own
- * {@code IntrinsicFunction} registration is unchanged.</p>
- */
 public class DynamicProducerRuleTest {
 
     private static int passed = 0;
@@ -990,12 +928,6 @@ public class DynamicProducerRuleTest {
         }
         """;
 
-    /**
-     * The module-namespace member read: the import alias's value position
-     * holds the module's surface as a {@code table}, so its function-typed
-     * member read takes the landed {@code MEMBER_READ} arm — the producer
-     * rule's dynamic registration — never a second read production.
-     */
     private static final String NAMESPACE_READ_SOURCE = """
         import * as console from "std/console"
 
@@ -1065,7 +997,6 @@ public class DynamicProducerRuleTest {
             return;
         }
 
-        // The value-position export read keeps its landed static class.
         List<SemanticOp> reads = ofKind(app, SemanticOpKind.EXPORT_READ);
         check(reads.size() == 2, "the app unit carries the value read and the call "
             + "callee's read; got " + reads.size());

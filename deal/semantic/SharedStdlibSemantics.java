@@ -31,156 +31,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * The single standard-library algorithm executor of
- * {@code deal.semantic-ir/1} ({@code stdlib-operations-and-time-lock} D4,
- * Contracts §{@code SharedStdlibSemantics} algorithms and §Console
- * effect): the only component that computes the 21 named
- * {@link StdlibFunctionId} operations, as static per-family algorithms
- * over the closed value view ({@link Value} over
- * {@link UnicodeScalars.ScalarString} and {@link SemanticTable})
- * returning a sealed {@link Outcome} ({@code Success(value)} /
- * {@code Failure(StdlibFailure)}). Every DEAL-visible failure renders the
- * declared {@link deal.semantic.ir.FailureArm} bound to its
- * {@link FailureContractRegistry} row template (through
- * {@link FailureContractRegistry#render}) — the primitive never builds
- * message text ad hoc and consumers never select messages.
- *
- * <p><b>Executor-primitive pattern.</b> Like {@link SharedValueSemantics},
- * {@code ContainerOpsExecutor}, and {@code BoundaryExecutor}, the
- * component is pure, static, deterministic, stateless, and executes no
- * host code. The only non-pure surfaces are the injected
- * {@link ConsoleSink} (D5) and the injected {@link Clock} of
- * {@code TIME_NOW_MILLIS} (K7): the primitive performs no process I/O —
- * the executor supplies the sink and the clock reading, and a sink
- * failure is {@code INFRASTRUCTURE_ONLY} infrastructure failure: not a
- * DEAL error, no DEAL diagnostic, not catchable, and it aborts the run.
- * The primitive never catches a sink exception; the
- * exception propagates to the executor, which owns the run abort. The
- * dependency direction is exactly the pinned set: the IR enums,
- * {@link UnicodeScalars}, {@link SemanticTable}, the
- * {@link SharedValueSemantics} gates, and the registry — never a target
- * backend, the retained {@code std/*} files, the migration registry, or
- * the {@code StdlibFunctionCatalog} (the dispatch's arity/descriptor
- * facts come from the op's own operand types and the closed table, and
- * the catalog's closed-set coverage is the lowerer battery's fact).</p>
- *
- * <p><b>String family (Unicode scalar domain, D4 verbatim).</b>
- * {@code STRING_LENGTH} — Unicode scalar count as signed32; count
- * overflow fails E8004 ({@code INT32_RESULT} at the call origin —
- * defensive: the model's counts are bounded, but the closed policy pins
- * the gate). {@code STRING_SUBSTRING} — scalar indices;
- * {@code lo=max(0,start)}, {@code hi=min(max(0,end),length)}; empty when
- * {@code lo>=hi}; the result is the scalar slice {@code [lo,hi)}.
- * {@code STRING_CONTAINS}/{@code STRING_STARTS_WITH}/
- * {@code STRING_ENDS_WITH} — literal scalar-subsequence comparison; an
- * empty part is contained, a prefix, and a suffix.
- * {@code STRING_REPLACE} — replace all non-overlapping occurrences
- * left-to-right; empty {@code from} returns the input unchanged; the
- * replacement is literal, never pattern-interpreted.
- * {@code STRING_SPLIT} — empty input → {@code []} (regardless of the
- * separator); empty separator → one single-scalar string per element;
- * otherwise split at every non-overlapping literal separator occurrence
- * with leading/internal/trailing empty parts preserved.
- * {@code STRING_TRIM} — remove leading/trailing characters in exactly
- * the closed set U+0009–U+000D and U+0020 (U+000B/U+000C are trimmed;
- * U+00A0 is not). All string algorithms operate on
- * {@link UnicodeScalars.Valid} carriers: invalid scalar encodings were
- * already rejected at that argument's {@code STDLIB_PARAMETER} boundary
- * ({@code TYPE_DESCRIPTOR}, E8001
- * {@code expected string, got invalid Unicode scalar encoding}); the
- * primitive never re-interprets UTF-8, and an {@code Invalid} carrier
- * reaching an algorithm is a producer {@link Defect} — never a second
- * projection. Scalar indices/counts are code points: a surrogate pair is
- * one scalar.</p>
- *
- * <p><b>Table.</b> {@code TABLE_KEYS} — the string keys of the semantic
- * table in first-insertion order; delete removes the order slot and
- * reinsertion appends it ({@link SemanticTable} order contract); non-string
- * keys never exist on a semantic table. Policy {@code NO_DEAL_FAILURE} —
- * never fails.</p>
- *
- * <p><b>JSON.</b> {@code JSON_PARSE} — RFC-8259 scalar-valid parse of the
- * (already scalar-valid) input; object order follows text; duplicate keys
- * keep the last value and the first position; a signed32 <em>integer
- * lexical form</em> (the RFC-8259 integer grammar with the leading-zero
- * rules, mathematically within
- * {@code [-2147483648, 2147483647]}, {@code -0} normalized to {@code 0})
- * becomes {@link Value.Int}, and every other numeric form (fraction or
- * exponent forms, out-of-range integers) becomes {@link Value.Number}; a
- * syntax defect fails with policy {@code JSON_PARSE_SYNTAX} — E8001
- * {@code JSON parse error at position {oneBasedByteOffset}: {reason}}
- * with metadata {@code {oneBasedByteOffset}} (the defect's 1-based UTF-8
- * byte offset) and {@code {reason}} (a stable defect-classification text
- * owned by this component, the {@code REASON_*} constants), origin =
- * the {@code STDLIB_CALL(JSON_PARSE)} call origin, no cause, active
- * frames. A successful parse whose top-level value is not a table then
- * fails the {@code STDLIB_RETURN} boundary — that boundary is the call
- * machine's, never this primitive's. {@code JSON_STRINGIFY} — finite
- * acyclic JSON-shaped data (string-keyed objects, arrays, and
- * null/boolean/int/number/string leaves); object fields in
- * first-insertion order, arrays in index order; RFC-8259 escaping
- * (control characters, quote, backslash; surrogate pairs are emitted as
- * raw scalar UTF-8); shortest round-trippable decimal number formatting
- * ({@code Double.toString} — the JDK's unique-identification spelling);
- * the first failure in declaration order fails via
- * {@code JSON_TO_ERROR} — E8001
- * {@code unsupported type for JSON encoding: {actual}} with the pinned
- * expected text {@code string, number, boolean, or table} and metadata
- * {@code {fieldPath}}/{@code {actual}}, origin = the call
- * origin. The {@code {fieldPath}} spelling is owned by this component: a
- * dot-separated pre-order traversal from the root value — table fields
- * append the field name, array elements append the 0-based element
- * index, and the root itself has the empty path; it stays internal
- * metadata and never surfaces in the DEAL-visible projection.
- * Unsupported values
- * (functions, class instances, async-operation handles, missing values,
- * invalid Unicode scalar sequences), cycles, and nonfinite numbers fail
- * here; acyclic finite data never fails.</p>
- *
- * <p><b>Math.</b> {@code MATH_FLOOR}/{@code MATH_CEIL} — IEEE
- * floor/ceil, returned as Number. {@code MATH_SQRT} — IEEE sqrt; a
- * negative non-NaN input fails {@code SQRT_NEGATIVE} (E8001
- * {@code sqrt of negative number}; the failure carries the negative
- * operand in its {@code actual} field as the canonical IEEE-754
- * hex-float spelling, {@link CanonicalJson#numberHex}); NaN returns NaN
- * and {@code -0.0} returns {@code -0.0}. {@code MATH_ABS_INT} — signed32
- * absolute value; {@code -2147483648} fails {@code INT32_RESULT} (E8004
- * {@code int out of safe range} at the call origin). {@code MATH_ABS_NUMBER}
- * — IEEE absolute value ({@code -0.0} → {@code +0.0}).
- * {@code MATH_MIN_INT}/{@code MATH_MAX_INT} — return the selected
- * signed32 operand; equal operands return that operand value.</p>
- *
- * <p><b>Console (D5).</b> {@code CONSOLE_LOG}/{@code CONSOLE_ERROR}
- * append the argument's exact scalar UTF-8 bytes plus one {@code \n} to
- * the named channel ({@code STDOUT}/{@code STDERR}) as exactly one
- * ordered effect through the injected {@link ConsoleSink} — one
- * {@code write(byte[])} call per execution, byte-exact bytes, ordered
- * {@code \n} suffix, channel identity — then return the null value. The
- * effect is irreversible and ordered before terminal SUCCESS.</p>
- *
- * <p><b>Fail-closed discipline.</b> A shape outside the closed contracts
- * — a non-{@code STDLIB_CALL} op, a payload whose
- * {@code effectCapability} is not {@code STDLIB_SEMANTICS}, a stamped
- * {@code failurePolicy} differing from the single
- * {@link SemanticIrValidator#stdlibPolicy} table, an argument-count
- * mismatch, a wrong-kind argument carrier, an {@code Invalid} scalar
- * carrier reaching a string algorithm, a sink whose {@code channel()}
- * mismatches the call's channel, or a null sink on a console call —
- * fails closed as a producer {@link Defect}, never as a DEAL projection
- * and never as a crash. {@code execute} additionally checks that the op's
- * {@code failurePolicy} was stamped from the single table — the closed
- * algorithm→policy assignment stays single-sourced.</p>
- *
- * <p><b>Purity and bounds.</b> No mutation of the unit, no randomness,
- * no retry, no target knowledge; string algorithms are linear in the
- * scalar count, table keys linear in the key count, and parse/stringify
- * recursion is bounded by the input nesting depth (≤ input length) — a
- * resource exhaustion during execution is infrastructure failure
- * (propagated as an {@code Error}), never a DEAL error. The failure rows
- * are the registry's: codes and templates come from
- * {@link FailureContractRegistry#row(FailurePolicyId)}.</p>
- */
 public final class SharedStdlibSemantics {
 
     private SharedStdlibSemantics() {
@@ -411,8 +261,6 @@ public final class SharedStdlibSemantics {
         /**
          * Writes the exact effect bytes (scalar UTF-8 + {@code \n}).
          *
-         * @param bytes the exact byte sequence of one console effect;
-         *              non-null
          */
         void write(byte[] bytes);
     }
@@ -468,8 +316,6 @@ public final class SharedStdlibSemantics {
      * a retry. A console sink exception is not a {@code Failure}: it
      * propagates out of the primitive as infrastructure failure.
      *
-     * @param <V> the success value type (always {@link Value} for the
-     *            published algorithm results)
      */
     public sealed interface Outcome<V> permits Outcome.Success, Outcome.Failure {
 
@@ -521,29 +367,6 @@ public final class SharedStdlibSemantics {
      * {@link ConsoleSink} whose {@code channel()} matches the call's
      * channel; non-console calls ignore the sink.</p>
      *
-     * @param op   the validated {@code STDLIB_CALL} op; non-null
-     * @param args the resolved argument values in left-to-right source
-     *             order (same count as the op's operands); non-null, no
-     *             null elements
-     * @param sink the injected console sink for
-     *             {@code CONSOLE_LOG}/{@code CONSOLE_ERROR}; ignored by
-     *             every other id (may be null there)
-     * @return the sealed per-family outcome; a console sink exception
-     *         propagates uncaught (infrastructure failure, never a DEAL
-     *         failure)
-     * @throws Defect               if the op is not a
-     *                              {@code STDLIB_CALL}, if the payload's
-     *                              effect capability is not
-     *                              {@code STDLIB_SEMANTICS}, if the
-     *                              stamped policy differs from
-     *                              {@link SemanticIrValidator#stdlibPolicy},
-     *                              if the argument count mismatches the
-     *                              op shapes or the declared arity, if an
-     *                              argument carrier is outside the
-     *                              boundary admission set, or if a console
-     *                              call's sink is null or carries the
-     *                              wrong channel
-     * @throws NullPointerException if {@code op} or {@code args} is null
      */
     public static Outcome<Value> execute(SemanticOp op, List<Value> args,
                                          ConsoleSink sink) {
@@ -557,13 +380,6 @@ public final class SharedStdlibSemantics {
      * the clock is consulted only by {@code TIME_NOW_MILLIS} and every
      * other id ignores it.
      *
-     * @param op    the validated {@code STDLIB_CALL} op; non-null
-     * @param args  the resolved argument values in left-to-right source
-     *              order; non-null, no null elements
-     * @param sink  the injected console sink (may be null for non-console
-     *              ids)
-     * @param clock the injected clock of {@code TIME_NOW_MILLIS}; non-null
-     * @return the sealed per-family outcome
      */
     public static Outcome<Value> execute(SemanticOp op, List<Value> args,
                                          ConsoleSink sink, Clock clock) {
@@ -611,17 +427,6 @@ public final class SharedStdlibSemantics {
      * this seam with the invoking call op's own origin, so the cataloged
      * callable's failures keep the call site's pinned projection.
      *
-     * @param function the closed catalog row identity; non-null
-     * @param origin   the invoking call op's origin; non-null
-     * @param args     the boundary-admitted argument carriers in declared
-     *                 order; non-null, no null elements
-     * @param sink     the injected console sink (may be null for
-     *                 non-console ids)
-     * @param clock    the injected clock of {@code TIME_NOW_MILLIS}; non-null
-     * @return the sealed per-family outcome
-     * @throws Defect if the argument count mismatches the declared arity
-     *                or an argument carrier is outside the boundary
-     *                admission set
      */
     public static Outcome<Value> dispatch(StdlibFunctionId function, SourceOrigin origin,
                                           List<Value> args, ConsoleSink sink, Clock clock) {
@@ -765,15 +570,6 @@ public final class SharedStdlibSemantics {
      * Instantiates one pinned registry-row template into an outcome
      * failure at {@code origin} — the only failure-construction surface.
      *
-     * @param policy        the closed policy of the named row; non-null
-     * @param templateIndex the row's template list position
-     * @param expected      the canonical expected text, or {@code null}
-     * @param actual        the canonical actual text, or {@code null}
-     * @param metadata      the row's pinned metadata values in the row's
-     *                      pinned key order; may be empty, never null
-     * @param origin        the operation origin of the row's rule (the
-     *                      {@code STDLIB_CALL} call origin); non-null
-     * @return the sealed {@code Failure} outcome
      */
     private static Outcome.Failure<Value> failOf(FailurePolicyId policy, int templateIndex,
                                                  String expected, String actual,
@@ -889,14 +685,6 @@ public final class SharedStdlibSemantics {
      * sink exception propagates to the executor, which aborts the run,
      * and no DEAL failure is ever reported.
      *
-     * @param origin the {@code STDLIB_CALL} operation origin; non-null
-     * @param text   the scalar-valid string argument; non-null
-     * @param sink   the injected sink; non-null, channel
-     *               {@link Channel#STDOUT}
-     * @return {@code Success} with the language-null value
-     * @throws Defect               if the sink's channel is not
-     *                              {@code STDOUT}
-     * @throws NullPointerException if any argument is null
      */
     public static Outcome<Value> consoleLog(SourceOrigin origin, UnicodeScalars.Valid text,
                                             ConsoleSink sink) {
@@ -911,14 +699,6 @@ public final class SharedStdlibSemantics {
      * infrastructure-only contract as {@link #consoleLog} on the
      * {@code STDERR} channel.
      *
-     * @param origin the {@code STDLIB_CALL} operation origin; non-null
-     * @param text   the scalar-valid string argument; non-null
-     * @param sink   the injected sink; non-null, channel
-     *               {@link Channel#STDERR}
-     * @return {@code Success} with the language-null value
-     * @throws Defect               if the sink's channel is not
-     *                              {@code STDERR}
-     * @throws NullPointerException if any argument is null
      */
     public static Outcome<Value> consoleError(SourceOrigin origin, UnicodeScalars.Valid text,
                                               ConsoleSink sink) {
@@ -961,11 +741,6 @@ public final class SharedStdlibSemantics {
      * Defensive: the model's counts are bounded, but the closed policy
      * pins the gate.
      *
-     * @param origin the {@code STDLIB_CALL} operation origin; non-null
-     * @param input  the scalar-valid string argument; non-null
-     * @return {@code Success} with the signed32 scalar count, or
-     *         {@code Failure} with the E8004 range projection
-     * @throws NullPointerException if any argument is null
      */
     public static Outcome<Value> stringLength(SourceOrigin origin,
                                               UnicodeScalars.Valid input) {
@@ -980,14 +755,6 @@ public final class SharedStdlibSemantics {
      * when {@code lo>=hi}; the result is the scalar slice
      * {@code [lo,hi)}. Policy {@code NO_DEAL_FAILURE} — never fails.
      *
-     * @param origin the {@code STDLIB_CALL} operation origin; non-null
-     * @param input  the scalar-valid string argument; non-null
-     * @param start  the declared {@code int} start index (0-based,
-     *               inclusive; clamped to {@code [0, length]})
-     * @param end    the declared {@code int} end index (0-based,
-     *               exclusive; clamped to {@code [0, length]})
-     * @return {@code Success} with the scalar slice {@code [lo,hi)}
-     * @throws NullPointerException if any argument is null
      */
     public static Outcome<Value> stringSubstring(SourceOrigin origin,
                                                  UnicodeScalars.Valid input,
@@ -1010,11 +777,6 @@ public final class SharedStdlibSemantics {
      * {@code input}; an empty part is contained. Policy
      * {@code NO_DEAL_FAILURE} — never fails.
      *
-     * @param origin the {@code STDLIB_CALL} operation origin; non-null
-     * @param input  the scalar-valid string argument; non-null
-     * @param part   the scalar-valid part argument; non-null
-     * @return {@code Success} with the boolean result
-     * @throws NullPointerException if any argument is null
      */
     public static Outcome<Value> stringContains(SourceOrigin origin,
                                                 UnicodeScalars.Valid input,
@@ -1032,11 +794,6 @@ public final class SharedStdlibSemantics {
      * {@code part}; an empty part is a prefix. Policy
      * {@code NO_DEAL_FAILURE} — never fails.
      *
-     * @param origin the {@code STDLIB_CALL} operation origin; non-null
-     * @param input  the scalar-valid string argument; non-null
-     * @param part   the scalar-valid part argument; non-null
-     * @return {@code Success} with the boolean result
-     * @throws NullPointerException if any argument is null
      */
     public static Outcome<Value> stringStartsWith(SourceOrigin origin,
                                                   UnicodeScalars.Valid input,
@@ -1057,11 +814,6 @@ public final class SharedStdlibSemantics {
      * {@code part}; an empty part is a suffix. Policy
      * {@code NO_DEAL_FAILURE} — never fails.
      *
-     * @param origin the {@code STDLIB_CALL} operation origin; non-null
-     * @param input  the scalar-valid string argument; non-null
-     * @param part   the scalar-valid part argument; non-null
-     * @return {@code Success} with the boolean result
-     * @throws NullPointerException if any argument is null
      */
     public static Outcome<Value> stringEndsWith(SourceOrigin origin,
                                                 UnicodeScalars.Valid input,
@@ -1084,12 +836,6 @@ public final class SharedStdlibSemantics {
      * {@code to} is literal — never pattern-interpreted. Policy
      * {@code NO_DEAL_FAILURE} — never fails.
      *
-     * @param origin the {@code STDLIB_CALL} operation origin; non-null
-     * @param input  the scalar-valid string argument; non-null
-     * @param from   the scalar-valid search argument; non-null
-     * @param to     the scalar-valid literal replacement; non-null
-     * @return {@code Success} with the replaced scalar sequence
-     * @throws NullPointerException if any argument is null
      */
     public static Outcome<Value> stringReplace(SourceOrigin origin,
                                                UnicodeScalars.Valid input,
@@ -1129,11 +875,6 @@ public final class SharedStdlibSemantics {
      * separator occurrence with leading/internal/trailing empty parts
      * preserved. Policy {@code NO_DEAL_FAILURE} — never fails.
      *
-     * @param origin    the {@code STDLIB_CALL} operation origin; non-null
-     * @param input     the scalar-valid string argument; non-null
-     * @param separator the scalar-valid separator argument; non-null
-     * @return {@code Success} with the array of parts in order
-     * @throws NullPointerException if any argument is null
      */
     public static Outcome<Value> stringSplit(SourceOrigin origin,
                                              UnicodeScalars.Valid input,
@@ -1176,10 +917,6 @@ public final class SharedStdlibSemantics {
      * characters are never removed. Policy {@code NO_DEAL_FAILURE} —
      * never fails.
      *
-     * @param origin the {@code STDLIB_CALL} operation origin; non-null
-     * @param input  the scalar-valid string argument; non-null
-     * @return {@code Success} with the trimmed scalar sequence
-     * @throws NullPointerException if any argument is null
      */
     public static Outcome<Value> stringTrim(SourceOrigin origin,
                                             UnicodeScalars.Valid input) {
@@ -1214,11 +951,6 @@ public final class SharedStdlibSemantics {
      * contract); non-string keys never exist on a semantic table. Policy
      * {@code NO_DEAL_FAILURE} — never fails.
      *
-     * @param origin the {@code STDLIB_CALL} operation origin; non-null
-     * @param table  the declared table argument; non-null
-     * @return {@code Success} with the array of string keys in
-     *         first-insertion order
-     * @throws NullPointerException if any argument is null
      */
     public static Outcome<Value> tableKeys(SourceOrigin origin,
                                            SemanticTable<Value> table) {
@@ -1336,13 +1068,6 @@ public final class SharedStdlibSemantics {
      * end-of-input defect (unterminated string/object/array, unexpected
      * end of input). Multi-byte scalars count their full UTF-8 length.</p>
      *
-     * @param origin the {@code STDLIB_CALL} operation origin; non-null
-     * @param input  the scalar-valid JSON text argument; non-null
-     * @return {@code Success} with the parsed value (the top-level table
-     *         shape is the {@code STDLIB_RETURN} boundary's), or
-     *         {@code Failure} with the {@code JSON_PARSE_SYNTAX}
-     *         projection
-     * @throws NullPointerException if any argument is null
      */
     public static Outcome<Value> jsonParse(SourceOrigin origin,
                                            UnicodeScalars.Valid input) {
@@ -1391,12 +1116,6 @@ public final class SharedStdlibSemantics {
      * table keys in first-insertion order, array elements in index
      * order, pre-order depth-first.</p>
      *
-     * @param origin the {@code STDLIB_CALL} operation origin; non-null
-     * @param table  the declared table argument; non-null
-     * @return {@code Success} with the RFC-8259 JSON text as a valid
-     *         scalar string, or {@code Failure} with the first
-     *         declaration-order {@code JSON_TO_ERROR} projection
-     * @throws NullPointerException if any argument is null
      */
     public static Outcome<Value> jsonStringify(SourceOrigin origin,
                                                SemanticTable<Value> table) {
@@ -1676,9 +1395,6 @@ public final class SharedStdlibSemantics {
      * {@code NO_DEAL_FAILURE} — never fails ({@code NaN} → {@code NaN},
      * {@code ±Infinity} → {@code ±Infinity}).
      *
-     * @param origin the {@code STDLIB_CALL} operation origin; non-null
-     * @param value  the declared number argument; non-null origin
-     * @return {@code Success} with the IEEE floor as Number
      */
     public static Outcome<Value> mathFloor(SourceOrigin origin, double value) {
         Objects.requireNonNull(origin, "origin must not be null");
@@ -1689,9 +1405,6 @@ public final class SharedStdlibSemantics {
      * {@code MATH_CEIL}: IEEE ceiling, returned as Number. Policy
      * {@code NO_DEAL_FAILURE} — never fails.
      *
-     * @param origin the {@code STDLIB_CALL} operation origin; non-null
-     * @param value  the declared number argument
-     * @return {@code Success} with the IEEE ceiling as Number
      */
     public static Outcome<Value> mathCeil(SourceOrigin origin, double value) {
         Objects.requireNonNull(origin, "origin must not be null");
@@ -1706,10 +1419,6 @@ public final class SharedStdlibSemantics {
      * its {@code actual} field as the canonical IEEE-754 hex-float
      * spelling ({@link CanonicalJson#numberHex}).
      *
-     * @param origin the {@code STDLIB_CALL} operation origin; non-null
-     * @param value  the declared number argument
-     * @return {@code Success} with the IEEE sqrt as Number, or
-     *         {@code Failure} with the {@code SQRT_NEGATIVE} projection
      */
     public static Outcome<Value> mathSqrt(SourceOrigin origin, double value) {
         Objects.requireNonNull(origin, "origin must not be null");
@@ -1726,10 +1435,6 @@ public final class SharedStdlibSemantics {
      * {@code int out of safe range} at the call origin) — the exact long
      * intermediate makes the overflow visible before any narrowing.
      *
-     * @param origin the {@code STDLIB_CALL} operation origin; non-null
-     * @param value  the declared int argument
-     * @return {@code Success} with the signed32 absolute value, or
-     *         {@code Failure} with the E8004 range projection
      */
     public static Outcome<Value> mathAbsInt(SourceOrigin origin, int value) {
         Objects.requireNonNull(origin, "origin must not be null");
@@ -1743,9 +1448,6 @@ public final class SharedStdlibSemantics {
      * {@code -Infinity} → {@code +Infinity}). Policy
      * {@code NO_DEAL_FAILURE} — never fails.
      *
-     * @param origin the {@code STDLIB_CALL} operation origin; non-null
-     * @param value  the declared number argument
-     * @return {@code Success} with the IEEE absolute value as Number
      */
     public static Outcome<Value> mathAbsNumber(SourceOrigin origin, double value) {
         Objects.requireNonNull(origin, "origin must not be null");
@@ -1757,10 +1459,6 @@ public final class SharedStdlibSemantics {
      * operands return that operand value. Policy
      * {@code NO_DEAL_FAILURE} — never fails.
      *
-     * @param origin the {@code STDLIB_CALL} operation origin; non-null
-     * @param a      the first declared int argument
-     * @param b      the second declared int argument
-     * @return {@code Success} with the selected signed32 operand
      */
     public static Outcome<Value> mathMinInt(SourceOrigin origin, int a, int b) {
         Objects.requireNonNull(origin, "origin must not be null");
@@ -1772,10 +1470,6 @@ public final class SharedStdlibSemantics {
      * operands return that operand value. Policy
      * {@code NO_DEAL_FAILURE} — never fails.
      *
-     * @param origin the {@code STDLIB_CALL} operation origin; non-null
-     * @param a      the first declared int argument
-     * @param b      the second declared int argument
-     * @return {@code Success} with the selected signed32 operand
      */
     public static Outcome<Value> mathMaxInt(SourceOrigin origin, int a, int b) {
         Objects.requireNonNull(origin, "origin must not be null");
@@ -1794,9 +1488,6 @@ public final class SharedStdlibSemantics {
      * every contemporary epoch-millisecond reading produces. Policy
      * {@code INT32_RESULT}; the reading itself never fails.
      *
-     * @param origin the {@code STDLIB_CALL} operation origin; non-null
-     * @param clock  the injected clock seam; non-null
-     * @return {@code Success} with the target-clock reading as a number
      */
     public static Outcome<Value> timeNowMillis(SourceOrigin origin, Clock clock) {
         Objects.requireNonNull(origin, "origin must not be null");

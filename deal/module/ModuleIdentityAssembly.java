@@ -20,137 +20,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * The identity-assembly half of the {@code ModuleIdentityResolver}
- * component (design source
- * {@code strict-project-context-resolution-identity} D6, epic sequencing
- * item 7): {@code CanonicalClassIdentity} assembly over T6's
- * resolved-source stream, the per-classification eligibility gates, the
- * pinned descriptor-text projections, the
- * {@link CanonicalClassIdentityIndex} (keyed by
- * {@code (moduleIdentity, className)} and by descriptor text), and the
- * intrinsic {@code Error} synthesis.
- *
- * <p>One instance per compilation consumes the {@link
- * SourceModuleLocation} stream published by {@link SourceModuleResolver}
- * and performs <b>no source resolution and no filesystem access</b>:
- * every input is pre-resolved, and the gates are pure functions of the
- * validated {@link ProjectContext}, the published location, the class
- * name, and the class-name span. Consumers that require public class
- * identity (descriptor emission, FFI metadata, default plans, export
- * metadata) obtain identities exclusively through this assembly — never
- * by reverse-parsing descriptor text, never by recomputing identity
- * text. The index holds the compilation's one-way projection:
- * identities are computed from their structural components and
- * registered with their text; consumers recover structure from text only
- * through {@link CanonicalClassIdentityIndex#identityForDescriptorText},
- * which returns the exact registered instance (byte-for-byte text keys,
- * never boundary inference).</p>
- *
- * <h2>Eligibility per classification (D6, pinned)</h2>
- * <ol>
- *   <li><b>(a) Project form.</b> A class in a source whose published
- *       classification is {@link CanonicalModuleIdentity.ProjectModule}
- *       (a rooted {@code .deal} source) gets
- *       {@code @<configuredRootText>/<relativeModuleComponents>/<ClassName>}.
- *       {@link #requireClassIdentity} fires E2010 at the class-name span
- *       when the identity is unrepresentable — the class name is not
- *       identifier-shaped, the configured root text fails the T5
- *       configured-root representability predicate (reserved
- *       {@code $external}/{@code $builtin} exact first component,
- *       forbidden characters, whitespace/control scalars, {@code .}/
- *       {@code ..}/empty components, contiguous {@code ->}), or a
- *       relative module path component fails the per-component predicate
- *       — or when the containment is ambiguous (the defensive equal-root
- *       tie). Class-free code in the same source is unaffected.</li>
- *   <li><b>(b) Externals form.</b> A class in any resolved source whose
- *       published classification is
- *       {@link CanonicalModuleIdentity.ExternalModule} — file-keyed, so
- *       the import spelling (externals lookup, bare root search, or
- *       relative import) never matters — gets
- *       {@code @$external/<rawImportSpecifier>/<ClassName>}.
- *       {@link #requireClassIdentity} fires E2010 at the class-name span
- *       when the class name or the raw import specifier is
- *       unrepresentable, with a note carrying the externals entry's
- *       manifest value range.</li>
- *   <li><b>(c) Builtin form.</b> A class in a resolved source whose
- *       published classification is
- *       {@link CanonicalModuleIdentity.BuiltinModule} (file-keyed: the
- *       six spec-listed stdlib declaration files under the pinned
- *       {@code stdlibSurfacePath}) gets the builtin form. The stdlib
- *       surface declares no classes today and the projection of a future
- *       stdlib class is delegated to the stdlib/descriptor epics, so
- *       {@link #requireClassIdentity} fires E2010 at the class-name span
- *       for any required builtin class identity other than {@code Error},
- *       with the pinned missing-projection note. A required builtin
- *       class identity named exactly {@code Error} yields the intrinsic
- *       identity (below).</li>
- *   <li><b>(d) Unconditional declaration failure.</b> A class in any
- *       source with no public module identity — an out-of-root relative
- *       source, a rooted non-externals {@code .d.deal} source, or a
- *       non-spec-listed {@code .d.deal} inside the std directory — can
- *       never be represented (the only available form would be the
- *       project form and no {@code ProjectModule} identity exists):
- *       {@link #gateClassDeclaration} fires E2010 at the class-name span
- *       unconditionally at the declaration, before any
- *       class/export/default/FFI metadata or artifact is published.
- *       There is no deferred-to-first-use behavior, and
- *       {@link #requireClassIdentity} fails identically as a defensive
- *       re-gate.</li>
- *   <li><b>Intrinsic {@code Error}.</b>
- *       {@link #intrinsicErrorIdentity()} synthesizes
- *       {@code CanonicalClassIdentity(BuiltinModule, "Error")} with
- *       <b>no resolved source</b>; {@code Error} is the only intrinsic
- *       class identity, its pinned descriptor-text projection is
- *       {@link #INTRINSIC_ERROR_DESCRIPTOR_TEXT}, and the descriptor
- *       encoding of that projection remains the descriptor epic's
- *       boundary. E4006's user-declaration prohibition is unchanged and
- *       outside this assembly.</li>
- * </ol>
- *
- * <h2>Descriptor-text projections (pinned)</h2>
- * <ul>
- *   <li>Rooted class:
- *       {@code @<configuredRootText>/<relativeModuleComponents>/<ClassName>}
- *       — the path components from the root to the defining file's
- *       directory; the source suffix and file stem are omitted, and an
- *       empty relative module path yields
- *       {@code @<configuredRootText>/<ClassName>}.</li>
- *   <li>Externals declaration:
- *       {@code @$external/<rawImportSpecifier>/<ClassName>} (a specifier
- *       without {@code /} is one component).</li>
- *   <li>Builtin {@code Error}: {@code @$builtin/Error}.</li>
- * </ul>
- * This assembly publishes the projection strings and the index only;
- * descriptor encoding and emission into runtime artifacts is not
- * performed here.
- *
- * <h2>Diagnostics</h2>
- *
- * <p>Every eligibility E2010 carries a complete {@link DiagnosticRange}
- * at the class-name span through the complete-scalar-range carrier (a
- * SOURCE range when the span carries computed scalar offsets, the
- * canonical synthetic shape plus the anchor note otherwise), with the
- * pinned notes: the externals-entry note for (b) — a note carrying the
- * externals entry's manifest value range — and the missing-projection
- * note for (c). Identity failure publishes no affected metadata or
- * artifact: the gating call site returns a failure before any
- * metadata/artifact publication. The AST carries no separate name-only
- * span, so the class declaration's span is the pinned class-name anchor
- * (the convention of E4006's class diagnostics).</p>
- *
- * <p><b>Privacy invariant:</b> private identity URIs (the canonical
- * {@code file:} source URIs of {@link SemanticModuleIdentity}) never
- * appear in projections or diagnostic messages; projections contain only
- * decoded manifest text, filesystem path components, and class names.
- * Paths may appear in diagnostic text and are not secrets.</p>
- *
- * <p><b>Determinism:</b> identical {@code (ProjectContext,
- * resolved-source stream)} inputs produce identical identities, identical
- * descriptor texts, and identical index contents (registration order
- * included). The index maps are insertion-ordered and every registration
- * is a pure function of the pinned inputs.</p>
- */
 public final class ModuleIdentityAssembly {
 
     /** The pinned class name of the intrinsic builtin {@code Error} class. */
@@ -186,7 +55,6 @@ public final class ModuleIdentityAssembly {
     /**
      * Creates the identity assembly over one validated project context.
      *
-     * @param context the immutable validated project context (never null)
      */
     public ModuleIdentityAssembly(ProjectContext context) {
         this.context = Objects.requireNonNull(context, "context");
@@ -262,7 +130,6 @@ public final class ModuleIdentityAssembly {
      * {@link #INTRINSIC_ERROR_DESCRIPTOR_TEXT}; repeated calls return an
      * equal identity and never re-register.
      *
-     * @return the intrinsic {@code Error} identity (never null)
      */
     public CanonicalClassIdentity intrinsicErrorIdentity() {
         if (intrinsicError == null) {
@@ -296,11 +163,6 @@ public final class ModuleIdentityAssembly {
      *
      * <p>The gate registers nothing and demands no identity.</p>
      *
-     * @param location     the resolved source location from T6's stream
-     * @param className    the declared class name (never null)
-     * @param classNameSpan the class declaration's span, the diagnostic
-     *                     anchor (never null)
-     * @return {@link DeclarationResult.Ok} or the unconditional E2010
      */
     public DeclarationResult gateClassDeclaration(SourceModuleLocation location,
                                                   String className,
@@ -369,12 +231,6 @@ public final class ModuleIdentityAssembly {
      * {@code (moduleIdentity, className)} — the index's reverse lookup
      * for the returned text yields exactly that instance.</p>
      *
-     * @param location      the resolved source location from T6's stream
-     * @param className     the declared class name (never null)
-     * @param classNameSpan the class declaration's span, the diagnostic
-     *                      anchor (never null)
-     * @return the registered identity plus its descriptor text, or one
-     *         E2010; never null
      */
     public ClassIdentityResult requireClassIdentity(SourceModuleLocation location,
                                                     String className,
@@ -438,7 +294,6 @@ public final class ModuleIdentityAssembly {
      * for identical {@code (ProjectContext, resolved-source stream)}
      * inputs.</p>
      *
-     * @return the compilation's index (never null)
      */
     public CanonicalClassIdentityIndex index() {
         return index;

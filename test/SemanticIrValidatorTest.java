@@ -75,53 +75,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * Verifies the ISSUE-0286 closed 14-condition {@link SemanticIrValidator}
- * on both surfaces — the typed record surface
- * ({@link SemanticIrValidator#validate(LoweredModuleUnit,
- * SemanticIrValidator.ComparisonFacts)} /
- * {@link SemanticIrValidator#validate(ExecutableLoweredProject,
- * SemanticIrValidator.ComparisonFacts)}) and the canonical-JSON text
- * surface ({@link SemanticIrValidator#validateText(String,
- * SemanticIrValidator.ComparisonFacts)}, the pinned invalid-IR injection
- * route).
- *
- * <p>Corpus:</p>
- * <ol>
- *   <li>The pinned 14-rule enumeration order and the E6005 surface (code,
- *       phase, registry-instantiated message carrying the detail).</li>
- *   <li>The positive corpus: one passing synthetic unit per
- *       {@link SemanticOpKind} (55), every closed enum value in a passing
- *       unit (3 unary selectors, 42 binary selectors, 4 call modes,
- *       3 async sources, 2 parameter boundary modes, 4 index modes,
- *       2 iteration modes, 6 control selectors, 3 capture modes,
- *       2 realization forms, 25 boundary kinds, 24 policy names,
- *       21 stdlib ids), and each of the 23 construct rows carrying a
- *       required common form recorded in a passing unit's
- *       {@code constructCoverage} with at least one produced op of a
- *       mapped kind.</li>
- *   <li>Typed/text equivalence: the same validation result through both
- *       surfaces for the corpus units and for typed negatives.</li>
- *   <li>The negative corpus: each of the 14 rules asserted exactly once
- *       per defect class through T5's E6005 payload — the raw-name
- *       negatives (R-ENUM open policy, R-ENUM reserved boundary name,
- *       R-PRIVATE-STEP op kind, the out-of-set R-ENUM selector fixture,
- *       R-PROFILE's profile-string fixture and the cross-unit
- *       project-level profile fixture) via {@code validateText} over the
- *       text produced by the validator's serializer with exactly one leaf
- *       value substituted and the contract digest recomputed through T3,
- *       the remainder via typed construction.</li>
- *   <li>Deterministic first-failure order (the S6 rule enumeration order
- *       across independent defects) and repeated-run determinism.</li>
- *   <li>Lock pins (ISSUE-0368, retargeted by K7): {@code TIME_NOW_MILLIS}
- *       is the 21st closed {@link StdlibFunctionId} member
- *       ({@code RESERVED_NAMES} empty; an out-of-set selector name is
- *       R-ENUM), and a unit claiming {@code STDLIB_TIME_CONFLICT}
- *       — the empty-evidence routing marker — fails R-CAPABILITY
- *       on both the typed and the text surface, so no common-lowering
- *       path admits it.</li>
- * </ol>
- */
 public class SemanticIrValidatorTest {
 
     private static int passed = 0;
@@ -636,7 +589,6 @@ public class SemanticIrValidatorTest {
             op(SemanticOpKind.THROW, new KindPayload.ThrowPayload(nextValue()),
                 null, null, FailurePolicyId.THROW_TRANSFER, null))));
 
-        // RETURN
         units.put("RETURN", unit(List.of(
             op(SemanticOpKind.RETURN,
                 new KindPayload.ReturnPayload(null, new FunctionId(1), nextOpId(), nextOpId()),
@@ -2031,11 +1983,6 @@ public class SemanticIrValidatorTest {
                 "both surfaces report the identical E6005 for the same defect");
         }
     }
-
-    // =========================================================================
-    // 6. Lock pins (ISSUE-0368, retargeted by K7): TIME_NOW_MILLIS is the
-    //    21st closed member; the STDLIB_TIME_CONFLICT routing marker stays inert
-    // =========================================================================
 
     private static boolean enumMember(Class<? extends Enum<?>> closed, String name) {
         for (Enum<?> value : closed.getEnumConstants()) {

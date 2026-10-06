@@ -19,10 +19,6 @@ import deal.source.SourceScalarRange;
  * <p>Backslash is an ordinary Linux filename character and never
  * influences the classification.
  *
- * @param kind        the pinned classification
- * @param loaderText  the strictly decoded loader text exactly as written
- *                    in the manifest
- * @param sourceRange the value's half-open decoded-scalar range
  */
 public record NativeLibraryRef(Kind kind, String loaderText, SourceScalarRange sourceRange) {
 

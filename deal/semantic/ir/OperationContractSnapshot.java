@@ -35,18 +35,6 @@ import java.util.Objects;
  * <p>{@code version} is a first-class field (version strings are
  * first-class schema fields); it must equal {@link #VERSION}.</p>
  *
- * @param version               the snapshot format version; exactly {@link #VERSION}
- * @param opKind                the closed operation kind; non-null
- * @param resultType            the op result type (descriptor, internal
- *                              sentinel, or {@code null} for none)
- * @param operandTypes          the operand descriptors in left-to-right order; non-null
- * @param selector              the exact closed selector, or {@code null}
- * @param payload               the closed kind payload; non-null
- * @param failurePolicy         the closed failure policy; non-null
- * @param referencedSemanticIds the behavior-referenced semantic IDs
- *                              (class/function/binding/block/module IDs); non-null
- * @param canonicalDigest       the SHA-256 canonical-JSON digest of the
- *                              fields above (computed by T3's canonicalizer)
  */
 public record OperationContractSnapshot(
     int version,
@@ -92,10 +80,6 @@ public record OperationContractSnapshot(
      * construction, so an op can never carry a snapshot that disagrees
      * with its own fields.
      *
-     * @param op                    the op whose fields the snapshot mirrors; non-null
-     * @param referencedSemanticIds the behavior-referenced semantic IDs; non-null
-     * @param canonicalDigest       the digest computed by the canonicalizer; non-null
-     * @return the wired snapshot
      */
     public static OperationContractSnapshot of(SemanticOp op, List<SemanticId> referencedSemanticIds,
                                                String canonicalDigest) {

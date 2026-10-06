@@ -80,28 +80,6 @@ import java.util.Objects;
  * files, CLI values) produce an equal context; no timestamp, ordinal, or
  * process state enters any component.</p>
  *
- * @param manifestPath               the symlink-resolved manifest path
- *                                   text
- * @param projectRoot                the project root (pinned equal to the
- *                                   manifest directory)
- * @param manifestDirectory          the manifest's directory path text
- * @param languageVersion            always {@code "1.2"}
- * @param configuredModuleRoots      the completed configured roots in
- *                                   member order (no implicit root)
- * @param outputPath                 the effective classified output
- * @param backend                    the effective backend
- * @param externals                  raw import specifier → validated
- *                                   {@link ExternalEntry}, in member order
- * @param stdlibVersion              the validated stdlib version
- *                                   ({@code "1.2"})
- * @param stdlibSurfacePath          the pinned stdlib surface directory
- *                                   path text, or {@code null} when absent
- * @param stdlibDeclarationFiles     the canonical resolved paths of the
- *                                   six spec-listed stdlib declaration
- *                                   files under the pinned surface, in
- *                                   pinned module order; empty when the
- *                                   surface is absent (never null)
- * @param projectDeploymentIdentity  the private deployment identity
  */
 public record ProjectContext(
     String manifestPath,

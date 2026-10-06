@@ -37,47 +37,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * ISSUE-0640: {@code LuaSemanticEmitter.emitProductionProject} — the
- * production project entry
- * ({@code production-project-emission-and-atomic-cutover} P1/P3 and the
- * production LuaJIT emission contract;
- * {@code luajit-jvm-single-lowering-production-cutover} C2 and the
- * production LuaJIT emission contract).
- *
- * <ol>
- *   <li>the entry consumes only the validated {@link ExecutableLoweredProject},
- *       the per-module block-membership tables, the per-module class-factory
- *       registries, and the compile's host declaration surface (the
- *       declared-map source of the {@code MODULE_IMPORT(HOST)} load) — no
- *       AST, no checker result, no route input, no extern-C
- *       generated-module map, and no identity index;</li>
- *   <li>the artifact is exactly one Lua chunk carrying the whole closure
- *       (the prelude once, every module's function factories, adapter
- *       thunks, and detached class-default functions, then each module's
- *       init walk in dependency order) with the trace protocol suppressed
- *       (no event output, no {@code R|} terminal) and the production
- *       terminal applying;</li>
- *   <li>the entry module's {@code ENTRY_INVOKE} delegation runs exactly
- *       once per chunk execution while every non-entry module's
- *       {@code ENTRY_INVOKE} and its delegated {@code CALL} stay skipped,
- *       observable through a
- *       {@code std/console.log} effect;</li>
- *   <li>the artifact carries the module export-surface registry (one
- *       surface per module keyed by module identity, written by
- *       {@code EXPORT_PUBLISH}) and the production chunk returns the entry
- *       module's surface; the executed chunk's surfaces hold each module's
- *       exports (the T1 dependency);</li>
- *   <li>the chunk is deployed with the runtime ({@code deal/runtime.lua},
- *       {@code std/*.lua}) and executes under {@code luajit}: a
- *       covered-construct fixture exits 0 with empty output, a
- *       conversion-overflow fixture exits 1 with
- *       {@code DEAL_ERROR_CODE: E8004} on stdout;</li>
- *   <li>repeated emission over identical inputs is byte-identical, and
- *       {@code emitProject}/{@code emitProductionModule} keep their
- *       signatures and behavior.</li>
- * </ol>
- */
 public class LuaProductionProjectEmissionTest {
 
     private static int passed = 0;
@@ -200,7 +159,6 @@ public class LuaProductionProjectEmissionTest {
         Map<ModuleId, CanonicalModuleIdentity> declarationIdentities) {
     }
 
-    /** The release-owned production invocation (the epic's production record). */
     private static CompilerInvocation invocation() {
         return CompilerProfileProvider.resolve(ReleaseConfiguration.CURRENT_RELEASE_STATE,
             ReleaseConfiguration.releaseCapabilityRegistry());
@@ -344,11 +302,6 @@ public class LuaProductionProjectEmissionTest {
                 + unexpected.getClass().getSimpleName() + ", not NullPointerException");
         }
 
-        // The FFI-capable entry (the extern-C admission slice): the four
-        // landed inputs plus exactly the compile's FFI emission input
-        // (the generated-module map and the manifest-directory text) —
-        // still no AST, checker, route, identity-index, or raw
-        // generated-module input.
         Method ffiEntry = LuaSemanticEmitter.class.getDeclaredMethod(
             "emitProductionProject", ExecutableLoweredProject.class, Map.class,
             Map.class, HostDeclarationSurface.class, FfiEmissionInput.class);
@@ -805,13 +758,6 @@ public class LuaProductionProjectEmissionTest {
     // Driver sources
     // =========================================================================
 
-    /**
-     * The Lua surface probe: the chunk's returned value is the entry
-     * module's surface, the registry carries exactly one surface per
-     * closure module keyed by the dotted module path, each surface holds
-     * its declared exports with the landed entry shape in declaration
-     * order, and the published callable runs.
-     */
     private static String luaSurfaceProbe(Path artifact, List<String> modules,
             List<List<ExportEntry>> entries) {
         StringBuilder lua = new StringBuilder();

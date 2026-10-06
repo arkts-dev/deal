@@ -77,87 +77,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.Supplier;
 
-/**
- * The semantic oracle of {@code deal.semantic-ir/1} — an independent
- * interpreter over a validated {@link LoweredModuleUnit} plus its
- * {@link StructuredBodyTable} (semantic-lowering-differential-conformance
- * D5; the oracle carrier of the decomposition-tail integration
- * verification, ISSUE-0410). It invokes no target backend, no generated
- * artifact, no Java execution of emitted code, and no LuaJIT: execution is
- * realized directly from the validated IR.
- *
- * <p><b>Execution shape (the decomposition-tail carrier contract).</b>
- * The oracle executes the entry module's module-init block in list order
- * (the unit's {@code ModuleInitPlan} block, whose ops include the
- * produced entry delegation — the lowerer's module-init-level
- * {@code CALL(DIRECT main)} followed by its {@code DISCARD}); the run's
- * result atom is the value the trailing {@code DISCARD} discarded (the
- * entry call's committed value). Every executed op emits exactly one
- * START and one terminal (SUCCESS/FAILURE) {@link
- * SemanticRuntimeModel.TraceEvent} carrying the op's contract digest and
- * the structural {@code parentOpId} of its validated origin; children
- * (boundary ops of calls, chains, and reads) execute with their own
- * events. Completed operands' atoms are the START inputs; the produced
- * value atom is the SUCCESS output; a DEAL failure publishes the exact
- * error snapshot (code, canonical message, origin, attained
- * expected/actual, active frames innermost-first, nested cause).
- * {@code STDLIB_CALL} executes through {@link SharedStdlibSemantics} —
- * the single stdlib algorithm executor — with the pinned precedence:
- * {@code STDLIB_PARAMETER} boundaries in one-based order, then the
- * algorithm (a failure resolves the primitive's registry-row projection
- * with the row's pinned origin and the active frames), then the single
- * {@code STDLIB_RETURN} boundary run by the call op. The
- * {@code TIME_NOW_MILLIS} operation reads the oracle's injected
- * deterministic clock reading (K7 item 4), never the host clock.
- * Console stdlib calls record one ordered
- * {@link SemanticRuntimeModel.EffectEvent}
- * per terminal. A DEAL failure escaping the module-init block is the
- * run's {@link SemanticRuntimeModel.Terminal.DealFailure}; otherwise the
- * run succeeds with the entry result atom.</p>
- *
- * <p><b>Runtime conventions pinned here (consumed identically by the
- * shared emitters).</b></p>
- * <ul>
- *   <li>Bindings: one runtime cell per {@code (BindingId, generation)}
- *       incarnation; {@code BINDING_ALLOC} creates the cell,
- *       {@code BINDING_INIT}/{@code BINDING_STORE} commit into it,
- *       {@code BINDING_LOAD} reads it (generation-checked). Closures
- *       capture the cells current at {@code CLOSURE_NEW} execution
- *       ({@code captures} are generation-pinned binding references; loads
- *       inside the body carry their incarnation generations). Every
- *       {@code BINDING_ALLOC} execution publishes a fresh cell for its
- *       incarnation and a {@code FOR_EACH} iteration allocates the
- *       iteration binding's cell per iteration, so closures created in
- *       the body observe per-iteration values.</li>
- *   <li>Parameters: a callee body block's leading {@code BINDING_ALLOC}
- *       ops in list order are its parameter cells (the lowerer's
- *       body-entry parameter ALLOCs); a {@code CALL} binds the
- *       boundary-checked argument values to those cells before the
- *       remaining body ops execute.</li>
- *   <li>The single return boundary: {@code RETURN} executes the
- *       {@code FUNCTION_RETURN} boundary named by its payload (its
- *       origin's parent), publishes the checked value as the enclosing
- *       call's return value, and transfers. The CALL terminal records the
- *       value without re-checking.</li>
- *   <li>Transfers: {@code RETURN}/{@code BREAK}/{@code CONTINUE} succeed
- *       and then signal; the signal unwinds to the matching structure
- *       ({@code CALL} invocation, {@code LOOP}/{@code FOR_EACH} with the
- *       recorded target op) through enclosing {@code TRY_CATCH}es without
- *       being caught.</li>
- *   <li>Error values: {@code THROW} consumes an {@code Error} value
- *       ({@code code,message}); {@code TRY_CATCH} reifies a caught DEAL
- *       failure as an {@code Error} value bound to the catch binding; a
- *       catch failure carries its own origin with {@code cause} = the
- *       original snapshot. Only DEAL failures (E8) are catchable.</li>
- * </ul>
- *
- * <p><b>Purity of consumers.</b> The oracle, the shared LuaJIT emitter
- * artifact, and the shared JVM emitter artifact execute the identical
- * validated unit; the differential harness validates every event against
- * the exact IR op and compares the three reports event-for-event —
- * duplicated evaluations, wrong selectors, missing boundaries, and moved
- * children fail even when printed output coincides.</p>
- */
 public final class SemanticOracle {
 
     private SemanticOracle() {
@@ -172,9 +91,6 @@ public final class SemanticOracle {
      * CALL + DISCARD), recording the exact semantic trace, the ordered
      * effects, and the terminal.
      *
-     * @param unit  the validated lowered module unit; non-null
-     * @param table the unit's produced block-membership table; non-null
-     * @return the complete consumer run report
      */
     public static SemanticRuntimeModel.ConsumerRun execute(LoweredModuleUnit unit,
                                                            StructuredBodyTable table) {
@@ -194,17 +110,6 @@ public final class SemanticOracle {
         return execute(unit, table, responder, Map.of());
     }
 
-    /**
-     * The declaration-class seam of {@link #execute(LoweredModuleUnit,
-     * StructuredBodyTable, HostResponder)} (ISSUE-0624;
-     * {@code semantic-ir-construct-coverage-cutover} K10): the project's
-     * registered declaration-class layouts by {@link ClassId}, so a host
-     * declaration class's construction and its field operations resolve
-     * through exactly the registered declaration layout.
-     *
-     * @param declarationLayouts the declaration classes' registered
-     *                           layouts by {@link ClassId}; non-null
-     */
     public static SemanticRuntimeModel.ConsumerRun execute(LoweredModuleUnit unit,
                                                            StructuredBodyTable table,
                                                            HostResponder responder,
@@ -245,48 +150,12 @@ public final class SemanticOracle {
         return execute(project, tables, Map.of(), responder);
     }
 
-    /**
-     * Executes the entry module of a validated executable project with
-     * the complete implementation closure plus the class-construction
-     * production records (K-D2: one {@link ClassFactoryRegistry} per
-     * module — the owner-side {@code CLASS_FACTORY} bindings a caller's
-     * {@code CLASS_NEW(SHARED_FACTORY)} resolves through):
-     * {@code CALL(EXTERNAL)}/{@code ASYNC_START(EXTERNAL)} execute the
-     * callee unit's {@code EXTERNAL_ENTRY} (sync: the callee
-     * {@code RETURN} runs the single {@code EXTERNAL_RETURN} boundary
-     * and the value crosses the ABI unchanged; async: the callee entry
-     * creates the canonical token and the body task, the caller's alias
-     * token links through the {@code ExternalAsyncLink}, and the
-     * caller's single {@code ASYNC_COMPLETION} boundary validates the
-     * crossed value at {@code AWAIT}), and a
-     * {@code CLASS_NEW(SHARED_FACTORY)} transfers default application
-     * to the owner unit's registered {@code CLASS_FACTORY} op — the
-     * factory's events parent to the triggering caller op
-     * (cross-unit), its detached {@code CLASS_DEFAULT} children
-     * evaluate in the declaring module's scope, and the caller's
-     * {@code CLASS_DEFAULT_FIELD} boundaries read the named field of
-     * the transferred instance. The entry module's run report is
-     * returned.
-     */
     public static SemanticRuntimeModel.ConsumerRun execute(ExecutableLoweredProject project,
             Map<ModuleId, StructuredBodyTable> tables,
             Map<ModuleId, ClassFactoryRegistry> registries, HostResponder responder) {
         return execute(project, tables, registries, responder, Map.of());
     }
 
-    /**
-     * The declaration-class seam of {@link #execute(ExecutableLoweredProject,
-     * Map, Map, HostResponder)} (ISSUE-0624;
-     * {@code semantic-ir-construct-coverage-cutover} K10): the project's
-     * registered declaration-class layouts by {@link ClassId} — the
-     * layout context a host declaration class's construction, its field
-     * operations, and the host construction's boundary children resolve
-     * through. The overload without the context keeps the fail-closed
-     * behavior for a declaration-class owner.
-     *
-     * @param declarationLayouts the declaration classes' registered
-     *                           layouts by {@link ClassId}; non-null
-     */
     public static SemanticRuntimeModel.ConsumerRun execute(ExecutableLoweredProject project,
             Map<ModuleId, StructuredBodyTable> tables,
             Map<ModuleId, ClassFactoryRegistry> registries, HostResponder responder,
@@ -309,19 +178,6 @@ public final class SemanticOracle {
         return executeClosure(project, tables, registries, responder, true, Map.of());
     }
 
-    /**
-     * The declaration-class seam of {@link
-     * #executeProjectInits(ExecutableLoweredProject, Map, Map, HostResponder)}
-     * (the declaration-layout input of {@link
-     * #execute(ExecutableLoweredProject, Map, Map, HostResponder, Map)};
-     * ISSUE-0624, extended by ISSUE-0667): the project's registered
-     * declaration-class layouts by {@link ClassId} — the layout context an
-     * extern-C C-struct construction (and a host declaration class's
-     * construction) resolves through in the all-init walk.
-     *
-     * @param declarationLayouts the declaration classes' registered
-     *                           layouts by {@link ClassId}; non-null
-     */
     public static SemanticRuntimeModel.ConsumerRun executeProjectInits(
             ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
             Map<ModuleId, ClassFactoryRegistry> registries, HostResponder responder,
@@ -501,11 +357,6 @@ public final class SemanticOracle {
         /**
          * One sync host call terminal.
          *
-         * @param module     the owning host module; non-null
-         * @param export     the host export name; non-null
-         * @param descriptor the declared function descriptor; non-null
-         * @param args       the boundary-checked argument values; non-null
-         * @return the terminal
          */
         default SyncOutcome call(ModuleId module, String export,
                                  RuntimeDescriptor.Func descriptor, List<Value> args) {
@@ -518,13 +369,6 @@ public final class SemanticOracle {
          * handle binds to, or {@code null} for a bad handle (the
          * {@code ASYNC_OPERATION_HANDLE} terminal check fails).
          *
-         * @param module         the owning host module; non-null
-         * @param export         the host export name; non-null
-         * @param descriptor     the declared async function descriptor; non-null
-         * @param args           the boundary-checked argument values; non-null
-         * @param operationLabel the deterministic operation label the
-         *                       canonical token binds one-to-one to; non-null
-         * @return the bound label, or {@code null} for a bad handle
          */
         default String startAsync(ModuleId module, String export,
                                   RuntimeDescriptor.Func descriptor, List<Value> args,
@@ -536,145 +380,29 @@ public final class SemanticOracle {
          * One async host completion: the completion value or the thrown
          * host error of the operation label.
          *
-         * @param operationLabel the operation label; non-null
-         * @return the completion terminal
          */
         default SyncOutcome completeAsync(String operationLabel) {
             return new SyncOutcome.Returned(Value.NullValue.INSTANCE);
         }
 
-        /**
-         * One loaded host surface entry (the E7 host seam's LOAD
-         * terminal, ISSUE-0651): the value the host module's declared
-         * export resolves to after the load — the entry an
-         * {@code EXPORT_READ} of a HOST module publishes. The oracle runs
-         * no host code, so the seamed load supplies the entry the same
-         * way it supplies the call terminals; a {@code null} return is
-         * the absent-slot projection ({@link Value.MissingValue}), the
-         * landed state where the seamed load has not run. The returned
-         * value is memoized per {@code (module, export)}, so every read
-         * of one export publishes the identical value (the loaded module
-         * table holds one entry per export).
-         *
-         * @param module     the owning host module; non-null
-         * @param export     the declared host export name; non-null
-         * @param descriptor the export's checked descriptor; non-null
-         * @return the loaded surface entry, or {@code null} when the seam
-         *         supplies none
-         */
         default Value loadedExport(ModuleId module, String export,
                                    RuntimeDescriptor descriptor) {
             return null;
         }
 
-        /**
-         * One loaded host module's whole surface (K15 item 1 and the
-         * module-namespace contract): the entries of the module table the
-         * artifact publishes as the import's namespace value, in
-         * declaration order — {@code __rt.load_host}'s returned table on
-         * LuaJIT and the loaded extern-C table for an FFI module. The
-         * oracle runs no host code, so the seamed load supplies the
-         * module table the same way it supplies one entry
-         * ({@link #loadedExport}); the completion stores these entries
-         * into the module's one namespace value, so a member read that no
-         * direct read has resolved yet (and {@code std.table.keys} of the
-         * namespace value) observes the loaded table. A {@code null}
-         * return means the seam supplies no whole table (the landed
-         * per-entry seam): the namespace value's entries then resolve one
-         * by one at the member reads.
-         *
-         * @param module the owning host module; non-null
-         * @return the loaded surface's entries in declaration order, or
-         *         {@code null} when the seam supplies no whole table
-         */
         default Map<String, Value> loadedSurface(ModuleId module) {
             return null;
         }
 
-        /**
-         * One loaded host class's defaults projection (ISSUE-0624;
-         * {@code semantic-ir-construct-coverage-cutover} K10 and the K10
-         * contract): the oracle-side analog of the loaded module's
-         * mandatory {@code <C>_defaults} entry — one entry per field name
-         * the host's defaults table carries, with an absent optional field
-         * as the miss sentinel ({@link Value.MissingValue}) and an omitted
-         * required-present field's default as its value. The oracle runs
-         * no host code, so the seamed load supplies the construction data
-         * the same way it supplies the loaded export entries; a
-         * {@code null} return is the absent-projection case (the seamed
-         * load has not run), and a construction over it is a fail-closed
-         * producer defect, never an invented default. The returned map is
-         * the host's data: the construction consumes it per attempt and
-         * never mutates it.
-         *
-         * @param classId    the declared host class's canonical identity
-         *                   (the module-scoped pair the projection is
-         *                   keyed by); non-null
-         * @return the field-name &#8594; value projection, or {@code null}
-         *         when the seam supplies none
-         */
         default Map<String, Value> loadedClassDefaults(ClassId classId) {
             return null;
         }
 
-        /**
-         * One loaded extern-C C-struct class's plan projection
-         * ({@code luajit-ffi-struct-plan-construction-and-oracle-projection}
-         * F4 and the oracle plan-projection contract; ISSUE-0667): the
-         * oracle-side analog of the loaded FFI module table's
-         * {@code <exportName>_plan} entry — the ordered plan entries of one
-         * extern-C {@code @c-struct} class, each carrying the field name,
-         * the field's canonical descriptor, the optional flag, and a
-         * deferred-default supplier. The oracle runs no generated evaluator
-         * content and no native code, so the seamed load supplies the plan
-         * entries the same way it supplies the loaded export entries and the
-         * loaded class defaults: the construction invokes each omitted
-         * required-present field's supplier exactly once per attempt in
-         * class source order. The projection's order, names, and descriptors
-         * must equal the class's registration-seed layout (the
-         * compiler-validated mirror of the plan); a mismatch is a fail-closed
-         * producer defect raised before any phase runs. The returned entries
-         * are the loaded plan's data: the construction consumes them per
-         * attempt and never mutates them. A {@code null} return is the
-         * absent-projection case (the seamed load has not run): a
-         * construction over it is a fail-closed producer defect, never an
-         * invented empty plan.
-         *
-         * @param module        the resolved declaring extern-C module (the
-         *                      loaded surface's module key); non-null
-         * @param className     the class's declared name within the module
-         *                      (the {@code <exportName>_plan} entry's
-         *                      {@code exportName}); non-null
-         * @param declaredClass the class's declared class descriptor; non-null
-         * @return the ordered plan entries, or {@code null} when the seam
-         *         supplies none
-         */
         default List<PlanEntry> planProjection(ModuleId module, String className,
                                                RuntimeDescriptor.Class declaredClass) {
             return null;
         }
 
-        /**
-         * One ordered entry of a loaded {@code <C>_plan} projection
-         * (struct-plan F4; ISSUE-0667): the plan's field name, canonical
-         * descriptor, optional flag, and deferred default — the plan's
-         * generated evaluator, supplied by the seam as a fresh per-attempt
-         * value. An entry without a deferred default carries a null
-         * supplier; an extern-C struct declares every field required with a
-         * default, so a null supplier on a required entry is a fail-closed
-         * producer defect at the construction, never an absent field.
-         *
-         * @param name             the field name in class source order;
-         *                         non-null
-         * @param descriptor       the field's canonical descriptor; non-null
-         * @param optional         the plan's optional flag (always false for
-         *                         an extern-C struct field)
-         * @param defaultEvaluator the deferred default supplier, or
-         *                         {@code null} when the entry carries no
-         *                         evaluator; the supplier produces a fresh
-         *                         value per invocation (the evaluator-once
-         *                         rule is the construction's, never a memo)
-         */
         record PlanEntry(String name, RuntimeDescriptor descriptor, boolean optional,
                          Supplier<Value> defaultEvaluator) {
 
@@ -685,22 +413,6 @@ public final class SemanticOracle {
         }
     }
 
-    /**
-     * The deferred-default proxy's failure projection (the plan-projection
-     * contract; ISSUE-0667): a plan-projection entry's default supplier
-     * raises the evaluator's own DEAL failure through this entry — code,
-     * message, and origin cross unchanged, the run reports that exact
-     * failure (exactly like a thrown host terminal), and no instance is
-     * published. The oracle runs no generated evaluator content and no
-     * native code, so a proxy whose proxied evaluator failed signals the
-     * failure here.
-     *
-     * @param code    the evaluator's own failure code; non-null
-     * @param message the evaluator's own failure message; non-null
-     * @param origin  the failure's origin (a host-thrown evaluator failure
-     *                carries the call-expression origin); non-null
-     * @return the DEAL failure the proxy throws
-     */
     public static DealFailure evaluatorFailure(String code, String message,
                                                SourceOrigin origin) {
         Objects.requireNonNull(code, "code must not be null");
@@ -773,7 +485,6 @@ public final class SemanticOracle {
             /**
              * Allocates one zero-filled bytes buffer.
              *
-             * @param length the logical length; non-negative
              */
             public BytesValue(int length) {
                 if (length < 0) {
@@ -838,24 +549,6 @@ public final class SemanticOracle {
         record AdapterValue(RuntimeDescriptor.Func signature) implements Value {
         }
 
-        /**
-         * The loaded host surface entry of a declared function export —
-         * the value a HOST {@code EXPORT_READ} publishes
-         * ({@code host-module-load-and-host-call-realization} H5 and the
-         * host value-read invocation contract; ISSUE-0653). The seamed
-         * load ({@code HostResponder.loadedExport}) supplies it the same
-         * way it supplies the call terminals: the oracle runs no host
-         * code, so the entry is a boundary-shaped host callable carrying
-         * only the declared function descriptor — the oracle's twin of
-         * the target-side loaded entry (the JVM host load's published
-         * {@code JvmRuntime.FunctionValue} carrier and the LuaJIT loaded
-         * wrapper's declared canonical signature). The value is memoized
-         * per {@code (module, export)} by the read arm, so every read of
-         * one export publishes the identical value; its boundary view is
-         * its declared signature, so a function-typed read row crosses it
-         * exactly like the target-side entry, and its atom is its own
-         * allocation (a heap value with reference identity).
-         */
         record HostEntryValue(RuntimeDescriptor.Func descriptor) implements Value {
 
             public HostEntryValue {
@@ -863,19 +556,6 @@ public final class SemanticOracle {
             }
         }
 
-        /**
-         * The caught/reified DEAL {@code Error} value — the builtin
-         * {@code Error} class's runtime carrier {@code {code, message}}
-         * (ISSUE-0619; {@code semantic-ir-construct-coverage-cutover}
-         * K13). The value is mutable with reference identity: a class-field
-         * write commits in place, so every alias of the instance observes
-         * the written field exactly like the target carriers. Both fields
-         * are always present (the declared layout is two required-present
-         * strings; an omitted field carries the compiler constant empty
-         * string), and the value converts to and from the closed executor
-         * class view {@code Class(@/Error, [Present(code),
-         * Present(message)])} — never to a generic class value.
-         */
         final class ErrorValue implements Value {
 
             private String code;
@@ -914,13 +594,6 @@ public final class SemanticOracle {
         record SlotValue(NormalizedSlot slot) implements Value {
         }
 
-        /**
-         * One class-field state of a {@link ClassValue} (the CLASSES
-         * family's three-presence-state discipline, K-D6):
-         * {@code Present(Value) | Missing} — present null (the explicit
-         * {@link NullValue} variant) stays {@code Present} and is
-         * distinguishable from {@code Missing}.
-         */
         sealed interface ClassFieldState
             permits ClassFieldState.Present, ClassFieldState.Missing {
 
@@ -1045,11 +718,7 @@ public final class SemanticOracle {
         final StructuredBodyTable table;
         /** The deterministic host responder (the E7 host seam); null outside host drives. */
         final HostResponder responder;
-        /**
-         * The class-construction production records by module (K-D2):
-         * the owner-side {@code ClassFactoryRegistry} bindings a
-         * caller's {@code CLASS_NEW(SHARED_FACTORY)} resolves through.
-         */
+
         final Map<ModuleId, ClassFactoryRegistry> registries;
         /** The complete implementation closure (entry module included). */
         final Map<ModuleId, UnitState> units = new LinkedHashMap<>();
@@ -1063,12 +732,7 @@ public final class SemanticOracle {
         final ArrayDeque<Long> readyQueue = new ArrayDeque<>();
         /** The canonical-token → host operation-label bindings. */
         final Map<Long, String> hostOperations = new LinkedHashMap<>();
-        /**
-         * The execution-bound external async token linkage of a
-         * dynamically resolved ASYNC_START (ISSUE-0531): caller token
-         * → callee EXTERNAL_ENTRY canonical token, bound when the
-         * runtime resolves the callee to an async external.
-         */
+
         final Map<Long, Long> dynamicReferents = new LinkedHashMap<>();
         /** The heap function value → resolved execution binding index. */
         final IdentityHashMap<Value, FunctionExecutionBinding> bindingsByValue =
@@ -1139,21 +803,9 @@ public final class SemanticOracle {
          * effects and fail the trace pairing.
          */
         final java.util.Set<OpId> ownedChildren = new java.util.HashSet<>();
-        /**
-         * The class-layout resolution context (K-D11): the union of
-         * every module's {@code classLayouts} plus the compile's registered
-         * declaration-class layouts — a caller's
-         * {@code CLASS_NEW(SHARED_FACTORY)} payload layout resolves
-         * against the owner unit's record, and a host declaration class's
-         * construction and field operations against the registered
-         * declaration layout (ISSUE-0624; K10).
-         */
+
         final Map<ClassId, ClassLayout> classLayouts = new LinkedHashMap<>();
-        /**
-         * The compile's registered declaration-class layouts by
-         * {@link ClassId} (ISSUE-0624; K10), merged into
-         * {@link #classLayouts} at construction.
-         */
+
         final Map<ClassId, ClassLayout> declarationLayouts;
         /**
          * The block-owning-unit stack (innermost first): the module-init
@@ -1199,12 +851,6 @@ public final class SemanticOracle {
             this(unit, table, responder, Map.of());
         }
 
-        /**
-         * The declaration-class seam of the unit-form execution
-         * (ISSUE-0624; K10): the registered declaration-class layouts are
-         * the resolution context a host declaration class's construction
-         * and its field operations use.
-         */
         Execution(LoweredModuleUnit unit, StructuredBodyTable table, HostResponder responder,
                   Map<ClassId, ClassLayout> declarationLayouts) {
             this.unit = unit;
@@ -1237,16 +883,9 @@ public final class SemanticOracle {
                 ownedChildren.addAll(state.ownedChildren);
                 classLayouts.putAll(state.unit.classLayouts());
             }
-            // The declaration classes' registered layouts (ISSUE-0624;
-            // K10): a host declaration class is not a unit-declared class,
-            // so its registered layout is the one construction and
-            // field-operation entry.
+
             classLayouts.putAll(this.declarationLayouts);
-            // The compiler-owned builtin Error layout (ISSUE-0619; K13 item
-            // 1): the builtin class resolves in every execution's layout
-            // context through the same entry the project lowering seeds, so
-            // the builtin Error construction and its field ops run through
-            // the closed executor views exactly like a declared class's.
+
             classLayouts.put(ClassId.ERROR, ClassLayout.BUILTIN_ERROR);
         }
 
@@ -1261,10 +900,6 @@ public final class SemanticOracle {
             this(project, tables, registries, responder, Map.of());
         }
 
-        /**
-         * The declaration-class seam of the project-form execution
-         * (ISSUE-0624; K10).
-         */
         Execution(ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
                   Map<ModuleId, ClassFactoryRegistry> registries,
                   HostResponder responder, Map<ClassId, ClassLayout> declarationLayouts) {
@@ -1323,11 +958,9 @@ public final class SemanticOracle {
                     }
                 }
             }
-            // The declaration classes' registered layouts (ISSUE-0624;
-            // K10): identical in every execution's layout context.
+
             classLayouts.putAll(this.declarationLayouts);
-            // The compiler-owned builtin Error layout (ISSUE-0619; K13 item
-            // 1): identical in every execution's layout context.
+
             classLayouts.put(ClassId.ERROR, ClassLayout.BUILTIN_ERROR);
         }
 
@@ -1536,7 +1169,6 @@ public final class SemanticOracle {
                 k -> String.valueOf(nextAllocationOrdinal++));
         }
 
-
         /** The atom of an op's operand value. */
         String operandAtom(SemanticOp op, int index) {
             return atomOf(valueOf(op.operands().get(index)));
@@ -1639,17 +1271,6 @@ public final class SemanticOracle {
             return cell;
         }
 
-        /**
-         * Allocates a fresh cell for one incarnation in the current scope
-         * and publishes it as that scope's cell for the key: a re-executed
-         * {@code BINDING_ALLOC} — a for-let per-iteration incarnation, a
-         * loop-body local, any per-execution allocation — replaces the slot
-         * with a fresh cell, so closures created in different iterations
-         * capture distinct cells and each observes its own iteration's
-         * value (the emitted artifacts' per-execution {@code BINDING_ALLOC}
-         * write). The previously published cell stays reachable through
-         * every closure that captured it.
-         */
         Cell freshCellOf(BindingId binding, long generation) {
             Cell cell = new Cell(binding, generation);
             String key = binding + "#" + generation;
@@ -2122,10 +1743,7 @@ public final class SemanticOracle {
                 case Value.IntrinsicValue intrinsic ->
                     new ComparisonOperandView.Ref(refIdentity(intrinsic));
                 case Value.BytesValue bytes ->
-                    // Bytes compare by allocation identity (the landed
-                    // BYTES_EQ/NE row over Ref views, K6 item 12): an alias
-                    // compares equal, two distinct buffers unequal — exactly
-                    // as both production artifacts compare their carriers.
+
                     new ComparisonOperandView.Ref(refIdentity(bytes));
                 case Value.StdlibCallableValue callable ->
                     // The in-target cataloged callable (M4): a heap value whose
@@ -2187,18 +1805,6 @@ public final class SemanticOracle {
             return publish(op, new Value.IntValue(array.elements().size()));
         }
 
-        /**
-         * MEMBER_READ: the missing-aware read, then its
-         * CONTEXTUAL_TABLE_READ boundary child (missing→nullable-null /
-         * E8001 via the contextual decision). A contextual read of a
-         * composite descriptor (a function or array position,
-         * ISSUE-0651) defers the shape check to the consuming declared
-         * cell exactly like the emitted artifacts: the boundary cell
-         * passes the value through and the pinned projection surfaces at
-         * the consuming cell's origin (the corpus pins the call-origin
-         * E8010 for a wrong-kind host argument whose contextual read sits
-         * on the argument expression).
-         */
         private String executeMemberRead(SemanticOp op) {
             KindPayload.MemberReadPayload payload = (KindPayload.MemberReadPayload) op.payload();
             Value.TableValue table = (Value.TableValue) valueOf(payload.table());
@@ -2235,19 +1841,6 @@ public final class SemanticOracle {
             return contextualReadDecision(op, checked, descriptor);
         }
 
-        /**
-         * The resolved surface entry of one namespace member read (K15
-         * item 3): a read through a module's namespace value that the
-         * surface has not recorded yet resolves the module's loaded
-         * table entry — the seamed load's entry for a HOST/FFI module,
-         * exactly the entry the direct {@code EXPORT_READ} of that export
-         * publishes — and memoizes it into the module's surface map (the
-         * namespace table's own entry map), so every later read of one
-         * export publishes the identical value. A non-namespace table, a
-         * non-HOST/FFI module, a read without a contextual descriptor, or
-         * a seam that supplies no entry keeps the landed absent-slot
-         * projection ({@link Value.MissingValue}).
-         */
         private Value resolveNamespaceSurfaceEntry(SemanticOp op,
                 Value.TableValue table, String key, RuntimeDescriptor descriptor) {
             ModuleId module = namespaceModules.get(table);
@@ -2313,10 +1906,7 @@ public final class SemanticOracle {
             }
             RuntimeDescriptor descriptor =
                 ((KindPayload.BoundaryPayload) boundary.payload()).descriptor();
-            // The composite-descriptor deferral of ISSUE-0651 applies to
-            // the optional-read envelope too (the emitters' identical
-            // rule): a function/array position passes through and the
-            // consuming cell carries the pinned projection.
+
             if (defersContextualCheck(descriptor)) {
                 return publish(op, runDeferredBoundaryChild(boundary, preMapped));
             }
@@ -2324,11 +1914,6 @@ public final class SemanticOracle {
             return contextualReadDecision(op, checked, descriptor);
         }
 
-        /**
-         * Whether one contextual-read boundary descriptor defers its
-         * shape check to the consuming declared cell (ISSUE-0651: a
-         * function or array position — the emitters' identical rule).
-         */
         private boolean defersContextualCheck(RuntimeDescriptor descriptor) {
             RuntimeDescriptor inner = descriptor instanceof RuntimeDescriptor.Nullable nullable
                 ? nullable.inner() : descriptor;
@@ -2367,12 +1952,7 @@ public final class SemanticOracle {
                     new Value.BoolValue(table.entries().containsKey(payload.key())));
             }
             if (receiver instanceof Value.ClassValue classValue) {
-                // The class-instance presence half (K-D7): the
-                // presence map of the generated instance — a present
-                // field (present null included) is present, a missing
-                // field is absent. The instance's states parallel its
-                // declared layout's declaration order (the construction
-                // executor pins the parallel-array discipline).
+
                 ClassLayout layout = classLayouts.get(classValue.classId());
                 if (layout == null || layout.fields().size() != classValue.fields().size()) {
                     throw new IllegalStateException("HAS_FIELD " + op.opId()
@@ -2444,20 +2024,6 @@ public final class SemanticOracle {
                 + "runs it); reaching executeClassDefaultArm is a producer defect");
         }
 
-        /**
-         * JSON_FROM_CLASS — the generated {@code C$fromJson} walk (E7/K-D8),
-         * delegating to the closed {@link ClassOpsExecutor} with the
-         * production algorithm seam ({@link JsonClassAlgorithmAdapter}) and
-         * the op's per-site {@code CLASS_DEFAULT} children. The per-site
-         * children are the layout's required-present defaulted fields'
-         * {@code CLASS_DEFAULT} ops in declaration order — the same list
-         * the lowerer records in the produced {@code JsonDefaultChildTable}
-         * (the record is a lowering-result fact, so the closed set is
-         * derived from the unit here: one {@code CLASS_DEFAULT} op per
-         * {@code (classId, field)}). The walk returns language null on
-         * every listed failure — never a DEAL failure, never a partial
-         * instance.
-         */
         private String executeJsonFromClass(SemanticOp op) {
             KindPayload.JsonFromClassPayload payload =
                 (KindPayload.JsonFromClassPayload) op.payload();
@@ -2480,15 +2046,6 @@ public final class SemanticOracle {
             return publish(op, produced);
         }
 
-        /**
-         * JSON_TO_CLASS — the generated {@code C$toJson} walk (E7/K-D10),
-         * delegating to the closed {@link ClassOpsExecutor} with the
-         * production stringify seam. The first declaration-order failure
-         * projects {@code JSON_TO_ERROR} (E8001
-         * {@code value at {fieldPath} is not JSON serializable: {actual}})
-         * at the op's origin; success publishes the deterministic
-         * RFC-8259 text.
-         */
         private String executeJsonToClass(SemanticOp op) {
             KindPayload.JsonToClassPayload payload =
                 (KindPayload.JsonToClassPayload) op.payload();
@@ -2507,14 +2064,6 @@ public final class SemanticOracle {
             };
         }
 
-        /**
-         * The per-site {@code CLASS_DEFAULT} children of one
-         * {@code JSON_FROM_CLASS} op in declaration order: for every
-         * required-present layout field that carries a declared default
-         * (exactly one {@code CLASS_DEFAULT} op per
-         * {@code (classId, field)}) the op id; optional fields' never-run
-         * defaults are excluded (K-D8 step 5).
-         */
         private List<OpId> jsonDefaultChildrenOf(UnitState state, ClassLayout layout) {
             List<OpId> children = new ArrayList<>();
             for (ClassLayout.FieldLayout field : layout.fields()) {
@@ -2537,16 +2086,6 @@ public final class SemanticOracle {
             return children;
         }
 
-        /**
-         * The nested-class defaults seam of the JSON_FROM_CLASS walk
-         * (K-D5 trigger (b)): the nested class's {@code CLASS_FACTORY}
-         * entry resolves in the closure (one factory per exported class;
-         * a non-exported class carries no factory and a nested decode of
-         * it is a producer defect, never executed), its default children
-         * run in the declaring module's scope with their own events, and
-         * the factory's events parent to the triggering JSON op (the
-         * cross-unit K-D12 parent).
-         */
         private ClassOpsExecutor.NestedClassFactory nestedClassFactory(SemanticOp triggering) {
             return (classId, providedFields) -> {
                 SemanticOp factoryOp = null;
@@ -2607,17 +2146,6 @@ public final class SemanticOracle {
             };
         }
 
-        /**
-         * CLASS_NEW — the closed K-D4/D16 construction in emitted order:
-         * provided values resolve in literal order (they completed before
-         * the op), default application in declaration order (LOCAL, or the
-         * owner's CLASS_FACTORY transfer with the factory's events parented
-         * to this caller op — cross-unit K-D12), extra-key rejection first
-         * in provided-source order (E8007), provided-field application in
-         * declaration order, field validation in declaration order through
-         * the boundary children, and the tag-last publication. Zero return
-         * boundaries. A failure publishes no partial instance.
-         */
         private String executeClassNew(SemanticOp op) {
             KindPayload.ClassNewPayload payload =
                 (KindPayload.ClassNewPayload) op.payload();
@@ -2748,19 +2276,7 @@ public final class SemanticOracle {
                             (ValueId) factoryOp.result()), replayRunner);
                 }
                 case HOST_DEFAULTS -> {
-                    // The host declaration class construction (ISSUE-0624;
-                    // K10 and the K10 contract): the loaded
-                    // {@code <C>_defaults} projection comes from the host
-                    // seam (the oracle runs no host code), the provided
-                    // values complete in payload order through the existing
-                    // check runner, the extra provided name raises E8007 at
-                    // the op origin, the omitted required-present fields
-                    // take the loaded defaults, and the omitted optional
-                    // fields stay absent — exactly the deployed
-                    // construction entry's phases. The owner is admissible
-                    // only for a class of the compile's registered
-                    // declaration classes: an unregistered class under
-                    // HOST_DEFAULTS is never executed.
+
                     if (!declarationLayouts.containsKey(payload.classId())) {
                         throw new IllegalStateException("CLASS_NEW " + op.opId()
                             + " carries defaultOwner HOST_DEFAULTS for class "
@@ -2789,14 +2305,7 @@ public final class SemanticOracle {
                         checkRunner(op, payload, boundaryOps, null), defaults);
                 }
                 case FFI_PLAN -> {
-                    // The extern-C C-struct construction (ISSUE-0667;
-                    // struct-plan F4 and the oracle plan-projection
-                    // contract): the loaded plan's ordered entries come
-                    // through the closed plan-projection terminal, and the
-                    // shared executor runs the runtime entry's four phases
-                    // over them. The oracle runs no generated evaluator
-                    // content and no native code: the seam supplies each
-                    // omitted field's deferred default.
+
                     ClassLayout declaredLayout = classLayouts.get(payload.classId());
                     if (declaredLayout == null) {
                         throw new IllegalStateException("CLASS_NEW " + op.opId()
@@ -2856,11 +2365,7 @@ public final class SemanticOracle {
                             + " admissible only for the builtin Error class"
                             + " (producer defect)");
                     }
-                    // The builtin Error construction (ISSUE-0619; K13 items
-                    // 2-4): the provided values complete in payload order
-                    // through the existing check runner, the omitted fields
-                    // take the compiler constant empty string, and the
-                    // published value is the canonical Error value.
+
                     outcome = ClassOpsExecutor.executeClassNewBuiltinDefaults(op,
                         priorValues, boundaryOps, classLayouts,
                         checkRunner(op, payload, boundaryOps, null));
@@ -2878,15 +2383,6 @@ public final class SemanticOracle {
             };
         }
 
-        /**
-         * The construction's body runner (K-D4 step 2): one default
-         * block per triggering attempt with the default op's own START
-         * and terminal events around it — a block failure emits the
-         * default op's FAILURE and propagates (the caller op's wrapper
-         * emits its own FAILURE). The events atomize the block's
-         * original produced value (never a re-converted copy), so the
-         * value's allocation id is the one the produced op published.
-         */
         private ClassOpsExecutor.BodyRunner bodyRunner(SemanticOp op) {
             return this::runDefaultBlockBody;
         }
@@ -2907,15 +2403,6 @@ public final class SemanticOracle {
             return produced;
         }
 
-        /**
-         * The construction's boundary-check runner (K-D4 step 5): each
-         * field boundary child runs once in payload (declaration) order
-         * through the closed {@link BoundaryExecutor} with its own START
-         * and terminal events; the checked input is the original value of
-         * the child's recorded input slot (a {@code CLASS_DEFAULT_FIELD}
-         * child of a SHARED_FACTORY construction reads the named field of
-         * the transferred instance — the K-D4 extraction rule).
-         */
         private ClassOpsExecutor.BoundaryCheckRunner checkRunner(SemanticOp op,
                 KindPayload.ClassNewPayload payload, Map<OpId, SemanticOp> boundaryOps,
                 ValueId factoryResult) {
@@ -2962,15 +2449,6 @@ public final class SemanticOracle {
             };
         }
 
-        /**
-         * The FFI construction's phase-3 descriptor check (struct-plan F4;
-         * ISSUE-0667): one present field validated against its plan entry's
-         * descriptor — the runtime {@code __rt.check_canonical_type}
-         * projection at the literal origin. No boundary op exists for a
-         * plan-supplied field, so the check runs event-free; a provided
-         * field's phase-1 boundary child already emitted its own events and
-         * the entry-descriptor re-check is the same deterministic predicate.
-         */
         private ClassOpsExecutor.BoundaryResult rawDescriptorCheck(
                 RuntimeDescriptor descriptor, ClassOpsExecutor.Value input) {
             Value oracleInput = oracleValueOf(input);
@@ -2993,14 +2471,6 @@ public final class SemanticOracle {
             };
         }
 
-        /**
-         * The resolved module of one extern-C class's declaring declaration
-         * module (struct-plan F4/F1; ISSUE-0667): the closure's HOST-kind
-         * {@code MODULE_IMPORT} whose raw specifier the class identity's
-         * semantic module path names ({@code "$external/" + rawSpecifier ==
-         * classId.modulePath()}). That resolved module is the loaded
-         * surface's module key the plan projection is requested with.
-         */
         private ModuleId ffiDeclarationModuleOf(ClassId classId) {
             ModuleId resolved = null;
             for (UnitState candidate : units.values()) {
@@ -3174,9 +2644,7 @@ public final class SemanticOracle {
                         new ClassOpsExecutor.FieldState.Present(
                             ClassOpsExecutor.Value.string(error.message()))));
                 case Value.IntrinsicValue intrinsic ->
-                    // The seeded intrinsic value's class-ops function view
-                    // (J2): the closed kind's declared signature — never
-                    // the landed opaque placeholder.
+
                     new ClassOpsExecutor.Value.Function(intrinsicViewOf(intrinsic));
                 case Value.SlotValue ignored ->
                     throw new IllegalStateException("a normalize-computed slot is never "
@@ -3456,19 +2924,6 @@ public final class SemanticOracle {
             oracleOriginals.put(updated, receiver);
         }
 
-        /**
-         * FIELD_READ — the presence-aware class member read (K-D6): the
-         * receiver resolves from the value lookup exactly once (never
-         * re-evaluated) and the op's two pinned boundary children run in
-         * order — the nominal {@code UNTYPED_CLASS_INPUT} receiver
-         * boundary, then the {@code OPTIONAL_FIELD_READ} boundary over
-         * the pre-mapped read (a missing field pre-maps to language null
-         * before the boundary; present null stays distinguishable from
-         * missing through the presence states); SUCCESS publishes the
-         * boundary-checked value. The closed presence/read/wrap
-         * discipline is {@link ClassOpsExecutor#executeFieldRead}, never
-         * forked here.
-         */
         private String executeFieldRead(SemanticOp op) {
             KindPayload.FieldReadPayload payload =
                 (KindPayload.FieldReadPayload) op.payload();
@@ -3490,12 +2945,6 @@ public final class SemanticOracle {
             };
         }
 
-        /**
-         * The pinned boundary child of one field op (K-D12): the child
-         * whose recorded {@code parentOpId} is the field op and whose
-         * closed kind matches. A missing or duplicated pinned child is a
-         * producer defect, fail closed before any execution.
-         */
         private SemanticOp boundaryChildOfKind(SemanticOp op, BoundaryKind kind) {
             List<SemanticOp> children = stateOf(op.opId()).childrenByParent.get(op.opId());
             SemanticOp match = null;
@@ -3592,16 +3041,6 @@ public final class SemanticOracle {
             oracleOriginals.put(updated, receiver);
         }
 
-        /**
-         * The declared-signature view of one oracle intrinsic value: the
-         * closed kind's declared signature ({@code IntrinsicKind
-         * .declaredSignature()}, the identity's own {@code IntrinsicFunction}
-         * registration's descriptor), so the seeded intrinsic value's
-         * class-ops and boundary views carry the declared signature and
-         * the actual kind stays {@code function}. A value whose name is
-         * not a conversion kind (the host-entry projections) keeps the
-         * landed opaque function view.
-         */
         private static RuntimeDescriptor.Func intrinsicViewOf(
                 Value.IntrinsicValue value) {
             for (IntrinsicKind kind : IntrinsicKind.values()) {
@@ -3885,22 +3324,13 @@ public final class SemanticOracle {
                     // classification-only — the view carries no contents.
                     BoundaryValueView.of(ActualKind.BYTES);
                 case Value.ErrorValue error ->
-                    // The builtin Error carrier's closed boundary view
-                    // (ISSUE-0619; K13 item 5): the canonical @/Error class
-                    // atom, so the descriptor-atom check of an @/Error
-                    // boundary matches and the class value crosses it
-                    // unchanged. The value's own atom stays the closed
-                    // err:<code>:<message> form and its actual kind stays
-                    // class:@builtin/Error.
+
                     BoundaryValueView.ofClass(ClassId.ERROR.text());
                 case Value.FuncValue func -> BoundaryValueView.ofFunction(func.signature());
                 case Value.AdapterValue adapter ->
                     BoundaryValueView.ofFunction(adapter.signature());
                 case Value.IntrinsicValue intrinsic ->
-                    // The seeded intrinsic value's boundary function view
-                    // (J2): the closed kind's declared signature — never
-                    // the landed opaque placeholder; the host-entry
-                    // projections keep the opaque view.
+
                     BoundaryValueView.ofFunction(intrinsicViewOf(intrinsic));
                 case Value.StdlibCallableValue callable ->
                     BoundaryValueView.ofFunction(callable.descriptor());
@@ -4308,15 +3738,7 @@ public final class SemanticOracle {
                     case FunctionExecutionBinding.ExternalFunction external ->
                         invokeExternalCall(op, payload, external, checkedArgs);
                     case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
-                        // The conversion intrinsic's value call (ISSUE-0679;
-                        // design source
-                        // {@code conversion-intrinsic-function-values} J3/J4):
-                        // the one conversion ladder runs with the invoking CALL
-                        // op's own origin and kind, over the value the recorded
-                        // host parameter cells admitted, and the recorded
-                        // HOST_TO_DEAL + HOST_SYNC_RETURN cell runs at the call
-                        // origin (the intrinsic's class is HOST,
-                        // {@link DynamicReturnBoundaryProtocol#kindOf}).
+
                         Value converted = invokeIntrinsicValue(op, intrinsic,
                             checkedArgs);
                         yield runBoundaryChild(opOf(payload.returnBoundaryOpId()),
@@ -4328,19 +3750,6 @@ public final class SemanticOracle {
             return publish(op, returned);
         }
 
-        /**
-         * The one conversion ladder at an intrinsic value call (ISSUE-0679;
-         * design source {@code conversion-intrinsic-function-values} J4): the
-         * closed kind's conversion runs through the landed
-         * {@link #convertInt}/{@link #convertNumber} arms — the same algorithm
-         * authority the direct {@code INTRINSIC_CALL} arm runs — with the
-         * invoking op's own origin, so the pinned texts and the FAILURE event
-         * carry the invoking op (the direct arm keeps {@code INTRINSIC_CALL}).
-         * The argument domain is the recorded parameter cells': the value
-         * handed over is the cell-admitted one, so a null or wrong-kind
-         * argument is a parameter-cell projection and never reaches the
-         * ladder.
-         */
         private Value invokeIntrinsicValue(SemanticOp op,
                 FunctionExecutionBinding.IntrinsicFunction intrinsic,
                 List<Value> checkedArgs) {
@@ -4375,16 +3784,6 @@ public final class SemanticOracle {
             return checked;
         }
 
-        /**
-         * The body execution of one {@code LoweredBody} binding under the
-         * callee body's owning unit (ISSUE-0678; design source
-         * {@code function-typed-value-materialization-and-dispatch} M5 and the
-         * dynamic call contract): the resolution consumes the value-channel
-         * class delivered by the producer rule, so a cross-module callee value's
-         * body lives in the unit the project closure records for its function id
-         * — the oracle twin of the artifacts' function-id to owning-module
-         * resolution — never in the invoking op's unit.
-         */
         private Value invokeLoweredBody(SemanticOp op, KindPayload.CallPayload payload,
                                         FunctionExecutionBinding.LoweredBody body,
                                         List<Value> checkedArgs, Value calleeValue) {
@@ -4531,15 +3930,7 @@ public final class SemanticOracle {
                     throw new IllegalStateException("adapter-of-adapter invocation is "
                         + "outside the statically-resolved slice (ISSUE-0531)");
                 case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
-                    // The adapter-over-intrinsic D15 path (ISSUE-0680; design
-                    // source {@code conversion-intrinsic-function-values} J5):
-                    // the adapter's recorded source is the seeded intrinsic
-                    // identity whose class is HOST
-                    // ({@link DynamicReturnBoundaryProtocol#kindOf}), so the
-                    // leading-M arguments run the one conversion ladder with
-                    // this call op's context and kind, and the recorded
-                    // HOST_TO_DEAL + HOST_SYNC_RETURN cell runs by the call op
-                    // — exactly the intrinsic's own indirect arm.
+
                     Value value = invokeIntrinsicValue(op, intrinsic, leading);
                     yield runBoundaryChild(opOf(payload.returnBoundaryOpId()), value,
                         BoundaryContext.none());
@@ -4549,23 +3940,6 @@ public final class SemanticOracle {
             };
         }
 
-        /**
-         * The dynamically resolved CALL terminal (ISSUE-0531): the
-         * callee's binding kind was unknown until execution, so the
-         * runtime resolves the identity against the registry, classifies
-         * the resolution with the closed protocol
-         * ({@link DynamicReturnBoundaryProtocol}), and executes the
-         * selected recorded return-boundary cell per the closed
-         * selection ({@link ReturnBoundarySelection}): the callee's
-         * source {@code RETURN} executes the recorded
-         * {@code FUNCTION_RETURN} cell for {@code DEAL_BODY}, the call op
-         * executes the recorded {@code HOST_TO_DEAL}/
-         * {@code EXTERNAL_RETURN} cell for {@code HOST}/{@code EXTERNAL},
-         * and {@code SHARED_BODY} executes zero caller-side return
-         * boundaries (the callee unit's {@code RETURN} under its
-         * {@code EXTERNAL_ENTRY} runs the single {@code EXTERNAL_RETURN}
-         * in the callee unit).
-         */
         private Value executeDynamicCall(SemanticOp op, KindPayload.CallPayload payload,
                                          FunctionExecutionBinding binding,
                                          List<Value> checkedArgs, Value calleeValue) {
@@ -4594,14 +3968,6 @@ public final class SemanticOracle {
             };
         }
 
-        /**
-         * The dynamically resolved adapter CALL (ISSUE-0531): the D15
-         * invocation protocol resolves the adapter's source value and its
-         * source binding fixes the resolution class (the adapter carries
-         * no source kind of its own —
-         * {@link DynamicReturnBoundaryProtocol} fails closed on an
-         * adapter input).
-         */
         private Value executeDynamicAdapterCall(SemanticOp op,
                 KindPayload.CallPayload payload,
                 FunctionExecutionBinding.AdapterBinding adapter,
@@ -4678,9 +4044,7 @@ public final class SemanticOracle {
                     throw new IllegalStateException("an adapter binding resolves its "
                         + "source before classification (producer defect)");
                 case FunctionExecutionBinding.IntrinsicFunction intrinsic ->
-                    // The intrinsic's HOST class resolves the conversion ladder
-                    // with the invoking op's own origin and kind (ISSUE-0679;
-                    // the same algorithm the direct INTRINSIC_CALL arm runs).
+
                     invokeIntrinsicValue(op, intrinsic, args);
                 case FunctionExecutionBinding.DynamicFunctionValue dynamic ->
                     throw dynamicFunctionValueDefect(dynamic);
@@ -4975,24 +4339,6 @@ public final class SemanticOracle {
             return binding;
         }
 
-        /**
-         * The execution binding of one dynamic callee (ISSUE-0677; design
-         * source {@code function-typed-value-materialization-and-dispatch}
-         * M5's value channel and the dynamic call contract): the callee
-         * value's own static registration decides only whether the class is
-         * statically identified — a same-walk {@code LoweredBody} (or any
-         * other statically classified registration) is used as it stands,
-         * while the producer rule's {@code DynamicFunctionValue} registration
-         * (or an unregistered callee value) defers to the runtime heap
-         * value's own producing registration through the value-keyed channel,
-         * so the class of the materialized carrier — not of the read that
-         * published it — is dispatched. A heap value with no producing
-         * registration fails closed as a producer defect, never a silent
-         * projection.
-         *
-         * @param callee the callee value identity of the dynamic invocation; non-null
-         * @return the resolved execution binding
-         */
         private FunctionExecutionBinding resolveDynamicCalleeBinding(ValueId callee) {
             FunctionExecutionBinding registration = bindingOf(callee);
             if (registration != null
@@ -5003,24 +4349,6 @@ public final class SemanticOracle {
             return resolveBindingOfValue(valueOf(callee));
         }
 
-        /**
-         * Runs the recorded DEAL-body cell of one dynamic invocation when the
-         * recorded form is the call-owned one (ISSUE-0677; design source
-         * {@code function-typed-value-materialization-and-dispatch} M6 and the
-         * dynamic DEAL-body cell contract): the invocation site executes the
-         * call-owned record on the value the resolved body returned, after
-         * the body's own {@code RETURN} ran the body's own cell and before the
-         * invocation publishes; a callee-owned record is the body's own cell
-         * and has already executed exactly once, so it runs nothing here.
-         * The cell is total on the admitted value (identical declared
-         * descriptor), so its check passes and only its boundary events are
-         * observable.
-         *
-         * @param invocation the dynamic invocation op; non-null
-         * @param cellOpId   the recorded DEAL-body cell; non-null
-         * @param returned   the value the resolved body returned; non-null
-         * @return the admitted value (the cell's checked projection)
-         */
         private Value runRecordedDealBodyCell(SemanticOp invocation, OpId cellOpId,
                                               Value returned) {
             SemanticOp cell = stateOf(invocation.opId()).opsById.get(cellOpId);
@@ -5056,18 +4384,6 @@ public final class SemanticOracle {
             return binding;
         }
 
-        /**
-         * The fail-closed producer defect of an intrinsic carrier's
-         * execution at the host-driven callback arm, which has no realization
-         * yet: the indirect call of an {@code IntrinsicFunction} registration
-         * runs the conversion ladder at the call origin (ISSUE-0679 — the
-         * static/indirect arm and the dynamic dispatch's HOST class), and the
-         * adapter-over-intrinsic source invocation, both emitters' async forms
-         * and the runtime adapter branch run it too (ISSUE-0680), while a
-         * host-driven {@code CALLBACK_INVOKE} of an intrinsic value stays
-         * outside the checked corpus (the conversion intrinsics are
-         * synchronous values; such a site is a producer defect).
-         */
         private static IllegalStateException intrinsicExecutionDefect(
                 FunctionExecutionBinding.IntrinsicFunction intrinsic) {
             return new IllegalStateException("the '" + intrinsic.kind() + "' intrinsic "
@@ -5075,15 +4391,6 @@ public final class SemanticOracle {
                 + "is the function-typed-value child's — producer defect)");
         }
 
-        /**
-         * The fail-closed producer defect of a dynamic function value's
-         * execution: this slice registers the closed
-         * {@code DynamicFunctionValue} binding only — the carrier's
-         * execution class is resolved from the runtime value's producing
-         * registration, and that resolution and its class paths are the
-         * function-typed-value child's, so no produced unit may resolve
-         * one at a call site.
-         */
         private static IllegalStateException dynamicFunctionValueDefect(
                 FunctionExecutionBinding.DynamicFunctionValue dynamic) {
             return new IllegalStateException("the dynamic function value produced by op "
@@ -5229,16 +4536,7 @@ public final class SemanticOracle {
                     executeAsyncEntry(entry, op.opId(), checkedArgs, calleeTokenId);
                 }
                 case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
-                    // The intrinsic's async form (ISSUE-0680; design source
-                    // {@code conversion-intrinsic-function-values} J3: the
-                    // conversion intrinsics are synchronous values, so an
-                    // async use is a checker rejection — this arm is the
-                    // deterministic closed treatment of a doctored site): the
-                    // closed DEAL_BODY task runs the one conversion ladder
-                    // over the checked arguments and completes immediately
-                    // with the converted value; the single AWAIT runs the
-                    // landed ASYNC_COMPLETION cell on the completion (zero
-                    // return boundaries).
+
                     if (checkedArgs.size() != intrinsic.descriptor().paramTypes().size()) {
                         throw new IllegalStateException("the async intrinsic start "
                             + op.opId() + " carries " + checkedArgs.size()
@@ -5257,17 +4555,6 @@ public final class SemanticOracle {
             return tokenAtom(token);
         }
 
-        /**
-         * The dynamically resolved ASYNC_START terminal (ISSUE-0531):
-         * the recorded source is {@code DEAL_BODY} (the only resolution
-         * whose caller-recorded return boundary executes — the single
-         * {@code FUNCTION_RETURN} task cell run by the task body's
-         * {@code RETURN}); the runtime derives the effective source from
-         * the resolved binding, and HOST/EXTERNAL/adapter-over-async
-         * resolutions execute zero caller-side return boundaries with
-         * their linkage (operation label, external async entry) bound at
-         * execution.
-         */
         private void executeDynamicAsyncStart(SemanticOp op,
                 FunctionExecutionBinding binding, List<Value> checkedArgs,
                 AsyncTokenId token, Value calleeValue) {
@@ -5320,14 +4607,6 @@ public final class SemanticOracle {
             }
         }
 
-        /**
-         * The dynamically resolved adapter-over-async task (ISSUE-0531):
-         * the D15 source resolution fixes the effective source class;
-         * the leading M source arguments come from the outer op's checked
-         * target-signature arguments, and the effective source's terminal
-         * binds at execution (zero caller-side return boundaries outside
-         * the DEAL_BODY resolution's recorded task cell).
-         */
         private void executeDynamicAdapterAsyncStart(SemanticOp op,
                 FunctionExecutionBinding.AdapterBinding adapter,
                 List<Value> checkedArgs, AsyncTokenId token) {
@@ -5356,12 +4635,7 @@ public final class SemanticOracle {
                 case HOST -> {
                     if (sourceBinding
                             instanceof FunctionExecutionBinding.IntrinsicFunction intrinsic) {
-                        // The runtime adapter branch over an intrinsic carrier
-                        // (ISSUE-0680): the intrinsic's HOST sub-class is the
-                        // synchronous conversion, so the task completes
-                        // immediately with the converted value and the single
-                        // AWAIT runs the landed ASYNC_COMPLETION cell (zero
-                        // caller-side return boundaries).
+
                         if (leading.size() != intrinsic.descriptor()
                                 .paramTypes().size()) {
                             throw new IllegalStateException("the runtime adapter "
@@ -5499,16 +4773,6 @@ public final class SemanticOracle {
             };
         }
 
-        /**
-         * One dynamically resolved DEAL-body task's completion value: the
-         * body task runs as landed (its {@code RETURN} runs the body's own
-         * cell), and a call-owned recorded task cell then executes in the
-         * caller-side task wrapper before the token completes (ISSUE-0677;
-         * design source
-         * {@code function-typed-value-materialization-and-dispatch} M6 and
-         * the dynamic async start contract). A callee-owned record is the
-         * body's own cell and runs nothing here.
-         */
         private Value runTaskBodyWithRecordedCell(SemanticOp op,
                 FunctionExecutionBinding.LoweredBody body, List<Value> args,
                 Value calleeValue) {
@@ -6037,9 +5301,7 @@ public final class SemanticOracle {
                 case Value.IntrinsicValue ignored -> "function";
                 case Value.StdlibCallableValue ignored -> "function";
                 case Value.HostEntryValue ignored -> "function";
-                // The builtin Error carrier keeps its landed runtime
-                // spelling (the corpus pins neither form; this authority
-                // neither pins nor changes it).
+
                 case Value.ErrorValue ignored -> "class:@builtin/Error";
                 case Value.ClassValue classValue -> classValue.classId().text();
                 case Value.MissingValue ignored -> "nil";
@@ -6611,40 +5873,6 @@ public final class SemanticOracle {
             throw new LoopSignal(payload.loopId(), true);
         }
 
-        /**
-         * EXPORT_READ — the per-kind read resolution (M3/M4/M5): a COMPILED
-         * read publishes the value the owning module's {@code
-         * EXPORT_PUBLISH} recorded into the per-run export-surface
-         * registry; a HOST/FFI read publishes that registry's entry for the
-         * export — for a HOST module the surface is the loaded module table
-         * (the entry the calls child's host load surface and the FFI child's
-         * {@code load_ffi} surface record under the module identity), so the
-         * read re-wraps nothing and runs no host code; an absent surface or
-         * entry publishes {@link Value.MissingValue} in both cases (the
-         * landed partial-drive parity state, a state a full execution never
-         * reaches because a dependency's publication — or its load — runs
-         * before any dependent's read). A STDLIB read publishes the closed
-         * catalog row's memoized callable ({@link Value.StdlibCallableValue};
-         * see {@link #stdlibCallableOf}) — the same catalog entry and the
-         * same algorithm authority the direct {@code STDLIB_CALL} arm uses,
-         * never a host responder. A read whose unit records no import fact
-         * for its module — the test-only class-core carrier sessions, whose
-         * units carry no module-level import op — keeps the landed
-         * placeholder; every production and conformance session records the
-         * resolved import facts, so a read is never guessed from a path.
-         *
-         * <p>The read does not write the value-keyed binding map
-         * (K11/M3): the published value already carries the owner's
-         * registration, so re-keying it would replace the owner-side
-         * {@code LoweredBody} resolution; a STDLIB read's own created
-         * callable is keyed once at its creation and never re-keyed; a
-         * HOST read's loaded entry is the read's own class carrier (the
-         * loaded surface entry itself), so it is keyed once to that read's
-         * {@code HostFunction} registration — the value-keyed channel a
-         * later dynamic resolution consumes; the read's own registration
-         * stays addressable by the read result's allocation identity
-         * ({@link #bindingOf}).</p>
-         */
         private String executeExportRead(SemanticOp op) {
             KindPayload.ExportReadPayload payload =
                 (KindPayload.ExportReadPayload) op.payload();
@@ -6655,12 +5883,7 @@ public final class SemanticOracle {
                     Map<String, Value> surface = exportSurfaces.get(payload.module());
                     Value entry = surface == null ? null : surface.get(payload.name());
                     if (entry == null && kind == ModuleImportKind.HOST && responder != null) {
-                        // The HOST read resolves the loaded module table's
-                        // entry (ISSUE-0651): the seamed load supplies it (the
-                        // oracle runs no host code), and the entry is memoized
-                        // so every read of one export publishes the identical
-                        // value. A seam without an entry keeps the absent-slot
-                        // projection.
+
                         entry = responder.loadedExport(payload.module(), payload.name(),
                             payload.descriptor());
                         if (entry != null) {
@@ -6758,14 +5981,6 @@ public final class SemanticOracle {
             return callable;
         }
 
-        /**
-         * The closed import kind of one read's module, resolved from the
-         * reading unit's own {@code MODULE_IMPORT} record (the session's
-         * own import facts — never a path guess, never another module's
-         * record), or {@code null} when the unit records no import fact
-         * for the module (the class-core carrier sessions), which keeps
-         * the landed placeholder realization.
-         */
         private ModuleImportKind importKindOf(UnitState unit, ModuleId module) {
             for (SemanticOp candidate : unit.unit.ops()) {
                 if (candidate.kind() != SemanticOpKind.MODULE_IMPORT) {
@@ -6780,21 +5995,6 @@ public final class SemanticOracle {
             return null;
         }
 
-        /**
-         * MODULE_IMPORT — the load-once initialization record and the
-         * alias cells' completion write (K15 items 1-3; the landed BINDINGS
-         * contract's pinned initializing write). The op's payload names the
-         * import's ordered alias cells; each named cell receives the
-         * module's namespace value — the one per-run
-         * {@link Value.TableValue} of that module (K15 item 5), whose
-         * entries are the module's published export surface — and is marked
-         * initialized, so an alias read is the landed {@code BINDING_LOAD}
-         * of a real table value. No alias cell is ever written twice (the
-         * completion is the single initializing write). The tail's stdlib
-         * console algorithm executes inside {@code STDLIB_CALL}
-         * ({@code CONSOLE_LOG}/{@code CONSOLE_ERROR}), so the import record
-         * initializes no other run state beyond the op terminal.
-         */
         private String executeModuleImport(SemanticOp op) {
             KindPayload.ModuleImportPayload payload =
                 (KindPayload.ModuleImportPayload) op.payload();

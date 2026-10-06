@@ -58,10 +58,6 @@ public final class TypeChecker {
     //    treated as a write target (no contextual typing required) --
     private boolean assignmentTargetMode = false;
 
-    // -- Class declaration lexical scopes (the default-planning seam of
-    //    ISSUE-0541): every class the checker visits, in walk order, with
-    //    the exact scope its declaration was checked in — the declaring
-    //    lexical context the default planner resolves defaults against.
     private final Map<ClassDeclaration, SymbolTable> classDeclarationScopes =
         new LinkedHashMap<>();
 
@@ -142,11 +138,7 @@ public final class TypeChecker {
         SymbolTable stmtScope = scopeMap.get(stmt);
         if (stmtScope != null) {
             currentScope = stmtScope;
-            // Keep the resolver's scope pointer in sync so
-            // resolveTypeNode resolves nested class names against the
-            // scope that lexically contains the resolved annotation
-            // (ISSUE-0318 seam: a class declared inside a function body
-            // must type class-typed lets/defaults in that body).
+
             nameResolver.setCurrentScope(stmtScope);
         }
 
@@ -180,26 +172,9 @@ public final class TypeChecker {
     // =======================================================================
 
     private void checkClassDeclaration(ClassDeclaration cd) {
-        // The default-planning seam (ISSUE-0541): record the exact scope
-        // this declaration is checked in — the scope the planner resolves
-        // the class's defaults against.
+
         classDeclarationScopes.put(cd, currentScope);
 
-        // ISSUE-0095 rework: every class-field default expression runs
-        // through checkExpression here — the class declaration site, the
-        // point where LuaJIT evaluates the defaults table — so the
-        // typeMap carries types for every default subexpression. The JVM
-        // backend reads those types back when it emits defaults inline
-        // at each construction site (unchecked defaults left every
-        // subexpression at Type.Error: `x: int = 1 + 2` mis-typed as
-        // E6000 "ADD on error and error", and a default containing a
-        // null-typed call emitted `wrap(noise())` — an artifact javac
-        // rejects after the CLI reported success). Default type
-        // mismatches become real E3001 diagnostics (the F9 code)
-        // instead of silent miscompiles. Checking at the declaration —
-        // not at each construction site — matches LuaJIT's
-        // declaration-site defaults-table evaluation and records each
-        // default exactly once.
         for (ClassField cf : cd.fields()) {
             if (cf.defaultExpr().isEmpty()) continue;
             ExpressionNode def = cf.defaultExpr().get();
@@ -975,15 +950,7 @@ public final class TypeChecker {
             boolean nullableVsNull = isNullableOf(leftType, rightType)
                 || isNullableOf(rightType, leftType);
             if (equalTypes || nullableVsNull) {
-                // Bytes equality admission (ISSUE-0158, the
-                // binary-comparison-selectors B-D7 gate lift): equal
-                // bytes-containing types (bytes, bytes[], bytes|null,
-                // functions/classes containing bytes) and
-                // nullable-bytes-vs-null in both directions are admitted
-                // as boolean — bytes compare by reference identity
-                // (spec-v1.2 equality semantics; the closed
-                // BYTES_EQ/BYTES_NE comparison row and the bytes
-                // descriptor carry the pair through lowering).
+
                 return Type.Boolean.INSTANCE;
             }
             error(DiagnosticCode.E3006,
@@ -1099,7 +1066,7 @@ public final class TypeChecker {
         List<Type> argTypes = new ArrayList<>();
         for (int i = 0; i < call.args().size(); i++) {
             ExpressionNode arg = call.args().get(i);
-            // Set expectedType from the corresponding parameter type, if available
+
             Type savedExpected = expectedType;
             if (paramTypesForContext != null && i < paramTypesForContext.size()) {
                 expectedType = paramTypesForContext.get(i);
@@ -1302,12 +1269,6 @@ public final class TypeChecker {
         if (arrayType == Type.Error.INSTANCE || indexType == Type.Error.INSTANCE)
             return Type.Error.INSTANCE;
 
-        // A-D10 (assignment-delete-address-chains): table index
-        // write/delete keys must have static type string (spec v1.2
-        // table writes). The F5 "allow any index type and skip further
-        // checks" skip is superseded by the static string-key gate; the
-        // read side (no write context) is E2's read-mechanics domain and
-        // is untouched here.
         if (arrayType instanceof Type.Table && assignmentTargetMode) {
             if (indexType instanceof Type.String) {
                 return Type.Table.INSTANCE;

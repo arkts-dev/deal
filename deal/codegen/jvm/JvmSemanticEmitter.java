@@ -48,42 +48,6 @@ import java.util.Objects;
 import static deal.codegen.SemanticEmitterShared.descriptorText;
 import static deal.codegen.SemanticEmitterShared.staticKind;
 
-/**
- * The shared JVM emitter of the decomposition-tail integration
- * verification (ISSUE-0410): emits a real Java artifact from the
- * validated {@link LoweredModuleUnit} + {@link StructuredBodyTable} over
- * the EVALUATION_ORDER op set (binary-comparison-selectors B-D6;
- * control-flow-structures C-D9; assignment-delete-address-chains A-D8):
- *
- * <ul>
- *   <li><b>Chains:</b> every chain child's result is materialized into a
- *       fresh local in payload order before the next child executes; the
- *       bounds check runs only from the boundary child's projection;
- *       receiver/key/RHS expressions are never re-emitted; the retained
- *       Lua {@code emitAssignment} double-evaluation shape never
- *       appears.</li>
- *   <li><b>Comparisons:</b> ints via primitive comparison; number EQ via
- *       IEEE {@code ==} (never {@code Double.compare}) and orderings via
- *       {@code <}/{@code <=}/{@code >}/{@code >=} predicates (NaN false);
- *       string order via code point comparison (never
- *       {@code String.compareTo}); reference identity via {@code ==}
- *       (never {@code equals()}).</li>
- *   <li><b>Control flow:</b> no speculative execution; condition ops
- *       emitted inside the loop structure and re-evaluated per
- *       iteration; the {@code FOR_EACH} iterable materialized into a
- *       local before the loop; the short-circuited block behind a guard;
- *       FOR's continue landing before the update; block code generated
- *       per the {@code StructuredBodyTable} membership; catches limited
- *       to DEAL errors ({@code DealError} — infrastructure failures are
- *       never caught or reified).</li>
- * </ul>
- *
- * <p>The artifact publishes its execution report on the dedicated trace
- * channel (stderr) through the
- * {@link deal.semantic.SemanticTraceProtocol} line grammar via
- * {@link JvmRuntime} — byte-identical to the semantic oracle's report —
- * and writes real console effect bytes to stdout.</p>
- */
 public final class JvmSemanticEmitter {
 
     private JvmSemanticEmitter() {
@@ -114,10 +78,6 @@ public final class JvmSemanticEmitter {
      * parent. Single-unit sessions are the singleton closure of the same
      * machinery.
      *
-     * @param project    the validated executable closure; non-null
-     * @param tables     each module's block-membership table; non-null
-     * @param registries each module's class-factory registry; non-null
-     * @return the combined artifact
      */
     public static EmissionResult emitProject(ExecutableLoweredProject project,
                                              Map<ModuleId, StructuredBodyTable> tables,
@@ -128,30 +88,6 @@ public final class JvmSemanticEmitter {
         return new Session(project, tables, registries, true, null, null).emit();
     }
 
-    /**
-     * Emits the combined trace artifact of a validated executable
-     * project with the compile's host declaration surface (ISSUE-0651;
-     * the differential drive of the sync host call realization): the
-     * trace-mode project session of {@link #emitProject} additionally
-     * carries the JVM host ABI emission surface, so a
-     * {@code MODULE_IMPORT(HOST)} emits its module load entry and a host
-     * {@code CALL}/{@code CALLBACK_INVOKE} arm resolves the emitted
-     * per-export wrapper — the oracle-agreement drive (“the oracle
-     * matches event-for-event in trace mode”) then compares one event
-     * stream from the oracle and both targets. The trace session keeps
-     * the shared conformance class name (the {@code $DealRt} scope's
-     * bridges delegate to {@code __hostProjectArg}/{@code __hostToDeal}
-     * of it).
-     *
-     * @param project            the validated executable closure; non-null
-     * @param tables             each module's block-membership table;
-     *                           non-null
-     * @param registries         each module's class-factory registry;
-     *                           non-null
-     * @param declarationSurface the declaration surface covering every
-     *                           declaration import of the compile; non-null
-     * @return the emitted combined trace artifact
-     */
     public static EmissionResult emitProject(ExecutableLoweredProject project,
                                              Map<ModuleId, StructuredBodyTable> tables,
                                              Map<ModuleId, ClassFactoryRegistry> registries,
@@ -165,43 +101,6 @@ public final class JvmSemanticEmitter {
             declarationSurface).emit();
     }
 
-    /**
-     * Emits the production JVM project artifact for the validated
-     * executable closure (the production counterpart of
-     * {@link #emitProject}; {@code production-project-emission-and-atomic-cutover}
-     * P1/P2/P3 and the production JVM emission contract): one
-     * {@code public final class <className>} carrying the whole closure
-     * with {@code public static void main(String[])}, the conformance
-     * trace protocol suppressed, the landed {@code DEAL_ERROR_CODE: <code>}
-     * terminal (a DEAL failure publishes the code line on stdout and
-     * exits 1; success exits 0 silently), the entry module's one
-     * {@code ENTRY_INVOKE} delegation, and the per-module export-surface
-     * registry keyed by the module identity.
-     *
-     * <p>The class name is used verbatim: the production arm passes the
-     * {@code JvmBackend.classNameFor(entryModule.path())} derivation. The
-     * entry consumes only the validated project, the per-module body
-     * tables and class-factory registries, that class name, and the
-     * compile's host declaration surface — no AST, no {@code CheckResult},
-     * no route input, and no extern-C generated-module input. The
-     * declaration surface is the single source of the host ABI emission
-     * surface this entry emits (ISSUE-0650;
-     * {@code host-module-load-and-host-call-realization} H2 and H7's
-     * carrier set): the module-keyed load entries with the declared
-     * parameter-class projection, the per-export wrappers with the declared
-     * parameter/return cells, the {@code <C>_defaults} captures, and the
-     * synthesized {@code $DealRt} host-record and host-carrier scope.</p>
-     *
-     * @param project            the validated executable closure; non-null
-     * @param tables             each module's block-membership table;
-     *                           non-null
-     * @param registries         each module's class-factory registry;
-     *                           non-null
-     * @param className          the entry class name, used verbatim; non-null
-     * @param declarationSurface the declaration surface covering every
-     *                           declaration import of the compile; non-null
-     * @return the emitted production project artifact
-     */
     public static EmissionResult emitProductionProject(ExecutableLoweredProject project,
                                                        Map<ModuleId, StructuredBodyTable> tables,
                                                        Map<ModuleId, ClassFactoryRegistry> registries,
@@ -217,21 +116,6 @@ public final class JvmSemanticEmitter {
             declarationSurface).emit();
     }
 
-    /**
-     * Emits the production JVM module artifact for the validated unit
-     * (ISSUE-0239 E10): the conformance trace protocol is suppressed, a
-     * DEAL failure publishes the retained {@code DEAL_ERROR_CODE: <code>}
-     * line on stdout and exits 1, and the {@code ENTRY_INVOKE} delegation
-     * executes only for the entry module. The class name is the retained
-     * backend's derivation ({@code JvmBackend.classNameFor(modulePath)}),
-     * so the emitted artifact set keeps the retained layout.
-     *
-     * @param unit        the validated lowered module unit; non-null
-     * @param table       the unit's produced block-membership table; non-null
-     * @param entryModule whether this module is the selected entry module
-     * @param className   the retained-layout class name of the artifact
-     * @return the emitted production artifact
-     */
     public static EmissionResult emitProductionModule(LoweredModuleUnit unit,
                                                       StructuredBodyTable table,
                                                       boolean entryModule,
@@ -269,9 +153,6 @@ public final class JvmSemanticEmitter {
      * projection, and every other reference carrier is the production value
      * itself.
      *
-     * @param declaredReturn the declared position's type; non-null
-     * @param expression     the Java expression holding the object-held value; non-null
-     * @return the Java expression holding the production value carrier; non-null
      */
     static String checkedResultOf(Type declaredReturn, String expression) {
         Type inner = declaredReturn instanceof Type.Nullable nullable
@@ -313,9 +194,6 @@ public final class JvmSemanticEmitter {
      * array/function returns are already production values, and a nullable
      * position keeps the language null.
      *
-     * @param declaredReturn the declared position's type; non-null
-     * @param expression     the Java expression holding the host-facing value; non-null
-     * @return the Java expression holding the production value carrier; non-null
      */
     static String productionValueOf(Type declaredReturn, String expression) {
         Type inner = declaredReturn instanceof Type.Nullable nullable
@@ -358,12 +236,7 @@ public final class JvmSemanticEmitter {
         /** The selected entry module runs the ENTRY_INVOKE delegation. */
         final boolean entryModule;
         final String className;
-        /**
-         * The JVM host ABI emission surface of the production project
-         * session (ISSUE-0650): non-null exactly when the session is the
-         * production project entry and the closure imports a host
-         * declaration module.
-         */
+
         final JvmHostAbiEmission hostAbi;
 
         Session(LoweredModuleUnit unit, StructuredBodyTable table) {
@@ -384,14 +257,7 @@ public final class JvmSemanticEmitter {
             } else {
                 this.className = sharedClassName(unit.moduleId().path());
             }
-            // The seam-only host ABI (the project session's rule, applied to
-            // one unit): a unit whose op walk carries host-boundary cells of
-            // its own (the DEAL_TO_HOST/HOST_PARAMETER/HOST_TO_DEAL/
-            // HOST_SYNC_RETURN family — a dynamic call's recorded return
-            // cells, a stdlib export read's host cells) emits checks the host
-            // seam realizes, so the artifact compiles with the emitted seam.
-            // A unit carrying a host import keeps the landed null (its
-            // declaration surface is the production project session's).
+
             this.hostAbi = !unitHasHostImports(unit)
                     && unitHasHostCellBoundaries(unit)
                 ? new JvmHostAbiEmission(java.util.List.of(), this.className)
@@ -481,14 +347,6 @@ public final class JvmSemanticEmitter {
             this(project, tables, registries, trace, className, null);
         }
 
-        /**
-         * The project-mode session of the production project entry (and,
-         * since ISSUE-0651, of the host-aware trace project entry): the
-         * combined closure plus the compile's host declaration surface
-         * (the JVM host ABI emission surface). A session without the
-         * surface carries no host ABI (the unit sessions and the
-         * host-free trace project session).
-         */
         Session(ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
                 Map<ModuleId, ClassFactoryRegistry> registries, boolean trace,
                 String className, HostDeclarationSurface hostSurface) {
@@ -498,24 +356,12 @@ public final class JvmSemanticEmitter {
                 throw new IllegalArgumentException(
                     "the entry module is not in the executable closure");
             }
-            // The artifact class name is resolved before the host ABI
-            // construction: the emitted $DealRt scope's bridges delegate
-            // to the artifact class's crossing helpers, so a trace-mode
-            // project session (the shared conformance name) carries the
-            // resolved name too (ISSUE-0651).
+
             String resolvedClassName = className != null ? className
                 : sharedClassName(project.modules().containsKey(project.entryModule())
                     ? project.modules().get(project.entryModule()).moduleId().path()
                     : project.entryModule().path());
-            // The host ABI emission surface: the compile's declaration surface
-            // when the session carries one, and — since ISSUE-0678 — a
-            // seam-only surface for a closure whose op walk carries
-            // host-boundary cells of its own (the
-            // DEAL_TO_HOST/HOST_PARAMETER/HOST_TO_DEAL/HOST_SYNC_RETURN family):
-            // a spec-stdlib declared-function export read called as a value
-            // carries that family (K2) without any host import, and its emitted
-            // checks are the seam's. A session with host imports keeps its
-            // landed surface (or its landed null: the scenario-seam sessions).
+
             this.hostAbi = hostSurface != null
                 ? new JvmHostAbiEmission(JvmHostAbiEmission.collect(project, hostSurface),
                     resolvedClassName)
@@ -668,22 +514,13 @@ public final class JvmSemanticEmitter {
             // (the compiled fixture runners reference the field).
             out.append("  static final java.util.LinkedHashMap<String, "
                 + "JvmRuntime.Table> EXPORT_SURFACES = JvmRuntime.EXPORT_SURFACES;\n");
-            // The program-scoped active-function markers of the re-entrant
-            // invocation-state save (ISSUE-0654): hosted by the runtime so
-            // the per-unit classes of one program share them.
+
             out.append("  static final java.util.HashSet<Long> __bodyActive = "
                 + "JvmRuntime.BODY_ACTIVE;\n");
             out.append("\n  static JvmRuntime.Table exportSurface(String module) {\n");
             out.append("    return JvmRuntime.exportSurface(module);\n");
             out.append("  }\n");
-            // The dynamic dispatch's function-id -> owning-module
-            // resolution (ISSUE-0658;
-            // dynamic-call-shape-production-and-emission Y6): a generated
-            // lookup over the closure's function ids, so the DEAL_BODY
-            // class path establishes the callee's module before invoking
-            // the resolved carrier's own invoker. A function id the
-            // closure does not carry resolves null and the dynamic call
-            // fails closed at its origin.
+
             out.append("\n  /**\n   * The owning module path of one lowered function id of this\n"
                 + "   * closure, or null for an id outside the closure.\n   */\n");
             out.append("  static String dealModuleOfFunction(String fid) {\n");
@@ -739,9 +576,7 @@ public final class JvmSemanticEmitter {
             for (String field : fields) {
                 out.append("  static Object ").append(field).append(";\n");
             }
-            // The host ABI surface (ISSUE-0650): the module-keyed load and
-            // binding fields, the per-module load entries, the per-export
-            // wrappers, and the emitted boundary-check seam.
+
             if (hostAbi != null) {
                 hostAbi.emitClassMembers(out);
             }
@@ -786,13 +621,7 @@ public final class JvmSemanticEmitter {
             // slots plus boolean presence flags, tagged with the
             // canonical class identity.
             emitClassCarriers();
-            // The per-class JSON plans (E7/K-D8/K-D10): one plan per class
-            // layout of the resolution context — declaration-order fields
-            // with descriptor, optionality, static result kind, and the
-            // per-field CLASS_DEFAULT child metadata the JSON_FROM_CLASS
-            // walk consumes (the lowerer's per-site JsonDefaultChildTable
-            // entry, derived from the unit: one CLASS_DEFAULT op per
-            // (classId, field)).
+
             for (ClassLayout layout : classLayouts.values()) {
                 emitJsonPlan(layout);
             }
@@ -813,7 +642,7 @@ public final class JvmSemanticEmitter {
             emitStdlibSurfacePopulation(2);
             emitProjectWalk(2);
             out.append("  }\n");
-            // main.
+
             out.append("  public static void main(String[] args) {\n");
             if (trace) {
                 out.append("    try {\n");
@@ -848,17 +677,7 @@ public final class JvmSemanticEmitter {
                     }
                 }
             }
-            // The host-driven async-entry dispatch entries (async
-            // EXTERNAL_ENTRY): one entry per recorded async export of
-            // every closure unit — the scenario host adapter's invocation
-            // surface (the E6 dispatch-entry pattern). The entry creates
-            // the callee's canonical task; the drive flag makes the
-            // top-level scenario invocation drain it and return the
-            // completion, while a cross-module caller passes the drive
-            // flag false (its AWAIT drains). The per-closure loop is the
-            // same shape the CALLBACK_INVOKE entries above use: a
-            // non-entry module's async export is reachable in the one
-            // artifact (ISSUE-0655, cross-module-call-realization X2).
+
             for (LoweredModuleUnit moduleUnit : units.values()) {
                 for (SemanticOp op : moduleUnit.ops()) {
                     if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
@@ -868,10 +687,7 @@ public final class JvmSemanticEmitter {
                 }
             }
             out.append("}\n");
-            // The synthesized top-level $DealRt host-record and host-carrier
-            // scope (ISSUE-0650): the deployed host implementations compile
-            // against these classes unchanged. Emitted exactly for a
-            // production project session carrying a host import.
+
             if (hostAbi != null) {
                 hostAbi.emitScope(out);
             }
@@ -899,22 +715,6 @@ public final class JvmSemanticEmitter {
             }
         }
 
-        /**
-         * MODULE_INIT (E8; ISSUE-0590): the emitted module envelope — the
-         * op's START, the payload init block (the {@code MODULE_IMPORT}/
-         * {@code EXPORT_*}/entry-delegation ops nested under it) inside a
-         * try so an uncaught DEAL failure publishes the op's single
-         * FAILURE terminal recording {@code FAILED(error)} (no export
-         * publication) before the error propagates to the retained
-         * terminal, and the SUCCESS terminal publishing
-         * {@code state:INITIALIZED}. The closed
-         * {@code UNINITIALIZED -> INITIALIZING -> INITIALIZED} state
-         * machine runs through {@link JvmRuntime} in both modes (the
-         * production mode's event surface is disabled): a re-execution of
-         * an initialized module publishes the state without re-running
-         * the block; a re-entrant or failed re-execution is a producer
-         * defect, never a silent re-run.
-         */
         private void emitModuleInit(SemanticOp op, int indent) {
             KindPayload.ModuleInitPayload payload =
                 (KindPayload.ModuleInitPayload) op.payload();
@@ -1135,7 +935,6 @@ public final class JvmSemanticEmitter {
                 .append("());\n");
         }
 
-
         /** The JSON plan descriptor text (the walk's closed kind grammar). */
         private static String jsonDescriptorText(RuntimeDescriptor descriptor) {
             if (descriptor instanceof RuntimeDescriptor.Nullable nullable) {
@@ -1162,16 +961,6 @@ public final class JvmSemanticEmitter {
             };
         }
 
-        /**
-         * JSON_FROM_CLASS (E7/K-D8): the shared walk
-         * ({@link JvmJson#fromClass}) over the class's emitted plan — the
-         * payload's JSON text operand resolves exactly once; the walk runs
-         * the per-site CLASS_DEFAULT children (their own START/terminal
-         * events) for omitted required-present defaulted fields and
-         * publishes the tagged instance, or language null on any
-         * syntax/extra-key/decode/default/validation failure (the
-         * {@code JSON_FROM_NULL} projection).
-         */
         private void emitJsonFromClass(SemanticOp op, int indent) {
             KindPayload.JsonFromClassPayload payload =
                 (KindPayload.JsonFromClassPayload) op.payload();
@@ -1183,15 +972,6 @@ public final class JvmSemanticEmitter {
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
         }
 
-        /**
-         * JSON_TO_CLASS (E7/K-D10): the shared walk over the class's
-         * emitted plan — the root identity check, the declaration-order
-         * field serialization, and the first failing position's
-         * {@code JSON_TO_ERROR} projection (E8001
-         * {@code value at {fieldPath} is not JSON serializable: {actual}}
-         * at the op origin, no cause, active frames); success publishes
-         * the deterministic RFC-8259 text.
-         */
         private void emitJsonToClass(SemanticOp op, int indent) {
             KindPayload.JsonToClassPayload payload =
                 (KindPayload.JsonToClassPayload) op.payload();
@@ -1683,8 +1463,6 @@ public final class JvmSemanticEmitter {
             emitSuccessEvent(op, op.kind().name(), "null, null", indent);
         }
 
-
-
         /** Emits the transfer closures of the ancestors down to (and including)
          *  the target loop; stops at an enclosing TRY_CATCH when requested
          *  (its dispatch closes it). */
@@ -1942,13 +1720,7 @@ public final class JvmSemanticEmitter {
                     .append(boundary.opId().id()).append(";\n");
                 out.append(indent(indent)).append("  try {\n");
                 if (defersContextualCheck(boundaryPayload.descriptor())) {
-                    // A composite contextual read (ISSUE-0651): the
-                    // function/array carriers pass through unchanged — the
-                    // consuming declared cell carries the pinned E8010
-                    // projection at its own origin, exactly the oracle's
-                    // identical deferral and the LuaJIT arm's identical
-                    // condition. The SUCCESS atom renders the value's own
-                    // kind (the oracle's atomOf).
+
                     out.append(indent(indent)).append("    __mr_")
                         .append(boundary.opId().id()).append(" = ")
                         .append(target).append(";\n");
@@ -2013,7 +1785,6 @@ public final class JvmSemanticEmitter {
                 .append("), null);\n");
         }
 
-
         /**
          * OPTIONAL_READ: the internal missing pre-maps to language null
          * before the present branch is validated (the closed table's
@@ -2064,20 +1835,7 @@ public final class JvmSemanticEmitter {
                     .append(", ")
                     .append(javaString(staticKind(boundaryPayload.descriptor())))
                     .append(")), null, null);\n");
-                // The present branch is validated per the closed table's
-                // optional-read rule; the boundary failure publishes the
-                // boundary FAILURE and the op FAILURE events with the
-                // boundary origin (a wrong present kind fails the
-                // differential verdict even with coincidental output).
-                // A composite contextual position (ISSUE-0651) — the
-                // function and array carriers — passes through: the
-                // consuming declared cell carries the pinned E8010
-                // projection at its own origin (the corpus pins the
-                // call-origin failure for a wrong-kind argument whose
-                // contextual read sits on the argument expression),
-                // exactly the oracle's identical deferral and the LuaJIT
-                // arm's identical condition. Every other descriptor keeps
-                // the strict row.
+
                 String checkedName = "__orb_" + boundary.opId().id();
                 String errorName = "__obe_" + boundary.opId().id();
                 String rebuiltName = "__obe2_" + boundary.opId().id();
@@ -2138,11 +1896,6 @@ public final class JvmSemanticEmitter {
             return inner instanceof RuntimeDescriptor.Array;
         }
 
-        /**
-         * Whether one boundary descriptor is a composite value type whose
-         * contextual read defers its shape check to the consuming declared
-         * cell (ISSUE-0651: the function and array carriers).
-         */
         private boolean defersContextualCheck(RuntimeDescriptor descriptor) {
             // The composite carriers (functions, arrays, and bytes — a bytes
             // contextual read defers its shape check to the consuming
@@ -2187,16 +1940,6 @@ public final class JvmSemanticEmitter {
         // re-evaluated source expression.
         // =====================================================================
 
-        /**
-         * FIELD_READ (K-D6): the nominal receiver boundary
-         * ({@code UNTYPED_CLASS_INPUT}) runs first — a null receiver or a
-         * foreign class identity fails its canonical E8001 projection —
-         * then the presence-aware read (a missing field pre-maps to
-         * language null; present null is the carrier's null value seen
-         * through a true presence flag, never conflated with missing)
-         * goes through the {@code OPTIONAL_FIELD_READ} boundary; SUCCESS
-         * publishes the boundary-checked value.
-         */
         private void emitFieldRead(SemanticOp op, int indent) {
             KindPayload.FieldReadPayload payload =
                 (KindPayload.FieldReadPayload) op.payload();
@@ -2220,15 +1963,6 @@ public final class JvmSemanticEmitter {
                 (RuntimeDescriptor) op.resultType(), indent);
         }
 
-        /**
-         * FIELD_WRITE (K-D6, the ASSIGN chain's commit child): the
-         * receiver boundary runs over the resolved receiver slot, then the
-         * field boundary ({@code CLASS_FIELD_ASSIGNMENT}) over the
-         * resolved stored value — the store commits only after both pass
-         * (a failed boundary commits nothing), and the instance carries
-         * the boundary-published value in the named field with every
-         * other presence state unchanged.
-         */
         private void emitFieldWrite(SemanticOp op, int indent) {
             KindPayload.FieldWritePayload payload =
                 (KindPayload.FieldWritePayload) op.payload();
@@ -2248,13 +1982,6 @@ public final class JvmSemanticEmitter {
             emitPlainSuccess(op, indent);
         }
 
-        /**
-         * FIELD_DELETE (K-D6, the DELETE chain's commit child): the
-         * receiver boundary runs over the resolved receiver slot, then the
-         * named field's presence and value are cleared — deleting an
-         * already-missing field is a no-op SUCCESS, and every other field
-         * state is unchanged.
-         */
         private void emitFieldDelete(SemanticOp op, int indent) {
             KindPayload.FieldDeletePayload payload =
                 (KindPayload.FieldDeletePayload) op.payload();
@@ -2268,7 +1995,6 @@ public final class JvmSemanticEmitter {
                 .append(javaString(payload.field())).append(");\n");
             emitPlainSuccess(op, indent);
         }
-
 
         /**
          * One field-op boundary child: the START carries the input's
@@ -2577,12 +2303,7 @@ public final class JvmSemanticEmitter {
                 (KindPayload.BindingAllocPayload) op.payload();
             emitStart(op, indent);
             if (isCatchBinding(payload.binding())) {
-                // The catch binding's ALLOC sits at the catch block's entry
-                // and its pinned initializing write is the TRY_CATCH arm's
-                // catch-entry assignment, which runs before the catch block's
-                // ops (the catch binding's cell carries the reified Error
-                // value — ISSUE-0619's catch reification). A cell reset here
-                // would clobber the caught value.
+
                 emitPlainSuccess(op, indent);
                 return;
             }
@@ -2594,7 +2315,6 @@ public final class JvmSemanticEmitter {
             }
             emitPlainSuccess(op, indent);
         }
-
 
         private void emitBindingInit(SemanticOp op, int indent) {
             KindPayload.BindingInitPayload payload =
@@ -2617,25 +2337,10 @@ public final class JvmSemanticEmitter {
             emitPlainSuccess(op, indent);
         }
 
-
-        /**
-         * The memoized intrinsic carrier expression of one value identity
-         * (J2): the closed {@code IntrinsicFunction} registration of the
-         * closure resolves the kind — never a spelling — and every op
-         * result publishing the identity is an identity-preserving
-         * {@code BINDING_LOAD} of the seed {@code BINDING_INIT}'s own cell
-         * (or nothing publishes it, the seed's producer-less identity), so
-         * an identity-preserving load of the seeded binding never replaces
-         * the memoized carrier with a slot read. {@code null} when the
-         * identity is not a registered intrinsic: every other value keeps
-         * the landed {@code hasProducer} behavior (a closure identity has
-         * its real creation op).
-         */
         private String intrinsicCarrierExpr(ValueId valueId) {
             IntrinsicKind kind = intrinsicKindOf(valueId);
             return kind == null ? null : intrinsicAccessor(kind);
         }
-
 
         /**
          * The memoized intrinsic carrier expression of one identity whose
@@ -2663,16 +2368,6 @@ public final class JvmSemanticEmitter {
             return null;
         }
 
-
-        /**
-         * The deterministic placeholder expression of a site whose identity
-         * resolves no intrinsic registration (the landed residual arm): a
-         * fresh, per-site value carrying the landed opaque export view — the
-         * oracle's {@code ()->number} projection — and the real carrier's
-         * interface, so the landed function row admits it exactly as the
-         * oracle's view does. Never the removed marker: the placeholder is a
-         * real carrier surface.
-         */
         private static String exportPlaceholderCarrier() {
             return "JvmRuntime.intrinsicExport()";
         }
@@ -2803,12 +2498,6 @@ public final class JvmSemanticEmitter {
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
         }
 
-        /**
-         * The carrier expression of one adapter VALUE source: the memoized
-         * intrinsic carrier when the identity carries the seeded
-         * {@code IntrinsicFunction} registration (J2), the operand's own
-         * slot for a produced identity, and the landed placeholder otherwise.
-         */
         private String adaptValueExpr(AdaptSourceRef.Value value) {
             String sourceExpr = intrinsicCarrierExpr(value.value());
             if (sourceExpr == null) {
@@ -2921,7 +2610,6 @@ public final class JvmSemanticEmitter {
             emitResultSuccess(op, slot((ValueId) op.result()),
                 producerResultType(op.result()), indent);
         }
-
 
         private void emitDelete(SemanticOp op, int indent) {
             KindPayload.DeletePayload payload = (KindPayload.DeletePayload) op.payload();
@@ -3056,8 +2744,6 @@ public final class JvmSemanticEmitter {
             }
         }
 
-
-
         /** The chain's normalize-slot local (found among its children). */
         private String chainSlotExpr(SemanticOp chain) {
             for (OpId childId : chainChildOps(chain)) {
@@ -3096,13 +2782,7 @@ public final class JvmSemanticEmitter {
             KindPayload.CallPayload payload = (KindPayload.CallPayload) op.payload();
             FunctionExecutionBinding binding = callBinding(payload);
             emitStart(op, indent);
-            // The host arms (ISSUE-0651; host-module-load-and-host-call-
-            // realization H3 and the sync host call contract): the loaded
-            // surface entry is invoked through the emitted per-export
-            // wrapper and the boundary children's events surround the
-            // checks. The wrapper is the single check authority for the
-            // host cells: the arm runs no generic descriptor-kind check on
-            // the DEAL_TO_HOST/HOST_TO_DEAL cells.
+
             if (binding instanceof FunctionExecutionBinding.HostFunction host) {
                 emitHostCall(op, payload, host.hostModuleId(), host.exportName(), indent);
                 return;
@@ -3111,12 +2791,7 @@ public final class JvmSemanticEmitter {
                 emitHostValueCall(op, payload, hostValue, indent);
                 return;
             }
-            // The conversion intrinsic's value call (ISSUE-0679; design source
-            // {@code conversion-intrinsic-function-values} J3/J4): the seeded
-            // identity's registration is a boundary-shaped callable, so the
-            // indirect arm runs the recorded host cell family and the one
-            // conversion ladder with the invoking CALL op's own context and
-            // kind, exactly the landed statically classified rows' discipline.
+
             if (binding instanceof FunctionExecutionBinding.IntrinsicFunction intrinsic) {
                 emitIntrinsicValueCall(op, payload, intrinsic, indent);
                 return;
@@ -3157,9 +2832,7 @@ public final class JvmSemanticEmitter {
                     indent);
             }
             if (payload.callee() instanceof KindPayload.CallCallee.Dynamic dynamic) {
-                // The dynamic dispatch (ISSUE-0658): the recorded parameter
-                // cells above are the class-independent family; the
-                // carrier's own class tag selects the path.
+
                 emitDynamicCall(op, payload, dynamic, indent);
                 emitResultSuccess(op, slot((ValueId) op.result()),
                     (RuntimeDescriptor) op.resultType(), indent);
@@ -3237,19 +2910,7 @@ public final class JvmSemanticEmitter {
                         .append(" = ").append(resultLocal).append(";\n");
                 }
                 case FunctionExecutionBinding.AdapterBinding adapter -> {
-                    // The D15 invocation protocol: resolve the source per
-                    // the recorded capture mode, the source-signature
-                    // check (E8010 at this CALL's origin), then the
-                    // source invocation with the leading M arguments
-                    // only — every N target-signature parameter boundary
-                    // already ran above. The adapter protocol pushes the
-                    // source body's frame itself; the identical
-                    // completion error propagates unchanged. An adapter
-                    // whose recorded source is the seeded intrinsic
-                    // identity runs the same order at this call site with
-                    // the conversion ladder as its source invocation
-                    // (ISSUE-0680; design source
-                    // {@code conversion-intrinsic-function-values} J5).
+
                     if (adapterIntrinsicKind(adapter) != null) {
                         emitAdapterOverIntrinsicRun(op, payload, adapter, indent);
                         break;
@@ -3265,15 +2926,7 @@ public final class JvmSemanticEmitter {
                         args.append(slot(((KindPayload.BoundaryPayload) boundary.payload())
                             .input()));
                     }
-                    // The resolved source's own module carries the events of
-                    // its body (the oracle's owning-unit body run): a
-                    // cross-module adapted source reports its own module,
-                    // never the invoking module's tag, so the frame's body
-                    // resolves like a dynamic DEAL-body invocation's. A
-                    // REEVALUATE_THUNK source is only resolved by the
-                    // adapter protocol itself (a pre-resolution would run
-                    // the thunk twice), so its crossing keeps the landed
-                    // single evaluation.
+
                     String adapterSuffix = String.valueOf(op.opId().id());
                     boolean switchAdapterModule =
                         adapter.captureMode() != deal.semantic.ir.CaptureMode
@@ -3333,20 +2986,6 @@ public final class JvmSemanticEmitter {
                 (RuntimeDescriptor) op.resultType(), indent);
         }
 
-        /**
-         * The {@code ExternalFunction(SHARED_BODY)} CALL arm (ISSUE-0654;
-         * {@code cross-module-call-realization} X1/X4/X5 and the
-         * cross-module sync call contract): the callee unit's recorded
-         * {@code EXTERNAL_ENTRY} runs inside the one artifact under the
-         * callee module's context (the {@code MODULE} literal and the
-         * runtime's own module context), with the entry's trace events
-         * parented to the caller's {@code CALL} op, and the callee body's
-         * {@code RETURN} runs the callee's single {@code EXTERNAL_RETURN}
-         * boundary. The caller publishes the returned value without
-         * re-checking (its own {@code EXTERNAL_PARAMETER} cells ran
-         * exactly once above); the module context is restored on success
-         * and on failure.
-         */
         private void emitExternalCall(SemanticOp op, KindPayload.CallPayload payload,
                 FunctionExecutionBinding.ExternalFunction external, int indent) {
             if (external.executionOwner()
@@ -3477,8 +3116,6 @@ public final class JvmSemanticEmitter {
                 .append(" = ").append(resultLocal).append(";\n");
         }
 
-
-
         /**
          * The re-entrant invocation's private-state save, or {@code null}
          * when the callee body has no private state. Only a nested
@@ -3532,7 +3169,6 @@ public final class JvmSemanticEmitter {
         private record StateSlot(String previous, String saved) {
         }
 
-
         /**
          * The registered execution binding of one allocation identity. The
          * project session's units share one identity space (every semantic
@@ -3553,15 +3189,6 @@ public final class JvmSemanticEmitter {
             return null;
         }
 
-        /**
-         * The statically resolved execution binding of one CALL: the
-         * inline Static binding or the unit's registered binding of an
-         * Indirect callee identity (the same registration the semantic
-         * oracle re-resolves at execution). A Dynamic callee is the
-         * runtime-resolution slice (ISSUE-0531/ISSUE-0658): its execution
-         * class is read from the resolved carrier at execution and the
-         * emission-time binding is null ({@link #emitDynamicCall}).
-         */
         private FunctionExecutionBinding callBinding(KindPayload.CallPayload payload) {
             FunctionExecutionBinding binding = switch (payload.callee()) {
                 case KindPayload.CallCallee.Static staticCallee -> staticCallee.binding();
@@ -3577,38 +3204,6 @@ public final class JvmSemanticEmitter {
             return binding;
         }
 
-        /**
-         * The dynamic CALL arm (ISSUE-0658;
-         * {@code dynamic-call-shape-production-and-emission} Y2/Y3/Y5/Y6
-         * and the dynamic dispatch contract): the recorded parameter
-         * cells ran once, left to right, before the dispatch (the
-         * class-independent family); the carrier's own class tag then
-         * selects exactly one class path — never the checked descriptor,
-         * the callee spelling, or an argument value.
-         *
-         * <p>{@code DEAL_BODY} resolves the carrier's function id to its
-         * owning module through the emitted
-         * {@code dealModuleOfFunction} lookup (built over the closure's
-         * function ids), pushes the callee frame, switches the module
-         * context, and invokes the carrier's own invoker ({@code fn});
-         * {@code ADAPTER} runs the landed D15 sequence (the source
-         * value's own tag, the source-signature check, the leading-M
-         * argument projection) and executes the cell the source class
-         * selects — a DEAL-body source runs that body's own
-         * {@code RETURN} cell; {@code HOST} invokes the loaded surface
-         * entry carrier through its own invoker and runs the recorded
-         * {@code HOST_TO_DEAL} + {@code HOST_SYNC_RETURN} cell of the
-         * dynamic return-boundary set.</p>
-         *
-         * <p>Every other carrier — and an adapter whose D15 source value
-         * identifies no executable class at this boundary — fails closed
-         * with the pinned E8001 {@code expected function} projection
-         * ({@code expected}/{@code actual}) at the call origin, exactly
-         * the projection the materialization-site function row produces:
-         * never a guessed path and never a silent no-op. The module
-         * context and the frame stack are restored on success and on
-         * failure.</p>
-         */
         private void emitDynamicCall(SemanticOp op, KindPayload.CallPayload payload,
                                      KindPayload.CallCallee.Dynamic callee, int indent) {
             KindPayload.DynamicReturnBoundary cells = payload.dynamicReturnBoundary();
@@ -3629,12 +3224,7 @@ public final class JvmSemanticEmitter {
             String carrier = "__dc" + id;
             String result = "__dr" + id;
             String cls = "__dk" + id;
-            // The recorded DEAL-body cell's closed form (ISSUE-0677; design
-            // source {@code function-typed-value-materialization-and-dispatch}
-            // M6): a call-owned record is executed by the invocation site on
-            // the value the resolved body returned, after the body's own
-            // RETURN ran the body's own cell; a callee-owned record is that
-            // body's own cell and runs nothing here.
+
             SemanticOp recordedDealCell = opsById.get(cells.dealBodyBoundaryOpId());
             boolean callOwnedDealCell = recordedDealCell != null
                 && callOwnedCell(recordedDealCell);
@@ -3676,10 +3266,7 @@ public final class JvmSemanticEmitter {
                 emitRecordedCellRun(op, recordedDealCell, result, "__cr" + id,
                     indent + 1);
             }
-            // ADAPTER: the landed D15 sequence; the source class selects
-            // the return cell (a DEAL-body source runs its own body's
-            // RETURN cell, and a call-owned recorded cell then runs at the
-            // invocation site).
+
             out.append(indent(indent)).append("} else if (\"ADAPTER\".equals(")
                 .append(cls).append(")) {\n");
             out.append(indent(indent + 1)).append("JvmRuntime.AdapterValue __ad")
@@ -3692,14 +3279,7 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent + 1)).append("if (__src").append(id)
                 .append(" instanceof JvmRuntime.Intrinsic __ii").append(id)
                 .append(") {\n");
-            // The runtime adapter branch's intrinsic source (ISSUE-0680;
-            // design source {@code conversion-intrinsic-function-values} J5):
-            // the resolved source value is the memoized intrinsic carrier, so
-            // the same D15 sequence runs here — the leading-M recorded
-            // argument through the one conversion ladder with the invoking
-            // CALL op's context and kind, then the recorded HOST_TO_DEAL +
-            // HOST_SYNC_RETURN cell of the dynamic set (the source class is
-            // HOST). Non-intrinsic source values keep the landed arms.
+
             if (payload.parameterBoundaryOpIds().isEmpty()) {
                 // The leading-M projection of the runtime intrinsic source has
                 // no argument to convert (the intrinsic declares one
@@ -3807,26 +3387,6 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent)).append("}\n");
         }
 
-        /**
-         * The dynamic dispatch's HOST row: the carrier's own HOST sub-class
-         * decides the path (never the checked descriptor). The conversion
-         * intrinsic ({@code JvmRuntime.Intrinsic}) runs the closed kind's
-         * conversion ladder with the invoking CALL op's own context and kind
-         * label — one algorithm authority with the direct
-         * {@code INTRINSIC_CALL} arm (ISSUE-0679; design source
-         * {@code conversion-intrinsic-function-values} J3/J4). The cataloged
-         * stdlib callable ({@code StdlibFunctionValue}) runs the closed catalog
-         * row's one invoker — {@code JvmRuntime.invokeStdlibCallable} with the
-         * invoking CALL op's context (the row identity plus the op key, contract
-         * digest, parent key, origin, and the invoking op's own kind label for
-         * its FAILURE event) — one algorithm authority with the direct
-         * {@code STDLIB_CALL} arm and the read's callable. A loaded surface entry
-         * bridges the emitted per-export wrapper ({@code carrier.fn}) with the
-         * completed production values. Every sub-class then runs the recorded
-         * {@code HOST_TO_DEAL} + {@code HOST_SYNC_RETURN} cell at the call origin
-         * (the oracle's {@code invokeResolvedHostRequest} followed by
-         * {@code runBoundaryChild}).
-         */
         private void emitDynamicHostRow(SemanticOp op, KindPayload.CallPayload payload,
                                         SemanticOp returnBoundary, String carrier,
                                         String result, String id, int indent) {
@@ -3840,17 +3400,7 @@ public final class JvmSemanticEmitter {
             }
             String hostValue = "__dh" + id;
             out.append(indent(indent)).append("Object ").append(hostValue).append(";\n");
-            // The conversion intrinsic's HOST sub-class (ISSUE-0679; design
-            // source {@code conversion-intrinsic-function-values} J3/J4): the
-            // carrier's own kind tag selects the one conversion ladder — never
-            // a spelling, a checked descriptor, or an argument value — with
-            // the invoking CALL op's own context and kind label (the pinned
-            // conversion texts and the FAILURE event carry the invoking op),
-            // over the value the recorded class-independent parameter cells
-            // admitted. The intrinsic's declared arity is one, so a site with
-            // exactly one recorded parameter cell carries the ladder; the tag
-            // still fails closed at any other arity rather than guessing a
-            // conversion.
+
             if (payload.parameterBoundaryOpIds().size() == 1) {
                 String declaredKind = javaString(staticKind(
                     ((KindPayload.BoundaryPayload) opsById.get(
@@ -3935,24 +3485,6 @@ public final class JvmSemanticEmitter {
                 .append(";\n");
         }
 
-
-        /**
-         * The invocation site's execution of one call-owned recorded
-         * DEAL-body cell (ISSUE-0677; the oracle's {@code runBoundaryChild}
-         * over the recorded cell): the same emission the parented boundary
-         * cells use — the START event with the input's raw atom, the check
-         * under the cell's own origin, the SUCCESS terminal with the admitted
-         * value, and the cell's plus the invocation op's FAILURE events on a
-         * failure. The cell is total on the admitted value (an identical
-         * declared descriptor), so its check passes and only its boundary
-         * events are observable.
-         *
-         * @param invocation  the dynamic invocation op; non-null
-         * @param cell        the recorded call-owned cell; non-null
-         * @param valueExpr   the emitted expression holding the returned value; non-null
-         * @param checkedName the emitted local receiving the admitted value; non-null
-         * @param indent      the emitted block's indentation depth; ≥0
-         */
         private void emitRecordedCellRun(SemanticOp invocation, SemanticOp cell,
                                          String valueExpr, String checkedName, int indent) {
             emitFieldBoundaryCheck(invocation, cell, valueExpr, checkedName, indent);
@@ -3982,41 +3514,6 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent)).append("throw ").append(error).append(";\n");
         }
 
-        /**
-         * The dynamic {@code ASYNC_START} arm (ISSUE-0658; ISSUE-0678 for the
-         * asynchronous host class;
-         * {@code dynamic-call-shape-production-and-emission} Y4/Y5 and
-         * the dynamic async start contract): the recorded parameter
-         * cells ran above; a DEAL-body carrier starts the callee body
-         * task under the callee's module context with the recorded task
-         * cell (the body's own {@code RETURN} runs it) — a callee value of
-         * another unit resolves its owning module through the carrier's
-         * function id and runs its own body under that module context, the
-         * emitter twin of the oracle's owning-unit body terminal; the adapter
-         * class runs the landed D15 sequence and starts the source
-         * class's task under the source's module context with the
-         * leading-M recorded arguments (the source body task), with
-         * zero caller-side return boundaries beyond the recorded task
-         * cell — the oracle's {@code executeDynamicAdapterAsyncStart}; a
-         * loaded host surface entry (a {@code FunctionValue} with no frame id)
-         * starts the declared async export through the same host calling
-         * convention and {@code ASYNC_OPERATION_HANDLE} terminal as the static
-         * arm, with the operation handle bound to this token under the entry's
-         * declared identity (the oracle's dynamic HOST resolution; zero
-         * caller-side return cells). A shared-body/retained-ABI external
-         * function value carries no value tag at all (M4: the identity channel
-         * only), so a value-resolved external callee of another unit is the
-         * DEAL-body class above — its own body under its own module context —
-         * and the identity-channel external async link stays the landed static
-         * {@code ASYNC_START(EXTERNAL)} arm's recorded
-         * {@code ExternalAsyncLink}. A carrier of any other class fails closed
-         * here with the pinned E8001 at the start origin, as does an adapter
-         * whose D15 source value identifies no class the closed protocol
-         * resolves and a host-tagged carrier whose declared identity resolves
-         * no unique loaded surface entry. The caller records no
-         * return boundary beyond the recorded task cell, and its single
-         * {@code AWAIT} drains the token.
-         */
         private void emitDynamicAsyncStart(SemanticOp op,
                                            KindPayload.AsyncStartPayload payload,
                                            KindPayload.CallCallee.Dynamic callee,
@@ -4024,23 +3521,14 @@ public final class JvmSemanticEmitter {
                                            int indent) {
             String id = String.valueOf(op.opId().id());
             String carrier = "__dc" + id;
-            // The recorded task cell's closed form (ISSUE-0677; design
-            // source {@code function-typed-value-materialization-and-dispatch}
-            // M6): a call-owned record executes in this caller-side task
-            // wrapper before the token completes; a callee-owned record is
-            // the resolved body's own cell and runs inside the body.
+
             SemanticOp recordedTaskCell = payload.returnBoundaryOpId() == null
                 ? null : opsById.get(payload.returnBoundaryOpId());
             boolean callOwnedTaskCell = recordedTaskCell != null
                 && callOwnedCell(recordedTaskCell);
             out.append(indent(indent)).append("Object ").append(carrier)
                 .append(" = ").append(slot(callee.callee())).append(";\n");
-            // ADAPTER: the landed D15 sequence resolves the source value
-            // and checks its carried source spec; the source class then
-            // starts its own task with the leading-M recorded arguments
-            // (a DEAL-body source runs that body's own RETURN cell under
-            // its module context, with zero caller-side return
-            // boundaries).
+
             out.append(indent(indent)).append("if (").append(carrier)
                 .append(" instanceof JvmRuntime.AdapterValue) {\n");
             String adapter = "__da" + id;
@@ -4054,14 +3542,7 @@ public final class JvmSemanticEmitter {
                 .append(adapter).append("), ").append(adapter)
                 .append(".sourceSpec, ").append(javaString(originOf(op)))
                 .append(");\n");
-            // The runtime adapter branch's intrinsic source (ISSUE-0680;
-            // design source {@code conversion-intrinsic-function-values} J5):
-            // the resolved source value is the memoized intrinsic carrier, so
-            // the task is the closed DEAL_BODY task running the one conversion
-            // ladder with this op's context and kind over the leading-M
-            // recorded argument and completing immediately with the converted
-            // value; the single AWAIT runs the landed ASYNC_COMPLETION cell.
-            // Every other source value keeps the landed arms.
+
             out.append(indent(indent + 1)).append("if (").append(source)
                 .append(" instanceof JvmRuntime.Intrinsic __ii").append(id)
                 .append(") {\n");
@@ -4227,34 +3708,10 @@ public final class JvmSemanticEmitter {
             emitDynamicCarrierFailure(op, carrier, indent + 1);
             out.append(indent(indent)).append("}\n");
         }
-        /**
-         * The sync host call arm (ISSUE-0651;
-         * {@code host-module-load-and-host-call-realization} H3/H7 and the
-         * sync host call contract): every declared parameter cell runs in
-         * one-based order through the emitted host-check seam (the same
-         * rule the wrapper's own cell runs, so the pinned E8010
-         * {@code parameter {i} type mismatch} projection surfaces at the
-         * call origin), each checked value is projected into its declared
-         * host-facing carrier (H7: the per-signature function bridge, the
-         * declared element-shape array carrier), the emitted per-export
-         * wrapper is invoked with the import's origin triple, and the
-         * declared return value is projected back into the production
-         * value carriers. The wrapper is the single check authority for
-         * the host cells: this arm runs no generic descriptor-kind check
-         * on the DEAL_TO_HOST/HOST_TO_DEAL cells. A declared array
-         * parameter's host element writes are copied back into the
-         * production array only after a normal return (a failed call
-         * copies nothing back). A DEAL error the host raises propagates
-         * unchanged.
-         */
+
         private void emitHostCall(SemanticOp op, KindPayload.CallPayload payload,
                 ModuleId hostModuleId, String exportName, int indent) {
-            // The cataloged-callable sub-class (ISSUE-0678; K2): the read's own
-            // registration of a spec-stdlib declared function exports resolves
-            // the closed catalog row, so the invocation is the row's one invoker
-            // with the invoking call's own context — never a loaded surface entry
-            // and never a host responder. The recorded HOST cell family runs
-            // exactly as the landed host arm's does.
+
             StdlibFunctionCatalog.Entry catalogRow = StdlibFunctionCatalog
                 .lookup(hostModuleId.path(), exportName).orElse(null);
             if (catalogRow != null) {
@@ -4282,23 +3739,6 @@ public final class JvmSemanticEmitter {
                 indent);
         }
 
-        /**
-         * The cataloged-callable static arm: the read's own registration used as
-         * a call callee (the static/indirect arm) resolved the closed catalog
-         * row, so the declared parameter cells run through the emitted host-check
-         * seam (the landed host cell family and its pinned E8010 texts), the row's
-         * one invoker runs with the invoking call's own context, and the recorded
-         * {@code HOST_TO_DEAL} + {@code HOST_SYNC_RETURN} cell admits the result at
-         * the call origin — one algorithm authority with the direct
-         * {@code STDLIB_CALL} arm, exactly the oracle's cataloged branch of
-         * {@code invokeResolvedHostRequest}.
-         *
-         * <p>The argument domain is the recorded {@code HOST_PARAMETER} cells'
-         * checked values: the closed catalog rows declare non-nullable
-         * scalar/table parameter positions only, for which the host-facing
-         * projection is the identity — a nullable, function, or class position is
-         * a fail-closed producer defect, never a silently projected argument.</p>
-         */
         private void emitStdlibCalleeCall(SemanticOp op, KindPayload.CallPayload payload,
                 StdlibFunctionCatalog.Entry row, int indent) {
             List<String> checked = new ArrayList<>();
@@ -4365,21 +3805,6 @@ public final class JvmSemanticEmitter {
                 (RuntimeDescriptor) op.resultType(), indent);
         }
 
-        /**
-         * The conversion intrinsic's value call (ISSUE-0679; design source
-         * {@code conversion-intrinsic-function-values} J3/J4): the seeded
-         * identity's registration is a boundary-shaped callable, so the
-         * indirect arm runs exactly the recorded host cell family — one
-         * {@code DEAL_TO_HOST} + {@code HOST_PARAMETER} cell per declared
-         * parameter through the emitted host-check seam (the argument domain
-         * the cells own; a null or wrong-kind argument is a parameter-cell
-         * projection) — then the one conversion ladder
-         * ({@code JvmRuntime.intConv}/{@code numConv}) with the invoking CALL
-         * op's own context and kind label, then the recorded
-         * {@code HOST_TO_DEAL} + {@code HOST_SYNC_RETURN} cell at the call
-         * origin. One algorithm authority with the direct
-         * {@code INTRINSIC_CALL} arm, whose kind label stays its own.
-         */
         private void emitIntrinsicValueCall(SemanticOp op, KindPayload.CallPayload payload,
                 FunctionExecutionBinding.IntrinsicFunction intrinsic, int indent) {
             List<String> checked = new ArrayList<>();
@@ -4475,17 +3900,6 @@ public final class JvmSemanticEmitter {
                 (RuntimeDescriptor) op.resultType(), indent);
         }
 
-        /**
-         * The intrinsic kind of one adapter's statically fixed recorded
-         * source, or {@code null} (ISSUE-0680; design source
-         * {@code conversion-intrinsic-function-values} J5): a VALUE source
-         * operand whose identity carries the seeded {@code IntrinsicFunction}
-         * registration under the identity-preserving-load predicate — the
-         * same resolution the adapter's creation operand publishes, so the
-         * call site and the creation site agree on the source class, and an
-         * operand of any other binding or class keeps the landed
-         * {@code JvmRuntime.invokeAdapter} protocol.
-         */
         private IntrinsicKind adapterIntrinsicKind(
                 FunctionExecutionBinding.AdapterBinding adapter) {
             if (!(adapter.sourceRef() instanceof AdaptSourceRef.Value value)) {
@@ -4494,22 +3908,6 @@ public final class JvmSemanticEmitter {
             return intrinsicKindOf(value.value());
         }
 
-        /**
-         * The adapter-over-intrinsic invocation at a statically classified
-         * call site (ISSUE-0680; design source
-         * {@code conversion-intrinsic-function-values} J5): the landed D15
-         * order with the seeded intrinsic identity as the recorded source —
-         * (1) the source resolution per the recorded capture mode (VALUE
-         * retains the memoized carrier the adapter creation published),
-         * (2) the carried canonical spec checked against the recorded source
-         * signature (the pinned E8010 at this CALL's origin), (3) the
-         * leading-M argument projection over the recorded target-cell values,
-         * (4) the one conversion ladder with the invoking CALL op's own
-         * context and kind, and (5) the recorded {@code HOST_TO_DEAL} +
-         * {@code HOST_SYNC_RETURN} cell — the source class is HOST, so the
-         * call op runs exactly the cell the intrinsic's own indirect arm
-         * records.
-         */
         private void emitAdapterOverIntrinsicRun(SemanticOp op,
                 KindPayload.CallPayload payload,
                 FunctionExecutionBinding.AdapterBinding adapter, int indent) {
@@ -4521,12 +3919,7 @@ public final class JvmSemanticEmitter {
             }
             RuntimeDescriptor.Func declared = kind.declaredSignature();
             String adapterSlot = slot((ValueId) opsById.get(adapter.adaptOpId()).result());
-            // The source-signature check runs under the call op's FAILURE
-            // terminal (the landed adapter arm's discipline): a source-signature
-            // failure has no ladder event of its own, so the CALL op publishes
-            // it and propagates the identical error value. The conversion's own
-            // failure event already carries the invoking CALL op's key and kind
-            // (J4), so it is not duplicated here.
+
             String source = "__ais" + op.opId().id();
             out.append(indent(indent)).append("try {\n");
             out.append(indent(indent + 1)).append("Object ").append(source)
@@ -4572,15 +3965,6 @@ public final class JvmSemanticEmitter {
                 .append(admitted).append(";\n");
         }
 
-        /**
-         * One recorded {@code HOST_TO_DEAL} + {@code HOST_SYNC_RETURN} cell
-         * run by the invoking call op (ISSUE-0680; the landed intrinsic
-         * value-call return cell's shared form): the boundary START, the
-         * host-check seam over the cell's declared descriptor, the boundary
-         * FAILURE with the call op's own terminal on a check failure, and
-         * the boundary SUCCESS. Returns the expression holding the admitted
-         * value (the input expression when the op records no cell).
-         */
         private String emitHostCellRun(SemanticOp op, SemanticOp returnBoundary,
                                        String valueExpr, int indent) {
             if (returnBoundary == null) {
@@ -4844,12 +4228,6 @@ public final class JvmSemanticEmitter {
                 + ", " + span.startColumn();
         }
 
-        /**
-         * The conversion ladder's invoking-op context arguments (ISSUE-0679
-         * J4): the op key, the contract digest, the parent key, and the
-         * origin — one algorithm authority with the direct
-         * {@code INTRINSIC_CALL} arm and the static intrinsic value call.
-         */
         private String intrinsicContextArgs(SemanticOp op) {
             return javaString(opKey(op.opId())) + ", "
                 + javaString(op.contract().canonicalDigest()) + ", "
@@ -4857,38 +4235,17 @@ public final class JvmSemanticEmitter {
                 + javaString(originOf(op));
         }
 
-        /**
-         * CLASS_NEW (E5, D16 construction order): provided values
-         * completed before the op; default application in declaration
-         * order (LOCAL through the detached class-default methods, or the
-         * owner's CLASS_FACTORY transfer with the factory's events
-         * parented to this caller op — the cross-unit K-D12 parent);
-         * extra-key rejection first in provided-source order (E8007 at
-         * the op origin); provided-field application and field validation
-         * in declaration order through the boundary children; the
-         * instance is tagged with its canonical class identity last.
-         * Zero return boundaries; a failure publishes no partial
-         * instance.
-         */
         private void emitClassNew(SemanticOp op, int indent) {
             KindPayload.ClassNewPayload payload =
                 (KindPayload.ClassNewPayload) op.payload();
             emitStart(op, indent);
             ClassLayout layout = classLayouts.get(payload.classId());
             if (layout == null && payload.defaultOwner() == DefaultOwner.BUILTIN_DEFAULTS) {
-                // The compiler-owned builtin Error layout (ISSUE-0619; K13
-                // item 1): the builtin class resolves through the same
-                // compiler constant every consumer resolves — the layout is
-                // a resolution-only entry (the class is excluded from the
-                // generated class carriers and the JSON plans).
+
                 layout = ClassLayout.BUILTIN_ERROR;
             }
             if (layout == null && payload.defaultOwner() == DefaultOwner.HOST_DEFAULTS) {
-                // The host declaration class's registered layout
-                // (ISSUE-0624; K10): the payload carries exactly the project
-                // lowering's registration-seed layout (the validator checks
-                // the equality against the seeds), and the declaration
-                // layouts are never merged into a unit's own classLayouts.
+
                 layout = payload.layout();
             }
             if (layout == null) {
@@ -4905,12 +4262,7 @@ public final class JvmSemanticEmitter {
                 case SHARED_FACTORY -> emitClassNewFactoryTransfer(op, payload, provided,
                     indent);
                 case HOST_DEFAULTS -> {
-                    // The host declaration class construction (ISSUE-0624;
-                    // K10 and the K10 contract): dispatched after the static
-                    // extra-key scan below — the shape carries no default
-                    // children and no factory transfer, and its phases run
-                    // through the loaded <C>_defaults capture and the
-                    // synthesized host record.
+
                 }
                 case FFI_PLAN ->
                     throw new IllegalStateException("CLASS_NEW " + op.opId()
@@ -4929,9 +4281,7 @@ public final class JvmSemanticEmitter {
                     + " carries defaultOwner " + payload.defaultOwner()
                     + " outside the emitted owners (producer defect)");
             }
-            // K-D4 step 3: extra-key rejection first in provided-source
-            // order — after default application, before any provided-field
-            // application or field validation.
+
             for (KindPayload.ProvidedField field : payload.providedFields()) {
                 if (fieldOf(layout, field.name()) == null) {
                     String errName = "__ee_" + op.opId().id() + "_"
@@ -4967,9 +4317,7 @@ public final class JvmSemanticEmitter {
                 emitClassNewHostDefaults(op, payload, indent);
                 return;
             }
-            // K-D4 steps 4-5: instance building plus field validation in
-            // declaration order; the tag and the publication come last
-            // (step 6).
+
             String carrier = carrierName(payload.classId());
             String instName = "__inst_" + op.opId().id();
             out.append(indent(indent)).append(carrier).append(' ').append(instName)
@@ -4986,8 +4334,7 @@ public final class JvmSemanticEmitter {
                 String inputExpr;
                 if (entry.kind() == BoundaryKind.CLASS_DEFAULT_FIELD
                         && payload.defaultOwner() == DefaultOwner.SHARED_FACTORY) {
-                    // The K-D4 extraction rule: the checked value is the
-                    // transferred instance's named field.
+
                     SemanticOp factoryOp = opsById.get(factoryOpIdOf(op, payload));
                     String extracted = "__ft_" + boundary.opId().id();
                     out.append(indent(indent)).append("Object ").append(extracted)
@@ -5028,9 +4375,7 @@ public final class JvmSemanticEmitter {
                 out.append(indent(indent)).append(instName).append('.')
                     .append(fieldFlag(entry.field())).append(" = true;\n");
             }
-            // K-D4 step 6: the tag is the carrier's class identity (the
-            // generated class carries it by construction), then the
-            // publication.
+
             out.append(indent(indent)).append(slot((ValueId) op.result()))
                 .append(" = ").append(instName).append(";\n");
             emitResultSuccess(op, slot((ValueId) op.result()),
@@ -5083,20 +4428,6 @@ public final class JvmSemanticEmitter {
                 indent);
         }
 
-        /**
-         * The builtin {@code Error} construction (ISSUE-0619;
-         * {@code semantic-ir-construct-coverage-cutover} K13 items 4/7):
-         * the provided fields run their pinned {@code CLASS_LITERAL_FIELD}
-         * boundary children in payload order (the descriptor-kind rule, the
-         * field's declared {@code string} descriptor), the omitted fields
-         * take the compiler constant empty string, and the publication is
-         * {@code new JvmRuntime.ErrorValue(&lt;code&gt;, &lt;message&gt;)} —
-         * the canonical carrier {@code THROW}, the catch reification,
-         * {@code bcheck("@/Error")}, and {@code actualOf} already speak.
-         * No default child, no factory transfer, and no extra-key
-         * projection (the checker's E4002 rejects an extra literal field
-         * before lowering).
-         */
         private void emitClassNewBuiltinDefaults(SemanticOp op,
                 KindPayload.ClassNewPayload payload, ClassLayout layout, int indent) {
             if (!ClassId.ERROR.equals(payload.classId())
@@ -5137,22 +4468,6 @@ public final class JvmSemanticEmitter {
                 (RuntimeDescriptor) op.resultType(), indent);
         }
 
-        /**
-         * The host declaration class construction (ISSUE-0624;
-         * {@code semantic-ir-construct-coverage-cutover} K10 and the K10
-         * contract): the provided values complete in literal order before
-         * the op (already-completed operands), the extra provided name the
-         * load-time-captured {@code <C>_defaults} map does not carry raises
-         * E8007 at the literal origin before any field validation, the
-         * pinned {@code CLASS_LITERAL_FIELD} boundary children run in
-         * declaration order, an omitted required-present field takes the
-         * loaded default (the fail-closed E8001 when the loaded map carries
-         * none), an omitted optional field stays absent, and the published
-         * value is the synthesized {@code $DealRt} host record tagged with
-         * the canonical class identity — the record the deployed host
-         * implementation reads directly. A failed construction publishes no
-         * instance.
-         */
         private void emitClassNewHostDefaults(SemanticOp op,
                 KindPayload.ClassNewPayload payload, int indent) {
             JvmHostAbiEmission.HostClassFacts facts = hostAbi == null ? null
@@ -5172,10 +4487,7 @@ public final class JvmSemanticEmitter {
                     + " carries neither (the loaded defaults are data — a producer"
                     + " defect)");
             }
-            // K-D4 step 3: the extra-key rejection first in provided-source
-            // order against the loaded defaults capture (the accepted-key
-            // authority), after the operand completion and before any field
-            // validation.
+
             for (KindPayload.ProvidedField field : payload.providedFields()) {
                 out.append(indent(indent)).append("if (!").append(facts.defaultsField())
                     .append(".containsKey(").append(javaString(field.name()))
@@ -5198,9 +4510,7 @@ public final class JvmSemanticEmitter {
                     .append(";\n");
                 out.append(indent(indent)).append("}\n");
             }
-            // K-D4 step 5: the pinned CLASS_LITERAL_FIELD boundary children
-            // in declaration order; the admitted value is the one the record
-            // carries.
+
             java.util.Map<String, String> checked = new java.util.LinkedHashMap<>();
             for (KindPayload.FieldBoundary entry : payload.fieldBoundaries()) {
                 SemanticOp boundary = requireClassNewFieldBoundary(op, entry);
@@ -5261,12 +4571,6 @@ public final class JvmSemanticEmitter {
                 (RuntimeDescriptor) op.resultType(), indent);
         }
 
-        /**
-         * K-D4 step 2, LOCAL: the default children run in declaration
-         * order through their detached class-default methods, skipping
-         * any child whose field is provided (a provided field's default
-         * never runs); each child emits its own START and terminal.
-         */
         private void emitClassNewLocalDefaults(SemanticOp op,
                 KindPayload.ClassNewPayload payload, java.util.Set<String> provided,
                 int indent) {
@@ -5333,16 +4637,6 @@ public final class JvmSemanticEmitter {
                 .append("), null);\n");
         }
 
-
-        /**
-         * K-D4 step 2, SHARED_FACTORY: the transfer to the owner's
-         * CLASS_FACTORY entry — the factory's events parent to this
-         * caller op (cross-unit) and carry the owner's module path; its
-         * CLASS_DEFAULT children evaluate in the declaring module's
-         * scope (skipping provided fields) and fill the untagged
-         * internal transfer instance, which the factory publishes as its
-         * result for the caller's CLASS_DEFAULT_FIELD extraction.
-         */
         private void emitClassNewFactoryTransfer(SemanticOp op,
                 KindPayload.ClassNewPayload payload, java.util.Set<String> provided,
                 int indent) {
@@ -5391,7 +4685,7 @@ public final class JvmSemanticEmitter {
                 KindPayload.ClassDefaultPayload defaultPayload =
                     (KindPayload.ClassDefaultPayload) defaultOp.payload();
                 if (provided.contains(defaultPayload.field())) {
-                    continue; // the skip-provided rule (K-D5)
+                    continue;
                 }
                 if (trace) {
                     out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
@@ -5484,9 +4778,7 @@ public final class JvmSemanticEmitter {
             String kind = staticKind(op.operandTypes().get(0));
             String origin = originOf(op);
             switch (payload.kind()) {
-                // The direct arm keeps its own kind as the invoking op's
-                // label (ISSUE-0679); an intrinsic value call passes the
-                // invoking CALL op's kind through the same ladder.
+
                 case INT_CONVERT -> out.append(indent(indent)).append(target)
                     .append(" = JvmRuntime.intConv(").append(input).append(", ")
                     .append(javaString(op.kind().name())).append(", ")
@@ -5645,8 +4937,6 @@ public final class JvmSemanticEmitter {
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
         }
 
-
-
         private void emitBranch(SemanticOp op, int indent) {
             KindPayload.BranchPayload payload = (KindPayload.BranchPayload) op.payload();
             emitStart(op, indent);
@@ -5790,21 +5080,6 @@ public final class JvmSemanticEmitter {
             emitPlainSuccess(op, indent);
         }
 
-
-        /**
-         * The TRY_CATCH arm: the try block runs under a {@code DealError}
-         * catch clause that reifies the caught failure as the builtin Error
-         * carrier in the catch binding's cell, then the catch block runs
-         * under its own {@code DealError} wrapper (a failure of the catch
-         * block re-projects the wrapped carrier with {@code cause} = the
-         * original). The transfer dispatch (a {@code RETURN}/{@code BREAK}/
-         * {@code CONTINUE} inside the try block or the catch block signals
-         * through {@code JvmRuntime.Transfer}) wraps the WHOLE try/catch: an
-         * exception raised inside a catch clause is never handled by the
-         * sibling clauses of its own try statement, so the dispatch cannot
-         * live beside the {@code DealError} clause (ISSUE-0619's catch
-         * rethrow/return surface).
-         */
         private void emitTryCatch(SemanticOp op, int indent) {
             KindPayload.TryCatchPayload payload =
                 (KindPayload.TryCatchPayload) op.payload();
@@ -5909,7 +5184,6 @@ public final class JvmSemanticEmitter {
                 }
             }
         }
-
 
         private void emitThrow(SemanticOp op, int indent) {
             KindPayload.ThrowPayload payload = (KindPayload.ThrowPayload) op.payload();
@@ -6306,15 +5580,6 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent)).append("}\n");
         }
 
-        /**
-         * The host {@code CALLBACK_INVOKE} arm (ISSUE-0651;
-         * {@code host-module-load-and-host-call-realization} H3 and the sync
-         * host call contract): the callback record's bound value resolves
-         * to a declared host export, so the host-driven invocation runs the
-         * emitted per-export wrapper with the {@code HOST_TO_DEAL} checked
-         * arguments and the callback op's own origin, then the callback
-         * op's own return projection (its single return boundary child).
-         */
         private void emitHostCallbackInvoke(SemanticOp op,
                 KindPayload.CallbackInvokePayload payload, String wrapper,
                 Type.Func declared, int indent) {
@@ -6542,8 +5807,7 @@ public final class JvmSemanticEmitter {
                 }
             }
             if (payload.callee() instanceof KindPayload.CallCallee.Dynamic dynamic) {
-                // The dynamic async start (ISSUE-0658): the class of the
-                // resolved carrier selects the task source.
+
                 emitDynamicAsyncStart(op, payload, dynamic, token, args, indent);
                 emitTokenSuccess(op, javaString(tokenAtom(token)), indent);
                 return;
@@ -6607,9 +5871,7 @@ public final class JvmSemanticEmitter {
                 }
                 case FunctionExecutionBinding.HostFunction host -> {
                     if (hostAbi == null) {
-                        // A unit/surface-less session is the scenario drive:
-                        // its async host path is the landed deterministic
-                        // seam, which the production path never reaches.
+
                         emitAsyncHostSeamStart(op, indent, token,
                             host.hostModuleId().path(), host.exportName(), args);
                     } else {
@@ -6630,17 +5892,7 @@ public final class JvmSemanticEmitter {
                     emitAsyncExternalStart(op, indent, token, payload.externalAsyncLink(),
                         args);
                 case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
-                    // The intrinsic's async form (ISSUE-0680; design source
-                    // {@code conversion-intrinsic-function-values} J3: the
-                    // conversion intrinsics are synchronous values, so an
-                    // async use is a checker rejection — this arm is the
-                    // deterministic closed treatment of a doctored site): the
-                    // closed DEAL_BODY task runs the one conversion ladder
-                    // inside the task body with this op's context and kind
-                    // over the recorded argument carrier and completes
-                    // immediately with the converted value; the single AWAIT
-                    // runs the landed ASYNC_COMPLETION cell on the completion
-                    // (zero return boundaries).
+
                     if (args.size() != intrinsic.descriptor().paramTypes().size()) {
                         throw new IllegalStateException("ASYNC_START " + op.opId()
                             + " carries " + args.size() + " argument(s) for the '"
@@ -6670,13 +5922,6 @@ public final class JvmSemanticEmitter {
             emitTokenSuccess(op, javaString(tokenAtom(token)), indent);
         }
 
-        /**
-         * The scenario-drive {@code ASYNC_START(HOST)} terminal (the landed
-         * shape): the deterministic seam start plus the bad-handle check.
-         * Emitted only by a session without the compile's host ABI emission
-         * surface (a unit/surface-less session); the production and
-         * trace-mode project sessions take the operation-handle arm.
-         */
         private void emitAsyncHostSeamStart(SemanticOp op, int indent,
                                             AsyncTokenId token, String module,
                                             String export, List<String> args) {
@@ -6710,23 +5955,6 @@ public final class JvmSemanticEmitter {
                 .append(");\n");
         }
 
-        /**
-         * The ASYNC_START(HOST) terminal (ISSUE-0652;
-         * {@code host-module-load-and-host-call-realization} H4 and the
-         * async host start and completion contract): the loaded surface
-         * entry is invoked through the emitted per-export wrapper — the
-         * same host-boundary call shape as the sync arm, with the call
-         * origin triplet — whose declared-async shape check realizes the
-         * op's {@code ASYNC_OPERATION_HANDLE} terminal with the pinned
-         * E8010 {@code host async function must return an async operation,
-         * got {actual}} at the call origin, and the returned operation
-         * handle is bound to the canonical token through the production
-         * {@code startHostTask(tokenId, label, operation)} registration.
-         * The wrapper returns the handle instead of joining it (the shared
-         * {@code AWAIT} machine owns the token and the single completion
-         * boundary), and the deterministic {@code JvmRuntime.HOST_ASYNC}
-         * seam is never referenced on the production path.
-         */
         private void emitAsyncHostStart(SemanticOp op, int indent, AsyncTokenId token,
                                         ModuleId moduleId, String exportName,
                                         List<String> args) {
@@ -6819,21 +6047,6 @@ public final class JvmSemanticEmitter {
                 .append(", ").append(handle).append(");\n");
         }
 
-        /**
-         * The ASYNC_START(EXTERNAL) terminal: the callee unit's
-         * async-entry dispatch inside the one artifact (ISSUE-0655,
-         * {@code cross-module-call-realization} X2). A project session
-         * emits the local method reference — one {@code ae<entry op id>}
-         * method per async entry op lives in the one production class, the
-         * callee token id is the entry op's id by construction, and no
-         * per-module {@code SharedM} class is referenced — and resolves
-         * the link against the emitted async-entry set, failing closed
-         * when it names no entry. A single-unit session keeps the landed
-         * cross-class reference: the callee unit's own artifact is a
-         * sibling class of the same multi-artifact drive and carries the
-         * entry method. The caller passes the drive flag false (its AWAIT
-         * drains).
-         */
         private void emitAsyncExternalStart(SemanticOp op, int indent, AsyncTokenId token,
                                             ExternalAsyncLink link, List<String> args) {
             if (link == null) {
@@ -6859,7 +6072,6 @@ public final class JvmSemanticEmitter {
                     .append(String.join(", ", args)).append("});\n");
             }
         }
-
 
         /**
          * AWAIT — the completion position (D13 step 6): the deterministic
@@ -6930,23 +6142,6 @@ public final class JvmSemanticEmitter {
                 (RuntimeDescriptor) op.resultType(), indent);
         }
 
-        /**
-         * The async EXTERNAL_ENTRY dispatch entry (the E6 dispatch-entry
-         * pattern; ISSUE-0655, {@code cross-module-call-realization} X2
-         * and the cross-module async call contract): the scenario host
-         * adapter invokes it top-level with scripted arguments (drive
-         * flag on — the entry drains and returns the completion), and a
-         * cross-module caller invokes it with the drive flag off (its
-         * AWAIT drains). One entry exists per async export of every
-         * closure unit, emitted as the local static method
-         * {@code ae<entry op id>} of the one production class; the entry
-         * resolves its function and its capture cells through its own
-         * unit. It emits the callee record's START/SUCCESS under the
-         * passed parent key and creates exactly one canonical task
-         * wrapping the entry function's body-task future under the
-         * owning module's context (the per-entry module literal), with
-         * the module restored on every path.
-         */
         private void emitAsyncEntry(SemanticOp op, int indent,
                                     LoweredModuleUnit owner) {
             KindPayload.ExternalEntryPayload payload =
@@ -7042,45 +6237,13 @@ public final class JvmSemanticEmitter {
             emitPlainSuccess(op, indent);
         }
 
-        /**
-         * {@code MODULE_IMPORT} — the import's load/initialization op
-         * (ISSUE-0650; {@code host-module-load-and-host-call-realization}
-         * H1/H2 item 1): a {@code HOST}-kind import calls its module-keyed
-         * load entry from its position in the module init walk with the
-         * import statement's origin, so the landed E8011 defects carry the
-         * import origin and a second alias of one host module binds
-         * nothing new (the entry is idempotent per module).
-         * {@code COMPILED}/{@code STDLIB} imports keep the landed no-op
-         * load realization: their surface entry is the module's own
-         * publication (its {@code EXPORT_PUBLISH} writes, or the chunk-top
-         * cataloged-callable population).</p>
-         *
-         * <p><b>The completion write (K15 items 1-2).</b> After the
-         * kind-specific load the op's payload {@code aliasCells} receive
-         * the module's namespace value — the module-identity-keyed
-         * {@code JvmRuntime.EXPORT_SURFACES} entry through the one
-         * {@code exportSurface} accessor, the surface object the module's
-         * own publication or its single guarded load created, never a
-         * per-alias re-derivation — so {@code let t = time} reads the very
-         * table the direct read/publish arms use and two aliases of one
-         * module observe the identical value. It is the alias cells'
-         * single initializing write (an alias cell never carries a
-         * {@code BINDING_INIT}); the cell-kind switch keeps the
-         * {@code SHARED_CELL} in-place publication discipline.</p>
-         */
         private void emitModuleImport(SemanticOp op, int indent) {
             KindPayload.ModuleImportPayload payload =
                 (KindPayload.ModuleImportPayload) op.payload();
             emitStart(op, indent);
             if (payload.kind() == deal.semantic.ir.ModuleImportKind.HOST
                     && hostAbi != null) {
-                // The host load is the production/trace project session's
-                // realization; a unit session or a host-free project
-                // session (no host ABI surface) keeps the landed no-op arm
-                // — its host path is the landed scenario seam, which the
-                // production path never reaches (ISSUE-0651: the
-                // host-aware trace project entry carries the surface too,
-                // so the oracle-agreement drive loads the same surface).
+
                 SourceSpan span = op.origin().span();
                 if (span == null) {
                     throw new IllegalStateException("the host import " + op.opId()
@@ -7201,40 +6364,10 @@ public final class JvmSemanticEmitter {
                 + javaString(row.declaredDescriptor().canonicalSpecText());
         }
 
-        /**
-         * {@code EXPORT_READ} — the per-kind read resolution (M2/M4/M5/M6):
-         * the read is the uniform program-scoped surface lookup
-         * {@code exportSurface(module).read(name)} for a COMPILED read
-         * (whose stored entry is the owner's published
-         * {@code JvmRuntime.FunctionValue} carrier — the identical object
-         * for every read of one export in one program) and for a HOST/FFI
-         * read (whose stored entry is the loaded module table's entry),
-         * whose landed {@code Table.read} projects
-         * {@code JvmRuntime.MISSING} for an absent key; a STDLIB read
-         * publishes the in-target cataloged callable of the closed catalog
-         * row (the one memoized carrier per row per module per program —
-         * the identical object the whole-surface population writes,
-         * carrying the row's declared signature and canonical spec text); a
-         * read whose unit records no import fact keeps the residual kind
-         * arm's memoized intrinsic carrier. The emitted read expression is
-         * identical in trace
-         * and production mode. In a project session a COMPILED read whose
-         * owner module is not among the closure's units is a producer
-         * defect and fails the emission closed; a per-unit session never
-         * fails closed for a foreign owner (the owner's own class
-         * publishes the surface of the same program).
-         */
         private void emitExportRead(SemanticOp op, int indent) {
             KindPayload.ExportReadPayload payload =
                 (KindPayload.ExportReadPayload) op.payload();
-            // The read's module kind is the session's own recorded import
-            // fact (M6). A module the session records no import fact for —
-            // the test-only class-core carrier sessions, whose units carry
-            // no module-level import op — keeps the landed interim
-            // realization (the residual kind arm's memoized intrinsic
-            // carrier); the production and
-            // conformance sessions record every resolved import, so a
-            // COMPILED read is never guessed from a path.
+
             ModuleImportKind kind = importKinds.get(payload.module());
             if (kind == ModuleImportKind.COMPILED && projectSession
                     && !units.containsKey(payload.module())) {
@@ -7260,13 +6393,7 @@ public final class JvmSemanticEmitter {
                     .append(stdlibRowArgs(stdlibRowOf(payload.module().path(),
                         payload.name()))).append(");\n");
             } else {
-                // The residual kind arm (a session whose unit records no
-                // import fact for the read's module): the placeholder
-                // publishes the memoized intrinsic carrier the identity's
-                // own registration resolves, and a fresh opaque export
-                // carrier otherwise (the landed per-read allocation, now a
-                // real carrier surface) — never the removed marker and
-                // never a re-read of the read's own slot.
+
                 String carrier = registeredIntrinsicCarrierExpr((ValueId) op.result());
                 out.append(" = ")
                     .append(carrier == null ? exportPlaceholderCarrier() : carrier)

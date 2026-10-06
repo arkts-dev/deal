@@ -21,22 +21,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
-/**
- * The shared JVM runtime helper of the decomposition-tail integration
- * verification (ISSUE-0410): the real runtime the generated shared-JVM
- * artifact executes against — event/effect/terminal protocol encoding
- * (byte-identical to the semantic oracle's report), the closed atom
- * encoding with first-observation allocation ids, the native boundary
- * projections (the descriptor-kind rule with the pinned int ladder, the
- * array element cause chain, the function-signature projection — exactly
- * the closed failure registry's templates, never invented text), the
- * closed B-D2 comparison table realized with native Java operators
- * (primitive {@code ==}/{@code <} on ints; IEEE {@code ==}/{@code <} on
- * doubles — never {@code Double.compare}; code point order on strings —
- * never {@code String.compareTo}; identity {@code ==} on references —
- * never {@code equals()}), and the array read/bounds cells with the
- * shared slot-space context.
- */
 public final class JvmRuntime {
 
     private JvmRuntime() {
@@ -73,8 +57,6 @@ public final class JvmRuntime {
      * registry: the existing surface of the module, or a freshly created
      * empty one (a repeated drive never wipes a published surface).
      *
-     * @param module the module path (the registry key); non-null
-     * @return the program's surface of the module; never null
      */
     public static Table exportSurface(String module) {
         Table surface = EXPORT_SURFACES.get(module);
@@ -85,24 +67,6 @@ public final class JvmRuntime {
         return surface;
     }
 
-    /**
-     * The declared identity (module path, export name) of one loaded host
-     * surface entry (ISSUE-0678; design source
-     * {@code function-typed-value-materialization-and-dispatch} M5's
-     * asynchronous host class): the program-scoped export-surface registry
-     * is the identity-indexed home of the entries the host load published
-     * (H1), so a carrier that is a declared host export names the export
-     * the dynamic dispatch's host operation start derives its operation
-     * label and its {@code ASYNC_OPERATION_HANDLE} terminal from — the same
-     * declared identity the oracle's binding resolution reports. Exactly
-     * one home is required: a value with no home, or one shared by two
-     * entries (never a loaded surface entry), resolves nothing and the
-     * dispatch fails closed.
-     *
-     * @param value the carrier value; may be null
-     * @return a two-element {@code {module, export}} array, or null when
-     *         the value has no unique home
-     */
     public static String[] surfaceNameOf(Object value) {
         if (value == null) {
             return null;
@@ -142,12 +106,6 @@ public final class JvmRuntime {
      * carries the row's declared signature text and canonical spec text —
      * never the reading site's descriptor.
      *
-     * @param module    the resolved stdlib module path (the registry key)
-     * @param name      the export name (the row key)
-     * @param rowId     the catalog row tag ({@code StdlibFunctionId} name)
-     * @param signature the row's declared descriptor text
-     * @param spec      the row's canonical spec text
-     * @return the program's callable of that catalog row; never null
      */
     public static StdlibFunctionValue stdlibCallable(String module, String name,
                                                      String rowId, String signature,
@@ -161,18 +119,6 @@ public final class JvmRuntime {
         return callable;
     }
 
-    /**
-     * The program-scoped active-function markers of the re-entrant
-     * invocation-state save (ISSUE-0654): the function ids whose body is
-     * currently executing. An invoking arm that finds its callee body
-     * already active (recursion) preserves the callee body's own slots and
-     * {@code DIRECT} cells across the invocation — the per-invocation
-     * semantics the semantic oracle models with its cell overlays — while
-     * a plain call leaves the artifact's flat state observable, exactly
-     * like the LuaJIT chunk-global markers. Hosted with the runtime's
-     * program state ({@link #TASKS}, {@link #EXPORT_SURFACES}) so the
-     * per-unit classes of one program share it.
-     */
     public static final java.util.HashSet<Long> BODY_ACTIVE =
         new java.util.HashSet<>();
 
@@ -263,19 +209,6 @@ public final class JvmRuntime {
         }
     }
 
-    /**
-     * A DEAL Error value ({@code code, message}) — the builtin
-     * {@code Error} class's runtime carrier (ISSUE-0619;
-     * {@code semantic-ir-construct-coverage-cutover} K13). The carrier is
-     * a {@link ClassInstance} of the canonical {@code @/Error} identity:
-     * both declared fields are always present, a field write commits in
-     * place (every alias observes it), and {@code hasField}/{@code read}/
-     * {@code write} resolve the declared field names — the same closed
-     * presence surface the generated carriers realize. A field delete never
-     * reaches the runtime (every builtin Error field is required-present
-     * and the checker rejects {@code delete e.f} with E4004) and stays a
-     * fail-closed producer defect.
-     */
     public static final class ErrorValue implements ClassInstance {
         public String code;
         public String message;
@@ -324,17 +257,6 @@ public final class JvmRuntime {
         }
     }
 
-    /**
-     * An intrinsic function value (int()/number() as first-class values,
-     * J2): a callable {@link FunctionValue} carrier carrying the closed
-     * intrinsic kind tag, the intrinsic's declared descriptor text (the
-     * landed function row's carried signature) and the declared canonical
-     * spec text, with a null frame id. One memoized object per intrinsic
-     * kind per program ({@link #intrinsic}); its {@code fn} is the
-     * generic conversion invoker ({@link #intrinsicInvoke}), so the
-     * landed {@code bcheck}/{@code actualOf}/{@code fnCheck} and the D15
-     * adapter source resolution accept it unchanged.
-     */
     public static final class Intrinsic extends FunctionValue {
         /** The closed intrinsic kind tag ({@code IntrinsicKind} name). */
         public final String kind;
@@ -364,17 +286,6 @@ public final class JvmRuntime {
         return carrier;
     }
 
-    /**
-     * The residual export-read kind arm's placeholder carrier (a session
-     * whose unit records no import fact for the read's module): a fresh,
-     * per-read value carrying the landed opaque export view the oracle
-     * projects for that arm (a {@code ()->number} function) and the real
-     * carrier's interface, so the landed function row admits it exactly as
-     * the oracle's view does and the read keeps its own identity (the
-     * landed arm's per-read allocation). The memoized intrinsic carrier is
-     * published at that arm only when the read's identity carries an
-     * {@code IntrinsicFunction} registration.
-     */
     public static FunctionValue intrinsicExport() {
         return new FunctionValue(args -> null, "function(;number)", "()->number", null);
     }
@@ -408,16 +319,6 @@ public final class JvmRuntime {
         return numConv(value, evKind, staticKind, opKey, digest, parent, origin);
     }
 
-    /**
-     * The in-target cataloged stdlib callable (M4): a {@link FunctionValue}
-     * carrier holding the catalog row tag, the row's declared descriptor
-     * text (the landed function row's carried signature), and the row's
-     * canonical spec text, with a null frame id. One memoized object per
-     * catalog row per module per program ({@link #stdlibCallable}); its
-     * {@code fn} is the row's invoker ({@link #stdlibInvoke}), and the
-     * invoking call's context travels through
-     * {@link #invokeStdlibCallable}.
-     */
     public static final class StdlibFunctionValue extends FunctionValue {
         /** The catalog row tag ({@code StdlibFunctionId} name). */
         public final String rowId;
@@ -431,15 +332,6 @@ public final class JvmRuntime {
         }
     }
 
-    /**
-     * Invokes one cataloged stdlib callable under the invoking call's
-     * context (M4; ISSUE-0678 for the {@code kind}): the invoking op's own
-     * event kind label, the trace key, contract digest, parent key, and
-     * origin pack the leading five array entries, the boundary-admitted
-     * call arguments follow — the same context the direct
-     * {@code STDLIB_CALL} arm passes to {@link #stdlibInvoke}, with the
-     * invoking op's own kind so an algorithm FAILURE event carries it.
-     */
     public static Object invokeStdlibCallable(StdlibFunctionValue callable, String kind,
                                               String opKey, String digest, String parent,
                                               String origin, Object[] args) {
@@ -735,12 +627,6 @@ public final class JvmRuntime {
         return "E9999;" + esc(String.valueOf(e)) + ";-;-;-;-;-";
     }
 
-    /**
-     * The protocol-channel gate (ISSUE-0239 E10): the conformance
-     * consumers keep the channel on (the default), while a production
-     * artifact disables it at startup so no trace/effect record ever
-     * reaches stderr from a production run.
-     */
     private static volatile boolean traceEnabled = true;
 
     /**
@@ -748,7 +634,6 @@ public final class JvmRuntime {
      * with {@code false} before executing any operation; the conformance
      * harness never calls it, so its per-process default stays on.
      *
-     * @param enabled whether the dedicated trace/effect channel is active
      */
     public static void setTraceEnabled(boolean enabled) {
         traceEnabled = enabled;
@@ -1414,19 +1299,12 @@ public final class JvmRuntime {
          * handle binds to, or {@code null} for a bad handle (the
          * {@code ASYNC_OPERATION_HANDLE} terminal check fails).
          *
-         * @param module the owning host module; non-null
-         * @param export the host export name; non-null
-         * @param label  the deterministic operation label; non-null
-         * @param args   the boundary-checked argument values; non-null
-         * @return the bound label, or {@code null} for a bad handle
          */
         String startAsync(String module, String export, String label, Object[] args);
 
         /**
          * One async host completion of the operation label.
          *
-         * @param label the operation label; non-null
-         * @return the completion terminal
          */
         HostCompletion completeAsync(String label);
     }
@@ -1450,20 +1328,6 @@ public final class JvmRuntime {
         PENDING.add(task);
     }
 
-    /**
-     * Registers one production async host operation (ISSUE-0652;
-     * {@code host-module-load-and-host-call-realization} H4 and the async
-     * host start and completion contract): the operation handle the loaded
-     * declared async export returned is the task's completion — the
-     * {@code AWAIT} joins that operation and never reads
-     * {@link #HOST_ASYNC}, which stays the scenario/oracle seam of the
-     * seam-registered host task. A handle that is not a backend async
-     * operation is a producer defect, never a silent projection.
-     *
-     * @param tokenId   the canonical token identity; non-negative
-     * @param label     the deterministic operation label; non-null
-     * @param operation the host operation handle; non-null
-     */
     @SuppressWarnings("unchecked")
     public static void startHostTask(long tokenId, String label, Object operation) {
         if (!(operation instanceof CompletableFuture<?> future)) {
@@ -1549,10 +1413,6 @@ public final class JvmRuntime {
      * re-check or a synthesized copy — and a completed value is returned
      * for the single {@code ASYNC_COMPLETION} boundary at the await site.
      *
-     * @param tokenId     the canonical token identity; non-negative
-     * @param awaitOrigin the {@code AWAIT} op's origin text (the origin
-     *                    of a host-thrown completion error)
-     * @return the completion value
      */
     public static Object awaitTask(long tokenId, String awaitOrigin) {
         drainTasks();
@@ -1562,12 +1422,7 @@ public final class JvmRuntime {
                 + " (producer defect)");
         }
         if (task.hostLabel != null && task.hostOperation != null) {
-            // The production host operation (ISSUE-0652): the registered
-            // operation is the task's completion — the seam field is never
-            // read. The ordered completion effect mirrors the seam
-            // terminal so the differential trace comparison stays
-            // event-for-event; the operation's own DEAL error is rethrown
-            // identical (never re-checked, copied, or re-projected).
+
             try {
                 Object value = task.future.join();
                 effect("ASYNC_COMPLETE_RETURN", task.hostLabel + "="
@@ -1671,8 +1526,6 @@ public final class JvmRuntime {
      * ({@code FAILED}) execution is a producer defect, never a silent
      * re-run.
      *
-     * @param module the module path; non-null
-     * @return whether the init walk runs
      */
     public static boolean moduleInitNeeded(String module) {
         ModuleInitState state = MODULE_STATES.get(module);
@@ -2227,17 +2080,6 @@ public final class JvmRuntime {
         }
     }
 
-    /**
-     * The one row invoker of the closed stdlib catalog (M4): the single
-     * callable realization per catalog row, shared by the direct
-     * {@code STDLIB_CALL} arm, the cataloged callable's {@code fn}, and the
-     * dynamic dispatch's cataloged-callable HOST sub-class (ISSUE-0678).
-     * The two console rows run the row's single-effect write through
-     * {@link #console}/{@link #consoleError} (the direct arm's text
-     * projection); every algorithmic row delegates to {@link #stdlib} with
-     * the same row identity and the same invoking-call context — one
-     * algorithm authority, never two.
-     */
     public static Object stdlibInvoke(String kind, String fn, String opKey, String digest,
                                       String parent, String origin, Object[] args) {
         switch (fn) {
@@ -2815,17 +2657,6 @@ public final class JvmRuntime {
         }
     }
 
-    /**
-     * The intrinsic conversion ladders (INT_CONVERSION/NUMBER_CONVERSION).
-     *
-     * <p>The invoking op's own kind label is a parameter (ISSUE-0679; design
-     * source {@code conversion-intrinsic-function-values} J4): the direct
-     * {@code INTRINSIC_CALL} arm passes its own kind, and an intrinsic value
-     * call passes the invoking CALL op's kind, so the trace's FAILURE event
-     * carries the op that invoked the conversion exactly as the oracle's
-     * {@code emitFailure(op, ...)} does. One algorithm authority, one
-     * parameter more.</p>
-     */
     public static Object intConv(Object v, String evKind, String kind, String opKey,
                                  String digest, String parent, String origin) {
         if (v == null) {
@@ -2935,7 +2766,6 @@ public final class JvmRuntime {
          * deployed host's own bytes carrier): the logical length is the
          * storage's length, exactly the host carrier's contract.
          *
-         * @param data the storage; non-null
          */
         public BytesValue(byte[] data) {
             this.data = java.util.Objects.requireNonNull(data, "data must not be null");

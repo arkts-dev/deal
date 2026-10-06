@@ -37,87 +37,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * The B9 production-time structural validation of the BINDINGS
- * capability (ISSUE-0451 validation child; design B9): the closed rule
- * set {@code GROUP_SHAPE}, {@code CAPTURE_RESOLUTION},
- * {@code BINDING_GENERATION_RESOLUTION}, {@code BINDING_INIT_ONCE},
- * {@code INIT_DOMINATES_LOAD}, {@code ADAPTER_PAIR},
- * {@code ADAPTER_SOURCE_SHAPE}, {@code REGISTRY_ONE_TO_ONE}, and
- * {@code NO_ADAPTER_AT_BOUNDARY} over one validated
- * {@link LoweredModuleUnit} plus its produced
- * {@link StructuredBodyTable} — the production walk is the membership
- * authority (the walk owns the block map and runs these checks with
- * it). Every rejection is E6005 with the rule identifier, module,
- * capability {@code BINDINGS}, profile/version, and source origin via
- * the {@link FailureContractRegistry} {@link LoweringFailureDetail}
- * carrier — never a new diagnostic code. The closed 14-condition
- * schema validator ({@code deal.semantic.ir.SemanticIrValidator}) is
- * unchanged and keeps running on both surfaces; these rules are the
- * production-site realization of the structural checks the closed
- * schema page deferred to the construct epics.
- *
- * <p><b>The one uniform resolution context (R1-R4).</b> All three
- * resolution-backed rules ({@code BINDING_GENERATION_RESOLUTION},
- * {@code CAPTURE_RESOLUTION}, {@code INIT_DOMINATES_LOAD}) resolve
- * {@code {binding, generation}} references and binding captures over
- * the same model:</p>
- *
- * <ul>
- *   <li><b>R1 — plain/structured sites.</b> A site resolves against the
- *       producing allocations of its own block and every block
- *       dominating the site through structured edges (ancestor blocks
- *       transitively, with the intra-{@code LOOP} edges: the init
- *       block's ops dominate the condition evaluation, which dominates
- *       the body block's ops, which dominate the update block's ops —
- *       the {@code control-flow-structures} C-D4 placement contract is
- *       the Basis input).</li>
- *   <li><b>R2 — detached function-body sites.</b> A site inside a
- *       {@code LoweredFunction.body} resolves against the body's own
- *       subgraph (R1 within it) or exactly its
- *       {@code LoweredFunction.captures} list, whose entries resolve
- *       at the detaching op's creation site recursively along the
- *       detaching chain.</li>
- *   <li><b>R3 — thunk sites.</b> A site inside a
- *       {@code Thunk.blockId} resolves against the thunk block's own
- *       subgraph or exactly its generation-pinned
- *       {@code capturedBindings}, resolved at the
- *       {@code FUNCTION_ADAPT} creation site.</li>
- *   <li><b>R4 — default-block sites.</b> A site inside a
- *       {@code CLASS_DEFAULT.defaultBlock} resolves against the
- *       default block's own subgraph plus module-level bindings; any
- *       further free reference is ISSUE-0238's boundary and this epic
- *       validates nothing further (it admits the module-level arm and
- *       skips the rest).</li>
- * </ul>
- *
- * <p>Payload references carried on a {@code FUNCTION_ADAPT} op itself
- * ({@code SharedCell}, {@code proof}, and the thunk's
- * {@code capturedBindings} entries) resolve at the
- * {@code FUNCTION_ADAPT} creation site, never against the detached
- * thunk block. Generation equality is checked at every chain step.</p>
- *
- * <p><b>Determinism and purity.</b> {@link #validate} reads the unit
- * and the table and mutates neither; repeated validation of the same
- * inputs yields the same first rejection. The first-failure order is
- * fixed: {@code GROUP_SHAPE}, {@code CAPTURE_RESOLUTION},
- * {@code BINDING_GENERATION_RESOLUTION}, {@code BINDING_INIT_ONCE},
- * {@code INIT_DOMINATES_LOAD}, {@code ADAPTER_PAIR},
- * {@code ADAPTER_SOURCE_SHAPE}, {@code REGISTRY_ONE_TO_ONE},
- * {@code NO_ADAPTER_AT_BOUNDARY}; within each rule the unit's ops in
- * unit order decide the first defect.</p>
- *
- * <p><b>Cell-kind invariant (B2 iff).</b> {@link #deriveCellKinds}
- * exposes the closed cell-kind derivation — the pinned special cases
- * ({@code FOR_EACH} iteration bindings and for-let per-iteration
- * incarnations) plus the union of the three capture reference sets
- * (closure captures, thunk {@code capturedBindings} entries,
- * {@code FUNCTION_ADAPT(SHARED_CELL)} {@code SharedCell} sources) —
- * the surface the corpus asserts the emitted {@code BINDING_ALLOC}
- * payload kinds against. It is an invariant assertion over the emitted
- * units, not a new validator rule (the closed schema validator is
- * unchanged).</p>
- */
 public final class BindingsProductionValidator {
 
     /** The group-shape rule (B9): member lists, registrations, no member ALLOC/INIT. */
@@ -144,45 +63,8 @@ public final class BindingsProductionValidator {
     /** The adapter-pair rule (B9/B6): the pair re-derives as assignable-but-not-exact. */
     public static final String ADAPTER_PAIR = "ADAPTER_PAIR";
 
-    /**
-     * The adapter-source-shape rule (B9/B8): mode↔source shape, proof iff
-     * VALUE-over-binding — with the closed VALUE-over-intrinsic exemption
-     * (ISSUE-0674): the seeded conversion intrinsic's identity is the
-     * intrinsic function value itself, so a VALUE operand that is a
-     * seed-admitted {@code IntrinsicFunction} key published only by
-     * identity-preserving loads of the seeded binding is admissible with
-     * or without its proof (a present proof must name the seeded
-     * binding/generation).
-     */
     public static final String ADAPTER_SOURCE_SHAPE = "ADAPTER_SOURCE_SHAPE";
 
-    /**
-     * The registry one-to-one rule (B9/B5): one registration per producing
-     * allocation, plus the producer-less intrinsic-seed clause set
-     * (admission, converse, and the pinned declared signature of the two
-     * conversion intrinsics) and the dynamic-materialization clause set
-     * (ISSUE-0674): a {@code DynamicFunctionValue} key is admissible
-     * exactly when the op its record names produces that key identity and
-     * the key carries no static producing position (no closure, group,
-     * adapt, or export-read production, no function-typed
-     * {@code HOST_TO_DEAL} crossing input, and no producer-less seed
-     * {@code BINDING_INIT} operand; a member read with a function-typed
-     * result is one of the dynamic producer arms, so it is not a static
-     * position). The producer-less test
-     * carries the identity-preserving-load exclusion: a load whose result
-     * identity is an already-allocated identity of the cell it names (that
-     * cell's {@code BINDING_INIT} carries it) is not a producing position,
-     * while a load naming a cell whose init carries another identity (a
-     * parameter, catch, or iteration cell, or a dynamically allocated
-     * identity tracked into a later cell) is — the exclusion is per
-     * publishing op and closed (ISSUE-0675): an identity any load of which
-     * does not republish a carrying cell is a producing position even when
-     * another load over the same identity preserves it, so a dynamically
-     * allocated identity tracked into a later cell is never mistaken for a
-     * producer-less seed operand. An alias declaration's re-publication of
-     * the seed write into its own cell makes its alias loads
-     * identity-preserving too (ISSUE-0676 J1's alias-load refinement).
-     */
     public static final String REGISTRY_ONE_TO_ONE = "REGISTRY_ONE_TO_ONE";
 
     /** The no-adapter-at-boundary rule (B9/B6): the adapter result wires into its own position only. */
@@ -203,9 +85,6 @@ public final class BindingsProductionValidator {
      * mutation; deterministic; linear in ops plus block edges and
      * capture chains.
      *
-     * @param unit  the lowered module unit; non-null
-     * @param table the block-membership table of the unit; non-null
-     * @return empty on pass, otherwise the first E6005
      */
     public static Optional<CompilerDiagnostic> validate(LoweredModuleUnit unit,
                                                         StructuredBodyTable table) {
@@ -223,10 +102,6 @@ public final class BindingsProductionValidator {
      * the first failing rule on failure. No mutation; deterministic;
      * linear in ops plus block edges and capture chains.
      *
-     * @param unit  the lowered module unit; non-null
-     * @param table the block-membership table of the unit; non-null
-     * @param facts the walk's pinned-write binding facts; non-null
-     * @return empty on pass, otherwise the first E6005
      */
     public static Optional<CompilerDiagnostic> validate(LoweredModuleUnit unit,
                                                         StructuredBodyTable table,
@@ -320,9 +195,6 @@ public final class BindingsProductionValidator {
      * a validator rule; the emitted {@code BINDING_ALLOC} payload
      * kinds must equal exactly this derivation.
      *
-     * @param unit  the lowered module unit; non-null
-     * @param table the block-membership table of the unit; non-null
-     * @return the derived kinds in producing-allocation order
      */
     public static List<DerivedCellKind> deriveCellKinds(LoweredModuleUnit unit,
                                                         StructuredBodyTable table) {
@@ -441,7 +313,7 @@ public final class BindingsProductionValidator {
         final Map<OpId, List<BlockId>> controlChildren = new LinkedHashMap<>();
         /** The parent block of every control child block. */
         final Map<BlockId, BlockId> parentBlock = new LinkedHashMap<>();
-        /** The intra-LOOP sequencing edges (init→body, body→update). */
+
         final Map<BlockId, List<BlockId>> intraLoopEdges = new LinkedHashMap<>();
         /** The region root of every block of the table. */
         final Map<BlockId, BlockId> regionRoot = new LinkedHashMap<>();
@@ -484,15 +356,7 @@ public final class BindingsProductionValidator {
             FunctionExecutionBinding>> registryByFunction = new LinkedHashMap<>();
         /** The MODULE_IMPORT ops in unit op order (the import-alias completions). */
         final List<SemanticOp> moduleImports = new ArrayList<>();
-        /**
-         * The MODULE_IMPORT completions per named alias cell, in unit op
-         * order (the payload's explicit alias-cell list is the
-         * alias&#8596;import join; the declaration-order positional
-         * pairing is superseded). A cell with zero entries is named by no
-         * completion; a cell with two entries is doubly named — both are
-         * producer defects ({@code BINDING_INIT_ONCE}'s completion
-         * agreement arm).
-         */
+
         final Map<BindingId, List<SemanticOp>> completionsByCell = new LinkedHashMap<>();
         /** The no-INIT module-region ALLOCs in unit op order (the import aliases). */
         final List<SemanticOp> aliasAllocs = new ArrayList<>();
@@ -638,9 +502,7 @@ public final class BindingsProductionValidator {
             for (BlockId root : roots) {
                 model.regionBlocks.computeIfAbsent(root, k -> new ArrayList<>());
             }
-            // Dominators within each region: structured child edges plus
-            // the intra-LOOP sequencing edges. dominators[X] = the blocks
-            // whose ops dominate X's ops (the blocks X is reachable from).
+
             for (Map.Entry<BlockId, List<BlockId>> entry
                     : model.regionBlocks.entrySet()) {
                 BlockId root = entry.getKey();
@@ -1065,7 +927,7 @@ public final class BindingsProductionValidator {
                             allocation.op, allocation.generation));
                     }
                 }
-                // An enclosing-region free reference: ISSUE-0238's boundary.
+
                 return Optional.empty();
             }
             return dominantCaptureAllocation(binding, site)
@@ -1073,12 +935,6 @@ public final class BindingsProductionValidator {
                     allocation.generation));
         }
 
-        /**
-         * Resolves one {@code {binding, generation}} reference carried by
-         * an op under the uniform context (R1-R4). {@code outOfScope}
-         * marks a default-block enclosing-region reference (ISSUE-0238's
-         * boundary — this epic validates nothing further there).
-         */
         Resolution resolveReference(BindingId binding, long generation, SemanticOp carrier) {
             BlockId site = blockOf(carrier.opId());
             if (site == null) {
@@ -1789,13 +1645,7 @@ public final class BindingsProductionValidator {
      */
     private static Optional<CompilerDiagnostic> checkAliasCompletionAgreement(Model model) {
         if (model.moduleImports.isEmpty()) {
-            // The modules arm did not run for this unit: the intermediate
-            // class/binding windows lower module ASTs without resolved
-            // import facts and emit no completion, so the unit carries no
-            // alias-cell recording surface and its aliases stay inert
-            // exactly as before this slice. The agreement below is the
-            // property of every unit a walk with the modules arm produced
-            // (at least one completion).
+
             return Optional.empty();
         }
         Set<BindingId> aliases = new LinkedHashSet<>();
@@ -1863,7 +1713,7 @@ public final class BindingsProductionValidator {
             Resolution resolution = model.resolveReference(load.binding(),
                 load.generation(), op);
             if (resolution.outOfScope) {
-                continue; // ISSUE-0238's boundary; nothing further is validated
+                continue;
             }
             if (resolution.allocation == null) {
                 continue; // BINDING_GENERATION_RESOLUTION rejected this first
@@ -1957,7 +1807,7 @@ public final class BindingsProductionValidator {
                 // construction sites after module init completes.
                 return true;
             }
-            // An enclosing-region free reference: ISSUE-0238's boundary.
+
             return true;
         }
         // Any other region root (e.g., a CALL body block): plain dominance
@@ -2119,17 +1969,7 @@ public final class BindingsProductionValidator {
                 if (facts == null) {
                     facts = productionFacts(model);
                 }
-                // The VALUE-over-intrinsic exemption (the intrinsic-load
-                // refinement): the adapted declaration's operand is the
-                // seeded intrinsic identity itself — the shape map's
-                // intrinsic arm wires the identity, never a load of a user
-                // binding — so a value-position load of the same intrinsic
-                // elsewhere in the unit (an identity-preserving load of the
-                // seeded binding) does not turn it into a load operand. The
-                // exemption is closed to that operand shape: a proof
-                // recorded for it must name the seeded binding/generation,
-                // and every other VALUE operand keeps the landed proof
-                // rule.
+
                 if (seedAdmittedIntrinsicKey(model, facts, operand.id())) {
                     BindingSite seeded = facts.seedInitsOf().get(operand.id());
                     if (adapt.proof() != null
@@ -2225,24 +2065,6 @@ public final class BindingsProductionValidator {
      * {@code REGISTRY_ONE_TO_ONE} clauses and of the
      * {@code ADAPTER_SOURCE_SHAPE} VALUE-over-intrinsic exemption.
      *
-     * @param closureProductions    CLOSURE_NEW results per key
-     * @param adaptProductions      FUNCTION_ADAPT results per key
-     * @param groupProductions      RECURSIVE_GROUP_INIT member identities per key
-     * @param memberReadProductions member-read result identities per key
-     * @param exportReadProductions EXPORT_READ value identities per key
-     * @param boundaryInputs        every HOST_TO_DEAL crossing input per key
-     * @param functionBoundaryInputs the function-typed HOST_TO_DEAL crossing inputs per key
-     * @param seedInits             the producer-less seed BINDING_INITs per operand identity
-     * @param seedInitsOf           the {@code {binding, generation}} of the seed init of an
-     *                              init operand identity (the first, diagnostic-order entry)
-     * @param preservedCells        the cell an identity-preserving load of a seeded identity
-     *                              reads (that identity's seeded binding/generation)
-     * @param preservedInits        the BINDING_INITs landing on a preserved cell per identity
-     *                              (the seed write; the other inits over the identity are the
-     *                              declaration's re-publications of it; consumed through
-     *                              {@link ProductionFacts#seedWrites(long)})
-     * @param producingValues       every identity produced by an op of the unit under the
-     *                              identity-preserving-load exclusion
      */
     private record ProductionFacts(
             Map<Long, Integer> closureProductions,
@@ -2267,20 +2089,6 @@ public final class BindingsProductionValidator {
                 + exportReadProductions.getOrDefault(key, 0);
         }
 
-        /**
-         * The seed writes of one key — the one seed-write notion of the
-         * {@code IntrinsicFunction}-key admission clauses. An
-         * identity-preserving load of the seeded identity reads the seeded
-         * binding's own cell, so the identity's seed write is the init
-         * landing on that cell; a later {@code BINDING_INIT} storing the
-         * same identity into another binding's cell is the alias
-         * declaration's re-publication of that one seed write, not a second
-         * seed write. An identity no preserved load publishes counts every
-         * producer-less init over it (the landed {@code seedInits}
-         * counting). A key whose identity a non-preserved load also
-         * publishes is inside {@code producingValues}, so it is the
-         * {@code producingValues} clause — not this count — that refuses it.
-         */
         int seedWrites(long key) {
             BindingSite seededCell = preservedCells.get(key);
             return seededCell == null ? seedInits.getOrDefault(key, 0)
@@ -2429,26 +2237,7 @@ public final class BindingsProductionValidator {
                     new BindingSite(init.binding(), init.generation()));
             }
         }
-        // The identity-preserving loads: a BINDING_LOAD whose result
-        // identity is an already-allocated identity of the cell it names —
-        // the cell's BINDING_INIT carries that identity. The preservation
-        // decision is per publishing op and closed (ISSUE-0675): a load
-        // naming a cell whose init carries another identity (a parameter,
-        // catch, or iteration cell, or a dynamically allocated identity
-        // tracked into a later cell) is a producing position, even when
-        // another load over the same identity preserves it — the exclusion
-        // admits only identities every publishing load of which republishes
-        // a cell's already-allocated identity. The alias declaration's
-        // re-publication (a BINDING_INIT storing the seeded identity into
-        // another binding's cell) makes the alias load read the seeded
-        // identity, so the seed's alias loads stay identity-preserving
-        // (J1's alias-load refinement) while the allocating load of a
-        // dynamically allocated identity stays a producing position. The
-        // loaded cell is recorded per identity when it is the identity's
-        // candidate seed cell (the seed write's cell): a later BINDING_INIT
-        // storing the same identity into another binding's cell is the
-        // alias declaration's re-publication of the seed write, not a
-        // second seed write.
+
         Map<BindingSite, Set<Long>> initOperandsByCell = new LinkedHashMap<>();
         for (SemanticOp op : model.unit.ops()) {
             if (op.kind() == SemanticOpKind.BINDING_INIT

@@ -30,11 +30,6 @@ import java.util.Objects;
  * appears in runtime descriptors, diagnostic type names, public export
  * keys, or source-language values.</p>
  *
- * @param declarationKind               the declaration kind
- * @param declaredName                  the declared name
- * @param enclosingLexicalDeclarationPath the enclosing lexical
- *                                       declaration path
- * @param sourceScalarRange             the complete source scalar range
  */
 public record LexicalDeclarationIdentity(DeclarationKind declarationKind,
                                          String declaredName,

@@ -8,7 +8,6 @@ package deal.semantic.ir;
  * copied from checked {@code Symbol} facts at bridge time; the semantic
  * unit retains no checker object.</p>
  *
- * @param id the numeric identity; non-negative
  */
 public record BindingId(long id) implements SemanticId {
 

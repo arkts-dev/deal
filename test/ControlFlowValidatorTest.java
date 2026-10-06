@@ -47,57 +47,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * Verifies the ISSUE-0408 component surface:
- * {@link StructuredBodyTable} (control-flow-structures C-D1 — the
- * block-membership production record with the ordered per-block ops and
- * the inverse membership map) and {@link ControlFlowValidator}
- * (control-flow-structures C-D2 — the production-time block-tree,
- * dominance, and exit checks producing E6005 with
- * {@code validatorRule CONTROL_BLOCK_TREE}/{@code CONTROL_EXIT} and
- * {@code capability EVALUATION_ORDER}, outside the foundation
- * validator's closed 14-condition rule set).
- *
- * <p>Pinned cases (task verification):
- * <ol>
- *   <li>Record surface: defensive copies, unmodifiable maps, null
- *       rejection, the pinned rule names.</li>
- *   <li>Positive corpus: {@code BRANCH(IF)} with selected/alternate
- *       blocks, {@code BRANCH(LOGICAL_AND|OR)} with the right-operand
- *       block, {@code LOOP(WHILE)} with the per-iteration condition block
- *       in {@code initBlock}, {@code LOOP(FOR)} with init/body/update
- *       blocks, the test-less FOR shape ({@code CONST true} in
- *       {@code initBlock}, update ops only in {@code updateBlock}),
- *       {@code FOR_EACH(ARRAY_VALUES)} with a body block,
- *       {@code TRY_CATCH} with try/catch blocks, nested structures,
- *       break/continue/return targets including transfer across a
- *       try boundary, and the five module-level kinds
- *       ({@code MODULE_INIT}/{@code EXTERNAL_ENTRY}/
- *       {@code CLASS_FACTORY}/{@code CALLBACK_INVOKE}/
- *       {@code ENTRY_INVOKE}) absent from the table — each
- *       validates.</li>
- *   <li>Negative corpus, each producing exactly one E6005 with the
- *       correct rule and {@link deal.semantic.ir.LoweringFailureDetail}
- *       fields: orphan block, double-referenced block, cyclic nesting, an
- *       op in two blocks, inverse-map conflicts, an unknown
- *       {@code BlockId} in a payload, an op after
- *       {@code RETURN}/{@code BREAK}/{@code CONTINUE}/{@code THROW} in a
- *       block, a root block referenced by a control position, a structure
- *       op outside every block, an op of a lowered function that is a
- *       member of no block (the unit-to-table completeness direction —
- *       a {@code CONST} plus an {@code ASSIGN} in neither map), an op
- *       listed for a block that is not a unit op, a missing function
- *       body/module-init block — all {@code CONTROL_BLOCK_TREE} (the
- *       {@code BREAK} member-of-no-block fixture now stops at this
- *       earlier membership rejection too); {@code BREAK} targeting a
- *       non-loop op, an unknown op, or a non-enclosing loop, and
- *       {@code RETURN} naming a different or unknown function — all
- *       {@code CONTROL_EXIT}.</li>
- *   <li>Determinism and purity: identical inputs produce identical
- *       outcomes and the unit and table are never mutated.</li>
- *   <li>Null-argument rejection.</li>
- * </ol>
- */
 public class ControlFlowValidatorTest {
 
     private static int passed = 0;
@@ -538,7 +487,6 @@ public class ControlFlowValidatorTest {
                 "nested loop/branch/try-catch with break and continue across the try boundary");
         }
 
-        // RETURN naming the containing function (own body and a nested block).
         {
             SemanticOp ret = returnOp(MAIN);
             LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)), List.of(ret));
@@ -895,7 +843,6 @@ public class ControlFlowValidatorTest {
                 ControlFlowValidator.CONTROL_BLOCK_TREE, "is a member of no block");
         }
 
-        // RETURN naming a different function.
         {
             SemanticOp ret = returnOp(HELPER);
             LoweredModuleUnit unit = unit(Map.of(
@@ -910,7 +857,6 @@ public class ControlFlowValidatorTest {
                 ControlFlowValidator.CONTROL_EXIT, "belongs to the block tree rooted at BlockId(10)");
         }
 
-        // RETURN naming a function that is not a function of the unit.
         {
             SemanticOp ret = returnOp(new FunctionId(99));
             LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)), List.of(ret));
@@ -921,10 +867,6 @@ public class ControlFlowValidatorTest {
                 ControlFlowValidator.CONTROL_EXIT, "is not a function of the unit");
         }
     }
-
-    // =========================================================================
-    // 4b. The dynamic invocation's call-owned return records (ISSUE-0657)
-    // =========================================================================
 
     /**
      * The invocation-owned return record of a dynamic {@code CALL} — the

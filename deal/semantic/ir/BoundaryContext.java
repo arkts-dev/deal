@@ -2,39 +2,6 @@ package deal.semantic.ir;
 
 import java.util.Objects;
 
-/**
- * The minimal execution context a boundary cell names (ISSUE-0233 design
- * D3): exactly {@code {parameterIndex?, index?, length?, elementIndex?,
- * fieldPath?}} — one field per context-bearing cell of the closed
- * 13-policy subset, all optional because every field is named by at most
- * one cell.
- *
- * <ul>
- *   <li>{@code parameterIndex} — the {@code HOST_PARAMETER} boundary's
- *       one-based position among the invocation's parameter boundaries
- *       (the invocation machine's fact; retained pin
- *       {@code deal/runtime.lua:593-605}).</li>
- *   <li>{@code index} — the array index for the
- *       {@code ARRAY_READ_INDEX_THEN_DESCRIPTOR},
- *       {@code ARRAY_WRITE_BOUNDS_THEN_ELEMENT}, and
- *       {@code ARRAY_DELETE_BOUNDS} cells, and the bytes index for the
- *       {@code BYTES_READ}/{@code BYTES_WRITE} cells.</li>
- *   <li>{@code length} — the array length at check time for the write and
- *       delete bounds cells, and the bytes length for the
- *       {@code BYTES_READ}/{@code BYTES_WRITE} cells.</li>
- *   <li>{@code elementIndex} — the {@code ARRAY_ELEMENT_DESCRIPTOR}
- *       boundary's one-based element position ({@code {oneBasedIndex}}).</li>
- *   <li>{@code fieldPath} — the {@code JSON_TO_ERROR} boundary's
- *       {@code {fieldPath}}.</li>
- * </ul>
- *
- * <p>The executor validates required-ness and ranges fail closed: a
- * context-bearing cell executed without its required context is a
- * producer defect ({@link BoundaryExecutor.Defect}), never a DEAL
- * projection. The context carries no invocation state — fields are
- * machine-supplied inputs, never derived here (ISSUE-0236 owns the
- * invocation state machine).</p>
- */
 public record BoundaryContext(
     Integer parameterIndex,
     Integer index,

@@ -35,16 +35,6 @@ import java.util.Objects;
  * opaque here — computed by the canonicalizer (T3) and checked by the
  * validator (R-DIGEST, T6).</p>
  *
- * @param opId          the globally unique operation identity carrying its module; non-null
- * @param kind          the closed operation kind; non-null
- * @param origin        the source origin; non-null
- * @param result        the result slot ({@link ValueId} or {@link AsyncTokenId}), or {@code null} for none
- * @param resultType    the result type (descriptor or internal sentinel), or {@code null} for none
- * @param operands      the completed operand values in left-to-right order; non-null
- * @param operandTypes  the operand descriptors in left-to-right order (same length as operands); non-null
- * @param payload       the closed kind payload; non-null
- * @param failurePolicy the closed failure policy; non-null
- * @param contract      the wired operation-contract snapshot; non-null
  */
 public record SemanticOp(
     OpId opId,

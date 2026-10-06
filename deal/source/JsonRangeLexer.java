@@ -154,9 +154,6 @@ public final class JsonRangeLexer {
      * (null when both decodes fail), {@link Boolean} for TRUE/FALSE,
      * and null for every other kind.
      *
-     * @param kind         the token kind
-     * @param range        the half-open decoded-scalar range of the token
-     * @param decodedValue the decoded value, or null (see above)
      */
     public record JsonRangeToken(JsonTokenKind kind, SourceScalarRange range, Object decodedValue) {
     }
@@ -165,14 +162,6 @@ public final class JsonRangeLexer {
      * An object-member pairing recorded for every member at every nesting
      * depth, in value-completion order.
      *
-     * @param path        object keys from the root to this member (array
-     *                    levels contribute no element)
-     * @param keyText     the decoded key string
-     * @param keyRange    the key token's range
-     * @param valueRange  the completed value's range; zero-length at the
-     *                    end-of-input position for a null value at end of
-     *                    input
-     * @param memberRange key start through value end
      */
     public record JsonMemberRange(List<String> path, String keyText,
                                   SourceScalarRange keyRange, SourceScalarRange valueRange,
@@ -185,16 +174,6 @@ public final class JsonRangeLexer {
     /**
      * A structural defect or strict-JSON deviation, never an exception.
      *
-     * @param kind    the fault kind
-     * @param range   the offending position: a one-scalar range for
-     *                UNEXPECTED_CHARACTER, RAW_CONTROL_IN_STRING, and
-     *                UNPAIRED_SURROGATE; the offending token's range for
-     *                positional token faults; the whole skipped whitespace
-     *                run for NON_STRICT_WHITESPACE; the backslash plus the
-     *                escaped scalar for INVALID_ESCAPE; zero-length at the
-     *                position for EXPECTED_COMMA_OR_END, TRAILING_CONTENT,
-     *                and the end-of-input faults
-     * @param message a human-readable description
      */
     public record JsonLexFault(JsonFaultKind kind, SourceScalarRange range, String message) {
     }
@@ -202,9 +181,6 @@ public final class JsonRangeLexer {
     /**
      * The complete scan result.
      *
-     * @param orderedTokens every scanned token in scan order
-     * @param members       every completed member at every nesting depth
-     * @param faults        every defect in scan order
      */
     public record JsonRangeLexResult(List<JsonRangeToken> orderedTokens,
                                      List<JsonMemberRange> members,

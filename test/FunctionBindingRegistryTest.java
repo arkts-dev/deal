@@ -53,68 +53,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * The registry child's tests (ISSUE-0447 sequencing item 4): the
- * {@code FunctionExecutionBinding} registry —
- * {@code LoweredModuleUnit.functionBindings} keyed by
- * {@link FunctionAllocationIdentity} with exactly one registration per
- * producing allocation for the five closed binding shapes — and this
- * epic's minimal in-epic ownership of the host/external function-value
- * materialization seam (the classification of host/external
- * function-value producing sites and the {@code HostFunction}/
- * {@code ExternalFunction}/{@code HostFunctionValue} registrations over
- * member-read/export-read op facts and {@code HOST_TO_DEAL}
- * boundary-op facts at the IR level, explicitly without producing
- * member-read/module lowering and without producing any
- * {@code BOUNDARY} op).
- *
- * <p><b>Coverage.</b></p>
- * <ul>
- *   <li>a closure lowering registers exactly one {@code LoweredBody}
- *       keyed by the {@code CLOSURE_NEW} result identity (combined with
- *       the closure child — fails if it breaks);</li>
- *   <li>a mutual-recursion group lowering registers one
- *       {@code LoweredBody} per member keyed by each pre-assigned
- *       identity (combined with the group child — fails if it breaks);</li>
- *   <li>seam tests (self-contained, IR level): a
- *       {@code MemberReadPayload}/{@code ExportReadPayload} record with
- *       host-module facts registers {@code HostFunction
- *       {hostModuleId, exportName, descriptor}}; the same with
- *       cross-module facts plus a {@code ModuleRoutePlan} record whose
- *       callee route is shared registers {@code ExternalFunction
- *       {moduleId, exportName, descriptor, SHARED_BODY}}; with a
- *       retained-ABI route record registers {@code RETAINED_ABI}; a
- *       {@code HOST_TO_DEAL} {@code BoundaryPayload} fact record
- *       (constructed as the pinned schema shape, not produced or
- *       executed) with a function-typed descriptor registers
- *       {@code HostFunctionValue {hostModuleId,
- *       materializingBoundaryOpId, descriptor}} naming exactly that
- *       boundary op id;</li>
- *   <li>producer-fact classification: the seam marks host/external
- *       producing sites with the facts the shape-map child's import-read
- *       arm consumes (the {@code FunctionValueMaterialization}
- *       records keyed by the produced allocation identity);</li>
- *   <li>the adapter registration seam: {@code FUNCTION_ADAPT} →
- *       {@code AdapterBinding {adaptOpId, captureMode, sourceRef,
- *       sourceSignature, targetSignature}} (the registration function
- *       consumed at the adapter-creation site — the shape-map child's
- *       production);</li>
- *   <li>negatives: duplicate-key registration rejected at registration
- *       time; a function-typed materialization without its producer
- *       facts (or with mismatched facts, a non-function descriptor, a
- *       missing route record, or a foreign payload) is not silently
- *       skipped — the seam fails explicitly;</li>
- *   <li>non-production assertions: units produced by this child's own
- *       tests contain no {@code BOUNDARY} ops, the lowered units carry
- *       no {@code MEMBER_READ}/{@code EXPORT_READ} op production path
- *       (a module member access still fails closed with the pinned
- *       E6005), and the map is immutable after lowering with identical
- *       iteration order across runs;</li>
- *   <li>determinism: a fixed lowering yields the same map with
- *       identical iteration order across runs and byte-identical
- *       {@code deal.semantic-ir/1} dumps.</li>
- * </ul>
- */
 public class FunctionBindingRegistryTest {
 
     private static int passed = 0;
@@ -455,8 +393,7 @@ public class FunctionBindingRegistryTest {
                     && hBody.functionId().equals(hPayload.function()),
                 "h's closure binding is LoweredBody keyed by its CLOSURE_NEW result identity");
         }
-        // Iteration order: the two intrinsic seeds first (they are seeded
-        // before the hoisted names, ISSUE-0632), then declaration order f, g, h.
+
         List<FunctionAllocationIdentity> keys = new ArrayList<>(
             unit.functionBindings().keySet());
         check(keys.size() == 5 && keys.get(2).equals(fKey) && keys.get(3).equals(gKey)

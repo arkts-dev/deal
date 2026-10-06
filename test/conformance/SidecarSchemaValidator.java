@@ -15,109 +15,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
 
-/**
- * The reusable Sidecar Schema Validation component of the v1.2
- * three-backend conformance gate (ISSUE-0348; the corpus sidecar design
- * is {@code v12-three-backend-conformance-corpus} C2/C6, the consuming
- * gate is {@code v12-zero-skip-conformance-gate}).
- *
- * <p>Validates one sidecar document against schema version 1 and
- * produces the classification failures the design defines. The canonical
- * schema name is <b>Structured Expectation Sidecar</b>; its backend
- * neutral variant is the <b>Compile Expectation Sidecar</b>. The three
- * runtime variants and one compile variant of the schema are closed:</p>
- *
- * <ul>
- *   <li><b>Uniform runtime sidecar</b> —
- *       {@code version: 1}, {@code backends} naming exactly the three
- *       backends {@code luajit}, {@code jvm}, {@code js} as an array, and
- *       one {@code expected} object shared by all three lanes with
- *       {@code mode} exactly {@code runtime-ok} or {@code runtime-error}
- *       (a {@code compile-reject} mode in a uniform {@code expected}
- *       object is an unknown variant — the rejection exists only in the
- *       divergent form).</li>
- *   <li><b>Divergent runtime sidecar</b> — {@code backends} as a
- *       per-backend object naming exactly the three backends, one
- *       expectation per entry ({@code mode} in {@code runtime-ok},
- *       {@code runtime-error}, {@code compile-reject}). The only
- *       divergent shape that validates is the sanctioned C6 split,
- *       reserved for the spec-sanctioned C FFI rejection: a runtime
- *       expectation on {@code luajit} and {@code compile-reject} with
- *       {@code diagnostic.code} exactly {@code E6006}
- *       ({@code FFI_UNSUPPORTED_BACKEND}) on both {@code jvm} and
- *       {@code js} — and only when the fixture's compilation set contains
- *       the C6 rejection trigger, an {@code @extern-c} import directive
- *       in the fixture or a companion module of the compilation set.
- *       Every other combination is a classification failure naming the
- *       fixture and the offending backend entry.</li>
- *   <li><b>Compile Expectation Sidecar</b> — {@code version: 1},
- *       {@code mode: "compile-error"}, no {@code backends} key, and one
- *       {@code diagnostic} object with mandatory {@code code} and
- *       optional-pinned {@code line}/{@code column}/{@code message}. The
- *       pin's {@code code} must equal the fixture's exact
- *       {@code compile-error CODE} {@code @expected} tag.</li>
- * </ul>
- *
- * <p>Per-mode expectation rules ({@code prefix} is {@code expected} for
- * the uniform form or {@code backends.<backend>} for a divergent
- * entry):</p>
- * <ul>
- *   <li>{@code runtime-ok} — {@code transcript} object with string
- *       {@code stdout}/{@code stderr} fields, {@code exitCode} 0, and no
- *       {@code error} field (an {@code error} field on {@code runtime-ok}
- *       is a classification failure).</li>
- *   <li>{@code runtime-error} — {@code exitCode} 1 and an {@code error}
- *       object with the mandatory fields {@code code} and {@code
- *       message} plus the span group {@code sourceFile}, {@code line},
- *       {@code column}. The span group is mandatory for every fixture
- *       except the one sanctioned span-less shape — the locked time
- *       selector's retained {@code nowMillis} wrapper raises E8004 with
- *       no file/line/column at all
- *       ({@code luajit-time-selector-disposition}, Failure and
- *       operations), so the sidecar of exactly
- *       {@code backend-runtime/stdlib-edge/time-now-millis-positive.deal}
- *       omits the whole group, and pinning any of the three there is a
- *       classification failure (a sidecar must never pin span values
- *       the runtime cannot produce). Recognized optional fields are
- *       exactly {@code expected}, {@code actual}, {@code frames},
- *       {@code cause}; any other field in the error object is an
- *       unknown-field failure. The sidecar is the authoritative field
- *       set (C2).</li>
- *   <li>{@code compile-reject} — exactly a {@code diagnostic} object with
- *       mandatory {@code code} plus optional-pinned {@code line}/
- *       {@code column} ({@code message} is compile-sidecar-only); no
- *       {@code transcript}/{@code exitCode}/{@code error} fields — any
- *       other field in the entry is an unknown-field failure.</li>
- * </ul>
- *
- * <p>{@code sourceFile} of every {@code runtime-error} error object must
- * be the canonical corpus-relative path of the module that threw — the
- * fixture's own corpus-relative path when the fixture itself throws, or
- * the corpus-relative path of any module in the fixture's compilation set
- * (the modules the lane compiles for this fixture: the fixture plus its
- * transitively imported corpus modules). The validator rejects absolute
- * paths, temp-workspace paths, backslash separators, paths that do not
- * resolve to an existing corpus module, and paths naming a corpus module
- * outside the fixture's compilation set — a sidecar naming a different,
- * unrelated fixture is a classification failure (corpus page
- * Verification 1).</p>
- *
- * <p>The validator is deterministic and side-effect-free: it parses the
- * sidecar text it is given, performs no I/O, mutates nothing, and has no
- * default expectations. It enforces no absence: a missing sidecar for a
- * runtime fixture is the gate classification contract's failure, and
- * {@code compile-ok} fixtures and code-pinned {@code compile-error}
- * fixtures without diagnostic pins carry no sidecar — the validator
- * rejects no absence it is not given.</p>
- *
- * <p>Validation context: the gate core derives the compilation set via
- * module-import resolution (gate T6) and passes module paths plus their
- * sources; unit tests supply synthetic compilation sets. The optional
- * corpus module index is the set of all corpus-relative module paths the
- * gate discovered — it lets the validator distinguish a sidecar naming a
- * corpus module outside the fixture's compilation set from one naming a
- * path that resolves to no existing corpus module.</p>
- */
 public final class SidecarSchemaValidator {
 
     /** The only schema version this validator accepts. */
@@ -433,10 +330,6 @@ public final class SidecarSchemaValidator {
         return Optional.empty();
     }
 
-    /**
-     * Returns the pinned code iff the tag has the exact
-     * {@code compile-error CODE} form, else {@code null}.
-     */
     private static String exactCompileErrorCode(String expectedTag) {
         if (!EXACT_COMPILE_ERROR_TAG.matcher(expectedTag).matches()) {
             return null;

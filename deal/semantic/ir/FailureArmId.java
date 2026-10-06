@@ -45,10 +45,6 @@ public enum FailureArmId {
     ARRAY_WRITE_BOUNDS,
     ARRAY_DELETE_BOUNDS,
 
-    // the bytes rows (the sibling bytes sub-epic's retained rows; every
-    // retained template is bound to exactly one declared arm, so the
-    // bytes cells' arms render the sibling rows' own texts through the
-    // closed projections — no bytes-specific text or projection is added)
     BYTES_ALLOCATE,
     BYTES_READ,
     BYTES_WRITE_BOUNDS,
@@ -65,7 +61,6 @@ public enum FailureArmId {
     ASYNC_COMPLETION_REFINEMENT,
     ASYNC_SHAPE,
 
-    // HOST_LOAD (the six landed templates)
     HOST_LOAD_FAILED,
     HOST_LOAD_NOT_A_MODULE,
     HOST_LOAD_MISSING_EXPORT,

@@ -62,101 +62,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
 
-/**
- * ISSUE-0707: the lane-equivalent bytes production drive and its baseline
- * measurement ({@code bytes-value-semantics-production-realization} B1, the
- * bytes production drive contract, and the preserved-invariant contract;
- * {@code conformance-corpus-disposition-and-profile-repin} CD2/CD5;
- * {@code luajit-jvm-single-lowering-production-cutover} C1/C2/C7/C8;
- * {@code dispatched-corpus-production-realization} R1).
- *
- * <p>One registered drive measures the whole bytes slate through the
- * release-owned production invocation:</p>
- *
- * <ol>
- *   <li><b>The lane-equivalent materialization.</b> Every in-scope fixture
- *       is written as the <em>entry module</em> of a temp project with the
- *       entry-directory-relative layout the gate's lane rule uses, its
- *       transitively imported companions, every {@code host/<name>}
- *       declaration under {@code bindings/} and the corpus C FFI
- *       declarations with the corpus's {@code nativeLibrary} wiring, plus
- *       one generated {@code deal.json} ({@code moduleRoots},
- *       {@code output}, {@code backend}, {@code externals}) whose raw
- *       host keys resolve the declaration files while the compile
- *       context carries the dotted typing name first (the JVM lane's
- *       externals-identity convention). No {@code app.deal} shim
- *       exists.</li>
- *   <li><b>The compile criterion.</b> Every in-scope fixture compiles on
- *       {@link Backend#LUAJIT} and {@link Backend#JVM} under the
- *       release-owned production invocation with zero E6005
- *       {@code CONSTRUCT_UNLOWERED}/{@code RETAINED_ABI_DEFERRED}/
- *       {@code SHARED_EMITTER_COVERAGE}; {@code ffi/016} on the JVM
- *       reproduces exactly the pinned E6006 extern-C rejection and
- *       publishes no artifact.</li>
- *   <li><b>The deferred-entry drive.</b> Each staged artifact is driven
- *       with the corpus probe: the deferred module-init entry, then the
- *       entry surface's ordered zero-arity exports inside protected calls
- *       (an async export through its recorded entry with the drive flag
- *       set; the host-importing fixture runs against the deployed corpus
- *       host implementation; {@code ffi/016} runs against the bootstrapped
- *       corpus FFI library). The capture is projected to {@code code},
- *       {@code message}, the span group, {@code expected}, and
- *       {@code actual}, with the module-relative line rebased onto raw
- *       corpus coordinates by the stripped-header delta.</li>
- *   <li><b>The sidecar-authoritative comparison.</b> Mandatory
- *       {@code code}/{@code message} always, a span only when pinned,
- *       {@code expected}/{@code actual} only when pinned, unpinned fields
- *       suppressed, nothing fabricated; a divergence names the fixture,
- *       the target, the field, the captured value, and the pinned
- *       value.</li>
- *   <li><b>The accounting and the baseline record.</b> Exactly one
- *       outcome per fixture and per target over the 39-fixture scope (78
- *       cells) with the only dispositions {@code pin-exact},
- *       {@code divergent}, and {@code delegated} (the two dual-mechanism
- *       fixtures, named with the delegated boundary contract, never
- *       skipped and never treated as passed); no aggregate-only reporting.
- *       The measured record is asserted against the pinned baseline (76
- *       pin-exact legs — 75 executed legs reproducing their pinned tuple
- *       plus {@code ffi/016}'s one pinned compile-reject leg — and the
- *       measured divergent legs named by
- *       fixture/target/field/captured/pinned). The design's
- *       baseline of 74 pin-exact legs and four divergent legs was measured
- *       before the canonical failure-projection authority's closed
- *       carrier-kind render landed; at this revision the two
- *       {@code stdlib/json} LuaJIT legs already reproduce the pinned
- *       {@code bytes} tuple, so the drive pins the corrected record and
- *       asserts those two legs' corrected tuple explicitly.</li>
- *   <li><b>Oracle agreement.</b> The oracle terminal is captured for every
- *       fixture (through a driver-entry lowering for the sync exports and
- *       the fixture's own async entry for the async export) and compared
- *       with the artifacts' projected tuple.</li>
- *   <li><b>The JSON stringify bytes carrier arm (ISSUE-0708).</b> The
- *       emitted walk's table branch carries the bytes carrier arm, so a
- *       stringified bytes value at any reachable nesting depth renders the
- *       pinned {@code unsupported type for JSON encoding: bytes} tuple at
- *       the {@code json.stringify} call origin on LuaJIT exactly as the
- *       oracle and the JVM already do. One focused section drives the
- *       three bytes nesting shapes (a top-level table member, a
- *       {@code bytes[]} element, and a leaf four tables deep) and the
- *       class-instance carrier-kind control through a scratch entry module
- *       on both targets and through the oracle, drives the corpus
- *       function-value and runtime-ok round-trip controls, and asserts
- *       over the staged LuaJIT artifact that the walk renders the closed
- *       arm row (the serialized expected text and the carrier-kind
- *       projected actual), never a site-held text.</li>
- *   <li><b>The preserved invariants.</b> The dispatched corpus count, the
- *       sidecar schema, the fixture inventory, the 27-member
- *       {@code BoundaryKind} set with its two reserved names, the green
- *       and untouched {@code BytesCoverageTest} drives, the untouched JS
- *       lane, the byte-identical repeated emission, and the atomic
- *       staging of a failing compile are asserted in the same run.</li>
- * </ol>
- *
- * <p>The drive is read-only over the repository: every temp project is
- * removed on every path, nothing is staged in the checkout, and no
- * production file, sidecar, schema, JS file, lane mechanism, or corpus
- * member is modified.</p>
- */
 public class BytesProductionDriveTest {
 
     private static int passed = 0;
@@ -1763,10 +1668,6 @@ public class BytesProductionDriveTest {
         }
     }
 
-    // =========================================================================
-    // 6c. The JSON stringify bytes carrier arm (ISSUE-0708)
-    // =========================================================================
-
     /** The arm's pinned expected text (the serialized row's own field). */
     private static final String JSON_STRINGIFY_EXPECTED_TEXT =
         "string, number, boolean, or table";
@@ -1845,7 +1746,6 @@ public class BytesProductionDriveTest {
         }
         """;
 
-    /** The class-instance carrier-kind control (the landed table token). */
     private static final String STRINGIFY_CLASS_SOURCE = """
         import * as json from "std/json";
 
@@ -1883,16 +1783,6 @@ public class BytesProductionDriveTest {
             "json_stringify_class_control", STRINGIFY_CLASS_SOURCE, 8, 10,
             "unsupported type for JSON encoding: table", "table"));
 
-    /**
-     * The direct drive of the JSON_STRINGIFY bytes carrier arm (ISSUE-0708,
-     * {@code bytes-value-semantics-production-realization} B2 and
-     * Verification 2): every bytes nesting shape raises the pinned tuple at
-     * the {@code json.stringify} call origin on the oracle, the LuaJIT
-     * artifact, and the JVM artifact; the class-instance and function
-     * carrier kinds keep their landed tokens; the runtime-ok round trip
-     * stays green; and the emitted walk renders the closed arm row rather
-     * than a site-held text.
-     */
     private static void testJsonStringifyBytesArm() throws Exception {
         System.out.println("-- the JSON_STRINGIFY bytes carrier arm: the three "
             + "nesting shapes, the carrier-kind controls, and the rendered row --");
@@ -1938,8 +1828,7 @@ public class BytesProductionDriveTest {
                 }
             }
         }
-        // The production-pipeline carrier-kind controls: the function member
-        // keeps its landed token, and the runtime-ok round trip stays green.
+
         for (String fixture : List.of(
                 "backend-runtime/runtime-errors/json-stringify-function-e8001",
                 "backend-runtime/stdlib/json/json-stringify-roundtrip")) {
@@ -2342,8 +2231,6 @@ public class BytesProductionDriveTest {
             }
         }
 
-        // The landed element-contract battery and its registration are
-        // untouched: the two dual-mechanism fixtures keep their drives.
         Path bytesCoverage = Path.of("test", "BytesCoverageTest.java");
         check(Files.isRegularFile(bytesCoverage),
             "the landed element-contract battery stays in the tree");
@@ -2462,11 +2349,7 @@ public class BytesProductionDriveTest {
                 + leg.target().laneName() + "]: divergent, "
                 + describe(leg.differences()));
         }
-        // The design baseline's two stdlib/json LuaJIT divergences are
-        // corrected at this revision: the emitted walk renders the closed
-        // std/json carrier-kind projection, so those legs reproduce the
-        // pinned `bytes` tuple exactly (the canonical projection
-        // authority's landed arm).
+
         for (String fixture : List.of(
                 STDLIB_JSON_DIR + "/json-stringify-bytes-error",
                 STDLIB_JSON_DIR + "/json-stringify-nested-bytes-error")) {

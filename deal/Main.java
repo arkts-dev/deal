@@ -20,53 +20,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * CLI entry point for the DEAL compiler.
- *
- * <p>Usage:
- * <pre>{@code
- * deal compile <entry.deal> [--output <dir>] [--backend <lua|luajit|jvm|js>] [--verbose] [--dump-ir] [--source-map] [--diagnostics-json <path>]
- * }</pre>
- *
- * <p>Options:
- * <ul>
- *   <li>{@code compile <entry.deal>} — compile a DEAL project (required)</li>
- *   <li>{@code --output <dir>} / {@code -o <dir>} — output directory
- *       (CWD-relative; overrides the manifest {@code output}; the default
- *       is {@code <manifestDirectory>/build/lua}, {@code build/jvm}, or
- *       {@code build/js} per the effective backend)</li>
- *   <li>{@code --backend <name>} — code-generation backend: the CLI
- *       aliases {@code lua}/{@code luajit} (default), {@code jvm}, or
- *       {@code js}. A {@code deal.json} {@code "backend"} field
- *       ({@code "luajit"} | {@code "jvm"} | {@code "js"}) is used when
- *       the flag is absent.</li>
- *   <li>{@code --verbose} / {@code -v} — verbose output with per-module timing</li>
- *   <li>{@code --dump-ir} — produce IR dump files at {@code <outputDir>/<module-path>.ir.txt}</li>
- *   <li>{@code --source-map} — produce source map sidecar files ({@code .deal.map.json})</li>
- *   <li>{@code --diagnostics-json <path>} — write the structured diagnostics
- *       document (version 1) to {@code <path>} for manifest-configuration
- *       failures and for every compilation (successful or failed); a
- *       write failure is a deterministic I/O diagnostic on stderr with
- *       exit 1</li>
- * </ul>
- *
- * <p><b>Exact-v1.2 project location (ISSUE-0269 migration, design
- * source {@code strict-project-context-resolution-identity} D1/D7,
- * {@code deal-v1.2-directives-and-c-ffi-declarations} D10/D11).</b> The
- * CLI consumes {@link ProjectLocator#locate(String, CliOverrides)}: one
- * ancestor {@code deal.json} with {@code languageVersion: "1.2"} governs
- * the graph, the strict manifest is read/decoded/parsed before any
- * override is consulted, roots/output/externals/stdlib surface come from
- * the published immutable {@link ProjectContext}, and no implicit
- * entry-directory root or stdlib heuristic exists here. A manifest
- * failure is one E2010 printed through the canonical formatter (with the
- * structured document honored when {@code --diagnostics-json} is set);
- * a malformed entry or malformed CLI override is a
- * {@code CliDiagnostic} (exit 1); a post-validation write failure is a
- * deterministic compiler I/O diagnostic (exit 1), never E2010 and never
- * a raw exception. Output directories are created only in the write
- * phase.</p>
- */
 public final class Main {
 
     private Main() {}

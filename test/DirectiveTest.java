@@ -27,16 +27,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
-/**
- * The dedicated directive test battery (ISSUE-0273,
- * fixed-name-directive-events Verification 1-4, 6, 8): lexical forms,
- * the ordered anchoring machine, parser binding, the E1043(warning)/
- * E1044/E1045/E1046/E7002 contract, the exact (1,2) declaration-version
- * contract, template-embedded event rebasing, the registry delta, the
- * production {@code // @spec:} E1044 pin, and the production C FFI
- * manifest-policy pin (an unbacked {@code @extern-c} import is E2010 at
- * the import span; a manifest-backed one compiles — ISSUE-0477).
- */
 public class DirectiveTest {
 
     private static int passed = 0;
@@ -489,8 +479,6 @@ public class DirectiveTest {
         check(hasError(parse("class A { x: int = 0; }\n// @deal-version 1.2"),
             "E1046"), "post-token → E1046");
 
-        // No migration registry exists or is consulted: every parsed value
-        // other than (1,2) fails, nothing is migrated.
         check(hasError(parse("// @deal-version 1.1\nexport class C { x: int = 0; }"),
             "E1046"), "1.1 is never migrated");
 
@@ -635,9 +623,6 @@ public class DirectiveTest {
                 "// @spec: Lexical elements — comment semantics\n"
                     + "export function main(): null { return null; }\n");
 
-            // ISSUE-0269: the tolerant DealConfig reader is retired; the
-            // test-only isolated-phase overload synthesizes the internal
-            // ProjectContext, and this manifest declares no externals.
             CompilationOrchestrator orchestrator = new CompilationOrchestrator(
                 srcDir.resolve("main.deal"), tmp.resolve("build"),
                 false, false, false, Backend.LUAJIT,
@@ -677,19 +662,6 @@ public class DirectiveTest {
     // Production C FFI manifest policy (docs/spec-v1.2.md:1891)
     // =========================================================================
 
-    /**
-     * The production emission site behind the promoted
-     * {@code ffi-manifest-missing-native-library-rejected.deal} E2010
-     * pin (ISSUE-0477): the production module resolver
-     * ({@code CompilationOrchestrator.ModuleResolverImpl}) rejects an
-     * import of a C FFI declaration file ({@code .d.deal} with
-     * {@code // @extern-c}) that no externals entry declares with
-     * {@code nativeLibrary} — E2010 at the import span via the
-     * checker's manifest-policy mapping. The same import through an
-     * externals entry carrying {@code nativeLibrary} compiles; an entry
-     * that omits {@code nativeLibrary} is the invalid-manifest-policy
-     * rejection again.
-     */
     static void testProductionCffiManifestPolicy() throws Exception {
         System.out.println("-- Production C FFI manifest policy: E2010 at the import --");
 
@@ -761,11 +733,6 @@ public class DirectiveTest {
                 "the manifest-backed extern-C import emits no E2010: "
                     + backed.diagnostics());
 
-            // The extern-C admission slice (ISSUE-0662): the same fixture
-            // through the release-owned production invocation now emits the
-            // load_ffi prelude at the import's MODULE_IMPORT and stages the
-            // one project artifact (the host-kind guard no longer rejects
-            // the extern-C declaration import).
             ByteArrayOutputStream prodErr = new ByteArrayOutputStream();
             PrintStream originalErr = System.err;
             int prodExit;
@@ -800,13 +767,6 @@ public class DirectiveTest {
                     "the production artifact carries no ffi.C/cdef text");
             }
 
-            // Case 3: an externals entry that declares the file without
-            // nativeLibrary is the invalid-manifest-policy rejection —
-            // rejected at locate time by ProjectLocator step 4(b)
-            // (ISSUE-0508): exactly one E2010 at the externals entry's
-            // manifest value range naming the nativeLibrary policy, and
-            // no context is published (a C FFI entry must include
-            // nativeLibrary, docs/spec-v1.2.md:1891).
             Files.writeString(tmp.resolve("deal.json"),
                 "{\"languageVersion\": \"1.2\", \"moduleRoots\": [\".\"],"
                     + " \"externals\": {\"ffi\": {\"declaration\":"
@@ -838,15 +798,6 @@ public class DirectiveTest {
         }
     }
 
-    /**
-     * Locates the production context for {@code entry} and builds the
-     * context-driven orchestrator, or null after a failing check. The
-     * compile resolves the harness invocation (ISSUE-0643 P10 item 3):
-     * the suite's extern-C fixtures carry a HOST-kind declaration import
-     * the release-owned production invocation fails closed, while the
-     * suite's subject — the directive/manifest policy — is
-     * arm-independent.
-     */
     private static CompilationOrchestrator locateOrchestrator(Path entry) {
         ProjectLocator.LocateResult located = ProjectLocator.locate(
             entry.toString(), null);

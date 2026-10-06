@@ -11,56 +11,6 @@ import deal.semantic.ir.UnicodeScalars;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Verifies the ISSUE-0234 B-D1/B-D2/B-D4 surface: the closed
- * {@link ComparisonOperandView} and {@link ComparisonExecutor} as the
- * single, pure execution form of the 30 comparison selectors of
- * {@code deal.semantic-ir/1}, with the missing≡null rule at both operand
- * positions.
- *
- * <p>Tests (binary-comparison-selectors Verification 1/2/3 and the
- * NO_DEAL_FAILURE sweep):</p>
- * <ol>
- *   <li>View shape: the seven closed variants, fail-closed construction
- *       (null scalars/token), and the validated-scalars invariant.</li>
- *   <li>INT32 EQ/NE and all four signed orderings, incl. the null and
- *       missing operand rows at both positions.</li>
- *   <li>NUMBER IEEE matrix: {@code NaN === NaN} false,
- *       {@code NaN !== NaN} true, {@code -0.0 === 0.0} true,
- *       {@code -0.0 < 0.0} false, {@code -0.0 <= 0.0} true, NaN false
- *       in every ordering.</li>
- *   <li>STRING equality and scalar (code point) order with supplementary
- *       characters — the pinned seed {@code "\uE000"} vs {@code U+1F600}
- *       sorts opposite to UTF-16 code-unit order and yields the
- *       scalar-order result.</li>
- *   <li>BOOLEAN EQ/NE and NULL EQ/NE.</li>
- *   <li>Every {@code NULLABLE_*} side LEFT/RIGHT/BOTH with
- *       null-vs-null, null-vs-value, and value-vs-value pairs per inner
- *       kind (int, number incl. NaN, string incl. supplementary,
- *       boolean, array/table/class/function identity);
- *       {@code NULLABLE_NULL_*} both directions.</li>
- *   <li>{@code REFERENCE_*} for array, table, class, and function
- *       identities: two distinct values of equal shape → NE, the same
- *       allocation/function identity → EQ; null/missing rows.</li>
- *   <li>Missing≡null at both operand positions across every selector
- *       family with no error raised (the
- *       {@code jvm-arr-cmp-past-end-parity} shapes).</li>
- *   <li>NO_DEAL_FAILURE sweep: every comparison selector with
- *       null/missing operands returns a boolean without throwing;
- *       arithmetic selectors are producer defects.</li>
- *   <li>Fail-closed defects: wrong operand families, null-literal
- *       selectors with value operands, missing/broken
- *       {@code NULLABLE_*}/{@code REFERENCE_*} payloads, arithmetic
- *       selectors; documented NPEs.</li>
- *   <li>Component discipline: the executor and view carry no
- *       {@code deal.diagnostics}/{@code deal.types}/{@code deal.ast}/
- *       {@code deal.checker}/{@code deal.codegen} import and the
- *       executor references no boundary-op type (B-D5: no boundary
- *       execution).</li>
- *   <li>Exactly 30 comparison selectors and 12 arithmetic selectors in
- *       the closed set; determinism of repeated execution.</li>
- * </ol>
- */
 public class ComparisonExecutorTest {
 
     private static int passed = 0;
@@ -562,10 +512,6 @@ public class ComparisonExecutorTest {
         check(cmp(BinarySelector.NULLABLE_EQ, NULL, NULL, BYTES, NullableSide.BOTH),
             "NULLABLE_EQ BOTH(null,null) bytes inner");
     }
-
-    // =========================================================================
-    // 7a. BYTES matrix (ISSUE-0158 row)
-    // =========================================================================
 
     private static void testBytesMatrix() {
         System.out.println("-- BYTES_EQ/NE (bytes allocation identity) --");

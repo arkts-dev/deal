@@ -1,28 +1,5 @@
 package deal.semantic.ir;
 
-/**
- * The closed binary selector set of {@code deal.semantic-ir/1} (parent
- * "Closed selectors"; schema S3).
- *
- * <p>Closed set — exactly the 42 values below in the pinned order; no open
- * or unknown fallback member and no external extension point exist.
- * Unknown or reserved selectors fail validation (R-ENUM). Selector→policy
- * is fixed by the parent: signed32 add/sub/mul use {@code INT32_RESULT},
- * div/mod use {@code INT32_DIVISOR_THEN_RESULT}, pow uses
- * {@code INT32_EXPONENT_THEN_RESULT}; all number operations and
- * comparisons use {@code NO_DEAL_FAILURE}. Number modulo is
- * {@code a-floor(a/b)*b}; number division and power use IEEE-754.
- * {@code NULLABLE_*} payload carries the inner descriptor and the side
- * mode {@code LEFT|RIGHT|BOTH} ({@link NullableSide}); missing and
- * language null compare as language null only at nullable reads.
- * {@code REFERENCE_*} requires one equal checked descriptor and an
- * {@code ARRAY|TABLE|CLASS|FUNCTION} value; it compares allocation or
- * function identity. {@code BYTES_*} requires the one equal checked
- * {@code bytes} descriptor ({@link RuntimeDescriptor.Bytes} — ISSUE-0158
- * added the member with the bytes comparison row) and compares allocation
- * identity of the two bytes carriers. Short circuit is {@code BRANCH} with
- * {@code LOGICAL_AND}/{@code LOGICAL_OR}, never {@code BINARY}.</p>
- */
 public enum BinarySelector implements ClosedSelector {
 
     // Signed32 arithmetic.
@@ -81,7 +58,6 @@ public enum BinarySelector implements ClosedSelector {
     REFERENCE_EQ,
     REFERENCE_NE,
 
-    // Bytes reference-identity equality/inequality (ISSUE-0158).
     BYTES_EQ,
     BYTES_NE
 }

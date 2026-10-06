@@ -26,7 +26,6 @@ public class SemanticIrTextDecodeException extends RuntimeException {
     /**
      * Creates the decode failure with the transport-level reason.
      *
-     * @param message the decode failure reason; non-null
      */
     public SemanticIrTextDecodeException(String message) {
         super(message);
