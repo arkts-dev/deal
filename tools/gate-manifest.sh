@@ -93,35 +93,5 @@ WARNING: node not found, skipping standard library JS tests'
   'fg|=== Running Closed Composite Terminator Analysis Tests (ISSUE-0712) ===|java -ea -cp build deal.test.CompositeTerminatorAnalysisTest'
   'fg|=== Running the Truncating Int32 Remainder Prelude Tests (ISSUE-0714) ===|java -ea -cp build deal.test.Int32ModTruncPreludeTest'
   'fg|=== Running LuaJIT Chunk Local Bound Tests (ISSUE-0716) ===|java -ea -cp build deal.test.LuaJitChunkLocalBoundTest'
-  # ISSUE-0713 (the represented unreachable tail; design source
-  # residual-carrier-shapes-production-realization D2 and the
-  # terminator-and-unreachable-tail contract; dispatched-corpus-production-
-  # realization R4 item 3 and R8; luajit-jvm-single-lowering-production-
-  # cutover C1/C2): a lowered function carrying a tail after each of
-  # return/throw/break/continue validates with every tail op a member of
-  # its terminator's own block in source order, no synthetic implicit
-  # return, and the tail's constructs represented; the two tail fixtures
-  # (async-await/async-error-propagation and async-await/async-throw-catch)
-  # compile through the release-owned production invocation on LuaJIT and
-  # JVM with zero E6005, publish one project artifact per target with no
-  # retained emission, and execute on the real toolchains with the pinned
-  # runtime-ok outcome (exit 0, empty stdout/stderr); the emitted Lua chunk
-  # carries each tail op behind its terminator; the emitted Java keeps the
-  # JLS 14.21 reachability skip (the marker directly follows the THROW
-  # arm's transfer and no tail origin is emitted) and compiles under
-  # javac --release 25 -proc:none; the oracle completes the async export
-  # and emits no event for any tail op; a composite whose every path
-  # transfers and whose sub-blocks carry a represented tail (an if/else
-  # with both branches returning, a try/catch whose protected and catch
-  # blocks both return) also compiles under javac --release 25 -proc:none
-  # and executes on both targets, with the JVM completion query walking
-  # the same reachable prefix the emission walks; and an unreachable loop
-  # tail (a BREAK and a CONTINUE in a `for (;;)` behind a THROW inside a
-  # try, with a trailing return behind the try) keeps its transfer op and
-  # its loop represented while the JVM transfer dispatch collects only the
-  # emitted reachable prefix, so the artifact defines no label for the
-  # skipped loop and carries no dispatch arm for it, compiles under
-  # javac --release 25 -proc:none, and executes with exit 0 and an empty
-  # transcript on both targets.
   'fg|=== Running Unreachable Tail Production Tests (ISSUE-0713) ===|java -ea -cp build deal.test.UnreachableTailProductionTest'
 )
