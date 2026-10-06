@@ -594,11 +594,13 @@ public final class LuaSemanticEmitter {
             if (bindsHostRuntime()) {
                 out.append("local __rt = require(\"deal.runtime\")\n");
                 out.append("__rtNull = __rt.__NULL\n");
+                out.append("__rtMissing = __rt.__MISSING\n");
                 out.append(HOST_BOUNDARY_PRELUDE);
             } else if (bindsBytesRuntime()) {
 
                 out.append("local __rt = require(\"deal.runtime\")\n");
                 out.append("__rtNull = __rt.__NULL\n");
+                out.append("__rtMissing = __rt.__MISSING\n");
             }
             if (bindsBytesRuntime()) {
                 out.append(BYTES_PRELUDE);
@@ -7453,6 +7455,15 @@ local __NULL = setmetatable({}, {__tostring = function() return "null" end})
 -- host-crossed table entry, a runtime class field) reaching a failing
 -- walk position renders "null", never the table spelling.
 local __rtNull = nil
+-- The deployed runtime's own absent-marker sentinel (deal/runtime.lua's
+-- __rt.__MISSING — a value distinct from this chunk's __MISSING). The
+-- chunk's runtime binding assigns it when the chunk binds the deployed
+-- runtime; a host-free chunk leaves it nil. The typed-boundary projection
+-- classifies it as the absent marker exactly like the chunk's own
+-- sentinel, so a runtime-produced carrier (a host-crossed table entry, a
+-- runtime class field) reaching a failing walk position renders "nil",
+-- never the table spelling.
+local __rtMissing = nil
 -- The member-read helper (ISSUE-0239 E10): a present key yields the
 -- stored value (a present null is the plain nil stored by the write
 -- paths); an absent key yields the internal MISSING sentinel — exactly
@@ -7942,11 +7953,6 @@ local function __isClassAtom(s)
   if string.find(s, "/", 1, true) == nil then return false end
   return string.find(s, "[%s{}]") == nil
 end
-local function __isClassSpelling(s)
-  if type(s) ~= "string" then return false end
-  if string.sub(s, 1, 6) == "class:" then return #s > 6 end
-  return __isClassAtom(s)
-end
 -- A descriptor text: the canonical grammar and the prelude's own internal
 -- dialect (array(inner)/nullable(inner)/function(params;result)).
 local function __isDescriptorText(s)
@@ -8068,8 +8074,12 @@ local function __checkActualField(id, arm, actual)
       .."supplied none (producer defect)", 0)
   end
   if arm.a == "TYPED_BOUNDARY" or arm.a == "COMPLETION" then
+    -- The closed vocabulary and the carried canonical class atom only: the
+    -- superseded composed class:<ClassId> spelling is never a typed-boundary
+    -- token (jsonable-tojson-walk-arm-binding W1), so a caller composing it
+    -- fails closed.
     local closed = arm.a == "COMPLETION" and __completionTokens or __typedTokens
-    if not closed[actual] and not __isClassSpelling(actual) then
+    if not closed[actual] and not __isClassAtom(actual) then
       __fieldDefect(id, "actual", "a closed typed-boundary token", actual)
     end
   elseif arm.a == "CARRIER_KIND" then
@@ -8162,6 +8172,9 @@ end
 -- target class name, never the class: IR/trace spelling).
 local function __typedBoundaryKind(staticKind, v)
   if v == __MISSING then return "nil" end
+  -- The deployed runtime's absent-marker sentinel, by identity (its own
+  -- value, never the nil a host-free chunk leaves the binding at).
+  if __rtMissing ~= nil and v == __rtMissing then return "nil" end
   if v == nil or v == __NULL or v == __rtNull then return "null" end
   if type(v) == "table" and v.__jn then return v.k end
   local t = type(v)

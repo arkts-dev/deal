@@ -1004,20 +1004,20 @@ public final class FailureContractRegistry {
         return "class instance".equals(kindText) ? "class" : kindText;
     }
 
-    /** The closed typed-boundary token check (the carried class spelling included). */
+    /**
+     * The closed typed-boundary token check (the carried canonical class
+     * atom included). The superseded composed {@code class:<ClassId>}
+     * spelling is never a typed-boundary token (jsonable-tojson-walk-arm-
+     * binding W1): only the closed vocabulary and a carried canonical class
+     * atom are admissible, so a caller that composes the removed spelling
+     * fails closed.
+     */
     private static void requireTypedBoundaryToken(FailureArm arm, String token,
                                                   Set<String> closed) {
-        if (closed.contains(token) || isClassSpelling(token)) {
+        if (closed.contains(token) || isClassAtomText(token)) {
             return;
         }
         throw shapeDefect(arm, "actual", token, "a closed typed-boundary token");
-    }
-
-    private static boolean isClassSpelling(String token) {
-        if (token.startsWith("class:")) {
-            return token.length() > "class:".length();
-        }
-        return isClassAtomText(token);
     }
 
     /** The declared or carried canonical class atom ({@code @modulePath/Name}). */

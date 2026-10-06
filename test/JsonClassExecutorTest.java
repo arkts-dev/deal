@@ -2058,22 +2058,35 @@ public class JsonClassExecutorTest {
         ValueId deepTableClassId = nextValue();
         SemanticOp deepTableOp = jsonToOp(tableLayout, deepTableClassId);
         String overflowPath = "data" + ".k".repeat(513);
+        SourceOrigin tableDepthOrigin = nextOrigin(null);
         Outcome<Value> tableOverflow = ClassOpsExecutor.executeJsonToClass(deepTableOp,
             Map.of(deepTableClassId, deepTable), Map.of(POINT, tableLayout),
-            FixtureJson.stringifier(), nextOrigin(null));
+            FixtureJson.stringifier(), tableDepthOrigin);
         check(tableOverflow instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().code() == DiagnosticCode.E8001
                 && failure.failure().failure().message().equals(
-                    "value at " + overflowPath + " is not JSON serializable: table"),
-            "a 513-deep table subtree fails at the exceeding container's pinned path "
-                + "with the table token");
+                    "value at " + overflowPath + " is not JSON serializable: table")
+                && failure.failure().origin().equals(tableDepthOrigin)
+                && !failure.failure().origin().equals(deepTableOp.origin())
+                && failure.failure().failure().expected() == null
+                && failure.failure().failure().actual().equals("table"),
+            "a 513-deep table subtree fails the walk arm at the exceeding container's "
+                + "pinned path with the table token, no expected field, and the "
+                + "supplied call origin (never the generated body's synthetic anchor)");
+        SourceOrigin tableDepthAdapterOrigin = nextOrigin(null);
         Outcome<Value> tableOverflowAdapter = ClassOpsExecutor.executeJsonToClass(
             deepTableOp, Map.of(deepTableClassId, deepTable), Map.of(POINT, tableLayout),
-            JsonClassAlgorithmAdapter.stringifier(), nextOrigin(null));
+            JsonClassAlgorithmAdapter.stringifier(), tableDepthAdapterOrigin);
         check(tableOverflowAdapter instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().code() == DiagnosticCode.E8001
                 && failure.failure().failure().message().equals(
-                    "value at " + overflowPath + " is not JSON serializable: table"),
-            "the production adapter fails the deep table subtree identically (never a "
-                + "producer crash)");
+                    "value at " + overflowPath + " is not JSON serializable: table")
+                && failure.failure().origin().equals(tableDepthAdapterOrigin)
+                && !failure.failure().origin().equals(deepTableOp.origin())
+                && failure.failure().failure().expected() == null
+                && failure.failure().failure().actual().equals("table"),
+            "the production adapter fails the deep table subtree identically (the "
+                + "walk arm's tuple at the supplied origin, never a producer crash)");
         Value.Class boundedTable = instanceOf(tableLayout,
             Map.of("data", nestedTableChain(512)));
         ValueId boundedTableClassId = nextValue();
@@ -2097,14 +2110,22 @@ public class JsonClassExecutorTest {
         for (int j = 2; j <= 514; j++) {
             mixedPath.append(j % 2 == 0 ? ".k" : "[0]");
         }
+        SourceOrigin mixedDepthOrigin = nextOrigin(null);
         Outcome<Value> mixedOverflow = ClassOpsExecutor.executeJsonToClass(deepMixedOp,
             Map.of(deepMixedClassId, deepMixed), Map.of(POINT, tableLayout),
-            FixtureJson.stringifier(), nextOrigin(null));
+            FixtureJson.stringifier(), mixedDepthOrigin);
         check(mixedOverflow instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().code() == DiagnosticCode.E8001
                 && failure.failure().failure().message().equals(
-                    "value at " + mixedPath + " is not JSON serializable: array"),
-            "a mixed table/array subtree fails at the exceeding array container with "
-                + "the pinned mixed segments and the array token");
+                    "value at " + mixedPath + " is not JSON serializable: array")
+                && failure.failure().origin().equals(mixedDepthOrigin)
+                && !failure.failure().origin().equals(deepMixedOp.origin())
+                && failure.failure().failure().expected() == null
+                && failure.failure().failure().actual().equals("array"),
+            "a mixed table/array subtree fails the walk arm at the exceeding array "
+                + "container with the pinned mixed segments and the array token, no "
+                + "expected field, and the supplied call origin (never the generated "
+                + "body's synthetic anchor)");
     }
 
     private static Value.Class emptyNode() {

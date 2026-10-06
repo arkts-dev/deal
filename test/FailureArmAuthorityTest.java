@@ -97,6 +97,7 @@ public class FailureArmAuthorityTest {
         testIntLadderWrongKindCell();
         testBoundsAndBytesArms();
         testDeclaredFieldShapeNegatives();
+        testTypedBoundaryClassSpellingNegatives();
         testHostInnerReasonDescriptorValidation();
         testEmittedParameterContract();
         testNegativeSingleSourceControl();
@@ -104,9 +105,11 @@ public class FailureArmAuthorityTest {
         testWalkArmOracleDispatchLeg();
         testLandedPresentNullRead();
         testWalkOracleNumericPositions();
+        testWalkOracleKindPositions();
         testMovedElementCell();
         testRuntimeCarrierProjection();
         testRuntimeNullSentinelAtWalk();
+        testRuntimeMissingSentinelAtWalk();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -1538,6 +1541,74 @@ public class FailureArmAuthorityTest {
     }
 
     // =========================================================================
+    // 11e. The superseded class:<ClassId> spelling fails closed
+    // =========================================================================
+
+    /**
+     * The closed typed-boundary vocabulary admits the carried canonical
+     * class atom only: the superseded composed {@code class:<ClassId>}
+     * spelling (jsonable-tojson-walk-arm-binding W1) is rejected by every
+     * renderer that can receive a caller-supplied actual token — the
+     * registry's arm render, the JVM arm render (routed through the
+     * registry), and the serialized Lua arm renderer — while a valid
+     * carried atom stays green.
+     */
+    static void testTypedBoundaryClassSpellingNegatives() throws Exception {
+        System.out.println("-- the superseded class: spelling fails closed --");
+        // The registry renderer.
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.JSON_TO_WALK,
+            Map.of("fieldPath", "x", "actual", "class:arm/walk/Walk"), null,
+            "class:arm/walk/Walk", null),
+            "the superseded class:<ClassId> spelling on the walk arm's actual field "
+                + "fails closed");
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.JSON_TO_WALK,
+            Map.of("fieldPath", "x", "actual", "class:not-a-canonical-atom"), null,
+            "class:not-a-canonical-atom", null),
+            "a class:-prefixed token that is not a canonical atom fails closed");
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.JSON_TO_WALK,
+            Map.of("fieldPath", "x", "actual", "class:"), null, "class:", null),
+            "the empty class: prefix fails closed");
+        checkEq("@/Error", FailureContractRegistry.render(FailureArmId.JSON_TO_WALK,
+                Map.of("fieldPath", "", "actual", "@/Error"), null, "@/Error", null)
+                .actual(),
+            "the carried canonical class atom stays admissible (the control)");
+        // The JVM renderer (JvmRuntime.arm routes through the registry).
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
+            Map.of("fieldPath", "x", "actual", "class:arm/walk/Walk"), WALK_SPAN,
+            null, "class:arm/walk/Walk"),
+            "the JVM arm render fails closed on the superseded class: spelling");
+        checkEq("@/Error", deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
+                Map.of("fieldPath", "", "actual", "@/Error"), WALK_SPAN, null,
+                "@/Error").actual,
+            "the JVM arm render keeps the carried canonical atom (the control)");
+        // The serialized Lua renderer, under real luajit.
+        List<String> rows = runPreludeProbe("""
+            local ok = pcall(__arm, "JSON_TO_WALK",
+              {fieldPath = "x", actual = "class:arm/walk/Walk"}, "-", nil,
+              "class:arm/walk/Walk")
+            print("class-spelling|" .. tostring(ok))
+            ok = pcall(__arm, "JSON_TO_WALK",
+              {fieldPath = "x", actual = "class:not-a-canonical-atom"}, "-", nil,
+              "class:not-a-canonical-atom")
+            print("class-nonatom|" .. tostring(ok))
+            ok = pcall(__arm, "JSON_TO_WALK", {fieldPath = "x", actual = "class:"},
+              "-", nil, "class:")
+            print("class-empty|" .. tostring(ok))
+            ok, value = pcall(__arm, "JSON_TO_WALK",
+              {fieldPath = "", actual = "@/Error"}, "-", nil, "@/Error")
+            print("atom-control|" .. tostring(ok) .. "|" .. (ok and value.a or ""))
+            """, "class-spelling-probe", 4);
+        checkEq("class-spelling|false", rows.get(0),
+            "the Lua arm renderer fails closed on the superseded class: spelling");
+        checkEq("class-nonatom|false", rows.get(1),
+            "the Lua arm renderer fails closed on a class:-prefixed non-atom");
+        checkEq("class-empty|false", rows.get(2),
+            "the Lua arm renderer fails closed on the empty class: prefix");
+        checkEq("atom-control|true|@/Error", rows.get(3),
+            "the Lua arm renderer keeps the carried canonical atom (the control)");
+    }
+
+    // =========================================================================
     // 13. The host inner-reason descriptor validation and the emitted
     //     parameter contract
     // =========================================================================
@@ -2177,7 +2248,7 @@ public class FailureArmAuthorityTest {
         nonfiniteIntField.put("data", walkEmptyTable());
         nonfiniteIntField.put("tags", walkIntArray(1));
         checkWalkOracleTuple(op, layouts, callOrigin, callOriginText,
-            "nonfinite-int-field", nonfiniteIntField, "age");
+            "nonfinite-int-field", nonfiniteIntField, "age", "number");
 
         Map<String, ClassOpsExecutor.Value> fractionalElement = new LinkedHashMap<>();
         fractionalElement.put("name", walkString("n"));
@@ -2188,7 +2259,81 @@ public class FailureArmAuthorityTest {
             deal.semantic.ir.SemanticArray.of(
                 List.of(new ClassOpsExecutor.Value.Number(0.25)))));
         checkWalkOracleTuple(op, layouts, callOrigin, callOriginText,
-            "fractional-array-int-element", fractionalElement, "tags[0]");
+            "fractional-array-int-element", fractionalElement, "tags[0]", "number");
+    }
+
+    /**
+     * The walk drive's oracle-only kind-mismatch layout: a null descriptor
+     * and a boolean descriptor, the two declared positions the three-consumer
+     * drive's layout does not carry. Both fields are optional so the
+     * dedicated drives place exactly the failing position and the walk skips
+     * every absent one; the value-derived kind of the present wrong-kind
+     * value is the arm's actual token.
+     */
+    private static deal.semantic.ir.ClassLayout walkKindLayout() {
+        return new deal.semantic.ir.ClassLayout(WALK_ID, List.of(
+            new deal.semantic.ir.ClassLayout.FieldLayout("nul",
+                RuntimeDescriptor.Null.INSTANCE, false,
+                deal.semantic.ir.DefaultOwner.LOCAL),
+            new deal.semantic.ir.ClassLayout.FieldLayout("flag",
+                RuntimeDescriptor.Boolean.INSTANCE, false,
+                deal.semantic.ir.DefaultOwner.LOCAL)));
+    }
+
+    /**
+     * The walk arm's oracle-only null/boolean descriptor decomposition (V2):
+     * a wrong-kind value at a {@code null}-typed declared field and at a
+     * {@code boolean}-typed declared field each publish the walk arm's tuple
+     * — the failing value's own closed kind as both the {@code {actual}}
+     * message parameter and the {@code actual} field, the supplied call
+     * origin, and no expected field — never the declared descriptor text.
+     * The descriptor's own kind at each position is the success control (the
+     * position admits its value and the walk serializes it).
+     */
+    static void testWalkOracleKindPositions() {
+        System.out.println("-- the walk arm's oracle-only null/boolean descriptor "
+            + "positions --");
+        deal.semantic.ir.SemanticOp op = walkJsonOp(walkKindLayout());
+        Map<deal.semantic.ir.ClassId, deal.semantic.ir.ClassLayout> layouts =
+            Map.of(WALK_ID, walkKindLayout());
+        deal.semantic.ir.SourceOrigin callOrigin = new deal.semantic.ir.SourceOrigin(
+            "arm-walk.deal",
+            new deal.semantic.ir.SourceSpan("arm-walk.deal", 9, 6, 9, 14),
+            deal.semantic.ir.SourceOriginKind.USER, new deal.semantic.ir.AnchorId(0),
+            null);
+        String callOriginText = callOrigin.sourceId() + ":"
+            + callOrigin.span().startLine() + ":" + callOrigin.span().startColumn();
+
+        checkWalkOracleTuple(op, layouts, callOrigin, callOriginText,
+            "string-at-null-descriptor", kindFields("nul", walkString("x")), "nul",
+            "string");
+        checkWalkOracleTuple(op, layouts, callOrigin, callOriginText,
+            "table-at-null-descriptor", kindFields("nul", walkEmptyTable()), "nul",
+            "table");
+        checkWalkOracleTuple(op, layouts, callOrigin, callOriginText,
+            "int-at-boolean-descriptor", kindFields("flag",
+                new ClassOpsExecutor.Value.Int(7)), "flag", "int");
+        checkWalkOracleTuple(op, layouts, callOrigin, callOriginText,
+            "string-at-boolean-descriptor", kindFields("flag", walkString("x")),
+            "flag", "string");
+
+        // The success controls: each descriptor's own kind at its position is
+        // admitted and serialized (the null descriptor's null, the boolean
+        // descriptor's boolean).
+        checkWalkOracleSuccess(op, layouts, callOrigin, "null-descriptor-control",
+            kindFields("nul", ClassOpsExecutor.Value.Null.INSTANCE),
+            "{\"nul\":null}");
+        checkWalkOracleSuccess(op, layouts, callOrigin, "boolean-descriptor-control",
+            kindFields("flag", new ClassOpsExecutor.Value.Bool(true)),
+            "{\"flag\":true}");
+    }
+
+    /** The kind-mismatch drive's one-field instance (declaration order). */
+    private static Map<String, ClassOpsExecutor.Value> kindFields(
+            String name, ClassOpsExecutor.Value value) {
+        Map<String, ClassOpsExecutor.Value> fields = new LinkedHashMap<>();
+        fields.put(name, value);
+        return fields;
     }
 
     /** One oracle-only walk position's full tuple at the supplied call origin. */
@@ -2196,11 +2341,12 @@ public class FailureArmAuthorityTest {
             deal.semantic.ir.SemanticOp op,
             Map<deal.semantic.ir.ClassId, deal.semantic.ir.ClassLayout> layouts,
             deal.semantic.ir.SourceOrigin callOrigin, String callOriginText,
-            String label, Map<String, ClassOpsExecutor.Value> fields, String fieldPath) {
+            String label, Map<String, ClassOpsExecutor.Value> fields, String fieldPath,
+            String token) {
         Map<deal.semantic.ir.ValueId, ClassOpsExecutor.Value> values =
             new LinkedHashMap<>();
         values.put(((deal.semantic.ir.KindPayload.JsonToClassPayload) op.payload())
-            .classValue(), walkOracleInstance(fields));
+            .classValue(), walkOracleInstance(op, fields));
         ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome =
             ClassOpsExecutor.executeJsonToClass(op, values, layouts,
                 deal.semantic.JsonClassAlgorithmAdapter.stringifier(), callOrigin);
@@ -2212,15 +2358,38 @@ public class FailureArmAuthorityTest {
             return;
         }
         checkEq(new Tuple("E8001",
-                "value at " + fieldPath + " is not JSON serializable: number",
-                callOriginText, null, "number"),
+                "value at " + fieldPath + " is not JSON serializable: " + token,
+                callOriginText, null, token),
             tupleOf(failure.failure().failure(), callOriginText),
-            label + ": the oracle renders the walk arm's tuple with the value-derived "
-                + "number token, never the declared int text beside the position");
+            label + ": the oracle renders the walk arm's tuple with the failing "
+                + "value's own " + token + " token, never the declared descriptor "
+                + "text beside the position");
         checkEq(callOrigin, failure.failure().origin(),
             label + ": the walk renders the supplied call origin");
         check(!failure.failure().origin().equals(op.origin()),
             label + ": the walk never substitutes the op's own synthetic anchor");
+    }
+
+    /** One oracle-only walk position's admitted value and serialized JSON text. */
+    private static void checkWalkOracleSuccess(
+            deal.semantic.ir.SemanticOp op,
+            Map<deal.semantic.ir.ClassId, deal.semantic.ir.ClassLayout> layouts,
+            deal.semantic.ir.SourceOrigin callOrigin, String label,
+            Map<String, ClassOpsExecutor.Value> fields, String expectedJson) {
+        Map<deal.semantic.ir.ValueId, ClassOpsExecutor.Value> values =
+            new LinkedHashMap<>();
+        values.put(((deal.semantic.ir.KindPayload.JsonToClassPayload) op.payload())
+            .classValue(), walkOracleInstance(op, fields));
+        ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome =
+            ClassOpsExecutor.executeJsonToClass(op, values, layouts,
+                deal.semantic.JsonClassAlgorithmAdapter.stringifier(), callOrigin);
+        check(outcome instanceof ClassOpsExecutor.Outcome.Success<
+                ClassOpsExecutor.Value> success
+                && success.value() instanceof ClassOpsExecutor.Value.String text
+                && text.scalar() instanceof deal.semantic.ir.UnicodeScalars.Valid valid
+                && valid.carrier().equals(expectedJson),
+            label + ": the descriptor's own kind at its position is admitted and "
+                + "serializes " + expectedJson + "; got " + outcome);
     }
 
     /** A one-field drive case of the walk's three-consumer comparison. */
@@ -2237,13 +2406,29 @@ public class FailureArmAuthorityTest {
     /** One oracle walk instance of the drive's layout (declaration order). */
     private static ClassOpsExecutor.Value walkOracleInstance(
             Map<String, ClassOpsExecutor.Value> fields) {
+        return walkOracleInstance(walkLayout(), fields);
+    }
+
+    /** One oracle walk instance of one layout (declaration order). */
+    private static ClassOpsExecutor.Value walkOracleInstance(
+            deal.semantic.ir.ClassLayout layout,
+            Map<String, ClassOpsExecutor.Value> fields) {
         List<ClassOpsExecutor.FieldState> states = new ArrayList<>();
-        for (deal.semantic.ir.ClassLayout.FieldLayout field : walkLayout().fields()) {
+        for (deal.semantic.ir.ClassLayout.FieldLayout field : layout.fields()) {
             ClassOpsExecutor.Value value = fields.get(field.name());
             states.add(value == null ? ClassOpsExecutor.FieldState.Missing.INSTANCE
                 : new ClassOpsExecutor.FieldState.Present(value));
         }
         return new ClassOpsExecutor.Value.Class(WALK_ID, List.copyOf(states));
+    }
+
+    /** One oracle walk instance of the op's payload layout (declaration order). */
+    private static ClassOpsExecutor.Value walkOracleInstance(
+            deal.semantic.ir.SemanticOp op,
+            Map<String, ClassOpsExecutor.Value> fields) {
+        return walkOracleInstance(
+            ((deal.semantic.ir.KindPayload.JsonToClassPayload) op.payload()).layout(),
+            fields);
     }
 
     /** One emitted-Lua walk instance of the drive's layout (the carrier shape). */
@@ -2507,13 +2692,29 @@ public class FailureArmAuthorityTest {
     private static deal.semantic.ir.SemanticOp walkJsonOp() {
         return walkJsonOp(new deal.semantic.ir.OpId(
                 new deal.semantic.ir.ModuleId("arm-walk"), 3),
-            new deal.semantic.ir.ValueId(1), new deal.semantic.ir.ValueId(4));
+            new deal.semantic.ir.ValueId(1), new deal.semantic.ir.ValueId(4),
+            walkLayout());
+    }
+
+    /** The same op shape over one class layout (the oracle-only drives). */
+    private static deal.semantic.ir.SemanticOp walkJsonOp(
+            deal.semantic.ir.ClassLayout layout) {
+        return walkJsonOp(new deal.semantic.ir.OpId(
+                new deal.semantic.ir.ModuleId("arm-walk"), 3),
+            new deal.semantic.ir.ValueId(1), new deal.semantic.ir.ValueId(4), layout);
     }
 
     /** The same op shape over one produced class-value operand and its own ids. */
     private static deal.semantic.ir.SemanticOp walkJsonOp(
             deal.semantic.ir.OpId opId, deal.semantic.ir.ValueId classValue,
             deal.semantic.ir.ValueId result) {
+        return walkJsonOp(opId, classValue, result, walkLayout());
+    }
+
+    /** The same op shape over one produced class-value operand and one layout. */
+    private static deal.semantic.ir.SemanticOp walkJsonOp(
+            deal.semantic.ir.OpId opId, deal.semantic.ir.ValueId classValue,
+            deal.semantic.ir.ValueId result, deal.semantic.ir.ClassLayout layout) {
         deal.semantic.ir.ModuleId module = opId.module();
         deal.semantic.ir.SourceSpan span = new deal.semantic.ir.SourceSpan(
             "arm-walk.deal", 2, 8, 2, 18);
@@ -2521,7 +2722,7 @@ public class FailureArmAuthorityTest {
             "arm-walk.deal", span, deal.semantic.ir.SourceOriginKind.SYNTHETIC,
             new deal.semantic.ir.AnchorId(0), null);
         KindPayload.JsonToClassPayload payload =
-            new KindPayload.JsonToClassPayload(classValue, walkLayout());
+            new KindPayload.JsonToClassPayload(classValue, layout);
         deal.semantic.ir.OpResultType resultType = RuntimeDescriptor.String.INSTANCE;
         deal.semantic.ir.OperationContractSnapshot contract =
             new deal.semantic.ir.OperationContractSnapshot(
@@ -2963,6 +3164,89 @@ public class FailureArmAuthorityTest {
                 "null"), walkLuaTuple(rows.get(3)),
             "the runtime null at a runtime class instance's declared field renders "
                 + "null in the message and the actual field");
+    }
+
+    // =========================================================================
+    // 16c. The deployed runtime's absent-marker sentinel at the walk
+    // =========================================================================
+
+    /**
+     * The runtime-produced absent-marker sentinel at a failing walk position
+     * (jsonable-tojson-walk-arm-binding W1's absent-marker classification):
+     * {@code deal/runtime.lua}'s {@code __rt.__MISSING} is a distinct value
+     * from the chunk's own {@code __MISSING}, and the landed host crossing
+     * preserves it — {@code __hostReturnCell} returns a host-returned
+     * table's entries unchanged and {@code __hostDealProject} keeps a
+     * runtime class instance's non-class field values. The host-binding
+     * production chunk binds the deployed runtime's sentinel beside the
+     * runtime it requires, and the typed-boundary projection classifies
+     * that sentinel as the absent marker at the walk's failing positions:
+     * the message and the actual field both carry {@code nil}. The
+     * flat-table control at the same position keeps the table spelling, so
+     * the classification is by sentinel identity, not by table shape.
+     */
+    static void testRuntimeMissingSentinelAtWalk() throws Exception {
+        System.out.println("-- the deployed runtime's absent-marker sentinel at the walk --");
+        String lua = emittedWalkHostChunk();
+        check(lua.contains("local __rt = require(\"deal.runtime\")\n")
+                && lua.contains("__rtMissing = __rt.__MISSING\n"),
+            "the host-binding production chunk binds the deployed runtime's "
+                + "absent-marker sentinel");
+        String body = "local rt = require(\"deal.runtime\")\n"
+            + "local sentinel = rt.__MISSING\n"
+            + "print(\"runtime-missing-binding|\" .. (__rtMissing == sentinel and "
+            + "\"OK\" or \"MISSING\") .. \"|\")\n"
+            + "local returned = __hostReturnCell(\"table\", {k = sentinel}, "
+            + quote(WALK_SPAN) + ", false)\n"
+            + "local dataRoot = {__c = true, __id = " + quote(WALK_ID.text())
+            + ", __p = {name = true, age = true, ratio = true, data = true, "
+            + "tags = true}, __f = {name = " + luaString("n") + ", age = 1, "
+            + "ratio = 0.5, data = {__t = true, __keys = {k = true}, k = "
+            + "returned.k}, tags = {__a = true, __n = 1, [1] = 1}}}\n"
+            + "local cases = {\n"
+            + "  {label = \"host-returned-table-missing-entry\", root = dataRoot},\n"
+            + "  {label = \"plain-table-entry-control\", root = {__c = true, __id = "
+            + quote(WALK_ID.text()) + ", __p = {name = true, age = true, ratio = "
+            + "true, data = true, tags = true}, __f = {name = " + luaString("n")
+            + ", age = 1, ratio = 0.5, data = {__t = true, __keys = {k = true}, "
+            + "k = {}}, tags = {__a = true, __n = 1, [1] = 1}}}},\n"
+            + "  {label = \"runtime-class-missing-field\", root = __hostDealProject("
+            + quote(WALK_ID.text()) + ", {name = returned.k, age = 1, ratio = "
+            + "0.5, data = {__t = true, __keys = {}}, tags = {__a = true, "
+            + "__n = 0}, __kind = \"class\", __classname = "
+            + quote(WALK_ID.text()) + "}, " + quote(WALK_SPAN) + ")},\n"
+            + "}\n"
+            + "for i = 1, #cases do\n"
+            + "  local c = cases[i]\n"
+            + "  local ok, text, arm, params, actual = __jsonToClassOp("
+            + quote(WALK_ID.text()) + ", c.root)\n"
+            + "  if ok then print(c.label .. \"|OK|\") return end\n"
+            + "  local value = __arm(arm, params, " + quote(WALK_SPAN)
+            + ", nil, actual)\n"
+            + "  print(c.label .. \"|\" .. value.code .. \"|\" .. "
+            + "(value.e == nil and \"\" or value.e) .. \"|\" .. "
+            + "(value.a == nil and \"\" or value.a) .. \"|\" .. value.m .. \"|\" .. "
+            + "tostring(value.o))\n"
+            + "end\n";
+        List<String> rows = runProbe(lua, "arm-walk", body, "walk-runtime-missing", 4,
+            true);
+        checkEq("runtime-missing-binding|OK|", rows.get(0),
+            "the emitted chunk's own binding is the deployed runtime's absent-marker "
+                + "sentinel");
+        checkEq(new Tuple("E8001",
+                "value at data.k is not JSON serializable: nil", WALK_SPAN, null,
+                "nil"), walkLuaTuple(rows.get(1)),
+            "the runtime absent marker in a host-returned table entry renders nil in "
+                + "the message and the actual field");
+        checkEq(new Tuple("E8001",
+                "value at data.k is not JSON serializable: table", WALK_SPAN, null,
+                "table"), walkLuaTuple(rows.get(2)),
+            "the flat-table control at the same position keeps the table spelling");
+        checkEq(new Tuple("E8001",
+                "value at name is not JSON serializable: nil", WALK_SPAN, null,
+                "nil"), walkLuaTuple(rows.get(3)),
+            "the runtime absent marker at a runtime class instance's declared field "
+                + "renders nil in the message and the actual field");
     }
 
     // =========================================================================
