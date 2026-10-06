@@ -1228,6 +1228,94 @@ public final class JvmSemanticEmitter {
         }
 
         /**
+         * Whether the emitted {@code FOR} body can reach the update block:
+         * the emitted {@code CONT: do { body } while (false);} completes
+         * normally when the body's reachable prefix can complete normally,
+         * or when it carries a reachable continue targeting this loop — the
+         * {@code CONT} label re-tests the constant-false condition and
+         * falls through to the update. A body whose every emitted path
+         * leaves by {@code break}/{@code return}/{@code throw} never
+         * reaches the update, so its emitted update statements would be
+         * unreachable Java (JLS &sect;14.21).
+         */
+        private boolean forUpdateReachable(BlockId bodyBlock, OpId loopId) {
+            StructuredBodyTable ownerTable = blockTableOf.get(bodyBlock);
+            if (ownerTable == null) {
+                ownerTable = table;
+            }
+            List<OpId> ops = ownerTable.blockOps().get(bodyBlock);
+            if (ops == null) {
+                return true;
+            }
+            for (OpId opId : ops) {
+                if (ownedChildren.contains(opId) || skippedOps.contains(opId)) {
+                    continue;
+                }
+                SemanticOp op = opsById.get(opId);
+                if (op == null) {
+                    continue;
+                }
+                if (reachesForUpdate(op, loopId)) {
+                    return true;
+                }
+                if (!completesNormally(op)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /**
+         * One op's contribution to {@link #forUpdateReachable}: a continue
+         * targeting this loop completes the emitted {@code CONT} do
+         * statement (it re-tests the constant-false condition), a composite
+         * completes when one of its emitted paths completes, and every
+         * other op neither completes itself nor reaches the update.
+         */
+        private boolean reachesForUpdate(SemanticOp op, OpId loopId) {
+            return switch (op.kind()) {
+                case CONTINUE -> ((KindPayload.ContinuePayload) op.payload())
+                    .loopId().equals(loopId);
+                case TRY_CATCH -> {
+                    KindPayload.TryCatchPayload payload =
+                        (KindPayload.TryCatchPayload) op.payload();
+                    yield forUpdateReachable(payload.tryBlock(), loopId)
+                        || forUpdateReachable(payload.catchBlock(), loopId);
+                }
+                case BRANCH -> {
+                    KindPayload.BranchPayload payload =
+                        (KindPayload.BranchPayload) op.payload();
+                    yield payload.alternateBlock() == null
+                        || forUpdateReachable(payload.selectedBlock(), loopId)
+                        || forUpdateReachable(payload.alternateBlock(), loopId);
+                }
+                default -> false;
+            };
+        }
+
+        /**
+         * Whether the emission walk of one block emits at least one
+         * statement: the same owned/skipped filter {@code emitBlockOps}
+         * applies, without the reachability walk.
+         */
+        private boolean blockHasEmittedOps(BlockId block) {
+            StructuredBodyTable ownerTable = blockTableOf.get(block);
+            if (ownerTable == null) {
+                ownerTable = table;
+            }
+            List<OpId> ops = ownerTable.blockOps().get(block);
+            if (ops == null) {
+                return false;
+            }
+            for (OpId opId : ops) {
+                if (!ownedChildren.contains(opId) && !skippedOps.contains(opId)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /**
          * The {@link LoweredFunction} record of one function id across the
          * session's closure: a non-entry module's function body resolves
          * against its own module's function registry, never the entry
@@ -5104,7 +5192,21 @@ public final class JvmSemanticEmitter {
                     emitBlockOps(payload.bodyBlock(), indent + 2);
                     out.append(indent(indent)).append("  } while (false);\n");
                     if (payload.updateBlock() != null) {
-                        emitBlockOps(payload.updateBlock(), indent + 1);
+                        if (forUpdateReachable(payload.bodyBlock(), op.opId())) {
+                            emitBlockOps(payload.updateBlock(), indent + 1);
+                        } else if (blockHasEmittedOps(payload.updateBlock())) {
+                            // JLS §14.21: the emitted CONT do statement
+                            // cannot complete normally (every path of the
+                            // emitted body leaves by break/return/throw and
+                            // no reachable continue targets this loop), so
+                            // the update statements would be unreachable
+                            // Java — javac rejects them, and the oracle's
+                            // loop walk stops on the same non-completing
+                            // path. Emit the skip marker instead; the update
+                            // ops stay in the lowered unit.
+                            out.append(indent(indent)).append("  // unreachable: the"
+                                + " preceding statement cannot complete normally\n");
+                        }
                     }
                     out.append(indent(indent)).append("}\n");
                 }

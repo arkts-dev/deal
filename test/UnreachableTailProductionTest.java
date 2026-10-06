@@ -35,6 +35,7 @@ import deal.semantic.ir.BlockId;
 import deal.semantic.ir.ChainOperandCompletion;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ConstructKind;
+import deal.semantic.ir.ControlSelector;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ExternalModuleInterface;
 import deal.semantic.ir.ExternalModuleKind;
@@ -1858,6 +1859,342 @@ public class UnreachableTailProductionTest {
             + stderr + "\"");
     }
 
+    // =========================================================================
+    // 7. The updated FOR inside TRY_CATCH: the update reachability
+    // =========================================================================
+
+    /**
+     * The review's reproduction and its variants: an updated FOR inside
+     * {@code TRY_CATCH} whose emitted {@code CONT} do statement cannot
+     * complete normally (every emitted path of the body leaves by
+     * break/return/throw and no reachable continue targets the loop). The
+     * update ops stay in the lowered unit; the JVM artifact replaces them
+     * with the JLS &sect;14.21 skip marker, and the emitted Java compiles
+     * under {@code javac --release 25 -proc:none} and runs. A reachable
+     * continue targeting the loop completes the emitted do statement
+     * through the {@code CONT} label, so its update stays emitted and
+     * executed.
+     *
+     * <p>{@code traceCompared} is false only for the throw body: a
+     * {@code DealFailure} propagating through a composite leaves the
+     * structurally enclosing composite op with a START and no terminal in
+     * the shared artifacts while the oracle emits the FAILURE terminal — a
+     * pre-existing oracle/emitter terminal projection gap that a no-tail,
+     * update-reachable minimal program reproduces identically with and
+     * without this change, so it is not a property of the update
+     * reachability. The throw case still requires the oracle's completion,
+     * the represented tail's absence, and the real
+     * {@code javac --release 25 -proc:none} compilation.</p>
+     */
+    private record ForUpdateCase(String name, String source, String tailMarker,
+                                 boolean updateSkipped, boolean traceCompared) {
+    }
+
+    private static final String FOR_UPDATE_BREAK_SOURCE = """
+        export function main(): null {
+          try {
+            for (let i: int = 0; i < 2; i = i + 1) {
+              break;
+              "forUpdateBreakTail";
+            }
+          } catch (e) {
+          }
+          return null;
+        }
+        """;
+
+    private static final String FOR_UPDATE_RETURN_SOURCE = """
+        export function main(): null {
+          try {
+            for (let i: int = 0; i < 2; i = i + 1) {
+              return null;
+              "forUpdateReturnTail";
+            }
+          } catch (e) {
+          }
+          return null;
+        }
+        """;
+
+    private static final String FOR_UPDATE_THROW_SOURCE = """
+        export function main(): null {
+          try {
+            for (let i: int = 0; i < 2; i = i + 1) {
+              throw { code: "EXPECTED", message: "expected" };
+              "forUpdateThrowTail";
+            }
+          } catch (e) {
+          }
+          return null;
+        }
+        """;
+
+    /**
+     * The continue-to-update case: the body's only update-reaching path is
+     * the {@code continue} (the {@code if} branch continues until the
+     * guard breaks in its {@code else}), so a skipped update would fail the
+     * post-loop tick check instead of looping forever.
+     */
+    private static final String FOR_UPDATE_CONTINUE_SOURCE = """
+        export function main(): null {
+          let ticks: int = 0;
+          let guard: int = 0;
+          try {
+            for (let i: int = 0; i < 1000000; ticks = ticks + 1) {
+              guard = guard + 1;
+              if (guard < 6) {
+                continue;
+                "forUpdateContinueTail";
+              } else {
+                break;
+              }
+            }
+          } catch (e) {
+          }
+          if (ticks !== 5) {
+            throw { code: "TEST_FAIL", message: "the for update did not run" };
+          }
+          return null;
+        }
+        """;
+
+    private static final List<ForUpdateCase> FOR_UPDATE_CASES = List.of(
+        new ForUpdateCase("for-update-break-tail", FOR_UPDATE_BREAK_SOURCE,
+            "forUpdateBreakTail", true, true),
+        new ForUpdateCase("for-update-return-tail", FOR_UPDATE_RETURN_SOURCE,
+            "forUpdateReturnTail", true, true),
+        new ForUpdateCase("for-update-throw-tail", FOR_UPDATE_THROW_SOURCE,
+            "forUpdateThrowTail", true, false),
+        new ForUpdateCase("for-update-continue-tail", FOR_UPDATE_CONTINUE_SOURCE,
+            "forUpdateContinueTail", false, true));
+
+    private static void testForUpdateReachability() throws Exception {
+        System.out.println("-- The updated FOR inside TRY_CATCH: real-javac update "
+            + "reachability regression --");
+        for (ForUpdateCase forCase : FOR_UPDATE_CASES) {
+            testForUpdateCase(forCase);
+        }
+    }
+
+    private static void testForUpdateCase(ForUpdateCase forCase) throws Exception {
+        Path project = Files.createTempDirectory("deal-unreachable-tail-"
+            + forCase.name() + "-");
+        try {
+            Path src = project.resolve("src");
+            Files.createDirectories(src);
+            Files.writeString(src.resolve("main.deal"), forCase.source(),
+                StandardCharsets.UTF_8);
+            Files.writeString(project.resolve("deal.json"), DEAL_JSON,
+                StandardCharsets.UTF_8);
+            Path entry = src.resolve("main.deal");
+
+            LoweredProject lowered = lowerProgram(forCase.name(), entry,
+                new CliOverrides("jvm", project.resolve("out-oracle").toString()));
+            if (lowered == null) {
+                return;
+            }
+            LoweredModuleUnit unit = lowered.project().modules().get(lowered.entry());
+            Map<OpId, SemanticOp> byId = new LinkedHashMap<>();
+            for (SemanticOp op : unit.ops()) {
+                byId.put(op.opId(), op);
+            }
+            SemanticOp loop = unit.ops().stream()
+                .filter(op -> op.kind() == SemanticOpKind.LOOP)
+                .filter(op -> ((KindPayload.LoopPayload) op.payload()).selector()
+                    == ControlSelector.FOR)
+                .findFirst().orElse(null);
+            check(loop != null, forCase.name() + ": the updated FOR loop op is "
+                + "represented in the lowered unit");
+            if (loop == null) {
+                return;
+            }
+            KindPayload.LoopPayload payload =
+                (KindPayload.LoopPayload) loop.payload();
+            List<OpId> updateMembers = payload.updateBlock() == null ? null
+                : lowered.entryTable().blockOps().get(payload.updateBlock());
+            check(updateMembers != null && !updateMembers.isEmpty(), forCase.name()
+                + ": the update block keeps its ops in the lowered unit");
+            if (updateMembers == null || updateMembers.isEmpty()) {
+                return;
+            }
+            for (OpId updateOp : updateMembers) {
+                check(byId.containsKey(updateOp), forCase.name() + ": the update op "
+                    + updateOp + " is represented in the lowered unit");
+            }
+            SemanticOp marker = opWithString(unit.ops(), forCase.tailMarker());
+            check(marker != null, forCase.name() + ": the tail statement '"
+                + forCase.tailMarker() + "' is represented in the lowered unit");
+            if (marker == null) {
+                return;
+            }
+
+            // The oracle executes the loop, takes the transfer (or the
+            // continue path), and never executes the represented tail.
+            SemanticRuntimeModel.ConsumerRun run = SemanticOracle.execute(
+                lowered.project(), lowered.tables(),
+                new SemanticOracle.HostResponder() {
+                });
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                forCase.name() + ": the oracle completes main: " + run.terminal());
+            check(run.trace().stream().noneMatch(
+                    event -> event.op().equals(marker.opId())),
+                forCase.name() + ": the oracle emits no event for the tail op "
+                    + marker.opId());
+
+            // The three-consumer comparison: the oracle and both shared
+            // artifacts agree event-for-event (the shared JVM artifact is
+            // compiled under javac --release 25 -proc:none by the harness).
+            // The throw body is excluded for the pre-existing
+            // DealFailure-through-composite terminal projection gap recorded
+            // on the case record; its oracle completion and real javac
+            // compilation are still required below.
+            if (forCase.traceCompared()) {
+                Path workspace = Files.createTempDirectory(
+                    "deal-unreachable-tail-for-update-matrix-" + forCase.name() + "-");
+                try {
+                    SemanticDifferentialHarness.Verdict verdict =
+                        SemanticDifferentialHarness.runProject(lowered.project(),
+                            lowered.tables(), lowered.registries(),
+                            SemanticDifferentialHarness.Expectation.success(
+                                forCase.name(), List.of(), "null"), workspace);
+                    check(verdict.runs().size() == 3, forCase.name() + ": the "
+                        + "differential matrix produced the three consumers: "
+                        + verdict.failures());
+                    check(verdict.pass(), forCase.name() + ": the oracle and both "
+                        + "shared artifacts agree event-for-event over the updated "
+                        + "FOR: " + verdict.failures());
+                    for (SemanticRuntimeModel.ConsumerRun consumer : verdict.runs()) {
+                        check(consumer.trace().stream().noneMatch(
+                                event -> event.op().equals(marker.opId())),
+                            forCase.name() + ": " + consumer.consumer() + " emits no "
+                                + "event for the represented tail op " + marker.opId());
+                    }
+                } finally {
+                    deleteRecursively(workspace);
+                }
+            }
+
+            forUpdateJvmDrive(forCase, loop, updateMembers, marker, project, entry);
+        } finally {
+            deleteRecursively(project);
+        }
+    }
+
+    /**
+     * The JVM leg: the artifact skips the update of a CONT do statement
+     * that cannot complete normally (the marker replaces the update
+     * statements, whose ops stay in the lowered unit) or emits it when a
+     * reachable continue completes the do statement, compiles under
+     * {@code javac --release 25 -proc:none}, and executes with exit 0 and
+     * an empty transcript.
+     */
+    private static void forUpdateJvmDrive(ForUpdateCase forCase, SemanticOp loop,
+                                          List<OpId> updateMembers, SemanticOp marker,
+                                          Path project, Path entry) throws Exception {
+        String name = forCase.name();
+        Path out = project.resolve("out-jvm");
+        ProjectLocator.LocateResult located = ProjectLocator.locate(entry.toString(),
+            new CliOverrides("jvm", out.toString()));
+        check(located.context() != null, name + " [jvm]: the generated deal.json "
+            + "locates strictly");
+        if (located.context() == null) {
+            return;
+        }
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            located.context(), entry, false, false, false, false, null,
+            productionInvocation());
+        boolean compiled = orchestrator.compile();
+        List<String> errors = orchestrator.diagnostics().stream()
+            .filter(diagnostic -> "error".equals(diagnostic.severity()))
+            .map(CompilerDiagnostic::message).toList();
+        check(compiled && errors.isEmpty(), name + " [jvm]: zero E6005 over the "
+            + "release-owned production invocation: " + errors);
+        check(orchestrator.semanticEmissionCount() == 1
+                && orchestrator.retainedEmissionCount() == 0,
+            name + " [jvm]: exactly one project artifact and no retained "
+                + "emission: semantic=" + orchestrator.semanticEmissionCount()
+                + " retained=" + orchestrator.retainedEmissionCount());
+        if (!compiled) {
+            return;
+        }
+        Path artifact = out.resolve(JvmBackend.classNameFor("main") + ".java");
+        check(Files.isRegularFile(artifact), name + " [jvm]: the project artifact "
+            + "is staged: " + artifact);
+        if (!Files.isRegularFile(artifact)) {
+            return;
+        }
+        String text = Files.readString(artifact, StandardCharsets.UTF_8);
+        long id = loop.opId().id();
+        String doOpen = "CONT" + id + ": do {";
+        int doOpenAt = text.indexOf(doOpen);
+        check(doOpenAt >= 0, name + " [jvm]: the artifact carries the loop's "
+            + "CONT do statement (" + doOpen + ")");
+        int doCloseAt = doOpenAt < 0 ? -1
+            : text.indexOf("} while (false);", doOpenAt);
+        check(doCloseAt >= 0, name + " [jvm]: the artifact closes the CONT do "
+            + "statement");
+        if (doCloseAt >= 0) {
+            String afterDo = text
+                .substring(doCloseAt + "} while (false);".length()).stripLeading();
+            if (forCase.updateSkipped()) {
+                check(afterDo.startsWith("// unreachable:"), name + " [jvm]: the "
+                    + "update of the non-completing CONT do statement is replaced "
+                    + "by the JLS \u00a714.21 skip marker: "
+                    + afterDo.lines().findFirst().orElse("<eof>"));
+                for (OpId updateOp : updateMembers) {
+                    check(!text.contains(quotedOpId(updateOp)), name + " [jvm]: the "
+                        + "skipped update op " + updateOp + " is not emitted");
+                }
+            } else {
+                check(!afterDo.startsWith("// unreachable:"), name + " [jvm]: the "
+                    + "reachable update of the CONT do statement is emitted");
+                check(updateMembers.stream().anyMatch(
+                        updateOp -> text.contains(quotedOpId(updateOp))),
+                    name + " [jvm]: the emitted update carries its lowered ops");
+                check(text.contains("continue CONT" + id + ";"), name + " [jvm]: "
+                    + "the reachable continue jumps to the CONT label");
+            }
+        }
+        check(text.contains("// unreachable: the preceding statement cannot"
+                + " complete normally"), name + " [jvm]: the artifact keeps the "
+            + "JLS \u00a714.21 reachability skip marker");
+        check(!text.contains(forCase.tailMarker()), name + " [jvm]: the tail "
+            + "statement is skipped from the emitted Java");
+        check(!text.contains(originOf(marker)), name + " [jvm]: the tail op origin "
+            + originOf(marker) + " is absent from the emitted Java");
+
+        Path classes = out.resolve("classes");
+        Files.createDirectories(classes);
+        String classpath = absoluteClasspath();
+        ProcessBuilder javac = new ProcessBuilder("javac", "--release", "25",
+            "-proc:none", "-cp", classpath, "-d", classes.toString(),
+            artifact.toString());
+        javac.directory(out.toFile());
+        javac.redirectErrorStream(true);
+        Process compile = javac.start();
+        String compileOut = new String(compile.getInputStream().readAllBytes(),
+            StandardCharsets.UTF_8);
+        int compileExit = compile.waitFor();
+        check(compileExit == 0, name + " [jvm]: the artifact compiles under "
+            + "javac --release 25 -proc:none: " + compileOut);
+        if (compileExit != 0) {
+            return;
+        }
+        ProcessBuilder runner = new ProcessBuilder("java", "-cp",
+            classpath + File.pathSeparator + classes, "Main");
+        runner.directory(out.toFile());
+        Process process = runner.start();
+        String stdout = new String(process.getInputStream().readAllBytes(),
+            StandardCharsets.UTF_8);
+        String stderr = new String(process.getErrorStream().readAllBytes(),
+            StandardCharsets.UTF_8);
+        int exit = process.waitFor();
+        check(exit == 0 && stdout.isEmpty() && stderr.isEmpty(), name
+            + " [jvm]: the artifact executes with exit 0 and an empty transcript: "
+            + "exit=" + exit + " stdout=\"" + stdout + "\" stderr=\""
+            + stderr + "\"");
+    }
+
     private static String absoluteClasspath() {
         StringBuilder resolved = new StringBuilder();
         for (String entry : System.getProperty("java.class.path", "")
@@ -1903,6 +2240,7 @@ public class UnreachableTailProductionTest {
         testCompositeBlockTails();
         testUnreachableLoopTransferDispatch();
         testInTryLoopTransferDispatch();
+        testForUpdateReachability();
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
             System.exit(1);
