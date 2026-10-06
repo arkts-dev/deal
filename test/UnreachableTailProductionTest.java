@@ -1875,7 +1875,16 @@ public class UnreachableTailProductionTest {
      * through the {@code CONT} label, so its update stays emitted and
      * executed.
      *
-     * <p>{@code traceCompared} is false only for the throw body: a
+     * <p>The distinction is exact: a composite's ordinary fall-through is
+     * not an immediate answer — the walk keeps examining the remaining
+     * members of the enclosing block and stops at the first non-completing
+     * statement after it — and only a reachable continue targeting the loop
+     * (directly or on a composite path) answers update-reachable at once.
+     * The composite-prefix cases cover both composite arms and all three
+     * transfers, and the composite-continue case keeps the
+     * continue-to-update positive under the corrected rule.</p>
+     *
+     * <p>{@code traceCompared} is false only for the throw bodies: a
      * {@code DealFailure} propagating through a composite leaves the
      * structurally enclosing composite op with a START and no terminal in
      * the shared artifacts while the oracle emits the FAILURE terminal — a
@@ -1958,6 +1967,161 @@ public class UnreachableTailProductionTest {
         }
         """;
 
+    /**
+     * The reviewer's exact reproduction: a completing composite prefix (the
+     * else-less {@code if}) followed by an unconditional {@code break}. The
+     * composite's ordinary fall-through returns to the enclosing block, so
+     * the walk keeps examining the remaining members and stops at the
+     * {@code break}: the update is unreachable and must be skipped. Reading
+     * the composite alone as update-reaching emitted the update statements,
+     * and real {@code javac --release 25 -proc:none} rejected them with
+     * {@code unreachable statement}.
+     */
+    private static final String FOR_UPDATE_IF_BREAK_SOURCE = """
+        export function main(): null {
+          try {
+            for (let i: int = 0; i < 2; i = i + 1) {
+              if (i === 0) {
+                "reachable";
+              }
+              break;
+              "forUpdateIfBreakTail";
+            }
+          } catch (e) {
+          }
+          return null;
+        }
+        """;
+
+    /**
+     * The composite-prefix distinction with both arms present and a
+     * {@code return} after the prefix.
+     */
+    private static final String FOR_UPDATE_ELSE_RETURN_SOURCE = """
+        export function main(): null {
+          try {
+            for (let i: int = 0; i < 2; i = i + 1) {
+              if (i === 0) {
+                "selected";
+              } else {
+                "alternate";
+              }
+              return null;
+              "forUpdateElseReturnTail";
+            }
+          } catch (e) {
+          }
+          return null;
+        }
+        """;
+
+    /**
+     * The composite-prefix distinction with a {@code throw} after the
+     * prefix.
+     */
+    private static final String FOR_UPDATE_IF_THROW_SOURCE = """
+        export function main(): null {
+          try {
+            for (let i: int = 0; i < 2; i = i + 1) {
+              if (i === 0) {
+                "reachable";
+              }
+              throw { code: "EXPECTED", message: "expected" };
+              "forUpdateIfThrowTail";
+            }
+          } catch (e) {
+          }
+          return null;
+        }
+        """;
+
+    /**
+     * The composite-prefix distinction for the try arm: the protected block
+     * completes normally, so its fall-through alone must not answer
+     * update-reaching; the following {@code break} must.
+     */
+    private static final String FOR_UPDATE_TRY_BREAK_SOURCE = """
+        export function main(): null {
+          try {
+            for (let i: int = 0; i < 2; i = i + 1) {
+              try {
+                if (i === 0) {
+                  "reachable";
+                }
+              } catch (e) {
+              }
+              break;
+              "forUpdateTryBreakTail";
+            }
+          } catch (e) {
+          }
+          return null;
+        }
+        """;
+
+    /**
+     * The continue-to-update positive under the corrected distinction: the
+     * composite prefix carries the only update-reaching continue, the
+     * unconditional {@code break} behind it leaves every other path out of
+     * the loop, and the update must still be emitted and executed (the
+     * post-loop tick check fails if it is skipped, and the guard bound keeps
+     * a skipped update from looping forever).
+     */
+    private static final String FOR_UPDATE_IF_CONTINUE_SOURCE = """
+        export function main(): null {
+          let ticks: int = 0;
+          let guard: int = 0;
+          try {
+            for (let i: int = 0; i < 1000000; ticks = ticks + 1) {
+              guard = guard + 1;
+              if (guard < 6) {
+                continue;
+                "forUpdateIfContinueTail";
+              }
+              break;
+            }
+          } catch (e) {
+          }
+          if (ticks !== 5) {
+            throw { code: "TEST_FAIL", message: "the for update did not run" };
+          }
+          return null;
+        }
+        """;
+
+    /**
+     * The try-arm continue-to-update positive under the corrected
+     * distinction: the only update-reaching path is the continue inside the
+     * protected block (the unreachable tail sits behind it), the
+     * unconditional {@code break} behind the composite leaves every other
+     * path out of the loop, and the update must still be emitted and
+     * executed.
+     */
+    private static final String FOR_UPDATE_TRY_CONTINUE_SOURCE = """
+        export function main(): null {
+          let ticks: int = 0;
+          let guard: int = 0;
+          try {
+            for (let i: int = 0; i < 1000000; ticks = ticks + 1) {
+              guard = guard + 1;
+              try {
+                if (guard < 6) {
+                  continue;
+                  "forUpdateTryContinueTail";
+                }
+              } catch (e) {
+              }
+              break;
+            }
+          } catch (e) {
+          }
+          if (ticks !== 5) {
+            throw { code: "TEST_FAIL", message: "the for update did not run" };
+          }
+          return null;
+        }
+        """;
+
     private static final List<ForUpdateCase> FOR_UPDATE_CASES = List.of(
         new ForUpdateCase("for-update-break-tail", FOR_UPDATE_BREAK_SOURCE,
             "forUpdateBreakTail", true, true),
@@ -1966,7 +2130,19 @@ public class UnreachableTailProductionTest {
         new ForUpdateCase("for-update-throw-tail", FOR_UPDATE_THROW_SOURCE,
             "forUpdateThrowTail", true, false),
         new ForUpdateCase("for-update-continue-tail", FOR_UPDATE_CONTINUE_SOURCE,
-            "forUpdateContinueTail", false, true));
+            "forUpdateContinueTail", false, true),
+        new ForUpdateCase("for-update-if-break-tail", FOR_UPDATE_IF_BREAK_SOURCE,
+            "forUpdateIfBreakTail", true, true),
+        new ForUpdateCase("for-update-else-return-tail",
+            FOR_UPDATE_ELSE_RETURN_SOURCE, "forUpdateElseReturnTail", true, true),
+        new ForUpdateCase("for-update-if-throw-tail",
+            FOR_UPDATE_IF_THROW_SOURCE, "forUpdateIfThrowTail", true, false),
+        new ForUpdateCase("for-update-try-break-tail", FOR_UPDATE_TRY_BREAK_SOURCE,
+            "forUpdateTryBreakTail", true, true),
+        new ForUpdateCase("for-update-if-continue-tail",
+            FOR_UPDATE_IF_CONTINUE_SOURCE, "forUpdateIfContinueTail", false, true),
+        new ForUpdateCase("for-update-try-continue-tail",
+            FOR_UPDATE_TRY_CONTINUE_SOURCE, "forUpdateTryContinueTail", false, true));
 
     private static void testForUpdateReachability() throws Exception {
         System.out.println("-- The updated FOR inside TRY_CATCH: real-javac update "

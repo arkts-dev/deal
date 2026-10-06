@@ -1231,21 +1231,41 @@ public final class JvmSemanticEmitter {
          * Whether the emitted {@code FOR} body can reach the update block:
          * the emitted {@code CONT: do { body } while (false);} completes
          * normally when the body's reachable prefix can complete normally,
-         * or when it carries a reachable continue targeting this loop — the
-         * {@code CONT} label re-tests the constant-false condition and
-         * falls through to the update. A body whose every emitted path
-         * leaves by {@code break}/{@code return}/{@code throw} never
-         * reaches the update, so its emitted update statements would be
-         * unreachable Java (JLS &sect;14.21).
+         * or when some reachable path executes a continue targeting this
+         * loop — the {@code CONT} label re-tests the constant-false
+         * condition and falls through to the update. A body whose every
+         * emitted path leaves by {@code break}/{@code return}/{@code throw}
+         * never reaches the update, so its emitted update statements would
+         * be unreachable Java (JLS &sect;14.21).
          */
         private boolean forUpdateReachable(BlockId bodyBlock, OpId loopId) {
-            StructuredBodyTable ownerTable = blockTableOf.get(bodyBlock);
+            return blockReachesForUpdate(bodyBlock, loopId, true);
+        }
+
+        /**
+         * Whether a block's emitted reachable prefix reaches the update:
+         * the same walk the emission applies (the non-owned, non-skipped
+         * members in order, stopping at the first op whose emitted
+         * statement cannot complete normally), with the two update-reaching
+         * paths — a reachable {@code continue} targeting this loop exits the
+         * do's constant-false test to the update, and a composite carrying
+         * such a continue on one of its emitted paths does the same.
+         * {@code fallsThrough} is true only for the do statement's own body,
+         * whose fall-through reaches the false condition test and so the
+         * update. A composite sub-block's fall-through only returns to the
+         * enclosing block, whose remaining members the caller keeps walking,
+         * so a later unconditional transfer still makes the update
+         * unreachable.
+         */
+        private boolean blockReachesForUpdate(BlockId block, OpId loopId,
+                                              boolean fallsThrough) {
+            StructuredBodyTable ownerTable = blockTableOf.get(block);
             if (ownerTable == null) {
                 ownerTable = table;
             }
-            List<OpId> ops = ownerTable.blockOps().get(bodyBlock);
+            List<OpId> ops = ownerTable.blockOps().get(block);
             if (ops == null) {
-                return true;
+                return fallsThrough;
             }
             for (OpId opId : ops) {
                 if (ownedChildren.contains(opId) || skippedOps.contains(opId)) {
@@ -1262,15 +1282,19 @@ public final class JvmSemanticEmitter {
                     return false;
                 }
             }
-            return true;
+            return fallsThrough;
         }
 
         /**
-         * One op's contribution to {@link #forUpdateReachable}: a continue
-         * targeting this loop completes the emitted {@code CONT} do
-         * statement (it re-tests the constant-false condition), a composite
-         * completes when one of its emitted paths completes, and every
-         * other op neither completes itself nor reaches the update.
+         * Whether some emitted path of one op reaches the update block: a
+         * {@code continue} targeting this loop exits the emitted
+         * {@code CONT} do statement to the update, and a composite does so
+         * when one of its emitted sub-blocks carries such a path. Ordinary
+         * fall-through is deliberately not an immediate answer here — a
+         * composite that can complete normally returns to the enclosing
+         * block, so the caller keeps walking its remaining members and
+         * reports the update unreachable only at the first non-completing
+         * statement after it.
          */
         private boolean reachesForUpdate(SemanticOp op, OpId loopId) {
             return switch (op.kind()) {
@@ -1279,15 +1303,16 @@ public final class JvmSemanticEmitter {
                 case TRY_CATCH -> {
                     KindPayload.TryCatchPayload payload =
                         (KindPayload.TryCatchPayload) op.payload();
-                    yield forUpdateReachable(payload.tryBlock(), loopId)
-                        || forUpdateReachable(payload.catchBlock(), loopId);
+                    yield blockReachesForUpdate(payload.tryBlock(), loopId, false)
+                        || blockReachesForUpdate(payload.catchBlock(), loopId, false);
                 }
                 case BRANCH -> {
                     KindPayload.BranchPayload payload =
                         (KindPayload.BranchPayload) op.payload();
-                    yield payload.alternateBlock() == null
-                        || forUpdateReachable(payload.selectedBlock(), loopId)
-                        || forUpdateReachable(payload.alternateBlock(), loopId);
+                    yield blockReachesForUpdate(payload.selectedBlock(), loopId, false)
+                        || (payload.alternateBlock() != null
+                            && blockReachesForUpdate(payload.alternateBlock(),
+                                loopId, false));
                 }
                 default -> false;
             };
