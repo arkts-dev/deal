@@ -16,8 +16,11 @@ import deal.semantic.SemanticRuntimeModel;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ExecutableLoweredProject;
+import deal.semantic.ir.FunctionAllocationIdentity;
+import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
+import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.OpId;
@@ -32,6 +35,7 @@ import deal.test.conformance.SidecarExpectations;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.InputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -44,6 +48,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 /**
@@ -84,17 +89,30 @@ import java.util.stream.Stream;
  *       realization or a broken residual mechanism fails the same
  *       drive.</li>
  *   <li><b>The represented-tail monotonicity.</b> The two tail fixtures
- *       and a unit-level both-branch-return body with a following
- *       unreachable statement keep their body block non-{@code OPEN}
- *       while the walk continues: the tail is a member of the block after
- *       its terminator, no implicit return is fabricated, only the Lua
- *       artifact emits it (the JVM artifact keeps the reachability skip
- *       and compiles under {@code javac --release 25 -proc:none}), and it
- *       never executes.</li>
+ *       keep the enclosing body of their represented tail non-{@code OPEN}
+ *       while the walk continues (the body root carries no implicit
+ *       synthetic return); a unit-level <em>null-returning</em>
+ *       both-branch-return body whose represented tail ends in a
+ *       non-terminating statement and whose body carries no final return
+ *       that could re-mark it asserts the same state on both targets, and
+ *       a patched-lowerer negative control proves the assertion rejects
+ *       the exit-state-reset mutation. The return/throw/try-catch
+ *       composite regressions with tails inside their child blocks prove
+ *       the JVM reachability-prefix decision: the emitted artifact
+ *       compiles and executes under {@code javac --release 25 -proc:none}
+ *       plus {@code java}, the Lua artifact emits the tail, the oracle
+ *       agrees, and the tail never executes.</li>
  *   <li><b>The union invariants.</b> The sidecars and fixture sources are
  *       read, never written; the corpus count pin, the guard identifiers,
  *       the retargeted control-flow pin files, and this test's foreground
  *       registration stay landed.</li>
+ *   <li><b>The bounded real-toolchain execution.</b> Every child this
+ *       drive launches (luajit, javac, java) runs through the bounded
+ *       runner: separate transcripts, concurrent capped 1 MiB drains to
+ *       EOF, the canonical 300000 ms deadline, descendant-then-child
+ *       forcible termination, and the named hard
+ *       {@code BOUNDED_PROCESS_TIMEOUT} failure — with a finite
+ *       stderr-flood check and a timeout check.</li>
  * </ol>
  */
 public final class ResidualCarrierShapesAcceptanceTest {
@@ -991,20 +1009,161 @@ public final class ResidualCarrierShapesAcceptanceTest {
     // 6. The represented-tail monotonicity
     // =========================================================================
 
-    private static final String TAIL_PROBE = """
-        export function probe(c: boolean): int {
-          if (c) { return 1; } else { return 2; }
-          let tailMarker: int = 715;
-          if (tailMarker === 715) {
-            throw { code: "TAIL_EXECUTED", message: "TAIL715" }
-          }
-          return 3;
-        }
+    /**
+     * The unit-level represented-tail probes. Every probe carries a
+     * composite whose child blocks carry a represented tail (a statement
+     * after the child block's terminator) and a body-level represented
+     * tail behind the composite; the drive compiles, emits, executes and
+     * oracle-checks each on both targets.
+     */
+    private record TailUnitProbe(String name, String source, String luaAsserts,
+                                 String jvmAsserts) {
+    }
 
-        export function main(): null {
-          return null;
-        }
-        """;
+    private static final List<TailUnitProbe> TAIL_UNIT_PROBES = List.of(
+        // The monotonicity probe: a null-returning body whose both
+        // branches return null, whose represented body tail ends in a
+        // non-terminating statement and which carries no final return that
+        // could re-mark the block — only the retained composite marking
+        // keeps the implicit null return un-fabricated (the
+        // exit-state-reset negative control drives this probe).
+        new TailUnitProbe("null-both-return", """
+            export function probe(c: boolean): null {
+              if (c) {
+                return null;
+                let x: int = 9715;
+              } else {
+                return null;
+                let y: int = 9716;
+              }
+              let tailMarker: int = 715;
+              if (tailMarker === 715) {
+                throw { code: "TAIL_EXECUTED", message: "TAIL715" }
+              }
+            }
+
+            export function main(): null {
+              probe(true);
+              probe(false);
+              return null;
+            }
+            """, """
+            probe.f(true)
+            probe.f(false)
+            """, """
+                fn.fn.invoke(new Object[]{true});
+                fn.fn.invoke(new Object[]{false});
+            """),
+        // The reported reproduction: an if/else whose both branches return
+        // with tails, followed by a body-level tail the JVM emitter must
+        // skip as unreachable Java.
+        new TailUnitProbe("int-both-return", """
+            export function probe(c: boolean): int {
+              if (c) {
+                return 1;
+                let x: int = 9715;
+              } else {
+                return 2;
+                let y: int = 9716;
+              }
+              return 3;
+            }
+
+            export function main(): null {
+              if (probe(true) !== 1) {
+                throw { code: "TEST_FAIL", message: "true branch" }
+              }
+              if (probe(false) !== 2) {
+                throw { code: "TEST_FAIL", message: "false branch" }
+              }
+              return null;
+            }
+            """, """
+            if probe.f(true) ~= 1 then print("ERR:VALUE"); os.exit(1) end
+            if probe.f(false) ~= 2 then print("ERR:VALUE"); os.exit(1) end
+            """, """
+                if (!"1".equals(String.valueOf(fn.fn.invoke(new Object[]{true})))) {
+                  System.out.println("ERR:VALUE|true branch");
+                  System.exit(1);
+                }
+                if (!"2".equals(String.valueOf(fn.fn.invoke(new Object[]{false})))) {
+                  System.out.println("ERR:VALUE|false branch");
+                  System.exit(1);
+                }
+            """),
+        // A throw composite with a represented tail in its protected child
+        // block: the try block's reachable prefix ends in a THROW followed
+        // by the represented tail, so the completion decision must stop at
+        // the throw, not read the tail as the block's completion. The throw
+        // is outside the preceding if-branch, so the oracle and both emitted
+        // consumers agree on the composite's failure projection.
+        new TailUnitProbe("throw-tail", """
+            export function probe(c: boolean): string {
+              try {
+                if (!c) {
+                  return "false";
+                }
+                throw { code: "E_C", message: "c" };
+                let x: int = 9715;
+              } catch (e) {
+                return e.code;
+              }
+              return "TAIL_NEVER";
+            }
+
+            export function main(): null {
+              if (probe(false) !== "false") {
+                throw { code: "TEST_FAIL", message: "false branch" }
+              }
+              if (probe(true) !== "E_C") {
+                throw { code: "TEST_FAIL", message: "throw branch" }
+              }
+              return null;
+            }
+            """, """
+            if probe.f(false) ~= "false" then print("ERR:VALUE"); os.exit(1) end
+            if probe.f(true) ~= "E_C" then print("ERR:VALUE"); os.exit(1) end
+            """, """
+                if (!"false".equals(String.valueOf(
+                        fn.fn.invoke(new Object[]{false})))) {
+                  System.out.println("ERR:VALUE|false branch");
+                  System.exit(1);
+                }
+                if (!"E_C".equals(String.valueOf(
+                        fn.fn.invoke(new Object[]{true})))) {
+                  System.out.println("ERR:VALUE|throw branch");
+                  System.exit(1);
+                }
+            """),
+        // A try/catch whose both child blocks return with tails: the
+        // completion decision must read the reachable emitted prefix of
+        // each child block, not its last represented op.
+        new TailUnitProbe("try-both-return", """
+            export function probe(): string {
+              try {
+                return "try";
+                let x: int = 9715;
+              } catch (e) {
+                return "catch";
+                let y: int = 9716;
+              }
+              return "unreachable";
+            }
+
+            export function main(): null {
+              if (probe() !== "try") {
+                throw { code: "TEST_FAIL", message: "return composite" }
+              }
+              return null;
+            }
+            """, """
+            if probe.f() ~= "try" then print("ERR:VALUE"); os.exit(1) end
+            """, """
+                if (!"try".equals(String.valueOf(fn.fn.invoke(new Object[0])))) {
+                  System.out.println("ERR:VALUE|return composite");
+                  System.exit(1);
+                }
+            """));
 
     private static void testRepresentedTailMonotonicity(Path work, List<Outcome> outcomes)
             throws Exception {
@@ -1023,151 +1182,449 @@ public final class ResidualCarrierShapesAcceptanceTest {
                 check(noSyntheticReturnsInTailBlocks(lowered), path + ": no implicit "
                     + "return is fabricated in a block marked non-OPEN by a terminator "
                     + "whose walk continued");
+                assertCorpusTailBodyState(path, lowered);
             }
         }
-
-        // The unit-level both-branch-return body with a following
-        // unreachable statement: the same marking, on both targets, with
-        // the per-target emission rule (Lua emits the tail, the JVM keeps
-        // the reachability skip and compiles under javac).
-        for (Backend backend : List.of(Backend.LUAJIT, Backend.JVM)) {
-            Path root = Files.createTempDirectory(work, "tail-probe-");
-            Path source = root.resolve("src").resolve("app.deal");
-            Files.createDirectories(source.getParent());
-            Files.writeString(source, TAIL_PROBE, StandardCharsets.UTF_8);
-            CompilationOrchestrator orchestrator = compile(source, root.resolve("src"),
-                root.resolve("out"), backend);
-            StringBuilder diagnostics = new StringBuilder();
-            for (CompilerDiagnostic diagnostic : orchestrator.diagnostics()) {
-                diagnostics.append(diagnostic.code()).append(' ')
-                    .append(diagnostic.message()).append('\n');
+        for (TailUnitProbe probe : TAIL_UNIT_PROBES) {
+            for (Backend backend : List.of(Backend.LUAJIT, Backend.JVM)) {
+                driveTailUnitProbe(work, probe, backend);
             }
-            check(diagnostics.isEmpty(), "the unit-level tail probe (" + backend
-                + "): the release-owned production invocation compiles with zero "
-                + "diagnostics: " + diagnostics);
-            checkEq(1, orchestrator.semanticEmissionCount(), "the unit-level tail probe ("
-                + backend + "): one project artifact is staged");
-            checkEq(0, orchestrator.retainedEmissionCount(), "the unit-level tail probe ("
-                + backend + "): no retained emission");
-            if (backend == Backend.LUAJIT) {
-                Path artifact = root.resolve("out").resolve("app.lua");
-                String text = Files.readString(artifact, StandardCharsets.UTF_8);
-                check(text.contains("TAIL715"), "the unit-level tail probe (LuaJIT): "
-                    + "the Lua artifact emits the tail (the TAIL715 statement)");
-                Path driver = root.resolve("out").resolve("tail_probe_driver.lua");
-                Files.writeString(driver, """
-                    local surface = dofile("%s")
-                    local ok, err = __dealMain()
-                    if not ok then print("ERR:INIT"); os.exit(1) end
-                    local probe = surface["probe"]
-                    print("RESULT:" .. tostring(probe.f(true)))
-                    print("RESULT:" .. tostring(probe.f(false)))
-                    """.formatted(artifact.toAbsolutePath()), StandardCharsets.UTF_8);
-                ProcessOutcome run = runProcess(root.resolve("out"),
-                    Map.of("DEAL_DEFER_MAIN", "1"), "luajit", driver.getFileName().toString());
-                checkEq(0, run.exitCode(), "the unit-level tail probe (LuaJIT): exit 0");
-                checkEq("RESULT:1\nRESULT:2\n", run.stdout(), "the unit-level tail probe "
-                    + "(LuaJIT): the body returns its branch value and the represented "
-                    + "tail never executes");
-                checkEq("", run.stderr(), "the unit-level tail probe (LuaJIT): silent");
-            } else {
-                String className = JvmBackend.classNameFor("app");
-                Path artifact = root.resolve("out").resolve(className + ".java");
-                String text = Files.readString(artifact, StandardCharsets.UTF_8);
-                check(text.contains("// unreachable"), "the unit-level tail probe (JVM): "
-                    + "the JVM artifact keeps the reachability skip");
-                Path driverFile = root.resolve("out").resolve("TailProbe.java");
-                Files.writeString(driverFile, """
-                    final class TailProbe {
-                      public static void main(String[] args) {
-                        %s.dealMain();
-                        deal.codegen.jvm.JvmRuntime.Table surface =
-                            %s.EXPORT_SURFACES.get("app");
-                        deal.codegen.jvm.JvmRuntime.FunctionValue fn =
-                            (deal.codegen.jvm.JvmRuntime.FunctionValue)
-                                surface.read("probe");
-                        System.out.println("RESULT:" + fn.fn.invoke(new Object[]{true}));
-                        System.out.println("RESULT:" + fn.fn.invoke(new Object[]{false}));
-                      }
-                    }
-                    """.formatted(className, className), StandardCharsets.UTF_8);
-                Path classes = root.resolve("classes");
-                Files.createDirectories(classes);
-                String classpath = absoluteClasspath();
-                ProcessOutcome javac = runProcess(root.resolve("out"), Map.of(), "javac",
-                    "--release", "25", "-proc:none", "-cp", classpath, "-d",
-                    classes.toString(), artifact.toAbsolutePath().toString(),
-                    driverFile.toAbsolutePath().toString());
-                checkEq(0, javac.exitCode(), "the unit-level tail probe (JVM): the "
-                    + "artifact compiles under javac --release 25 -proc:none: "
-                    + javac.stdout() + javac.stderr());
-                if (javac.exitCode() == 0) {
-                    ProcessOutcome run = runProcess(root, Map.of(), "java", "-cp",
-                        classpath + File.pathSeparator + classes, "TailProbe");
-                    checkEq(0, run.exitCode(), "the unit-level tail probe (JVM): exit 0");
-                    checkEq("RESULT:1\nRESULT:2\n", run.stdout(), "the unit-level tail "
-                        + "probe (JVM): the body returns its branch value and the "
-                        + "represented tail never executes");
-                    checkEq("", run.stderr(), "the unit-level tail probe (JVM): silent");
-                }
-            }
-            // The marked-state monotonicity on the unit-level probe: the
-            // both-branch-return body is marked non-OPEN while its walk
-            // continues, so the trailing unreachable statement is a member
-            // of the body block after the composite and no implicit return
-            // is fabricated.
-            Path artifact = backend == Backend.LUAJIT
-                ? root.resolve("out").resolve("app.lua")
-                : root.resolve("out").resolve(JvmBackend.classNameFor("app") + ".java");
-            Lowered lowered = lower(new Compiled(root, orchestrator, artifact,
-                new byte[0], new byte[0]), new Fixture("app", "probe", ProbeKind.SYNC,
-                    "0", "0", "int:0"));
-            if (lowered != null) {
-                List<SemanticOp> tail = opsAfterCompositeBranch(lowered);
-                check(!tail.isEmpty(), "the unit-level tail probe (" + backend
-                    + "): the both-branch-return body's following unreachable "
-                    + "statement is a member of its block after the composite");
-                check(noSyntheticReturns(lowered), "the unit-level tail probe ("
-                    + backend + "): the body block stays marked terminated and no "
-                    + "implicit return is fabricated");
-                check(lowered.unit().ops().stream().anyMatch(
-                        op -> op.kind() == SemanticOpKind.THROW),
-                    "the unit-level tail probe (" + backend + "): the unreachable "
-                        + "TAIL715 throw is represented in the lowered unit");
-            }
-            deleteRecursively(root);
         }
     }
 
     /**
-     * The ops that follow a composite {@code BRANCH} in a function body
-     * block (the unit-level both-branch-return probe's represented tail).
+     * The relevant enclosing body state of one corpus tail fixture: the
+     * lowered function body whose block subtree carries the represented
+     * tail stays non-{@code OPEN} while the walk continues — its body root
+     * carries no implicit synthetic return (implicit returns are generated
+     * for body roots, not for arbitrary child blocks).
      */
-    private static List<SemanticOp> opsAfterCompositeBranch(Lowered lowered) {
-        List<SemanticOp> tail = new ArrayList<>();
-        for (var function : lowered.unit().functions().values()) {
-            boolean afterBranch = false;
+    private static void assertCorpusTailBodyState(String path, Lowered lowered) {
+        Set<BlockId> tails = tailBlocks(lowered);
+        int owning = 0;
+        for (LoweredFunction function : lowered.unit().functions().values()) {
+            Set<BlockId> subtree = blockSubtree(lowered, function.body());
+            if (java.util.Collections.disjoint(subtree, tails)) {
+                continue;
+            }
+            owning++;
             for (SemanticOp op : lowered.opsOfBlock(function.body())) {
-                if (afterBranch) {
-                    tail.add(op);
-                }
-                if (op.kind() == SemanticOpKind.BRANCH) {
-                    afterBranch = true;
+                if (op.kind() == SemanticOpKind.RETURN && op.origin() != null
+                        && op.origin().kind() == SourceOriginKind.SYNTHETIC) {
+                    fail(path + ": the body block " + function.body()
+                        + " enclosing the represented tail stays non-OPEN "
+                        + "(no implicit synthetic return, op " + op.opId() + ")");
                 }
             }
         }
-        return tail;
+        checkEq(1, owning, path + ": exactly one lowered body encloses the "
+            + "represented tail");
     }
 
-    /** Whether the unit carries no implicit synthetic return anywhere. */
-    private static boolean noSyntheticReturns(Lowered lowered) {
+    /** One unit-level tail probe and one target, through the whole drive. */
+    private static void driveTailUnitProbe(Path work, TailUnitProbe probe, Backend backend)
+            throws Exception {
+        Path root = Files.createTempDirectory(work, "tail-unit-");
+        try {
+            Path source = root.resolve("src").resolve("app.deal");
+            Files.createDirectories(source.getParent());
+            Files.writeString(source, probe.source(), StandardCharsets.UTF_8);
+            Fixture fixture = new Fixture("app", "probe", ProbeKind.SYNC, "0", "0",
+                "int:0");
+            CompilationOrchestrator orchestrator = compile(source, root.resolve("src"),
+                root.resolve("out"), backend);
+            checkProductionOutcome(fixture, probe.name() + " (" + backend + ")",
+                orchestrator);
+            Path artifact = artifactOf(fixture, backend, root.resolve("out"));
+            check(Files.exists(artifact), probe.name() + " (" + backend
+                + "): the staged project artifact exists at " + artifact);
+            CompilationOrchestrator repeated = compile(source, root.resolve("src"),
+                root.resolve("out-repeat"), backend);
+            checkProductionOutcome(fixture,
+                probe.name() + " (repeated, " + backend + ")", repeated);
+            Path repeatedArtifact = artifactOf(fixture, backend,
+                root.resolve("out-repeat"));
+            check(Files.exists(artifact) && Files.exists(repeatedArtifact)
+                    && Arrays.equals(Files.readAllBytes(artifact),
+                        Files.readAllBytes(repeatedArtifact)),
+                probe.name() + " (" + backend + "): the repeated compile stages "
+                    + "byte-identical artifact bytes");
+            Lowered lowered = lower(new Compiled(root, orchestrator, artifact,
+                new byte[0], new byte[0]), fixture);
+            if (lowered == null) {
+                return;
+            }
+            assertTailUnitProbeState(probe, backend, lowered, artifact);
+            runTailUnitProbe(probe, backend, root, artifact);
+            if (backend == Backend.LUAJIT) {
+                Path workspace = Files.createTempDirectory(work, "tail-unit-matrix-");
+                try {
+                    SemanticDifferentialHarness.Verdict verdict =
+                        SemanticDifferentialHarness.runProject(lowered.project(),
+                            lowered.tables(), lowered.registries(),
+                            SemanticDifferentialHarness.Expectation.success(
+                                probe.name(), List.of(), "null"), workspace);
+                    assertVerdict(fixture, verdict, "null");
+                } finally {
+                    deleteRecursively(workspace);
+                }
+            }
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /** The lowered-state and per-target emission assertions of one probe. */
+    private static void assertTailUnitProbeState(TailUnitProbe probe, Backend backend,
+            Lowered lowered, Path artifact) throws Exception {
+        List<SemanticOp> tail = tailOps(lowered);
+        check(!tail.isEmpty(), probe.name() + " (" + backend + "): the statements "
+            + "after the child-block terminators are members of their blocks after "
+            + "the terminators");
+        BlockId probeBody = exportedBodyBlock(lowered, "probe");
+        check(probeBody != null, probe.name() + " (" + backend + "): the exported "
+            + "probe's lowered body block resolves");
+        if (probeBody == null) {
+            return;
+        }
+        List<SemanticOp> bodyOps = lowered.opsOfBlock(probeBody);
+        int compositeIndex = -1;
+        for (int i = 0; i < bodyOps.size(); i++) {
+            SemanticOpKind kind = bodyOps.get(i).kind();
+            if (kind == SemanticOpKind.BRANCH || kind == SemanticOpKind.TRY_CATCH) {
+                compositeIndex = i;
+                break;
+            }
+        }
+        check(compositeIndex >= 0 && compositeIndex + 1 < bodyOps.size(),
+            probe.name() + " (" + backend + "): the composite's following "
+            + "represented tail is a member of the probe body block (op kinds "
+            + opKinds(bodyOps) + ")");
+        for (SemanticOp op : bodyOps) {
+            if (op.kind() == SemanticOpKind.RETURN && op.origin() != null
+                    && op.origin().kind() == SourceOriginKind.SYNTHETIC) {
+                fail(probe.name() + " (" + backend + "): the probe body block "
+                    + probeBody + " stays non-OPEN while the walk continues — no "
+                    + "implicit synthetic return is fabricated (op " + op.opId() + ")");
+            }
+        }
         for (SemanticOp op : lowered.unit().ops()) {
             if (op.kind() == SemanticOpKind.RETURN && op.origin() != null
                     && op.origin().kind() == SourceOriginKind.SYNTHETIC) {
-                return false;
+                fail(probe.name() + " (" + backend + "): the probe unit fabricates "
+                    + "no implicit synthetic return (op " + op.opId() + ")");
             }
         }
-        return true;
+        String text = Files.readString(artifact, StandardCharsets.UTF_8);
+        if (backend == Backend.LUAJIT) {
+            check(!text.contains("// unreachable"), probe.name() + " (LuaJIT): the "
+                + "Lua artifact emits the tail (no reachability skip marker)");
+            for (SemanticOp op : tail) {
+                if (op.result() instanceof ValueId value) {
+                    check(text.contains("S.v" + value.id()), probe.name()
+                        + " (LuaJIT): the tail op " + op.opId() + " (" + op.kind()
+                        + ") is emitted in the Lua artifact");
+                }
+            }
+        } else {
+            check(text.contains("// unreachable"), probe.name() + " (JVM): the JVM "
+                + "artifact keeps the JLS §14.21 reachability skip");
+        }
+    }
+
+    /** The real-toolchain execution of one unit-level tail probe. */
+    private static void runTailUnitProbe(TailUnitProbe probe, Backend backend, Path root,
+            Path artifact) throws Exception {
+        ProcessOutcome run;
+        if (backend == Backend.LUAJIT) {
+            Path driver = root.resolve("out").resolve("tail_unit_driver.lua");
+            Files.writeString(driver, """
+                local surface = dofile("%s")
+                local ok, err = __dealMain()
+                if not ok then print("ERR:INIT"); os.exit(1) end
+                local probe = surface["probe"]
+                if type(probe) ~= "table" or probe.__kind ~= "function"
+                    or type(probe.f) ~= "function" then
+                  print("ERR:SHAPE"); os.exit(1)
+                end
+                %sprint("TAIL-UNIT-OK")
+                """.formatted(artifact.toAbsolutePath(), probe.luaAsserts()),
+                StandardCharsets.UTF_8);
+            run = runProcess(root.resolve("out"), Map.of("DEAL_DEFER_MAIN", "1"),
+                "luajit", driver.getFileName().toString());
+        } else {
+            String className = JvmBackend.classNameFor("app");
+            Path driverFile = root.resolve("out").resolve("TailUnitProbeDriver.java");
+            Files.writeString(driverFile, """
+                final class TailUnitProbeDriver {
+                  public static void main(String[] args) {
+                    %s.dealMain();
+                    deal.codegen.jvm.JvmRuntime.Table surface =
+                        %s.EXPORT_SURFACES.get("app");
+                    Object probeValue = surface.read("probe");
+                    if (!(probeValue
+                            instanceof deal.codegen.jvm.JvmRuntime.FunctionValue)) {
+                      throw new IllegalStateException(
+                          "the entry surface publishes the fixture probe");
+                    }
+                    deal.codegen.jvm.JvmRuntime.FunctionValue fn =
+                        (deal.codegen.jvm.JvmRuntime.FunctionValue) probeValue;
+                    %s    System.out.println("TAIL-UNIT-OK");
+                  }
+                }
+                """.formatted(className, className, probe.jvmAsserts()),
+                StandardCharsets.UTF_8);
+            Path classes = root.resolve("classes");
+            Files.createDirectories(classes);
+            String classpath = absoluteClasspath();
+            ProcessOutcome javac = runProcess(root.resolve("out"), Map.of(), "javac",
+                "--release", "25", "-proc:none", "-cp", classpath, "-d",
+                classes.toString(), artifact.toAbsolutePath().toString(),
+                driverFile.toAbsolutePath().toString());
+            checkEq(0, javac.exitCode(), probe.name() + " (JVM): the artifact compiles "
+                + "under javac --release 25 -proc:none: " + javac.stdout()
+                + javac.stderr());
+            if (javac.exitCode() != 0) {
+                return;
+            }
+            run = runProcess(root, Map.of(), "java", "-cp",
+                classpath + File.pathSeparator + classes, "TailUnitProbeDriver");
+        }
+        checkEq(0, run.exitCode(), probe.name() + " (" + backend + "): the staged "
+            + "artifact exits 0: stdout=" + run.stdout() + " stderr=" + run.stderr());
+        checkEq("TAIL-UNIT-OK\n", run.stdout(), probe.name() + " (" + backend
+            + "): the probe runs its branch paths and the represented tail never "
+            + "executes");
+        checkEq("", run.stderr(), probe.name() + " (" + backend + "): the probe is "
+            + "silent");
+    }
+
+    /**
+     * The exit-state-reset negative control: the production lowerer copied
+     * with the monotonicity broken at both statement walks (the current
+     * block's exit state erased before every statement of the walk — the
+     * "exit-state-reset" mutation a regression of this criterion would
+     * introduce), compiled against the production classes and driven over
+     * the null-returning probe in a child JVM whose classpath carries the
+     * patched class first. The patched build must fabricate the implicit
+     * null return in the probe body, so the drive's "no synthetic return"
+     * assertion rejects the reset control; the unpatched classpath keeps it
+     * green.
+     */
+    private static void testExitStateResetNegativeControl(Path work) throws Exception {
+        System.out.println("-- the exit-state-reset negative control --");
+        String patched = resetPatchedLowerer(Files.readString(
+            Path.of("deal", "semantic", "SemanticLowerer.java"), StandardCharsets.UTF_8));
+        check(patched != null, "the exit-state-reset control's mutation anchors "
+            + "(both statement walks) are present in the production lowerer");
+        if (patched == null) {
+            return;
+        }
+        Path root = Files.createTempDirectory(work, "reset-control-");
+        try {
+            Path patchedSource = root.resolve("patched").resolve("deal")
+                .resolve("semantic").resolve("SemanticLowerer.java");
+            Files.createDirectories(patchedSource.getParent());
+            Files.writeString(patchedSource, patched, StandardCharsets.UTF_8);
+            Path patchedClasses = root.resolve("classes");
+            Files.createDirectories(patchedClasses);
+            String classpath = absoluteClasspath();
+            ProcessOutcome javac = runProcess(root, Map.of(), "javac", "--release", "25",
+                "-proc:none", "-cp", classpath, "-d", patchedClasses.toString(),
+                patchedSource.toAbsolutePath().toString());
+            checkEq(0, javac.exitCode(), "the patched lowerer compiles against the "
+                + "production classes: " + javac.stdout() + javac.stderr());
+            if (javac.exitCode() != 0) {
+                return;
+            }
+            TailUnitProbe probe = TAIL_UNIT_PROBES.get(0);
+            Path source = root.resolve("probe").resolve("src").resolve("app.deal");
+            Files.createDirectories(source.getParent());
+            Files.writeString(source, probe.source(), StandardCharsets.UTF_8);
+            ProcessOutcome plain = resetControlRun(root, source, classpath, null, "plain");
+            checkEq(0, plain.exitCode(), "the unpatched control lowers the probe: "
+                + plain.stdout() + plain.stderr());
+            checkEq("RESET_CONTROL_SYNTHETIC_RETURN=false\n", plain.stdout(),
+                "the unpatched control keeps the probe body's retained marking (no "
+                    + "implicit synthetic return)");
+            ProcessOutcome reset = resetControlRun(root, source, classpath,
+                patchedClasses, "reset");
+            checkEq(0, reset.exitCode(), "the patched control lowers the probe: "
+                + reset.stdout() + reset.stderr());
+            checkEq("RESET_CONTROL_SYNTHETIC_RETURN=true\n", reset.stdout(),
+                "the exit-state-reset negative control is rejected: the reset "
+                    + "mutation fabricates the implicit synthetic return the "
+                    + "monotonicity assertion forbids");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /** One child-JVM run of the reset control driver. */
+    private static ProcessOutcome resetControlRun(Path root, Path source, String classpath,
+            Path patchedClasses, String label) throws Exception {
+        String controlClasspath = patchedClasses == null
+            ? classpath
+            : patchedClasses + File.pathSeparator + classpath;
+        return runProcess(root, Map.of(), "java", "-cp", controlClasspath,
+            "deal.test.ResidualCarrierShapesAcceptanceTest$ResetControlDriver",
+            source.toAbsolutePath().toString(),
+            root.resolve("out-" + label).toAbsolutePath().toString());
+    }
+
+    /**
+     * The exit-state-reset mutation of the production lowerer (the
+     * negative control): the current block's accumulated exit state is
+     * erased before every statement of both statement walks. Returns
+     * {@code null} when either mutation anchor is absent.
+     */
+    private static String resetPatchedLowerer(String text) {
+        String result = text;
+        for (String anchor : List.of(
+                "private void lowerFullStatements(List<StatementNode> statements,",
+                "private void lowerStatements(List<StatementNode> statements) {")) {
+            int methodAt = result.indexOf(anchor);
+            if (methodAt < 0) {
+                return null;
+            }
+            String loop = "for (StatementNode statement : statements) {";
+            int loopAt = result.indexOf(loop, methodAt);
+            if (loopAt < 0) {
+                return null;
+            }
+            int insertAt = loopAt + loop.length();
+            result = result.substring(0, insertAt)
+                + "\n                blockExitStates.remove(blockStack.peek());"
+                + result.substring(insertAt);
+        }
+        return result;
+    }
+
+    /** The blocks that carry a terminator with a following represented op. */
+    private static Set<BlockId> tailBlocks(Lowered lowered) {
+        Set<BlockId> blocks = new LinkedHashSet<>();
+        for (BlockId block : lowered.tables().get(lowered.fixtureModule())
+                .blockOps().keySet()) {
+            List<SemanticOp> ops = lowered.opsOfBlock(block);
+            boolean terminated = false;
+            for (SemanticOp op : ops) {
+                if (terminated) {
+                    blocks.add(block);
+                    break;
+                }
+                if (isTerminator(op.kind())) {
+                    terminated = true;
+                }
+            }
+        }
+        return blocks;
+    }
+
+    /** Every block of one function body's block subtree. */
+    private static Set<BlockId> blockSubtree(Lowered lowered, BlockId root) {
+        Set<BlockId> blocks = new LinkedHashSet<>();
+        java.util.ArrayDeque<BlockId> queue = new java.util.ArrayDeque<>();
+        queue.add(root);
+        while (!queue.isEmpty()) {
+            BlockId block = queue.remove();
+            if (!blocks.add(block)) {
+                continue;
+            }
+            for (SemanticOp op : lowered.opsOfBlock(block)) {
+                for (BlockId child : childBlocks(op)) {
+                    if (child != null) {
+                        queue.add(child);
+                    }
+                }
+            }
+        }
+        return blocks;
+    }
+
+    /** The child blocks a structure op's payload owns. */
+    private static List<BlockId> childBlocks(SemanticOp op) {
+        List<BlockId> children = new ArrayList<>();
+        if (op.payload() instanceof KindPayload.BranchPayload branch) {
+            children.add(branch.selectedBlock());
+            if (branch.alternateBlock() != null) {
+                children.add(branch.alternateBlock());
+            }
+        } else if (op.payload() instanceof KindPayload.TryCatchPayload tryCatch) {
+            children.add(tryCatch.tryBlock());
+            children.add(tryCatch.catchBlock());
+        } else if (op.payload() instanceof KindPayload.LoopPayload loop) {
+            children.add(loop.initBlock());
+            children.add(loop.bodyBlock());
+            if (loop.updateBlock() != null) {
+                children.add(loop.updateBlock());
+            }
+        } else if (op.payload() instanceof KindPayload.ForEachPayload forEach) {
+            children.add(forEach.body());
+        }
+        return children;
+    }
+
+    /** The lowered body block of one exported function, or null. */
+    private static BlockId exportedBodyBlock(Lowered lowered, String export) {
+        for (SemanticOp op : lowered.unit().ops()) {
+            if (op.kind() != SemanticOpKind.EXPORT_PUBLISH
+                    || !(op.payload()
+                        instanceof KindPayload.ExportPublishPayload publish)
+                    || !export.equals(publish.name())) {
+                continue;
+            }
+            FunctionExecutionBinding binding = lowered.unit().functionBindings().get(
+                new FunctionAllocationIdentity(publish.value().id()));
+            if (binding instanceof FunctionExecutionBinding.LoweredBody body) {
+                return body.blockId();
+            }
+        }
+        return null;
+    }
+
+    /** One op list's kinds (failure diagnostics). */
+    private static List<String> opKinds(List<SemanticOp> ops) {
+        List<String> kinds = new ArrayList<>();
+        for (SemanticOp op : ops) {
+            kinds.add(op.kind().name());
+        }
+        return kinds;
+    }
+
+    /**
+     * The exit-state-reset negative control's child-JVM driver: lowers the
+     * probe project and reports whether the exported {@code probe} body
+     * block carries an implicit synthetic return. Run with the patched
+     * lowerer first on the classpath (the control) and without it (the
+     * green counterpart).
+     */
+    public static final class ResetControlDriver {
+
+        public static void main(String[] args) throws Exception {
+            Path source = Path.of(args[0]);
+            Path outputRoot = Path.of(args[1]);
+            CompilationOrchestrator orchestrator = compile(source, source.getParent(),
+                outputRoot, Backend.LUAJIT);
+            Fixture fixture = new Fixture("app", "probe", ProbeKind.SYNC, "0", "0",
+                "int:0");
+            Lowered lowered = lower(new Compiled(source.getParent(), orchestrator,
+                outputRoot.resolve("app.lua"), new byte[0], new byte[0]), fixture);
+            if (lowered == null) {
+                System.out.println("RESET_CONTROL_LOWERING_FAILED");
+                System.exit(1);
+            }
+            BlockId body = exportedBodyBlock(lowered, "probe");
+            boolean synthetic = false;
+            if (body != null) {
+                for (SemanticOp op : lowered.opsOfBlock(body)) {
+                    if (op.kind() == SemanticOpKind.RETURN && op.origin() != null
+                            && op.origin().kind() == SourceOriginKind.SYNTHETIC) {
+                        synthetic = true;
+                    }
+                }
+            }
+            System.out.println("RESET_CONTROL_SYNTHETIC_RETURN=" + synthetic);
+        }
     }
 
     /**
@@ -1414,22 +1871,169 @@ public final class ResidualCarrierShapesAcceptanceTest {
     }
 
     // =========================================================================
-    // Process and file helpers
+    // The bounded real-toolchain execution (the release-pipeline contract)
     // =========================================================================
 
+    /** The canonical per-stream cap of the bounded-subprocess contract. */
+    private static final int STREAM_CAP_BYTES = 1 << 20;
+
+    /** The canonical truncation marker of the bounded-subprocess contract. */
+    private static final String TRUNCATION_MARKER = "\n[STREAM TRUNCATED at 1 MiB]\n";
+
+    /** The canonical per-child deadline of the bounded-subprocess contract. */
+    private static final long BOUNDED_PROCESS_BUDGET_MS = 300_000L;
+
+    /**
+     * The bounded-subprocess timeout: a hard gate failure, never a skip
+     * (an {@link AssertionError}, so no probe-style
+     * {@code catch (Exception)} guard can read a hung toolchain as
+     * absent).
+     */
+    private static final class BoundedProcessTimeoutException extends AssertionError {
+        private static final long serialVersionUID = 1L;
+
+        BoundedProcessTimeoutException(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * One stream's capped, concurrent drain: the first
+     * {@link #STREAM_CAP_BYTES} bytes are retained and the read continues
+     * to EOF, so a child that saturates a pipe can never deadlock the
+     * harness. After the cap the {@link #TRUNCATION_MARKER} sits at the
+     * cut point.
+     */
+    private static final class CappedDrain implements Runnable {
+
+        private final InputStream stream;
+        private final ByteArrayOutputStream retained = new ByteArrayOutputStream();
+        private volatile boolean truncated;
+
+        CappedDrain(InputStream stream) {
+            this.stream = stream;
+        }
+
+        @Override
+        public void run() {
+            byte[] buffer = new byte[8192];
+            try (InputStream in = stream) {
+                int read;
+                while ((read = in.read(buffer)) >= 0) {
+                    int kept = Math.min(read, STREAM_CAP_BYTES - retained.size());
+                    if (kept > 0) {
+                        retained.write(buffer, 0, kept);
+                    }
+                    if (kept < read) {
+                        truncated = true;
+                    }
+                }
+            } catch (java.io.IOException ignored) {
+                // The stream ends when the child and its descendants are gone.
+            }
+        }
+
+        String text() {
+            String drained = new String(retained.toByteArray(), StandardCharsets.UTF_8);
+            return truncated ? drained + TRUNCATION_MARKER : drained;
+        }
+    }
+
+    /**
+     * The bounded real-toolchain runner: separate stdout/stderr
+     * transcripts, both streams drained concurrently with the canonical
+     * 1 MiB cap, the canonical 300000 ms deadline, and on timeout
+     * descendants-then-child forcible termination plus a drain to EOF and
+     * a reap, reported as the named hard
+     * {@link BoundedProcessTimeoutException}.
+     */
     private static ProcessOutcome runProcess(Path directory, Map<String, String> env,
             String... command) throws Exception {
+        return runBounded(directory, env, BOUNDED_PROCESS_BUDGET_MS, command);
+    }
+
+    /**
+     * The bounded runner with an explicit budget (the release-run call
+     * sites use the canonical default; the gate controls below use a
+     * reduced budget so the timeout path stays fast).
+     */
+    private static ProcessOutcome runBounded(Path directory, Map<String, String> env,
+            long budgetMs, String... command) throws Exception {
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.directory(directory.toFile());
         builder.redirectErrorStream(false);
         builder.environment().putAll(env);
         Process process = builder.start();
-        String stdout = new String(process.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        String stderr = new String(process.getErrorStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        int exit = process.waitFor();
-        return new ProcessOutcome(exit, stdout, stderr);
+        CappedDrain stdout = new CappedDrain(process.getInputStream());
+        CappedDrain stderr = new CappedDrain(process.getErrorStream());
+        Thread stdoutThread = new Thread(stdout, "residual-stdout-" + command[0]);
+        Thread stderrThread = new Thread(stderr, "residual-stderr-" + command[0]);
+        stdoutThread.setDaemon(true);
+        stderrThread.setDaemon(true);
+        stdoutThread.start();
+        stderrThread.start();
+        boolean finished = process.waitFor(budgetMs, TimeUnit.MILLISECONDS);
+        if (!finished) {
+            process.descendants().forEach(ProcessHandle::destroyForcibly);
+            process.destroyForcibly();
+        }
+        // Drain to EOF (the child and its descendants are dead on the
+        // timeout path) and reap the direct child on every path.
+        stdoutThread.join();
+        stderrThread.join();
+        process.waitFor();
+        if (!finished) {
+            throw new BoundedProcessTimeoutException(
+                "BOUNDED_PROCESS_TIMEOUT " + command[0]);
+        }
+        return new ProcessOutcome(process.exitValue(), stdout.text(), stderr.text());
+    }
+
+    /**
+     * The bounded-subprocess controls: a finite stderr flood larger than
+     * the pipe capacity completes without a deadlock and returns the
+     * capped transcript with the truncation marker, and a child that
+     * outlives the budget fails hard with the named
+     * {@code BOUNDED_PROCESS_TIMEOUT} after the descendant-then-child
+     * kill and the reap.
+     */
+    private static void testBoundedProcessControls(Path work) throws Exception {
+        System.out.println("-- the bounded-subprocess controls: the finite stderr "
+            + "flood and the hard timeout --");
+        Path script = work.resolve("stderr-flood.lua");
+        Files.writeString(script, """
+            local chunk = string.rep("f", 1024)
+            for _ = 1, 1200 do io.stderr:write(chunk) end
+            io.stdout:write("FLOOD-DONE\\n")
+            """, StandardCharsets.UTF_8);
+        ProcessOutcome flood = runBounded(work, Map.of(), 30_000L, "luajit",
+            script.getFileName().toString());
+        checkEq(0, flood.exitCode(), "the finite stderr flood: the child exits 0 "
+            + "without a pipe deadlock (stdout=" + flood.stdout() + ")");
+        checkEq("FLOOD-DONE\n", flood.stdout(), "the finite stderr flood: the stdout "
+            + "transcript is intact");
+        checkEq(STREAM_CAP_BYTES + TRUNCATION_MARKER.length(), flood.stderr().length(),
+            "the finite stderr flood: the stderr transcript retains the 1 MiB cap "
+                + "plus the truncation marker");
+        check(flood.stderr().endsWith(TRUNCATION_MARKER), "the finite stderr flood: "
+            + "the truncation marker sits at the cut point");
+        long started = System.nanoTime();
+        boolean timedOut = false;
+        String timeoutMessage = null;
+        try {
+            runBounded(work, Map.of(), 1_000L, "bash", "-c", "sleep 30");
+        } catch (BoundedProcessTimeoutException timeout) {
+            timedOut = true;
+            timeoutMessage = timeout.getMessage();
+        }
+        long elapsedMs = (System.nanoTime() - started) / 1_000_000L;
+        check(timedOut, "the hung child with its descendant fails the gate hard "
+            + "(BOUNDED_PROCESS_TIMEOUT), never a skip");
+        check(timeoutMessage != null && timeoutMessage.startsWith(
+                "BOUNDED_PROCESS_TIMEOUT bash"),
+            "the hung child names the canonical failure: " + timeoutMessage);
+        check(elapsedMs < 20_000L, "the timeout path kills the direct child and its "
+            + "descendants and reaps them promptly, got " + elapsedMs + " ms");
     }
 
     /** The absolute compile classpath of this test JVM (never cwd-relative). */
@@ -1489,6 +2093,8 @@ public final class ResidualCarrierShapesAcceptanceTest {
             testUnionDrive(work, outcomes);
             testDualMechanismJointAcceptance(outcomes);
             testRepresentedTailMonotonicity(work, outcomes);
+            testExitStateResetNegativeControl(work);
+            testBoundedProcessControls(work);
             testInt32RemainderTruncation(work);
             testUnionInvariants(corpusBefore);
         } finally {
