@@ -1502,6 +1502,67 @@ public final class JvmSemanticEmitter {
             }
         }
 
+        /**
+         * Whether a transfer's target label is defined at the given op's
+         * emission level (the landed Lua rule, {@code transferTargetVisible}):
+         * the walk from the emitting op's block outward reaches the target
+         * loop before any TRY_CATCH ancestor exactly when the target's
+         * labels are defined at the same level — the closer targets are at
+         * the current level, while a farther one lies outside the nearest
+         * enclosing protected body, where its label is not in scope. A
+         * target the walk never reaches is not an enclosing structure — it
+         * lives inside a protected body of this level (the transferred loop
+         * resets at its own level) — and is equally invisible. A RETURN's
+         * label lives at the function's top level, outside every protected
+         * body, so it is visible exactly when the level carries no enclosing
+         * boundary (the {@code null} target).
+         */
+        private boolean transferTargetVisible(SemanticOp emittingOp,
+                                              SemanticOp targetLoop) {
+            if (targetLoop == null) {
+                return tryDepth == 0;
+            }
+            for (SemanticOp ancestor
+                    : structureAncestors(opBlock.get(emittingOp.opId()))) {
+                if (ancestor.kind() == SemanticOpKind.TRY_CATCH) {
+                    return false;
+                }
+                if (ancestor.opId().equals(targetLoop.opId())) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /**
+         * The emitted jump of one BREAK transfer (the label its target loop
+         * defines): a FOR_EACH loop owns {@code FE<id>}, every other loop
+         * form owns {@code LOOP<id>}.
+         */
+        private String breakJump(OpId loopId, SemanticOp target) {
+            if (target != null && target.kind() == SemanticOpKind.FOR_EACH) {
+                return "break FE" + loopId.id() + ";";
+            }
+            return "break " + loopLabel(loopId) + ";";
+        }
+
+        /**
+         * The emitted jump of one CONTINUE transfer (the label its target
+         * loop defines): a FOR_EACH loop owns {@code FE<id>}, a FOR loop
+         * owns {@code CONT<id>}, and a WHILE loop owns {@code LOOP<id>}.
+         */
+        private String continueJump(OpId loopId, SemanticOp target) {
+            if (target != null && target.kind() == SemanticOpKind.FOR_EACH) {
+                return "continue FE" + loopId.id() + ";";
+            }
+            if (target != null && target.kind() == SemanticOpKind.LOOP
+                    && ((KindPayload.LoopPayload) target.payload()).selector()
+                        == deal.semantic.ir.ControlSelector.FOR) {
+                return "continue CONT" + loopId.id() + ";";
+            }
+            return "continue " + loopLabel(loopId) + ";";
+        }
+
         private void emitFailureEvent(OpId id, String kindName, SemanticOp op,
                                       String errExpr, int indent) {
             if (!trace) {
@@ -1977,7 +2038,9 @@ public final class JvmSemanticEmitter {
                 .append(";\n");
             emitFieldBoundaryCheck(op,
                 boundaryChildOfKind(op, BoundaryKind.OPTIONAL_FIELD_READ),
-                read, slot((ValueId) op.result()), indent);
+                read, "__frc_" + op.opId().id(), indent);
+            out.append(indent(indent)).append(slot((ValueId) op.result()))
+                .append(" = __frc_").append(op.opId().id()).append(";\n");
             emitResultSuccess(op, slot((ValueId) op.result()),
                 (RuntimeDescriptor) op.resultType(), indent);
         }
@@ -5152,7 +5215,11 @@ public final class JvmSemanticEmitter {
 
         /** The transfer dispatch: each distinct BREAK/CONTINUE/RETURN of the
          *  block's emitted reachable prefix re-applies after emitting the
-         *  TRY_CATCH SUCCESS. */
+         *  TRY_CATCH SUCCESS. A transfer whose target label is defined at
+         *  this level takes the emitted jump; a farther target leaves the
+         *  protected region as the re-raised marker (the next enclosing
+         *  dispatch owns the jump) — no emitted jump references a label
+         *  outside its scope. */
         private void emitJvmTransferDispatch(SemanticOp tryOp, BlockId block, int indent) {
             List<SemanticOp> transfers = new ArrayList<>();
             collectReachableTransfers(block, transfers);
@@ -5161,42 +5228,51 @@ public final class JvmSemanticEmitter {
                     case BREAK -> {
                         KindPayload.BreakPayload breakPayload =
                             (KindPayload.BreakPayload) transfer.payload();
+                        SemanticOp target = opsById.get(breakPayload.loopId());
+                        boolean visible = transferTargetVisible(tryOp, target);
                         out.append(indent(indent)).append("if (\"break\".equals(__tr.kind) ")
                             .append("&& __tr.id == ").append(breakPayload.loopId().id())
                             .append("L) {\n");
                         emitPlainSuccess(tryOp, indent + 1);
-                        emitTransferClosures(tryOp, opsById.get(breakPayload.loopId()),
-                            false, indent + 1);
-                        out.append(indent(indent)).append("  break ")
-                            .append(loopLabel(breakPayload.loopId())).append(";\n");
+                        emitTransferClosures(tryOp, target, !visible, indent + 1);
+                        if (visible) {
+                            out.append(indent(indent)).append("  ")
+                                .append(breakJump(breakPayload.loopId(), target))
+                                .append("\n");
+                        } else {
+                            out.append(indent(indent)).append("  throw __tr;\n");
+                        }
                         out.append(indent(indent)).append("}\n");
                     }
                     case CONTINUE -> {
                         KindPayload.ContinuePayload continuePayload =
                             (KindPayload.ContinuePayload) transfer.payload();
+                        SemanticOp target = opsById.get(continuePayload.loopId());
+                        boolean visible = transferTargetVisible(tryOp, target);
                         out.append(indent(indent)).append("if (\"continue\".equals(__tr.kind) ")
                             .append("&& __tr.id == ").append(continuePayload.loopId().id())
                             .append("L) {\n");
                         emitPlainSuccess(tryOp, indent + 1);
-                        emitTransferClosures(tryOp, opsById.get(continuePayload.loopId()),
-                            false, indent + 1);
-                        SemanticOp target = opsById.get(continuePayload.loopId());
-                        if (target != null && target.kind() == SemanticOpKind.LOOP
-                                && ((KindPayload.LoopPayload) target.payload()).selector()
-                                    == deal.semantic.ir.ControlSelector.FOR) {
-                            out.append(indent(indent)).append("  continue CONT")
-                                .append(continuePayload.loopId().id()).append(";\n");
+                        emitTransferClosures(tryOp, target, !visible, indent + 1);
+                        if (visible) {
+                            out.append(indent(indent)).append("  ")
+                                .append(continueJump(continuePayload.loopId(), target))
+                                .append("\n");
                         } else {
-                            out.append(indent(indent)).append("  continue ")
-                                .append(loopLabel(continuePayload.loopId())).append(";\n");
+                            out.append(indent(indent)).append("  throw __tr;\n");
                         }
                         out.append(indent(indent)).append("}\n");
                     }
                     case RETURN -> {
+                        boolean visible = transferTargetVisible(tryOp, null);
                         out.append(indent(indent)).append("if (\"return\".equals(__tr.kind)) {\n");
                         emitPlainSuccess(tryOp, indent + 1);
-                        emitTransferClosures(tryOp, null, false, indent + 1);
-                        out.append(indent(indent)).append("  return __tr.value;\n");
+                        emitTransferClosures(tryOp, null, !visible, indent + 1);
+                        if (visible) {
+                            out.append(indent(indent)).append("  return __tr.value;\n");
+                        } else {
+                            out.append(indent(indent)).append("  throw __tr;\n");
+                        }
                         out.append(indent(indent)).append("}\n");
                     }
                     default -> {
@@ -5349,7 +5425,7 @@ public final class JvmSemanticEmitter {
             emitBoundaryAdmission(op, boundary, "__rv_" + op.opId().id(), rvc,
                 caught, rejection, indent);
             emitPlainSuccess(op, indent);
-            if (tryDepth > 0) {
+            if (!transferTargetVisible(op, null)) {
                 emitTransferClosures(op, null, true, indent);
                 out.append(indent(indent))
                     .append("throw new JvmRuntime.Transfer(\"return\", 0L, __rvc_")
@@ -5365,20 +5441,15 @@ public final class JvmSemanticEmitter {
             KindPayload.BreakPayload payload = (KindPayload.BreakPayload) op.payload();
             emitStart(op, indent);
             emitPlainSuccess(op, indent);
-            if (tryDepth > 0) {
-                emitTransferClosures(op, opsById.get(payload.loopId()), true, indent);
+            SemanticOp target = opsById.get(payload.loopId());
+            if (transferTargetVisible(op, target)) {
+                emitTransferClosures(op, target, false, indent);
+                out.append(indent(indent)).append(breakJump(payload.loopId(), target))
+                    .append("\n");
+            } else {
+                emitTransferClosures(op, target, true, indent);
                 out.append(indent(indent)).append("throw new JvmRuntime.Transfer(\"break\", ")
                     .append(payload.loopId().id()).append("L, null);\n");
-            } else {
-                emitTransferClosures(op, opsById.get(payload.loopId()), false, indent);
-                SemanticOp target = opsById.get(payload.loopId());
-                if (target != null && target.kind() == SemanticOpKind.FOR_EACH) {
-                    out.append(indent(indent)).append("break FE")
-                        .append(payload.loopId().id()).append(";\n");
-                } else {
-                    out.append(indent(indent)).append("break ")
-                        .append(loopLabel(payload.loopId())).append(";\n");
-                }
             }
         }
 
@@ -5386,26 +5457,16 @@ public final class JvmSemanticEmitter {
             KindPayload.ContinuePayload payload = (KindPayload.ContinuePayload) op.payload();
             emitStart(op, indent);
             emitPlainSuccess(op, indent);
-            if (tryDepth > 0) {
-                emitTransferClosures(op, opsById.get(payload.loopId()), true, indent);
+            SemanticOp target = opsById.get(payload.loopId());
+            if (transferTargetVisible(op, target)) {
+                emitTransferClosures(op, target, false, indent);
+                out.append(indent(indent))
+                    .append(continueJump(payload.loopId(), target)).append("\n");
+            } else {
+                emitTransferClosures(op, target, true, indent);
                 out.append(indent(indent))
                     .append("throw new JvmRuntime.Transfer(\"continue\", ")
                     .append(payload.loopId().id()).append("L, null);\n");
-            } else {
-                emitTransferClosures(op, opsById.get(payload.loopId()), false, indent);
-                SemanticOp target = opsById.get(payload.loopId());
-                if (target != null && target.kind() == SemanticOpKind.FOR_EACH) {
-                    out.append(indent(indent)).append("continue FE")
-                        .append(payload.loopId().id()).append(";\n");
-                } else if (target != null && target.kind() == SemanticOpKind.LOOP
-                        && ((KindPayload.LoopPayload) target.payload()).selector()
-                            == deal.semantic.ir.ControlSelector.FOR) {
-                    out.append(indent(indent)).append("continue CONT")
-                        .append(payload.loopId().id()).append(";\n");
-                } else {
-                    out.append(indent(indent)).append("continue ")
-                        .append(loopLabel(payload.loopId())).append(";\n");
-                }
             }
         }
 
