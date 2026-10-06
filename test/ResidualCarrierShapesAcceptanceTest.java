@@ -1847,11 +1847,16 @@ public final class ResidualCarrierShapesAcceptanceTest {
             "the RETAINED_ABI_DEFERRED guard identifier stays landed");
         checkEq("SHARED_EMITTER_COVERAGE", ProductionProjectEmission.SHARED_EMITTER_COVERAGE,
             "the SHARED_EMITTER_COVERAGE guard identifier stays landed");
-        // No test file is removed.
+        // No test file this change's pins live in is removed. The
+        // canonical revision's own test pruning removed the former
+        // EvaluationOrderIntegrationTest/SemanticProductionGateTest
+        // carriers from the base; the retargeted control-flow pins live
+        // in the two ControlFlow*Test files below, and the epic's scope
+        // batteries stay landed.
         for (String file : List.of("ControlFlowLoweringTest.java",
-                "ControlFlowValidatorTest.java", "EvaluationOrderIntegrationTest.java",
-                "SemanticProductionGateTest.java", "CompositeTerminatorAnalysisTest.java",
-                "BytesCoverageTest.java")) {
+                "ControlFlowValidatorTest.java",
+                "CompositeTerminatorAnalysisTest.java", "BytesCoverageTest.java",
+                "BytesProductionDriveTest.java")) {
             check(Files.exists(Path.of("test", file)),
                 "the test file " + file + " stays landed");
         }
