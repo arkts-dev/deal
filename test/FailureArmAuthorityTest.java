@@ -1744,6 +1744,89 @@ public class FailureArmAuthorityTest {
                 "tags", "{__a = true, __n = 1, [1] = 1}"),
             Map.of("name", walkJvmFunction(), "age", 1L, "ratio", 0.5, "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
+        // The remaining declared-descriptor kind mismatches (V2's
+        // per-descriptor set): each position fails with the failing value's
+        // own closed kind on every consumer.
+        cases.add(walkCase("boolean-at-int-field", "JSON_TO_WALK", "age", "boolean",
+            Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Bool(true),
+                "ratio", new ClassOpsExecutor.Value.Number(0.5),
+                "data", walkEmptyTable(), "tags", walkIntArray(1)),
+            Map.of("name", luaString("n"), "age", "true", "ratio", "0.5",
+                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}"),
+            Map.of("name", "n", "age", Boolean.TRUE, "ratio", 0.5, "data",
+                new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
+        cases.add(walkCase("string-at-number-field", "JSON_TO_WALK", "ratio", "string",
+            Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Int(1),
+                "ratio", walkString("x"),
+                "data", walkEmptyTable(), "tags", walkIntArray(1)),
+            Map.of("name", luaString("n"), "age", "1", "ratio", luaString("x"),
+                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}"),
+            Map.of("name", "n", "age", 1L, "ratio", "x", "data",
+                new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
+        cases.add(walkCase("string-at-table-field", "JSON_TO_WALK", "data", "string",
+            Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Int(1),
+                "ratio", new ClassOpsExecutor.Value.Number(0.5),
+                "data", walkString("x"), "tags", walkIntArray(1)),
+            Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
+                "data", luaString("x"), "tags", "{__a = true, __n = 1, [1] = 1}"),
+            Map.of("name", "n", "age", 1L, "ratio", 0.5, "data", "x", "tags",
+                jvmIntArray(1L))));
+        cases.add(walkCase("table-at-array-field", "JSON_TO_WALK", "tags", "table",
+            Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Int(1),
+                "ratio", new ClassOpsExecutor.Value.Number(0.5),
+                "data", walkEmptyTable(), "tags", walkEmptyTable()),
+            Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
+                "data", LUA_TABLE_CARRIER, "tags", LUA_TABLE_CARRIER),
+            Map.of("name", "n", "age", 1L, "ratio", 0.5, "data",
+                new deal.codegen.jvm.JvmRuntime.Table(), "tags",
+                new deal.codegen.jvm.JvmRuntime.Table())));
+        cases.add(walkCase("int-at-nullable-string-field", "JSON_TO_WALK", "note", "int",
+            Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Int(1),
+                "ratio", new ClassOpsExecutor.Value.Number(0.5),
+                "data", walkEmptyTable(), "tags", walkIntArray(1),
+                "note", new ClassOpsExecutor.Value.Int(5)),
+            Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
+                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}",
+                "note", "5"),
+            Map.of("name", "n", "age", 1L, "ratio", 0.5, "data",
+                new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L),
+                "note", 5L)));
+        // A table-content carrier (an unsupported function value inside the
+        // table-typed field): the closed function token at its pinned path.
+        cases.add(walkCase("function-in-table-content", "JSON_TO_WALK", "data.k",
+            "function",
+            Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Int(1),
+                "ratio", new ClassOpsExecutor.Value.Number(0.5),
+                "data", walkFunctionTable(), "tags", walkIntArray(1)),
+            Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
+                "data", "{__t = true, __keys = {k = true}, k = function() end}",
+                "tags", "{__a = true, __n = 1, [1] = 1}"),
+            Map.of("name", "n", "age", 1L, "ratio", 0.5, "data",
+                jvmFunctionTable(), "tags", jvmIntArray(1L))));
+        // A table-content class instance: the carried canonical class atom at
+        // its pinned path, never the class: IR/trace spelling.
+        cases.add(walkCase("class-in-table-content", "JSON_TO_WALK", "data.k",
+            FOREIGN_ID.text(),
+            Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Int(1),
+                "ratio", new ClassOpsExecutor.Value.Number(0.5),
+                "data", walkClassTable(), "tags", walkIntArray(1)),
+            Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
+                "data", "{__t = true, __keys = {k = true}, k = {__c = true, "
+                    + "__id = " + quote(FOREIGN_ID.text())
+                    + ", __p = {}, __f = {}}}",
+                "tags", "{__a = true, __n = 1, [1] = 1}"),
+            Map.of("name", "n", "age", 1L, "ratio", 0.5, "data",
+                jvmClassTable(), "tags", jvmIntArray(1L))));
+        // The builtin Error carrier at the walk root: the root-identity
+        // failure publishes the value's carried canonical class atom
+        // (@/Error — ClassId.ERROR.text()), never the superseded
+        // class:@builtin/Error spelling (the review correction).
+        cases.add(new WalkCase("error-carrier-at-root", "JSON_TO_WALK", "", "@/Error",
+            new ClassOpsExecutor.Value.Class(deal.semantic.ir.ClassId.ERROR,
+                List.of(new ClassOpsExecutor.FieldState.Present(walkString("E8001")),
+                    new ClassOpsExecutor.FieldState.Present(walkString("x")))),
+            "{__d = true, code = \"E8001\", m = \"x\"}",
+            new deal.codegen.jvm.JvmRuntime.ErrorValue("E8001", "x")));
         // A path-local table re-entry: the cycle arm, no expected/actual.
         cases.add(walkCase("cyclic-table-field", "JSON_TO_WALK_CYCLE", null, null,
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Int(1),
@@ -1753,6 +1836,18 @@ public class FailureArmAuthorityTest {
                 "data", "cyc", "tags", "{__a = true, __n = 1, [1] = 1}"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5, "data", jvmCyclicTable(),
                 "tags", jvmIntArray(1L))));
+        // The array container needle: the table subtree re-enters the array
+        // it already entered (data -> array -> table -> the same array), so
+        // the cycle is detected at the array container and the cycle arm is
+        // selected — the second cycle needle site, on every consumer.
+        cases.add(walkCase("cyclic-array-container", "JSON_TO_WALK_CYCLE", null, null,
+            Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Int(1),
+                "ratio", new ClassOpsExecutor.Value.Number(0.5),
+                "data", walkCyclicArrayViaTables(), "tags", walkIntArray(1)),
+            Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
+                "data", "arrCycTable", "tags", "{__a = true, __n = 1, [1] = 1}"),
+            Map.of("name", "n", "age", 1L, "ratio", 0.5,
+                "data", jvmCyclicArrayViaTables(), "tags", jvmIntArray(1L))));
         return cases;
     }
 
@@ -1922,6 +2017,28 @@ public class FailureArmAuthorityTest {
                 reference.message(), reference.span(), reference.expected(),
                 "class:arm/walk/Walk")),
             "the superseded class: IR spelling is reported by field name actual");
+        // The superseded absent-value spelling ("missing"): the walk arm's
+        // closed projection publishes "nil" at an absent required position.
+        Tuple absent = tupleOf(FailureContractRegistry.render(
+            FailureArmId.JSON_TO_WALK, Map.of("fieldPath", "age", "actual", "nil"),
+            null, "nil", null), WALK_SPAN);
+        checkEq("nil", absent.actual(),
+            "the walk arm's absent-position projection publishes the nil token");
+        checkEq("actual", firstDifferingField(absent, new Tuple(absent.code(),
+                absent.message(), absent.span(), absent.expected(), "missing")),
+            "the superseded absent-value 'missing' spelling is reported by field "
+                + "name actual");
+        // The superseded root-identity spelling ("shape"): the walk arm's
+        // root/identity projection publishes the carried canonical class atom.
+        Tuple identity = tupleOf(FailureContractRegistry.render(
+            FailureArmId.JSON_TO_WALK, Map.of("fieldPath", "", "actual", "@/Error"),
+            null, "@/Error", null), WALK_SPAN);
+        checkEq("@/Error", identity.actual(),
+            "the walk arm's root-identity projection publishes the carried canonical "
+                + "class atom");
+        checkEq("actual", firstDifferingField(identity, new Tuple(identity.code(),
+                identity.message(), identity.span(), identity.expected(), "shape")),
+            "the superseded root 'shape' spelling is reported by field name actual");
         checkEq("message", firstDifferingField(reference, new Tuple(reference.code(),
                 "walk: value at age is not JSON serializable: number", reference.span(),
                 reference.expected(), reference.actual())),
@@ -2205,6 +2322,64 @@ public class FailureArmAuthorityTest {
         return carrier;
     }
 
+    /** The drive's table-typed field holding one function value under {@code k}. */
+    private static ClassOpsExecutor.Value walkFunctionTable() {
+        deal.semantic.ir.SemanticTable<ClassOpsExecutor.Value> table =
+            new deal.semantic.ir.SemanticTable<>();
+        table.put("k", walkFunction());
+        return new ClassOpsExecutor.Value.Table(table);
+    }
+
+    private static deal.codegen.jvm.JvmRuntime.Table jvmFunctionTable() {
+        deal.codegen.jvm.JvmRuntime.Table table = new deal.codegen.jvm.JvmRuntime.Table();
+        table.write("k", walkJvmFunction());
+        return table;
+    }
+
+    /** The drive's table-typed field holding one class instance under {@code k}. */
+    private static ClassOpsExecutor.Value walkClassTable() {
+        deal.semantic.ir.SemanticTable<ClassOpsExecutor.Value> table =
+            new deal.semantic.ir.SemanticTable<>();
+        table.put("k", new ClassOpsExecutor.Value.Class(FOREIGN_ID, List.of()));
+        return new ClassOpsExecutor.Value.Table(table);
+    }
+
+    private static deal.codegen.jvm.JvmRuntime.Table jvmClassTable() {
+        deal.codegen.jvm.JvmRuntime.Table table = new deal.codegen.jvm.JvmRuntime.Table();
+        table.write("k", new WalkInstance(FOREIGN_ID.text(), Map.of()));
+        return table;
+    }
+
+    /**
+     * The drive's array-container cycle: the table subtree {@code data} holds
+     * the array {@code a}; the array holds the second table {@code b}; that
+     * table holds the same array again, so the re-entry is detected at the
+     * array container.
+     */
+    private static ClassOpsExecutor.Value walkCyclicArrayViaTables() {
+        deal.semantic.ir.SemanticTable<ClassOpsExecutor.Value> second =
+            new deal.semantic.ir.SemanticTable<>();
+        ClassOpsExecutor.Value secondValue =
+            new ClassOpsExecutor.Value.Table(second);
+        ClassOpsExecutor.Value array = new ClassOpsExecutor.Value.Array(
+            deal.semantic.ir.SemanticArray.of(List.of(secondValue)));
+        second.put("b", array);
+        deal.semantic.ir.SemanticTable<ClassOpsExecutor.Value> first =
+            new deal.semantic.ir.SemanticTable<>();
+        first.put("a", array);
+        return new ClassOpsExecutor.Value.Table(first);
+    }
+
+    private static deal.codegen.jvm.JvmRuntime.Table jvmCyclicArrayViaTables() {
+        deal.codegen.jvm.JvmRuntime.Table second = new deal.codegen.jvm.JvmRuntime.Table();
+        deal.codegen.jvm.JvmRuntime.Array array = new deal.codegen.jvm.JvmRuntime.Array(1);
+        array.elements.add(second);
+        second.write("b", array);
+        deal.codegen.jvm.JvmRuntime.Table first = new deal.codegen.jvm.JvmRuntime.Table();
+        first.write("a", array);
+        return first;
+    }
+
     private static deal.codegen.jvm.JvmRuntime.Array jvmIntArray(long... values) {
         deal.codegen.jvm.JvmRuntime.Array array =
             new deal.codegen.jvm.JvmRuntime.Array(values.length);
@@ -2254,6 +2429,14 @@ public class FailureArmAuthorityTest {
         StringBuilder body = new StringBuilder();
         body.append("local cyc = {__t = true, __keys = {self = true}}\n");
         body.append("cyc[\"self\"] = cyc\n");
+        // The array-container cycle: data -> array -> table -> the same array
+        // (the needle is detected at the array container's re-entry, never at
+        // the table's).
+        body.append("local arrCycTable = {__t = true, __keys = {a = true}}\n");
+        body.append("local arrCycTblB = {__t = true, __keys = {b = true}}\n");
+        body.append("local arrCycArr = {__a = true, __n = 1, arrCycTblB}\n");
+        body.append("arrCycTblB.b = arrCycArr\n");
+        body.append("arrCycTable.a = arrCycArr\n");
         body.append("local cases = {\n");
         for (WalkCase drive : cases) {
             body.append("  {label = ").append(quote(drive.label())).append(", root = ")

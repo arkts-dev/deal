@@ -5308,7 +5308,7 @@ public final class SemanticOracle {
                 case Value.StdlibCallableValue ignored -> "function";
                 case Value.HostEntryValue ignored -> "function";
 
-                case Value.ErrorValue ignored -> "class:@builtin/Error";
+                case Value.ErrorValue ignored -> ClassId.ERROR.text();
                 case Value.ClassValue classValue -> classValue.classId().text();
                 case Value.MissingValue ignored -> "nil";
                 case Value.SlotValue ignored -> throw new IllegalStateException(
@@ -5443,7 +5443,7 @@ public final class SemanticOracle {
                 case Value.BytesValue ignored -> new SharedStdlibSemantics.Value.Other(
                     ActualKind.BYTES, null);
                 case Value.ErrorValue ignored -> new SharedStdlibSemantics.Value.Other(
-                    ActualKind.CLASS, "@builtin/Error");
+                    ActualKind.CLASS, ClassId.ERROR.text());
                 case Value.ClassValue classValue ->
                     new SharedStdlibSemantics.Value.Other(ActualKind.CLASS,
                         classValue.classId().text());

@@ -889,10 +889,12 @@ public final class JvmRuntime {
         if (v instanceof FunctionValue || v instanceof Intrinsic) {
             return "function";
         }
-        if (v instanceof ErrorValue) {
-            return "class:@builtin/Error";
-        }
         if (v instanceof ClassInstance instance) {
+            // A class instance — the builtin Error carrier included —
+            // projects its carried canonical class atom (the Error
+            // carrier's classIdText is {@code @/Error}); the
+            // {@code class:<ClassId>} IR/trace spelling never appears in
+            // the DEAL-visible projection.
             return instance.classIdText();
         }
         return staticKind;

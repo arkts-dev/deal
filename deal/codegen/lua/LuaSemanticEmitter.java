@@ -8202,7 +8202,13 @@ local function __typedBoundaryKind(staticKind, v)
     end
     if v.__a then return "array" end
     if v.__c then return v.__id end
-    if v.__d then return "class:@builtin/Error" end
+    -- The DEAL error carrier (the builtin Error class instance, the
+    -- __d-tagged shape every failure and raise site publishes) projects
+    -- its carried canonical class atom @/Error — never the class:<ClassId>
+    -- IR/trace spelling and never the superseded class:@builtin/Error
+    -- form (the oracle's and the JVM's class instances project the same
+    -- carried canonical atom).
+    if v.__d then return "@/Error" end
     if v.__t then return "table" end
     -- Every function-shaped carrier projects the closed function token:
     -- the __fn protocol carriers (closures, adapters, intrinsic and
@@ -8213,7 +8219,10 @@ local function __typedBoundaryKind(staticKind, v)
     if v.__fn ~= nil or v.__f or v.__kind == "function" then
       return "function"
     end
-    if staticKind == "err" then return "class:@builtin/Error" end
+    -- A value without a closed carrier mark projects its own kind: the
+    -- declared static kind never replaces the value's own classification
+    -- (a non-Error value at an Error-class boundary is a table on the
+    -- oracle and the JVM alike).
     if staticKind == "table" then return "table" end
     if staticKind == "array" then return "array" end
     return "table"
