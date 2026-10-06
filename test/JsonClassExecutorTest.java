@@ -1667,7 +1667,13 @@ public class JsonClassExecutorTest {
         Map<ClassId, ClassLayout> layouts = Map.of(POINT, point, NESTED, nested);
         SourceOrigin callOrigin = nextOrigin(null);
 
-        // A nested wrong identity: path "home", actual class:<other>.
+        // A nested wrong identity: path "home", actual the carried
+        // canonical class atom. The oracle walk is driven through the
+        // production stringify adapter (the generated C$toJson seam) and
+        // asserts the complete rendered walk tuple: E8001, the arm's own
+        // template at path 'home', the supplied call origin (never the
+        // generated body's synthetic anchor), no expected field, and the
+        // carried canonical atom as the actual field.
         Value.Class wrongNested = instanceOf(point, Map.of(
             "name", Value.string("n"),
             "age", new Value.Int(1),
@@ -1676,14 +1682,22 @@ public class JsonClassExecutorTest {
             "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
             "data", new Value.Table(new SemanticTable<>())));
         Outcome<Value> nestedFailure = ClassOpsExecutor.executeJsonToClass(op,
-            Map.of(classId, wrongNested), layouts, FixtureJson.stringifier(), callOrigin);
+            Map.of(classId, wrongNested), layouts,
+            JsonClassAlgorithmAdapter.stringifier(), callOrigin);
         check(nestedFailure instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().code() == DiagnosticCode.E8001
                 && failure.failure().failure().message().equals(
                     "value at home is not JSON serializable: @" + MOD.path()
                         + "/Other")
-                && failure.failure().origin().equals(callOrigin),
-            "a nested wrong identity fails with the exact template at path 'home' and "
-                + "the call origin");
+                && failure.failure().origin().equals(callOrigin)
+                && !failure.failure().origin().equals(op.origin())
+                && failure.failure().failure().expected() == null
+                && failure.failure().failure().actual().equals(
+                    "@" + MOD.path() + "/Other"),
+            "a nested wrong identity fails through the production walk with the complete "
+                + "walk tuple (E8001, the exact template at path 'home', the carried "
+                + "canonical class atom, no expected field, and the supplied call origin, "
+                + "never the generated body's synthetic anchor)");
 
         // An array element failure: path "tags[1]", actual "string".
         Value.Class badArray = instanceOf(point, Map.of(
@@ -1725,11 +1739,16 @@ public class JsonClassExecutorTest {
             Map.of(classId, badTable), layouts, JsonClassAlgorithmAdapter.stringifier(),
             callOrigin);
         check(productionTableFailure instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().code() == DiagnosticCode.E8001
                 && failure.failure().failure().message().equals(
                     "value at data.k is not JSON serializable: function")
-                && failure.failure().origin().equals(callOrigin),
+                && failure.failure().origin().equals(callOrigin)
+                && !failure.failure().origin().equals(op.origin())
+                && failure.failure().failure().expected() == null
+                && failure.failure().failure().actual().equals("function"),
             "the production adapter's walk projects the function-in-table failure at "
-                + "data.k with the call origin");
+                + "data.k as the complete walk tuple (E8001, the function token as actual, "
+                + "no expected field, and the call origin)");
 
         SemanticTable<Value> badClassData = new SemanticTable<>();
         badClassData.put("k", instanceOf(layoutOf(OTHER, field("x", INT, true)),
@@ -1744,12 +1763,18 @@ public class JsonClassExecutorTest {
             Map.of(classId, classInTable), layouts,
             JsonClassAlgorithmAdapter.stringifier(), callOrigin);
         check(productionClassFailure instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().code() == DiagnosticCode.E8001
                 && failure.failure().failure().message().equals(
                     "value at data.k is not JSON serializable: @" + MOD.path()
                         + "/Other")
-                && failure.failure().origin().equals(callOrigin),
+                && failure.failure().origin().equals(callOrigin)
+                && !failure.failure().origin().equals(op.origin())
+                && failure.failure().failure().expected() == null
+                && failure.failure().failure().actual().equals(
+                    "@" + MOD.path() + "/Other"),
             "the production adapter's walk projects the class-in-table failure at data.k "
-                + "with the carried canonical class atom and the call origin");
+                + "as the complete walk tuple (E8001, the carried canonical class atom as "
+                + "actual, no expected field, and the call origin)");
 
         SemanticTable<Value> badInvalidData = new SemanticTable<>();
         badInvalidData.put("k", Value.string("\uD800"));
@@ -1763,11 +1788,16 @@ public class JsonClassExecutorTest {
             Map.of(classId, invalidInTable), layouts,
             JsonClassAlgorithmAdapter.stringifier(), callOrigin);
         check(productionInvalidFailure instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().code() == DiagnosticCode.E8001
                 && failure.failure().failure().message().equals(
                     "value at data.k is not JSON serializable: invalid-unicode")
-                && failure.failure().origin().equals(callOrigin),
+                && failure.failure().origin().equals(callOrigin)
+                && !failure.failure().origin().equals(op.origin())
+                && failure.failure().failure().expected() == null
+                && failure.failure().failure().actual().equals("invalid-unicode"),
             "the production adapter's walk projects the invalid-string-in-table failure "
-                + "at data.k with the invalid-unicode token and the call origin");
+                + "at data.k as the complete walk tuple (E8001, the invalid-unicode token "
+                + "as actual, no expected field, and the call origin)");
 
         SemanticTable<Value> badMissingData = new SemanticTable<>();
         badMissingData.put("k", Value.Missing.INSTANCE);
@@ -1781,11 +1811,16 @@ public class JsonClassExecutorTest {
             Map.of(classId, missingInTable), layouts,
             JsonClassAlgorithmAdapter.stringifier(), callOrigin);
         check(productionMissingFailure instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().code() == DiagnosticCode.E8001
                 && failure.failure().failure().message().equals(
                     "value at data.k is not JSON serializable: nil")
-                && failure.failure().origin().equals(callOrigin),
+                && failure.failure().origin().equals(callOrigin)
+                && !failure.failure().origin().equals(op.origin())
+                && failure.failure().failure().expected() == null
+                && failure.failure().failure().actual().equals("nil"),
             "the production adapter's walk projects the missing-in-table failure at "
-                + "data.k with the typed-boundary nil token and the call origin");
+                + "data.k as the complete walk tuple (E8001, the typed-boundary nil token "
+                + "as actual, no expected field, and the call origin)");
 
         // A dotted table key: E8's dot-joined failure path is ambiguous
         // ({"a": [1], "a.0": <function>} reports "a.0", which is the
