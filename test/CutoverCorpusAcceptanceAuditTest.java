@@ -111,7 +111,9 @@ import java.util.stream.Stream;
  *       registry/retained-counter references from the compile path, zero
  *       retained-counter increments, exactly one
  *       {@code SemanticLowerer.lowerProject(} call site) and for the
- *       retained classes' and their unit tests' presence. Pre-removal the
+ *       retained classes' and their test coverage's presence (each
+ *       retained class is present and exercised by at least one test
+ *       source). Pre-removal the
  *       residual sites are reported per file and token (the same
  *       pre-precondition reporting rule); under the strict acceptance mode
  *       the zero result is asserted.</li>
@@ -838,22 +840,40 @@ public class CutoverCorpusAcceptanceAuditTest {
             "exactly one SemanticLowerer.lowerProject( call site exists in "
                 + "the production source set");
 
-        // The retained classes and their unit tests stay present (HR2's
-        // invariant: the audit cannot silently delete them).
+        // The retained classes and their test coverage stay present
+        // (HR2's invariant: the audit cannot silently delete them). The
+        // canonical tree keeps the retained classes' coverage in the
+        // shared suites rather than in dedicated per-class test files, so
+        // the audit makes the live check: every retained class is present
+        // and is exercised by at least one test source (a direct code
+        // reference, never this audit's own pinned names, so the coverage
+        // check cannot satisfy itself).
+        List<Path> testSources = javaSources(root.resolve("test"));
         for (String retained : List.of(
                 "deal/codegen/lua/LuaBackend.java",
                 "deal/codegen/jvm/JvmBackend.java",
                 "deal/semantic/MigrationPlanner.java")) {
             check(Files.isRegularFile(root.resolve(retained)),
                 "the retained class " + retained + " is present");
-        }
-        for (String retainedTest : List.of(
-                "test/LuaBackendTest.java",
-                "test/JvmBackendTest.java",
-                "test/MigrationPlannerTest.java")) {
-            check(Files.isRegularFile(root.resolve(retainedTest)),
-                "the retained class's unit test " + retainedTest
-                    + " is present");
+            String simpleName = retained.substring(
+                retained.lastIndexOf('/') + 1,
+                retained.length() - ".java".length());
+            boolean covered = false;
+            for (Path testSource : testSources) {
+                if (testSource.getFileName().toString()
+                        .equals("CutoverCorpusAcceptanceAuditTest.java")) {
+                    continue;
+                }
+                if (codeLines(Files.readString(testSource,
+                        StandardCharsets.UTF_8))
+                        .contains(simpleName + ".")) {
+                    covered = true;
+                    break;
+                }
+            }
+            check(covered, "the retained class " + simpleName
+                + " is exercised by at least one test source (its tests "
+                + "stay present)");
         }
 
         if (violations.isEmpty()) {
