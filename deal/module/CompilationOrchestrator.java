@@ -219,6 +219,21 @@ public final class CompilationOrchestrator {
      */
     private IOException pendingStageFailure;
 
+    /**
+     * The IR dumps a LuaJIT/JVM compile generated in their existing
+     * phase-1/3 sites, in generation order: they are held until the one
+     * production arm has accepted the compile ({@link #stageIrDumps()}),
+     * so a rejected compile — including the legacy-profile rejection —
+     * stages neither a dump nor an artifact and no staging fault can
+     * preempt its diagnostic. The JS arm keeps its immediate phase-1/3
+     * staging (the JS path is unchanged by the cutover).
+     */
+    private final List<PendingIrDump> pendingIrDumps = new ArrayList<>();
+
+    /** One held IR dump: its publication-relative path and its text. */
+    private record PendingIrDump(String filePath, String text) {
+    }
+
     private static final class ModuleInfo {
         final String sourcePath;
         final String modulePath;
@@ -590,11 +605,14 @@ public final class CompilationOrchestrator {
         // Transactional publication (whole-project-artifact-publication
         // D1-D6): one fresh staging stager per compile; the stage tree
         // and the per-root lock are created lazily at the first staged
-        // write (an IR dump in phase 1/3, or a phase-4 artifact) and
-        // the staged set is atomically swapped into the live output
-        // root only when the compilation succeeded.
+        // write of an accepted compile (a phase-4 production artifact or
+        // deployment copy, the dumps the production arm accepted, or —
+        // on the unchanged JS path — a phase-1/3 dump) and the staged
+        // set is atomically swapped into the live output root only when
+        // the compilation succeeded.
         stager = PublicationStager.forRoot(outputRoot);
         pendingStageFailure = null;
+        pendingIrDumps.clear();
         boolean success;
         try {
             success = compileInternal();
@@ -724,6 +742,14 @@ public final class CompilationOrchestrator {
         hostDeclarationSurface = produceHostDeclarationSurface();
         if (hasErrors) { printDiagnostics(); return false; }
         codegenAll();
+        if (hasErrors) { printDiagnostics(); return false; }
+
+        // The IR dumps a LuaJIT/JVM compile generated in their existing
+        // phase-1/3 sites stage only now: the one production arm accepted
+        // the compile, so the dumps publish atomically with the artifact
+        // set. A rejection never reaches this point, discards its pending
+        // dumps, and stages nothing at all.
+        stageIrDumps();
         if (hasErrors) { printDiagnostics(); return false; }
 
         long elapsed = System.currentTimeMillis() - startTime;
@@ -2440,20 +2466,47 @@ public final class CompilationOrchestrator {
     // =========================================================================
 
     /**
-     * Stages an IR dump string into the publication staging tree (D1/D5):
-     * the file is placed at {@code <outputRoot>/<module-path>.ir.txt}
-     * after a successful publish, and appears atomically with the set —
-     * dumps of a failed compilation are discarded with the stage tree
-     * and never reach the live root (today's phases 1/3 dumps wrote the
-     * live root directly). A staging write failure records the pinned
-     * publish diagnostic (D4); the {@link IrDumper} failure diagnostic
-     * (E6001) stays with the callers' exception handling.
+     * Records an IR dump for publication (D1/D5): the file is placed at
+     * {@code <outputRoot>/<module-path>.ir.txt} after a successful
+     * publish, and appears atomically with the set. A LuaJIT/JVM compile
+     * generates the dump in its existing phase-1/3 site and holds it
+     * until the one production arm has accepted the compile
+     * ({@link #stageIrDumps()}), so a rejected compile stages neither a
+     * dump nor an artifact; the JS arm stages its dump immediately. The
+     * {@link IrDumper} failure diagnostic (E6001) stays with the
+     * callers' exception handling.
      */
     private void writeIrDump(String modulePath, String irText) {
+        String filePath = modulePath.replace('.', '/') + ".ir.txt";
+        if (backend == Backend.JS) {
+            stageIrDump(filePath, irText);
+            return;
+        }
+        pendingIrDumps.add(new PendingIrDump(filePath, irText));
+    }
+
+    /**
+     * Stages the dumps a LuaJIT/JVM compile held while it ran: called
+     * once, after the one production arm accepted the compile and before
+     * the publication swap. A staging write failure records the pinned
+     * publish diagnostic (D4) and stops the remaining dumps; the
+     * rejection of the publication then discards the whole stage tree.
+     */
+    private void stageIrDumps() {
+        for (PendingIrDump dump : pendingIrDumps) {
+            stageIrDump(dump.filePath(), dump.text());
+        }
+        pendingIrDumps.clear();
+    }
+
+    /**
+     * Stages one IR dump into the publication staging tree; a staging
+     * write failure records the pinned publish diagnostic (D4).
+     */
+    private void stageIrDump(String filePath, String irText) {
         if (pendingStageFailure != null) {
             return; // a staging failure already recorded: nothing more stages
         }
-        String filePath = modulePath.replace('.', '/') + ".ir.txt";
         try {
             stager.stage(filePath, irText.getBytes(StandardCharsets.UTF_8));
         } catch (IOException stagingFailure) {

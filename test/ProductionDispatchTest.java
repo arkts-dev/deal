@@ -5,6 +5,7 @@ import deal.diagnostics.CompilerDiagnostic;
 import deal.module.CompilationOrchestrator;
 import deal.project.CliOverrides;
 import deal.project.ProjectLocator;
+import deal.publication.PublicationStager;
 import deal.semantic.CapabilityRegistry;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
@@ -15,6 +16,7 @@ import deal.semantic.ir.SemanticProfile;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -302,6 +304,11 @@ public class ProductionDispatchTest {
 
     private static ArmCompile compileWithInvocation(Path project, String entry,
             CompilerInvocation invocation) throws Exception {
+        return compileWithInvocation(project, entry, invocation, false);
+    }
+
+    private static ArmCompile compileWithInvocation(Path project, String entry,
+            CompilerInvocation invocation, boolean dumpIr) throws Exception {
         Path entryFile = project.resolve(entry).toAbsolutePath().normalize();
         ProjectLocator.LocateResult located = ProjectLocator.locate(
             entryFile.toString(), new CliOverrides(null, null));
@@ -309,7 +316,7 @@ public class ProductionDispatchTest {
             throw new IllegalStateException("locate failed: " + located);
         }
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            located.context(), entryFile, false, false, false, false, null,
+            located.context(), entryFile, false, dumpIr, false, false, null,
             invocation);
         return new ArmCompile(orchestrator, orchestrator.compile());
     }
@@ -1399,6 +1406,132 @@ public class ProductionDispatchTest {
             .toList();
     }
 
+    /**
+     * The dumps-enabled legacy rejection (both targets): the accepted
+     * compile stages its generated IR dump with the artifact set after
+     * the one production arm accepted it, while the legacy-profile
+     * rejection stages nothing at all — no staging transaction starts,
+     * so a staging fault installed at staging start cannot preempt the
+     * one E6005 LOWER_LEGACY_PROFILE_REJECTED.
+     */
+    private static void testLegacyRejectionStagesNothingWithDumps()
+            throws Exception {
+        System.out.println("-- legacy-profile rejection with --dump-ir: the "
+            + "accepted dump stages after acceptance; the rejection stages "
+            + "nothing and no staging fault can preempt it --");
+
+        for (String backend : List.of("luajit", "jvm")) {
+            Path project = Files.createTempDirectory(
+                "production-dispatch-dump-");
+            try {
+                write(project, "deal.json",
+                    "jvm".equals(backend) ? DEAL_JSON_JVM : DEAL_JSON_LUA);
+                write(project, "src/main.deal",
+                    "export function main(): null { return null; }\n");
+                Path out = project.resolve("out");
+
+                // Accepted control: the release-owned compile with
+                // --dump-ir generates the dump in its existing phase and
+                // stages it in the accepted compile's one transaction.
+                int[] stagingStarts = {0};
+                PublicationStager.installPublishFault(step -> {
+                    if (PublicationStager.FAULT_STEP_STAGING_BEGAN.equals(
+                            step)) {
+                        stagingStarts[0]++;
+                    }
+                });
+                ArmCompile accepted;
+                try {
+                    accepted = compileWithInvocation(project, "src/main.deal",
+                        productionInvocation(), true);
+                } finally {
+                    PublicationStager.clearPublishFault();
+                }
+                check(accepted.success(), backend
+                    + ": the dumps-enabled release-owned compile succeeds: "
+                    + accepted.orchestrator().diagnostics());
+                checkEq(1, stagingStarts[0], backend
+                    + ": the accepted compile stages exactly one staging "
+                    + "transaction (dump and artifact)");
+                check(artifactFiles(out).contains("main.ir.txt"), backend
+                    + ": the accepted compile publishes the generated IR "
+                    + "dump: " + artifactFiles(out));
+
+                // The legacy rejection with --dump-ir: exactly one E6005,
+                // zero staging starts (the pending dump is discarded), and
+                // the prior live set byte-identical. The staging fault
+                // installed at staging start never fires, so it cannot
+                // preempt the legacy diagnostic with a publish I/O error.
+                Map<String, byte[]> before = snapshotTree(out);
+                stagingStarts[0] = 0;
+                PublicationStager.installPublishFault(step -> {
+                    if (PublicationStager.FAULT_STEP_STAGING_BEGAN.equals(
+                            step)) {
+                        stagingStarts[0]++;
+                        throw new IOException(
+                            "injected staging failure (legacy probe)");
+                    }
+                });
+                ArmCompile rejected;
+                try {
+                    rejected = compileWithInvocation(project, "src/main.deal",
+                        legacyRegression(), true);
+                } finally {
+                    PublicationStager.clearPublishFault();
+                }
+                check(!rejected.success(), backend
+                    + ": the dumps-enabled legacy-profile invocation fails "
+                    + "closed");
+                List<CompilerDiagnostic> errors =
+                    rejected.orchestrator().diagnostics().stream()
+                        .filter(d -> "error".equals(d.severity())).toList();
+                checkEq(1, errors.size(), backend
+                    + ": exactly one error diagnostic (the staging fault "
+                    + "cannot preempt it): "
+                    + rejected.orchestrator().diagnostics());
+                if (errors.size() == 1) {
+                    check(errors.get(0).code().equals("E6005")
+                            && errors.get(0).message().contains(
+                                SemanticLowerer.LOWER_LEGACY_PROFILE_REJECTED),
+                        backend + ": the one failure is E6005 "
+                            + SemanticLowerer.LOWER_LEGACY_PROFILE_REJECTED
+                            + ": " + errors.get(0).message());
+                }
+                checkEq(0, rejected.orchestrator().semanticEmissionCount(),
+                    backend + ": the fail-closed lowering records no project "
+                        + "emission");
+                checkEq(0, stagingStarts[0], backend
+                    + ": the rejected compile starts no staging transaction");
+                checkTreeIdentical(before, out, backend
+                    + ": the rejected compile leaves the prior artifact set "
+                    + "byte-identical");
+                checkEq(List.of(), stageResidue(out), backend
+                    + ": the rejected compile leaves no stage or retired "
+                    + "residue");
+            } finally {
+                deleteRecursively(project);
+            }
+        }
+    }
+
+    /** The stage/retired siblings beside one live output root. */
+    private static List<String> stageResidue(Path root) throws Exception {
+        Path normalized = root.toAbsolutePath().normalize();
+        Path parent = normalized.getParent();
+        if (parent == null || !Files.isDirectory(parent)) {
+            return List.of();
+        }
+        String name = normalized.getFileName().toString();
+        String stagePrefix = name + PublicationStager.STAGE_TREE_MARKER;
+        String retiredPrefix = name + PublicationStager.RETIRED_TREE_MARKER;
+        try (Stream<Path> entries = Files.list(parent)) {
+            return entries.map(path -> path.getFileName().toString())
+                .filter(entry -> entry.startsWith(stagePrefix)
+                    || entry.startsWith(retiredPrefix))
+                .sorted().toList();
+        }
+    }
+
     private static boolean treeEquals(Map<String, byte[]> left,
             Map<String, byte[]> right) {
         if (!left.keySet().equals(right.keySet())) {
@@ -1475,24 +1608,50 @@ public class ProductionDispatchTest {
         }
 
         // The one project lowering: exactly one SemanticLowerer.lowerProject
-        // call site over the whole production source set.
+        // call occurrence over the whole production source set. The audit
+        // counts occurrences (never matching files or a fixed call-site
+        // inventory) and names the file, location, and offending token
+        // when the count is wrong.
         List<Path> sources = new ArrayList<>();
         try (Stream<Path> walk = Files.walk(Path.of("deal"))) {
             walk.filter(path -> path.toString().endsWith(".java"))
                 .sorted().forEach(sources::add);
         }
         check(!sources.isEmpty(), "the production source set is non-empty");
-        List<String> callSites = new ArrayList<>();
+        List<SourceText> productionSources = new ArrayList<>();
         for (Path source : sources) {
-            String text = Files.readString(source, StandardCharsets.UTF_8);
-            if (text.contains("SemanticLowerer.lowerProject(")) {
-                callSites.add(source.toString());
-            }
+            productionSources.add(new SourceText(source.toString(),
+                Files.readString(source, StandardCharsets.UTF_8)));
         }
-        checkEq(List.of("deal/module/ProductionProjectEmission.java"),
-            callSites,
-            "deal/** carries exactly one SemanticLowerer.lowerProject call "
-                + "site: " + callSites);
+        String auditFailure = loweringCallSiteAudit(productionSources);
+        check(auditFailure == null, "deal/** carries exactly one "
+            + LOWERING_CALL_TOKEN + " call site: " + auditFailure);
+
+        // The audit is self-verified against zero, one, and two
+        // occurrences, including two in the same file: a wrong count fails
+        // with the file, location, and offending token.
+        String zeroFailure = loweringCallSiteAudit(List.of(
+            new SourceText("example/Zero.java", "class Zero { }")));
+        check(zeroFailure != null
+                && zeroFailure.contains(LOWERING_CALL_TOKEN),
+            "the audit fails a source set with no lowering call site: "
+                + zeroFailure);
+        String oneFailure = loweringCallSiteAudit(List.of(
+            new SourceText("example/One.java",
+                "class One { void run() { " + LOWERING_CALL_TOKEN
+                    + "input); } }")));
+        check(oneFailure == null, "the audit accepts exactly one lowering "
+            + "call site: " + oneFailure);
+        String twoFailure = loweringCallSiteAudit(List.of(
+            new SourceText("example/Two.java",
+                LOWERING_CALL_TOKEN + "a);\n" + LOWERING_CALL_TOKEN
+                    + "b);\n")));
+        check(twoFailure != null
+                && twoFailure.contains("example/Two.java:1")
+                && twoFailure.contains("example/Two.java:2")
+                && twoFailure.contains(LOWERING_CALL_TOKEN),
+            "the audit fails two call sites in one file by file, location, "
+                + "and offending token: " + twoFailure);
 
         // The harness module-codegen seam of the removed arm is gone from the
         // production source set: no production caller exists, and the service
@@ -1500,6 +1659,43 @@ public class ProductionDispatchTest {
         check(!Files.exists(Path.of("deal/codegen/HarnessModuleCodegen.java")),
             "the production source set carries no harness module-codegen seam: "
                 + "deal/codegen/HarnessModuleCodegen.java");
+    }
+
+    /** One production source text under audit (name plus content). */
+    private record SourceText(String name, String text) {
+    }
+
+    /** The one call-site token of the one project lowering. */
+    private static final String LOWERING_CALL_TOKEN =
+        "SemanticLowerer.lowerProject(";
+
+    /**
+     * The one-lowering audit: enumerates every occurrence of
+     * {@link #LOWERING_CALL_TOKEN} over the given sources; exactly one
+     * occurrence in the whole source set passes. A wrong count (including
+     * zero) reports every location with the offending token.
+     */
+    private static String loweringCallSiteAudit(List<SourceText> sources) {
+        List<String> sites = new ArrayList<>();
+        for (SourceText source : sources) {
+            List<String> lines = Arrays.asList(
+                source.text().split("\n", -1));
+            for (int index = 0; index < lines.size(); index++) {
+                String line = lines.get(index);
+                int column = line.indexOf(LOWERING_CALL_TOKEN);
+                while (column >= 0) {
+                    sites.add(source.name() + ":" + (index + 1) + ":"
+                        + (column + 1) + " '" + LOWERING_CALL_TOKEN + "'");
+                    column = line.indexOf(LOWERING_CALL_TOKEN, column + 1);
+                }
+            }
+        }
+        if (sites.size() != 1) {
+            return "the production source set must carry exactly one "
+                + LOWERING_CALL_TOKEN + " call site; found " + sites.size()
+                + ": " + sites;
+        }
+        return null;
     }
 
     // =========================================================================
@@ -1519,6 +1715,7 @@ public class ProductionDispatchTest {
         testFailClosedFamilies();
         testSourceMapDisposition();
         testSingleArmDispatch();
+        testLegacyRejectionStagesNothingWithDumps();
         testProductionSourceReachability();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
