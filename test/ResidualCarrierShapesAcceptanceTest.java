@@ -2,7 +2,7 @@ package deal.test;
 
 import deal.checker.BuiltinErrorDeclaration;
 import deal.codegen.Backend;
-import deal.codegen.jvm.JvmBackend;
+import deal.codegen.jvm.JvmNames;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.module.CompilationOrchestrator;
 import deal.module.ProductionProjectEmission;
@@ -452,7 +452,7 @@ public final class ResidualCarrierShapesAcceptanceTest {
     private static Path artifactOf(Fixture fixture, Backend backend, Path outputRoot) {
         return backend == Backend.LUAJIT
             ? outputRoot.resolve(fixture.relativePath() + ".lua")
-            : outputRoot.resolve(JvmBackend.classNameFor(fixture.relativePath()) + ".java");
+            : outputRoot.resolve(JvmNames.classNameFor(fixture.relativePath()) + ".java");
     }
 
     /**
@@ -474,7 +474,7 @@ public final class ResidualCarrierShapesAcceptanceTest {
         } else {
             List<String> classes = files.stream()
                 .filter(name -> name.endsWith(".java")).toList();
-            checkEq(List.of(JvmBackend.classNameFor(fixture.relativePath()) + ".java"),
+            checkEq(List.of(JvmNames.classNameFor(fixture.relativePath()) + ".java"),
                 classes, fixture.what() + " (" + backend
                     + "): exactly one project artifact class is staged");
         }
@@ -673,7 +673,7 @@ public final class ResidualCarrierShapesAcceptanceTest {
             run = runProcess(compiled.outputRoot(), Map.of("DEAL_DEFER_MAIN", "1"),
                 "luajit", driver.getFileName().toString());
         } else {
-            String className = JvmBackend.classNameFor(fixture.relativePath());
+            String className = JvmNames.classNameFor(fixture.relativePath());
             String driver = jvmDriver(fixture, className, lowered);
             if (driver == null) {
                 return;
@@ -1370,7 +1370,7 @@ public final class ResidualCarrierShapesAcceptanceTest {
             run = runProcess(root.resolve("out"), Map.of("DEAL_DEFER_MAIN", "1"),
                 "luajit", driver.getFileName().toString());
         } else {
-            String className = JvmBackend.classNameFor("app");
+            String className = JvmNames.classNameFor("app");
             Path driverFile = root.resolve("out").resolve("TailUnitProbeDriver.java");
             Files.writeString(driverFile, """
                 final class TailUnitProbeDriver {
@@ -1739,7 +1739,7 @@ public final class ResidualCarrierShapesAcceptanceTest {
                     + "(LuaJIT): the truncating remainder matches the pinned sign and "
                     + "boundary cases");
             } else {
-                String className = JvmBackend.classNameFor("app");
+                String className = JvmNames.classNameFor("app");
                 Path artifact = root.resolve("out").resolve(className + ".java");
                 StringBuilder jvmAsserts = new StringBuilder();
                 for (String[] remainderCase : REMAINDER_CASES) {
