@@ -13,7 +13,7 @@ the Visitor interface.
 
 Compiles all production and remaining test sources with `javac --release 25`
 and executes the complete selection in `tools/gate-manifest.sh` with
-assertions enabled: 75 Java suites and five Lua/JS runtime records. Java
+assertions enabled: 76 Java suites and five Lua/JS runtime records. Java
 suites run sequentially; `--jobs` controls parallel work inside suites.
 There is no alternate full-suite profile.
 

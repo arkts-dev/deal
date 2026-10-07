@@ -2243,22 +2243,23 @@ public class BytesProductionDriveTest {
         // The landed element-contract circuits are re-asserted at the
         // acceptance boundary by name: the read shape and the seven-child
         // write chain, the element cells' {index, length} context, the
-        // oracle's zero-fill / in-place write / identity realization, and
-        // the pinned sidecar rows of the battery. A weakened or removed
-        // circuit fails the lock here.
+        // oracle's zero-fill / in-place write / identity realization, the
+        // pinned sidecar rows of the battery, and the per-fixture check that
+        // every lowered unit carries its bytes construct. A weakened or
+        // removed circuit fails the lock here.
         for (String circuit : List.of(
                 "the bytes read shape and the seven-child write chain",
                 "the bytes element cells receive {index, length}",
                 "the oracle bytes realization: zero fill, in-place write",
                 "the bytes corpus sidecars keep their pinned rows",
-                "zero bytes CONSTRUCT_UNLOWERED over the corpus")) {
+                "lowered unit carries its bytes construct")) {
             check(coverageSource.contains(circuit), "the landed "
                 + "element-contract battery keeps its circuit: " + circuit);
         }
         for (String circuit : List.of(
                 "the seven-child", "BYTE_ELEMENT_ASSIGNMENT",
                 "BYTE_ELEMENT_READ", "alias mutation not observed",
-                "zero fill mismatch")) {
+                "zero fill mismatch", "carriesBytesConstruct")) {
             check(coverageSource.contains(circuit), "the landed "
                 + "element-contract battery keeps its assertion surface: "
                 + circuit);
