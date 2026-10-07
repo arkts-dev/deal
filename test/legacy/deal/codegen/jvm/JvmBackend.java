@@ -5,7 +5,6 @@ import deal.ast.ArrayType;
 import deal.ast.FunctionType;
 import deal.ast.NullableType;
 import deal.checker.CheckResult;
-import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.codegen.HostModuleDeclarations;
@@ -72,10 +71,11 @@ public final class JvmBackend {
         }
     }
 
-    public static final String ASYNC_EXPORT_HOST_ARG = "$asyncExportHost";
+    public static final String ASYNC_EXPORT_HOST_ARG =
+        JvmNames.ASYNC_EXPORT_HOST_ARG;
 
     public static final String ASYNC_EXPORT_HOST_CLASS_SUFFIX =
-        "$AsyncExportHost";
+        JvmNames.ASYNC_EXPORT_HOST_CLASS_SUFFIX;
 
     public static final String ASYNC_EXPORT_RESULT_PREFIX =
         "DEAL_ASYNC_EXPORT_RESULT:";
@@ -98,29 +98,6 @@ public final class JvmBackend {
     // dotted module path.
     private final CanonicalClassIdentityIndex identityIndex;
     private final Function<String, CanonicalModuleIdentity> moduleIdentities;
-
-    /** The static identity index of the public static
-     * {@link #typeDescriptor(Type)} surface: descriptorTextFor projects
-     * from the identity carriers, so one empty-classification index
-     * serves every identity. */
-    private static final CanonicalClassIdentityIndex STATIC_DESCRIPTOR_INDEX =
-        ModuleIdentityResolver.buildIndex(Map.of(
-            "", CanonicalModuleIdentity.BuiltinModule.INSTANCE));
-
-    /**
-     * The one canonical descriptor service behind the public static
-     * {@link #typeDescriptor(Type)} surface
-     * (descriptor-identity-propagation D2): the static emitter
-     * delegates to {@link CanonicalRuntimeTypeDescriptor#encode(Type)} —
-     * the compilation's one Type→text producer — over the
-     * identity-carrier projection index above.  The per-producer
-     * switch (including its {@code Type.Error} arm) is retired with
-     * it: the sentinel has no descriptor and {@code encode} fails
-     * closed for it (the pinned internal invariant violation — never
-     * emitted, never an artifact).
-     */
-    private static final CanonicalRuntimeTypeDescriptor STATIC_DESCRIPTORS =
-        new CanonicalRuntimeTypeDescriptor(STATIC_DESCRIPTOR_INDEX);
 
     /** The standalone single-module identity surface of the legacy
      * generate overloads: both the module path and the source path
@@ -1405,49 +1382,12 @@ public final class JvmBackend {
     }
 
     public static String classNameFor(String modulePath) {
-        String path = modulePath == null ? "" : modulePath;
-        StringBuilder sb = new StringBuilder();
-        for (String segment : path.split("[/.]")) {
-            String cleaned = sanitizeSegment(segment);
-            if (cleaned.isEmpty()) continue;
-            sb.append(Character.toUpperCase(cleaned.charAt(0)))
-                .append(cleaned.substring(1));
-        }
-        String result = sb.toString();
-        if (result.isEmpty()) result = "Main";
-        return JAVA_RESERVED.contains(result) ? result + "_" : result;
-    }
-
-    /** Sanitizes one module-path segment to a Java identifier. */
-    private static String sanitizeSegment(String segment) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < segment.length(); i++) {
-            char c = segment.charAt(i);
-            boolean ok = Character.isJavaIdentifierPart(c);
-            if (i == 0) ok = ok && Character.isJavaIdentifierStart(c);
-            sb.append(ok ? c : '_');
-        }
-        return sb.toString();
+        return JvmNames.classNameFor(modulePath);
     }
 
     // =========================================================================
     // Identifier translation
     // =========================================================================
-
-    /**
-     * Java reserved words. DEAL keywords are not identifiers, so this list is
-     * exactly the Java keywords that can appear as DEAL identifiers.
-     */
-    private static final Set<String> JAVA_RESERVED = Set.of(
-        "abstract", "assert", "boolean", "break", "byte", "case", "catch",
-        "char", "class", "const", "continue", "default", "do", "double",
-        "else", "enum", "extends", "final", "finally", "float", "for",
-        "goto", "if", "implements", "import", "instanceof", "int",
-        "interface", "long", "native", "new", "package", "private",
-        "protected", "public", "return", "short", "static", "strictfp",
-        "super", "switch", "synchronized", "this", "throw", "throws",
-        "transient", "try", "void", "volatile", "while", "_",
-        "true", "false", "null");
 
     /**
      * Emitted runtime-helper methods, by translated name → mapped Java
@@ -1571,18 +1511,7 @@ public final class JvmBackend {
     }
 
     public static String javaName(String dealIdentifier) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < dealIdentifier.length(); i++) {
-            char c = dealIdentifier.charAt(i);
-            if (c == '$') sb.append("$d");
-            else if (c == '_') sb.append("$u");
-            else sb.append(c);
-        }
-        String encoded = sb.toString();
-        if (JAVA_RESERVED.contains(encoded)) {
-            return "_" + encoded;
-        }
-        return encoded;
+        return JvmNames.javaName(dealIdentifier);
     }
 
     // =========================================================================
@@ -5464,42 +5393,7 @@ public final class JvmBackend {
      * service; the property tests supply their own).
      */
     public static String fnShapeId(Type.Func f) {
-        StringBuilder sb = new StringBuilder("Fn");
-        if (f.isAsync()) sb.append('A');
-        sb.append(f.paramTypes().size());
-        if (!f.paramTypes().isEmpty()) {
-            sb.append('_');
-            for (int i = 0; i < f.paramTypes().size(); i++) {
-                if (i > 0) sb.append('_');
-                sb.append(shapeSegment(f.paramTypes().get(i)));
-            }
-        }
-        sb.append("_R_").append(shapeSegment(f.returnType()));
-        return sb.toString();
-    }
-
-    /** One segment of {@link #fnShapeId}: the single-letter code for a
-     * primitive, or {@code $} + the injectively escaped canonical
-     * descriptor text for any other type. */
-    private static String shapeSegment(Type t) {
-        Character c = fnShapeLetter(t);
-        if (c != null) return c.toString();
-        return "$" + escapedIdentifier(typeDescriptor(t));
-    }
-
-    /** The one-letter shape code ({@code B}/{@code I}/{@code N}/
-     * {@code S}/{@code V}/{@code Y} for boolean/int/number/string/null/
-     * bytes). */
-    private static Character fnShapeLetter(Type t) {
-        return switch (t) {
-            case Type.Boolean ignored -> 'B';
-            case Type.Int ignored -> 'I';
-            case Type.Number ignored -> 'N';
-            case Type.String ignored -> 'S';
-            case Type.Null ignored -> 'V';
-            case Type.Bytes ignored -> 'Y';
-            default -> null;
-        };
+        return JvmNames.fnShapeId(f);
     }
 
     /**
@@ -5521,39 +5415,7 @@ public final class JvmBackend {
      * injective.
      */
     public static String escapedIdentifier(String text) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-                    || (c >= '0' && c <= '9')) {
-                sb.append(c);
-            } else if (c == '$') {
-                sb.append("$$");
-            } else if (c == '_') {
-                sb.append("$u");
-            } else {
-                appendEscapedChar(sb, c);
-            }
-        }
-        return sb.toString();
-    }
-
-    /** One escaped non-identifier code unit of {@link #escapedIdentifier}. */
-    private static void appendEscapedChar(StringBuilder sb, char c) {
-        switch (c) {
-            case '(' -> sb.append("$l");
-            case ')' -> sb.append("$r");
-            case '[' -> sb.append("$B");
-            case ']' -> sb.append("$E");
-            case '?' -> sb.append("$Q");
-            case '@' -> sb.append("$a");
-            case '-' -> sb.append("$m");
-            case '>' -> sb.append("$g");
-            case ',' -> sb.append("$c");
-            case '.' -> sb.append("$i");
-            case '/' -> sb.append("$s");
-            default -> sb.append(String.format("$x%04x", (int) c));
-        }
+        return JvmNames.escapedIdentifier(text);
     }
 
     /** The function-signature runtime descriptor — the ONE descriptor
@@ -6344,9 +6206,7 @@ public final class JvmBackend {
 
     static String hostRecordSimpleName(String specifier,
                                        String className) {
-        return "$Host$" + escapedIdentifier(
-                specifier.replace('.', '/')) + "$"
-            + javaName(className);
+        return JvmNames.hostRecordSimpleName(specifier, className);
     }
 
     /** The fully qualified shared record reference for one declared
@@ -6463,8 +6323,7 @@ public final class JvmBackend {
     }
 
     public static String typeDescriptor(Type t) {
-        if (t == null) return "null";
-        return STATIC_DESCRIPTORS.encode(t);
+        return JvmNames.typeDescriptor(t);
     }
 
     /**

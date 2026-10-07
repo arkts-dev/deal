@@ -1582,9 +1582,9 @@ end
 -- it returns a boolean and never raises, so the no-throw decode guarantee
 -- and the DEAL-error-only encode contract stay mechanical.
 
--- Maximum walker recursion depth (D5; JVM parity with
--- JvmBackend.JSON_TABLE_DEPTH_LIMIT = 512: entry at depth 0, every
--- recursive descent increments, depth > 512 rejects).
+-- Maximum walker recursion depth (D5; the JVM emitter's JSON table
+-- depth limit is 512: entry at depth 0, every recursive descent
+-- increments, depth > 512 rejects).
 __rt._JSON_MAX_DEPTH = 512
 
 --- True iff t is a JSON-object-shaped table: every key is a string

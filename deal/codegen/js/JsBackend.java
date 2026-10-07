@@ -95,10 +95,9 @@ public final class JsBackend {
      * optional source-map recorder ({@code null} when mapping recording
      * was not requested — the caller passes a {@link SourceMapGenerator}
      * to {@link #generate} and serializes the sidecar afterwards).
-     * {@link #hasErrors()} gates the artifact (the
-     * {@code JvmCodegenResult} shape,
-     * deal/codegen/jvm/JvmBackend.java:605-618, with {@code modulePath} in
-     * place of {@code className}).
+     * {@link #hasErrors()} gates the artifact (the retained JVM AST
+     * emitter's result shape, with {@code modulePath} in place of
+     * {@code className}).
      */
     public record JsCodegenResult(String modulePath, String source,
                                   List<CompilerDiagnostic> diagnostics,
@@ -242,7 +241,7 @@ public final class JsBackend {
     private Type currentReturnType = null;
     /** Optional source-map recording (js-v12-source-maps D2): null
      * disables mapping collection (the
-     * {@code LuaBackend.sourceMapGenerator} precedent); a non-null
+     * {@code sourceMapGenerator} precedent); a non-null
      * generator receives one {@link SourceMapGenerator#emitStatement}
      * per generated statement-group boundary from
      * {@link #recordMapping}. */
@@ -400,7 +399,7 @@ public final class JsBackend {
      * generated statement-group boundary — the current output
      * line/column at the emission site mapped to the AST statement's
      * {@link Span} start (the Lua
-     * {@code LuaBackend.generateResult} optional-generator precedent) —
+     * {@code generateResult} optional-generator precedent) —
      * and the returned result carries the recorder so the caller
      * serializes the sidecar after codegen. The profile defaults to
      * {@link SemanticProfile#LEGACY_SAFE_INT} (no selector emission).
@@ -513,9 +512,9 @@ public final class JsBackend {
             ? scanEntryMain(program) : null;
 
         // Shape step 6: predeclared function and class-artifact
-        // bindings in declaration order (the LuaBackend
-        // predeclare-then-assign pattern): the binding exists before any
-        // declaration assignment runs, so recursion, forward calls,
+        // bindings in declaration order (the retained LuaJIT AST
+        // emitter's predeclare-then-assign pattern): the binding exists
+        // before any declaration assignment runs, so recursion, forward calls,
         // mutual recursion, and function bodies referencing
         // later-declared classes all resolve.
         List<String> predeclares = new ArrayList<>();
@@ -995,8 +994,8 @@ public final class JsBackend {
     /**
      * E6004 entry backstop: the defensive scan that keeps the artifact
      * valid when the backend is driven without the orchestrator's
-     * E2010/E2011 entry gate (the {@code JvmBackend.emitEntryPoint} scan
-     * precedent, deal/codegen/jvm/JvmBackend.java:1599-1652). The selected
+     * E2010/E2011 entry gate (the retained JVM AST emitter's
+     * {@code emitEntryPoint} scan precedent). The selected
      * entry module must export a non-async {@code main} with signature
      * {@code (): null}; a missing or mismatched {@code main} is an E6004
      * diagnostic at the main declaration (or the program span) and no
@@ -1019,8 +1018,8 @@ public final class JsBackend {
         }
         if (match == null) {
             // T12-native ranged factory: the diagnostic is anchored at the
-            // program span (the JvmBackend.emitEntryPoint E6004 pattern,
-            // SOURCE-exact via the program-span range).
+            // program span (the retained JVM AST emitter's emitEntryPoint
+            // E6004 pattern, SOURCE-exact via the program-span range).
             diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E6004,
                 "entry module must export non-async main(): null; found "
                     + (foundAnyMain
@@ -1033,8 +1032,8 @@ public final class JsBackend {
 
     /**
      * Resolves an AST type node to the internal {@link Type} without
-     * re-checking (the {@code LuaBackend.resolveTypeNode} mirror,
-     * deal/codegen/lua/LuaBackend.java:2934-2985): primitive names
+     * re-checking (the retained LuaJIT AST emitter's
+     * {@code resolveTypeNode} mirror): primitive names
      * (the builtin {@code Error} included, module path empty), local
      * classes through the module symbol table, qualified cross-module
      * class references through the module exports, and the array/
@@ -1128,8 +1127,8 @@ public final class JsBackend {
         // statement-group boundary — recorded at the current output
         // position (the source-comment emission site for wrapper,
         // class, and entry-shim groups) mapped to the AST statement's
-        // span start (the LuaBackend.visitStatement precedent,
-        // deal/codegen/lua/LuaBackend.java:1051-1054).
+        // span start (the retained LuaJIT AST emitter's
+        // visitStatement precedent).
         recordMapping(stmt.span());
 
         switch (stmt) {
@@ -1240,7 +1239,7 @@ public final class JsBackend {
      * position), the jsName-translated parameter list plus the trailing
      * {@code $}-prefixed span parameters (duplicate-free for user
      * parameters literally named {@code file}/{@code line}/
-     * {@code column} — the {@code LuaBackend.visit(FunctionDeclaration)}
+     * {@code column} — the {@code visit(FunctionDeclaration)}
      * wrapper shape with the js-backend-architecture D5 span-parameter
      * extension), the entry parameter checks in parameter order with
      * the forwarded span, the body walk through the T2 lowering, and
@@ -1293,7 +1292,7 @@ public final class JsBackend {
 
     /**
      * The checker's module-level function type, resolved from the
-     * module symbol table (the {@code LuaBackend.getFunctionType}
+     * module symbol table (the {@code getFunctionType}
      * mirror) — consulted only at module level, where the hoisted
      * symbol carries the checker's exact type.
      */
@@ -1471,9 +1470,8 @@ public final class JsBackend {
     }
 
     /**
-     * The synthesized pre-plan fallback plan list (the
-     * {@code LuaBackend.synthesizedPlan} mirror,
-     * deal/codegen/lua/LuaBackend.java:1795-1817): one entry per declared
+     * The synthesized pre-plan fallback plan list (the retained LuaJIT
+     * AST emitter's {@code synthesizedPlan} mirror): one entry per declared
      * field in class source order with the pinned
      * {@code $rt.classPlan} shape {@code {name, descriptor, optional,
      * evaluator?}}. Used only when the graph published no plan for the
@@ -1686,8 +1684,8 @@ public final class JsBackend {
 
     /**
      * The jtype string for a type node after {@code T | null}
-     * unwrapping (the {@code LuaBackend.jtypeForTypeNode} mirror,
-     * deal/codegen/lua/LuaBackend.java:2737-2758): the JSON kind of a
+     * unwrapping (the retained LuaJIT AST emitter's
+     * {@code jtypeForTypeNode} mirror): the JSON kind of a
      * field — primitives by name, user-defined classes (bare or
      * qualified) as {@code class}, arrays as {@code array}. The
      * {@code function} arm is defensive-only (the checker's E4007
@@ -1909,9 +1907,9 @@ public final class JsBackend {
     }
 
     /**
-     * One field's defaults-thunk entry (the
-     * {@code LuaBackend.visit(ClassDeclaration)} order,
-     * deal/codegen/lua/LuaBackend.java:1076-1096): absent optional →
+     * One field's defaults-thunk entry (the retained LuaJIT AST
+     * emitter's {@code visit(ClassDeclaration)} order): absent optional
+     * →
      * {@code $rt.MISSING}; default expression → the expression verbatim
      * (its own checks travel inside — {@code $rt.intAdd}, the conversions,
      * the table/array literals); required nullable without default →
@@ -1937,7 +1935,7 @@ public final class JsBackend {
 
     /**
      * The JS zero value for a type node with no default expression (the
-     * {@code LuaBackend.defaultValueForTypeNode} mirror): {@code 0},
+     * {@code defaultValueForTypeNode} mirror): {@code 0},
      * {@code 0.0}, {@code false}, {@code ""}, {@code null}, a fresh empty
      * Map via {@code $rt.makeTable({})} for tables, a fresh {@code []}
      * for arrays, and {@code {}} for the remaining dead-entry shapes
@@ -1965,7 +1963,7 @@ public final class JsBackend {
 
     /**
      * Variable declaration (the
-     * {@code LuaBackend.visit(VariableDeclaration)} mirror): the binding
+     * {@code visit(VariableDeclaration)} mirror): the binding
      * position translates through {@link #jsName} (shadowing is native
      * per-block {@code let}); an annotated declaration crosses the
      * initializer's typed boundary — a function-typed target whose
@@ -2058,8 +2056,8 @@ public final class JsBackend {
 
     /**
      * If/else: the condition crosses a boolean boundary via
-     * {@code $rt.checkBoolean} (the reference's condition check,
-     * deal/codegen/lua/LuaBackend.java:1305-1346); every branch is a
+     * {@code $rt.checkBoolean} (the retained LuaJIT AST emitter's
+     * condition check); every branch is a
      * brace scope, so branch-level shadowing is native.
      */
     private void visit(IfStatement node) {
@@ -2215,8 +2213,8 @@ public final class JsBackend {
 
     /**
      * Delete statement. Array element delete (js-backend-architecture
-     * D6, the {@code LuaBackend.visit(DeleteStatement)} mirror,
-     * deal/codegen/lua/LuaBackend.java:1696-1715): the array and the
+     * D6, the retained LuaJIT AST emitter's
+     * {@code visit(DeleteStatement)} mirror): the array and the
      * {@code $rt.checkInt}-validated index hoist to generated locals, a
      * negative or beyond-length index raises E8002 "array index out of
      * bounds", an index equal to the length performs no write (a JS
@@ -2329,9 +2327,9 @@ public final class JsBackend {
     }
 
     /**
-     * Throw statement (js-backend-runtime D7, the
-     * {@code LuaBackend.visit(ThrowStatement)} mirror,
-     * deal/codegen/lua/LuaBackend.java:1852-1880): an Error literal emits
+     * Throw statement (js-backend-runtime D7, the retained LuaJIT AST
+     * emitter's {@code visit(ThrowStatement)} mirror): an Error literal
+     * emits
      * {@code $rt.errorValue} with the per-property {@code ""} default
      * filling (an omitted {@code code}/{@code message} passes the empty
      * string — the checker's E4002 already excludes extra fields), plus
@@ -2377,10 +2375,9 @@ public final class JsBackend {
     /**
      * Walks a statement list directly (no braces): the caller owns the
      * enclosing scope. Every function declaration in the list binds a
-     * predeclared {@code let} before any statement emits — the
-     * {@code LuaBackend.walkStatements} hoisting loop
-     * (deal/codegen/lua/LuaBackend.java:1005-1019), which supports
-     * recursion, forward calls, and mutual recursion for nested
+     * predeclared {@code let} before any statement emits — the retained
+     * LuaJIT AST emitter's {@code walkStatements} hoisting loop, which
+     * supports recursion, forward calls, and mutual recursion for nested
      * functions while retaining lexical scope (module-level predeclares
      * carry the header, shape step 6). The hoisting is collision-free
      * in the emitted JS scope: one {@code let} per distinct name (two
@@ -2623,8 +2620,8 @@ public final class JsBackend {
             case LiteralValue.NumberLiteral n -> {
                 double v = n.value();
                 // No bare host-global spelling: NaN/Infinity emit as
-                // IEEE-arithmetic expressions (the LuaBackend (0/0) /
-                // (1/0) precedent).
+                // IEEE-arithmetic expressions (the retained LuaJIT AST
+                // emitter's (0/0) / (1/0) precedent).
                 if (Double.isNaN(v)) yield "(0/0)";
                 if (Double.isInfinite(v)) yield v > 0 ? "(1/0)" : "(-1/0)";
                 yield Double.toString(v);
@@ -2678,8 +2675,8 @@ public final class JsBackend {
      * scalar values via {@code $rt.strCompare}; equality and inequality
      * are native {@code ===}/{@code !==}; {@code &&}/{@code ||} are
      * native short-circuit. The two nullable special forms mirror the
-     * reference's nil-aware equality byte-for-byte
-     * (deal/codegen/lua/LuaBackend.java:2007-2030): a nullable operand
+     * retained LuaJIT AST emitter's nil-aware equality byte-for-byte:
+     * a nullable operand
      * compared against a {@code null} literal, and two nullable operands
      * compared against each other, map the nil-equivalent values
      * ({@code undefined}/{@code null}/{@code MISSING}) through
@@ -2997,11 +2994,10 @@ public final class JsBackend {
      * decides (nullable → DEAL null via {@code $rt.checkNullable};
      * non-nullable → E8001) (js-backend-architecture D3/D6). Table
      * reads are Map {@code .get} calls. The arrow IIFE evaluates the
-     * index (checked) before the container — the exact
-     * {@code LuaBackend.emitIndex} pinned sequence: evaluate the index,
-     * run {@code checkInt}, raise E8002 for a negative index, and only
-     * then evaluate the container and read
-     * (deal/codegen/lua/LuaBackend.java:2116-2121). An await-bearing
+     * index (checked) before the container — the retained LuaJIT AST
+     * emitter's exact {@code emitIndex} pinned sequence: evaluate the
+     * index, run {@code checkInt}, raise E8002 for a negative index, and only
+     * then evaluate the container and read. An await-bearing
      * container or index cannot land inside a non-async closure (node
      * rejects {@code await} in non-async function bodies at load), so
      * the await-bearing form keeps the operands inline inside an async
@@ -3077,7 +3073,7 @@ public final class JsBackend {
 
     /**
      * Class-typed literal construction (the
-     * {@code LuaBackend.emitClassConstruction} mirror): the computed-key
+     * {@code emitClassConstruction} mirror): the computed-key
      * provided object plus the literal-span location arguments to the
      * construction closure. Provided values carry their own
      * expression-site boundary checks (js-backend-runtime D5).
@@ -3118,7 +3114,7 @@ public final class JsBackend {
      * Searches the module symbol table for a ModuleSymbol whose exports
      * include the class with the exact canonical class identity; returns
      * the import alias or {@code null} (the
-     * {@code LuaBackend.findImportAliasForClass} mirror — v1.2 identity
+     * {@code findImportAliasForClass} mirror — v1.2 identity
      * carriage).
      */
     private String findImportAliasForClass(String className,
@@ -3235,9 +3231,8 @@ public final class JsBackend {
      * closure (node rejects {@code await} in non-async function bodies
      * at load), so the await-bearing form keeps the operands inline
      * inside an async arrow IIFE that the enclosing level awaits — the
-     * body re-runs the pinned
-     * {@code LuaBackend.emitAssignment} sequence
-     * (deal/codegen/lua/LuaBackend.java:2358-2378): evaluate the
+     * body re-runs the retained LuaJIT AST emitter's pinned
+     * {@code emitAssignment} sequence: evaluate the
      * container, evaluate and {@code checkInt} the index, raise E8002
      * on the bounds gate, and only then evaluate and check the value —
      * the reference raises E8002 before an await-bearing value's side
@@ -3370,7 +3365,7 @@ public final class JsBackend {
      * {@code checkType} E8010 check, with the arity-extension adapter
      * replacing it when the value's declared signature is assignably
      * narrower ({@link #boundaryValue}, the
-     * {@code LuaBackend.emitArityAdapter} mirror).
+     * {@code emitArityAdapter} mirror).
      */
     private String checkedAssignmentValue(ExpressionNode valueNode,
                                           Type targetType, Type valueType,
@@ -3410,7 +3405,7 @@ public final class JsBackend {
 
     /**
      * Arity-extension detection (the
-     * {@code LuaBackend.isArityExtension} mirror): a function value whose
+     * {@code isArityExtension} mirror): a function value whose
      * checker-accepted transition to a wider function target needs an
      * adapter — assignable but not equal, with fewer declared parameters
      * than the target.
@@ -3426,7 +3421,7 @@ public final class JsBackend {
 
     /**
      * The arity-extension adapter closure (js-backend-emitter D6, the
-     * {@code LuaBackend.emitArityAdapter} mirror with the JS span
+     * {@code emitArityAdapter} mirror with the JS span
      * plumbing): a {@code $rt.function} wrapper carrying the TARGET
      * descriptor signature, whose body checks every extended parameter
      * in order (generated {@code $p0}/{@code $p1}/… bindings,
@@ -3444,8 +3439,8 @@ public final class JsBackend {
      * (js-backend-runtime D6). The value expression is evaluated per
      * adapter call like the reference, which embeds
      * {@code <valueLua>.f(...)} inside the per-call closure
-     * (deal/codegen/lua/LuaBackend.java:2405-2420 — the compiled Lua
-     * re-awaits per call). An await-bearing inner value re-awaits on
+     * (the retained LuaJIT AST emitter's compiled Lua re-awaits per
+     * call). An await-bearing inner value re-awaits on
      * every call through an {@code async function} body carrying the
      * inlined value expression, with the wrapper {@code $sig} staying
      * the target descriptor; node rejects {@code await} in non-async
@@ -3554,8 +3549,8 @@ public final class JsBackend {
      * Template literal lowering (the JVM concatenation approach,
      * js-backend-architecture D6): string parts concatenate with the
      * interpolated expressions via native string {@code +}; empty string
-     * parts are skipped (the {@code LuaBackend} precedent); a template
-     * with no interpolations is the plain string literal.
+     * parts are skipped (the retained LuaJIT AST emitter's precedent); a
+     * template with no interpolations is the plain string literal.
      */
     private String emitTemplateLiteral(TemplateLiteralExpr tl) {
         List<ExpressionNode> parts = tl.parts();
@@ -3651,7 +3646,7 @@ public final class JsBackend {
     /**
      * Captures the output of a sub-emission (function-expression bodies)
      * into a returned string, restoring the accumulator and indent
-     * afterwards (the {@code LuaBackend.captureOutput} pattern).
+     * afterwards (the {@code captureOutput} pattern).
      */
     private String captureOutput(Runnable action) {
         StringBuilder saved = out;
@@ -3687,8 +3682,8 @@ public final class JsBackend {
 
     /**
      * Returns the current 1-based line number in the output buffer
-     * (the {@code LuaBackend.currentGeneratedLine} mechanics,
-     * deal/codegen/lua/LuaBackend.java:800-806).
+     * (the retained LuaJIT AST emitter's
+     * {@code currentGeneratedLine} mechanics).
      */
     private int currentGeneratedLine() {
         int line = 1;
@@ -3711,7 +3706,7 @@ public final class JsBackend {
 
     /**
      * Returns the current 1-based column number in the output buffer
-     * (the {@code LuaBackend.currentGeneratedColumn} mechanics).
+     * (the {@code currentGeneratedColumn} mechanics).
      */
     private int currentGeneratedColumn() {
         int lastNewline = out.lastIndexOf("\n");

@@ -3154,8 +3154,7 @@ public final class SemanticLowerer {
          * Lowers the module's top-level statements through the
          * binding-core walk: first the module-init-top bindings — the
          * {@code int}/{@code number} intrinsic bindings (ALLOC + INIT at
-         * module-init top, the retained per-module wrapper shape,
-         * {@code deal/codegen/lua/LuaBackend.java:668-674}) and the
+         * module-init top, the retained per-module wrapper shape) and the
          * hoisted module-level function-name ALLOCs plus import-alias
          * ALLOCs in declaration order (B1) — then the statements in
          * source order.

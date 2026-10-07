@@ -162,7 +162,7 @@ final class JvmHostAbiEmission {
 
     /** The module key of one host import identity (injective, `$`-free). */
     static String key(String modulePath) {
-        return JvmBackend.escapedIdentifier(modulePath);
+        return JvmNames.escapedIdentifier(modulePath);
     }
 
     HostClassFacts hostClassFacts(ClassId classId) {
@@ -208,20 +208,20 @@ final class JvmHostAbiEmission {
     }
 
     static String methodField(String key, String exportName) {
-        return "__hostM$" + key + "$" + JvmBackend.javaName(exportName);
+        return "__hostM$" + key + "$" + JvmNames.javaName(exportName);
     }
 
     static String defaultsField(String key, String className) {
-        return "__hostD$" + key + "$" + JvmBackend.javaName(className);
+        return "__hostD$" + key + "$" + JvmNames.javaName(className);
     }
 
     static String wrapperName(String key, String exportName) {
-        return "__host$" + key + "$" + JvmBackend.javaName(exportName);
+        return "__host$" + key + "$" + JvmNames.javaName(exportName);
     }
 
     /** The canonical descriptor text of one declared type (the one producer). */
     static String descriptorText(Type type) {
-        return JvmBackend.typeDescriptor(type);
+        return JvmNames.typeDescriptor(type);
     }
 
     private void declareRecord(HostModule module, String className,
@@ -229,7 +229,7 @@ final class JvmHostAbiEmission {
         Type.Class classType = classTypeOf(module, className);
         String identityText = descriptorText(classType);
         String specifier = externalSpecifier(classType);
-        String simple = JvmBackend.hostRecordSimpleName(specifier, className);
+        String simple = JvmNames.hostRecordSimpleName(specifier, className);
         if (records.containsKey(simple)) {
             return;
         }
@@ -242,11 +242,11 @@ final class JvmHostAbiEmission {
             // is the omission rule, not the nullability rule).
             String storage = carrierType(fieldType, field.declaration().optional());
             fields.add(new FieldInfo(field.declaration().name(),
-                JvmBackend.javaName(field.declaration().name()), storage,
+                JvmNames.javaName(field.declaration().name()), storage,
                 descriptorText(fieldType), field.declaration().optional()));
         }
-        String arrayWrapper = "$HostArr$" + JvmBackend.escapedIdentifier(
-            specifier.replace('.', '/')) + "$" + JvmBackend.javaName(className);
+        String arrayWrapper = "$HostArr$" + JvmNames.escapedIdentifier(
+            specifier.replace('.', '/')) + "$" + JvmNames.javaName(className);
         RecordInfo record = new RecordInfo(simple, arrayWrapper, identityText, fields);
         // The record registers before its field types are collected: a
         // self-referential declared class (a class-typed or class-array
@@ -267,7 +267,7 @@ final class JvmHostAbiEmission {
             case Type.Nullable nullable -> collectType(owner, nullable.inner());
             case Type.Array array -> collectType(owner, array.element());
             case Type.Func func -> {
-                shapes.putIfAbsent(JvmBackend.fnShapeId(func), func);
+                shapes.putIfAbsent(JvmNames.fnShapeId(func), func);
                 for (Type param : func.paramTypes()) {
                     collectType(owner, param);
                 }
@@ -354,12 +354,12 @@ final class JvmHostAbiEmission {
     }
 
     private static String recordSimpleNameOf(Type.Class cls) {
-        return JvmBackend.hostRecordSimpleName(externalSpecifier(cls), cls.name());
+        return JvmNames.hostRecordSimpleName(externalSpecifier(cls), cls.name());
     }
 
     private static String classNameKey(String specifier, String className) {
-        return JvmBackend.escapedIdentifier(specifier.replace('.', '/')) + "$"
-            + JvmBackend.javaName(className);
+        return JvmNames.escapedIdentifier(specifier.replace('.', '/')) + "$"
+            + JvmNames.javaName(className);
     }
 
     // =========================================================================
@@ -391,7 +391,7 @@ final class JvmHostAbiEmission {
             case Type.Bytes ignored -> "$DealRt.Bytes";
             case Type.Class cls -> "$DealRt." + recordSimpleNameOf(cls);
             case Type.Array array -> "$DealRt." + arrayCarrier(array.element());
-            case Type.Func func -> "$DealRt." + JvmBackend.fnShapeId(func);
+            case Type.Func func -> "$DealRt." + JvmNames.fnShapeId(func);
             case Type.Table ignored -> "java.lang.Object";
             default -> throw new IllegalStateException(
                 "the declared host position " + type + " has no settled"
@@ -408,7 +408,7 @@ final class JvmHostAbiEmission {
             case Type.Bytes ignored -> "$DealRt.Bytes";
             case Type.Class cls -> "$DealRt." + recordSimpleNameOf(cls);
             case Type.Array array -> "$DealRt." + arrayCarrier(array.element());
-            case Type.Func func -> "$DealRt." + JvmBackend.fnShapeId(func);
+            case Type.Func func -> "$DealRt." + JvmNames.fnShapeId(func);
             default -> "java.lang.Object";
         };
     }
@@ -448,8 +448,8 @@ final class JvmHostAbiEmission {
             return name;
         }
         String wrapper = "$HostArr$"
-            + JvmBackend.escapedIdentifier(specifier.replace('.', '/')) + "$"
-            + JvmBackend.javaName(cls.name());
+            + JvmNames.escapedIdentifier(specifier.replace('.', '/')) + "$"
+            + JvmNames.javaName(cls.name());
         classArrayWrappers.put(classNameKey(specifier, cls.name()), wrapper);
         return wrapper;
     }
@@ -473,7 +473,7 @@ final class JvmHostAbiEmission {
             case Type.Bytes ignored -> "$DealRt.Bytes.class";
             case Type.Class cls -> "$DealRt." + recordSimpleNameOf(cls) + ".class";
             case Type.Array array -> "$DealRt." + arrayCarrier(array.element()) + ".class";
-            case Type.Func func -> "$DealRt." + JvmBackend.fnShapeId(func) + ".class";
+            case Type.Func func -> "$DealRt." + JvmNames.fnShapeId(func) + ".class";
             default -> "java.lang.Object.class";
         };
     }
@@ -646,7 +646,7 @@ final class JvmHostAbiEmission {
     private void emitLoadEntry(StringBuilder out, HostModule module) {
         String key = key(module.modulePath());
         String raw = module.rawSpecifier();
-        String clsName = JvmBackend.classNameFor(raw);
+        String clsName = JvmNames.classNameFor(raw);
         out.append("  // Load-time validation of host module '").append(raw)
             .append("' (declared exports must exist; extras are ignored;"
                 + " one load per module).\n");
@@ -1749,7 +1749,7 @@ final class JvmHostAbiEmission {
         if (inner instanceof Type.Array || inner instanceof Type.Func) {
             String carrier = inner instanceof Type.Array array
                 ? arrayCarrier(array.element())
-                : JvmBackend.fnShapeId((Type.Func) inner);
+                : JvmNames.fnShapeId((Type.Func) inner);
             expression = "($DealRt." + carrier + ") " + artifactClass
                 + ".__hostProjectArg(" + javaString(desc) + ", __r)";
             if (nullable) {

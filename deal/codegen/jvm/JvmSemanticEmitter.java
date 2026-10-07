@@ -372,7 +372,7 @@ public final class JvmSemanticEmitter {
             this.projectSession = true;
             this.entryModule = true;
             // A production project entry passes its class name verbatim
-            // (the JvmBackend.classNameFor(entry path) derivation); the
+            // (the shared JvmNames.classNameFor(entry path) derivation); the
             // trace project session keeps the shared conformance name.
             this.className = resolvedClassName;
             for (Map.Entry<ModuleId, LoweredModuleUnit> entry

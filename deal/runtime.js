@@ -1596,7 +1596,7 @@ const $rt = {
 
   // numMod: a - floor(a / b) * b — the Lua floored remainder for
   // number % number (native JS % is truncated, so it diverges for mixed
-  // signs; the JVM precedent deal/codegen/jvm/JvmBackend.java:3382).
+  // signs; the JVM emitter's truncated remainder is the precedent).
   // No check: IEEE arithmetic on two numbers is total.
   numMod: function $numMod(a, b) {
     return a - $Math.floor(a / b) * b;
@@ -2459,8 +2459,7 @@ const $rt = {
   // relational operators compare UTF-16 code units, which diverges from
   // scalar order for supplementary characters (strCompare('\uE000',
   // '\u{10000}') < 0 while ('\uE000' < '\u{10000}') === false). Mirrors
-  // the JVM backend's emitted scalarCompare
-  // (deal/codegen/jvm/JvmBackend.java:3389): a codePointAt walk with
+  // the JVM emitter's emitted scalarCompare: a codePointAt walk with
   // per-scalar advancement, returning a negative number / 0 / a positive
   // number.
   strCompare: function $strCompare(a, b) {

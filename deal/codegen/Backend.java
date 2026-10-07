@@ -5,7 +5,7 @@ import java.util.Optional;
 
 public enum Backend {
 
-    /** Emits Lua 5.1/LuaJIT source via {@code deal.codegen.lua.LuaBackend}. */
+    /** Emits Lua 5.1/LuaJIT project artifacts from validated semantic IR. */
     LUAJIT("luajit"),
 
     JVM("jvm"),

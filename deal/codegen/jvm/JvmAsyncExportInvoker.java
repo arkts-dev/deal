@@ -18,16 +18,16 @@ public class JvmAsyncExportInvoker {
     /**
      * The reserved argv marker of the generated host mode: byte-equal to
      * the backend's emitted dispatch marker
-     * ({@link JvmBackend#ASYNC_EXPORT_HOST_ARG}).
+     * ({@link JvmNames#ASYNC_EXPORT_HOST_ARG}).
      */
-    public static final String HOST_ARG = JvmBackend.ASYNC_EXPORT_HOST_ARG;
+    public static final String HOST_ARG = JvmNames.ASYNC_EXPORT_HOST_ARG;
 
     /**
      * The binary-name suffix of the reserved generated host-export
-     * launcher ({@link JvmBackend#ASYNC_EXPORT_HOST_CLASS_SUFFIX}).
+     * launcher ({@link JvmNames#ASYNC_EXPORT_HOST_CLASS_SUFFIX}).
      */
     public static final String HOST_CLASS_SUFFIX =
-        JvmBackend.ASYNC_EXPORT_HOST_CLASS_SUFFIX;
+        JvmNames.ASYNC_EXPORT_HOST_CLASS_SUFFIX;
 
     /**
      * The exact stdout marker prefix of the shared envelope protocol:

@@ -3,12 +3,12 @@ package deal.module;
 import deal.ast.*;
 import deal.checker.*;
 import deal.codegen.Backend;
+import deal.codegen.HarnessModuleCodegen;
 import deal.codegen.SourceMapGenerator;
-import deal.codegen.jvm.JvmBackend;
+import deal.codegen.jvm.JvmNames;
 import deal.codegen.jvm.JvmSemanticEmitter;
 import deal.codegen.HostModuleDeclarations;
 import deal.codegen.js.JsBackend;
-import deal.codegen.lua.LuaBackend;
 import deal.codegen.lua.LuaSemanticEmitter;
 import deal.identity.CanonicalModuleIdentity;
 import deal.identity.ProjectModuleIdentity;
@@ -222,10 +222,10 @@ public final class CompilationOrchestrator {
     private List<RuntimeImportDependency> runtimeDependencies =
         List.of();
 
-    private final Map<String, JvmBackend.JvmCodegenResult> jvmGeneratedResults =
+    private final Map<String, HarnessModuleCodegen.JvmResult> jvmGeneratedResults =
         new LinkedHashMap<>();
 
-    private final Map<String, LuaBackend.GenerationResult>
+    private final Map<String, HarnessModuleCodegen.LuaResult>
         luaGeneratedResults = new LinkedHashMap<>();
 
     private final Map<String, JsBackend.JsCodegenResult>
@@ -617,7 +617,7 @@ public final class CompilationOrchestrator {
         return invocation;
     }
 
-    public Map<String, JvmBackend.JvmCodegenResult> jvmGeneratedResults() {
+    public Map<String, HarnessModuleCodegen.JvmResult> jvmGeneratedResults() {
         return Collections.unmodifiableMap(jvmGeneratedResults);
     }
 
@@ -1555,7 +1555,7 @@ public final class CompilationOrchestrator {
         return Collections.unmodifiableMap(completedDefaultPlans);
     }
 
-    public Map<String, LuaBackend.GenerationResult>
+    public Map<String, HarnessModuleCodegen.LuaResult>
             luaGeneratedResults() {
         return Collections.unmodifiableMap(luaGeneratedResults);
     }
@@ -2344,7 +2344,7 @@ public final class CompilationOrchestrator {
         if (lowered == null) {
             return;
         }
-        String className = JvmBackend.classNameFor(checked.moduleId().path());
+        String className = JvmNames.classNameFor(checked.moduleId().path());
         JvmSemanticEmitter.EmissionResult emission;
         try {
             emission = JvmSemanticEmitter.emitProductionModule(
@@ -2470,7 +2470,8 @@ public final class CompilationOrchestrator {
     }
 
     /**
-     * Lua use site: emits the module via {@link LuaBackend}, with the
+     * Lua use site: emits the module through the retained test-scope
+     * AST codegen of the harness arm, with the
      * resolved import map, host-module declarations, and the compilation's
      * canonical descriptor service (emitter page D1 — the same surface
      * codegenAllJs builds and consumes).
@@ -2536,7 +2537,8 @@ public final class CompilationOrchestrator {
         // value seeded into NameResolver, so emitted class identity tags
         // stay byte-identical to the checker's descriptors
         // (runtime-class-identity D2(0)).
-        LuaBackend.GenerationResult gen = LuaBackend.generateToFile(
+        HarnessModuleCodegen.LuaResult gen =
+            HarnessModuleCodegen.current().luaGenerateToFile(
             info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
             stager.stageTree(), stageOutputPath, outputRoot, liveOutputPath,
             sourceMap, importResolutions, hostModules, ffiModules,
@@ -2569,7 +2571,7 @@ public final class CompilationOrchestrator {
             Map<String, Map<String, Type>> hostModules,
             Map<String, Map<String, List<HostModuleDeclarations.HostField>>>
                 hostClassDeclarations,
-            Map<String, JvmBackend.ImportedModuleSurface> importedSurfaces) {}
+            Map<String, HarnessModuleCodegen.ImportedSurface> importedSurfaces) {}
 
     /** The externals identity specifier of a declaration module (the
      * module-identity layer's classification raw import specifier), or
@@ -2594,7 +2596,7 @@ public final class CompilationOrchestrator {
         Map<String, Map<String, List<HostModuleDeclarations.HostField>>>
             hostClassDeclarations = new HashMap<>();
 
-        Map<String, JvmBackend.ImportedModuleSurface> importedSurfaces =
+        Map<String, HarnessModuleCodegen.ImportedSurface> importedSurfaces =
             new HashMap<>();
         for (StatementNode stmt : info.rawAst.statements()) {
             if (stmt instanceof ImportDeclaration imp) {
@@ -2664,7 +2666,7 @@ public final class CompilationOrchestrator {
                             }
                         }
                         importedSurfaces.put(imported.modulePath,
-                            new JvmBackend.ImportedModuleSurface(functions,
+                            new HarnessModuleCodegen.ImportedSurface(functions,
                                 imported.sourcePath));
                     }
                 }
@@ -2721,7 +2723,8 @@ public final class CompilationOrchestrator {
         for (ModuleInfo info : modules.values()) {
             if (info.isDeclarationFile) continue;
             JvmImportContext ctx = jvmImportContextOf(info);
-            for (Type shape : JvmBackend.collectShapes(info.rawAst,
+            for (Type shape : HarnessModuleCodegen.current().collectShapes(
+                    info.rawAst,
                     info.checkResult, info.sourcePath, info.modulePath,
                     ctx.importResolutions, ctx.importedClasses,
                     ctx.hostModules, ctx.hostClassDeclarations,
@@ -2756,7 +2759,8 @@ public final class CompilationOrchestrator {
         // Pass 1: generate every module and merge diagnostics. Rejected
         // modules write no artifact.
         List<ModuleInfo> cleanModules = new ArrayList<>();
-        Map<ModuleInfo, JvmBackend.JvmCodegenResult> results = new LinkedHashMap<>();
+        Map<ModuleInfo, HarnessModuleCodegen.JvmResult> results =
+            new LinkedHashMap<>();
         for (ModuleInfo info : modules.values()) {
             if (info.isDeclarationFile) continue;
             if (routeOf(info) == ModuleRoute.SHARED) {
@@ -2765,7 +2769,8 @@ public final class CompilationOrchestrator {
             JvmImportContext ctx = jvmImportContextOf(info);
             boolean isEntry = info.sourcePath.equals(entryFile.toString());
 
-            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+            HarnessModuleCodegen.JvmResult res =
+                HarnessModuleCodegen.current().jvmGenerate(
                 info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
                 ctx.importResolutions, ctx.importedClasses, ctx.hostModules,
                 ctx.hostClassDeclarations,
@@ -2793,7 +2798,7 @@ public final class CompilationOrchestrator {
         // artifact.
         Map<String, String> classOwners = new LinkedHashMap<>();
         for (ModuleInfo info : cleanModules) {
-            JvmBackend.JvmCodegenResult res = results.get(info);
+            HarnessModuleCodegen.JvmResult res = results.get(info);
             String className = res.className();
             String previousOwner = classOwners.putIfAbsent(className, info.modulePath);
             if (previousOwner != null) {
@@ -3104,7 +3109,7 @@ public final class CompilationOrchestrator {
     /**
      * The source/generated path pair passed to
      * {@link SourceMapGenerator#toJson} for a JS sidecar — the exact
-     * strings the Lua arm passes (LuaBackend.generateToFile's
+     * strings the Lua arm passes (the retained test-scope AST codegen's
      * project-relative normalization, mirrored verbatim): the source
      * path and the generated artifact path relativized against the
      * project root inferred as {@code outputRoot/../..} when the

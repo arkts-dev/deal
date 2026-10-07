@@ -2,7 +2,7 @@ package deal.module;
 
 import deal.checker.BuiltinErrorDeclaration;
 import deal.codegen.Backend;
-import deal.codegen.jvm.JvmBackend;
+import deal.codegen.jvm.JvmNames;
 import deal.codegen.jvm.JvmSemanticEmitter;
 import deal.codegen.lua.FfiEmissionInput;
 import deal.codegen.lua.LuaSemanticEmitter;
@@ -208,7 +208,7 @@ public final class ProductionProjectEmission {
         String artifactRelativePath;
         String artifactSource;
         if (backend == Backend.JVM) {
-            String className = JvmBackend.classNameFor(project.entryModule().path());
+            String className = JvmNames.classNameFor(project.entryModule().path());
             JvmSemanticEmitter.EmissionResult emission;
             try {
                 emission = JvmSemanticEmitter.emitProductionProject(project,

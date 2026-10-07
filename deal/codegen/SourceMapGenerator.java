@@ -54,7 +54,8 @@ public final class SourceMapGenerator {
      * Records a mapping from the given generated Lua position to the
      * originating DEAL source span.
      *
-     * <p>Called by {@code LuaBackend} before emitting each statement.
+     * <p>Called by the retained LuaJIT AST emitter before emitting each
+     * statement.
      * Only the start line/column of the span are recorded, since that
      * is the primary position used for error reporting.</p>
      */

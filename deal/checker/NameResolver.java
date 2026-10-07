@@ -94,7 +94,8 @@ public final class NameResolver {
 
     /**
      * The single-module standalone classification adapter (the
-     * LuaBackend/JsBackend standalone-surface convention): the empty
+     * standalone-surface convention shared by the retained AST emitters
+     * and JsBackend): the empty
      * module path is the intrinsic builtin Error module and the module
      * path itself is a project module whose configured root text is the
      * path — byte-identical to the pre-carriage
