@@ -49,6 +49,7 @@ import deal.semantic.ir.ValueId;
 import deal.test.conformance.SidecarExpectations;
 
 import java.io.File;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -59,6 +60,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 public class BytesCoverageTest {
 
@@ -100,10 +103,23 @@ public class BytesCoverageTest {
      */
     private record BytesFixture(String directory, String relativePath, String export,
                                 String resultType, List<String> companions, String code,
-                                String message, int line, int column) {
+                                String message, int line, int column, String expected,
+                                String actual) {
+
+        BytesFixture(String directory, String relativePath, String export,
+                     String resultType, List<String> companions, String code,
+                     String message, int line, int column) {
+            this(directory, relativePath, export, resultType, companions, code,
+                message, line, column, null, null);
+        }
 
         boolean runtimeOk() {
             return code == null;
+        }
+
+        /** True for the rows whose sidecar also pins the expected/actual tokens. */
+        boolean pinsExpectedActual() {
+            return expected != null && actual != null;
         }
 
         String fixtureFile() {
@@ -129,6 +145,17 @@ public class BytesCoverageTest {
                                       String code, String message, int line, int column) {
         return new BytesFixture(BYTES_DIR, path, export, type, List.of(), code, message,
             line, column);
+    }
+
+    /**
+     * One failure row whose sidecar also pins the expected/actual tokens
+     * (the exact-tuple rows, including the decoded nested element row).
+     */
+    private static BytesFixture pinnedError(String path, String export, String type,
+                                            String code, String message, int line,
+                                            int column, String expected, String actual) {
+        return new BytesFixture(BYTES_DIR, path, export, type, List.of(), code, message,
+            line, column, expected, actual);
     }
 
     /**
@@ -159,21 +186,23 @@ public class BytesCoverageTest {
             "bytes value out of range", 8, 3),
         error("bytes-write-negative-error", "main", "null", "E8013",
             "bytes value out of range", 8, 3),
-        error("bytes-dynamic-function-mismatch-e8010",
+        pinnedError("bytes-dynamic-function-mismatch-e8010",
             "test_bytes_dynamic_function_mismatch", "int", "E8010",
-            "function signature mismatch: expected (bytes)->bytes, got (int)->int", 12, 10),
-        error("bytes-dynamic-async-function-mismatch-e8010",
+            "function signature mismatch: expected (bytes)->bytes, got (int)->int", 12, 10,
+            "(bytes)->bytes", "(int)->int"),
+        pinnedError("bytes-dynamic-async-function-mismatch-e8010",
             "test_bytes_dynamic_async_function_mismatch", "int", "E8010",
             "function signature mismatch: expected async(bytes)->bytes, got (int)->int",
-            12, 16),
-        error("bytes-dynamic-wrong-kind-e8001", "test_bytes_dynamic_wrong_kind", "int",
-            "E8001", "expected bytes", 8, 10),
-        error("bytes-fn-adapter-e8010", "test_bytes_fn_adapter_e8010", "int", "E8010",
+            12, 16, "async(bytes)->bytes", "(int)->int"),
+        pinnedError("bytes-dynamic-wrong-kind-e8001", "test_bytes_dynamic_wrong_kind",
+            "int", "E8001", "expected bytes", 8, 10, "bytes", "string"),
+        pinnedError("bytes-fn-adapter-e8010", "test_bytes_fn_adapter_e8010", "int",
+            "E8010",
             "function signature mismatch: expected (bytes,int)->bytes, got (bytes)->bytes",
-            8, 21),
-        error("bytes-dynamic-nested-first-element-e8003",
+            8, 21, "(bytes,int)->bytes", "(bytes)->bytes"),
+        pinnedError("bytes-dynamic-nested-first-element-e8003",
             "test_bytes_dynamic_nested_first_element", "int", "E8003",
-            "array element 1 type mismatch", 10, 11),
+            "array element 1 type mismatch", 10, 11, "[bytes]", "table"),
         // The two source-location pins (the acceptance's
         // source-location/bytes-* clause): the same rows at the error's own
         // source coordinate — the indexing expression for E8012 and the
@@ -299,6 +328,10 @@ public class BytesCoverageTest {
             checkEq(fixture.line(), row.line(), fixture.what() + ": the pinned line");
             checkEq(fixture.column(), row.column(), fixture.what()
                 + ": the pinned column");
+            checkEq(fixture.expected(), row.expected().orElse(null), fixture.what()
+                + ": the pinned expected token");
+            checkEq(fixture.actual(), row.actual().orElse(null), fixture.what()
+                + ": the pinned actual token");
             checkEq(fixture.fixtureFile(), row.sourceFile(), fixture.what()
                 + ": the pinned source file");
             List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
@@ -652,15 +685,26 @@ public class BytesCoverageTest {
                     String expectedOrigin = compiledOrigin(drive, fixture.line(),
                         fixture.column());
                     for (SemanticRuntimeModel.ConsumerRun run : runs) {
-                        check(run.terminal()
+                        boolean pinnedTerminal = run.terminal()
                                 instanceof SemanticRuntimeModel.Terminal.DealFailure
                                     terminal
                                 && fixture.code().equals(terminal.error().code())
                                 && fixture.message().equals(terminal.error().message())
-                                && expectedOrigin.equals(terminal.error().origin()),
-                            run.consumer() + " (" + fixture.what() + "): the terminal is "
-                                + "the pinned row at the pinned origin: "
-                                + run.terminal());
+                                && expectedOrigin.equals(terminal.error().origin());
+                        check(pinnedTerminal, run.consumer() + " (" + fixture.what()
+                            + "): the terminal is the pinned row at the pinned origin: "
+                            + run.terminal());
+                        if (pinnedTerminal && fixture.pinsExpectedActual()
+                                && run.terminal()
+                                    instanceof SemanticRuntimeModel.Terminal.DealFailure
+                                        terminal) {
+                            checkEq(fixture.expected(), terminal.error().expected(),
+                                run.consumer() + " (" + fixture.what() + "): the oracle "
+                                    + "expected token is pin-exact");
+                            checkEq(fixture.actual(), terminal.error().actual(),
+                                run.consumer() + " (" + fixture.what() + "): the oracle "
+                                    + "actual token is pin-exact");
+                        }
                     }
                 }
 
@@ -683,12 +727,25 @@ public class BytesCoverageTest {
                         fixture.column());
                     String expectedPrefix = "ERR:" + fixture.code() + "|"
                         + fixture.message() + "|" + expectedOrigin + "|";
-                    check(lua.outcome().startsWith(expectedPrefix), fixture.what()
-                        + ": the LuaJIT production artifact projects the pinned row at "
-                        + "the pinned origin: " + lua.outcome());
-                    check(jvm.outcome().startsWith(expectedPrefix), fixture.what()
-                        + ": the JVM production artifact projects the pinned row at the "
-                        + "pinned origin: " + jvm.outcome());
+                    if (fixture.pinsExpectedActual()) {
+                        // The exact-tuple rows (including the decoded nested
+                        // element row): a divergent field fails by value.
+                        String pinnedOutcome = expectedPrefix + fixture.expected()
+                            + "|" + fixture.actual();
+                        checkEq(pinnedOutcome, lua.outcome(), fixture.what()
+                            + ": the LuaJIT production artifact reproduces the pinned "
+                            + "expected/actual tuple");
+                        checkEq(pinnedOutcome, jvm.outcome(), fixture.what()
+                            + ": the JVM production artifact reproduces the pinned "
+                            + "expected/actual tuple");
+                    } else {
+                        check(lua.outcome().startsWith(expectedPrefix), fixture.what()
+                            + ": the LuaJIT production artifact projects the pinned row "
+                            + "at the pinned origin: " + lua.outcome());
+                        check(jvm.outcome().startsWith(expectedPrefix), fixture.what()
+                            + ": the JVM production artifact projects the pinned row at "
+                            + "the pinned origin: " + jvm.outcome());
+                    }
                     checkEq("DEAL_ERROR_CODE: " + fixture.code(), lua.terminalLine(),
                         fixture.what() + ": the LuaJIT artifact's pinned terminal line");
                     checkEq("DEAL_ERROR_CODE: " + fixture.code(), jvm.terminalLine(),
@@ -939,6 +996,501 @@ public class BytesCoverageTest {
         }
         check(writeContextless, "a BYTE_ELEMENT_ASSIGNMENT cell without its "
             + "{index, length} context is a producer defect");
+    }
+
+    // =========================================================================
+    // 4c. The decoded-array mark: the real decode producers, the exact
+    //     tuples, and projection-only inertness (ISSUE-0710)
+    // =========================================================================
+
+    /**
+     * One pinned failure projection: code, message, and the token pair.
+     * The comparison reports the first divergent field with both values.
+     */
+    private record Tuple(String code, String message, String expected, String actual) {
+
+        static Tuple of(SemanticRuntimeModel.ErrorSnapshot error) {
+            return new Tuple(error.code(), error.message(),
+                error.expected() == null ? "" : error.expected(),
+                error.actual() == null ? "" : error.actual());
+        }
+
+        /** The first divergent field with captured and pinned values, or null. */
+        String firstDivergence(Tuple pinned) {
+            if (!code.equals(pinned.code())) {
+                return "code: captured " + code + ", pinned " + pinned.code();
+            }
+            if (!message.equals(pinned.message())) {
+                return "message: captured " + message + ", pinned " + pinned.message();
+            }
+            if (!expected.equals(pinned.expected())) {
+                return "expected: captured " + expected + ", pinned "
+                    + pinned.expected();
+            }
+            if (!actual.equals(pinned.actual())) {
+                return "actual: captured " + actual + ", pinned " + pinned.actual();
+            }
+            return null;
+        }
+    }
+
+    /** The scratch unrealized-construct seed (a function-typed materialization). */
+    private static final String GUARD_SEED = """
+        export function main(): null {
+          let f: (a: int) => int = one
+          let x: int = f(1)
+          return null
+        }
+
+        function one(x: int): int {
+          return x
+        }
+        """;
+
+    /**
+     * The marked case (B3): a real {@code std/json} decode whose nested
+     * arrays carry the mark. The failing element of the outer decoded array
+     * renders the reference kind {@code table}.
+     */
+    private static final String DECODED_NESTED_SOURCE = """
+        import * as json from "std/json"
+
+        export function main(): null {
+          let t: table = json.parse("{\\"values\\":[[\\"x\\"],[\\"y\\"]]}")
+          let xs: bytes[][] = t.values
+          return null
+        }
+        """;
+
+    /**
+     * The unmarked control: a DEAL nested array (an array literal) keeps the
+     * landed refined token {@code array} at the same projection.
+     */
+    private static final String UNMARKED_NESTED_SOURCE = """
+        export function main(): null {
+          let inner: int[] = [1]
+          let holder: table = { values: [inner] }
+          let xs: bytes[][] = holder.values
+          return null
+        }
+        """;
+
+    /**
+     * The host-returned control: the array returned through the host ABI
+     * ({@code host/array_return}'s {@code string[]}) is a real host
+     * conversion and keeps the unmarked {@code array} token.
+     */
+    private static final String HOST_RETURNED_NESTED_SOURCE = """
+        import * as host from "host/array_return"
+
+        export function main(): null {
+          let inner: string[] = host.split("ignored")
+          let holder: table = { values: [inner] }
+          let xs: bytes[][] = holder.values
+          return null
+        }
+        """;
+
+    /**
+     * Projection-only inertness: the decoded tree's identity, length,
+     * indexing, alias-observed mutation, and stringify encoding are
+     * unchanged by the mark.
+     */
+    private static final String DECODED_INERTNESS_SOURCE = """
+        import * as json from "std/json"
+
+        export function main(): null {
+          let t: table = json.parse("{\\"values\\":[[1,2],[3,4]]}")
+          let xs: int[][] = t.values
+          let first: int[] = xs[0]
+          let alias: int[] = xs[0]
+          if (first !== alias) {
+            throw { code: "TEST_FAIL", message: "decoded identity" }
+          }
+          if (first.length !== 2) {
+            throw { code: "TEST_FAIL", message: "decoded length" }
+          }
+          if (xs[1][0] !== 3) {
+            throw { code: "TEST_FAIL", message: "decoded indexing" }
+          }
+          first[1] = 9
+          if (alias[1] !== 9) {
+            throw { code: "TEST_FAIL", message: "decoded alias mutation" }
+          }
+          let encoded: string = json.stringify(t)
+          if (encoded !== "{\\"values\\":[[1,9],[3,4]]}") {
+            throw { code: "TEST_FAIL", message: "decoded stringify: " + encoded }
+          }
+          return null
+        }
+        """;
+
+    /**
+     * Admission inertness: a decoded array stays rejected at a {@code table}
+     * descriptor with the landed {@code array} actual token.
+     */
+    private static final String DECODED_ADMISSION_SOURCE = """
+        import * as json from "std/json"
+        import * as tables from "std/table"
+
+        export function main(): null {
+          let t: table = json.parse("{\\"values\\":[[1,2]]}")
+          let ks: string[] = tables.keys(t.values)
+          return null
+        }
+        """;
+
+    /**
+     * The decoded-array mark end to end (B3): the closed decode producers
+     * are exercised through the real production pipeline, the marked nested
+     * element renders {@code table}, the unmarked and host-returned nested
+     * elements keep the landed {@code array} token, the decoded tree stays
+     * inert outside the array-element projection, and the comparison fails
+     * by field on any divergence.
+     */
+    private static void testDecodedArrayMark() throws Exception {
+        System.out.println("-- the decoded-array mark: real decode producers, exact "
+            + "tuples, and projection-only inertness (ISSUE-0710) --");
+
+        driveFocusedFailure("bytes decoded nested element (marked)",
+            DECODED_NESTED_SOURCE, null, null, 5, 11,
+            new Tuple("E8003", "array element 1 type mismatch", "[bytes]", "table"));
+
+        driveFocusedFailure("bytes unmarked nested element", UNMARKED_NESTED_SOURCE,
+            null, null, 4, 11,
+            new Tuple("E8003", "array element 1 type mismatch", "[bytes]", "array"));
+
+        driveFocusedFailure("bytes host-returned nested element",
+            HOST_RETURNED_NESTED_SOURCE, "array_return", "host/array_return", 6, 11,
+            new Tuple("E8003", "array element 1 type mismatch", "[bytes]", "array"));
+
+        driveFocusedSuccess("decoded-array inertness", DECODED_INERTNESS_SOURCE);
+
+        driveFocusedFailure("decoded array at a table descriptor",
+            DECODED_ADMISSION_SOURCE, null, null, 6, 34,
+            new Tuple("E8001", "expected table", "table", "array"));
+
+        // Comparison honesty: a pin-exact tuple reports no divergence and a
+        // divergent field fails by name with the captured and pinned values.
+        Tuple pinned = new Tuple("E8003", "array element 1 type mismatch",
+            "[bytes]", "table");
+        checkEq(null, pinned.firstDivergence(pinned),
+            "a pin-exact tuple reports no divergent field");
+        checkEq("actual: captured array, pinned table",
+            new Tuple("E8003", "array element 1 type mismatch", "[bytes]", "array")
+                .firstDivergence(pinned),
+            "the pre-correction actual token fails by field");
+        checkEq("code: captured E8001, pinned E8003",
+            new Tuple("E8001", "array element 1 type mismatch", "[bytes]", "table")
+                .firstDivergence(pinned),
+            "a divergent code fails by field");
+
+        checkDeterministicEmission();
+        checkAtomicStaging();
+    }
+
+    /**
+     * Drives one focused failing program through the real production
+     * pipeline: the oracle (with the optional host responder), the LuaJIT
+     * production artifact, and the JVM production artifact, and asserts the
+     * exact pinned tuple on every consumer.
+     */
+    private static void driveFocusedFailure(String label, String source,
+            String hostStem, String hostSpecifier, int line, int column, Tuple pinned)
+            throws Exception {
+        Path root = Files.createTempDirectory("bytes-mark-");
+        try {
+            BytesFixture spec = new BytesFixture(BYTES_DIR, label, "main", "null",
+                List.of(), pinned.code(), pinned.message(), line, column);
+            Compiled compiled = compileFocused(root, source, hostStem, hostSpecifier);
+            if (compiled == null) {
+                return;
+            }
+            Drive drive = lowerFocused(compiled, spec);
+            if (drive == null) {
+                return;
+            }
+            int[] calls = { 0 };
+            SemanticOracle.HostResponder responder = hostStem == null ? null
+                : focusedArrayHostResponder(calls);
+            SemanticRuntimeModel.ConsumerRun oracle =
+                SemanticOracle.executeProjectInits(drive.project(), drive.tables(),
+                    drive.registries(), responder);
+            if (hostStem != null) {
+                checkEq(1, calls[0], label + ": the host array return is called once");
+            }
+            String origin = root.resolve("src").resolve("main.deal").toAbsolutePath()
+                + ":" + line + ":" + column;
+            check(oracle.terminal()
+                    instanceof SemanticRuntimeModel.Terminal.DealFailure,
+                label + ": the oracle projects the pinned failure: "
+                    + oracle.terminal());
+            if (oracle.terminal()
+                    instanceof SemanticRuntimeModel.Terminal.DealFailure failure) {
+                checkEq(null, Tuple.of(failure.error()).firstDivergence(pinned),
+                    label + ": the oracle tuple is pin-exact");
+                checkEq(origin, failure.error().origin(),
+                    label + ": the oracle origin is the pinned expression");
+            }
+            Path hostLua = hostStem == null ? null
+                : Path.of("test", "conformance", "host-fixtures", hostStem + ".lua");
+            Path hostJava = hostStem == null ? null
+                : Path.of("test", "conformance", "host-fixtures", hostStem + ".java");
+            String pinnedOutcome = "ERR:" + pinned.code() + "|" + pinned.message()
+                + "|" + origin + "|" + pinned.expected() + "|" + pinned.actual();
+            ArtifactRun lua = luaProduction(drive, hostSpecifier, hostLua);
+            checkEq(pinnedOutcome, lua.outcome(), label
+                + ": the LuaJIT production artifact reproduces the exact tuple");
+            checkEq("DEAL_ERROR_CODE: " + pinned.code(), lua.terminalLine(), label
+                + ": the LuaJIT artifact's pinned terminal line");
+            ArtifactRun jvm = jvmProduction(drive, hostSpecifier, hostJava);
+            checkEq(pinnedOutcome, jvm.outcome(), label
+                + ": the JVM production artifact reproduces the exact tuple");
+            checkEq("DEAL_ERROR_CODE: " + pinned.code(), jvm.terminalLine(), label
+                + ": the JVM artifact's pinned terminal line");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * Drives one focused runtime-ok program through the real production
+     * pipeline: the oracle and both production artifacts reach the pinned
+     * success with no terminal.
+     */
+    private static void driveFocusedSuccess(String label, String source)
+            throws Exception {
+        Path root = Files.createTempDirectory("bytes-inert-");
+        try {
+            BytesFixture spec = new BytesFixture(BYTES_DIR, label, "main", "null",
+                List.of(), null, null, 0, 0);
+            Compiled compiled = compileFocused(root, source, null, null);
+            if (compiled == null) {
+                return;
+            }
+            Drive drive = lowerFocused(compiled, spec);
+            if (drive == null) {
+                return;
+            }
+            SemanticRuntimeModel.ConsumerRun oracle =
+                SemanticOracle.executeProjectInits(drive.project(), drive.tables(),
+                    drive.registries(), null);
+            check(oracle.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                label + ": the oracle runs the decoded tree to success: "
+                    + oracle.terminal());
+            ArtifactRun lua = luaProduction(drive);
+            checkEq("OK", lua.outcome(), label
+                + ": the LuaJIT production artifact runs to success");
+            checkEq("", lua.terminalLine(), label
+                + ": no LuaJIT terminal on the successful drive");
+            ArtifactRun jvm = jvmProduction(drive);
+            checkEq("OK", jvm.outcome(), label
+                + ": the JVM production artifact runs to success");
+            checkEq("", jvm.terminalLine(), label
+                + ": no JVM terminal on the successful drive");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * The oracle-side host of the focused host-returned-array control:
+     * {@code host/array_return}'s {@code split} returns a real (unmarked)
+     * string array, the same shape the deployed Lua host module and JVM host
+     * class return.
+     */
+    private static SemanticOracle.HostResponder focusedArrayHostResponder(int[] calls) {
+        return new SemanticOracle.HostResponder() {
+            @Override
+            public SyncOutcome call(ModuleId module, String export,
+                    RuntimeDescriptor.Func descriptor,
+                    List<SemanticOracle.Value> args) {
+                if (!"host.array_return".equals(module.path())
+                        || !"split".equals(export)) {
+                    return new SyncOutcome.Thrown("E9001", "unknown host call "
+                        + module.path() + "#" + export);
+                }
+                calls[0]++;
+                List<SemanticOracle.Value> elements = new ArrayList<>();
+                elements.add(new SemanticOracle.Value.StrValue("a"));
+                elements.add(new SemanticOracle.Value.StrValue("b"));
+                elements.add(new SemanticOracle.Value.StrValue("c"));
+                return new SyncOutcome.Returned(new SemanticOracle.Value.ArrayValue(
+                    elements, RuntimeDescriptor.String.INSTANCE, false));
+            }
+        };
+    }
+
+    /**
+     * Materializes one focused program ({@code src/main.deal} plus the
+     * optional host declaration) and compiles it through the release-owned
+     * production orchestrator.
+     */
+    private static Compiled compileFocused(Path root, String source, String hostStem,
+            String hostSpecifier) throws Exception {
+        Path src = root.resolve("src");
+        Files.createDirectories(src);
+        Files.writeString(src.resolve("main.deal"), source, StandardCharsets.UTF_8);
+        Map<String, String> externals = null;
+        if (hostStem != null) {
+            Path declaration = root.resolve("host").resolve(hostStem + ".d.deal");
+            Files.createDirectories(declaration.getParent());
+            Files.writeString(declaration,
+                ConformanceHarnessMetadata.stripClassificationHeaders(
+                    Files.readString(Path.of("test", "conformance", "host-fixtures",
+                        hostStem + ".d.deal"), StandardCharsets.UTF_8)),
+                StandardCharsets.UTF_8);
+            externals = new LinkedHashMap<>();
+            externals.put(hostSpecifier, declaration.toAbsolutePath().toString());
+            externals.put(hostSpecifier.replace('.', '/'),
+                declaration.toAbsolutePath().toString());
+        }
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            src.resolve("main.deal").toAbsolutePath(), root.resolve("out"), false,
+            false, false, false, Backend.LUAJIT, externals,
+            List.of(src.toAbsolutePath()), Path.of("std").toAbsolutePath().normalize(),
+            null, productionInvocation());
+        boolean compiled = orchestrator.compile();
+        check(compiled, "the focused program compiles through the release-owned "
+            + "invocation: " + orchestrator.diagnostics());
+        CheckedProjectBuildResult built = orchestrator.checkedProject();
+        RequirementManifestResult manifests = orchestrator.requirementManifests();
+        check(built != null && built.input() != null && built.index() != null
+                && !built.hasErrors(),
+            "the focused program's checked project builds: "
+                + (built == null ? "null" : built.diagnostics()));
+        if (!compiled || built == null || built.input() == null || built.index() == null
+                || built.hasErrors() || manifests == null
+                || manifests.manifests() == null
+                || orchestrator.hostDeclarationSurface() == null) {
+            return null;
+        }
+        Map<ModuleId, CanonicalModuleIdentity> identities = new LinkedHashMap<>();
+        for (ModuleId declaration : orchestrator.hostDeclarationSurface().moduleIds()) {
+            identities.put(declaration,
+                new CanonicalModuleIdentity.ExternalModule(hostStem == null
+                    ? declaration.path() : declaration.path().replace('/', '.')));
+        }
+        return new Compiled(root, built.input(), built.index(), manifests.manifests(),
+            orchestrator.hostDeclarationSurface(), identities, 0);
+    }
+
+    /** The production project lowering entry over one focused program. */
+    private static Drive lowerFocused(Compiled compiled, BytesFixture spec) {
+        SemanticLowerer.ProjectLoweringResult result = SemanticLowerer.lowerProject(
+            productionInvocation(), compiled.checkedProject(), compiled.index(),
+            compiled.manifests(), compiled.surface(), compiled.identities(), Map.of(),
+            BuiltinErrorDeclaration.synthesized(
+                compiled.checkedProject().modules().get(0).ast().span()),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT), Set.of());
+        check(result.project() != null, spec.what() + ": the production project entry "
+            + "lowers the focused program with zero diagnostics: "
+            + result.diagnostics());
+        if (result.project() == null) {
+            return null;
+        }
+        ModuleId fixtureModule = result.project().entryModule();
+        LoweredModuleUnit unit = result.project().modules().get(fixtureModule);
+        Optional<CompilerDiagnostic> gate = SemanticIrValidator.validate(
+            result.project(), new SemanticIrValidator.ComparisonFacts(
+                unit.interfaceHash(), SemanticProfile.DEAL_V1_2_INT32,
+                ReleaseConfiguration.releaseCapabilityRegistry()
+                    .capabilityRegistryHash()));
+        check(gate.isEmpty(), spec.what() + ": the closed schema and bindings gates "
+            + "accept the produced closure: "
+            + gate.map(CompilerDiagnostic::message).orElse("admission"));
+        if (gate.isPresent()) {
+            return null;
+        }
+        return new Drive(compiled, result, fixtureModule, unit, spec);
+    }
+
+    /**
+     * Repeated lowering and emission of one focused program are
+     * byte-identical on both targets: two production compiles of the same
+     * source publish the same artifact bytes.
+     */
+    private static void checkDeterministicEmission() throws Exception {
+        Path root = Files.createTempDirectory("bytes-determinism-");
+        try {
+            Path src = root.resolve("src");
+            Files.createDirectories(src);
+            Files.writeString(src.resolve("main.deal"), DECODED_INERTNESS_SOURCE,
+                StandardCharsets.UTF_8);
+            for (Backend backend : List.of(Backend.LUAJIT, Backend.JVM)) {
+                String artifact = backend == Backend.JVM
+                    ? JvmBackend.classNameFor("main") + ".java" : "main.lua";
+                String first = compileArtifact(root, src, backend, artifact);
+                String second = compileArtifact(root, src, backend, artifact);
+                check(first != null && second != null, "the " + backend
+                    + " determinism drive publishes its artifact");
+                checkEq(first, second, "repeated " + backend + " lowering and "
+                    + "emission are byte-identical");
+            }
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /** One production compile of the determinism drive; the artifact text. */
+    private static String compileArtifact(Path root, Path src, Backend backend,
+            String artifact) throws Exception {
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            src.resolve("main.deal").toAbsolutePath(), root.resolve("out"), false,
+            false, false, false, backend, null, List.of(src.toAbsolutePath()),
+            Path.of("std").toAbsolutePath().normalize(), null, productionInvocation());
+        boolean compiled = orchestrator.compile();
+        check(compiled, "the determinism compile (" + backend + ") succeeds: "
+            + orchestrator.diagnostics());
+        if (!compiled) {
+            return null;
+        }
+        return Files.readString(root.resolve("out").resolve(artifact),
+            StandardCharsets.UTF_8);
+    }
+
+    /**
+     * A fail-closed production compile stages nothing and preserves the
+     * previous artifact set byte-identical (the atomic staging contract),
+     * on both targets.
+     */
+    private static void checkAtomicStaging() throws Exception {
+        for (Backend backend : List.of(Backend.LUAJIT, Backend.JVM)) {
+            Path scratch = Files.createTempDirectory("bytes-atomic-");
+            try {
+                Path src = scratch.resolve("src");
+                Files.createDirectories(src);
+                Files.writeString(src.resolve("main.deal"), GUARD_SEED,
+                    StandardCharsets.UTF_8);
+                Path out = scratch.resolve("out");
+                Files.createDirectories(out);
+                Files.writeString(out.resolve("main.lua"),
+                    "-- the prior artifact set\n", StandardCharsets.UTF_8);
+                String before = Files.readString(out.resolve("main.lua"),
+                    StandardCharsets.UTF_8);
+                CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                    src.resolve("main.deal").toAbsolutePath(), out, false, false,
+                    false, false, backend, null, List.of(src.toAbsolutePath()),
+                    Path.of("std").toAbsolutePath().normalize(), null,
+                    productionInvocation());
+                boolean compiled = orchestrator.compile();
+                check(!compiled, "the unrealized-construct seed fails closed on "
+                    + backend + ": " + orchestrator.diagnostics());
+                check(orchestrator.diagnostics().stream().anyMatch(diagnostic ->
+                        "E6005".equals(diagnostic.code())
+                            && diagnostic.message().contains("CONSTRUCT_UNLOWERED")),
+                    "the fail-closed compile names E6005 CONSTRUCT_UNLOWERED on "
+                        + backend + ": " + orchestrator.diagnostics());
+                check(!Files.exists(out.resolve("deal").resolve("runtime.lua")),
+                    "the failing compile stages no deployment copy on " + backend);
+                checkEq(before, Files.readString(out.resolve("main.lua"),
+                        StandardCharsets.UTF_8),
+                    "the failing compile leaves the prior artifact set byte-identical "
+                        + "on " + backend);
+            } finally {
+                deleteRecursively(scratch);
+            }
+        }
     }
 
     // =========================================================================
@@ -1308,22 +1860,15 @@ public class BytesCoverageTest {
                 """).formatted(className, className, entryId), StandardCharsets.UTF_8);
             Path classes = workspace.resolve("classes");
             Files.createDirectories(classes);
-            String classpath = absoluteClasspath();
-            ProcessBuilder javac = new ProcessBuilder("javac", "--release", "25",
-                "-proc:none", "-cp", classpath, "-d", classes.toString(),
-                className + ".java", "Probe.java");
-            javac.directory(workspace.toFile());
-            javac.redirectErrorStream(true);
-            Process compile = javac.start();
-            String compileOut = new String(compile.getInputStream().readAllBytes(),
-                StandardCharsets.UTF_8);
-            int compileExit = compile.waitFor();
-            checkEq(0, compileExit, spec.what() + ": the JVM async fixture compiles "
-                + "with the emitted production artifact: " + compileOut);
-            if (compileExit != 0) {
+            BoundedRun compile = runJavac(workspace, classes,
+                List.of(className + ".java", "Probe.java"));
+            checkEq(0, compile.exitCode(), spec.what() + ": the JVM async fixture "
+                + "compiles with the emitted production artifact: "
+                + compile.stdout() + compile.stderr());
+            if (compile.exitCode() != 0) {
                 return;
             }
-            String stdout = runJava(classpath, classes, "Probe");
+            String stdout = runJava(absoluteClasspath(), classes, "Probe");
             check(stdout.contains("OK:0") && !stdout.contains("ERR:"), spec.what()
                 + ": the JVM production artifact runs the async fixture's own test "
                 + "export to the pinned outcome: " + stdout);
@@ -1415,23 +1960,15 @@ public class BytesCoverageTest {
                 """).formatted(className, className, entryId), StandardCharsets.UTF_8);
             Path classes = workspace.resolve("classes");
             Files.createDirectories(classes);
-            String classpath = absoluteClasspath();
-            ProcessBuilder javac = new ProcessBuilder("javac", "--release", "25",
-                "-proc:none", "-cp", classpath, "-d", classes.toString(),
-                className + ".java", hostClass + ".java", "Probe.java");
-            javac.directory(workspace.toFile());
-            javac.redirectErrorStream(true);
-            Process compile = javac.start();
-            String compileOut = new String(compile.getInputStream().readAllBytes(),
-                StandardCharsets.UTF_8);
-            int compileExit = compile.waitFor();
-            checkEq(0, compileExit, spec.what() + ": the JVM host fixture compiles "
-                + "with the emitted host ABI surface and the deployed host class: "
-                + compileOut);
-            if (compileExit != 0) {
+            BoundedRun compile = runJavac(workspace, classes,
+                List.of(className + ".java", hostClass + ".java", "Probe.java"));
+            checkEq(0, compile.exitCode(), spec.what() + ": the JVM host fixture "
+                + "compiles with the emitted host ABI surface and the deployed host "
+                + "class: " + compile.stdout() + compile.stderr());
+            if (compile.exitCode() != 0) {
                 return;
             }
-            String stdout = runJava(classpath, classes, "Probe");
+            String stdout = runJava(absoluteClasspath(), classes, "Probe");
             check(stdout.contains("OK") && !stdout.contains("ERR:"), spec.what()
                 + ": the JVM production artifact runs the async host fixture to the "
                 + "pinned outcome: " + stdout);
@@ -1574,7 +2111,78 @@ public class BytesCoverageTest {
         return resolved.toString();
     }
 
+    /**
+     * The bounded subprocess contract (the harness budget): each stream is
+     * drained concurrently with the wait up to the 1 MiB cap and to EOF; a
+     * child that outlives the 300 s budget is killed, reaped, and reported
+     * as a hard failure, never as a skip. Scratch cleanup stays with the
+     * caller's {@code finally}.
+     */
+    private static final int STREAM_CAP_BYTES = 1 << 20;
+    private static final long PROCESS_BUDGET_SECONDS = 300;
+
+    /** One bounded subprocess run; the streams stay separate. */
+    private record BoundedRun(int exitCode, String stdout, String stderr) {
+    }
+
+    /** Drains one stream to EOF, retaining at most the 1 MiB cap. */
+    private static String drainCapped(InputStream stream) throws java.io.IOException {
+        java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        long total = 0;
+        int read;
+        while ((read = stream.read(buffer)) >= 0) {
+            if (total < STREAM_CAP_BYTES) {
+                int keep = (int) Math.min(read, STREAM_CAP_BYTES - total);
+                captured.write(buffer, 0, keep);
+                total += keep;
+            }
+        }
+        return captured.toString(StandardCharsets.UTF_8);
+    }
+
+    /** Drains one stream; a closed stream keeps the bytes read so far. */
+    private static String drainQuietly(InputStream stream) {
+        try {
+            return drainCapped(stream);
+        } catch (java.io.IOException ignored) {
+            return "";
+        }
+    }
+
+    /** Runs one subprocess under the bounded-output and deadline contract. */
+    private static BoundedRun runBounded(List<String> argv, Path workingDir,
+            Map<String, String> environment) throws Exception {
+        ProcessBuilder builder = new ProcessBuilder(argv);
+        builder.directory(workingDir.toFile());
+        builder.environment().putAll(environment);
+        Process process = builder.start();
+        CompletableFuture<String> stdout =
+            CompletableFuture.supplyAsync(() -> drainQuietly(process.getInputStream()));
+        CompletableFuture<String> stderr =
+            CompletableFuture.supplyAsync(() -> drainQuietly(process.getErrorStream()));
+        boolean finished = process.waitFor(PROCESS_BUDGET_SECONDS, TimeUnit.SECONDS);
+        if (!finished) {
+            process.descendants().forEach(ProcessHandle::destroyForcibly);
+            process.destroyForcibly();
+            process.waitFor();
+            stdout.join();
+            stderr.join();
+            throw new AssertionError("BOUNDED_PROCESS_TIMEOUT " + argv.get(0));
+        }
+        return new BoundedRun(process.exitValue(), stdout.join(), stderr.join());
+    }
+
     private static ArtifactRun luaProduction(Drive drive) throws Exception {
+        return luaProduction(drive, null, null);
+    }
+
+    /**
+     * The production LuaJIT artifact, optionally with a deployed host
+     * module for a host-importing focused program.
+     */
+    private static ArtifactRun luaProduction(Drive drive, String hostModule,
+            Path hostImplementation) throws Exception {
         Path workspace = Files.createTempDirectory("bytes-lua");
         try {
             Path artifact = workspace.resolve("project.lua");
@@ -1582,6 +2190,12 @@ public class BytesCoverageTest {
                 drive.project(), drive.tables(), drive.registries(),
                 drive.compiled().surface()), StandardCharsets.UTF_8);
             deployRuntime(workspace);
+            if (hostModule != null) {
+                Path hostDir = workspace.resolve("host");
+                Files.createDirectories(hostDir);
+                Files.copy(hostImplementation, hostDir.resolve(
+                    hostModule.substring(hostModule.lastIndexOf('/') + 1) + ".lua"));
+            }
             Path probe = workspace.resolve("probe.lua");
             Files.writeString(probe, """
                 local chunk = dofile("%s")
@@ -1617,23 +2231,13 @@ public class BytesCoverageTest {
 
     private static String runLua(Path workspace, Path script, boolean deferMain)
             throws Exception {
-        ProcessBuilder builder = new ProcessBuilder("luajit",
-            script.toAbsolutePath().toString());
-        builder.directory(workspace.toFile());
-        if (deferMain) {
-            builder.environment().put("DEAL_DEFER_MAIN", "1");
-        }
-        Path stderrFile = Files.createTempFile(workspace, "stderr", ".txt");
-        builder.redirectError(stderrFile.toFile());
-        Process process = builder.start();
-        String stdout = new String(process.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        int exit = process.waitFor();
-        check(deferMain ? exit == 0 : exit == 1,
+        BoundedRun run = runBounded(List.of("luajit", script.toAbsolutePath().toString()),
+            workspace, deferMain ? Map.of("DEAL_DEFER_MAIN", "1") : Map.of());
+        check(deferMain ? run.exitCode() == 0 : run.exitCode() == 1,
             "the luajit run of " + script.getFileName() + " exits "
-                + (deferMain ? 0 : 1) + ": stdout=" + stdout + " stderr="
-                + Files.readString(stderrFile, StandardCharsets.UTF_8));
-        return stdout;
+                + (deferMain ? 0 : 1) + ": stdout=" + run.stdout() + " stderr="
+                + run.stderr());
+        return run.stdout();
     }
 
     private static void deployRuntime(Path workspace) throws Exception {
@@ -1652,6 +2256,15 @@ public class BytesCoverageTest {
     }
 
     private static ArtifactRun jvmProduction(Drive drive) throws Exception {
+        return jvmProduction(drive, null, null);
+    }
+
+    /**
+     * The production JVM artifact, optionally with a deployed host class
+     * for a host-importing focused program.
+     */
+    private static ArtifactRun jvmProduction(Drive drive, String hostModule,
+            Path hostImplementation) throws Exception {
         Path workspace = Files.createTempDirectory("bytes-jvm");
         try {
             String className = JvmBackend.classNameFor(
@@ -1662,6 +2275,13 @@ public class BytesCoverageTest {
                     drive.compiled().surface());
             Files.writeString(workspace.resolve(className + ".java"),
                 emission.source(), StandardCharsets.UTF_8);
+            List<String> sources = new ArrayList<>();
+            sources.add(className + ".java");
+            if (hostModule != null) {
+                String hostClass = JvmBackend.classNameFor(hostModule);
+                Files.copy(hostImplementation, workspace.resolve(hostClass + ".java"));
+                sources.add(hostClass + ".java");
+            }
             Files.writeString(workspace.resolve("Probe.java"), """
                 final class Probe {
                   public static void main(String[] args) {
@@ -1677,24 +2297,17 @@ public class BytesCoverageTest {
                   }
                 }
                 """.formatted(className), StandardCharsets.UTF_8);
+            sources.add("Probe.java");
             Path classes = workspace.resolve("classes");
             Files.createDirectories(classes);
-            String classpath = absoluteClasspath();
-            ProcessBuilder javac = new ProcessBuilder("javac", "--release", "25",
-                "-proc:none", "-cp", classpath, "-d", classes.toString(),
-                className + ".java", "Probe.java");
-            javac.directory(workspace.toFile());
-            javac.redirectErrorStream(true);
-            Process compile = javac.start();
-            String compileOut = new String(compile.getInputStream().readAllBytes(),
-                StandardCharsets.UTF_8);
-            int compileExit = compile.waitFor();
-            checkEq(0, compileExit, drive.spec().what() + ": the JVM production "
-                + "artifact compiles (javac --release 25 -proc:none): " + compileOut);
-            if (compileExit != 0) {
+            BoundedRun compile = runJavac(workspace, classes, sources);
+            checkEq(0, compile.exitCode(), drive.spec().what() + ": the JVM production "
+                + "artifact compiles (javac --release 25 -proc:none): "
+                + compile.stdout() + compile.stderr());
+            if (compile.exitCode() != 0) {
                 return new ArtifactRun("", "", "");
             }
-            String stdout = runJava(classpath, classes, "Probe");
+            String stdout = runJava(absoluteClasspath(), classes, "Probe");
             String outcome = stdout.lines()
                 .filter(line -> line.startsWith("ERR:") || line.equals("OK"))
                 .reduce((first, second) -> second).orElse("");
@@ -1702,7 +2315,8 @@ public class BytesCoverageTest {
                 + "artifact publishes its outcome: " + stdout);
             String terminalLine = "";
             if (!drive.spec().runtimeOk()) {
-                terminalLine = runJava(classpath, classes, className).strip();
+                terminalLine = runJava(absoluteClasspath(), classes,
+                    className).strip();
             }
             return new ArtifactRun(outcome, stdout, terminalLine);
         } finally {
@@ -1710,20 +2324,24 @@ public class BytesCoverageTest {
         }
     }
 
+    /** One bounded {@code javac} run of the emitted sources. */
+    private static BoundedRun runJavac(Path workspace, Path classes,
+            List<String> sources) throws Exception {
+        List<String> argv = new ArrayList<>(List.of("javac", "--release", "25",
+            "-proc:none", "-cp", absoluteClasspath(), "-d", classes.toString()));
+        argv.addAll(sources);
+        return runBounded(argv, workspace, Map.of());
+    }
+
     private static String runJava(String classpath, Path classes, String mainClass)
             throws Exception {
-        ProcessBuilder builder = new ProcessBuilder("java", "-cp",
-            classpath + File.pathSeparator + classes, mainClass);
-        builder.directory(classes.getParent().toFile());
-        Process process = builder.start();
-        String stdout = new String(process.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        String stderr = new String(process.getErrorStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        int exit = process.waitFor();
-        check(exit == 0 || exit == 1, "the java run of " + mainClass + " exits 0 or 1: "
-            + "stdout=" + stdout + " stderr=" + stderr);
-        return stdout;
+        BoundedRun run = runBounded(List.of("java", "-cp",
+            classpath + File.pathSeparator + classes, mainClass),
+            classes.getParent(), Map.of());
+        check(run.exitCode() == 0 || run.exitCode() == 1,
+            "the java run of " + mainClass + " exits 0 or 1: stdout=" + run.stdout()
+                + " stderr=" + run.stderr());
+        return run.stdout();
     }
 
     // =========================================================================
@@ -1735,6 +2353,7 @@ public class BytesCoverageTest {
         testCorpusDrive();
         testReadShapeAndWriteChain();
         testBytesBoundaryContext();
+        testDecodedArrayMark();
         testOracleRealization();
         System.out.println();
         System.out.println("BytesCoverageTest: " + passed + " passed, " + failed
