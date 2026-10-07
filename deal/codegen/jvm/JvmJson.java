@@ -764,7 +764,13 @@ public final class JvmJson {
             String inner = descriptor.substring("array(".length(),
                 descriptor.length() - 1);
             for (Object element : array.elements) {
-                if (element == null || !conforms(inner, element)) {
+                // A null element is normalized to the language null the
+                // element descriptor then decides: a nullable element admits
+                // it (the spec's recursive T | null jsonable types), a
+                // non-nullable element keeps its own rejection. The decode
+                // already rejected a null at every non-nullable element; the
+                // check never rejects it unconditionally.
+                if (!conforms(inner, element)) {
                     return false;
                 }
             }

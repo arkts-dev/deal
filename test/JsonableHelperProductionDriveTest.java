@@ -88,12 +88,19 @@ import java.util.stream.Stream;
  * field must be rejected by all three consumers (the table-content walk
  * stays JSON-shaped); a nested class's table field must spell its keys in
  * first-insertion order and its int/number leaves by their own variant
- * (the exact text compared on all three consumers); and the recursive
+ * (the exact text compared on all three consumers); the recursive
  * nested-class walk must stop at the shared JSON depth bound (511 chain
  * links succeed, 512 links fail through the walk arm with the exceeding
- * container's token and path). The pinned-failure leg's comparison is
- * itself covered by negative controls: an incorrect process exit status
- * or stderr is rejected.</p>
+ * container's token and path); the oracle's array executor view must stay
+ * live behind a class field's in-place element replacement, append, and
+ * deletion (exact text for replacement and append, outcome parity for the
+ * deleted missing slot); a null element in {@code (int | null)[]} must
+ * roundtrip on all three consumers while the same document stays rejected
+ * by {@code int[]}; and a read-derived numeric variant carrier must
+ * serialize at a declared {@code number} field and array element with its
+ * own variant's spelling. The pinned-failure leg's comparison is itself
+ * covered by negative controls: unexpected process stdout, an incorrect
+ * process exit status, or wrong stderr is rejected.</p>
  *
  * <p>The combined dependency step runs the oracle over every fixture of
  * the family through the same one-lowering closure (the runtime-ok
@@ -1021,7 +1028,7 @@ public class JsonableHelperProductionDriveTest {
         }
         SidecarExpectations.ErrorExpectation row = expectation.error();
         List<String> mismatches = runtimeErrorSidecarMismatches(expectation, row,
-            execution.exitCode(), execution.stderr(), capture);
+            execution.exitCode(), execution.stdout(), execution.stderr(), capture);
         for (String mismatch : mismatches) {
             check(false, fixtureRel + " [" + target.laneName() + "]: " + mismatch);
         }
@@ -1031,16 +1038,20 @@ public class JsonableHelperProductionDriveTest {
     /**
      * The pinned-failure leg's sidecar comparison: the ordered mismatch
      * descriptions (empty exactly when the leg reproduces the sidecar's
-     * byte-exact transcript — the normalized capture fields, the regenerated
-     * framed stdout, the process exit code, and the process stderr). The
-     * sidecar's exit code and stderr are part of the byte-exact transcript
-     * contract, so a matching capture accompanied by an incorrect process
-     * status or stderr is a mismatch, never a pass.
+     * byte-exact transcript — the normalized capture fields, the complete
+     * stdout transcript, the process exit code, and the process stderr). The
+     * sidecar's stdout, exit code, and stderr are part of the byte-exact
+     * transcript contract, so a matching capture accompanied by unexpected
+     * stdout, an incorrect process status, or wrong stderr is a mismatch,
+     * never a pass. The stdout transcript is the captured process stdout
+     * concatenated with the framing regenerated from the normalized capture
+     * — the landed lane's assembly — so arbitrary extra output cannot hide
+     * behind an otherwise matching capture.
      */
     private static List<String> runtimeErrorSidecarMismatches(
             SidecarExpectations.RuntimeExpectation.Executed expectation,
-            SidecarExpectations.ErrorExpectation row, int exitCode, String stderr,
-            Capture capture) {
+            SidecarExpectations.ErrorExpectation row, int exitCode, String stdout,
+            String stderr, Capture capture) {
         List<String> mismatches = new ArrayList<>();
         if (capture == null || capture.code() == null) {
             mismatches.add("the pinned failure is not captured (exit " + exitCode
@@ -1074,7 +1085,8 @@ public class JsonableHelperProductionDriveTest {
                 Optional.empty(), Optional.empty()))
             + "\n";
         addMismatch(mismatches, "framed stdout",
-            new String(expectation.stdout(), StandardCharsets.UTF_8), framed);
+            new String(expectation.stdout(), StandardCharsets.UTF_8),
+            stdout + framed);
         return mismatches;
     }
 
@@ -1890,13 +1902,13 @@ public class JsonableHelperProductionDriveTest {
     }
 
     /**
-     * The exact nested-table text drive: the DEAL body compares the helper's
+     * The exact helper-text drive: the DEAL body compares the helper's
      * returned text against the exact expected string and throws the actual
      * text on any difference, so every consumer that completes proves the
      * exact string value — the oracle, the LuaJIT artifact, and the JVM
      * artifact alike.
      */
-    private static void driveExactNestedTableText(String label, String source)
+    private static void driveExactHelperText(String label, String source)
             throws Exception {
         List<Export> exports = exportsOf(source);
         Project oracleProject = syntheticProject("app", source, Target.JVM);
@@ -1965,7 +1977,7 @@ public class JsonableHelperProductionDriveTest {
             + "    throw { code: \"MISMATCH\", message: json };\n"
             + "  }\n"
             + "  return null;\n}\n";
-        driveExactNestedTableText("nested-table-order",
+        driveExactHelperText("nested-table-order",
             nestedTableFixtureSource(function));
     }
 
@@ -2005,7 +2017,7 @@ public class JsonableHelperProductionDriveTest {
             + "    throw { code: \"MISMATCH\", message: json };\n"
             + "  }\n"
             + "  return null;\n}\n";
-        driveExactNestedTableText("nested-table-numbers",
+        driveExactHelperText("nested-table-numbers",
             nestedTableFixtureSource(function));
     }
 
@@ -2169,16 +2181,241 @@ public class JsonableHelperProductionDriveTest {
         }
     }
 
+    // =========================================================================
+    // 7d. The oracle carrier mirror and the helper carrier regressions
+    // =========================================================================
+
+    /**
+     * The three-consumer outcome parity of one inline project: the oracle's
+     * success or failure tuple is the reference and every artifact must
+     * agree — success where the oracle succeeds, the identical code and
+     * message where the oracle fails. The exact-text drive proves a success
+     * outcome's text; this parity drive proves the consumers agree on the
+     * outcome itself (a deleted array element's admission or rejection).
+     */
+    private static void driveThreeConsumerParity(String label, String source)
+            throws Exception {
+        List<Export> exports = exportsOf(source);
+        SemanticRuntimeModel.ErrorSnapshot oracle;
+        Project oracleProject = syntheticProject("app", source, Target.JVM);
+        try {
+            oracle = oracleFailure(oracleProject, exports);
+        } finally {
+            deleteRecursively(oracleProject.root());
+        }
+        String reference = oracle == null ? "success"
+            : oracle.code() + " " + oracle.message();
+        System.out.println("   " + label + ": the oracle reference outcome is "
+            + reference);
+        for (Target target : Target.values()) {
+            Project project = syntheticProject("app", source, target);
+            try {
+                List<String> diagnostics = new ArrayList<>();
+                boolean compiled = compile(project, label, target, diagnostics);
+                check(compiled, label + " [" + target.laneName()
+                    + "]: the project compiles through the production invocation: "
+                    + diagnostics);
+                if (!compiled) {
+                    continue;
+                }
+                Execution execution = target == Target.LUAJIT
+                    ? executeLua(project, exports) : executeJvm(project, exports);
+                Capture capture = execution.capture();
+                if (oracle == null) {
+                    check(capture == null, label + " [" + target.laneName()
+                        + "]: the artifact agrees with the oracle's success (exit "
+                        + execution.exitCode() + "; "
+                        + (capture == null ? ""
+                            : capture.code() + " " + capture.message())
+                        + ")");
+                } else {
+                    check(capture != null, label + " [" + target.laneName()
+                        + "]: the artifact agrees with the oracle's failure (exit "
+                        + execution.exitCode() + "; stderr " + execution.stderr()
+                        + ")");
+                    if (capture != null) {
+                        checkEq(oracle.code(), capture.code(), label + " ["
+                            + target.laneName() + "]: the failure code");
+                        checkEq(oracle.message(), capture.message(), label + " ["
+                            + target.laneName() + "]: the failure message");
+                    }
+                }
+            } finally {
+                deleteRecursively(project.root());
+            }
+        }
+    }
+
+    /**
+     * The oracle's carrier-to-executor mutation mirror for arrays (the
+     * three-consumer regression): a class field's array mutated in place by
+     * an element replacement and an append is what the helper serializes on
+     * the oracle, the LuaJIT artifact, and the JVM artifact alike — the
+     * cached executor view never goes stale behind the carrier's in-place
+     * commit.
+     */
+    private static void testArrayExecutorViewSync() throws Exception {
+        System.out.println("-- the oracle's array carrier mirror: replacement and "
+            + "append serialize on all three consumers --");
+        String source = "// @jsonable\nexport class Box {\n  xs: int[] = [];\n}\n\n"
+            + "// @jsonable\nexport class Wrapper {\n  data: table = {};\n}\n\n"
+            + "export function test_array_mutation(): null {\n"
+            + "  let b: Box = { xs: [1] };\n"
+            + "  b.xs[0] = 2;\n"
+            + "  b.xs[1] = 3;\n"
+            // The second instance's field holds the same array identity;
+            // mutating it through the alias must be visible through the
+            // first instance's cached view (the mirror preserves identity).
+            + "  let c: Box = { xs: b.xs };\n"
+            + "  c.xs[0] = 9;\n"
+            + "  let json: string = Box$toJson(b);\n"
+            + "  let expected: string = " + dealStringLiteral("{\"xs\":[9,3]}")
+            + ";\n"
+            + "  if (json !== expected) {\n"
+            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "  }\n"
+            + "  return null;\n"
+            + "}\n\n"
+            // The array nested in a table field: the cached table view
+            // shares the array view, so the same in-place commit is what
+            // the descriptor-free table walk serializes.
+            + "export function test_table_nested_array(): null {\n"
+            + "  let w: Wrapper = { data: { xs: [1] } };\n"
+            + "  let arr: int[] = w.data.xs;\n"
+            + "  arr[0] = 2;\n"
+            + "  arr[1] = 3;\n"
+            + "  let json: string = Wrapper$toJson(w);\n"
+            + "  let expected: string = "
+            + dealStringLiteral("{\"data\":{\"xs\":[2,3]}}") + ";\n"
+            + "  if (json !== expected) {\n"
+            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "  }\n"
+            + "  return null;\n"
+            + "}\n\n"
+            + "export function main(): null {\n  return null;\n}\n";
+        driveExactHelperText("array-executor-view-sync", source);
+    }
+
+    /**
+     * The oracle's carrier mirror on deletion (the three-consumer
+     * agreement): an element deleted from a class field's array is observed
+     * by the helper walk on the oracle and both artifacts with the same
+     * outcome — the mirror keeps the deleted slot as the missing element,
+     * never the stale pre-delete value.
+     */
+    private static void testArrayExecutorViewDeleteParity() throws Exception {
+        System.out.println("-- the oracle's array carrier mirror: a deleted element "
+            + "agrees on all three consumers --");
+        String source = "// @jsonable\nexport class Box {\n  xs: int[] = [];\n}\n\n"
+            + "export function test_array_delete(): string {\n"
+            + "  let b: Box = { xs: [1, 2] };\n"
+            + "  delete b.xs[0];\n"
+            + "  return Box$toJson(b);\n"
+            + "}\n\n"
+            + "export function main(): null {\n  return null;\n}\n";
+        driveThreeConsumerParity("array-executor-view-delete", source);
+        // The same missing-slot semantics in the descriptor-free table
+        // walk (an array nested in a table field): the deleted slot is the
+        // internal missing element on every consumer, never a serialized
+        // null or the stale pre-delete value.
+        String tableSource = "// @jsonable\nexport class Wrapper {\n"
+            + "  data: table = {};\n}\n\n"
+            + "export function test_table_array_delete(): string {\n"
+            + "  let w: Wrapper = { data: { xs: [1, 2] } };\n"
+            + "  let arr: int[] = w.data.xs;\n"
+            + "  delete arr[0];\n"
+            + "  return Wrapper$toJson(w);\n"
+            + "}\n\n"
+            + "export function main(): null {\n  return null;\n}\n";
+        driveThreeConsumerParity("table-array-view-delete", tableSource);
+    }
+
+    /**
+     * The nullable-array element admission (the three-consumer regression):
+     * a null element is admitted exactly where the element descriptor admits
+     * it — {@code (int | null)[]} roundtrips the null element on the oracle,
+     * the LuaJIT artifact, and the JVM artifact, while a non-nullable
+     * {@code int[]} rejects the same document (language null) on all three.
+     */
+    private static void testNullableArrayElements() throws Exception {
+        System.out.println("-- the nullable-array element admission: the element "
+            + "descriptor decides a null element on all three consumers --");
+        String source = "// @jsonable\nexport class Box {\n"
+            + "  xs: (int | null)[] = [];\n}\n\n"
+            + "// @jsonable\nexport class StrictBox {\n"
+            + "  xs: int[] = [];\n}\n\n"
+            + "export function test_nullable_array_roundtrip(): null {\n"
+            + "  let maybe: Box | null = Box$fromJson(\"{\\\"xs\\\":[1,null]}\");\n"
+            + "  if (maybe !== null) {\n"
+            + "    let b: Box = maybe;\n"
+            + "    let json: string = Box$toJson(b);\n"
+            + "    let expected: string = "
+            + dealStringLiteral("{\"xs\":[1,null]}") + ";\n"
+            + "    if (json !== expected) {\n"
+            + "      throw { code: \"MISMATCH\", message: json };\n"
+            + "    }\n"
+            + "    return null;\n"
+            + "  }\n"
+            + "  throw { code: \"MISMATCH\", message: \"the valid nullable "
+            + "array document was rejected\" };\n"
+            + "}\n\n"
+            + "export function test_strict_array_rejected(): null {\n"
+            + "  let maybe: StrictBox | null = StrictBox$fromJson("
+            + "\"{\\\"xs\\\":[1,null]}\");\n"
+            + "  if (maybe !== null) {\n"
+            + "    throw { code: \"MISMATCH\", message: \"the non-nullable "
+            + "element was admitted\" };\n"
+            + "  }\n"
+            + "  return null;\n"
+            + "}\n\n"
+            + "export function main(): null {\n  return null;\n}\n";
+        driveExactHelperText("nullable-array-elements", source);
+    }
+
+    /**
+     * The read-derived numeric carrier at declared positions (the
+     * three-consumer regression): a numeric value read from a container slot
+     * travels as the read-side variant carrier ({@code __jn}), and a declared
+     * {@code number} field or array element admits it with its own variant's
+     * spelling — never a rejection of the carrier representation.
+     */
+    private static void testReadDerivedNumericCarriers() throws Exception {
+        System.out.println("-- read-derived numeric carriers in declared fields and "
+            + "array elements: the own-variant spelling on all three consumers --");
+        String source = "// @jsonable\nexport class Child {\n"
+            + "  n: number = 0.5;\n"
+            + "  xs: number[] = [];\n}\n\n"
+            + "// @jsonable\nexport class Box {\n"
+            + "  child: Child = {};\n}\n\n"
+            + "export function test_read_derived_numbers(): null {\n"
+            + "  let t: table = { i: 1, n: 2.5 };\n"
+            + "  let i: number = t.i;\n"
+            + "  let n: number = t.n;\n"
+            + "  let b: Box = { child: { n: i, xs: [i, n] } };\n"
+            + "  let json: string = Box$toJson(b);\n"
+            + "  let expected: string = "
+            + dealStringLiteral("{\"child\":{\"n\":1,\"xs\":[1,2.5]}}")
+            + ";\n"
+            + "  if (json !== expected) {\n"
+            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "  }\n"
+            + "  return null;\n"
+            + "}\n\n"
+            + "export function main(): null {\n  return null;\n}\n";
+        driveExactHelperText("read-derived-numeric-carriers", source);
+    }
+
     /**
      * The pinned-failure leg's negative controls: the sidecar comparison
-     * accepts the sidecar's own pin (the control) and rejects an incorrect
-     * process exit status, incorrect process stderr, and a missing capture —
-     * the process-level pins the runtime-error branch previously never
-     * compared.
+     * accepts the sidecar's own pin (the control) and rejects unexpected
+     * process stdout, an incorrect process exit status, incorrect process
+     * stderr, and a missing capture — the process-level pins the
+     * runtime-error branch previously never compared.
      */
     private static void testRuntimeErrorSidecarNegativeControls() throws Exception {
         System.out.println("-- the pinned-failure leg's negative controls: the "
-            + "process exit code and stderr are part of the byte-exact pin --");
+            + "process stdout, exit code, and stderr are part of the byte-exact "
+            + "pin --");
         Optional<SidecarExpectations.RuntimeExpectation.Executed> pinned =
             pinnedOf(CYCLIC_FIXTURE);
         check(pinned.isPresent(), CYCLIC_FIXTURE + ": the pinned runtime-error "
@@ -2194,22 +2431,29 @@ public class JsonableHelperProductionDriveTest {
         Capture matching = new Capture(row.code(), row.message(), row.sourceFile(),
             row.line(), row.column(), row.expected().orElse(null),
             row.actual().orElse(null));
+        String cleanStdout = new String(expectation.stdout(), StandardCharsets.UTF_8);
         List<String> accepted = runtimeErrorSidecarMismatches(expectation, row,
-            expectation.exitCode(), stderr, matching);
+            expectation.exitCode(), "", stderr, matching);
         check(accepted.isEmpty(), "the comparator accepts the sidecar's own pin "
             + "(the control): " + accepted);
+        List<String> extraStdout = runtimeErrorSidecarMismatches(expectation, row,
+            expectation.exitCode(), "unexpected output\n", stderr, matching);
+        check(extraStdout.stream().anyMatch(m -> m.contains("framed stdout")),
+            "the comparator rejects unexpected process stdout: " + extraStdout);
         List<String> wrongExit = runtimeErrorSidecarMismatches(expectation, row,
-            expectation.exitCode() + 1, stderr, matching);
+            expectation.exitCode() + 1, "", stderr, matching);
         check(wrongExit.stream().anyMatch(m -> m.contains("exit code")),
             "the comparator rejects an incorrect process exit status: " + wrongExit);
         List<String> wrongStderr = runtimeErrorSidecarMismatches(expectation, row,
-            expectation.exitCode(), "boom", matching);
+            expectation.exitCode(), "", "boom", matching);
         check(wrongStderr.stream().anyMatch(m -> m.contains("stderr")),
             "the comparator rejects incorrect process stderr: " + wrongStderr);
         List<String> noCapture = runtimeErrorSidecarMismatches(expectation, row,
-            expectation.exitCode(), stderr, null);
+            expectation.exitCode(), "", stderr, null);
         check(!noCapture.isEmpty(),
             "the comparator rejects a missing capture: " + noCapture);
+        check(cleanStdout.length() > 0,
+            "the pinned cyclic fixture carries a non-empty stdout transcript");
     }
 
     // =========================================================================
@@ -2298,6 +2542,10 @@ public class JsonableHelperProductionDriveTest {
         testNestedTableInsertionOrder();
         testNestedTableNumericVariants();
         testNestedClassDepthBound();
+        testArrayExecutorViewSync();
+        testArrayExecutorViewDeleteParity();
+        testNullableArrayElements();
+        testReadDerivedNumericCarriers();
         testRuntimeErrorSidecarNegativeControls();
         testDeterminismAndExportKey();
         System.out.println("");

@@ -117,11 +117,18 @@ WARNING: node not found, skipping standard library JS tests'
   # field is rejected by all three consumers (the table-content walk stays
   # JSON-shaped); a nested class's table field spells its keys in
   # first-insertion order and its int/number leaves by their own variant
-  # (exact text on all three consumers); and the recursive nested-class
+  # (exact text on all three consumers); the recursive nested-class
   # walk stops at the shared JSON depth bound (511 chain links succeed,
-  # 512 fail through the walk arm). The pinned-failure sidecar comparison
-  # is covered by negative controls for an incorrect process exit status
-  # or stderr.
+  # 512 fail through the walk arm); the oracle's array executor view stays
+  # live behind a class field's in-place element replacement, append, and
+  # deletion (exact text for replacement and append, outcome parity for
+  # the deleted missing slot); a null element in (int | null)[] roundtrips
+  # on all three consumers while the same document stays rejected by
+  # int[]; and a read-derived numeric variant carrier serializes at a
+  # declared number field and array element with its own variant's
+  # spelling. The pinned-failure sidecar comparison is covered by negative
+  # controls for unexpected process stdout, an incorrect process exit
+  # status, or wrong stderr.
   'fg|=== Running the @jsonable Helper Production Drive (ISSUE-0698) ===|java -ea -cp build deal.test.JsonableHelperProductionDriveTest'
   'fg|=== Running Closed Composite Terminator Analysis Tests (ISSUE-0712) ===|java -ea -cp build deal.test.CompositeTerminatorAnalysisTest'
   'fg|=== Running the Truncating Int32 Remainder Prelude Tests (ISSUE-0714) ===|java -ea -cp build deal.test.Int32ModTruncPreludeTest'

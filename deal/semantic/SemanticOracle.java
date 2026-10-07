@@ -2885,14 +2885,11 @@ public final class SemanticOracle {
             switch (op.payload()) {
                 case KindPayload.MemberWritePayload payload -> {
                     Value.TableValue table = (Value.TableValue) valueOf(payload.table());
-                    Value stored = valueOf(payload.value());
-                    table.entries().put(payload.key(), stored);
-                    mirrorTableWrite(table, payload.key(), stored);
+                    table.entries().put(payload.key(), valueOf(payload.value()));
                 }
                 case KindPayload.MemberDeletePayload payload -> {
                     Value.TableValue table = (Value.TableValue) valueOf(payload.table());
                     table.entries().remove(payload.key());
-                    mirrorTableDelete(table, payload.key());
                 }
                 case KindPayload.IndexWritePayload payload -> {
                     Value container = valueOf(payload.container());
@@ -2929,32 +2926,6 @@ public final class SemanticOracle {
                     "commit op payload " + op.payload().getClass().getSimpleName());
             }
             return null;
-        }
-
-        /**
-         * The committed-mutation mirror of the two value models (the
-         * in-place commit discipline): a carrier table and its converted
-         * class-construction view share the entries the consumer observes,
-         * so a mutation committed through the carrier — a
-         * {@code MEMBER_WRITE}/{@code MEMBER_DELETE} or an index write on a
-         * table container — is applied to the cached view the committed
-         * instance's field states hold. Without the mirror a class-field-held
-         * table would be a stale snapshot of the commit (the artifact
-         * carriers mutate one table by identity). The reverse direction
-         * never occurs: the class walk only reads table contents.
-         */
-        private void mirrorTableWrite(Value.TableValue carrier, String key, Value value) {
-            ClassOpsExecutor.Value view = executorViews.get(carrier);
-            if (view instanceof ClassOpsExecutor.Value.Table table) {
-                table.table().put(key, executorValueOf(value));
-            }
-        }
-
-        private void mirrorTableDelete(Value.TableValue carrier, String key) {
-            ClassOpsExecutor.Value view = executorViews.get(carrier);
-            if (view instanceof ClassOpsExecutor.Value.Table table) {
-                table.table().remove(key);
-            }
         }
 
         /**
@@ -3214,11 +3185,8 @@ public final class SemanticOracle {
                     }
                     target.write(bytes.index(), (int) written);
                 }
-                case NormalizedSlot.TableSlot table -> {
-                    Value.TableValue carrier = (Value.TableValue) container;
-                    carrier.entries().put(table.key(), value);
-                    mirrorTableWrite(carrier, table.key(), value);
-                }
+                case NormalizedSlot.TableSlot table ->
+                    ((Value.TableValue) container).entries().put(table.key(), value);
             }
         }
 
@@ -3235,11 +3203,8 @@ public final class SemanticOracle {
                 case NormalizedSlot.BytesSlot ignored -> throw new IllegalStateException(
                     "a bytes slot never carries a delete (delete b[i] is the "
                         + "checker's E3007 rejection) — a producer defect, never executed");
-                case NormalizedSlot.TableSlot table -> {
-                    Value.TableValue carrier = (Value.TableValue) container;
-                    carrier.entries().remove(table.key());
-                    mirrorTableDelete(carrier, table.key());
-                }
+                case NormalizedSlot.TableSlot table ->
+                    ((Value.TableValue) container).entries().remove(table.key());
             }
         }
 

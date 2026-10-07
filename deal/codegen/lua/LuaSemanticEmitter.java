@@ -6920,7 +6920,11 @@ local function __jsonConforms(desc, v)
     for i = 1, v.__n do
       local element = v[i]
       if element == __NULL then element = nil end
-      if element == nil then return false end
+      -- A null element is normalized to the language null the element
+      -- descriptor then decides: a nullable element admits it (the spec's
+      -- recursive T | null jsonable types), a non-nullable element keeps
+      -- its own rejection. The decode already rejected a null at every
+      -- non-nullable element; the check never rejects it unconditionally.
       if not __jsonConforms(inner, element) then return false end
     end
     return true
@@ -7210,8 +7214,18 @@ local function __jsonToClassOp(planName, root)
     local out = {"["}
     for i = 1, av.__n do
       local element = av[i]
-      if element == __NULL then element = nil end
       local elementPath = apath .. "[" .. (i - 1) .. "]"
+      if element == __NULL then
+        -- A present null: the element descriptor then decides it.
+        element = nil
+      elseif element == nil then
+        -- A deleted element is the internal missing slot (the read-side
+        -- __MISSING), not a null: it is not JSON-shaped at any element
+        -- descriptor, and the walk renders the missing token exactly
+        -- like the oracle's Missing element and the shared JVM
+        -- runtime's MISSING array slot.
+        return fail(elementPath, __MISSING)
+      end
       if i > 1 then out[#out + 1] = "," end
       if edesc ~= nil then
         -- A declared array descriptor walks its elements through the
@@ -7343,15 +7357,33 @@ local function __jsonToClassOp(planName, root)
       return fail(path, v)
     elseif kind == "int" then
       -- An int-position value is the int32 carrier: a finite integral
-      -- number. A fractional or nonfinite number (and every non-number)
-      -- is the number/other carrier and fails here exactly like the
-      -- oracle's Value.Int admission.
+      -- number, or its read-side variant carrier (__readVar's __jn
+      -- shape, an int-variant read materialized at a number position).
+      -- A fractional or nonfinite number, a number-variant carrier (and
+      -- every non-number) is the number/other carrier and fails here
+      -- exactly like the oracle's Value.Int admission.
+      if type(v) == "table" and v.__jn then
+        if v.k ~= "int" then return fail(path, v) end
+        v = v.d
+      end
       if type(v) == "number" and v == math.floor(v)
           and v ~= math.huge and v ~= -math.huge then
         return tostring(v)
       end
       return fail(path, v)
     elseif kind == "number" then
+      -- A number-position value admits the raw number and the read-side
+      -- variant carrier alike, each spelled by its own recorded variant
+      -- — an int-variant carrier keeps the integer text, a number-variant
+      -- carrier the closed decimal spelling — exactly the oracle's and
+      -- the shared JVM runtime's Int/Double split, never the declared
+      -- descriptor's text.
+      if type(v) == "table" and v.__jn then
+        if v.k == "int" then return tostring(v.d) end
+        local text = __jsonNumText(v.d)
+        if text == nil then return fail(path, v) end
+        return text
+      end
       if type(v) == "number" then
         local text = __jsonNumText(v)
         if text == nil then return fail(path, v) end
