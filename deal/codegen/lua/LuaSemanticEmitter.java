@@ -7106,9 +7106,6 @@ local function __jsonToClassOp(planName, root)
   local encodeField
   local encodeTableValue
   local encodeArrayValue
-  local encodeField
-  local encodeTableValue
-  local encodeArrayValue
   local encodeClass
   encodeTableValue = function(tv, tpath, visited)
     if visited[tv] then return cycle() end
