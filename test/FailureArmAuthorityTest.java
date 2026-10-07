@@ -111,7 +111,7 @@ public class FailureArmAuthorityTest {
         testAbsentOriginFailsClosed();
         testWalkArmOracleDispatchLeg();
         testWalkArmOracleDispatchCycles();
-        testLandedPresentNullRead();
+        testPresentNullAdmission();
         testWalkOracleNumericPositions();
         testWalkOracleKindPositions();
         testMovedElementCell();
@@ -1723,9 +1723,9 @@ public class FailureArmAuthorityTest {
             new deal.semantic.ir.ClassLayout.FieldLayout("tags",
                 new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE), true,
                 deal.semantic.ir.DefaultOwner.LOCAL),
-            // The nullable optional field of the landed present-null read
-            // (testLandedPresentNullRead): its presence pin is the exact
-            // trigger of the walk's landed admission check.
+            // The nullable optional field of the present-null admission
+            // (testPresentNullAdmission): its presence pin is the exact
+            // trigger of the walk's admission check.
             new deal.semantic.ir.ClassLayout.FieldLayout("note",
                 new RuntimeDescriptor.Nullable(RuntimeDescriptor.String.INSTANCE), false,
                 deal.semantic.ir.DefaultOwner.LOCAL)));
@@ -2017,19 +2017,28 @@ public class FailureArmAuthorityTest {
         // selects, through the one arm renderer, at the executing op's own
         // SourceOrigin.
         String lua = emittedWalkChunk();
-        check(lua.contains("__eT = __arm(__jarmT, __jcparT, \"" + WALK_SPAN
-                + "\", nil, __jfactT)"),
+        // ISSUE-0698 retarget: the walk site renders the closed arm through
+        // the one arm renderer at the invoking call origin (the origin the
+        // generated C$toJson body's own op cannot carry), with the op's own
+        // SourceOrigin as the no-active-call fallback — so this drive's
+        // direct probe (no call in flight) keeps the pinned span.
+        check(lua.contains("__eT = __arm(__jarmT, __jcparT, __callOrigin(\""
+                + WALK_SPAN + "\"), nil, __jfactT)"),
             "the emitted Lua walk site renders the selected arm through the one arm "
-                + "renderer at the op's own SourceOrigin");
+                + "renderer at the invoking call origin (the op's own SourceOrigin "
+                + "as the no-active-call fallback)");
         check(!lua.contains("__failExpr(\"E8001\", __renderTemplate(\"JSON_TO_WALK\""),
             "the emitted Lua walk site composes no message of its own");
         String jvm = emittedWalkJvm();
         check(jvm.contains("JvmRuntime.arm(deal.semantic.ir.FailureArmId.JSON_TO_WALK, "
                 + "java.util.Map.of(\"fieldPath\", projection.fieldPath, \"actual\", "
-                + "projection.actual), \"" + WALK_SPAN + "\", null, projection.actual)"),
-            "the emitted JVM catch site renders the walk arm at the op's own SourceOrigin");
+                + "projection.actual), JvmRuntime.callOrigin(\"" + WALK_SPAN
+                + "\"), null, projection.actual)"),
+            "the emitted JVM catch site renders the walk arm at the invoking call "
+                + "origin (the op's own SourceOrigin as the no-active-call fallback)");
         check(jvm.contains("JvmRuntime.arm(deal.semantic.ir.FailureArmId.JSON_TO_WALK_CYCLE, "
-                + "java.util.Map.of(), \"" + WALK_SPAN + "\", null, null)"),
+                + "java.util.Map.of(), JvmRuntime.callOrigin(\"" + WALK_SPAN
+                + "\"), null, null)"),
             "the emitted JVM catch site renders the cycle arm with no parameters");
         check(!jvm.contains("value at \" + projection.fieldPath"),
             "the emitted JVM catch site composes no message of its own");
@@ -2369,22 +2378,20 @@ public class FailureArmAuthorityTest {
     }
 
     /**
-     * The landed present-null read of the emitted Lua walk (the review
-     * correction of the binding): the walk's admission checks are landed and
-     * this binding does not rebuild them, so the emitted walk keeps its
-     * landed {@code (raw == __NULL) and nil or raw} operand — the
-     * {@code __NULL} sentinel reaches the declared-descriptor check and the
-     * bound typed-boundary projection classifies it as "null". The oracle
-     * and the JVM walk admit the sentinel as the language null and serialize
-     * JSON null at this position (their landed check sets, pinned by
-     * {@code ClassConstructionIntegrationTailTest}'s present-null row); the
-     * nullable-admission correction and its success regression belong to the
-     * follow-up slice that owns the walk's check sets, so this drive pins the
-     * landed Lua failure — the exact trigger of the recorded
-     * rejection-to-success finding — without claiming the correction.
+     * The present-null admission of the emitted Lua walk (ISSUE-0698's
+     * production realization of the @jsonable family): the walk normalizes
+     * the carrier's {@code __NULL} sentinel to the language null and the
+     * declared descriptor decides — a nullable position admits it and
+     * serializes JSON null (the corpus fixtures' pinned three-state
+     * roundtrip: {@code jsonable-optional-nullable} and the sibling
+     * roundtrip fixtures execute runtime-ok on both real toolchains), while
+     * a non-nullable position keeps the closed typed-boundary "null"
+     * projection (the walk-cases drive's {@code present-null-non-nullable}
+     * row). The oracle and the JVM walk publish the same JSON null at this
+     * position, so the three consumers agree on the corrected admission.
      */
-    static void testLandedPresentNullRead() throws Exception {
-        System.out.println("-- the landed present-null read on a nullable field --");
+    static void testPresentNullAdmission() throws Exception {
+        System.out.println("-- the present-null admission of the emitted walk --");
         Map<String, ClassOpsExecutor.Value> oracleFields = new LinkedHashMap<>();
         oracleFields.put("name", walkString("n"));
         oracleFields.put("age", new ClassOpsExecutor.Value.Int(1));
@@ -2409,21 +2416,20 @@ public class FailureArmAuthorityTest {
         String expectedText = "{\"name\":\"n\",\"age\":1,\"ratio\":0.5,"
             + "\"data\":{},\"tags\":[1],\"note\":null}";
 
-        // The emitted Lua leg under real luajit: the landed read leaves the
-        // sentinel in place, so the walk fails the position and the bound
-        // projection renders its closed null token.
-        List<String> rows = runWalkProbe(List.of(walkCase("present-null-nullable",
-            "JSON_TO_WALK", "note", "null", oracleFields, luaFields, jvmFields)));
-        checkEq(new Tuple("E8001",
-                "value at note is not JSON serializable: null", WALK_SPAN, null, "null"),
-            walkLuaTuple(rows.get(0)),
-            "the emitted Lua walk keeps the landed present-null read: the __NULL "
-                + "sentinel reaches the declared-descriptor check and the bound "
-                + "projection classifies it as null");
+        // The emitted Lua leg under real luajit: the walk admits the
+        // present null on the nullable field and serializes JSON null.
+        String body = "local root = " + walkLuaRoot(luaFields) + "\n"
+            + "local ok, text = __jsonToClassOp(\"" + WALK_ID.text() + "\", root)\n"
+            + "if ok then print(\"present-null-nullable|OK|\" .. text)\n"
+            + "else print(\"present-null-nullable|FAIL|\") end\n";
+        List<String> rows = runProbe(emittedWalkChunk(), "arm-walk", body,
+            "present-null-nullable", 1);
+        checkEq("present-null-nullable|OK|" + expectedText, rows.get(0),
+            "the emitted Lua walk admits the present null on the nullable field and "
+                + "serializes JSON null");
 
-        // The oracle's and the JVM's own landed check sets admit the sentinel
-        // and serialize JSON null (the per-target difference the follow-up
-        // slice's nullable-admission correction owns).
+        // The oracle and the JVM walk publish the same JSON null at this
+        // position (the three-consumer agreement on the corrected admission).
         deal.semantic.ir.SemanticOp op = walkJsonOp();
         ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> oracleOutcome =
             ClassOpsExecutor.executeJsonToClass(op,
@@ -2446,14 +2452,15 @@ public class FailureArmAuthorityTest {
     }
 
     /**
-     * The walk arm's oracle-only numeric decomposition (V2): the two numeric
-     * positions the oracle's landed check set fails while the emitted Lua
-     * walk's landed check set admits them (the landed per-target check sets)
-     * are asserted on the oracle alone — a nonfinite value at an int-typed
+     * The walk arm's numeric decomposition (V2): the two numeric positions
+     * the oracle's check set fails — a nonfinite value at an int-typed
      * declared field and a fractional value at an {@code array(int)} element,
      * each projecting the value's own variant ({@code number}), never the
      * declared {@code int} text beside the position, at the call origin the
-     * drive supplied.
+     * drive supplied. The emitted Lua walk's corrected descriptor walk fails
+     * the same positions (the walk-cases drive's
+     * {@code array-element-nonfinite} row runs that agreement through the
+     * real luajit lane), so this drive asserts the oracle's rendering alone.
      */
     static void testWalkOracleNumericPositions() {
         System.out.println("-- the walk arm's oracle-only numeric positions --");

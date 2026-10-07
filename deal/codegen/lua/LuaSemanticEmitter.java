@@ -7237,11 +7237,22 @@ local function __jsonToClassOp(planName, root)
       local fieldPath = (cpath == "") and f.name or (cpath .. "." .. f.name)
       if not instance.__p[f.name] then
         if not f.optional then
+          -- The internal nil propagation: the callers (a nested field's
+          -- encodeField, the array element walk) check nil and return nil
+          -- themselves, so only the root converts the walk's failure
+          -- state through failure().
           fail(fieldPath, __MISSING)
-          return failure()
+          return nil
         end
       else
         local value = instance.__f[f.name]
+        -- The present-null admission: the carrier's __NULL sentinel is
+        -- the language null the declared descriptor then decides —
+        -- a nullable position admits it and spells JSON null (the corpus
+        -- fixtures' pinned three-state roundtrip), while a non-nullable
+        -- position keeps the closed typed-boundary "null" projection
+        -- (the typed-boundary projection classifies the value as null,
+        -- never as the sentinel's table spelling).
         if value == __NULL then value = nil end
         local encoded = encodeField(f.desc, value, fieldPath, visited)
         if encoded == nil then return nil end
@@ -7264,7 +7275,14 @@ local function __jsonToClassOp(planName, root)
       if type(v) == "boolean" then return tostring(v) end
       return fail(path, v)
     elseif kind == "int" then
-      if type(v) == "number" and v == math.floor(v) then return tostring(v) end
+      -- An int-position value is the int32 carrier: a finite integral
+      -- number. A fractional or nonfinite number (and every non-number)
+      -- is the number/other carrier and fails here exactly like the
+      -- oracle's Value.Int admission.
+      if type(v) == "number" and v == math.floor(v)
+          and v ~= math.huge and v ~= -math.huge then
+        return tostring(v)
+      end
       return fail(path, v)
     elseif kind == "number" then
       if type(v) == "number" then
@@ -7297,7 +7315,7 @@ local function __jsonToClassOp(planName, root)
     return failure()
   end
   local encodedRoot = encodeClass(root, plan.classId, "", {})
-  if encodedRoot == nil then
+  if not encodedRoot then
     return failure()
   end
   return true, encodedRoot, nil, nil, nil
