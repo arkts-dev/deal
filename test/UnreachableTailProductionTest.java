@@ -928,7 +928,10 @@ public class UnreachableTailProductionTest {
         new CompositeCase("if-else", IF_ELSE_TAIL_SOURCE,
             List.of("ifElseTailMarker", "elseTailMarker")),
         new CompositeCase("try-catch", TRY_CATCH_TAIL_SOURCE,
-            List.of("tryTailMarker", "catchTailMarker")));
+            List.of("tryTailMarker", "catchTailMarker")),
+        new CompositeCase("null-both-return",
+            CompositeTerminatorAnalysisTest.NULL_BOTH_RETURN_TAIL_SOURCE,
+            List.of("nullTrueTailMarker", "nullFalseTailMarker", "nullBodyTailMarker")));
 
     private static void testCompositeBlockTails() throws Exception {
         System.out.println("-- The composite-block tail: real-javac regression --");
@@ -979,7 +982,9 @@ public class UnreachableTailProductionTest {
                 OpId terminator = null;
                 for (int i = 0; i < index; i++) {
                     SemanticOp candidate = byId.get(members.get(i));
-                    if (candidate != null && isTerminator(candidate.kind())) {
+                    if (candidate != null && (isTerminator(candidate.kind())
+                            || (marker.equals("nullBodyTailMarker")
+                                && candidate.kind() == SemanticOpKind.BRANCH))) {
                         terminator = candidate.opId();
                     }
                 }
@@ -1002,6 +1007,27 @@ public class UnreachableTailProductionTest {
                         + marker.op());
             }
 
+            if (composite.name().equals("null-both-return")) {
+                SemanticDifferentialHarness.Verdict verdict =
+                    SemanticDifferentialHarness.runProject(lowered.project(),
+                        lowered.tables(), lowered.registries(),
+                        SemanticDifferentialHarness.Expectation.success(
+                            composite.name(), List.of(), "null"), project.resolve("matrix"));
+                check(verdict.runs().size() == 3, composite.name()
+                    + ": the differential matrix produced all three consumers: "
+                    + verdict.failures());
+                check(verdict.pass(), composite.name()
+                    + ": the oracle and both shared artifacts agree event-for-event: "
+                    + verdict.failures());
+                for (SemanticRuntimeModel.ConsumerRun consumer : verdict.runs()) {
+                    for (TailMarker marker : markers) {
+                        check(consumer.trace().stream().noneMatch(
+                                event -> event.op().equals(marker.op())),
+                            composite.name() + ": " + consumer.consumer()
+                                + " emits no event for tail " + marker.op());
+                    }
+                }
+            }
             compositeJvmDrive(composite, project, entry);
             compositeLuaDrive(composite, markers, project, entry);
         } finally {

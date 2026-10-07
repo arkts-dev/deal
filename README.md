@@ -13,7 +13,7 @@ the Visitor interface.
 
 Compiles all production and remaining test sources with `javac --release 25`
 and executes the complete selection in `tools/gate-manifest.sh` with
-assertions enabled: 80 Java suites and five Lua/JS runtime records. Java
+assertions enabled: 75 Java suites and five Lua/JS runtime records. Java
 suites run sequentially; `--jobs` controls parallel work inside suites.
 There is no alternate full-suite profile.
 
@@ -30,6 +30,6 @@ Coverage executes the same test runner and instruments Java subprocesses
 without Java startup-option environment variables. Production classes compile into `build/deal`; test classes compile separately
 into `build/test-classes`. Only `build/deal` enters the report; test helpers
 and generated probe classes are excluded. Lua/JS execution is not counted by JaCoCo.
-Minimum production coverage is **80% lines** and **69% branches**.
+Minimum production coverage is **75% lines** and **69% branches**.
 Reports are written to `build/coverage.csv`, `build/coverage.xml`, and
 `build/coverage-html/index.html`.

@@ -109,6 +109,40 @@ public class CompositeTerminatorAnalysisTest {
         new Fixture("error-handling/error-roundtrip", "test_error_roundtrip",
             "\"error roundtrip ok\"", false));
 
+    private static final List<Fixture> NESTED_BODY_FIXTURES = List.of(
+        new Fixture("functions/direct-recursion", "test_direct_recursion", "0", false),
+        new Fixture("functions/nested-scope-recursion", "test_nested_scope_recursion",
+            "0", false),
+        new Fixture("control-flow/return-in-try", "test_return_in_try_loop", "5", false));
+
+    private static final Set<String> RECURSIVE_FIXTURES = Set.of(
+        "functions/direct-recursion", "functions/nested-scope-recursion");
+
+    static final String NULL_BOTH_RETURN_TAIL_SOURCE = """
+        export function probe(c: boolean): null {
+          if (c) {
+            return null;
+            "nullTrueTailMarker";
+            let x: int = 9715;
+          } else {
+            return null;
+            "nullFalseTailMarker";
+            let y: int = 9716;
+          }
+          "nullBodyTailMarker";
+          let tailMarker: int = 715;
+          if (tailMarker === 715) {
+            throw { code: "TAIL_EXECUTED", message: "TAIL715" }
+          }
+        }
+
+        export function main(): null {
+          probe(true);
+          probe(false);
+          return null;
+        }
+        """;
+
     private static String fixtureSource(String relativePath) throws Exception {
         return ConformanceHarnessMetadata.stripClassificationHeaders(
             Files.readString(FIXTURE_ROOT.resolve(relativePath + ".deal"),
@@ -413,6 +447,46 @@ public class CompositeTerminatorAnalysisTest {
                     + ": the composite sub-block " + child + " cannot complete "
                     + "normally (op kinds " + kindsOf(lowered, child) + ")");
             }
+        }
+    }
+
+    static void testNullBothReturnTailMonotonicity() throws Exception {
+        Lowered lowered = lowerProbe("null-both-return", NULL_BOTH_RETURN_TAIL_SOURCE);
+        if (lowered == null) {
+            return;
+        }
+        List<BlockId> bodies = lowered.declaredBodyBlocks();
+        checkEq(2, bodies.size(), "null-both-return: the probe and main bodies resolve");
+        if (bodies.size() != 2) {
+            return;
+        }
+        BlockId probeBody = bodies.get(0);
+        List<SemanticOp> bodyOps = lowered.blockOps(probeBody);
+        SemanticOp composite = bodyOps.stream()
+            .filter(op -> op.kind() == SemanticOpKind.BRANCH).findFirst().orElse(null);
+        check(composite != null, "null-both-return: the returning BRANCH is represented");
+        if (composite == null) {
+            return;
+        }
+        check(bodyOps.stream().anyMatch(op -> op.origin().span().startLine() == 11
+                && bodyOps.indexOf(op) > bodyOps.indexOf(composite)),
+            "null-both-return: the body tail follows the returning composite");
+        check(bodyOps.stream().noneMatch(op -> op.kind() == SemanticOpKind.RETURN
+                && op.origin().kind() == SourceOriginKind.SYNTHETIC),
+            "null-both-return: represented body tails do not fabricate a root RETURN");
+        check(lowered.implicitReturns().isEmpty(),
+            "null-both-return: no synthetic RETURN is fabricated in the unit");
+        List<BlockId> children = compositeChildBlocks(lowered, composite);
+        checkEq(2, children.size(), "null-both-return: both returning children resolve");
+        for (int i = 0; i < children.size(); i++) {
+            List<SemanticOp> ops = lowered.blockOps(children.get(i));
+            SemanticOp terminator = ops.stream()
+                .filter(op -> op.kind() == SemanticOpKind.RETURN).findFirst().orElse(null);
+            int markerLine = i == 0 ? 4 : 8;
+            check(terminator != null && ops.stream().anyMatch(op ->
+                    op.origin().span().startLine() == markerLine
+                        && ops.indexOf(op) > ops.indexOf(terminator)),
+                "null-both-return: child " + i + " retains its tail after RETURN");
         }
     }
 
@@ -1014,7 +1088,15 @@ public class CompositeTerminatorAnalysisTest {
     static void testDifferentialMatrix() throws Exception {
         System.out.println("-- the pinned probe values through the oracle and both "
             + "shared artifacts (the differential matrix) --");
-        for (Fixture fixture : FIXTURES) {
+        driveDifferentialFixtures(FIXTURES);
+    }
+
+    static void testNestedBodyProductionParity() throws Exception {
+        driveDifferentialFixtures(NESTED_BODY_FIXTURES);
+    }
+
+    private static void driveDifferentialFixtures(List<Fixture> fixtures) throws Exception {
+        for (Fixture fixture : fixtures) {
             Path root = Files.createTempDirectory("composite-terminator-matrix-");
             try {
                 Lowered lowered;
@@ -1059,11 +1141,19 @@ public class CompositeTerminatorAnalysisTest {
                     checkEq(3, verdict.runs().size(), fixture.relativePath()
                         + ": the drive produced the three consumers: "
                         + verdict.failures());
-                    check(verdict.pass(), fixture.relativePath()
+                    boolean accepted = RECURSIVE_FIXTURES.contains(fixture.relativePath())
+                        ? verdict.failures().stream().allMatch(failure ->
+                            failure.contains("starts again before its previous terminal")
+                                || failure.contains("terminates without an open START"))
+                        : verdict.pass();
+                    check(accepted, fixture.relativePath()
                         + ": the oracle and both shared artifacts agree event-for-event "
-                        + "with the pinned probe: " + verdict.failures());
+                        + "with the pinned probe (only recursive pairing notices allowed): "
+                        + verdict.failures());
                     for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
-                        check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                        check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success success
+                                && (fixture.async() ? "int:" + fixture.pinnedValue() : "null")
+                                    .equals(success.resultAtom()),
                             fixture.relativePath() + ": " + run.consumer()
                                 + " completes with the pinned outcome: "
                                 + run.terminal());
@@ -1187,12 +1277,14 @@ public class CompositeTerminatorAnalysisTest {
 
         testCorpusInventory();
         testCompositeMarkingPositives();
+        testNullBothReturnTailMonotonicity();
         testCompositeMarkingNegatives();
         testNestedBodyDisjointness();
         testUnterminatedNonNullStillFailsClosed();
         testLiteralTrueLoopOnNonNullBodyAtUnitLevel();
         testProductionArtifacts();
         testDifferentialMatrix();
+        testNestedBodyProductionParity();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
