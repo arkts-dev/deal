@@ -7077,8 +7077,11 @@ local function __jsonFromClassOp(planName, text)
 end
 -- The JSON_TO_CLASS walk: (true, text) or (false, nil, armId,
 -- parameters, actual) for the JSON_TO_ERROR projection. Table fields
--- serialize their present keys in ascending key order (the shared Lua
--- table carrier records key presence, not insertion order).
+-- serialize their present keys in first-insertion order (the shared Lua
+-- table carrier's __order discipline), and every class/table/array
+-- recursion carries the shared JSON walk depth bound (the oracle's
+-- JSON_MAX_DEPTH semantics: a container whose depth exceeds the bound
+-- fails through the walk arm with its own token and field path).
 -- The innermost active call's origin, or the fallback: the generated
 -- C$toJson body's JSON_TO_ERROR projection renders the call that
 -- invoked it, never the generated body's synthetic anchor.
@@ -7120,15 +7123,26 @@ local function __jsonToClassOp(planName, root)
   local encodeTableValue
   local encodeArrayValue
   local encodeClass
-  encodeTableValue = function(tv, tpath, visited)
+  encodeTableValue = function(tv, tpath, visited, depth)
+    if depth > __JSON_MAX_DEPTH then return fail(tpath, tv) end
     if visited[tv] then return cycle() end
     visited[tv] = true
-    local keys = {}
-    for k, _ in pairs(tv.__keys) do keys[#keys + 1] = k end
-    table.sort(keys)
+    -- The carrier's first-insertion order (the __order discipline every
+    -- shared table consumer reads): an object spells its keys exactly as
+    -- they were inserted, never in sorted order. A hand-built carrier
+    -- without the shared order marks (no production path builds one)
+    -- keeps the deterministic sorted spelling.
+    local order = tv.__order
+    if type(order) ~= "table" then
+      order = {}
+      for k, _ in pairs(tv.__keys) do order[#order + 1] = k end
+      table.sort(order)
+    end
+    local marks = tv.__nK
+    if type(marks) ~= "table" then marks = nil end
     local out = {"{"}
-    for i = 1, #keys do
-      local key = keys[i]
+    for i = 1, #order do
+      local key = order[i]
       local element = tv[key]
       if element == __NULL then element = nil end
       if i > 1 then out[#out + 1] = "," end
@@ -7137,9 +7151,29 @@ local function __jsonToClassOp(planName, root)
       if element == nil then out[#out + 1] = "null"
       elseif type(element) == "boolean" then out[#out + 1] = tostring(element)
       elseif type(element) == "number" then
-        local text = __jsonNumText(element)
-        if text == nil then return fail(elementPath, element) end
-        out[#out + 1] = text
+        -- The numeric leaf spells by its own recorded variant (the shared
+        -- write paths' and the JSON decode's __nK mark): a number-variant
+        -- slot through the closed decimal spelling, an int-variant slot
+        -- through the integer spelling — exactly the oracle's Value.Int/
+        -- Value.Number split, never the declared descriptor's text.
+        if marks ~= nil and marks[key] == true then
+          local text = __jsonNumText(element)
+          if text == nil then return fail(elementPath, element) end
+          out[#out + 1] = text
+        else
+          out[#out + 1] = tostring(element)
+        end
+      elseif type(element) == "table" and element.__jn then
+        -- The read-side variant carrier (__readVar) keeps its value's own
+        -- recorded variant: an int carrier spells its integer text, a
+        -- number carrier the closed decimal spelling.
+        if element.k == "int" then
+          out[#out + 1] = tostring(element.d)
+        else
+          local text = __jsonNumText(element.d)
+          if text == nil then return fail(elementPath, element.d) end
+          out[#out + 1] = text
+        end
       elseif type(element) == "string" then
         if not __jsonValidUtf8(element) then
           return fail(elementPath, element)
@@ -7147,11 +7181,13 @@ local function __jsonToClassOp(planName, root)
         out[#out + 1] = __QT .. __jsonEscapeString(element) .. __QT
       elseif type(element) == "table" then
         if element.__a then
-          local nested = encodeArrayValue(element, elementPath, visited)
+          local nested = encodeArrayValue(element, elementPath, visited, nil,
+            depth + 1)
           if nested == nil then return nil end
           out[#out + 1] = nested
         elseif element.__t then
-          local nested = encodeTableValue(element, elementPath, visited)
+          local nested = encodeTableValue(element, elementPath, visited,
+            depth + 1)
           if nested == nil then return nil end
           out[#out + 1] = nested
         else
@@ -7165,9 +7201,12 @@ local function __jsonToClassOp(planName, root)
     out[#out + 1] = "}"
     return table.concat(out)
   end
-  encodeArrayValue = function(av, apath, visited, edesc)
+  encodeArrayValue = function(av, apath, visited, edesc, depth)
+    if depth > __JSON_MAX_DEPTH then return fail(apath, av) end
     if visited[av] then return cycle() end
     visited[av] = true
+    local marks = av.__nK
+    if type(marks) ~= "table" then marks = nil end
     local out = {"["}
     for i = 1, av.__n do
       local element = av[i]
@@ -7180,15 +7219,30 @@ local function __jsonToClassOp(planName, root)
         -- an int element spells its integer text, a nested array
         -- recurses the element descriptor, and a class element walks
         -- its class plan.
-        local encoded = encodeField(edesc, element, elementPath, visited)
+        local encoded = encodeField(edesc, element, elementPath, visited,
+          depth + 1)
         if encoded == nil then return nil end
         out[#out + 1] = encoded
       elseif element == nil then out[#out + 1] = "null"
       elseif type(element) == "boolean" then out[#out + 1] = tostring(element)
       elseif type(element) == "number" then
-        local text = __jsonNumText(element)
-        if text == nil then return fail(elementPath, element) end
-        out[#out + 1] = text
+        -- The element's own recorded variant (the __nK mark), exactly as
+        -- the table-content leaf above.
+        if marks ~= nil and marks[i] == true then
+          local text = __jsonNumText(element)
+          if text == nil then return fail(elementPath, element) end
+          out[#out + 1] = text
+        else
+          out[#out + 1] = tostring(element)
+        end
+      elseif type(element) == "table" and element.__jn then
+        if element.k == "int" then
+          out[#out + 1] = tostring(element.d)
+        else
+          local text = __jsonNumText(element.d)
+          if text == nil then return fail(elementPath, element.d) end
+          out[#out + 1] = text
+        end
       elseif type(element) == "string" then
         if not __jsonValidUtf8(element) then
           return fail(elementPath, element)
@@ -7196,11 +7250,13 @@ local function __jsonToClassOp(planName, root)
         out[#out + 1] = __QT .. __jsonEscapeString(element) .. __QT
       elseif type(element) == "table" then
         if element.__a then
-          local nested = encodeArrayValue(element, elementPath, visited)
+          local nested = encodeArrayValue(element, elementPath, visited, nil,
+            depth + 1)
           if nested == nil then return nil end
           out[#out + 1] = nested
         elseif element.__t then
-          local nested = encodeTableValue(element, elementPath, visited)
+          local nested = encodeTableValue(element, elementPath, visited,
+            depth + 1)
           if nested == nil then return nil end
           out[#out + 1] = nested
         else
@@ -7226,7 +7282,8 @@ local function __jsonToClassOp(planName, root)
   -- spelled as JSON null, and every present field encoded per its
   -- declared descriptor. The class instance enters the path-local
   -- visited set, so a class re-entry on the path is the cycle needle.
-  encodeClass = function(instance, classId, cpath, visited)
+  encodeClass = function(instance, classId, cpath, visited, depth)
+    if depth > __JSON_MAX_DEPTH then return fail(cpath, instance) end
     if type(instance) ~= "table" or instance.__c ~= true
         or instance.__id ~= classId then
       return fail(cpath, instance)
@@ -7263,7 +7320,7 @@ local function __jsonToClassOp(planName, root)
         -- (the typed-boundary projection classifies the value as null,
         -- never as the sentinel's table spelling).
         if value == __NULL then value = nil end
-        local encoded = encodeField(f.desc, value, fieldPath, visited)
+        local encoded = encodeField(f.desc, value, fieldPath, visited, depth)
         if encoded == nil then return nil end
         if not first then out[#out + 1] = "," end
         first = false
@@ -7275,7 +7332,8 @@ local function __jsonToClassOp(planName, root)
     out[#out + 1] = "}"
     return table.concat(out)
   end
-  encodeField = function(desc, v, path, visited)
+  encodeField = function(desc, v, path, visited, depth)
+    if depth > __JSON_MAX_DEPTH then return fail(path, v) end
     local kind, inner = __jsonKindOf(desc)
     if kind == "null" then
       if v == nil then return "null" end
@@ -7306,15 +7364,15 @@ local function __jsonToClassOp(planName, root)
       return __QT .. __jsonEscapeString(v) .. __QT
     elseif kind == "nullable" then
       if v == nil then return "null" end
-      return encodeField(inner, v, path, visited)
+      return encodeField(inner, v, path, visited, depth)
     elseif kind == "table" then
       if type(v) ~= "table" or v.__t ~= true then return fail(path, v) end
-      return encodeTableValue(v, path, visited)
+      return encodeTableValue(v, path, visited, depth)
     elseif kind == "array" then
       if type(v) ~= "table" or v.__a ~= true then return fail(path, v) end
-      return encodeArrayValue(v, path, visited, inner)
+      return encodeArrayValue(v, path, visited, inner, depth)
     elseif kind == "class" then
-      return encodeClass(v, inner, path, visited)
+      return encodeClass(v, inner, path, visited, depth + 1)
     end
     return fail(path, v)
   end
@@ -7323,7 +7381,7 @@ local function __jsonToClassOp(planName, root)
     fail("", root)
     return failure()
   end
-  local encodedRoot = encodeClass(root, plan.classId, "", {})
+  local encodedRoot = encodeClass(root, plan.classId, "", {}, 0)
   if not encodedRoot then
     return failure()
   end

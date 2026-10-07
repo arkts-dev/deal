@@ -6,7 +6,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeSet;
 import java.util.function.Supplier;
 
 public final class JvmJson {
@@ -794,11 +793,15 @@ public final class JvmJson {
 
     /** The JSON_TO_CLASS walk: the deterministic text or a JSON_TO_ERROR projection. */
     public static String toClass(Plan plan, Object root) {
-        return encodeInstance(plan, root, "", new java.util.IdentityHashMap<>());
+        return encodeInstance(plan, root, "", new java.util.IdentityHashMap<>(), 0);
     }
 
     private static String encodeInstance(Plan plan, Object value, String path,
-                                         java.util.IdentityHashMap<Object, Boolean> visited) {
+                                         java.util.IdentityHashMap<Object, Boolean> visited,
+                                         int depth) {
+        if (depth > MAX_DEPTH) {
+            throw new Projection(path, actualToken(value));
+        }
         if (!(value instanceof JvmRuntime.ClassInstance instance)
                 || !instance.classIdText().equals(plan.classIdText)) {
             throw new Projection(path, actualToken(value));
@@ -821,7 +824,7 @@ public final class JvmJson {
                 Object fieldValue = instance.read(field.name);
                 String fieldPath = path.isEmpty() ? field.name : path + "." + field.name;
                 String encoded = encodeField(field.descriptor, fieldValue, fieldPath,
-                    visited);
+                    visited, depth);
                 if (!first) {
                     out.append(',');
                 }
@@ -837,13 +840,17 @@ public final class JvmJson {
     }
 
     private static String encodeField(String descriptor, Object value, String path,
-                                      java.util.IdentityHashMap<Object, Boolean> visited) {
+                                      java.util.IdentityHashMap<Object, Boolean> visited,
+                                      int depth) {
+        if (depth > MAX_DEPTH) {
+            throw new Projection(path, actualToken(value));
+        }
         if (descriptor.startsWith("nullable:")) {
             if (value == null) {
                 return "null";
             }
             return encodeField(descriptor.substring("nullable:".length()), value, path,
-                visited);
+                visited, depth);
         }
         if (descriptor.startsWith("array(")) {
             if (!(value instanceof JvmRuntime.Array array)) {
@@ -861,7 +868,7 @@ public final class JvmJson {
                         out.append(',');
                     }
                     out.append(encodeField(inner, array.elements.get(i),
-                        path + "[" + i + "]", visited));
+                        path + "[" + i + "]", visited, depth + 1));
                 }
                 out.append(']');
                 return out.toString();
@@ -876,7 +883,7 @@ public final class JvmJson {
                     + descriptor + " for a nested @jsonable class field "
                     + "(producer defect)");
             }
-            return encodeInstance(nested, value, path, visited);
+            return encodeInstance(nested, value, path, visited, depth + 1);
         }
         return switch (descriptor) {
             case "null" -> {
@@ -923,19 +930,26 @@ public final class JvmJson {
                 if (!(value instanceof JvmRuntime.Table table)) {
                     throw new Projection(path, actualToken(value));
                 }
-                yield encodeTable(table, path, visited);
+                yield encodeTable(table, path, visited, depth);
             }
             default -> throw new Projection(path, actualToken(value));
         };
     }
 
     private static String encodeTable(JvmRuntime.Table table, String path,
-                                      java.util.IdentityHashMap<Object, Boolean> visited) {
+                                      java.util.IdentityHashMap<Object, Boolean> visited,
+                                      int depth) {
+        if (depth > MAX_DEPTH) {
+            throw new Projection(path, actualToken(table));
+        }
         if (visited.put(table, Boolean.TRUE) != null) {
             throw Projection.cycle(path);
         }
         try {
-            Set<String> keys = new TreeSet<>(table.keys);
+            // The carrier's first-insertion order (the linked entry map): an
+            // object spells its keys exactly as they were inserted, never in
+            // sorted order.
+            Set<String> keys = table.entries.keySet();
             StringBuilder out = new StringBuilder("{");
             boolean first = true;
             for (String key : keys) {
@@ -950,7 +964,7 @@ public final class JvmJson {
                 Object element = table.entries.get(key);
                 String elementPath = path.isEmpty() ? key : path + "." + key;
                 out.append('"').append(escapedKey).append('"').append(':');
-                out.append(encodeLeaf(element, elementPath, visited));
+                out.append(encodeLeaf(element, elementPath, visited, depth + 1));
             }
             out.append('}');
             return out.toString();
@@ -961,7 +975,8 @@ public final class JvmJson {
 
     /** One table/array interior element (JSON-shaped data, first failure wins). */
     private static String encodeLeaf(Object value, String path,
-                                     java.util.IdentityHashMap<Object, Boolean> visited) {
+                                     java.util.IdentityHashMap<Object, Boolean> visited,
+                                     int depth) {
         if (value == null || value == JNULL) {
             return "null";
         }
@@ -985,9 +1000,12 @@ public final class JvmJson {
             return "\"" + escaped + "\"";
         }
         if (value instanceof JvmRuntime.Table table) {
-            return encodeTable(table, path, visited);
+            return encodeTable(table, path, visited, depth);
         }
         if (value instanceof JvmRuntime.Array array) {
+            if (depth > MAX_DEPTH) {
+                throw new Projection(path, actualToken(value));
+            }
             if (visited.put(array, Boolean.TRUE) != null) {
                 throw Projection.cycle(path);
             }
@@ -998,7 +1016,7 @@ public final class JvmJson {
                         out.append(',');
                     }
                     out.append(encodeLeaf(array.elements.get(i), path + "[" + i + "]",
-                        visited));
+                        visited, depth + 1));
                 }
                 out.append(']');
                 return out.toString();

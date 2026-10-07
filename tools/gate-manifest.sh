@@ -109,13 +109,19 @@ WARNING: node not found, skipping standard library JS tests'
   # corpus coordinates): the cross-module helper call succeeds and the
   # pinned helper JSON failure renders the cycle tuple at the invoking call
   # expression, so the drive fails if the canonical failure projection
-  # authority is broken. Two three-consumer regressions close the walk's
+  # authority is broken. The three-consumer regressions close the walk's
   # remaining arms: a helper invoked through a function-typed parameter
   # (f(w) inside the callee body) renders its pinned JSON failure at the
   # f(w) call expression in the oracle, the LuaJIT artifact, and the JVM
-  # artifact alike, and a class instance inside an array nested in a table
+  # artifact alike; a class instance inside an array nested in a table
   # field is rejected by all three consumers (the table-content walk stays
-  # JSON-shaped).
+  # JSON-shaped); a nested class's table field spells its keys in
+  # first-insertion order and its int/number leaves by their own variant
+  # (exact text on all three consumers); and the recursive nested-class
+  # walk stops at the shared JSON depth bound (511 chain links succeed,
+  # 512 fail through the walk arm). The pinned-failure sidecar comparison
+  # is covered by negative controls for an incorrect process exit status
+  # or stderr.
   'fg|=== Running the @jsonable Helper Production Drive (ISSUE-0698) ===|java -ea -cp build deal.test.JsonableHelperProductionDriveTest'
   'fg|=== Running Closed Composite Terminator Analysis Tests (ISSUE-0712) ===|java -ea -cp build deal.test.CompositeTerminatorAnalysisTest'
   'fg|=== Running the Truncating Int32 Remainder Prelude Tests (ISSUE-0714) ===|java -ea -cp build deal.test.Int32ModTruncPreludeTest'

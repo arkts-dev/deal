@@ -80,13 +80,20 @@ import java.util.stream.Stream;
  * {@code @jsonable} gains no helper, and a user identifier near a helper
  * name changes no outcome.</p>
  *
- * <p>Two three-consumer regressions close the walk's remaining arms: a
+ * <p>The three-consumer regressions close the walk's remaining arms: a
  * function-parameter invocation of a helper ({@code f(w)} inside the
  * callee body) must render the pinned JSON failure at the {@code f(w)}
  * call expression in the oracle, the LuaJIT artifact, and the JVM
- * artifact alike, and a class instance inside an array nested in a table
+ * artifact alike; a class instance inside an array nested in a table
  * field must be rejected by all three consumers (the table-content walk
- * stays JSON-shaped).</p>
+ * stays JSON-shaped); a nested class's table field must spell its keys in
+ * first-insertion order and its int/number leaves by their own variant
+ * (the exact text compared on all three consumers); and the recursive
+ * nested-class walk must stop at the shared JSON depth bound (511 chain
+ * links succeed, 512 links fail through the walk arm with the exceeding
+ * container's token and path). The pinned-failure leg's comparison is
+ * itself covered by negative controls: an incorrect process exit status
+ * or stderr is rejected.</p>
  *
  * <p>The combined dependency step runs the oracle over every fixture of
  * the family through the same one-lowering closure (the runtime-ok
@@ -1013,26 +1020,46 @@ public class JsonableHelperProductionDriveTest {
             return "ok";
         }
         SidecarExpectations.ErrorExpectation row = expectation.error();
-        check(capture != null && capture.code() != null, fixtureRel + " ["
-            + target.laneName() + "]: the pinned failure is captured (exit "
-            + execution.exitCode() + "; stderr " + execution.stderr() + ")");
-        if (capture == null || capture.code() == null) {
-            return "no-capture";
+        List<String> mismatches = runtimeErrorSidecarMismatches(expectation, row,
+            execution.exitCode(), execution.stderr(), capture);
+        for (String mismatch : mismatches) {
+            check(false, fixtureRel + " [" + target.laneName() + "]: " + mismatch);
         }
-        checkEq(row.code(), capture.code(), fixtureRel + " [" + target.laneName()
-            + "]: the pinned code");
-        checkEq(row.message(), capture.message(), fixtureRel + " [" + target.laneName()
-            + "]: the pinned message");
-        checkEq(row.sourceFile(), capture.sourceFile(), fixtureRel + " ["
-            + target.laneName() + "]: the pinned span file (raw corpus coordinates)");
-        checkEq(row.line(), capture.line(), fixtureRel + " [" + target.laneName()
-            + "]: the pinned raw corpus line");
-        checkEq(row.column(), capture.column(), fixtureRel + " [" + target.laneName()
-            + "]: the pinned column");
-        checkEq(row.expected().orElse(null), capture.expected(), fixtureRel + " ["
-            + target.laneName() + "]: the pinned expected field");
-        checkEq(row.actual().orElse(null), capture.actual(), fixtureRel + " ["
-            + target.laneName() + "]: the pinned actual field");
+        return mismatches.isEmpty() ? "pin-exact" : "pin-mismatch";
+    }
+
+    /**
+     * The pinned-failure leg's sidecar comparison: the ordered mismatch
+     * descriptions (empty exactly when the leg reproduces the sidecar's
+     * byte-exact transcript — the normalized capture fields, the regenerated
+     * framed stdout, the process exit code, and the process stderr). The
+     * sidecar's exit code and stderr are part of the byte-exact transcript
+     * contract, so a matching capture accompanied by an incorrect process
+     * status or stderr is a mismatch, never a pass.
+     */
+    private static List<String> runtimeErrorSidecarMismatches(
+            SidecarExpectations.RuntimeExpectation.Executed expectation,
+            SidecarExpectations.ErrorExpectation row, int exitCode, String stderr,
+            Capture capture) {
+        List<String> mismatches = new ArrayList<>();
+        if (capture == null || capture.code() == null) {
+            mismatches.add("the pinned failure is not captured (exit " + exitCode
+                + "; stderr " + stderr + ")");
+            return mismatches;
+        }
+        addMismatch(mismatches, "code", row.code(), capture.code());
+        addMismatch(mismatches, "message", row.message(), capture.message());
+        addMismatch(mismatches, "span file (raw corpus coordinates)",
+            row.sourceFile(), capture.sourceFile());
+        addMismatch(mismatches, "raw corpus line", row.line(), capture.line());
+        addMismatch(mismatches, "column", row.column(), capture.column());
+        addMismatch(mismatches, "expected field", row.expected().orElse(null),
+            capture.expected());
+        addMismatch(mismatches, "actual field", row.actual().orElse(null),
+            capture.actual());
+        addMismatch(mismatches, "exit code", expectation.exitCode(), exitCode);
+        addMismatch(mismatches, "stderr",
+            new String(expectation.stderr(), StandardCharsets.UTF_8), stderr);
         String framed = ErrorSnapshot.CODE_LINE_PREFIX + capture.code() + "\n"
             + ErrorSnapshot.SNAPSHOT_LINE_PREFIX
             + ErrorSnapshot.canonicalJson(new SidecarExpectations.ErrorExpectation(
@@ -1046,11 +1073,17 @@ public class JsonableHelperProductionDriveTest {
                     : Optional.empty(),
                 Optional.empty(), Optional.empty()))
             + "\n";
-        checkEq(new String(expectation.stdout(), StandardCharsets.UTF_8), framed,
-            fixtureRel + " [" + target.laneName()
-                + "]: the pin-exact capture reproduces the sidecar transcript "
-                + "byte-for-byte");
-        return "pin-exact";
+        addMismatch(mismatches, "framed stdout",
+            new String(expectation.stdout(), StandardCharsets.UTF_8), framed);
+        return mismatches;
+    }
+
+    private static void addMismatch(List<String> mismatches, String field,
+            Object expected, Object actual) {
+        if (!java.util.Objects.equals(expected, actual)) {
+            mismatches.add("the " + field + " mismatch (expected " + expected
+                + ", got " + actual + ")");
+        }
     }
 
     private static Optional<SidecarExpectations.RuntimeExpectation.Executed> pinnedOf(
@@ -1847,6 +1880,339 @@ public class JsonableHelperProductionDriveTest {
     }
 
     // =========================================================================
+    // 7c. The nested-class table-content text regressions
+    // =========================================================================
+
+    /** The DEAL string literal spelling of one text. */
+    private static String dealStringLiteral(String text) {
+        return "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"")
+            + "\"";
+    }
+
+    /**
+     * The exact nested-table text drive: the DEAL body compares the helper's
+     * returned text against the exact expected string and throws the actual
+     * text on any difference, so every consumer that completes proves the
+     * exact string value — the oracle, the LuaJIT artifact, and the JVM
+     * artifact alike.
+     */
+    private static void driveExactNestedTableText(String label, String source)
+            throws Exception {
+        List<Export> exports = exportsOf(source);
+        Project oracleProject = syntheticProject("app", source, Target.JVM);
+        try {
+            SemanticRuntimeModel.ErrorSnapshot oracle =
+                oracleFailure(oracleProject, exports);
+            check(oracle == null, label + ": the oracle produces the exact "
+                + "expected helper text (outcome "
+                + (oracle == null ? "success"
+                    : oracle.code() + " " + oracle.message())
+                + ")");
+        } finally {
+            deleteRecursively(oracleProject.root());
+        }
+        for (Target target : Target.values()) {
+            Project project = syntheticProject("app", source, target);
+            try {
+                List<String> diagnostics = new ArrayList<>();
+                boolean compiled = compile(project, label, target, diagnostics);
+                check(compiled, label + " [" + target.laneName() + "]: the project "
+                    + "compiles through the production invocation: " + diagnostics);
+                if (!compiled) {
+                    continue;
+                }
+                Execution execution = target == Target.LUAJIT
+                    ? executeLua(project, exports) : executeJvm(project, exports);
+                Capture capture = execution.capture();
+                check(capture == null, label + " [" + target.laneName()
+                    + "]: the artifact produces the exact expected helper text "
+                    + "(exit " + execution.exitCode() + "; "
+                    + (capture == null ? ""
+                        : capture.code() + " " + capture.message())
+                    + ")");
+            } finally {
+                deleteRecursively(project.root());
+            }
+        }
+    }
+
+    /** The shared nested-class fixture: {@code Wrapper.child.data} is the table field. */
+    private static String nestedTableFixtureSource(String function) {
+        return "// @jsonable\nexport class Child {\n  data: table = {};\n}\n\n"
+            + "// @jsonable\nexport class Wrapper {\n  child: Child = {};\n}\n\n"
+            + function
+            + "\nexport function main(): null {\n  return null;\n}\n";
+    }
+
+    /**
+     * The first-insertion-order regression (the three-consumer exact text):
+     * a nested class's table field spells its keys in first-insertion order,
+     * never in sorted order, so the same object value yields the same string
+     * on the oracle and both production artifacts.
+     */
+    private static void testNestedTableInsertionOrder() throws Exception {
+        System.out.println("-- the nested-class table field's first-insertion order: "
+            + "the exact three-consumer text --");
+        String expected = "{\"child\":{\"data\":{\"z\":\"first\","
+            + "\"a\":\"second\"}}}";
+        String function = "export function test_nested_table_order(): null {\n"
+            + "  let w: Wrapper = { child: { data: {} } };\n"
+            + "  w.child.data.z = \"first\";\n"
+            + "  w.child.data.a = \"second\";\n"
+            + "  let json: string = Wrapper$toJson(w);\n"
+            + "  let expected: string = " + dealStringLiteral(expected) + ";\n"
+            + "  if (json !== expected) {\n"
+            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "  }\n"
+            + "  return null;\n}\n";
+        driveExactNestedTableText("nested-table-order",
+            nestedTableFixtureSource(function));
+    }
+
+    /**
+     * The numeric-variant regression (the three-consumer exact text): an
+     * int-variant leaf inside a nested class's table field and array spells
+     * its integer text and a number-variant leaf its closed decimal text on
+     * every consumer — the shared carrier's {@code __nK} marks and
+     * {@code __jn} variant carriers (and the JVM's boxed variants) decide
+     * the spelling, never the walk's own default.
+     */
+    private static void testNestedTableNumericVariants() throws Exception {
+        System.out.println("-- the nested-class table field's numeric variants: "
+            + "int and number leaves in tables and arrays, exact text on all "
+            + "three consumers --");
+        String expected = "{\"child\":{\"data\":{\"i\":3,\"n\":2.5,"
+            + "\"ai\":[7],\"an\":[1.5],\"ri\":1,\"rn\":6.5}}}";
+        String function = "export function test_nested_table_numbers(): null {\n"
+            + "  let w: Wrapper = { child: { data: {} } };\n"
+            + "  w.child.data.i = 3;\n"
+            + "  w.child.data.n = 2.5;\n"
+            + "  w.child.data.ai = [7];\n"
+            + "  w.child.data.an = [1.5];\n"
+            // The read-side variant carriers: an int-variant slot read at a
+            // number position and a number-variant slot read at a number
+            // position both travel as carriers and must keep their own
+            // variant's spelling.
+            + "  let t: table = { x: 1 };\n"
+            + "  let n: number = t.x;\n"
+            + "  w.child.data.ri = n;\n"
+            + "  let nums: number[] = [6.5];\n"
+            + "  let fromNum: number = nums[0];\n"
+            + "  w.child.data.rn = fromNum;\n"
+            + "  let json: string = Wrapper$toJson(w);\n"
+            + "  let expected: string = " + dealStringLiteral(expected) + ";\n"
+            + "  if (json !== expected) {\n"
+            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "  }\n"
+            + "  return null;\n}\n";
+        driveExactNestedTableText("nested-table-numbers",
+            nestedTableFixtureSource(function));
+    }
+
+    /**
+     * The nested-class depth fixture: {@code Wrapper.child.data} is the head
+     * of a chain of {@code links} links (one table per link). The valid form
+     * compares the helper text against the exact expected string; the invalid
+     * form ({@code expectedText == null}) returns the helper text directly
+     * (the walk raises).
+     */
+    private static String nestedClassDepthSource(int links, String expectedText) {
+        StringBuilder body = new StringBuilder();
+        body.append("  let w: Wrapper = { child: { data: {} } };\n");
+        body.append("  let cur: table = w.child.data;\n");
+        body.append("  for (let i: int = 0; i < ").append(links)
+            .append("; i = i + 1) {\n");
+        body.append("    cur = linkAppend(cur);\n  }\n");
+        if (expectedText != null) {
+            body.append("  let json: string = Wrapper$toJson(w);\n");
+            body.append("  let expected: string = ")
+                .append(dealStringLiteral(expectedText)).append(";\n");
+            body.append("  if (json !== expected) {\n");
+            body.append("    throw { code: \"MISMATCH\", message: json };\n  }\n");
+            body.append("  return null;\n");
+        } else {
+            body.append("  return Wrapper$toJson(w);\n");
+        }
+        return "// @jsonable\nexport class Child {\n  data: table = {};\n}\n\n"
+            + "// @jsonable\nexport class Wrapper {\n  child: Child = {};\n}\n\n"
+            + "export function linkAppend(cur: table): table {\n"
+            + "  let n: table = {};\n"
+            + "  cur.next = n;\n"
+            + "  return n;\n"
+            + "}\n\n"
+            + "export function test_nested_class_depth(): "
+            + (expectedText != null ? "null" : "string") + " {\n"
+            + body
+            + "}\n\nexport function main(): null {\n  return null;\n}\n";
+    }
+
+    /** The exact JSON text of a {@code Wrapper.child.data} chain of {@code links} links. */
+    private static String nestedChainText(int links) {
+        return "{\"child\":{\"data\":" + "{\"next\":".repeat(links) + "{}"
+            + "}".repeat(links) + "}}";
+    }
+
+    /**
+     * The JSON walk depth bound in the recursive nested-class path (the
+     * three-consumer boundary): the 511-link chain (512 containers) completes
+     * on the oracle and both production artifacts, and the 512-link chain
+     * (513 containers) fails through the canonical walk arm with the exceeding
+     * container's token and field path at the helper call origin — the
+     * identical tuple on all three consumers.
+     */
+    private static void testNestedClassDepthBound() throws Exception {
+        System.out.println("-- the nested-class walk's depth bound: 511 links "
+            + "succeed, 512 links fail through the walk arm on all three "
+            + "consumers --");
+        String validSource = nestedClassDepthSource(511, nestedChainText(511));
+        List<Export> validExports = exportsOf(validSource);
+        Project validOracle = syntheticProject("app", validSource, Target.JVM);
+        try {
+            SemanticRuntimeModel.ErrorSnapshot oracle =
+                oracleFailure(validOracle, validExports);
+            check(oracle == null, "the 511-link chain (512 containers) completes "
+                + "on the oracle (outcome "
+                + (oracle == null ? "success"
+                    : oracle.code() + " " + oracle.message())
+                + ")");
+        } finally {
+            deleteRecursively(validOracle.root());
+        }
+        for (Target target : Target.values()) {
+            Project project = syntheticProject("app", validSource, target);
+            try {
+                List<String> diagnostics = new ArrayList<>();
+                boolean compiled = compile(project, "nested-class-depth-ok", target,
+                    diagnostics);
+                check(compiled, "the 511-link project compiles ["
+                    + target.laneName() + "]: " + diagnostics);
+                if (!compiled) {
+                    continue;
+                }
+                Execution execution = target == Target.LUAJIT
+                    ? executeLua(project, validExports)
+                    : executeJvm(project, validExports);
+                Capture capture = execution.capture();
+                check(capture == null, "the 511-link chain (512 containers) "
+                    + "completes on the " + target.laneName() + " artifact (exit "
+                    + execution.exitCode() + "; "
+                    + (capture == null ? ""
+                        : capture.code() + " " + capture.message())
+                    + ")");
+            } finally {
+                deleteRecursively(project.root());
+            }
+        }
+        String invalidSource = nestedClassDepthSource(512, null);
+        List<Export> invalidExports = exportsOf(invalidSource);
+        String expectedPosition = lineOf(invalidSource, "Wrapper$toJson(w)") + ":"
+            + columnOf(invalidSource, "Wrapper$toJson(w)");
+        String expectedMessage = "value at child.data" + ".next".repeat(512)
+            + " is not JSON serializable: table";
+        String oracleMessage = null;
+        Project invalidOracle = syntheticProject("app", invalidSource, Target.JVM);
+        try {
+            SemanticRuntimeModel.ErrorSnapshot oracle =
+                oracleFailure(invalidOracle, invalidExports);
+            check(oracle != null, "the 512-link chain exceeds the depth bound on "
+                + "the oracle");
+            if (oracle != null) {
+                checkEq("E8001", oracle.code(), "the oracle's depth-overflow code");
+                checkEq(expectedMessage, oracle.message(),
+                    "the oracle's walk-arm message names the exceeding container");
+                checkEq("table", oracle.actual(),
+                    "the oracle's actual token is the exceeding container's table");
+                checkEq(expectedPosition, originPosition(oracle.origin()),
+                    "the oracle renders the helper call origin (got "
+                        + oracle.origin() + ")");
+                oracleMessage = oracle.message();
+            }
+        } finally {
+            deleteRecursively(invalidOracle.root());
+        }
+        for (Target target : Target.values()) {
+            Project project = syntheticProject("app", invalidSource, target);
+            try {
+                List<String> diagnostics = new ArrayList<>();
+                boolean compiled = compile(project, "nested-class-depth-overflow",
+                    target, diagnostics);
+                check(compiled, "the 512-link project compiles ["
+                    + target.laneName() + "]: " + diagnostics);
+                if (!compiled) {
+                    continue;
+                }
+                Execution execution = target == Target.LUAJIT
+                    ? executeLua(project, invalidExports)
+                    : executeJvm(project, invalidExports);
+                Capture capture = execution.capture();
+                check(capture != null, "the 512-link chain fails on the "
+                    + target.laneName() + " artifact (exit " + execution.exitCode()
+                    + ")");
+                if (capture == null) {
+                    continue;
+                }
+                checkEq("E8001", capture.code(),
+                    "the " + target.laneName() + " depth-overflow code");
+                if (oracleMessage != null) {
+                    checkEq(oracleMessage, capture.message(), "the "
+                        + target.laneName() + " artifact reproduces the oracle's "
+                        + "walk-arm message");
+                }
+                checkEq(expectedPosition,
+                    capture.line() + ":" + capture.column(), "the "
+                        + target.laneName() + " artifact renders the helper call "
+                        + "origin (got " + capture.sourceFile() + ":"
+                        + capture.line() + ":" + capture.column() + ")");
+            } finally {
+                deleteRecursively(project.root());
+            }
+        }
+    }
+
+    /**
+     * The pinned-failure leg's negative controls: the sidecar comparison
+     * accepts the sidecar's own pin (the control) and rejects an incorrect
+     * process exit status, incorrect process stderr, and a missing capture —
+     * the process-level pins the runtime-error branch previously never
+     * compared.
+     */
+    private static void testRuntimeErrorSidecarNegativeControls() throws Exception {
+        System.out.println("-- the pinned-failure leg's negative controls: the "
+            + "process exit code and stderr are part of the byte-exact pin --");
+        Optional<SidecarExpectations.RuntimeExpectation.Executed> pinned =
+            pinnedOf(CYCLIC_FIXTURE);
+        check(pinned.isPresent(), CYCLIC_FIXTURE + ": the pinned runtime-error "
+            + "sidecar parses");
+        if (pinned.isEmpty()) {
+            return;
+        }
+        SidecarExpectations.RuntimeExpectation.Executed expectation = pinned.get();
+        check(expectation.isRuntimeError(), CYCLIC_FIXTURE + ": the sidecar pins a "
+            + "runtime error");
+        SidecarExpectations.ErrorExpectation row = expectation.error();
+        String stderr = new String(expectation.stderr(), StandardCharsets.UTF_8);
+        Capture matching = new Capture(row.code(), row.message(), row.sourceFile(),
+            row.line(), row.column(), row.expected().orElse(null),
+            row.actual().orElse(null));
+        List<String> accepted = runtimeErrorSidecarMismatches(expectation, row,
+            expectation.exitCode(), stderr, matching);
+        check(accepted.isEmpty(), "the comparator accepts the sidecar's own pin "
+            + "(the control): " + accepted);
+        List<String> wrongExit = runtimeErrorSidecarMismatches(expectation, row,
+            expectation.exitCode() + 1, stderr, matching);
+        check(wrongExit.stream().anyMatch(m -> m.contains("exit code")),
+            "the comparator rejects an incorrect process exit status: " + wrongExit);
+        List<String> wrongStderr = runtimeErrorSidecarMismatches(expectation, row,
+            expectation.exitCode(), "boom", matching);
+        check(wrongStderr.stream().anyMatch(m -> m.contains("stderr")),
+            "the comparator rejects incorrect process stderr: " + wrongStderr);
+        List<String> noCapture = runtimeErrorSidecarMismatches(expectation, row,
+            expectation.exitCode(), stderr, null);
+        check(!noCapture.isEmpty(),
+            "the comparator rejects a missing capture: " + noCapture);
+    }
+
+    // =========================================================================
     // 8. Determinism and the verbatim export key
     // =========================================================================
 
@@ -1929,6 +2295,10 @@ public class JsonableHelperProductionDriveTest {
         testNegatives();
         testDynamicHelperOrigin();
         testTableClassInstanceRejection();
+        testNestedTableInsertionOrder();
+        testNestedTableNumericVariants();
+        testNestedClassDepthBound();
+        testRuntimeErrorSidecarNegativeControls();
         testDeterminismAndExportKey();
         System.out.println("");
         System.out.println("Jsonable helper production drive: " + passed
