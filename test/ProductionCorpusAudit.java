@@ -119,9 +119,13 @@ import java.util.stream.Stream;
  *       not vacuous. The focused subprocess controls prove the same for
  *       the owned processes: a transcript read failure and a drain that
  *       is still open at its bounded deadline are infrastructure
- *       verdicts (never substituted empty output), and the audit-owned
- *       native bootstrap is deadline- and cancellation-bounded with its
- *       child reaped and its readers torn down on every exit.</li>
+ *       verdicts (never substituted empty output), and every owned child
+ *       runs under the whole-tree teardown — a persistent descendant that
+ *       holds the inherited pipes open dies with its process group, the
+ *       direct child is reaped, and no owned reader survives the call on
+ *       the deadline path or the cancellation path — so the audit-owned
+ *       native bootstrap and every drive are deadline- and
+ *       cancellation-bounded with nothing left behind.</li>
  *   <li><b>The acceptance verdicts and the pre-precondition rule.</b> The
  *       run computes the three acceptance verdicts — zero
  *       {@code CONSTRUCT_UNLOWERED}, zero {@code RETAINED_ABI_DEFERRED}/
@@ -211,6 +215,19 @@ public class ProductionCorpusAudit {
      * child), but only this many bytes are kept for the diagnostic.
      */
     private static final int NATIVE_OUTPUT_LIMIT_BYTES = 64 * 1024;
+
+    /**
+     * The bounded post-kill drain grace of the owned-process teardown:
+     * after the whole owned tree is terminated every inherited pipe writer
+     * is gone, so both transcript drains reach EOF inside this window.
+     */
+    private static final long OWNED_DRAIN_GRACE_SECONDS = 5;
+
+    /** The bounded reap window for the direct child after the tree kill. */
+    private static final long OWNED_REAP_TIMEOUT_SECONDS = 5;
+
+    /** The bounded wait for the containment helper of the tree kill. */
+    private static final long CONTAINMENT_HELPER_TIMEOUT_SECONDS = 5;
 
     private static final AtomicInteger passed = new AtomicInteger();
     private static final AtomicInteger fatalCount = new AtomicInteger();
@@ -1879,6 +1896,55 @@ public class ProductionCorpusAudit {
     }
 
     /**
+     * The process-group tools of the owned-process core. Every audit child
+     * starts through {@code setsid}, so the direct child leads its own
+     * process group and the teardown can kill the whole owned tree —
+     * including a descendant that outlives the direct child and is
+     * reparented, which {@link Process#descendants()} can no longer see.
+     * Both tools are resolved once, by absolute path, so a child
+     * environment's {@code PATH} cannot redirect them; when {@code setsid}
+     * is unavailable the core starts children directly and the teardown
+     * degrades to descendant-then-child termination.
+     */
+    private static final String SETSID_BINARY =
+        firstExecutable("/usr/bin/setsid", "/bin/setsid");
+    private static final String KILL_BINARY =
+        firstExecutable("/bin/kill", "/usr/bin/kill");
+
+    private static String firstExecutable(String... candidates) {
+        for (String candidate : candidates) {
+            if (Files.isExecutable(Path.of(candidate))) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The owned process builder: the {@code setsid} leader wrapper is
+     * prepended to the caller's command (when the tool is available) and
+     * every builder property is preserved, so the direct child becomes the
+     * leader of its own process group without changing any other observable
+     * property of the invocation.
+     */
+    private static ProcessBuilder ownedProcessBuilder(ProcessBuilder source) {
+        List<String> argv = new ArrayList<>();
+        argv.add(SETSID_BINARY);
+        argv.addAll(source.command());
+        ProcessBuilder owned = new ProcessBuilder(argv);
+        if (source.directory() != null) {
+            owned.directory(source.directory());
+        }
+        owned.environment().clear();
+        owned.environment().putAll(source.environment());
+        owned.redirectInput(source.redirectInput());
+        owned.redirectOutput(source.redirectOutput());
+        owned.redirectError(source.redirectError());
+        owned.redirectErrorStream(source.redirectErrorStream());
+        return owned;
+    }
+
+    /**
      * Runs one owned subprocess under the bounded deadline and returns its
      * outcome only when both transcript drains completed successfully. A
      * reader failure, a drain that has not completed when its bounded
@@ -1897,15 +1963,19 @@ public class ProductionCorpusAudit {
      * the post-exit drain deadline and the retained transcript cap ({@code 0}
      * keeps the whole transcript). The corpus drives keep the complete
      * transcript; the native bootstrap caps the compiler output while still
-     * draining the stream. Every post-start exit path closes the child and
-     * both readers before control leaves the call, and a transcript that is
-     * unreadable or still open at its deadline is an infrastructure failure,
-     * never substituted empty output.
+     * draining the stream. Every child starts as the leader of its own
+     * process group (through {@code setsid} when available), and every
+     * post-start exit path contains and terminates the whole owned tree,
+     * ends both readers and reaps the direct child before control leaves the
+     * call; a transcript that is unreadable or still open at its deadline is
+     * an infrastructure failure, never substituted empty output.
      */
     private static ProcessOutcome runOwnedProcess(ProcessBuilder builder,
             long timeoutSeconds, long drainSeconds, int outputLimitBytes)
             throws Exception {
-        Process process = builder.start();
+        boolean ownGroup = SETSID_BINARY != null;
+        Process process = ownGroup ? ownedProcessBuilder(builder).start()
+            : builder.start();
         byte[][] stdout = new byte[1][];
         byte[][] stderr = new byte[1][];
         Throwable[] stdoutFailure = new Throwable[1];
@@ -1941,12 +2011,14 @@ public class ProductionCorpusAudit {
         } finally {
             // Every post-start exit path — the bounded deadline, an
             // interruption of the calling worker, a reader failure, a drain
-            // deadline expiry, and the normal return — closes the owned
-            // child and both readers before control leaves the call. A
-            // cancelled audit therefore leaves no live child or reader
-            // behind, and the scratch/native cleanup that follows never
-            // races an ongoing execution.
-            closeOwnedProcess(process, outThread, errThread);
+            // deadline expiry, and the normal return — contains and
+            // terminates the whole owned process tree (so no inherited pipe
+            // writer survives), ends both readers and reaps the direct child
+            // before control leaves the call. A cancelled audit therefore
+            // leaves no live child, descendant or reader behind, and the
+            // scratch/native cleanup that follows never races an ongoing
+            // execution.
+            closeOwnedProcess(process, ownGroup, outThread, errThread);
         }
     }
 
@@ -1967,49 +2039,151 @@ public class ProductionCorpusAudit {
     }
 
     /**
-     * The bounded teardown of one owned process and its readers: the child is
-     * terminated, then force-killed if it does not exit within the bounded
-     * window, and each reader is joined within the same bound. The caller's
-     * interruption status is preserved for the propagation path.
+     * The bounded teardown of one owned process tree and its readers. The
+     * whole owned tree is contained: the current descendants, the child's
+     * process group (the direct child leads it when {@code setsid} is
+     * available, so a descendant that outlived the direct child and was
+     * reparented is reached too) and the direct child itself are
+     * force-killed, and the direct child is reaped. Both transcript drains
+     * then reach EOF inside the bounded post-kill grace, so neither an
+     * owned process nor an owned reader outlives this call and the
+     * scratch/native cleanup that follows never races an ongoing execution.
+     * The caller's interruption status is preserved for the propagation
+     * path.
      */
-    private static void closeOwnedProcess(Process process, Thread... readers) {
-        boolean interrupted = Thread.interrupted();
+    private static void closeOwnedProcess(Process process, boolean ownGroup,
+            Thread... readers) {
+        boolean[] interrupted = {Thread.interrupted()};
         try {
-            process.destroy();
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-            while (process.isAlive() && System.nanoTime() < deadline) {
-                try {
-                    process.waitFor(50, TimeUnit.MILLISECONDS);
-                } catch (InterruptedException e) {
-                    interrupted = true;
-                    process.destroyForcibly();
+            // The tree kill and the drain join form one sweep: the group
+            // kill ends every inherited pipe writer, so the drains reach
+            // EOF. A second sweep covers a process created while the first
+            // teardown ran, and gives the drains their remaining window.
+            for (int sweep = 0; sweep < 2; sweep++) {
+                terminateOwnedTree(process, ownGroup, interrupted);
+                if (awaitOwnedDrains(readers, interrupted)) {
+                    break;
                 }
             }
-            if (process.isAlive()) {
-                process.destroyForcibly();
-                try {
-                    process.waitFor(5, TimeUnit.SECONDS);
-                } catch (InterruptedException e) {
-                    interrupted = true;
-                }
-            }
-            for (Thread reader : readers) {
-                if (reader == null) {
-                    continue;
-                }
-                long joinDeadline = System.nanoTime()
-                    + TimeUnit.SECONDS.toNanos(5);
-                while (reader.isAlive() && System.nanoTime() < joinDeadline) {
-                    try {
-                        reader.join(50);
-                    } catch (InterruptedException e) {
-                        interrupted = true;
-                    }
-                }
-            }
+            reapOwnedProcess(process, interrupted);
         } finally {
-            if (interrupted) {
+            if (interrupted[0]) {
                 Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    /**
+     * Terminates the owned tree in the canonical order — descendants first,
+     * then the child's process group (when the core created one), then the
+     * direct child — so nothing outlives the call.
+     */
+    private static void terminateOwnedTree(Process process, boolean ownGroup,
+            boolean[] interrupted) {
+        try {
+            process.descendants().forEach(ProcessHandle::destroyForcibly);
+        } catch (RuntimeException ignored) {
+            // A vanished subtree is already gone; the group kill and the
+            // direct child remain the backstops.
+        }
+        if (ownGroup) {
+            killOwnedProcessGroup(process.pid(), interrupted);
+        }
+        process.destroyForcibly();
+    }
+
+    /**
+     * Kills every remaining member of the child's process group from outside
+     * the group: the child leads its own group (it was started through
+     * {@code setsid}), so its pid is the group id, and a descendant that
+     * outlived the direct child — reparented, therefore invisible to
+     * {@link Process#descendants()} — dies here. An already empty group
+     * yields the helper's not-found status and nothing else. The helper is a
+     * containment utility, not an owned toolchain child: its streams are
+     * discarded and its own wait is bounded.
+     */
+    private static void killOwnedProcessGroup(long groupId,
+            boolean[] interrupted) {
+        List<String> argv = KILL_BINARY != null
+            ? List.of(KILL_BINARY, "-KILL", "--", "-" + groupId)
+            : List.of("bash", "-c", "kill -KILL -- -\"$1\"",
+                "audit-kill-group", Long.toString(groupId));
+        try {
+            ProcessBuilder killerBuilder = new ProcessBuilder(argv);
+            killerBuilder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            killerBuilder.redirectError(ProcessBuilder.Redirect.DISCARD);
+            Process killer = killerBuilder.start();
+            boolean killed = false;
+            try {
+                killed = killer.waitFor(CONTAINMENT_HELPER_TIMEOUT_SECONDS,
+                    TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                interrupted[0] = true;
+            }
+            if (!killed) {
+                killer.destroyForcibly();
+            }
+        } catch (Exception ignored) {
+            // The direct child's destroyForcibly remains the backstop.
+        }
+    }
+
+    /**
+     * Joins both owned readers inside the bounded post-kill grace: once
+     * every process holding the inherited pipes is gone, the drains reach
+     * EOF. An interruption is recorded and the join retried, so the
+     * ownership cleanup completes before an interruption propagates.
+     * {@code true} means both drains ended inside the window.
+     */
+    private static boolean awaitOwnedDrains(Thread[] readers,
+            boolean[] interrupted) {
+        long deadline = System.nanoTime()
+            + TimeUnit.SECONDS.toNanos(OWNED_DRAIN_GRACE_SECONDS);
+        boolean complete = true;
+        for (Thread reader : readers) {
+            if (reader == null) {
+                continue;
+            }
+            while (reader.isAlive()) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    complete = false;
+                    break;
+                }
+                try {
+                    reader.join(Math.max(1L,
+                        TimeUnit.NANOSECONDS.toMillis(remaining)));
+                } catch (InterruptedException e) {
+                    interrupted[0] = true;
+                }
+            }
+        }
+        return complete;
+    }
+
+    /**
+     * Reaps the direct child inside the bounded window even when the waiting
+     * thread is interrupted; a child that cannot be reaped inside the window
+     * is SIGKILLed once more and left to the OS reaper.
+     */
+    private static void reapOwnedProcess(Process process,
+            boolean[] interrupted) {
+        long deadline = System.nanoTime()
+            + TimeUnit.SECONDS.toNanos(OWNED_REAP_TIMEOUT_SECONDS);
+        while (process.isAlive()) {
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) {
+                process.destroyForcibly();
+                return;
+            }
+            try {
+                if (process.waitFor(Math.max(1L,
+                        TimeUnit.NANOSECONDS.toMillis(remaining)),
+                        TimeUnit.MILLISECONDS)) {
+                    return;
+                }
+            } catch (InterruptedException e) {
+                interrupted[0] = true;
             }
         }
     }
@@ -2799,8 +2973,156 @@ public class ProductionCorpusAudit {
         projectionInventoryControls();
         unclassifiedBehaviorControls();
         subprocessCancellationControl();
+        ownedTreeTeardownControls();
         subprocessDrainControls();
         nativeBootstrapControls();
+    }
+
+    /**
+     * The owned-tree teardown controls: the direct child leaves a persistent
+     * descendant that holds the inherited pipes open and then waits. On the
+     * bounded-deadline path and on the cancellation path alike the teardown
+     * contains the whole owned tree, so after the call returns no
+     * descendant, no direct child and no audit-owned reader survives —
+     * nothing can race the scratch/native cleanup, and a stalled tool can
+     * never keep a drain (or an audit-owned process) alive past the call.
+     */
+    private static void ownedTreeTeardownControls() throws Exception {
+        System.out.println("-- the owned-tree teardown controls: a persistent "
+            + "descendant holding the inherited pipes open dies with the "
+            + "tree --");
+
+        // (a) The bounded-deadline path: the shell starts a persistent
+        // background descendant, records its pid and waits, so the direct
+        // child outlives the process deadline and the descendant holds the
+        // inherited pipes open until the teardown kills the whole tree.
+        Path deadlineRoot = Files.createTempDirectory(
+            "production-corpus-audit-tree-deadline-");
+        try {
+            Path pidFile = deadlineRoot.resolve("descendant.pid");
+            java.util.concurrent.atomic.AtomicReference<Exception> raised =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            java.util.concurrent.atomic.AtomicBoolean returned =
+                new java.util.concurrent.atomic.AtomicBoolean();
+            Thread worker = new Thread(() -> {
+                try {
+                    runOwnedProcess(new ProcessBuilder("sh", "-c",
+                        "sleep 30 & echo $! > " + pidFile + "; wait"),
+                        1, 1, 0);
+                    returned.set(true);
+                } catch (Exception e) {
+                    raised.set(e);
+                }
+            }, "audit-tree-deadline-control");
+            worker.setDaemon(true);
+            worker.start();
+            boolean started = awaitPidFile(pidFile);
+            check(started,
+                "the owned-tree deadline control's descendant started");
+            if (!started) {
+                return;
+            }
+            worker.join(TimeUnit.SECONDS.toMillis(30));
+            check(!worker.isAlive(),
+                "the owned-tree deadline control returns within the bound");
+            check(!returned.get() && raised.get() != null
+                    && String.valueOf(raised.get()).contains("deadline"),
+                "the owned-tree deadline control fails closed by deadline: "
+                    + (raised.get() == null ? "no failure" : raised.get()));
+            awaitPidGone(pidFile);
+            check(!pidAlive(pidFile),
+                "no descendant survives the owned-tree deadline teardown");
+            awaitAuditReaders();
+            checkEq(0L, auditReaderThreads(),
+                "no owned reader thread survives the owned-tree deadline "
+                    + "teardown");
+        } finally {
+            deleteRecursively(deadlineRoot);
+        }
+
+        // (b) The cancellation path: the same persistent descendant, with
+        // the calling worker interrupted while the direct child waits. The
+        // teardown owns the tree before the interruption propagates.
+        Path cancelRoot = Files.createTempDirectory(
+            "production-corpus-audit-tree-cancel-");
+        try {
+            Path pidFile = cancelRoot.resolve("descendant.pid");
+            java.util.concurrent.atomic.AtomicBoolean interrupted =
+                new java.util.concurrent.atomic.AtomicBoolean();
+            java.util.concurrent.atomic.AtomicReference<String> failure =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            Thread worker = new Thread(() -> {
+                try {
+                    runOwnedProcess(new ProcessBuilder("sh", "-c",
+                        "sleep 30 & echo $! > " + pidFile + "; wait"),
+                        30, 30, 0);
+                    failure.set("the cancelled owned-tree drive returned "
+                        + "normally");
+                } catch (InterruptedException e) {
+                    interrupted.set(true);
+                } catch (Exception e) {
+                    failure.set("the cancelled owned-tree drive raised " + e);
+                }
+            }, "audit-tree-cancel-control");
+            worker.setDaemon(true);
+            worker.start();
+            boolean started = awaitPidFile(pidFile);
+            check(started,
+                "the owned-tree cancellation control's descendant started");
+            if (!started) {
+                return;
+            }
+            worker.interrupt();
+            worker.join(TimeUnit.SECONDS.toMillis(30));
+            check(!worker.isAlive(),
+                "the owned-tree cancellation control returns within the "
+                    + "bound");
+            check(interrupted.get(),
+                "the owned-tree cancellation control observed the "
+                    + "interruption: " + failure.get());
+            awaitPidGone(pidFile);
+            check(!pidAlive(pidFile),
+                "no descendant survives the owned-tree cancellation "
+                    + "teardown");
+            awaitAuditReaders();
+            checkEq(0L, auditReaderThreads(),
+                "no owned reader thread survives the owned-tree "
+                    + "cancellation teardown");
+        } finally {
+            deleteRecursively(cancelRoot);
+        }
+    }
+
+    /** Waits (bounded) for a control's pid file to carry its recorded pid. */
+    private static boolean awaitPidFile(Path pidFile) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            if (Files.isRegularFile(pidFile)) {
+                String text = Files.readString(pidFile, StandardCharsets.UTF_8)
+                    .trim();
+                if (!text.isEmpty()) {
+                    return true;
+                }
+            }
+            Thread.sleep(20);
+        }
+        return false;
+    }
+
+    /** Waits (bounded) for a control's recorded descendant to disappear. */
+    private static void awaitPidGone(Path pidFile) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (pidAlive(pidFile) && System.nanoTime() < deadline) {
+            Thread.sleep(20);
+        }
+    }
+
+    /** Waits (bounded) for every audit-owned reader thread to end. */
+    private static void awaitAuditReaders() throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (auditReaderThreads() > 0 && System.nanoTime() < deadline) {
+            Thread.sleep(20);
+        }
     }
 
     /**
