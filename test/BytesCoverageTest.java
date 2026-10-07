@@ -1108,6 +1108,57 @@ public class BytesCoverageTest {
         """;
 
     /**
+     * The {@code STRING_SPLIT} control: the array {@code std/string.split}
+     * returns is not a decode result, so its nested element keeps the landed
+     * unmarked {@code array} token (B3: the {@code STRING_SPLIT} result is
+     * unmarked).
+     */
+    private static final String SPLIT_NESTED_SOURCE = """
+        import * as strings from "std/string"
+
+        export function main(): null {
+          let parts: string[] = strings.split("a,b", ",")
+          let holder: table = { values: [parts] }
+          let xs: bytes[][] = holder.values
+          return null
+        }
+        """;
+
+    /**
+     * The {@code TABLE_KEYS} control: the array {@code std/table.keys}
+     * returns is not a decode result, so its nested element keeps the landed
+     * unmarked {@code array} token (B3: the {@code TABLE_KEYS} result is
+     * unmarked).
+     */
+    private static final String KEYS_NESTED_SOURCE = """
+        import * as tables from "std/table"
+
+        export function main(): null {
+          let t: table = { a: 1 }
+          let ks: string[] = tables.keys(t)
+          let holder: table = { values: [ks] }
+          let xs: bytes[][] = holder.values
+          return null
+        }
+        """;
+
+    /**
+     * The decode tree's second nested level: a {@code bytes[][][]} crossing
+     * over a parsed {@code [[["x"]]]} reports the same marked element one
+     * wrap deeper, so the decode site marks every array of the tree
+     * recursively.
+     */
+    private static final String DECODED_DEEP_NESTED_SOURCE = """
+        import * as json from "std/json"
+
+        export function main(): null {
+          let t: table = json.parse("{\\"values\\":[[[\\"x\\"]]]}")
+          let xs: bytes[][][] = t.values
+          return null
+        }
+        """;
+
+    /**
      * Projection-only inertness: the decoded tree's identity, length,
      * indexing, alias-observed mutation, and stringify encoding are
      * unchanged by the mark.
@@ -1122,6 +1173,10 @@ public class BytesCoverageTest {
           let alias: int[] = xs[0]
           if (first !== alias) {
             throw { code: "TEST_FAIL", message: "decoded identity" }
+          }
+          let reread: int[][] = t.values
+          if (reread !== xs) {
+            throw { code: "TEST_FAIL", message: "decoded member identity" }
           }
           if (first.length !== 2) {
             throw { code: "TEST_FAIL", message: "decoded length" }
@@ -1180,7 +1235,24 @@ public class BytesCoverageTest {
             HOST_RETURNED_NESTED_SOURCE, "array_return", "host/array_return", 6, 11,
             new Tuple("E8003", "array element 1 type mismatch", "[bytes]", "array"));
 
+        // The remaining non-decode array producers (B3 names both): the
+        // STRING_SPLIT and TABLE_KEYS results stay unmarked, so the same
+        // element projection keeps the landed refined token.
+        driveFocusedFailure("bytes split-result nested element",
+            SPLIT_NESTED_SOURCE, null, null, 6, 11,
+            new Tuple("E8003", "array element 1 type mismatch", "[bytes]", "array"));
+
+        driveFocusedFailure("bytes keys-result nested element",
+            KEYS_NESTED_SOURCE, null, null, 7, 11,
+            new Tuple("E8003", "array element 1 type mismatch", "[bytes]", "array"));
+
+        driveFocusedFailure("bytes decoded element two levels down (marked)",
+            DECODED_DEEP_NESTED_SOURCE, null, null, 5, 11,
+            new Tuple("E8003", "array element 1 type mismatch", "[[bytes]]", "table"));
+
         driveFocusedSuccess("decoded-array inertness", DECODED_INERTNESS_SOURCE);
+
+        checkEmittedMarkSurface();
 
         driveFocusedFailure("decoded array at a table descriptor",
             DECODED_ADMISSION_SOURCE, null, null, 6, 34,
@@ -1311,6 +1383,66 @@ public class BytesCoverageTest {
                 + ": a runtime-ok drive runs no direct terminal artifact");
             checkEq("OK", jvm.outcome(), label
                 + ": the JVM production artifact runs to success");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * The mark's emission surface (B3, per consumer): the emitted LuaJIT
+     * prelude carries exactly one mark writer — the stdlib JSON decode
+     * realization — and exactly one reader — the array-element token helper,
+     * whose definition and single call site are its only other occurrences —
+     * so no other emitted surface sets or consults the mark.
+     */
+    private static void checkEmittedMarkSurface() throws Exception {
+        System.out.println("-- the decoded-array mark's emission surface: one writer "
+            + "and one reader --");
+        String chunk = emittedChunk(DECODED_NESTED_SOURCE);
+        if (chunk == null) {
+            return;
+        }
+        checkEq(1, countOf(chunk, "__da = true"),
+            "the emitted chunk carries exactly one decoded-array mark writer (the "
+                + "stdlib JSON decode realization)");
+        checkEq(1, countOf(chunk, "v.__da"),
+            "the emitted chunk reads the decoded-array mark at exactly one site (the "
+                + "array-element token helper)");
+        checkEq(2, countOf(chunk, "__elemRefKind("),
+            "the emitted chunk defines and calls the array-element token helper once "
+                + "each");
+    }
+
+    /** The occurrence count of one literal in a text. */
+    private static int countOf(String text, String needle) {
+        int count = 0;
+        int index = 0;
+        while ((index = text.indexOf(needle, index)) >= 0) {
+            count++;
+            index += needle.length();
+        }
+        return count;
+    }
+
+    /**
+     * The emitted LuaJIT production chunk of one focused program (the real
+     * emission surface, without an artifact execution).
+     */
+    private static String emittedChunk(String source) throws Exception {
+        Path root = Files.createTempDirectory("bytes-chunk-");
+        try {
+            BytesFixture spec = new BytesFixture(BYTES_DIR, "emitted chunk", "main",
+                "null", List.of(), null, null, 0, 0);
+            Compiled compiled = compileFocused(root, source, null, null);
+            if (compiled == null) {
+                return null;
+            }
+            Drive drive = lowerFocused(compiled, spec);
+            if (drive == null) {
+                return null;
+            }
+            return LuaSemanticEmitter.emitProductionProject(drive.project(),
+                drive.tables(), drive.registries(), drive.compiled().surface());
         } finally {
             deleteRecursively(root);
         }
