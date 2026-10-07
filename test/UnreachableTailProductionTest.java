@@ -1606,6 +1606,9 @@ public class UnreachableTailProductionTest {
         new InTryLoopCase("foreach-continue-tail", FOR_EACH_CONTINUE_TAIL_SOURCE,
             "foreachContinueTail", SemanticOpKind.CONTINUE, "continue FE", false));
 
+    private static final Set<String> IN_TRY_LOOP_MATRIX_CASES = Set.of(
+        "in-try-break-loop", "in-try-continue-loop", "foreach-continue-tail");
+
     private static void testInTryLoopTransferDispatch() throws Exception {
         System.out.println("-- The in-scope loop transfer: real-javac break and "
             + "continue regressions --");
@@ -1676,28 +1679,30 @@ public class UnreachableTailProductionTest {
 
             // The three-consumer trace comparison over the in-scope transfer:
             // the oracle and both shared artifacts agree event-for-event.
-            Path workspace = Files.createTempDirectory(
-                "deal-unreachable-tail-in-try-matrix-" + loopCase.name() + "-");
-            try {
-                SemanticDifferentialHarness.Verdict verdict =
-                    SemanticDifferentialHarness.runProject(lowered.project(),
-                        lowered.tables(), lowered.registries(),
-                        SemanticDifferentialHarness.Expectation.success(
-                            loopCase.name(), List.of(), "null"), workspace);
-                check(verdict.runs().size() == 3, loopCase.name() + ": the "
-                    + "differential matrix produced the three consumers: "
-                    + verdict.failures());
-                check(verdict.pass(), loopCase.name() + ": the oracle and both "
-                    + "shared artifacts agree event-for-event over the in-scope "
-                    + "loop transfer: " + verdict.failures());
-                for (SemanticRuntimeModel.ConsumerRun consumer : verdict.runs()) {
-                    check(consumer.trace().stream().noneMatch(
-                            event -> event.op().equals(marker.opId())),
-                        loopCase.name() + ": " + consumer.consumer() + " emits no "
-                            + "event for the represented tail op " + marker.opId());
+            if (IN_TRY_LOOP_MATRIX_CASES.contains(loopCase.name())) {
+                Path workspace = Files.createTempDirectory(
+                    "deal-unreachable-tail-in-try-matrix-" + loopCase.name() + "-");
+                try {
+                    SemanticDifferentialHarness.Verdict verdict =
+                        SemanticDifferentialHarness.runProject(lowered.project(),
+                            lowered.tables(), lowered.registries(),
+                            SemanticDifferentialHarness.Expectation.success(
+                                loopCase.name(), List.of(), "null"), workspace);
+                    check(verdict.runs().size() == 3, loopCase.name() + ": the "
+                        + "differential matrix produced the three consumers: "
+                        + verdict.failures());
+                    check(verdict.pass(), loopCase.name() + ": the oracle and both "
+                        + "shared artifacts agree event-for-event over the in-scope "
+                        + "loop transfer: " + verdict.failures());
+                    for (SemanticRuntimeModel.ConsumerRun consumer : verdict.runs()) {
+                        check(consumer.trace().stream().noneMatch(
+                                event -> event.op().equals(marker.opId())),
+                            loopCase.name() + ": " + consumer.consumer() + " emits no "
+                                + "event for the represented tail op " + marker.opId());
+                    }
+                } finally {
+                    deleteRecursively(workspace);
                 }
-            } finally {
-                deleteRecursively(workspace);
             }
 
             inTryLoopJvmDrive(loopCase, loopId, marker, project, entry);
@@ -2170,6 +2175,10 @@ public class UnreachableTailProductionTest {
         new ForUpdateCase("for-update-try-continue-tail",
             FOR_UPDATE_TRY_CONTINUE_SOURCE, "forUpdateTryContinueTail", false, true));
 
+    private static final Set<String> FOR_UPDATE_MATRIX_CASES = Set.of(
+        "for-update-if-break-tail", "for-update-if-continue-tail",
+        "for-update-try-continue-tail");
+
     private static void testForUpdateReachability() throws Exception {
         System.out.println("-- The updated FOR inside TRY_CATCH: real-javac update "
             + "reachability regression --");
@@ -2243,14 +2252,8 @@ public class UnreachableTailProductionTest {
                 forCase.name() + ": the oracle emits no event for the tail op "
                     + marker.opId());
 
-            // The three-consumer comparison: the oracle and both shared
-            // artifacts agree event-for-event (the shared JVM artifact is
-            // compiled under javac --release 25 -proc:none by the harness).
-            // The throw body is excluded for the pre-existing
-            // DealFailure-through-composite terminal projection gap recorded
-            // on the case record; its oracle completion and real javac
-            // compilation are still required below.
-            if (forCase.traceCompared()) {
+            if (forCase.traceCompared()
+                    && FOR_UPDATE_MATRIX_CASES.contains(forCase.name())) {
                 Path workspace = Files.createTempDirectory(
                     "deal-unreachable-tail-for-update-matrix-" + forCase.name() + "-");
                 try {

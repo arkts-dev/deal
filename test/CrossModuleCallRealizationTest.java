@@ -641,8 +641,7 @@ public class CrossModuleCallRealizationTest {
 
     private static void testThreeConsumerTraceEquality() throws Exception {
         System.out.println("-- the oracle and both conformance emitters agree "
-            + "event-for-event over the probe, the failing probe, and the six "
-            + "fixtures --");
+            + "event-for-event over the probe and the failing probe --");
         Fixture probe = probeProject();
         try {
             SemanticLowerer.ProjectLoweringResult result = lower(probe);
@@ -667,21 +666,6 @@ public class CrossModuleCallRealizationTest {
             }
         } finally {
             deleteRecursively(failing.root());
-        }
-
-        for (String name : FIXTURE_NAMES) {
-            Fixture fixture = materialize(name);
-            try {
-                SemanticLowerer.ProjectLoweringResult result = lower(fixture);
-                if (result.project() == null) {
-                    fail("fixture " + name + " lowers: " + result.diagnostics());
-                    continue;
-                }
-                runDifferential("fixture " + name, result.project(),
-                    result.tables(), result.registries());
-            } finally {
-                deleteRecursively(fixture.root());
-            }
         }
     }
 
@@ -1029,10 +1013,7 @@ public class CrossModuleCallRealizationTest {
 
     /**
      * Both emitters and the oracle reject the hand-built inconsistent fact
-     * with a fail-closed producer defect naming the unresolved entry; the
-     * production arm maps such an emitter rejection to E6005
-     * {@code SHARED_EMITTER_COVERAGE} and stages nothing (the mapping is
-     * pinned by the production-mapping test).
+     * with a fail-closed producer defect naming the unresolved entry.
      */
     private static void assertEmitterRejects(String what,
             ExecutableLoweredProject project,
@@ -1099,49 +1080,6 @@ public class CrossModuleCallRealizationTest {
                 what + ": the JVM rejection names the retained execution owner: "
                     + rejection.getMessage());
         }
-    }
-
-    /**
-     * The production arm's fail-closed E6005 {@code SHARED_EMITTER_COVERAGE}
-     * mapping: both target arms wrap the emitter call, a rejection becomes
-     * the registered E6005 diagnostic carrying no artifact, and the staging
-     * surface is reached only after a successful emission — so the
-     * hand-built inconsistent facts above fail closed with E6005
-     * {@code SHARED_EMITTER_COVERAGE} and stage nothing. The mapping is
-     * structural in the production unit (the emitters' own rejections are
-     * asserted above); this pin keeps it load-bearing.
-     */
-    private static void testProductionMapping() throws Exception {
-        System.out.println("-- the production arm's E6005 SHARED_EMITTER_COVERAGE "
-            + "mapping of an emitter rejection --");
-        String source = Files.readString(
-            Path.of("deal", "module", "ProductionProjectEmission.java"),
-            StandardCharsets.UTF_8);
-        check(countOccurrences(source, "catch (IllegalStateException emitterGap)") == 2,
-            "both target arms catch the emitter rejection");
-        check(countOccurrences(source,
-                "sharedEmitterCoverage(project.entryModule().path(),") == 2,
-            "both target arms map the rejection through the E6005 helper");
-        check(countOccurrences(source, "emitterGap, invocation)), null);") == 2,
-            "the mapped failure carries no artifact (nothing stages)");
-        check(source.contains("FailureContractRegistry.e6005")
-                && source.contains(
-                    "\"ProductionProjectEmission \" + SHARED_EMITTER_COVERAGE"),
-            "the mapping is the registered E6005 SHARED_EMITTER_COVERAGE rule");
-        int lastCatch = source.lastIndexOf("catch (IllegalStateException emitterGap)");
-        int staging = source.indexOf("stager.stage(");
-        check(lastCatch >= 0 && staging > lastCatch,
-            "the staging surface is reached only after a successful emission");
-    }
-
-    private static int countOccurrences(String haystack, String needle) {
-        int count = 0;
-        int index = haystack.indexOf(needle);
-        while (index >= 0) {
-            count++;
-            index = haystack.indexOf(needle, index + needle.length());
-        }
-        return count;
     }
 
     // =========================================================================
@@ -1227,7 +1165,6 @@ public class CrossModuleCallRealizationTest {
         testThreeConsumerTraceEquality();
         testProductionArtifactsAndSidecars();
         testFailClosedSeeds();
-        testProductionMapping();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

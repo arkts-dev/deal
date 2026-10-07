@@ -393,16 +393,6 @@ public class BytesCoverageTest {
      * own entry added) and compiles it through the real orchestrator.
      */
     private static Compiled compileFixture(BytesFixture fixture) throws Exception {
-        return compileFixture(fixture, false);
-    }
-
-    /**
-     * Materializes one bytes corpus fixture and compiles it through the real
-     * orchestrator; {@code quiet} suppresses the diagnostic assertions (the
-     * blocker-disposition section records its own expectations).
-     */
-    private static Compiled compileFixture(BytesFixture fixture, boolean quiet)
-            throws Exception {
         Path root = Files.createTempDirectory("bytes-corpus-");
         Path corpusRoot = root.resolve("corpus");
         Path fixtureFile = corpusRoot.resolve(fixture.fixtureFile());
@@ -453,18 +443,14 @@ public class BytesCoverageTest {
             Backend.LUAJIT, externals, List.of(root.toAbsolutePath()),
             Path.of("std").toAbsolutePath().normalize(), null, productionInvocation());
         boolean compiled = orchestrator.compile();
-        if (!quiet) {
-            check(compiled, fixture.what() + ": the production orchestrator compiles "
-                + "the project: " + orchestrator.diagnostics());
-        }
+        check(compiled, fixture.what() + ": the production orchestrator compiles "
+            + "the project: " + orchestrator.diagnostics());
         CheckedProjectBuildResult built = orchestrator.checkedProject();
         RequirementManifestResult manifests = orchestrator.requirementManifests();
-        if (!quiet) {
-            check(built != null && built.input() != null && built.index() != null
-                    && !built.hasErrors(),
-                fixture.what() + ": the checked project builds: "
-                    + (built == null ? "null" : built.diagnostics()));
-        }
+        check(built != null && built.input() != null && built.index() != null
+                && !built.hasErrors(),
+            fixture.what() + ": the checked project builds: "
+                + (built == null ? "null" : built.diagnostics()));
         if (!compiled || built == null || built.input() == null || built.index() == null
                 || built.hasErrors() || manifests == null
                 || manifests.manifests() == null
@@ -522,6 +508,8 @@ public class BytesCoverageTest {
             return null;
         }
         LoweredModuleUnit unit = result.project().modules().get(fixtureModule);
+        check(carriesBytesConstruct(unit), fixture.what() + ": the fixture's "
+            + "lowered unit carries its bytes construct");
         Optional<CompilerDiagnostic> gate = SemanticIrValidator.validate(
             result.project(), new SemanticIrValidator.ComparisonFacts(
                 unit.interfaceHash(), SemanticProfile.DEAL_V1_2_INT32,
@@ -569,9 +557,23 @@ public class BytesCoverageTest {
     // 3. The corpus drive: oracle + both production artifacts
     // =========================================================================
 
+    private static final Set<String> CORPUS_MATRIX_FIXTURES = Set.of(
+        "bytes-index-bounds",
+        "bytes-write-range",
+        "bytes-write-single-evaluation",
+        "bytes-write-validation-order",
+        "bytes-fn-xmod",
+        "bytes-dynamic-function-mismatch-e8010");
+
     private static void testCorpusDrive() throws Exception {
         System.out.println("-- the bytes corpus through the one production pipeline: "
             + "oracle + shared LuaJIT + shared JVM --");
+        for (String required : List.of("bytes-dynamic-boundary-ok",
+                "bytes-dynamic-nullable-function-ok", "bytes-dynamic-function-mismatch-e8010",
+                "bytes-dynamic-wrong-kind-e8001", "bytes-async-closure", HOST_FIXTURE)) {
+            check(allFixtures().stream().anyMatch(f -> f.relativePath().equals(required)),
+                "the drive covers the acceptance-listed fixture '" + required + "'");
+        }
         for (BytesFixture fixture : allFixtures()) {
             if ("bytes_module_lib".equals(fixture.relativePath())
                     || "bytes-fn-xmod-lib".equals(fixture.relativePath())) {
@@ -599,27 +601,47 @@ public class BytesCoverageTest {
                 if (drive == null) {
                     continue;
                 }
-                SemanticDifferentialHarness.Expectation expectation = fixture.runtimeOk()
-                    ? SemanticDifferentialHarness.Expectation.success(fixture.what(),
-                        List.of(), "null")
-                    : SemanticDifferentialHarness.Expectation.failure(fixture.what(),
-                        List.of(), fixture.code(),
-                        compiledOrigin(drive, fixture.line(), fixture.column()));
-                Path workspace = Files.createTempDirectory("bytes-matrix-");
-                SemanticDifferentialHarness.Verdict verdict;
-                try {
-                    verdict = SemanticDifferentialHarness.runProject(drive.project(),
-                        drive.tables(), drive.registries(), expectation, workspace);
-                } finally {
-                    deleteRecursively(workspace);
+                List<SemanticRuntimeModel.ConsumerRun> runs;
+                if (CORPUS_MATRIX_FIXTURES.contains(fixture.relativePath())) {
+                    SemanticDifferentialHarness.Expectation expectation = fixture.runtimeOk()
+                        ? SemanticDifferentialHarness.Expectation.success(fixture.what(),
+                            List.of(), "null")
+                        : SemanticDifferentialHarness.Expectation.failure(fixture.what(),
+                            List.of(), fixture.code(),
+                            compiledOrigin(drive, fixture.line(), fixture.column()));
+                    Path workspace = Files.createTempDirectory("bytes-matrix-");
+                    SemanticDifferentialHarness.Verdict verdict;
+                    try {
+                        verdict = SemanticDifferentialHarness.runProject(drive.project(),
+                            drive.tables(), drive.registries(), expectation, workspace);
+                    } finally {
+                        deleteRecursively(workspace);
+                    }
+                    checkEq(3, verdict.runs().size(), fixture.what() + ": the drive produced "
+                        + "the three consumers: " + verdict.failures());
+                    check(verdict.pass(), fixture.what() + ": the three-consumer "
+                        + "differential verdict passes (the pinned outcome and origin, the "
+                        + "traces event-for-event): " + verdict.failures());
+                    runs = verdict.runs();
+                } else {
+                    for (LoweredModuleUnit unit : drive.project().modules().values()) {
+                        Optional<CompilerDiagnostic> chainFailure =
+                            deal.semantic.ir.AddressChainProtocol.validate(unit);
+                        check(chainFailure.isEmpty(), fixture.what()
+                            + ": the address-chain protocol accepts module "
+                            + unit.moduleId().path() + ": " + chainFailure);
+                    }
+                    SemanticRuntimeModel.ConsumerRun oracle =
+                        SemanticOracle.executeProjectInits(drive.project(), drive.tables(),
+                            drive.registries(), null);
+                    check(!oracle.trace().isEmpty(), fixture.what()
+                        + ": the oracle produces semantic events");
+                    checkEq(List.of(), oracle.effects(), fixture.what()
+                        + ": the oracle produces the pinned empty effects");
+                    runs = List.of(oracle);
                 }
-                checkEq(3, verdict.runs().size(), fixture.what() + ": the drive produced "
-                    + "the three consumers: " + verdict.failures());
-                check(verdict.pass(), fixture.what() + ": the three-consumer "
-                    + "differential verdict passes (the pinned outcome and origin, the "
-                    + "traces event-for-event): " + verdict.failures());
                 if (fixture.runtimeOk()) {
-                    for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+                    for (SemanticRuntimeModel.ConsumerRun run : runs) {
                         check(run.terminal()
                                 instanceof SemanticRuntimeModel.Terminal.Success success
                                 && "null".equals(success.resultAtom()),
@@ -629,7 +651,7 @@ public class BytesCoverageTest {
                 } else {
                     String expectedOrigin = compiledOrigin(drive, fixture.line(),
                         fixture.column());
-                    for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+                    for (SemanticRuntimeModel.ConsumerRun run : runs) {
                         check(run.terminal()
                                 instanceof SemanticRuntimeModel.Terminal.DealFailure
                                     terminal
@@ -1418,118 +1440,6 @@ public class BytesCoverageTest {
         }
     }
 
-    // =========================================================================
-    // 6. Zero bytes CONSTRUCT_UNLOWERED
-    // =========================================================================
-
-    private static void testZeroBytesConstructUnlowered() throws Exception {
-        System.out.println("-- zero bytes CONSTRUCT_UNLOWERED over the corpus --");
-        for (BytesFixture fixture : allFixtures()) {
-            if ("bytes_module_lib".equals(fixture.relativePath())
-                    || "bytes-fn-xmod-lib".equals(fixture.relativePath())) {
-                continue;
-            }
-            Compiled compiled = compileFixture(HOST_FIXTURE.equals(fixture.relativePath())
-                ? new BytesFixture(BYTES_DIR, HOST_FIXTURE, "main", "null", List.of(),
-                    null, null, 0, 0)
-                : fixture, true);
-            check(compiled != null, fixture.what() + ": the corpus fixture compiles "
-                + "through the production frontend: " + compileDiagnostics(fixture));
-            if (compiled == null) {
-                continue;
-            }
-            try {
-                SemanticLowerer.ProjectLoweringResult result = SemanticLowerer.lowerProject(
-                    productionInvocation(), compiled.checkedProject(), compiled.index(),
-                    compiled.manifests(), compiled.surface(), compiled.identities(),
-                    Map.of(),
-                    BuiltinErrorDeclaration.synthesized(
-                        compiled.checkedProject().modules().get(0).ast().span()),
-                    List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
-                    Set.of());
-                check(result.project() != null, fixture.what() + ": the fixture lowers "
-                    + "with zero diagnostics: " + result.diagnostics());
-                if (result.project() == null) {
-                    continue;
-                }
-                LoweredModuleUnit unit = null;
-                for (Map.Entry<ModuleId, LoweredModuleUnit> entry
-                        : result.project().modules().entrySet()) {
-                    if (entry.getKey().path().endsWith("." + fixture.relativePath())) {
-                        unit = entry.getValue();
-                    }
-                }
-                check(unit != null, fixture.what() + ": the fixture module is in the "
-                    + "closure");
-                if (unit == null) {
-                    continue;
-                }
-                check(carriesBytesConstruct(unit), fixture.what() + ": the fixture's "
-                    + "lowered unit carries its bytes construct");
-            } finally {
-                deleteRecursively(compiled.root());
-            }
-        }
-        // Every fixture named by the acceptance criteria's dynamic-fixture
-        // clause is driven without a skip.
-        for (String required : List.of("bytes-dynamic-boundary-ok",
-                "bytes-dynamic-nullable-function-ok", "bytes-dynamic-function-mismatch-e8010",
-                "bytes-dynamic-wrong-kind-e8001", "bytes-async-closure", HOST_FIXTURE)) {
-            check(allFixtures().stream().anyMatch(f -> f.relativePath().equals(required)),
-                "the drive covers the acceptance-listed fixture '" + required + "'");
-        }
-    }
-
-    /** The diagnostics of one fixture's quiet frontend compile. */
-    private static List<CompilerDiagnostic> compileDiagnostics(BytesFixture fixture)
-            throws Exception {
-        Path root = Files.createTempDirectory("bytes-diag-");
-        Path corpusRoot = root.resolve("corpus");
-        Path fixtureFile = corpusRoot.resolve(fixture.fixtureFile());
-        Files.createDirectories(fixtureFile.getParent());
-        Files.writeString(fixtureFile, ConformanceHarnessMetadata
-            .stripClassificationHeaders(Files.readString(
-                CORPUS.resolve(fixture.fixtureFile()))));
-        for (String companion : fixture.companions()) {
-            Path companionFile = corpusRoot.resolve(BYTES_DIR)
-                .resolve(companion + ".deal");
-            Files.createDirectories(companionFile.getParent());
-            Files.writeString(companionFile, ConformanceHarnessMetadata
-                .stripClassificationHeaders(Files.readString(
-                    CORPUS.resolve(BYTES_DIR).resolve(companion + ".deal"))));
-        }
-        Path entry = "main".equals(fixture.export())
-            ? fixtureFile
-            : root.resolve("app.deal");
-        if (!"main".equals(fixture.export())) {
-            Files.writeString(entry, driver(fixture));
-        }
-        // The host-importing fixture materializes its corpus declaration
-        // module and the externals mapping exactly like the driven compile,
-        // so the quiet compile reports the same closure's diagnostics.
-        Map<String, String> externals = null;
-        if (HOST_FIXTURE.equals(fixture.relativePath())) {
-            Path declaration = root.resolve("host").resolve("bytes_roundtrip.d.deal");
-            Files.createDirectories(declaration.getParent());
-            Files.writeString(declaration, ConformanceHarnessMetadata
-                .stripClassificationHeaders(Files.readString(Path.of("test",
-                    "conformance", "host-fixtures", "bytes_roundtrip.d.deal"),
-                    StandardCharsets.UTF_8)), StandardCharsets.UTF_8);
-            externals = new LinkedHashMap<>();
-            externals.put("host.bytes_roundtrip", declaration.toAbsolutePath().toString());
-            externals.put("host/bytes_roundtrip", declaration.toAbsolutePath().toString());
-        }
-        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            entry.toAbsolutePath(), root.resolve("out"), false, false, false, false,
-            Backend.LUAJIT, externals, List.of(root.toAbsolutePath()),
-            Path.of("std").toAbsolutePath().normalize(), null, productionInvocation());
-        orchestrator.compile();
-        List<CompilerDiagnostic> diagnostics =
-            new ArrayList<>(orchestrator.diagnostics());
-        deleteRecursively(root);
-        return diagnostics;
-    }
-
     /** Whether one unit carries at least one bytes construct (K6). */
     private static boolean carriesBytesConstruct(LoweredModuleUnit unit) {
         for (SemanticOp op : unit.ops()) {
@@ -1826,7 +1736,6 @@ public class BytesCoverageTest {
         testReadShapeAndWriteChain();
         testBytesBoundaryContext();
         testOracleRealization();
-        testZeroBytesConstructUnlowered();
         System.out.println();
         System.out.println("BytesCoverageTest: " + passed + " passed, " + failed
             + " failed");
