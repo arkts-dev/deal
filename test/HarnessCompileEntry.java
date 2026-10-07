@@ -23,8 +23,11 @@ public final class HarnessCompileEntry {
 
     /**
      * The CLI-equivalent harness compile: the same arguments
-     * {@code deal.Main} accepts, the harness invocation in place of the
-     * release-owned production record.
+     * {@code deal.Main} accepts, with the compile's own
+     * harness-metadata invocation record in place of the release-owned
+     * production record. The record selects no arm: phase 4 always runs
+     * the one production arm, so this mirror's result equals the
+     * release-owned compile for the same input.
      *
      * @param args the command line ({@code compile <entry> [--backend
      *             lua|luajit|jvm|js] [--output <dir>] [--dump-ir]
@@ -125,9 +128,10 @@ public final class HarnessCompileEntry {
             .orElseThrow();
         Path entryFile = Path.of(entryPath).toAbsolutePath().normalize();
 
-        // The harness invocation of this compile: COMMON_SHADOW /
-        // DEAL_V1_2_INT32, never the release-owned production record, so
-        // the phase-4 dispatch selects the harness arm.
+        // The harness invocation record of this compile: COMMON_SHADOW /
+        // DEAL_V1_2_INT32, never the release-owned production record. The
+        // record selects no arm (phase 4 always runs the one production
+        // arm); it is the mirror's recorded invocation fact.
         CompilerInvocation invocation = ConformanceHarnessMetadata.invocation(
             SemanticProfile.DEAL_V1_2_INT32);
 

@@ -1,22 +1,27 @@
 package deal.test;
 
 import deal.codegen.Backend;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.module.CompilationOrchestrator;
 import deal.project.CliOverrides;
 import deal.project.ProjectLocator;
+import deal.publication.PublicationStager;
 import deal.semantic.CapabilityRegistry;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
 import deal.semantic.ReleaseConfiguration;
+import deal.semantic.SemanticLowerer;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.SemanticProfile;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
@@ -299,6 +304,11 @@ public class ProductionDispatchTest {
 
     private static ArmCompile compileWithInvocation(Path project, String entry,
             CompilerInvocation invocation) throws Exception {
+        return compileWithInvocation(project, entry, invocation, false);
+    }
+
+    private static ArmCompile compileWithInvocation(Path project, String entry,
+            CompilerInvocation invocation, boolean dumpIr) throws Exception {
         Path entryFile = project.resolve(entry).toAbsolutePath().normalize();
         ProjectLocator.LocateResult located = ProjectLocator.locate(
             entryFile.toString(), new CliOverrides(null, null));
@@ -306,7 +316,7 @@ public class ProductionDispatchTest {
             throw new IllegalStateException("locate failed: " + located);
         }
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            located.context(), entryFile, false, false, false, false, null,
+            located.context(), entryFile, false, dumpIr, false, false, null,
             invocation);
         return new ArmCompile(orchestrator, orchestrator.compile());
     }
@@ -459,12 +469,6 @@ public class ProductionDispatchTest {
             CompilationOrchestrator orchestrator = arm.orchestrator();
             checkEq(1, orchestrator.semanticEmissionCount(),
                 "the production arm records exactly one project emission");
-            checkEq(0, orchestrator.retainedEmissionCount(),
-                "the production arm increments no retained counter");
-            check(orchestrator.routePlan() == null,
-                "the production arm computes and consults no route plan");
-            check(orchestrator.jvmGeneratedResults().isEmpty(),
-                "the production arm populates no per-module backend results");
 
             Path out = project.resolve("out");
             List<String> artifacts = artifactFiles(out);
@@ -525,12 +529,6 @@ public class ProductionDispatchTest {
             CompilationOrchestrator orchestrator = arm.orchestrator();
             checkEq(1, orchestrator.semanticEmissionCount(),
                 "the production arm records exactly one project emission");
-            checkEq(0, orchestrator.retainedEmissionCount(),
-                "the production arm increments no retained counter");
-            check(orchestrator.routePlan() == null,
-                "the production arm computes and consults no route plan");
-            check(orchestrator.jvmGeneratedResults().isEmpty(),
-                "the production arm populates no per-module backend results");
 
             Path out = project.resolve("out");
             List<String> artifacts = artifactFiles(out);
@@ -592,10 +590,6 @@ public class ProductionDispatchTest {
             CompilationOrchestrator orchestrator = arm.orchestrator();
             checkEq(1, orchestrator.semanticEmissionCount(),
                 "the two-module compile records one project emission");
-            checkEq(0, orchestrator.retainedEmissionCount(),
-                "the two-module compile increments no retained counter");
-            check(orchestrator.routePlan() == null,
-                "the two-module compile consults no route plan");
             List<String> artifacts = artifactFiles(project.resolve("out"));
             check(artifacts.contains("main.lua")
                     && !artifacts.contains("lib.lua"),
@@ -751,8 +745,6 @@ public class ProductionDispatchTest {
             if (arm.success()) {
                 checkEq(1, arm.orchestrator().semanticEmissionCount(),
                     "the HOST import records one project emission");
-                checkEq(0, arm.orchestrator().retainedEmissionCount(),
-                    "the HOST import increments no retained counter");
                 List<String> artifacts = artifactFiles(host.resolve("out"));
                 check(artifacts.contains("main.lua")
                         && !artifacts.contains("cfg.lua"),
@@ -784,9 +776,6 @@ public class ProductionDispatchTest {
             if (arm.success()) {
                 checkEq(1, arm.orchestrator().semanticEmissionCount(),
                     "the cross-module async call records one project emission");
-                checkEq(0, arm.orchestrator().retainedEmissionCount(),
-                    "the cross-module async call increments no retained "
-                        + "counter");
                 List<String> artifacts = artifactFiles(async.resolve("out"));
                 check(artifacts.contains("main.lua")
                         && !artifacts.contains("lib.lua"),
@@ -1241,68 +1230,472 @@ public class ProductionDispatchTest {
     }
 
     // =========================================================================
-    // 6. The dispatch: every other invocation keeps the harness arm
+    // 6. The single-arm dispatch: every recorded invocation runs the one
+    //    production arm; a legacy profile fails closed at the lowering
     // =========================================================================
 
-    private static void testHarnessArmDispatch() throws Exception {
-        System.out.println("-- dispatch: every non-release invocation keeps the "
-            + "harness arm --");
+    private static void testSingleArmDispatch() throws Exception {
+        System.out.println("-- dispatch: every recorded invocation runs the one "
+            + "production arm; the legacy profile fails closed at the "
+            + "lowering --");
+
+        checkEq(3, Backend.values().length,
+            "the Backend enum keeps exactly its three closed values");
+        check(Backend.fromCliName("luajit").orElseThrow() == Backend.LUAJIT
+                && Backend.fromCliName("jvm").orElseThrow() == Backend.JVM
+                && Backend.fromCliName("js").orElseThrow() == Backend.JS,
+            "the three backend CLI names keep their closed values");
 
         Path project = Files.createTempDirectory("production-dispatch-arm-");
         try {
-            // A multi-module fixture with a cross-module call: the harness
-            // arm routes it LEGACY and publishes per-module artifacts, while
-            // the production arm would fail it closed.
+            // A multi-module fixture with a cross-module call: the one
+            // production arm emits it as the one project artifact.
             write(project, "deal.json", DEAL_JSON_LUA);
             write(project, "src/lib.deal", LIB_SOURCE);
             write(project, "src/main.deal", SYNC_CALL_SOURCE);
 
-            checkHarnessRow(project, "COMMON_SHADOW", commonShadow(), true);
-            checkHarnessRow(project, "LEGACY_REGRESSION",
-                legacyRegression(), false);
-            checkHarnessRow(project, "PUBLIC_BUILD + PRE_ACTIVATION",
-                publicBuildPreActivation(), false);
-            checkHarnessRow(project,
+            ArmCompile reference = compileWithInvocation(project,
+                "src/main.deal", productionInvocation());
+            check(reference.success(), "the release-owned compile succeeds: "
+                + reference.orchestrator().diagnostics());
+            if (!reference.success()) {
+                return;
+            }
+            Map<String, byte[]> referenceSet =
+                snapshotTree(project.resolve("out"));
+            check(referenceSet.containsKey("main.lua")
+                    && !referenceSet.containsKey("lib.lua"),
+                "the release-owned compile publishes the one project artifact: "
+                    + referenceSet.keySet());
+
+            // A delivery-equivalent record (any purpose, release state, or
+            // registry digest carrying the production profile) selects no
+            // arm: its artifact set is the release-owned set, byte for
+            // byte, and it reports no diagnostic.
+            checkDeliveryEquivalentRow(project, "COMMON_SHADOW",
+                commonShadow(), referenceSet);
+            checkDeliveryEquivalentRow(project,
                 "PUBLIC_BUILD + V1_2_ACTIVE + all-SHADOW registry digest",
-                publicBuildShadowRegistry(), true);
+                publicBuildShadowRegistry(), referenceSet);
+
+            // A legacy-profile record fails closed at the lowering: exactly
+            // one E6005 LOWER_LEGACY_PROFILE_REJECTED, nothing staged, and a
+            // previously published set stays byte-identical.
+            checkLegacyFailClosedRow(project, "LEGACY_REGRESSION",
+                legacyRegression());
+            checkLegacyFailClosedRow(project, "PUBLIC_BUILD + PRE_ACTIVATION",
+                publicBuildPreActivation());
         } finally {
             deleteRecursively(project);
         }
+
+        // A fail-closed input keeps the release-owned diagnostics under a
+        // delivery-equivalent record: the E6005 text carries the profile
+        // (identical for both records), so code and message match exactly.
+        Path fail = Files.createTempDirectory("production-dispatch-diag-");
+        try {
+            write(fail, "deal.json", DEAL_JSON_LUA);
+            write(fail, "src/main.deal", FUNCTION_VALUE_SOURCE);
+            ArmCompile releaseFail = compileWithInvocation(fail,
+                "src/main.deal", productionInvocation());
+            ArmCompile shadowFail = compileWithInvocation(fail,
+                "src/main.deal", commonShadow());
+            check(!releaseFail.success() && !shadowFail.success(),
+                "the fail-closed input fails under both records: "
+                    + releaseFail.orchestrator().diagnostics() + " / "
+                    + shadowFail.orchestrator().diagnostics());
+            checkEq(diagnosticTexts(releaseFail.orchestrator()),
+                diagnosticTexts(shadowFail.orchestrator()),
+                "the delivery-equivalent record reports the release-owned "
+                    + "diagnostics for the fail-closed input");
+            check(diagnosticTexts(shadowFail.orchestrator()).stream()
+                    .anyMatch(diagnostic -> diagnostic.contains("E6005")
+                        && diagnostic.contains("CONSTRUCT_UNLOWERED")),
+                "the shared diagnostics name the fail-closed construct: "
+                    + diagnosticTexts(shadowFail.orchestrator()));
+        } finally {
+            deleteRecursively(fail);
+        }
+
+        // The surviving harness mirror records its invocation but selects no
+        // arm: its result equals the release-owned compile for the same
+        // input, artifact for artifact.
+        Path mirror = Files.createTempDirectory("production-dispatch-mirror-");
+        try {
+            write(mirror, "deal.json", DEAL_JSON_LUA);
+            write(mirror, "src/lib.deal", LIB_SOURCE);
+            write(mirror, "src/main.deal", APP_SOURCE);
+            ProjectOutcome harness = runHarnessCli("compile",
+                mirror.resolve("src/main.deal").toAbsolutePath().toString(),
+                "--output", mirror.resolve("out-harness").toAbsolutePath()
+                    .toString());
+            ProjectOutcome release = productionCompile(mirror, "src/main.deal",
+                "out-release");
+            check(harness.exitCode() == 0 && release.exitCode() == 0,
+                "the harness mirror and the release-owned compile both "
+                    + "succeed: harness=" + harness.exitCode() + " release="
+                    + release.exitCode() + " stderr=" + harness.stderr());
+            check(treeEquals(snapshotTree(mirror.resolve("out-harness")),
+                    snapshotTree(mirror.resolve("out-release"))),
+                "the harness mirror publishes the release-owned artifact set "
+                    + "byte-for-byte");
+        } finally {
+            deleteRecursively(mirror);
+        }
     }
 
-    private static void checkHarnessRow(Path project, String name,
-            CompilerInvocation invocation, boolean expectLegacyArtifacts)
+    private static void checkDeliveryEquivalentRow(Path project, String name,
+            CompilerInvocation invocation, Map<String, byte[]> referenceSet)
             throws Exception {
+        deleteRecursively(project.resolve("out"));
         ArmCompile arm = compileWithInvocation(project, "src/main.deal",
             invocation);
-        check(arm.success(), name + ": the harness-arm compile succeeds: "
+        check(arm.success(), name + ": the compile succeeds: "
             + arm.orchestrator().diagnostics());
         if (!arm.success()) {
             return;
         }
-        CompilationOrchestrator orchestrator = arm.orchestrator();
-        check(orchestrator.routePlan() != null
-                && !orchestrator.routePlan().hasErrors()
-                && orchestrator.routePlan().plan() != null,
-            name + ": the harness arm computes the route plan");
-        if (expectLegacyArtifacts) {
-            check(orchestrator.retainedEmissionCount() >= 1,
-                name + ": the harness arm keeps the retained per-module "
-                    + "emission (retained="
-                    + orchestrator.retainedEmissionCount() + ")");
-        }
         check(!CompilationOrchestrator.isProductionInvocation(invocation),
             name + ": the record is not the release-owned production "
                 + "invocation");
+        checkEq(1, arm.orchestrator().semanticEmissionCount(),
+            name + ": the one production arm records one project emission");
+        check(arm.orchestrator().diagnostics().isEmpty(),
+            name + ": the compile reports no diagnostic: "
+                + arm.orchestrator().diagnostics());
+        check(treeEquals(referenceSet, snapshotTree(project.resolve("out"))),
+            name + ": the artifact set is the release-owned artifact set "
+                + "byte-for-byte");
+    }
+
+    private static void checkLegacyFailClosedRow(Path project, String name,
+            CompilerInvocation invocation) throws Exception {
         Path out = project.resolve("out");
-        check(Files.exists(out.resolve("main.lua"))
-                && Files.exists(out.resolve("lib.lua")),
-            name + ": the harness arm publishes the per-module artifact set: "
-                + artifactFiles(out));
-        ProcessOutcome run = runProcess(out, "luajit", "main.lua");
-        check(run.exitCode() == 0,
-            name + ": the retained per-module artifact set runs: exit="
-                + run.exitCode() + " output=" + run.output());
+        deleteRecursively(out);
+        write(project, "out/main.lua", "-- previous artifact\n");
+        write(project, "out/deal/runtime.lua", "-- previous runtime\n");
+        Map<String, byte[]> before = snapshotTree(out);
+
+        ArmCompile arm = compileWithInvocation(project, "src/main.deal",
+            invocation);
+        check(!arm.success(),
+            name + ": the legacy-profile invocation fails closed");
+        List<CompilerDiagnostic> errors = arm.orchestrator().diagnostics()
+            .stream().filter(d -> "error".equals(d.severity())).toList();
+        checkEq(1, errors.size(),
+            name + ": exactly one error diagnostic: "
+                + arm.orchestrator().diagnostics());
+        if (errors.size() == 1) {
+            check(errors.get(0).code().equals("E6005")
+                    && errors.get(0).message().contains(
+                        SemanticLowerer.LOWER_LEGACY_PROFILE_REJECTED),
+                name + ": the one failure is E6005 "
+                    + SemanticLowerer.LOWER_LEGACY_PROFILE_REJECTED + ": "
+                    + errors.get(0).message());
+        }
+        checkEq(0, arm.orchestrator().semanticEmissionCount(),
+            name + ": the fail-closed lowering records no project emission");
+        checkTreeIdentical(before, out,
+            name + ": the fail-closed compile stages nothing");
+    }
+
+    private static List<String> diagnosticTexts(
+            CompilationOrchestrator orchestrator) {
+        return orchestrator.diagnostics().stream()
+            .map(d -> d.code() + "|" + d.severity() + "|" + d.message())
+            .toList();
+    }
+
+    /**
+     * The dumps-enabled legacy rejection (both targets): the accepted
+     * compile stages its generated IR dump with the artifact set after
+     * the one production arm accepted it, while the legacy-profile
+     * rejection stages nothing at all — no staging transaction starts,
+     * so a staging fault installed at staging start cannot preempt the
+     * one E6005 LOWER_LEGACY_PROFILE_REJECTED.
+     */
+    private static void testLegacyRejectionStagesNothingWithDumps()
+            throws Exception {
+        System.out.println("-- legacy-profile rejection with --dump-ir: the "
+            + "accepted dump stages after acceptance; the rejection stages "
+            + "nothing and no staging fault can preempt it --");
+
+        for (String backend : List.of("luajit", "jvm")) {
+            Path project = Files.createTempDirectory(
+                "production-dispatch-dump-");
+            try {
+                write(project, "deal.json",
+                    "jvm".equals(backend) ? DEAL_JSON_JVM : DEAL_JSON_LUA);
+                write(project, "src/main.deal",
+                    "export function main(): null { return null; }\n");
+                Path out = project.resolve("out");
+
+                // Accepted control: the release-owned compile with
+                // --dump-ir generates the dump in its existing phase and
+                // stages it in the accepted compile's one transaction.
+                int[] stagingStarts = {0};
+                PublicationStager.installPublishFault(step -> {
+                    if (PublicationStager.FAULT_STEP_STAGING_BEGAN.equals(
+                            step)) {
+                        stagingStarts[0]++;
+                    }
+                });
+                ArmCompile accepted;
+                try {
+                    accepted = compileWithInvocation(project, "src/main.deal",
+                        productionInvocation(), true);
+                } finally {
+                    PublicationStager.clearPublishFault();
+                }
+                check(accepted.success(), backend
+                    + ": the dumps-enabled release-owned compile succeeds: "
+                    + accepted.orchestrator().diagnostics());
+                checkEq(1, stagingStarts[0], backend
+                    + ": the accepted compile stages exactly one staging "
+                    + "transaction (dump and artifact)");
+                check(artifactFiles(out).contains("main.ir.txt"), backend
+                    + ": the accepted compile publishes the generated IR "
+                    + "dump: " + artifactFiles(out));
+
+                // The legacy rejection with --dump-ir: exactly one E6005,
+                // zero staging starts (the pending dump is discarded), and
+                // the prior live set byte-identical. The staging fault
+                // installed at staging start never fires, so it cannot
+                // preempt the legacy diagnostic with a publish I/O error.
+                Map<String, byte[]> before = snapshotTree(out);
+                stagingStarts[0] = 0;
+                PublicationStager.installPublishFault(step -> {
+                    if (PublicationStager.FAULT_STEP_STAGING_BEGAN.equals(
+                            step)) {
+                        stagingStarts[0]++;
+                        throw new IOException(
+                            "injected staging failure (legacy probe)");
+                    }
+                });
+                ArmCompile rejected;
+                try {
+                    rejected = compileWithInvocation(project, "src/main.deal",
+                        legacyRegression(), true);
+                } finally {
+                    PublicationStager.clearPublishFault();
+                }
+                check(!rejected.success(), backend
+                    + ": the dumps-enabled legacy-profile invocation fails "
+                    + "closed");
+                List<CompilerDiagnostic> errors =
+                    rejected.orchestrator().diagnostics().stream()
+                        .filter(d -> "error".equals(d.severity())).toList();
+                checkEq(1, errors.size(), backend
+                    + ": exactly one error diagnostic (the staging fault "
+                    + "cannot preempt it): "
+                    + rejected.orchestrator().diagnostics());
+                if (errors.size() == 1) {
+                    check(errors.get(0).code().equals("E6005")
+                            && errors.get(0).message().contains(
+                                SemanticLowerer.LOWER_LEGACY_PROFILE_REJECTED),
+                        backend + ": the one failure is E6005 "
+                            + SemanticLowerer.LOWER_LEGACY_PROFILE_REJECTED
+                            + ": " + errors.get(0).message());
+                }
+                checkEq(0, rejected.orchestrator().semanticEmissionCount(),
+                    backend + ": the fail-closed lowering records no project "
+                        + "emission");
+                checkEq(0, stagingStarts[0], backend
+                    + ": the rejected compile starts no staging transaction");
+                checkTreeIdentical(before, out, backend
+                    + ": the rejected compile leaves the prior artifact set "
+                    + "byte-identical");
+                checkEq(List.of(), stageResidue(out), backend
+                    + ": the rejected compile leaves no stage or retired "
+                    + "residue");
+            } finally {
+                deleteRecursively(project);
+            }
+        }
+    }
+
+    /** The stage/retired siblings beside one live output root. */
+    private static List<String> stageResidue(Path root) throws Exception {
+        Path normalized = root.toAbsolutePath().normalize();
+        Path parent = normalized.getParent();
+        if (parent == null || !Files.isDirectory(parent)) {
+            return List.of();
+        }
+        String name = normalized.getFileName().toString();
+        String stagePrefix = name + PublicationStager.STAGE_TREE_MARKER;
+        String retiredPrefix = name + PublicationStager.RETIRED_TREE_MARKER;
+        try (Stream<Path> entries = Files.list(parent)) {
+            return entries.map(path -> path.getFileName().toString())
+                .filter(entry -> entry.startsWith(stagePrefix)
+                    || entry.startsWith(retiredPrefix))
+                .sorted().toList();
+        }
+    }
+
+    private static boolean treeEquals(Map<String, byte[]> left,
+            Map<String, byte[]> right) {
+        if (!left.keySet().equals(right.keySet())) {
+            return false;
+        }
+        for (Map.Entry<String, byte[]> entry : left.entrySet()) {
+            if (!Arrays.equals(entry.getValue(), right.get(entry.getKey()))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // =========================================================================
+    // 7. The focused production-source check: no retained generation,
+    //    routing, or counting state on the compile path; exactly one
+    //    project lowering call site in deal/**
+    // =========================================================================
+
+    /**
+     * The retired compile-path tokens: a production compile-path source
+     * that still names one fails the check by file and offending token.
+     * The inert routing/planner classes themselves stay in the tree (C3);
+     * the compile path never references them.
+     */
+    private static final List<String> RETIRED_COMPILE_PATH_TOKENS = List.of(
+        "productionArmApplies",
+        "codegenAllLua",
+        "codegenAllJvm",
+        "codegenLuaModule",
+        "routeOf",
+        "planRoutesForCompile",
+        "registryForInvocation",
+        "sharedModulesInDependencyOrder",
+        "emitSharedLuaModule",
+        "emitSharedJvmModule",
+        "lowerSharedModule",
+        "lowerSharedModuleOrFail",
+        "failSharedEmission",
+        "recordSharedAbi",
+        "validateMixedEdges",
+        "retainedEmissionCount",
+        "emittedSharedAbis",
+        "sharedCalleeEntries",
+        "HarnessModuleCodegen",
+        "luaGenerateToFile",
+        "jvmGenerate",
+        "MigrationPlanner",
+        "TargetAbiValidator",
+        "ModuleRoutePlan",
+        "ModuleRoute");
+
+    private static void testProductionSourceReachability() throws Exception {
+        System.out.println("-- the focused production-source check: no retained "
+            + "generation, routing or counting state on the compile path --");
+
+        // The compile path: the orchestrator and the one production emission
+        // unit it drives.
+        List<Path> compilePath = List.of(
+            Path.of("deal/module/CompilationOrchestrator.java"),
+            Path.of("deal/module/ProductionProjectEmission.java"));
+        for (Path source : compilePath) {
+            check(Files.isRegularFile(source),
+                "the production compile-path source exists: " + source);
+            if (!Files.isRegularFile(source)) {
+                continue;
+            }
+            String text = Files.readString(source, StandardCharsets.UTF_8);
+            for (String token : RETIRED_COMPILE_PATH_TOKENS) {
+                check(!text.contains(token),
+                    "the production source " + source + " carries no retired "
+                        + "compile-path token '" + token + "'");
+            }
+        }
+
+        // The one project lowering: exactly one SemanticLowerer.lowerProject
+        // call occurrence over the whole production source set. The audit
+        // counts occurrences (never matching files or a fixed call-site
+        // inventory) and names the file, location, and offending token
+        // when the count is wrong.
+        List<Path> sources = new ArrayList<>();
+        try (Stream<Path> walk = Files.walk(Path.of("deal"))) {
+            walk.filter(path -> path.toString().endsWith(".java"))
+                .sorted().forEach(sources::add);
+        }
+        check(!sources.isEmpty(), "the production source set is non-empty");
+        List<SourceText> productionSources = new ArrayList<>();
+        for (Path source : sources) {
+            productionSources.add(new SourceText(source.toString(),
+                Files.readString(source, StandardCharsets.UTF_8)));
+        }
+        String auditFailure = loweringCallSiteAudit(productionSources);
+        check(auditFailure == null, "deal/** carries exactly one "
+            + LOWERING_CALL_TOKEN + " call site: " + auditFailure);
+
+        // The audit is self-verified against zero, one, and two
+        // occurrences, including two in the same file: a wrong count fails
+        // with the file, location, and offending token.
+        String zeroFailure = loweringCallSiteAudit(List.of(
+            new SourceText("example/Zero.java", "class Zero { }")));
+        check(zeroFailure != null
+                && zeroFailure.contains(LOWERING_CALL_TOKEN),
+            "the audit fails a source set with no lowering call site: "
+                + zeroFailure);
+        String oneFailure = loweringCallSiteAudit(List.of(
+            new SourceText("example/One.java",
+                "class One { void run() { " + LOWERING_CALL_TOKEN
+                    + "input); } }")));
+        check(oneFailure == null, "the audit accepts exactly one lowering "
+            + "call site: " + oneFailure);
+        String twoFailure = loweringCallSiteAudit(List.of(
+            new SourceText("example/Two.java",
+                LOWERING_CALL_TOKEN + "a);\n" + LOWERING_CALL_TOKEN
+                    + "b);\n")));
+        check(twoFailure != null
+                && twoFailure.contains("example/Two.java:1")
+                && twoFailure.contains("example/Two.java:2")
+                && twoFailure.contains(LOWERING_CALL_TOKEN),
+            "the audit fails two call sites in one file by file, location, "
+                + "and offending token: " + twoFailure);
+
+        // The harness module-codegen seam of the removed arm is gone from the
+        // production source set: no production caller exists, and the service
+        // provider it named was test-scope only.
+        check(!Files.exists(Path.of("deal/codegen/HarnessModuleCodegen.java")),
+            "the production source set carries no harness module-codegen seam: "
+                + "deal/codegen/HarnessModuleCodegen.java");
+    }
+
+    /** One production source text under audit (name plus content). */
+    private record SourceText(String name, String text) {
+    }
+
+    /** The one call-site token of the one project lowering. */
+    private static final String LOWERING_CALL_TOKEN =
+        "SemanticLowerer.lowerProject(";
+
+    /**
+     * The one-lowering audit: enumerates every occurrence of
+     * {@link #LOWERING_CALL_TOKEN} over the given sources; exactly one
+     * occurrence in the whole source set passes. A wrong count (including
+     * zero) reports every location with the offending token.
+     */
+    private static String loweringCallSiteAudit(List<SourceText> sources) {
+        List<String> sites = new ArrayList<>();
+        for (SourceText source : sources) {
+            List<String> lines = Arrays.asList(
+                source.text().split("\n", -1));
+            for (int index = 0; index < lines.size(); index++) {
+                String line = lines.get(index);
+                int column = line.indexOf(LOWERING_CALL_TOKEN);
+                while (column >= 0) {
+                    sites.add(source.name() + ":" + (index + 1) + ":"
+                        + (column + 1) + " '" + LOWERING_CALL_TOKEN + "'");
+                    column = line.indexOf(LOWERING_CALL_TOKEN, column + 1);
+                }
+            }
+        }
+        if (sites.size() != 1) {
+            return "the production source set must carry exactly one "
+                + LOWERING_CALL_TOKEN + " call site; found " + sites.size()
+                + ": " + sites;
+        }
+        return null;
     }
 
     // =========================================================================
@@ -1321,7 +1714,9 @@ public class ProductionDispatchTest {
         testAtomicFailureThroughDispatch();
         testFailClosedFamilies();
         testSourceMapDisposition();
-        testHarnessArmDispatch();
+        testSingleArmDispatch();
+        testLegacyRejectionStagesNothingWithDumps();
+        testProductionSourceReachability();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

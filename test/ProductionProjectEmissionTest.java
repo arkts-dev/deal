@@ -62,7 +62,9 @@ public class ProductionProjectEmissionTest {
     }
 
     // =========================================================================
-    // Fixtures (compiled through a harness invocation: P10 item 3)
+    // Fixtures (compiled for their checked-project facts; the phase-4 arm
+    // is not the fixture compile's subject, because this unit drives
+    // ProductionProjectEmission directly)
     // =========================================================================
 
     private static final ModuleId LIB = new ModuleId("lib");
@@ -215,11 +217,12 @@ public class ProductionProjectEmissionTest {
     }
 
     /**
-     * The harness invocation of the fixture compile (P10 item 3): the
-     * fixtures keep building after the dispatch leaf activates the
-     * production arm for the release-owned invocation.
+     * The recorded invocation of the fixture compile: the record selects
+     * no arm (phase 4 always runs the one production arm), and the fixture
+     * compile only contributes the checked-project facts this unit drives
+     * ProductionProjectEmission with.
      */
-    private static CompilerInvocation harnessInvocation() {
+    private static CompilerInvocation fixtureInvocation() {
         return CompilerProfileProvider.resolveCommonShadow(
             SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
             CapabilityRegistry.releaseRegistry());
@@ -247,13 +250,22 @@ public class ProductionProjectEmissionTest {
         Path output = root.resolve("out").toAbsolutePath();
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(entry, output,
             false, false, false, false, Backend.LUAJIT, resolvedExternals,
-            List.of(src.toAbsolutePath()), null, null, harnessInvocation());
+            List.of(src.toAbsolutePath()), null, null, fixtureInvocation());
         boolean compiled = orchestrator.compile();
         CheckedProjectBuildResult built = orchestrator.checkedProject();
         RequirementManifestResult manifests = orchestrator.requirementManifests();
-        if (!compiled || built == null || built.input() == null || built.index() == null
-                || built.hasErrors() || manifests == null || manifests.manifests() == null
-                || orchestrator.hostDeclarationSurface() == null) {
+        // The fixture compile's subject here is the pre-phase-4 fact set:
+        // the checked project, the manifests, and the declaration surface.
+        // A construct outside the landed lowering coverage fails the fixture
+        // compile closed in phase 4 with its named E6005, which is the very
+        // outcome this unit drives directly below.
+        boolean fixtureFacts = built != null && built.input() != null
+                && built.index() != null && !built.hasErrors()
+                && manifests != null && manifests.manifests() != null
+                && orchestrator.hostDeclarationSurface() != null;
+        boolean honestFailClosed = compiled || orchestrator.diagnostics().stream()
+            .allMatch(d -> "E6005".equals(d.code()));
+        if (!fixtureFacts || !honestFailClosed) {
             String detail = built == null ? "no checked project"
                 : String.valueOf(built.diagnostics());
             deleteRecursively(root);

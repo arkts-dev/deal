@@ -235,8 +235,6 @@ public final class Int32ModTruncPreludeTest {
         }
         checkEq(1, orchestrator.semanticEmissionCount(), what + ": the production "
             + "arm emits exactly one project artifact");
-        checkEq(0, orchestrator.retainedEmissionCount(), what + ": the production "
-            + "arm performs no retained emission");
     }
 
     /** One lowered project: the oracle's inputs. */

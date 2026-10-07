@@ -32,11 +32,6 @@ javac --release 25 -proc:none -d build/test-classes \
   -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar \
   "${TEST_SOURCES[@]}"
 
-# Test-scope ServiceLoader registration: the retained harness module codegen
-# the production harness arm consumes, present only on the test classpath.
-mkdir -p build/test-classes/META-INF/services
-cp test/META-INF/services/* build/test-classes/META-INF/services/
-
 # Coverage uses a silent PATH wrapper for java, including Java subprocesses.
 for record in "${TEST_MAINS[@]}"; do
   record_class="${record%%|*}"
