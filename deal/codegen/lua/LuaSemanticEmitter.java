@@ -3652,8 +3652,15 @@ public final class LuaSemanticEmitter {
             out.append("  __modStack[#__modStack + 1] = __module\n");
             out.append("  __module = __dynM\n");
             out.append("  table.insert(__frames, 1, tostring(__dynC.__fid))\n");
+            // The invoking dynamic call's origin: a failure inside the
+            // callee body whose arm renders the call origin (the
+            // @jsonable toJson walk) reads the innermost active call —
+            // the f(w) invocation, never an enclosing static call.
+            out.append("  __callOrigins[#__callOrigins + 1] = ").append(origin)
+                .append("\n");
             out.append("  __okT, __resT = pcall(__unfn(__dynC)").append(argList)
                 .append(")\n");
+            out.append("  __callOrigins[#__callOrigins] = nil\n");
             out.append("  table.remove(__frames, 1)\n");
             out.append("  __module = __modStack[#__modStack]\n");
             out.append("  __modStack[#__modStack] = nil\n");
@@ -3685,8 +3692,14 @@ public final class LuaSemanticEmitter {
             out.append("    __module = __dynM\n");
             out.append("    table.insert(__frames, 1, tostring(__dynS.__fid))\n");
             out.append("    __dynA = {").append(argTable).append("}\n");
+            // The invoking dynamic call's origin, as in the direct
+            // DEAL_BODY row: the innermost active call is the f(w)
+            // invocation.
+            out.append("    __callOrigins[#__callOrigins + 1] = ").append(origin)
+                .append("\n");
             out.append("    __okT, __resT = pcall(__unfn(__dynS), unpack(__dynA, 1, ")
                 .append("__dynC.__m))\n");
+            out.append("    __callOrigins[#__callOrigins] = nil\n");
             out.append("    table.remove(__frames, 1)\n");
             out.append("    __module = __modStack[#__modStack]\n");
             out.append("    __modStack[#__modStack] = nil\n");
@@ -7190,14 +7203,13 @@ local function __jsonToClassOp(planName, root)
           local nested = encodeTableValue(element, elementPath, visited)
           if nested == nil then return nil end
           out[#out + 1] = nested
-        elseif element.__c then
-          -- A class-instance element serializes through its own class
-          -- plan (the nested class walk: the element's carried
-          -- identity drives the declared-field walk).
-          local nested = encodeClass(element, element.__id, elementPath, visited)
-          if nested == nil then return nil end
-          out[#out + 1] = nested
         else
+          -- A class instance in a descriptor-free walk — table content
+          -- that is not JSON-shaped data — is rejected here: table-field
+          -- contents are JSON objects, arrays, and null/boolean/int/
+          -- number/string leaves, so a nested @jsonable instance
+          -- serializes only through a declared class/array element
+          -- descriptor (the encodeField/encodeClass path).
           return fail(elementPath, element)
         end
       else
@@ -9326,7 +9338,15 @@ local function __adaptInvoke(w, origin, ...)
     table.insert(__frames, 1, tostring(__fid))
     __pushed = true
   end
+  -- The invoking call's origin: a failure inside the adapted source
+  -- whose arm renders the call origin (the @jsonable toJson walk) reads
+  -- the innermost active call — the adapter call expression, never an
+  -- enclosing static call. The host-facing bridge passes "-" (no call
+  -- expression), so only a real call origin is published.
+  local __originPushed = origin ~= nil and origin ~= "-"
+  if __originPushed then __callOrigins[#__callOrigins + 1] = origin end
   local __okA, __vA = pcall(__unfn(src), unpack(__cargs, 1, w.__m))
+  if __originPushed then __callOrigins[#__callOrigins] = nil end
   if __pushed then table.remove(__frames, 1) end
   if __switched then __module = __savedModule end
   if not __okA then error(__vA, 0) end

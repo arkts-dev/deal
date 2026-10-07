@@ -1240,9 +1240,22 @@ public final class JvmRuntime {
         if (pushed) {
             pushFrame(function.fid);
         }
+        // The invoking call's origin: a failure inside the adapted source
+        // whose arm renders the call origin (the @jsonable toJson walk)
+        // reads the innermost active call — the adapter call expression,
+        // never an enclosing static call. The host-facing bridge passes
+        // "-" (no call expression), so only a real call origin is
+        // published. The finally pops on every path.
+        boolean pushedOrigin = origin != null && !"-".equals(origin);
+        if (pushedOrigin) {
+            callOrigins.push(origin);
+        }
         try {
             return function.fn.invoke(leading);
         } finally {
+            if (pushedOrigin) {
+                callOrigins.pop();
+            }
             if (pushed) {
                 popFrame();
             }

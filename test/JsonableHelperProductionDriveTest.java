@@ -16,6 +16,7 @@ import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticOracle;
 import deal.semantic.SemanticRuntimeModel;
+import deal.semantic.ir.CallMode;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
@@ -23,6 +24,7 @@ import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.OpId;
 import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
+import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.SemanticOp;
@@ -70,13 +72,21 @@ import java.util.stream.Stream;
  * <p>The drive also pins the helper surface in the produced unit: exactly
  * one closure identity and one {@code LoweredBody} binding per class
  * helper, one {@code EXPORT_PUBLISH} and one recorded
- * {@code EXTERNAL_ENTRY} per exported helper, the same-module call bound
- * through the closed {@code CALL(EXTERNAL) SHARED_BODY} cell over the
- * callee's recorded entry, and the cross-module call bound through
- * {@code EXPORT_READ} plus the closed {@code ExternalFunction} shape to
- * the callee's recorded entry. A declared class that is not
+ * {@code EXTERNAL_ENTRY} per exported helper, the same-module call that
+ * resolves the declaration's generated closure identity through the
+ * landed {@code LoweredBody} call shape, and the cross-module call bound
+ * through {@code EXPORT_READ} plus the closed {@code ExternalFunction}
+ * shape to the callee's recorded entry. A declared class that is not
  * {@code @jsonable} gains no helper, and a user identifier near a helper
  * name changes no outcome.</p>
+ *
+ * <p>Two three-consumer regressions close the walk's remaining arms: a
+ * function-parameter invocation of a helper ({@code f(w)} inside the
+ * callee body) must render the pinned JSON failure at the {@code f(w)}
+ * call expression in the oracle, the LuaJIT artifact, and the JVM
+ * artifact alike, and a class instance inside an array nested in a table
+ * field must be rejected by all three consumers (the table-content walk
+ * stays JSON-shaped).</p>
  *
  * <p>The combined dependency step runs the oracle over every fixture of
  * the family through the same one-lowering closure (the runtime-ok
@@ -383,6 +393,273 @@ public class JsonableHelperProductionDriveTest {
                              Capture capture, boolean probeDefect) {
     }
 
+    // =========================================================================
+    // 3b. The bounded real-toolchain runner (the release-pipeline contract)
+    // =========================================================================
+
+    /**
+     * The bounded-subprocess contract of the release pipeline (the
+     * verified bounded-subprocess pages): every gate-executed real-toolchain
+     * invocation drains both streams concurrently with a cap, runs under one
+     * monotonic deadline, owns its whole process tree on every exit path,
+     * and reports an exceeded deadline as the named hard
+     * {@link BoundedProcessTimeoutException}. The runner starts each child
+     * through {@code setsid} (when available) so the whole owned tree can be
+     * killed even after the direct child exits and a descendant is
+     * reparented.
+     */
+    private static final int STREAM_CAP_BYTES = 1 << 20;
+
+    private static final String TRUNCATION_MARKER = "\n[STREAM TRUNCATED at 1 MiB]\n";
+
+    private static final long BOUNDED_PROCESS_BUDGET_MS = 300_000L;
+
+    private static final long POST_KILL_DRAIN_BUDGET_MS = 5_000L;
+
+    private static final long REAP_BUDGET_MS = 5_000L;
+
+    /** A hard gate failure, never a skip: an {@link AssertionError} so no
+     * probe-style {@code catch (Exception)} guard reads a hung toolchain as
+     * absent. */
+    private static final class BoundedProcessTimeoutException extends AssertionError {
+        private static final long serialVersionUID = 1L;
+
+        BoundedProcessTimeoutException(String message) {
+            super(message);
+        }
+    }
+
+    /** One stream's capped, concurrent drain: the first
+     * {@link #STREAM_CAP_BYTES} bytes are retained and the read continues to
+     * EOF, so a child that saturates a pipe can never deadlock the harness. */
+    private static final class CappedDrain implements Runnable {
+
+        private final java.io.InputStream stream;
+        private final java.io.ByteArrayOutputStream retained =
+            new java.io.ByteArrayOutputStream();
+        private volatile boolean truncated;
+
+        CappedDrain(java.io.InputStream stream) {
+            this.stream = stream;
+        }
+
+        @Override
+        public void run() {
+            byte[] buffer = new byte[8192];
+            try (java.io.InputStream in = stream) {
+                int read;
+                while ((read = in.read(buffer)) >= 0) {
+                    int kept = Math.min(read, STREAM_CAP_BYTES - retained.size());
+                    if (kept > 0) {
+                        retained.write(buffer, 0, kept);
+                    }
+                    if (kept < read) {
+                        truncated = true;
+                    }
+                }
+            } catch (java.io.IOException ignored) {
+                // The stream ends when the child and its descendants are gone.
+            }
+        }
+
+        String text() {
+            String drained = new String(retained.toByteArray(), StandardCharsets.UTF_8);
+            return truncated ? drained + TRUNCATION_MARKER : drained;
+        }
+    }
+
+    private record ProcessOutcome(int exitCode, String stdout, String stderr) {
+    }
+
+    private static final String SETSID_BINARY =
+        firstExecutable("/usr/bin/setsid", "/bin/setsid");
+    private static final String KILL_BINARY =
+        firstExecutable("/bin/kill", "/usr/bin/kill");
+
+    private static String firstExecutable(String... candidates) {
+        for (String candidate : candidates) {
+            if (Files.isExecutable(Path.of(candidate))) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The bounded real-toolchain runner: separate stdout/stderr
+     * transcripts, both streams drained concurrently with the canonical
+     * 1 MiB cap, the canonical 300000 ms deadline, and on timeout
+     * descendants-then-group-then-child forcible termination plus a drain
+     * to EOF and a reap, reported as the named hard
+     * {@link BoundedProcessTimeoutException}. One monotonic deadline covers
+     * the direct child and the drainage of both streams. The child is owned
+     * for the whole call: every path out of the wait — the child's
+     * completion, the deadline, an interruption of the waiting thread, or
+     * any other failure — terminates the whole owned tree, drains both
+     * streams to EOF, and reaps the direct child before the outcome returns
+     * or propagates.
+     */
+    private static ProcessOutcome runProcess(Path directory, Map<String, String> env,
+            long budgetMs, String... command) throws Exception {
+        boolean ownGroup = SETSID_BINARY != null;
+        List<String> argv = new ArrayList<>();
+        if (ownGroup) {
+            argv.add(SETSID_BINARY);
+        }
+        argv.addAll(java.util.Arrays.asList(command));
+        ProcessBuilder builder = new ProcessBuilder(argv);
+        builder.directory(directory.toFile());
+        builder.redirectErrorStream(false);
+        builder.environment().putAll(env);
+        long deadlineNanos = System.nanoTime()
+            + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(budgetMs);
+        Process process = builder.start();
+        CappedDrain stdout = new CappedDrain(process.getInputStream());
+        CappedDrain stderr = new CappedDrain(process.getErrorStream());
+        Thread stdoutThread = new Thread(stdout, "jsonable-stdout-" + command[0]);
+        Thread stderrThread = new Thread(stderr, "jsonable-stderr-" + command[0]);
+        stdoutThread.setDaemon(true);
+        stderrThread.setDaemon(true);
+        stdoutThread.start();
+        stderrThread.start();
+        boolean[] interrupted = {false};
+        boolean finished = false;
+        boolean drained = false;
+        String timeout = null;
+        try {
+            finished = waitForChild(process, deadlineNanos, interrupted);
+            // The same deadline bounds the child and its stream drainage: a
+            // reparented descendant that holds the inherited pipes ends the
+            // invocation with the named timeout, never with a delay.
+            drained = awaitDrains(stdoutThread, stderrThread, deadlineNanos, interrupted);
+            if (!finished) {
+                timeout = "BOUNDED_PROCESS_TIMEOUT " + command[0];
+            } else if (!drained) {
+                timeout = "BOUNDED_PROCESS_TIMEOUT " + command[0]
+                    + " (the stream drainage exceeded the child deadline)";
+            }
+        } finally {
+            // The finally owns the whole tree before any outcome propagates.
+            terminateTree(process, ownGroup, interrupted);
+            awaitDrains(stdoutThread, stderrThread, System.nanoTime()
+                + java.util.concurrent.TimeUnit.MILLISECONDS
+                    .toNanos(POST_KILL_DRAIN_BUDGET_MS), interrupted);
+            reap(process, interrupted);
+        }
+        if (interrupted[0]) {
+            Thread.interrupted();
+            throw new InterruptedException("interrupted while waiting for " + command[0]);
+        }
+        if (timeout != null) {
+            throw new BoundedProcessTimeoutException(timeout);
+        }
+        return new ProcessOutcome(process.exitValue(), stdout.text(), stderr.text());
+    }
+
+    /** Waits for the direct child inside the one deadline; {@code false}
+     * means the deadline expired. */
+    private static boolean waitForChild(Process process, long deadlineNanos,
+            boolean[] interrupted) throws InterruptedException {
+        long remaining = deadlineNanos - System.nanoTime();
+        if (remaining <= 0) {
+            return false;
+        }
+        try {
+            return process.waitFor(remaining, java.util.concurrent.TimeUnit.NANOSECONDS);
+        } catch (InterruptedException interruptedWait) {
+            interrupted[0] = true;
+            throw interruptedWait;
+        }
+    }
+
+    /** Terminates the owned tree: descendants first, then the child's process
+     * group (when the runner created one), then the direct child. */
+    private static void terminateTree(Process process, boolean ownGroup,
+            boolean[] interrupted) {
+        try {
+            process.descendants().forEach(ProcessHandle::destroyForcibly);
+        } catch (RuntimeException ignored) {
+            // A vanished subtree is already gone; the direct child is next.
+        }
+        if (ownGroup) {
+            killProcessGroup(process.pid(), interrupted);
+        }
+        process.destroyForcibly();
+    }
+
+    /** Kills every remaining member of the child's own process group from
+     * outside the group; the helper's own wait is bounded. */
+    private static void killProcessGroup(long groupId, boolean[] interrupted) {
+        List<String> argv = KILL_BINARY != null
+            ? List.of(KILL_BINARY, "-KILL", "--", "-" + groupId)
+            : List.of("bash", "-c", "kill -KILL -- -\"$1\"", "jsonable-kill-group",
+                Long.toString(groupId));
+        try {
+            ProcessBuilder killerBuilder = new ProcessBuilder(argv);
+            killerBuilder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            killerBuilder.redirectError(ProcessBuilder.Redirect.DISCARD);
+            Process killer = killerBuilder.start();
+            boolean killed = false;
+            try {
+                killed = killer.waitFor(POST_KILL_DRAIN_BUDGET_MS,
+                    java.util.concurrent.TimeUnit.MILLISECONDS);
+            } catch (InterruptedException interruptedKill) {
+                interrupted[0] = true;
+            }
+            if (!killed) {
+                killer.destroyForcibly();
+            }
+        } catch (Exception ignored) {
+            // The direct child's destroyForcibly remains the backstop.
+        }
+    }
+
+    /** Joins both capped drains to EOF inside the deadline; {@code false}
+     * means a drain was still alive at the deadline. */
+    private static boolean awaitDrains(Thread stdoutThread, Thread stderrThread,
+            long deadlineNanos, boolean[] interrupted) {
+        boolean drained = true;
+        for (Thread thread : new Thread[] {stdoutThread, stderrThread}) {
+            while (thread.isAlive()) {
+                long remaining = deadlineNanos - System.nanoTime();
+                if (remaining <= 0) {
+                    drained = false;
+                    break;
+                }
+                try {
+                    thread.join(Math.max(1L,
+                        java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(remaining)));
+                } catch (InterruptedException interruptedJoin) {
+                    interrupted[0] = true;
+                }
+            }
+        }
+        return drained;
+    }
+
+    /** Reaps the direct child inside a bounded window even when the waiting
+     * thread is interrupted. */
+    private static void reap(Process process, boolean[] interrupted) {
+        long deadlineNanos = System.nanoTime()
+            + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(REAP_BUDGET_MS);
+        while (process.isAlive()) {
+            long remaining = deadlineNanos - System.nanoTime();
+            if (remaining <= 0) {
+                process.destroyForcibly();
+                return;
+            }
+            try {
+                if (process.waitFor(Math.max(1L,
+                        java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(remaining)),
+                        java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    return;
+                }
+            } catch (InterruptedException interruptedReap) {
+                interrupted[0] = true;
+            }
+        }
+    }
+
     private record Export(String name, int index) {
     }
 
@@ -462,18 +739,12 @@ public class JsonableHelperProductionDriveTest {
         probe.append("os.exit(0)\n");
         Path probeFile = out.resolve("__probe.lua");
         Files.writeString(probeFile, probe.toString(), StandardCharsets.UTF_8);
-        ProcessBuilder run = new ProcessBuilder("luajit", probeFile.toString());
-        run.directory(out.toFile());
-        run.environment().put("DEAL_DEFER_MAIN", "1");
-        Process process = run.start();
-        String stdout = new String(process.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        String stderr = new String(process.getErrorStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        int exit = process.waitFor();
+        ProcessOutcome outcome = runProcess(out, Map.of("DEAL_DEFER_MAIN", "1"),
+            BOUNDED_PROCESS_BUDGET_MS, "luajit", probeFile.toString());
         Capture capture = readTransport(transport);
         boolean defect = capture != null && "PROBE_DEFECT".equals(capture.code());
-        return new Execution(exit, stdout, stderr, capture, defect);
+        return new Execution(outcome.exitCode(), outcome.stdout(), outcome.stderr(),
+            capture, defect);
     }
 
     private static Execution executeJvm(Project project, List<Export> exports)
@@ -541,33 +812,23 @@ public class JsonableHelperProductionDriveTest {
         probe.append("  }\n}\n");
         Path probeFile = out.resolve("Probe.java");
         Files.writeString(probeFile, probe.toString(), StandardCharsets.UTF_8);
-        ProcessBuilder javac = new ProcessBuilder("javac", "--release", "25",
-            "-proc:none", "-cp", classpath, "-d", classes.toString(),
-            artifact.toString(), probeFile.toString());
-        javac.directory(out.toFile());
-        javac.redirectErrorStream(true);
-        Process compile = javac.start();
-        String compileOut = new String(compile.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        int compileExit = compile.waitFor();
+        ProcessOutcome compile = runProcess(out, Map.of(), BOUNDED_PROCESS_BUDGET_MS,
+            "javac", "--release", "25", "-proc:none", "-cp", classpath, "-d",
+            classes.toString(), artifact.toString(), probeFile.toString());
+        String compileOut = compile.stdout() + compile.stderr();
+        int compileExit = compile.exitCode();
         checkEq(0, compileExit, project.modulePath() + " [jvm]: the emitted "
             + "production artifact compiles with javac --release 25 -proc:none: "
             + compileOut);
         if (compileExit != 0) {
             return new Execution(-1, "", compileOut, null, false);
         }
-        ProcessBuilder run = new ProcessBuilder("java", "-cp",
-            classpath + File.pathSeparator + classes, "Probe");
-        run.directory(out.toFile());
-        Process process = run.start();
-        String stdout = new String(process.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        String stderr = new String(process.getErrorStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        int exit = process.waitFor();
+        ProcessOutcome outcome = runProcess(out, Map.of(), BOUNDED_PROCESS_BUDGET_MS,
+            "java", "-cp", classpath + File.pathSeparator + classes, "Probe");
         Capture capture = readTransport(transport);
         boolean defect = capture != null && "PROBE_DEFECT".equals(capture.code());
-        return new Execution(exit, stdout, stderr, capture, defect);
+        return new Execution(outcome.exitCode(), outcome.stdout(), outcome.stderr(),
+            capture, defect);
     }
 
     private static String absoluteClasspath() {
@@ -1125,10 +1386,12 @@ public class JsonableHelperProductionDriveTest {
         } finally {
             deleteRecursively(project.root());
         }
-        // The same-module call shape: an exported helper is the module
-        // surface's entry, so a same-module call realizes the same closed
-        // EXTERNAL SHARED_BODY cell over the recorded entry whose function is
-        // the class's one lowered body.
+        // The same-module call shape (R3(b)): a same-module reference
+        // resolves the class's generated closure identity (the
+        // declaration-position CLOSURE_NEW result) and calls it through the
+        // landed LoweredBody call shape — one recorded EXTERNAL_ENTRY per
+        // helper export remains for the cross-module callers, and no
+        // same-module call resolves the ExternalFunction shape.
         Project same = materialize(FAMILY_DIR + "/jsonable-roundtrip", Target.JVM);
         try {
             Lowered sameLowered = lower(same, "same-module helper surface");
@@ -1141,38 +1404,73 @@ public class JsonableHelperProductionDriveTest {
             // so the entries are collected first and the call sites checked
             // after.
             Map<String, FunctionId> entryFunctionOf = new LinkedHashMap<>();
+            Map<FunctionId, OpId> entryReturnBoundaryByFunction = new LinkedHashMap<>();
+            Map<FunctionId, ValueId> closureIdentityOf = new LinkedHashMap<>();
             for (SemanticOp op : roundtrip.ops()) {
                 if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
                         && op.payload() instanceof KindPayload.ExternalEntryPayload p
                         && p.exportName().startsWith("Person$")) {
                     entryFunctionOf.put(p.exportName(), p.function());
+                    entryReturnBoundaryByFunction.put(p.function(),
+                        p.returnBoundaryOpId());
+                }
+                if (op.kind() == SemanticOpKind.CLOSURE_NEW
+                        && op.payload() instanceof KindPayload.ClosureNewPayload closure
+                        && op.result() instanceof ValueId identity) {
+                    closureIdentityOf.put(closure.function(), identity);
                 }
             }
-            int sameModuleCalls = 0;
+            java.util.Set<ValueId> loadedIdentities = new LinkedHashSet<>();
             for (SemanticOp op : roundtrip.ops()) {
-                if (op.kind() == SemanticOpKind.CALL
-                        && op.payload() instanceof KindPayload.CallPayload call
-                        && call.callee() instanceof KindPayload.CallCallee.Static s
-                        && s.binding() instanceof FunctionExecutionBinding.ExternalFunction
-                            external
+                if (op.kind() == SemanticOpKind.BINDING_LOAD
+                        && op.result() instanceof ValueId loaded) {
+                    loadedIdentities.add(loaded);
+                }
+            }
+            int directHelperCalls = 0;
+            int sameModuleExternalCalls = 0;
+            for (SemanticOp op : roundtrip.ops()) {
+                if (op.kind() != SemanticOpKind.CALL
+                        || !(op.payload() instanceof KindPayload.CallPayload call)
+                        || !(call.callee() instanceof KindPayload.CallCallee.Static s)) {
+                    continue;
+                }
+                if (s.binding() instanceof FunctionExecutionBinding.LoweredBody body
+                        && entryFunctionOf.containsValue(body.functionId())) {
+                    directHelperCalls++;
+                    LoweredFunction helper = roundtrip.functions().get(body.functionId());
+                    check(helper != null, "the same-module call resolves the class's "
+                        + "generated lowered body");
+                    checkEq(CallMode.DIRECT, call.mode(),
+                        "the same-module helper call is a direct body call");
+                    check(helper != null && helper.body().equals(body.blockId())
+                            && helper.body().equals(call.bodyBlock()),
+                        "the same-module call names the declaration's body block");
+                    ValueId identity = closureIdentityOf.get(body.functionId());
+                    check(identity != null && loadedIdentities.contains(identity),
+                        "the same-module callee load publishes the declaration's "
+                            + "generated closure identity " + identity);
+                    check(helper != null && helper.descriptor().canonicalSpecText()
+                            .contains("Person"),
+                        "the same-module helper body is the class's generated body");
+                    checkEq(entryReturnBoundaryByFunction.get(body.functionId()),
+                        call.returnBoundaryOpId(),
+                        "the same-module call shares the helper's single return cell");
+                }
+                if (s.binding() instanceof FunctionExecutionBinding.ExternalFunction external
                         && external.moduleId().equals(sameLowered.entryModule())
                         && external.executionOwner()
                             == deal.semantic.ir.ExternalExecutionOwner.SHARED_BODY) {
-                    sameModuleCalls++;
-                    FunctionId function = entryFunctionOf.get(external.exportName());
-                    check(function != null && roundtrip.functions().containsKey(function),
-                        "the same-module call of '" + external.exportName()
-                            + "' resolves the helper's own lowered body ("
-                            + entryFunctionOf.keySet() + ")");
-                    check(function != null && roundtrip.functions().get(function)
-                            .descriptor().canonicalSpecText().contains("Person"),
-                        "the same-module helper body is the class's generated body");
+                    sameModuleExternalCalls++;
                 }
             }
             checkEq(2, entryFunctionOf.size(),
                 "exactly one recorded entry per same-module helper export");
-            check(sameModuleCalls >= 2, "the same-module helper calls realize the "
-                + "closed EXTERNAL SHARED_BODY cell each (got " + sameModuleCalls + ")");
+            checkEq(2, directHelperCalls, "the same-module helper calls are direct "
+                + "LoweredBody calls to the declaration's closure (got "
+                + directHelperCalls + ")");
+            checkEq(0, sameModuleExternalCalls, "no same-module call resolves the "
+                + "ExternalFunction shape (the entry stays the cross-module record)");
         } finally {
             deleteRecursively(same.root());
         }
@@ -1264,6 +1562,291 @@ public class JsonableHelperProductionDriveTest {
     }
 
     // =========================================================================
+    // 7b. The three-consumer walk regressions
+    // =========================================================================
+
+    /** One synthetic lane-equivalent project of an inline source. */
+    private static Project syntheticProject(String moduleName, String source,
+            Target target) throws Exception {
+        Path root = Files.createTempDirectory("jsonable-synthetic-");
+        Path srcRoot = root.resolve("src");
+        Files.createDirectories(srcRoot);
+        Path entryFile = srcRoot.resolve(moduleName + ".deal");
+        Files.writeString(entryFile, source, StandardCharsets.UTF_8);
+        Files.writeString(root.resolve("deal.json"),
+            "{\n  \"languageVersion\": \"1.2\",\n"
+                + "  \"moduleRoots\": [\"src\"],\n  \"output\": \"out\",\n"
+                + "  \"backend\": \"" + (target == Target.JVM ? "jvm" : "luajit")
+                + "\"\n}\n", StandardCharsets.UTF_8);
+        Materialized materialized = new Materialized(moduleName + ".deal", source, 0);
+        Map<String, Materialized> modules = new LinkedHashMap<>();
+        modules.put(entryFile.toAbsolutePath().normalize().toString(), materialized);
+        modules.put(moduleName + ".deal", materialized);
+        return new Project(root, srcRoot, entryFile, moduleName, modules,
+            root.resolve("out"));
+    }
+
+    /** The 1-based line of the first occurrence of a token in a source. */
+    private static int lineOf(String source, String needle) {
+        return source.substring(0, source.indexOf(needle)).split("\n", -1).length;
+    }
+
+    /** The 1-based column of the first occurrence of a token in a source. */
+    private static int columnOf(String source, String needle) {
+        int index = source.indexOf(needle);
+        return index - source.lastIndexOf('\n', index - 1);
+    }
+
+    /** The oracle's failure of one synthetic project, or {@code null} on
+     * success. */
+    private static SemanticRuntimeModel.ErrorSnapshot oracleFailure(Project project,
+            List<Export> exports) throws Exception {
+        Path driver = project.srcRoot().resolve("__oracle_drive.deal");
+        Files.writeString(driver, oracleDriver(project, exports), StandardCharsets.UTF_8);
+        Lowered lowered = lower(project, driver, "synthetic oracle");
+        if (lowered == null) {
+            return null;
+        }
+        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.executeProjectInits(
+            lowered.project(), lowered.tables(), lowered.registries(),
+            new SemanticOracle.HostResponder() { });
+        if (run.terminal() instanceof SemanticRuntimeModel.Terminal.Success) {
+            return null;
+        }
+        return ((SemanticRuntimeModel.Terminal.DealFailure) run.terminal()).error();
+    }
+
+    /** The {@code line:column} suffix of a {@code file:line:column} origin. */
+    private static String originPosition(String origin) {
+        if (origin == null) {
+            return null;
+        }
+        int lastColon = origin.lastIndexOf(':');
+        int prevColon = lastColon < 0 ? -1 : origin.lastIndexOf(':', lastColon - 1);
+        if (prevColon < 0) {
+            return null;
+        }
+        return origin.substring(prevColon + 1);
+    }
+
+    /**
+     * The function-parameter helper invocation (the three-consumer
+     * regression): a helper passed to a function-typed parameter and
+     * invoked dynamically ({@code f(w)}) renders its pinned JSON failure
+     * at the {@code f(w)} call expression in the oracle, the LuaJIT
+     * artifact, and the JVM artifact alike — never at an enclosing static
+     * call or the generated declaration anchor.
+     */
+    private static void testDynamicHelperOrigin() throws Exception {
+        System.out.println("-- the function-parameter helper invocation: the f(w) "
+            + "origin on all three consumers --");
+        String source = """
+            // @jsonable
+            export class Wrapper {
+              data: table = {};
+            }
+
+            function apply(f: (w: Wrapper) => string, w: Wrapper): string {
+              return f(w);
+            }
+
+            export function test_dynamic_helper_origin(): string {
+              let w: Wrapper = { data: {} };
+              w.data.self = w.data;
+              return apply(Wrapper$toJson, w);
+            }
+
+            export function main(): null {
+              return null;
+            }
+            """;
+        int line = lineOf(source, "f(w)");
+        int column = columnOf(source, "f(w)");
+        String expectedPosition = line + ":" + column;
+        List<Export> exports = exportsOf(source);
+        // The oracle leg.
+        Project oracleProject = syntheticProject("app", source, Target.JVM);
+        try {
+            SemanticRuntimeModel.ErrorSnapshot oracle =
+                oracleFailure(oracleProject, exports);
+            check(oracle != null,
+                "the oracle rejects the cyclic helper invocation");
+            if (oracle != null) {
+                checkEq("E8001", oracle.code(), "the oracle's code");
+                checkEq("cyclic value cannot be encoded as JSON", oracle.message(),
+                    "the oracle's message");
+                checkEq(expectedPosition, originPosition(oracle.origin()),
+                    "the oracle renders the f(w) call origin (got " + oracle.origin()
+                        + ")");
+            }
+        } finally {
+            deleteRecursively(oracleProject.root());
+        }
+        // The covered lowering path: the f(w) call is a dynamic
+        // DEAL-body invocation (CallMode.INDIRECT over a CallCallee.Dynamic),
+        // never a statically resolved call.
+        Project irProject = syntheticProject("app", source, Target.JVM);
+        try {
+            Path driver = irProject.srcRoot().resolve("__oracle_drive.deal");
+            Files.writeString(driver, oracleDriver(irProject, exports),
+                StandardCharsets.UTF_8);
+            Lowered lowered = lower(irProject, driver, "dynamic-helper IR");
+            if (lowered != null) {
+                boolean dynamicCall = false;
+                for (LoweredModuleUnit unit : lowered.project().modules().values()) {
+                    for (SemanticOp op : unit.ops()) {
+                        if (op.kind() == SemanticOpKind.CALL
+                                && op.payload() instanceof KindPayload.CallPayload call
+                                && call.callee()
+                                    instanceof KindPayload.CallCallee.Dynamic
+                                && call.dynamicReturnBoundary() != null) {
+                            dynamicCall = true;
+                        }
+                    }
+                }
+                check(dynamicCall, "the f(w) call lowers as a dynamic "
+                    + "DEAL-body invocation");
+            }
+        } finally {
+            deleteRecursively(irProject.root());
+        }
+        // The two real-toolchain legs.
+        for (Target target : Target.values()) {
+            Project project = syntheticProject("app", source, target);
+            try {
+                List<String> diagnostics = new ArrayList<>();
+                boolean compiled = compile(project, "dynamic-helper-origin", target,
+                    diagnostics);
+                check(compiled, "the dynamic-helper project compiles ["
+                    + target.laneName() + "]: " + diagnostics);
+                if (!compiled) {
+                    continue;
+                }
+                Execution execution = target == Target.LUAJIT
+                    ? executeLua(project, exports) : executeJvm(project, exports);
+                Capture capture = execution.capture();
+                check(capture != null, "the dynamic-helper project fails on ["
+                    + target.laneName() + "] (exit " + execution.exitCode()
+                    + "; stderr " + execution.stderr() + ")");
+                if (capture == null) {
+                    continue;
+                }
+                checkEq("E8001", capture.code(), "the " + target.laneName()
+                    + " artifact's code");
+                checkEq("cyclic value cannot be encoded as JSON", capture.message(),
+                    "the " + target.laneName() + " artifact's message");
+                checkEq(expectedPosition,
+                    capture.line() + ":" + capture.column(), "the "
+                        + target.laneName() + " artifact renders the f(w) call "
+                        + "origin (got " + capture.sourceFile() + ":"
+                        + capture.line() + ":" + capture.column() + ")");
+                check(capture.sourceFile() != null
+                        && capture.sourceFile().endsWith("app.deal"),
+                    "the " + target.laneName() + " artifact's origin names the "
+                        + "declaring module file");
+            } finally {
+                deleteRecursively(project.root());
+            }
+        }
+    }
+
+    /**
+     * The class-instance-in-table-content negative (the three-consumer
+     * regression): a class instance inside an array nested in a table
+     * field is not JSON-shaped data, so the oracle, the LuaJIT artifact,
+     * and the JVM artifact all reject it with the pinned JSON_TO_WALK
+     * projection at the helper call origin — the descriptor-free table
+     * walk never serializes it.
+     */
+    private static void testTableClassInstanceRejection() throws Exception {
+        System.out.println("-- the table-content class-instance negative: all three "
+            + "consumers reject --");
+        String source = """
+            // @jsonable
+            export class Child {
+              value: int = 0;
+            }
+
+            // @jsonable
+            export class Wrapper {
+              data: table = {};
+            }
+
+            export function test_table_class_instance(): string {
+              let child: Child = { value: 7 };
+              let w: Wrapper = { data: {} };
+              w.data.children = [child];
+              return Wrapper$toJson(w);
+            }
+
+            export function main(): null {
+              return null;
+            }
+            """;
+        int line = lineOf(source, "Wrapper$toJson(w)");
+        int column = columnOf(source, "Wrapper$toJson(w)");
+        String expectedPosition = line + ":" + column;
+        List<Export> exports = exportsOf(source);
+        String oracleMessage = null;
+        Project oracleProject = syntheticProject("app", source, Target.JVM);
+        try {
+            SemanticRuntimeModel.ErrorSnapshot oracle =
+                oracleFailure(oracleProject, exports);
+            check(oracle != null, "the oracle rejects the class instance inside "
+                + "an array nested in a table field");
+            if (oracle != null) {
+                checkEq("E8001", oracle.code(), "the oracle's code");
+                check(oracle.message() != null
+                        && oracle.message().startsWith("value at data.children[0] "
+                            + "is not JSON serializable: "),
+                    "the oracle's pinned walk message (got " + oracle.message() + ")");
+                checkEq(expectedPosition, originPosition(oracle.origin()),
+                    "the oracle renders the helper call origin (got "
+                        + oracle.origin() + ")");
+                oracleMessage = oracle.message();
+            }
+        } finally {
+            deleteRecursively(oracleProject.root());
+        }
+        for (Target target : Target.values()) {
+            Project project = syntheticProject("app", source, target);
+            try {
+                List<String> diagnostics = new ArrayList<>();
+                boolean compiled = compile(project, "table-class-instance", target,
+                    diagnostics);
+                check(compiled, "the table-class-instance project compiles ["
+                    + target.laneName() + "]: " + diagnostics);
+                if (!compiled) {
+                    continue;
+                }
+                Execution execution = target == Target.LUAJIT
+                    ? executeLua(project, exports) : executeJvm(project, exports);
+                Capture capture = execution.capture();
+                check(capture != null, "the table-class-instance project fails on ["
+                    + target.laneName() + "] (exit " + execution.exitCode()
+                    + "; stderr " + execution.stderr() + ")");
+                if (capture == null) {
+                    continue;
+                }
+                checkEq("E8001", capture.code(), "the " + target.laneName()
+                    + " artifact's code");
+                if (oracleMessage != null) {
+                    checkEq(oracleMessage, capture.message(), "the "
+                        + target.laneName() + " artifact reproduces the oracle's "
+                        + "pinned walk message");
+                }
+                checkEq(expectedPosition,
+                    capture.line() + ":" + capture.column(), "the "
+                        + target.laneName() + " artifact renders the helper call "
+                        + "origin (got " + capture.sourceFile() + ":"
+                        + capture.line() + ":" + capture.column() + ")");
+            } finally {
+                deleteRecursively(project.root());
+            }
+        }
+    }
+
+    // =========================================================================
     // 8. Determinism and the verbatim export key
     // =========================================================================
 
@@ -1344,6 +1927,8 @@ public class JsonableHelperProductionDriveTest {
         testOracleAgreement();
         testHelperSurface();
         testNegatives();
+        testDynamicHelperOrigin();
+        testTableClassInstanceRejection();
         testDeterminismAndExportKey();
         System.out.println("");
         System.out.println("Jsonable helper production drive: " + passed

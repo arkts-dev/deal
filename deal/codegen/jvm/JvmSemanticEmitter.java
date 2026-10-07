@@ -3661,6 +3661,13 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent)).append("JvmRuntime.setModule(MODULE);\n");
             out.append(indent(indent)).append("JvmRuntime.pushFrame(").append(fid)
                 .append(".fid);\n");
+            // The invoking dynamic call's origin: a failure inside the
+            // callee body whose arm renders the call origin (the
+            // @jsonable toJson walk) reads the innermost active call —
+            // the f(w) invocation, never an enclosing static call. The
+            // finally below pops it on every path.
+            out.append(indent(indent)).append("JvmRuntime.callOrigins.push(")
+                .append(javaString(originOf(op))).append(");\n");
             out.append(indent(indent)).append("JvmRuntime.DealError __fd").append(id)
                 .append(" = null;\n");
             out.append(indent(indent)).append("try {\n");
@@ -3672,6 +3679,7 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent + 1)).append("__fd").append(id)
                 .append(" = __e").append(id).append(";\n");
             out.append(indent(indent)).append("} finally {\n");
+            out.append(indent(indent + 1)).append("JvmRuntime.callOrigins.pop();\n");
             out.append(indent(indent + 1)).append("JvmRuntime.popFrame();\n");
             out.append(indent(indent + 1)).append("MODULE = __pm").append(id)
                 .append(";\n");

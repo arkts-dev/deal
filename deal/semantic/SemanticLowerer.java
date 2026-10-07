@@ -2591,6 +2591,17 @@ public final class SemanticLowerer {
             boolean callSiteUsed;
             InvocationShape shape;
             OpId shapeOpId;
+            /**
+             * True for a compiler-generated {@code @jsonable} helper
+             * context (R3(b)): the declaring module's own reference to
+             * the helper calls the class's generated closure identity
+             * through the landed {@code LoweredBody} call shape, never
+             * the module surface's external entry — the reserved
+             * {@code EXTERNAL_ENTRY} record (and the body's
+             * {@code EXTERNAL_RETURN} cell it names) stays the
+             * cross-module callers' invocation.
+             */
+            boolean generatedHelper;
 
             FunctionContext(FunctionId functionId, BlockId bodyBlock,
                             RuntimeDescriptor.Func signature, OpId returnBoundaryOpId,
@@ -3743,13 +3754,19 @@ public final class SemanticLowerer {
                     FunctionContext context = new FunctionContext(functionId, bodyBlock,
                         signature, returnBoundaryOpId, callSiteOpId,
                         List.of(classDeclaration.span()));
+                    // R3(b): the declaring module's own reference to the
+                    // helper resolves the class's generated closure
+                    // identity and calls it through the landed
+                    // LoweredBody call shape (see lowerDirectCall).
+                    context.generatedHelper = true;
                     if (isExported(name)) {
-                        // The exported helper's invocation shape is the
-                        // module surface's EXTERNAL_ENTRY (R3(a)): a
-                        // cross-module reference and a same-module
-                        // reference alike realize the closed
-                        // CALL(EXTERNAL) SHARED_BODY cell through the
-                        // callee's recorded entry.
+                        // The exported helper still records exactly one
+                        // EXTERNAL_ENTRY (R3(a)): a cross-module
+                        // reference realizes the closed CALL(EXTERNAL)
+                        // SHARED_BODY cell over that entry, and the
+                        // entry's cell keeps the body's return boundary
+                        // kind (EXTERNAL_RETURN) even when the same
+                        // module also calls the helper directly.
                         OpId shapeOpId = ids.nextOpId(module, nextOrdinal++, 0);
                         context.assignShape(InvocationShape.EXTERNAL_ENTRY_SHAPE,
                             shapeOpId);
@@ -7950,9 +7967,17 @@ public final class SemanticLowerer {
 
         private ValueId lowerDirectCall(CallExpr call, ValueId slot, IdentifierExpr identifier,
                                         FunctionContext context) {
+            // The generated @jsonable helper's declaring module calls the
+            // class's generated closure identity through the landed
+            // LoweredBody call shape (R3(b)): the reserved EXTERNAL_ENTRY
+            // stays the cross-module invocation record, so the helper
+            // keeps its shape (and the body's EXTERNAL_RETURN cell the
+            // entry names) while this call is a direct body call.
             boolean entryInvocation = e7Calls
                 && context.shape == InvocationShape.EXTERNAL_ENTRY_SHAPE;
-            if (e7Calls && !entryInvocation) {
+            if (context.generatedHelper) {
+                entryInvocation = false;
+            } else if (e7Calls && !entryInvocation) {
                 context.assignShape(InvocationShape.SOURCE_CALL, context.callSiteOpId);
             }
             // The audited callee evaluation: the identifier loads the

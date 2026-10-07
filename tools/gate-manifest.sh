@@ -98,16 +98,24 @@ WARNING: node not found, skipping standard library JS tests'
   # coordinates). The helper surface is pinned in the produced unit: exactly
   # one generated closure and one LoweredBody binding per class helper, one
   # EXPORT_PUBLISH and one recorded EXTERNAL_ENTRY per helper export, the
-  # same-module and cross-module call shapes (EXPORT_READ plus the closed
-  # ExternalFunction SHARED_BODY binding over the callee's recorded entry),
-  # the near-collision identifier changing no outcome, and a non-@jsonable
-  # class gaining no helper. The combined dependency step runs the oracle
-  # over every fixture of the family through the same one-lowering
-  # closure (the runtime-ok success or the pinned error tuple at the raw
+  # same-module call resolving the declaration's generated closure identity
+  # through the landed LoweredBody call shape, the cross-module call bound
+  # through EXPORT_READ plus the closed ExternalFunction SHARED_BODY binding
+  # over the callee's recorded entry, the near-collision identifier changing
+  # no outcome, and a non-@jsonable class gaining no helper. The combined
+  # dependency step runs the oracle over every fixture of the family through
+  # the same one-lowering closure (the runtime-ok success or the pinned
+  # error tuple at the raw
   # corpus coordinates): the cross-module helper call succeeds and the
   # pinned helper JSON failure renders the cycle tuple at the invoking call
   # expression, so the drive fails if the canonical failure projection
-  # authority is broken.
+  # authority is broken. Two three-consumer regressions close the walk's
+  # remaining arms: a helper invoked through a function-typed parameter
+  # (f(w) inside the callee body) renders its pinned JSON failure at the
+  # f(w) call expression in the oracle, the LuaJIT artifact, and the JVM
+  # artifact alike, and a class instance inside an array nested in a table
+  # field is rejected by all three consumers (the table-content walk stays
+  # JSON-shaped).
   'fg|=== Running the @jsonable Helper Production Drive (ISSUE-0698) ===|java -ea -cp build deal.test.JsonableHelperProductionDriveTest'
   'fg|=== Running Closed Composite Terminator Analysis Tests (ISSUE-0712) ===|java -ea -cp build deal.test.CompositeTerminatorAnalysisTest'
   'fg|=== Running the Truncating Int32 Remainder Prelude Tests (ISSUE-0714) ===|java -ea -cp build deal.test.Int32ModTruncPreludeTest'
