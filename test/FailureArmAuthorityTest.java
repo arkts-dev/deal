@@ -1919,6 +1919,25 @@ public class FailureArmAuthorityTest {
                 "data", "arrCycTable", "tags", "{__a = true, __n = 1, [1] = 1}"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5,
                 "data", jvmCyclicArrayViaTables(), "tags", jvmIntArray(1L))));
+        // A table-content carrier under a key containing braces or the
+        // literal spelling of a placeholder: docs/spec-v1.2.md permits
+        // arbitrary string keys, so the walk's fieldPath carries the key
+        // verbatim and the arm's parameter substitution must publish it
+        // byte-for-byte on every consumer — never a producer defect, never
+        // a placeholder reinterpretation.
+        for (String key : List.of("{bad}", "{actual}", "{fieldPath}", "a}b", "a{b")) {
+            cases.add(walkCase("brace-key-" + key, "JSON_TO_WALK",
+                "data." + key, "function",
+                Map.of("name", walkString("n"),
+                    "age", new ClassOpsExecutor.Value.Int(1),
+                    "ratio", new ClassOpsExecutor.Value.Number(0.5),
+                    "data", walkFunctionTable(key), "tags", walkIntArray(1)),
+                Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
+                    "data", luaFunctionTable(key),
+                    "tags", "{__a = true, __n = 1, [1] = 1}"),
+                Map.of("name", "n", "age", 1L, "ratio", 0.5,
+                    "data", jvmFunctionTable(key), "tags", jvmIntArray(1L))));
+        }
         return cases;
     }
 
@@ -1996,6 +2015,16 @@ public class FailureArmAuthorityTest {
                 drive.label() + ": the oracle renders the bound walk arm's tuple");
             checkEq(failure.failure().origin(), opOrigin,
                 drive.label() + ": the class walk renders the operand it was given");
+            // The fieldPath metadata is the walk's literal position: a table
+            // key reaches it byte-for-byte (the cycle arm carries no position).
+            if (drive.fieldPath() == null) {
+                checkEq(Map.of(), rendered.metadata(), drive.label()
+                    + ": the cycle arm carries no position metadata");
+            } else {
+                checkEq(drive.fieldPath(), rendered.metadata().get("fieldPath"),
+                    drive.label() + ": the walk's fieldPath metadata is the literal "
+                        + "position (" + drive.fieldPath() + ")");
+            }
 
             // The emitted Lua leg, under real luajit. The tuple's origin is
             // the row's own rendered origin (never a test constant), so an
@@ -2038,6 +2067,11 @@ public class FailureArmAuthorityTest {
                     + "catch site carries");
             checkEq(drive.arm().equals("JSON_TO_WALK_CYCLE"), projection.cycle,
                 drive.label() + ": the JVM walk selects the same closed arm");
+            if (drive.fieldPath() != null) {
+                checkEq(drive.fieldPath(), projection.fieldPath, drive.label()
+                    + ": the JVM walk's projection path is the literal position ("
+                    + drive.fieldPath() + ")");
+            }
             if (i == 0) {
                 firstOracle = oracle;
             }
@@ -2509,16 +2543,36 @@ public class FailureArmAuthorityTest {
 
     /** The drive's table-typed field holding one function value under {@code k}. */
     private static ClassOpsExecutor.Value walkFunctionTable() {
+        return walkFunctionTable("k");
+    }
+
+    /** The drive's table-typed field holding one function value under {@code key}. */
+    private static ClassOpsExecutor.Value walkFunctionTable(String key) {
         deal.semantic.ir.SemanticTable<ClassOpsExecutor.Value> table =
             new deal.semantic.ir.SemanticTable<>();
-        table.put("k", walkFunction());
+        table.put(key, walkFunction());
         return new ClassOpsExecutor.Value.Table(table);
     }
 
     private static deal.codegen.jvm.JvmRuntime.Table jvmFunctionTable() {
+        return jvmFunctionTable("k");
+    }
+
+    private static deal.codegen.jvm.JvmRuntime.Table jvmFunctionTable(String key) {
         deal.codegen.jvm.JvmRuntime.Table table = new deal.codegen.jvm.JvmRuntime.Table();
-        table.write("k", walkJvmFunction());
+        table.write(key, walkJvmFunction());
         return table;
+    }
+
+    /**
+     * The emitted Lua carrier of a table holding one function under
+     * {@code key} (the walk's own key-presence shape): the key is a quoted
+     * string literal, so a key containing braces or a placeholder spelling
+     * reaches the walk verbatim.
+     */
+    private static String luaFunctionTable(String key) {
+        return "{__t = true, __keys = {[" + luaString(key) + "] = true}, ["
+            + luaString(key) + "] = function() end}";
     }
 
     /** The drive's table-typed field holding one class instance under {@code k}. */

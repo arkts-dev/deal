@@ -7439,7 +7439,8 @@ end
 
     /** The prelude with the serialized closed arm table spliced in. */
     private static String preludeWithArms() {
-        return PRELUDE.replace("__ARM_TABLE__", armTableLiteral());
+        String head = PRELUDE.replace("__ARM_TABLE__", armTableLiteral());
+        return head + PRELUDE_ARM_RENDERER;
     }
 
     private static final String PRELUDE = """
@@ -7855,6 +7856,16 @@ end
 -- through the one arm renderer below; a failure site composes no text of
 -- its own.
 __ARM_TABLE__
+""";
+
+    /**
+     * The second half of the shared runtime prelude (the closed-arm
+     * renderer onward): a separate constant because a single Java string
+     * constant may not exceed the class-file's 65535-byte UTF-8 limit;
+     * the halves are appended consecutively, so the emitted chunk is
+     * byte-identical to the unsplit text.
+     */
+    private static final String PRELUDE_ARM_RENDERER = """
 -- One arm renderer. The arm's own template is the message source; the
 -- named-parameter map supplies exactly the arm's declared parameters. A
 -- missing arm, an INNER_ONLY arm rendered at a failure site, a
@@ -7909,17 +7920,52 @@ local function __renderTemplate(id, values)
     error("failure arm '"..id.."' declares the parameters ["..__parametersText(arm)
       .."] but the render supplied "..supplied.." (producer defect)", 0)
   end
-  local msg = arm.t
-  if values ~= nil then
-    for k, v in pairs(values) do
-      msg = string.gsub(msg, "{"..k.."}", function() return tostring(v) end)
+  -- One single pass over the arm's own template: each {name} placeholder
+  -- is replaced by the value the render supplied and the inserted value is
+  -- never rescanned, so a parameter value that contains braces or the
+  -- literal spelling of another placeholder (a table key such as {actual})
+  -- is published byte-for-byte. The fail-closed checks below inspect the
+  -- template only, never the inserted data.
+  local template = arm.t
+  local parts = {}
+  local cursor = 1
+  while true do
+    local open = string.find(template, "{", cursor, true)
+    if open == nil then
+      local tail = string.sub(template, cursor)
+      if string.find(tail, "}", 1, true) ~= nil then
+        error("failure arm '"..id.."' left an unbound placeholder: "..template
+          .." (a stray closing brace outside a placeholder; producer defect)", 0)
+      end
+      parts[#parts + 1] = tail
+      break
     end
+    local close = string.find(template, "}", open + 1, true)
+    if close == nil then
+      error("failure arm '"..id.."' left an unbound placeholder: "..template
+        .." (producer defect)", 0)
+    end
+    local name = string.sub(template, open + 1, close - 1)
+    if not declared[name] then
+      error("failure arm '"..id.."' left an unbound placeholder: "..template
+        .." (producer defect)", 0)
+    end
+    local segment = string.sub(template, cursor, open - 1)
+    if string.find(segment, "}", 1, true) ~= nil then
+      error("failure arm '"..id.."' left an unbound placeholder: "..template
+        .." (a stray closing brace outside a placeholder; producer defect)", 0)
+    end
+    local value = nil
+    if values ~= nil then value = values[name] end
+    if value == nil then
+      error("failure arm '"..id.."' has no value for its parameter {"..name
+        .."} (producer defect)", 0)
+    end
+    parts[#parts + 1] = segment
+    parts[#parts + 1] = tostring(value)
+    cursor = close + 1
   end
-  if string.find(msg, "{", 1, true) ~= nil then
-    error("failure arm '"..id.."' left an unbound placeholder: "..msg
-      .." (producer defect)", 0)
-  end
-  return msg
+  return table.concat(parts)
 end
 -- The closed field shapes of the arm declaration (P2): a caller-supplied
 -- expected/actual token outside its arm's declared shape is a producer
