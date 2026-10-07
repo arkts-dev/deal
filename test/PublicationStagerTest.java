@@ -362,28 +362,26 @@ public class PublicationStagerTest {
                 false, false, null);
             check(first, "the fresh-root LuaJIT compile succeeds");
             Set<String> expected = new LinkedHashSet<>(List.of(
-                "main.lua", "lib.lua", "deal/runtime.lua",
+                "main.lua", "deal/runtime.lua",
                 "std/console.lua", "std/string.lua", "std/table.lua",
                 "std/json.lua", "std/math.lua", "std/time.lua"));
             check(treePaths(out).equals(expected),
-                "the fresh root contains exactly the expected files: "
-                    + treePaths(out));
+                "the fresh root contains exactly the one project artifact and "
+                    + "the deployment copies: " + treePaths(out));
 
-            // Delete the lib module: the whole-set swap removes its
-            // orphaned artifact with the replaced set.
+            // Delete the lib module and plant a stale sibling artifact in
+            // the live root: the whole-set swap removes the stale file with
+            // the replaced set.
             Files.delete(src.resolve("lib.deal"));
+            writeText(out.resolve("lib.lua"), "stale orphan\n");
             writeText(src.resolve("main.deal"),
                 "export function main(): null { return null; }\n");
             boolean second = compileProject(src, out, Backend.LUAJIT,
                 false, false, null);
             check(second, "the second compile after deleting lib succeeds");
-            Set<String> expectedAfterDelete = new LinkedHashSet<>(
-                List.of("main.lua", "deal/runtime.lua",
-                    "std/console.lua", "std/string.lua", "std/table.lua",
-                    "std/json.lua", "std/math.lua", "std/time.lua"));
-            check(treePaths(out).equals(expectedAfterDelete),
-                "the orphaned lib.lua artifact is gone (whole-set "
-                    + "semantics): " + treePaths(out));
+            check(treePaths(out).equals(expected),
+                "the stale lib.lua artifact is gone (whole-set semantics): "
+                    + treePaths(out));
         } finally {
             deleteTree(base);
         }

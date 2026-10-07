@@ -936,12 +936,10 @@ public class CompositeTerminatorAnalysisTest {
                 CompilationOrchestrator lua = productionCompile(root.resolve("src"),
                     entry, Backend.LUAJIT);
                 checkDiagnostics(fixture, "LuaJIT", lua);
-                check(lua.semanticEmissionCount() == 1
-                        && lua.retainedEmissionCount() == 0,
+                check(lua.semanticEmissionCount() == 1,
                     fixture.relativePath() + " (LuaJIT): the production arm stages "
-                        + "exactly one project artifact and no retained emission: "
-                        + "semantic=" + lua.semanticEmissionCount() + " retained="
-                        + lua.retainedEmissionCount());
+                        + "exactly one project artifact: semantic="
+                        + lua.semanticEmissionCount());
                 Path out = root.resolve("out");
                 Path artifact = out.resolve(fixture.relativePath() + ".lua");
                 check(Files.exists(artifact), fixture.relativePath() + " (LuaJIT): "
@@ -962,12 +960,10 @@ public class CompositeTerminatorAnalysisTest {
                 CompilationOrchestrator jvm = productionCompile(root.resolve("src"),
                     entry, Backend.JVM);
                 checkDiagnostics(fixture, "JVM", jvm);
-                check(jvm.semanticEmissionCount() == 1
-                        && jvm.retainedEmissionCount() == 0,
+                check(jvm.semanticEmissionCount() == 1,
                     fixture.relativePath() + " (JVM): the production arm stages "
-                        + "exactly one project artifact and no retained emission: "
-                        + "semantic=" + jvm.semanticEmissionCount() + " retained="
-                        + jvm.retainedEmissionCount());
+                        + "exactly one project artifact: semantic="
+                        + jvm.semanticEmissionCount());
                 String className = JvmBackend.classNameFor(fixture.relativePath());
                 Path jvmArtifact = out.resolve(className + ".java");
                 check(Files.exists(jvmArtifact), fixture.relativePath() + " (JVM): "

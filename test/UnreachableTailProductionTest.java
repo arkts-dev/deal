@@ -651,12 +651,9 @@ public class UnreachableTailProductionTest {
                 check(compiled && errors.isEmpty(), stem + " [" + lane
                     + "]: zero E6005 over the release-owned production invocation: "
                     + errors);
-                check(orchestrator.semanticEmissionCount() == 1
-                        && orchestrator.retainedEmissionCount() == 0,
-                    stem + " [" + lane + "]: exactly one project artifact and no "
-                        + "retained emission: semantic="
-                        + orchestrator.semanticEmissionCount() + " retained="
-                        + orchestrator.retainedEmissionCount());
+                check(orchestrator.semanticEmissionCount() == 1,
+                    stem + " [" + lane + "]: exactly one project artifact: semantic="
+                        + orchestrator.semanticEmissionCount());
                 if (!compiled) {
                     continue;
                 }
@@ -1072,12 +1069,9 @@ public class UnreachableTailProductionTest {
             .map(CompilerDiagnostic::message).toList();
         check(compiled && errors.isEmpty(), composite.name() + " [jvm]: zero E6005 "
             + "over the release-owned production invocation: " + errors);
-        check(orchestrator.semanticEmissionCount() == 1
-                && orchestrator.retainedEmissionCount() == 0,
-            composite.name() + " [jvm]: exactly one project artifact and no "
-                + "retained emission: semantic="
-                + orchestrator.semanticEmissionCount() + " retained="
-                + orchestrator.retainedEmissionCount());
+        check(orchestrator.semanticEmissionCount() == 1,
+            composite.name() + " [jvm]: exactly one project artifact: semantic="
+                + orchestrator.semanticEmissionCount());
         if (!compiled) {
             return;
         }
@@ -1153,12 +1147,9 @@ public class UnreachableTailProductionTest {
             .map(CompilerDiagnostic::message).toList();
         check(compiled && errors.isEmpty(), composite.name() + " [luajit]: zero "
             + "E6005 over the release-owned production invocation: " + errors);
-        check(orchestrator.semanticEmissionCount() == 1
-                && orchestrator.retainedEmissionCount() == 0,
-            composite.name() + " [luajit]: exactly one project artifact and no "
-                + "retained emission: semantic="
-                + orchestrator.semanticEmissionCount() + " retained="
-                + orchestrator.retainedEmissionCount());
+        check(orchestrator.semanticEmissionCount() == 1,
+            composite.name() + " [luajit]: exactly one project artifact: semantic="
+                + orchestrator.semanticEmissionCount());
         if (!compiled) {
             return;
         }
@@ -1375,11 +1366,9 @@ public class UnreachableTailProductionTest {
             .map(CompilerDiagnostic::message).toList();
         check(compiled && errors.isEmpty(), name + " [jvm]: zero E6005 over the "
             + "release-owned production invocation: " + errors);
-        check(orchestrator.semanticEmissionCount() == 1
-                && orchestrator.retainedEmissionCount() == 0,
-            name + " [jvm]: exactly one project artifact and no retained "
-                + "emission: semantic=" + orchestrator.semanticEmissionCount()
-                + " retained=" + orchestrator.retainedEmissionCount());
+        check(orchestrator.semanticEmissionCount() == 1,
+            name + " [jvm]: exactly one project artifact: semantic="
+                + orchestrator.semanticEmissionCount());
         if (!compiled) {
             return;
         }
@@ -1458,11 +1447,9 @@ public class UnreachableTailProductionTest {
             .map(CompilerDiagnostic::message).toList();
         check(compiled && errors.isEmpty(), name + " [luajit]: zero E6005 over the "
             + "release-owned production invocation: " + errors);
-        check(orchestrator.semanticEmissionCount() == 1
-                && orchestrator.retainedEmissionCount() == 0,
-            name + " [luajit]: exactly one project artifact and no retained "
-                + "emission: semantic=" + orchestrator.semanticEmissionCount()
-                + " retained=" + orchestrator.retainedEmissionCount());
+        check(orchestrator.semanticEmissionCount() == 1,
+            name + " [luajit]: exactly one project artifact: semantic="
+                + orchestrator.semanticEmissionCount());
         if (!compiled) {
             return;
         }
@@ -1741,11 +1728,9 @@ public class UnreachableTailProductionTest {
             .map(CompilerDiagnostic::message).toList();
         check(compiled && errors.isEmpty(), name + " [jvm]: zero E6005 over the "
             + "release-owned production invocation: " + errors);
-        check(orchestrator.semanticEmissionCount() == 1
-                && orchestrator.retainedEmissionCount() == 0,
-            name + " [jvm]: exactly one project artifact and no retained "
-                + "emission: semantic=" + orchestrator.semanticEmissionCount()
-                + " retained=" + orchestrator.retainedEmissionCount());
+        check(orchestrator.semanticEmissionCount() == 1,
+            name + " [jvm]: exactly one project artifact: semantic="
+                + orchestrator.semanticEmissionCount());
         if (!compiled) {
             return;
         }
@@ -1847,11 +1832,9 @@ public class UnreachableTailProductionTest {
             .map(CompilerDiagnostic::message).toList();
         check(compiled && errors.isEmpty(), name + " [luajit]: zero E6005 over the "
             + "release-owned production invocation: " + errors);
-        check(orchestrator.semanticEmissionCount() == 1
-                && orchestrator.retainedEmissionCount() == 0,
-            name + " [luajit]: exactly one project artifact and no retained "
-                + "emission: semantic=" + orchestrator.semanticEmissionCount()
-                + " retained=" + orchestrator.retainedEmissionCount());
+        check(orchestrator.semanticEmissionCount() == 1,
+            name + " [luajit]: exactly one project artifact: semantic="
+                + orchestrator.semanticEmissionCount());
         if (!compiled) {
             return;
         }
@@ -2314,11 +2297,9 @@ public class UnreachableTailProductionTest {
             .map(CompilerDiagnostic::message).toList();
         check(compiled && errors.isEmpty(), name + " [jvm]: zero E6005 over the "
             + "release-owned production invocation: " + errors);
-        check(orchestrator.semanticEmissionCount() == 1
-                && orchestrator.retainedEmissionCount() == 0,
-            name + " [jvm]: exactly one project artifact and no retained "
-                + "emission: semantic=" + orchestrator.semanticEmissionCount()
-                + " retained=" + orchestrator.retainedEmissionCount());
+        check(orchestrator.semanticEmissionCount() == 1,
+            name + " [jvm]: exactly one project artifact: semantic="
+                + orchestrator.semanticEmissionCount());
         if (!compiled) {
             return;
         }

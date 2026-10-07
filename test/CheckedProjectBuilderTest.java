@@ -809,8 +809,9 @@ public class CheckedProjectBuilderTest {
 
             CompilationOrchestrator orchestrator = new CompilationOrchestrator(
                 located.context(), entry, false, false, false, false, null,
-                CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
-                    CapabilityRegistry.releaseRegistry()));
+                CompilerProfileProvider.resolve(
+                    ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                    ReleaseConfiguration.releaseCapabilityRegistry()));
             boolean ok = orchestrator.compile();
             check(ok, "the class fixture compiles: " + orchestrator.diagnostics());
             CheckedProjectBuildResult result = orchestrator.checkedProject();
@@ -930,8 +931,9 @@ public class CheckedProjectBuilderTest {
 
             CompilationOrchestrator first = new CompilationOrchestrator(
                 context, entry, false, false, false, false, null,
-                CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
-                    CapabilityRegistry.releaseRegistry()));
+                CompilerProfileProvider.resolve(
+                    ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                    ReleaseConfiguration.releaseCapabilityRegistry()));
             check(first.compile(), "first build compiles: " + first.diagnostics());
             CheckedProjectBuildResult firstResult = first.checkedProject();
             check(firstResult != null && !firstResult.hasErrors(),
@@ -939,8 +941,9 @@ public class CheckedProjectBuilderTest {
 
             CompilationOrchestrator second = new CompilationOrchestrator(
                 context, entry, false, false, false, false, null,
-                CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
-                    CapabilityRegistry.releaseRegistry()));
+                CompilerProfileProvider.resolve(
+                    ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                    ReleaseConfiguration.releaseCapabilityRegistry()));
             check(second.compile(), "second build compiles: " + second.diagnostics());
             CheckedProjectBuildResult secondResult = second.checkedProject();
             check(secondResult != null && !secondResult.hasErrors(),
@@ -986,7 +989,8 @@ public class CheckedProjectBuilderTest {
             // T4: the release-owned invocation resolved through the provider;
             // the orchestrator receives it explicitly.
             CompilerInvocation explicitInvocation = CompilerProfileProvider.resolve(
-                ReleaseState.PRE_ACTIVATION, CapabilityRegistry.releaseRegistry());
+                ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                ReleaseConfiguration.releaseCapabilityRegistry());
             CompilationOrchestrator orchestrator = new CompilationOrchestrator(
                 context, entry, false, false, false, false, null,
                 explicitInvocation);
@@ -1085,8 +1089,9 @@ public class CheckedProjectBuilderTest {
         }
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             located.context(), entry, false, false, false, false, null,
-            CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
-                CapabilityRegistry.releaseRegistry()));
+            CompilerProfileProvider.resolve(
+                ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                ReleaseConfiguration.releaseCapabilityRegistry()));
         if (!orchestrator.compile()) {
             return false;
         }

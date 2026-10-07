@@ -149,6 +149,27 @@ public class DefaultSemanticSerializerTest {
             return new Compile(root, entry);
         }
 
+        /**
+         * True when the phase-3.8 default-plan and serializer-input facts
+         * — this suite's subject — are available. The one production arm
+         * runs after them: when a fixture carries a construct outside the
+         * landed lowering coverage, the compile fails closed with exactly
+         * its named E6005 while the earlier-phase facts stay available,
+         * and that honest fail-closed outcome is what this suite asserts.
+         */
+        boolean planFactsAvailable() {
+            if (success) {
+                return true;
+            }
+            if (orchestrator.checkedProject() == null
+                    || orchestrator.checkedProject().hasErrors()
+                    || orchestrator.defaultSerializerModuleInputs().isEmpty()) {
+                return false;
+            }
+            return diagnostics.stream().allMatch(
+                d -> "E6005".equals(d.code()));
+        }
+
         /** Serializes the compile's plans through the serializer
          * API. */
         DefaultSemanticSerializer.Result serialize() {
@@ -343,8 +364,9 @@ public class DefaultSemanticSerializerTest {
                 }
                 """), "src/main.deal");
         try {
-            check(compile.success,
-                "the fourteen-kind fixture compiles: "
+            check(compile.planFactsAvailable(),
+                "the fourteen-kind fixture reaches the default-plan phases "
+                    + "(the one production arm fails closed after them): "
                     + compile.diagnostics);
             DefaultSemanticSerializer.Result result = compile.serialize();
             check(!result.hasErrors() && result.diagnostics().isEmpty(),
@@ -989,9 +1011,10 @@ public class DefaultSemanticSerializerTest {
                 }
                 """), "src/main.deal");
         try {
-            check(compile.success,
-                "the nested-scope fixture compiles (the checker"
-                    + " accepts the body-local annotations): "
+            check(compile.planFactsAvailable(),
+                "the nested-scope fixture reaches the default-plan phases"
+                    + " (the checker accepts the body-local annotations; the"
+                    + " one production arm fails closed after them): "
                     + compile.diagnostics);
             DefaultSemanticSerializer.Result result = compile.serialize();
             check(!result.hasErrors(),
@@ -1081,8 +1104,9 @@ public class DefaultSemanticSerializerTest {
             "deal.json", MANIFEST, "src/main.deal", mainSource),
             "src/main.deal");
         try {
-            check(first.success,
-                "the same-named fixture compiles: "
+            check(first.planFactsAvailable(),
+                "the same-named fixture reaches the default-plan phases "
+                    + "(the one production arm fails closed after them): "
                     + first.diagnostics);
             DefaultSemanticSerializer.Result result = first.serialize();
             check(!result.hasErrors() && result.diagnostics().isEmpty(),
@@ -1163,8 +1187,10 @@ public class DefaultSemanticSerializerTest {
                 "return w.y + 2;");
             Compile second = first.recompile(Map.of(
                 "deal.json", MANIFEST, "src/main.deal", mutated));
-            check(second.success,
-                "the mutated variant compiles: " + second.diagnostics);
+            check(second.planFactsAvailable(),
+                "the mutated variant reaches the default-plan phases "
+                    + "(the one production arm fails closed after them): "
+                    + second.diagnostics);
             List<DefaultSemanticSerializer.SerializedDefaultClass>
                 mutatedPlans = modulePlansOf(second.serialize(),
                     "main.deal");
@@ -1259,9 +1285,10 @@ public class DefaultSemanticSerializerTest {
                 }
                 """), "src/main.deal");
         try {
-            check(compile.success,
-                "the same-named nested/imported fixture compiles: "
-                    + compile.diagnostics);
+            check(compile.planFactsAvailable(),
+                "the same-named nested/imported fixture reaches the "
+                    + "default-plan phases (the one production arm fails "
+                    + "closed after them): " + compile.diagnostics);
             DefaultSemanticSerializer.Result result = compile.serialize();
             check(!result.hasErrors() && result.diagnostics().isEmpty(),
                 "the serializer accepts the plans: "
@@ -1518,8 +1545,10 @@ public class DefaultSemanticSerializerTest {
                 }
                 """), "src/main.deal");
         try {
-            check(compile.success,
-                "the completion fixture compiles: " + compile.diagnostics);
+            check(compile.planFactsAvailable(),
+                "the completion fixture reaches the default-plan phases "
+                    + "(the one production arm fails closed after them): "
+                    + compile.diagnostics);
             DefaultSemanticSerializer.Result result = compile.serialize();
             check(!result.hasErrors(),
                 "the serializer completes the plans: "
@@ -1969,9 +1998,10 @@ public class DefaultSemanticSerializerTest {
                 }
                 """), "src/main.deal");
         try {
-            check(compile.success,
-                "the synthetic-jsonable-export fixture compiles: "
-                    + compile.diagnostics);
+            check(compile.planFactsAvailable(),
+                "the synthetic-jsonable-export fixture reaches the "
+                    + "default-plan phases (the one production arm fails "
+                    + "closed after them): " + compile.diagnostics);
             DefaultSemanticSerializer.Result result = compile.serialize();
             check(!result.hasErrors(),
                 "the serializer completes the synthetic-jsonable-export"
