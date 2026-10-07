@@ -116,7 +116,12 @@ import java.util.stream.Stream;
  *       hand-built guard diagnostic is reported by the guard detector
  *       (the compile criterion is not vacuous). The acceptance policy's
  *       truth table is asserted directly, so the fatality rule itself is
- *       not vacuous.</li>
+ *       not vacuous. The focused subprocess controls prove the same for
+ *       the owned processes: a transcript read failure and a drain that
+ *       is still open at its bounded deadline are infrastructure
+ *       verdicts (never substituted empty output), and the audit-owned
+ *       native bootstrap is deadline- and cancellation-bounded with its
+ *       child reaped and its readers torn down on every exit.</li>
  *   <li><b>The acceptance verdicts and the pre-precondition rule.</b> The
  *       run computes the three acceptance verdicts — zero
  *       {@code CONSTRUCT_UNLOWERED}, zero {@code RETAINED_ABI_DEFERRED}/
@@ -190,6 +195,22 @@ public class ProductionCorpusAudit {
 
     /** The bounded per-subprocess deadline (the harness deadline convention). */
     private static final long SUBPROCESS_TIMEOUT_SECONDS = 120;
+
+    /**
+     * The bounded post-exit transcript-drain window: both readers must reach
+     * EOF within it, or the capture is incomplete and the call fails closed.
+     */
+    private static final long TRANSCRIPT_DRAIN_TIMEOUT_SECONDS = 30;
+
+    /** The bounded audit-owned GCC run of the corpus native library. */
+    private static final long NATIVE_COMPILE_TIMEOUT_SECONDS = 120;
+
+    /**
+     * The retained-byte cap of the native compiler's merged output: the
+     * stream is drained past the cap (a runaway tool never stalls the
+     * child), but only this many bytes are kept for the diagnostic.
+     */
+    private static final int NATIVE_OUTPUT_LIMIT_BYTES = 64 * 1024;
 
     private static final AtomicInteger passed = new AtomicInteger();
     private static final AtomicInteger fatalCount = new AtomicInteger();
@@ -1140,8 +1161,8 @@ public class ProductionCorpusAudit {
     /**
      * The audit-owned compile of {@code support/native.c}: one GCC run per
      * audit, into the audit's native directory, fail closed on a missing
-     * source, a missing GCC, or a failed compile (an audit-input defect,
-     * never a construct gap).
+     * source, a missing GCC, a stalled tool, or a failed compile (an
+     * audit-input defect, never a construct gap).
      */
     private static String auditNativeLibrary(String label) {
         String cached = auditNativeLibraryPath;
@@ -1164,27 +1185,62 @@ public class ProductionCorpusAudit {
                 .resolve(CorpusFfi.NATIVE_LIBRARY_NAME)
                 .toAbsolutePath().normalize();
             try {
-                Process gcc = new ProcessBuilder("gcc", "-shared", "-fPIC",
-                    "-O2", "-o", library.toString(), source.toString())
-                    .redirectErrorStream(true)
-                    .start();
-                String output = new String(gcc.getInputStream().readAllBytes(),
-                    StandardCharsets.UTF_8);
-                int exit = gcc.waitFor();
-                if (exit != 0 || !Files.isRegularFile(library)) {
-                    throw new AuditInputException(label
-                        + ": the audit-owned FFI native-library bootstrap "
-                        + "failed (gcc exit " + exit + "): " + output.trim());
-                }
-            } catch (java.io.IOException | InterruptedException e) {
-                Thread.interrupted(); // clear the residual flag (no-op normally)
+                bootstrapNativeLibrary(label, source, library,
+                    List.of("gcc", "-shared", "-fPIC", "-O2", "-o",
+                        library.toString(), source.toString()));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
                 throw new AuditInputException(label
-                    + ": the audit-owned FFI native-library bootstrap failed: "
-                    + e.getMessage());
+                    + ": the audit-owned FFI native-library bootstrap was "
+                    + "interrupted: " + e);
             }
             cached = library.toString();
             auditNativeLibraryPath = cached;
             return cached;
+        }
+    }
+
+    /**
+     * One audit-owned native-library compile under the shared owned-process
+     * discipline: the GCC run is deadline-bounded, its merged output is
+     * bounded, its readers are drained and torn down on every post-start
+     * exit, and a calling-worker interruption is preserved after the child
+     * and its readers are closed. A deadline expiry, a drain failure, a
+     * non-zero exit and a missing output library are audit-input defects,
+     * never a construct gap.
+     */
+    static void bootstrapNativeLibrary(String label, Path source, Path library,
+            List<String> gccCommand) throws InterruptedException {
+        bootstrapNativeLibrary(label, source, library, gccCommand,
+            NATIVE_COMPILE_TIMEOUT_SECONDS);
+    }
+
+    /**
+     * The native-library compile with an explicit deadline: the timeout
+     * regression drives this overload so a stalled tool is bounded without
+     * waiting out the production deadline.
+     */
+    static void bootstrapNativeLibrary(String label, Path source, Path library,
+            List<String> gccCommand, long timeoutSeconds)
+            throws InterruptedException {
+        ProcessOutcome compile;
+        try {
+            compile = runOwnedProcess(
+                new ProcessBuilder(gccCommand).redirectErrorStream(true),
+                timeoutSeconds, TRANSCRIPT_DRAIN_TIMEOUT_SECONDS,
+                NATIVE_OUTPUT_LIMIT_BYTES);
+        } catch (InterruptedException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new AuditInputException(label
+                + ": the audit-owned FFI native-library bootstrap failed: "
+                + e);
+        }
+        if (compile.exitCode() != 0 || !Files.isRegularFile(library)) {
+            throw new AuditInputException(label
+                + ": the audit-owned FFI native-library bootstrap failed "
+                + "(gcc exit " + compile.exitCode() + "): "
+                + new String(compile.stdout(), StandardCharsets.UTF_8).trim());
         }
     }
 
@@ -1808,37 +1864,105 @@ public class ProductionCorpusAudit {
     record ProcessOutcome(int exitCode, byte[] stdout, byte[] stderr) {
     }
 
+    /**
+     * The per-cell verdict for a drive that failed before a comparable
+     * capture existed. A broken tool invocation, a corrupted or unloadable
+     * artifact, an unreadable or incomplete transcript and a deadline
+     * expiry are infrastructure, never a construct or capture deficit:
+     * fatal in every mode. The corpus driver and the focused subprocess
+     * controls share this one verdict path.
+     */
+    static CellVerdict driveFailureVerdict(String label, Target target,
+            Exception failure) {
+        return new CellVerdict(false, LegClass.INFRASTRUCTURE, label + " ["
+            + target.laneName() + "]: the drive failed: " + failure);
+    }
+
+    /**
+     * Runs one owned subprocess under the bounded deadline and returns its
+     * outcome only when both transcript drains completed successfully. A
+     * reader failure, a drain that has not completed when its bounded
+     * window expires, a calling-worker interruption and the process deadline
+     * each leave through the owned-process teardown; none manufactures
+     * empty output or a fabricated outcome.
+     */
     private static ProcessOutcome runProcess(ProcessBuilder builder)
+            throws Exception {
+        return runOwnedProcess(builder, SUBPROCESS_TIMEOUT_SECONDS,
+            TRANSCRIPT_DRAIN_TIMEOUT_SECONDS, 0);
+    }
+
+    /**
+     * The owned-subprocess core: the caller supplies the process deadline,
+     * the post-exit drain deadline and the retained transcript cap ({@code 0}
+     * keeps the whole transcript). The corpus drives keep the complete
+     * transcript; the native bootstrap caps the compiler output while still
+     * draining the stream. Every post-start exit path closes the child and
+     * both readers before control leaves the call, and a transcript that is
+     * unreadable or still open at its deadline is an infrastructure failure,
+     * never substituted empty output.
+     */
+    private static ProcessOutcome runOwnedProcess(ProcessBuilder builder,
+            long timeoutSeconds, long drainSeconds, int outputLimitBytes)
             throws Exception {
         Process process = builder.start();
         byte[][] stdout = new byte[1][];
         byte[][] stderr = new byte[1][];
-        Thread outThread = new Thread(() ->
-            stdout[0] = readAll(process.getInputStream()), "audit-stdout");
-        Thread errThread = new Thread(() ->
-            stderr[0] = readAll(process.getErrorStream()), "audit-stderr");
+        Throwable[] stdoutFailure = new Throwable[1];
+        Throwable[] stderrFailure = new Throwable[1];
+        Thread outThread = new Thread(() -> stdout[0] = readAll(
+            process.getInputStream(), outputLimitBytes, stdoutFailure),
+            "audit-stdout");
+        Thread errThread = new Thread(() -> stderr[0] = readAll(
+            process.getErrorStream(), outputLimitBytes, stderrFailure),
+            "audit-stderr");
         outThread.setDaemon(true);
         errThread.setDaemon(true);
         try {
             outThread.start();
             errThread.start();
-            if (!process.waitFor(SUBPROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
                 throw new IllegalStateException("the subprocess exceeded the "
-                    + SUBPROCESS_TIMEOUT_SECONDS + "s bounded deadline");
+                    + timeoutSeconds + "s bounded deadline");
             }
-            outThread.join(1000);
-            errThread.join(1000);
+            awaitDrain(outThread, drainSeconds, "stdout");
+            awaitDrain(errThread, drainSeconds, "stderr");
+            Throwable stdoutFail = stdoutFailure[0];
+            Throwable stderrFail = stderrFailure[0];
+            if (stdoutFail != null || stderrFail != null) {
+                Throwable failure = stdoutFail != null ? stdoutFail
+                    : stderrFail;
+                throw new IllegalStateException("the subprocess transcript "
+                    + "drain failed: " + failure);
+            }
             return new ProcessOutcome(process.exitValue(),
                 stdout[0] == null ? new byte[0] : stdout[0],
                 stderr[0] == null ? new byte[0] : stderr[0]);
         } finally {
             // Every post-start exit path — the bounded deadline, an
-            // interruption of the calling worker, a reader failure, and the
-            // normal return — closes the owned child and both readers before
-            // control leaves the call. A cancelled audit therefore leaves no
-            // live child or reader behind, and the scratch/native cleanup
-            // that follows never races an ongoing execution.
+            // interruption of the calling worker, a reader failure, a drain
+            // deadline expiry, and the normal return — closes the owned
+            // child and both readers before control leaves the call. A
+            // cancelled audit therefore leaves no live child or reader
+            // behind, and the scratch/native cleanup that follows never
+            // races an ongoing execution.
             closeOwnedProcess(process, outThread, errThread);
+        }
+    }
+
+    /**
+     * Waits for one transcript drain within the bounded window. A drain that
+     * is still running at the deadline makes the capture incomplete and the
+     * call fails closed; an interrupted caller leaves through the
+     * owned-process teardown with the interruption preserved.
+     */
+    private static void awaitDrain(Thread reader, long drainSeconds,
+            String streamName) throws InterruptedException {
+        reader.join(TimeUnit.SECONDS.toMillis(drainSeconds));
+        if (reader.isAlive()) {
+            throw new IllegalStateException("the subprocess exited but its "
+                + streamName + " drain did not complete within "
+                + drainSeconds + "s; the transcript is incomplete");
         }
     }
 
@@ -1863,6 +1987,11 @@ public class ProductionCorpusAudit {
             }
             if (process.isAlive()) {
                 process.destroyForcibly();
+                try {
+                    process.waitFor(5, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
             }
             for (Thread reader : readers) {
                 if (reader == null) {
@@ -1885,10 +2014,33 @@ public class ProductionCorpusAudit {
         }
     }
 
-    private static byte[] readAll(java.io.InputStream stream) {
+    /**
+     * The bounded transcript read: up to {@code outputLimitBytes} bytes are
+     * retained ({@code 0} keeps everything) while the rest of the stream is
+     * still drained, so a runaway tool cannot stall its child; any read
+     * failure is recorded in {@code failure} instead of being swallowed
+     * into empty output.
+     */
+    static byte[] readAll(java.io.InputStream stream, int outputLimitBytes,
+            Throwable[] failure) {
         try {
-            return stream.readAllBytes();
+            java.io.ByteArrayOutputStream kept =
+                new java.io.ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            long total = 0;
+            int read;
+            while ((read = stream.read(buffer)) != -1) {
+                int keep = outputLimitBytes <= 0 ? read
+                    : (int) Math.max(0,
+                        Math.min(read, outputLimitBytes - total));
+                if (keep > 0) {
+                    kept.write(buffer, 0, keep);
+                    total += keep;
+                }
+            }
+            return kept.toByteArray();
         } catch (Exception e) {
+            failure[0] = e;
             return new byte[0];
         }
     }
@@ -2440,12 +2592,12 @@ public class ProductionCorpusAudit {
                 fatal(label + " [" + target.laneName() + "] audit input: " + e);
                 return;
             } catch (Exception e) {
-                // A broken tool invocation, a corrupted artifact, or a failed
-                // artifact load is infrastructure, never a construct or
-                // capture deficit: fatal in every mode.
-                record(label, target, LegKind.CAPTURE, new CellVerdict(false,
-                    LegClass.INFRASTRUCTURE, label + " ["
-                    + target.laneName() + "]: the drive failed: " + e), report);
+                // A broken tool invocation, a corrupted artifact, a failed
+                // artifact load, an unreadable or incomplete transcript, and
+                // a subprocess deadline expiry are infrastructure, never a
+                // construct or capture deficit: fatal in every mode.
+                record(label, target, LegKind.CAPTURE,
+                    driveFailureVerdict(label, target, e), report);
                 return;
             }
             captureLegs.incrementAndGet();
@@ -2647,6 +2799,8 @@ public class ProductionCorpusAudit {
         projectionInventoryControls();
         unclassifiedBehaviorControls();
         subprocessCancellationControl();
+        subprocessDrainControls();
+        nativeBootstrapControls();
     }
 
     /**
@@ -2701,15 +2855,217 @@ public class ProductionCorpusAudit {
             check(child == null || !child.isAlive(),
                 "the owned child is gone after the cancellation (pid " + pid
                     + ")");
-            long readers = Thread.getAllStackTraces().keySet().stream()
-                .filter(Thread::isAlive)
-                .filter(thread -> thread.getName().startsWith("audit-"))
-                .count();
-            checkEq(0L, readers,
+            checkEq(0L, auditReaderThreads(),
                 "no audit-owned reader thread survives the cancellation");
         } finally {
             deleteRecursively(root);
         }
+    }
+
+    /**
+     * The transcript-drain controls: a reader failure is recorded and
+     * classified as infrastructure, and a transcript that is still open when
+     * the bounded drain window closes fails the call instead of returning
+     * substituted empty output. Both classes reach the corpus driver's own
+     * fatal verdict path, so neither can leave a registered audit green.
+     */
+    private static void subprocessDrainControls() throws Exception {
+        System.out.println("-- the transcript-drain controls: an unreadable "
+            + "or incomplete transcript is an infrastructure failure, never "
+            + "empty output --");
+        Throwable[] failure = new Throwable[1];
+        byte[] bytes = readAll(new java.io.InputStream() {
+            @Override
+            public int read() throws java.io.IOException {
+                throw new java.io.IOException("review-read-failure");
+            }
+        }, 0, failure);
+        check(bytes.length == 0,
+            "an unreadable transcript contributes no bytes");
+        check(failure[0] instanceof java.io.IOException
+                && String.valueOf(failure[0].getMessage())
+                    .contains("review-read-failure"),
+            "the reader failure is recorded, never swallowed into empty "
+                + "output: " + failure[0]);
+        assertFatalBothModes(driveFailureVerdict("drain-control",
+            Target.LUAJIT, new IllegalStateException("the subprocess "
+                + "transcript drain failed: " + failure[0])),
+            "a transcript read failure");
+
+        Path root = Files.createTempDirectory("production-corpus-audit-drain-");
+        try {
+            java.util.concurrent.atomic.AtomicReference<Exception> raised =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            java.util.concurrent.atomic.AtomicBoolean returned =
+                new java.util.concurrent.atomic.AtomicBoolean();
+            Thread worker = new Thread(() -> {
+                try {
+                    // The direct child exits after the readers have entered
+                    // their drains; a descendant then holds the transcript
+                    // open past the bounded drain window, so the capture is
+                    // incomplete at the deadline. (An immediate child exit
+                    // would race the JDK pipe reaper, which can close the
+                    // read end before the descendant's later output.)
+                    runOwnedProcess(new ProcessBuilder("sh", "-c",
+                        "sleep 1; (sleep 2; printf late-output) & exit 0"),
+                        30, 1, 0);
+                    returned.set(true);
+                } catch (Exception e) {
+                    raised.set(e);
+                }
+            }, "audit-drain-control");
+            worker.setDaemon(true);
+            worker.start();
+            worker.join(TimeUnit.SECONDS.toMillis(20));
+            check(!worker.isAlive(),
+                "the incomplete-drain control returns within the bound");
+            check(!returned.get() && raised.get() != null
+                    && String.valueOf(raised.get()).contains("incomplete"),
+                "an incomplete transcript drain fails closed, never returns "
+                    + "empty output: "
+                    + (raised.get() == null ? "no failure" : raised.get()));
+            if (raised.get() != null) {
+                assertFatalBothModes(driveFailureVerdict("drain-control",
+                    Target.LUAJIT, raised.get()),
+                    "an incomplete transcript drain");
+            }
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (auditReaderThreads() > 0 && System.nanoTime() < deadline) {
+                Thread.sleep(50);
+            }
+            checkEq(0L, auditReaderThreads(),
+                "no audit-owned reader thread survives the incomplete drain");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * The native-bootstrap controls: the audit-owned GCC run is deadline- and
+     * cancellation-bounded like every other owned subprocess. A tool that
+     * ignores the deadline fails the bootstrap as an audit-input defect and
+     * its child is reaped; an interrupted worker leaves with the interruption
+     * preserved, no live child and no surviving reader.
+     */
+    private static void nativeBootstrapControls() throws Exception {
+        System.out.println("-- the native-bootstrap controls: GCC runs under "
+            + "the bounded deadline and the owned-process teardown --");
+        Path root = Files.createTempDirectory("production-corpus-audit-gcc-");
+        try {
+            Path pidFile = root.resolve("gcc.pid");
+            Path fakeGcc = root.resolve("gcc");
+            Files.writeString(fakeGcc, "#!/bin/sh\necho $$ > " + pidFile
+                + "\nexec sleep 30\n", StandardCharsets.UTF_8);
+            if (!fakeGcc.toFile().setExecutable(true)) {
+                fatal("the native-bootstrap control cannot make its fake gcc "
+                    + "executable: " + fakeGcc);
+                return;
+            }
+            Path source = root.resolve("native.c");
+            Files.writeString(source, "int candidate(void) { return 0; }\n",
+                StandardCharsets.UTF_8);
+            Path library = root.resolve(CorpusFfi.NATIVE_LIBRARY_NAME);
+            List<String> command = List.of(fakeGcc.toString(), "-shared",
+                "-fPIC", "-O2", "-o", library.toString(), source.toString());
+
+            // (a) The deadline: a tool that ignores it fails the bootstrap
+            // as an audit-input defect and its child is reaped, never a hang.
+            java.util.concurrent.atomic.AtomicReference<Exception> timedOut =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            Thread timeoutWorker = new Thread(() -> {
+                try {
+                    bootstrapNativeLibrary("native-timeout-control", source,
+                        library, command, 2);
+                    timedOut.set(new IllegalStateException(
+                        "the stalled native bootstrap returned normally"));
+                } catch (InterruptedException e) {
+                    timedOut.set(e);
+                } catch (Exception e) {
+                    timedOut.set(e);
+                }
+            }, "audit-native-timeout-control");
+            timeoutWorker.setDaemon(true);
+            timeoutWorker.start();
+            timeoutWorker.join(TimeUnit.SECONDS.toMillis(60));
+            check(!timeoutWorker.isAlive(),
+                "the native-timeout control returns within the bound");
+            check(timedOut.get() instanceof AuditInputException
+                    && String.valueOf(timedOut.get()).contains("deadline"),
+                "a stalled native tool fails the bootstrap by deadline: "
+                    + timedOut.get());
+            check(!pidAlive(pidFile), "the timed-out native child is reaped");
+            check(!Files.exists(library),
+                "the timed-out native bootstrap stages no library");
+
+            // (b) The interruption: the calling worker's cancellation closes
+            // and reaps the owned child and both readers, and the
+            // interruption is preserved.
+            Files.deleteIfExists(pidFile);
+            java.util.concurrent.atomic.AtomicBoolean interrupted =
+                new java.util.concurrent.atomic.AtomicBoolean();
+            java.util.concurrent.atomic.AtomicReference<String> failure =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            Thread worker = new Thread(() -> {
+                try {
+                    bootstrapNativeLibrary("native-cancel-control", source,
+                        library, command);
+                    failure.set("the cancelled native bootstrap returned "
+                        + "normally");
+                } catch (InterruptedException e) {
+                    interrupted.set(true);
+                } catch (Exception e) {
+                    failure.set("the cancelled native bootstrap raised " + e);
+                }
+            }, "audit-native-cancel-control");
+            worker.setDaemon(true);
+            worker.start();
+            long startDeadline = System.nanoTime()
+                + TimeUnit.SECONDS.toNanos(10);
+            while (!Files.isRegularFile(pidFile)
+                    && System.nanoTime() < startDeadline) {
+                Thread.sleep(20);
+            }
+            check(Files.isRegularFile(pidFile),
+                "the native-cancellation control's gcc child started");
+            if (!Files.isRegularFile(pidFile)) {
+                return;
+            }
+            worker.interrupt();
+            worker.join(TimeUnit.SECONDS.toMillis(20));
+            check(!worker.isAlive(),
+                "the interrupted native-bootstrap worker returns");
+            check(interrupted.get(), "the native-bootstrap worker observed "
+                + "the interruption: " + failure.get());
+            check(!pidAlive(pidFile),
+                "the cancelled native child is reaped");
+            checkEq(0L, auditReaderThreads(),
+                "no audit-owned reader thread survives the native-bootstrap "
+                    + "cancellation");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /** The audit-owned reader threads currently alive. */
+    private static long auditReaderThreads() {
+        return Thread.getAllStackTraces().keySet().stream()
+            .filter(Thread::isAlive)
+            .filter(thread -> thread.getName().startsWith("audit-"))
+            .count();
+    }
+
+    /** True while the process recorded in {@code pidFile} is alive. */
+    private static boolean pidAlive(Path pidFile) throws Exception {
+        if (!Files.isRegularFile(pidFile)) {
+            return false;
+        }
+        String text = Files.readString(pidFile, StandardCharsets.UTF_8).trim();
+        if (text.isEmpty()) {
+            return false;
+        }
+        ProcessHandle handle = ProcessHandle.of(Long.parseLong(text))
+            .orElse(null);
+        return handle != null && handle.isAlive();
     }
 
     /**
