@@ -41,6 +41,8 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
@@ -113,10 +115,13 @@ import java.util.stream.Stream;
  *       {@code SemanticLowerer.lowerProject(} call site) and for the
  *       retained classes' and their test coverage's presence (each
  *       retained class is present and exercised by at least one test
- *       source). Pre-removal the
- *       residual sites are reported per file and token (the same
- *       pre-precondition reporting rule); under the strict acceptance mode
- *       the zero result is asserted.</li>
+ *       source). The reachability contract admits no reporting mode: a
+ *       discovered violation is an unconditional failure naming its file
+ *       and offending token (HR3). The scan detects every retained
+ *       {@code LuaBackend.generate*}/{@code JvmBackend.generate*} call
+ *       spelling, not only the method names the current compile path
+ *       happens to use; its controls pin both the detection and the
+ *       non-detection surface.</li>
  * </ol>
  *
  * <p>The drive is read-only over the repository: every temp project is
@@ -185,10 +190,10 @@ public class CutoverCorpusAcceptanceAuditTest {
 
     /**
      * One gated residual — the named producer-guard deficit of the corpus
-     * drive (criterion 3's CD5 precondition) or the pre-removal
-     * reachability deficit (criterion 4's removal slice) — reported under
-     * the pre-precondition rule: named, counted, and asserted only under
-     * the strict acceptance mode, never skipped.
+     * drive (criterion 3's CD5 precondition) — reported under the
+     * pre-precondition rule: named, counted, and asserted only under the
+     * strict acceptance mode, never skipped. The reachability contract has
+     * no gated mode: its violations are unconditional failures.
      */
     private static void deficit(String message) {
         reportedDeficit++;
@@ -772,6 +777,18 @@ public class CutoverCorpusAcceptanceAuditTest {
         "SemanticLowerer.lowerProject(";
 
     /**
+     * The retained generation call surface (HR3/C5): every
+     * {@code LuaBackend.generate*} / {@code JvmBackend.generate*} call
+     * spelling or method reference, not only the method names today's
+     * compile path happens to use. The retained class definitions are
+     * excluded by the scan, so a match names a production call site.
+     */
+    private static final Pattern RETAINED_GENERATION_CALL =
+        Pattern.compile(
+            "\\b(?:LuaBackend|JvmBackend)\\.generate[A-Za-z0-9_]*\\s*\\("
+                + "|\\b(?:LuaBackend|JvmBackend)::generate[A-Za-z0-9_]*");
+
+    /**
      * The lane-level dangling-identity guard's named failure marker
      * ({@link ProducedProjectIdentityAudit#laneFailure}): a lane outcome
      * carrying it is the K12 property violated on the project the lane
@@ -812,17 +829,8 @@ public class CutoverCorpusAcceptanceAuditTest {
             String relative = slash(root.relativize(file));
             String source = codeLines(Files.readString(file,
                 StandardCharsets.UTF_8));
-            boolean definingRetainedBackend = relative.endsWith(
-                "codegen/lua/LuaBackend.java")
-                || relative.endsWith("codegen/jvm/JvmBackend.java");
-            if (!definingRetainedBackend) {
-                for (String token : List.of("LuaBackend.generateToFile(",
-                        "JvmBackend.generate(")) {
-                    if (source.contains(token)) {
-                        violations.add(relative + ": " + token);
-                    }
-                }
-            }
+            violations.addAll(retainedGenerationCallSites(relative,
+                source));
             int index = 0;
             while ((index = source.indexOf(LOWER_PROJECT_CALL, index)) >= 0) {
                 lowerProjectCallSites++;
@@ -879,22 +887,101 @@ public class CutoverCorpusAcceptanceAuditTest {
         if (violations.isEmpty()) {
             System.out.println("  zero retained-surface violations over "
                 + "deal/**");
-        } else if (strictAcceptance()) {
-            System.out.println("  strict acceptance mode: ENGAGED "
-                + "(-Ddeal.acceptance.strict)");
+        } else {
+            // HR3: a violation names its file and offending token, and the
+            // focused audit test fails. The reachability contract admits no
+            // reporting mode and no strict-mode override; the retained
+            // surface is either absent or this audit is red.
             for (String violation : violations) {
                 fatal("reachability: " + violation);
             }
-        } else {
-            System.out.println("  strict acceptance mode: DISENGAGED (the "
-                + "pre-precondition reporting rule: the removal slice has "
-                + "not landed, so the retained sites are reported per file "
-                + "and token, never skipped)");
-            System.out.println("  Reachability deficit (reported, non-fatal "
-                + "under the pre-precondition rule):");
-            for (String violation : violations) {
-                deficit("reachability: " + violation);
+        }
+    }
+
+    /**
+     * The retained generation call sites of one production source: every
+     * {@code LuaBackend.generate*} / {@code JvmBackend.generate*} call
+     * spelling or method reference ({@link #RETAINED_GENERATION_CALL}),
+     * each reported with its file, line, and spelling. The defining
+     * retained-backend files are excluded, so their own definitions and
+     * internal calls never count as production call sites.
+     *
+     * @param relative the file's repository-relative path
+     * @param code the file's code lines ({@link #codeLines}: comment-only
+     *     lines were dropped while the line numbering was preserved)
+     * @return one violation per detected call site; empty when none
+     */
+    private static List<String> retainedGenerationCallSites(String relative,
+            String code) {
+        List<String> found = new ArrayList<>();
+        if (relative.endsWith("codegen/lua/LuaBackend.java")
+                || relative.endsWith("codegen/jvm/JvmBackend.java")) {
+            return found;
+        }
+        String[] lines = code.split("\n", -1);
+        for (int index = 0; index < lines.length; index++) {
+            Matcher matcher = RETAINED_GENERATION_CALL.matcher(lines[index]);
+            while (matcher.find()) {
+                found.add(relative + ":" + (index + 1) + ": "
+                    + matcher.group());
             }
+        }
+        return found;
+    }
+
+    /**
+     * The retained-generation scanner controls (HR3/C5): every retained
+     * {@code generate*} call spelling is detected — including the omitted
+     * spellings the review named ({@code LuaBackend.generate},
+     * {@code LuaBackend.generateWithImports},
+     * {@code LuaBackend.generateWithSourceMap}) and the method-reference
+     * spelling — and non-call spellings are not. The controls pass over
+     * fixed sample text, independent of the production surface's state, so
+     * the scan can never become a vacuous pass or an over-broad detector.
+     */
+    private static void testRetainedGenerationScannerControls() {
+        System.out.println("-- the retained-generation scanner controls: "
+            + "every generate* call spelling --");
+        String[][] detected = {
+            {"LuaBackend.generate(program, checked, path);",
+                "LuaBackend.generate("},
+            {"LuaBackend.generateWithImports(program, checked, path, "
+                    + "imports);",
+                "LuaBackend.generateWithImports("},
+            {"LuaBackend.generateWithSourceMap(program, checked, path);",
+                "LuaBackend.generateWithSourceMap("},
+            {"LuaBackend.generateToFile(program, checked, path);",
+                "LuaBackend.generateToFile("},
+            {"JvmBackend.generate(program, checked, path, name, out);",
+                "JvmBackend.generate("},
+            {"java.util.function.Function<?, ?> ref = "
+                    + "LuaBackend::generateToFile;",
+                "LuaBackend::generateToFile"},
+            {"java.util.function.Function<?, ?> ref2 = JvmBackend::generate;",
+                "JvmBackend::generate"},
+        };
+        for (String[] control : detected) {
+            List<String> found = retainedGenerationCallSites("deal/Sample.java",
+                codeLines(control[0]));
+            check(found.size() == 1 && found.get(0).contains(control[1]),
+                "the scanner detects " + control[1] + " (found " + found
+                    + ")");
+        }
+        String[][] notDetected = {
+            {"// LuaBackend.generate(program, checked, path);",
+                "a commented-out retained call"},
+            {"String name = LuaBackend.classNameFor(path);",
+                "a non-generate retained API"},
+            {"LuaBackend.GenerationResult result = null;",
+                "a retained result type mention"},
+            {"JvmBackend.JvmCodegenResult res = null;",
+                "a retained JVM result type mention"},
+        };
+        for (String[] control : notDetected) {
+            List<String> found = retainedGenerationCallSites("deal/Sample.java",
+                codeLines(control[0]));
+            check(found.isEmpty(), "the scanner does not flag " + control[1]
+                + " (found " + found + ")");
         }
     }
 
@@ -1286,6 +1373,7 @@ public class CutoverCorpusAcceptanceAuditTest {
         testDispatchedCorpusProductionDrive(dispatched,
             discovery.corpusByPath());
         testSettledLaneAcceptance(discovery, dispatched);
+        testRetainedGenerationScannerControls();
         testReachabilityAcceptance();
         System.out.println();
         System.out.println("passed: " + passed + ", fatal: " + fatal
