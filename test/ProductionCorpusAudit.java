@@ -56,23 +56,28 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 /**
- * The registered production-corpus audit over the dispatched set
+ * The production-corpus acceptance audit over the dispatched set
  * ({@code dispatched-corpus-production-acceptance} A1-A5 and the
  * production-corpus audit contract plus the corpus-invariant contract;
  * {@code conformance-corpus-disposition-and-profile-repin} CD2/CD3/CD5;
  * {@code conformance-cutover-guards-pins-and-production-source-removal}
- * HR4(a); {@code dispatched-corpus-production-realization} R1/R8).
+ * HR4(a); {@code dispatched-corpus-production-realization} R1/R8). It is
+ * driven by the retained acceptance suite
+ * ({@link ProductionDispatchTest}), which reuses its existing gate
+ * registration: the audit adds no corpus-wide gate registration of its own.
  *
- * <p>One registered drive measures the whole dispatched runtime corpus
+ * <p>One drive measures the whole dispatched runtime corpus
  * through the release-owned production pipeline:</p>
  *
  * <ol>
  *   <li><b>The corpus invariants.</b> Every {@code runtime-ok}/
  *       {@code runtime-error} fixture under
- *       {@code test/conformance/backend-runtime/**} is dispatched (the
- *       pinned count), every fixture's sidecar validates clean against
- *       the landed schema validator and pins all three backends, and no
- *       fixture or sidecar is reshaped by this drive.</li>
+ *       {@code test/conformance/backend-runtime/**} that the complete
+ *       current validated CD2 discovery classifies as runtime is
+ *       dispatched (the accounting is derived from that discovery, never
+ *       from a fixed count lock), every fixture's sidecar validates clean
+ *       against the landed schema validator and pins all three backends,
+ *       and no fixture or sidecar is reshaped by this drive.</li>
  *   <li><b>The lane-equivalent materialization.</b> Every fixture is
  *       written as the entry module of a temp project with the
  *       entry-directory-relative layout the gate's lane rule uses, its
@@ -121,19 +126,26 @@ import java.util.stream.Stream;
  *       (the sibling-owned realization work has not landed), the audit
  *       runs in its <em>pre-precondition reporting mode</em>: every
  *       failing leg is named by fixture and target, classified, and the
- *       run exits zero, exactly as
+ *       drive reports zero fatal failures, exactly as
  *       {@code conformance-cutover-guards-pins-and-production-source-removal}
  *       HR4(a) and {@code dispatched-corpus-production-acceptance} A5 and
  *       CD5 prescribe ("before it, the corpus run reports the residual
  *       failures per fixture and never skips"). Only three leg classes are
- *       permitted in that mode: the sibling-owned construct deficit, a
- *       cleanly framed runtime-error projection difference (the canonical
- *       failure-projection family, with the raw streams untouched and the
- *       pinned exit code), and the explicitly pinned interim behavior
- *       inventory. Everything else — a failed drive, a missing or
+ *       permitted in that mode, and each is bound to its recorded
+ *       evidence: the sibling-owned construct deficit (every error of the
+ *       leg carries the {@code CONSTRUCT_UNLOWERED} guard), the
+ *       evidence-bound projection inventory (the cell, the sidecar's
+ *       pinned code and message, and the capture's whole projection must
+ *       equal one recorded sibling projection deficit, with the raw streams
+ *       untouched and the pinned exit code), and the evidence-bound
+ *       interim behavior inventory (the cell and the capture's code and
+ *       message must equal one recorded entry, with the raw streams
+ *       untouched and the probe's failure status). Everything else — a
+ *       failed drive, a missing or
  *       unloadable artifact, a probe defect, a {@code NON_DEAL} or
  *       normally-completing runtime-error drive, extra output on either
- *       stream, a wrong exit code, a non-guard compile failure, a
+ *       stream, a wrong exit code, a changed message or projection on an
+ *       inventory cell, a non-guard compile failure, a
  *       mixed-guard failure, a pinned-rejection mismatch, a rejection that
  *       staged output, and every unclassified behavioral failure — is
  *       fatal in both modes. A construct deficit in one cell therefore
@@ -161,14 +173,11 @@ import java.util.stream.Stream;
  * audit selects no invocation other than the release-owned production
  * one.</p>
  */
-public class ProductionCorpusAuditTest {
+public class ProductionCorpusAudit {
 
     private static final Path CONFORMANCE = Path.of("test", "conformance");
     private static final Path HOST_FIXTURES = Path.of("test", "conformance",
         "host-fixtures");
-
-    /** The dispatched runtime-fixture count pin (the gate's 390). */
-    private static final int DISPATCHED_COUNT_PIN = 390;
 
     /** The three fail-closed producer guards the compile criterion forbids. */
     private static final List<String> GUARD_RULES = List.of(
@@ -218,9 +227,9 @@ public class ProductionCorpusAuditTest {
         PASS,
         /** A checker-valid E6005 {@code CONSTRUCT_UNLOWERED} leg (permitted interim). */
         CONSTRUCT_DEFICIT,
-        /** A cleanly framed runtime-error projection difference (permitted interim). */
+        /** A recorded runtime-error projection difference (permitted interim). */
         PROJECTION_DEFICIT,
-        /** A pinned interim behavior deficit (permitted interim; evidence-bound). */
+        /** A recorded interim behavior deficit (permitted interim). */
         BEHAVIOR_DEFICIT,
         /** A drive/load/toolchain failure: fatal in every mode. */
         INFRASTRUCTURE,
@@ -230,8 +239,20 @@ public class ProductionCorpusAuditTest {
         DEFECT
     }
 
-    /** One measured cell: its target, its class, and its reported line. */
-    record Leg(Target target, LegClass clazz, String line) {
+    /** The measured surface of one leg: the compile cell or its capture. */
+    enum LegKind {
+        /** The per-fixture, per-target compile outcome. */
+        COMPILE,
+        /** The producible cell's driven capture outcome. */
+        CAPTURE
+    }
+
+    /**
+     * One measured cell: its fixture, its target, the measured surface, its
+     * class, and its reported line.
+     */
+    record Leg(String corpusPath, Target target, LegKind kind, LegClass clazz,
+               String line) {
     }
 
     /** True iff a leg's class is fatal under the given acceptance mode. */
@@ -245,70 +266,88 @@ public class ProductionCorpusAuditTest {
     }
 
     /**
-     * One pinned interim behavior deficit: a cell whose production behavior
-     * the corpus pins byte-exact but whose realizing work has not landed.
-     * The pin is evidence-bound: the cell is permitted only while its drive
-     * raises exactly the recorded captured code. A different captured code, a
-     * probe defect, a normal completion, or an artifact/load failure is an
-     * unclassified failure, never this deficit, and is fatal in every mode.
+     * One recorded interim behavior deficit (a not-yet-realized production
+     * behavior family owned outside this audit). The evidence is bound: the
+     * cell, the capture's code and message, the raw streams (both empty) and
+     * the probe's failure status must all equal the recorded entry. A
+     * different code, a changed message, extra output on either stream, or
+     * another status is an unclassified failure, never this deficit, and is
+     * fatal in every mode.
      */
     record BehaviorDeficit(String corpusPath, Target target,
-                           String capturedCode, String family) {
+                           String capturedCode, String capturedMessage,
+                           int probeExitCode, String family) {
     }
 
     /**
-     * The pinned interim behavior inventory (the not-yet-realized production
-     * behavior families owned outside this audit). These legs stay FAILS:
-     * they are reported per fixture and target and are counted in every
-     * acceptance verdict; they are never skipped, excluded, or converted
-     * into a pass. They become fatal as soon as the compile criterion is
-     * met (the strict acceptance ratchet), and every runtime-ok capture
-     * failure whose cell or captured evidence is not in this inventory is an
+     * The recorded interim behavior inventory (the not-yet-realized
+     * production behavior families owned outside this audit). These legs
+     * stay FAILS: they are reported per fixture and target and are counted
+     * in every acceptance verdict; they are never skipped, excluded, or
+     * converted into a pass. They become fatal as soon as the compile
+     * criterion is met (the strict acceptance ratchet), and every runtime-ok
+     * capture failure whose evidence does not equal one recorded entry is an
      * unclassified behavioral failure and fatal in every mode.
      */
     private static final List<BehaviorDeficit> BEHAVIOR_DEFICITS = List.of(
         new BehaviorDeficit(
             "backend-runtime/control-flow/for-of-string-unicode.deal",
-            Target.LUAJIT, "TEST_FAIL",
+            Target.LUAJIT, "TEST_FAIL", "expected 5 scalar values", 1,
             "the production LuaJIT FOR_EACH over a string iterates bytes, not "
                 + "Unicode scalar values (the scalar-iteration realization)"),
         new BehaviorDeficit(
             "backend-runtime/control-flow/for-of-unicode-scalar.deal",
-            Target.LUAJIT, "TEST_FAIL",
+            Target.LUAJIT, "TEST_FAIL", "for-of unicode: scalar value mismatch",
+            1,
             "the production LuaJIT FOR_EACH over a string iterates bytes, not "
                 + "Unicode scalar values (the scalar-iteration realization)"),
         new BehaviorDeficit(
             "backend-runtime/defaults/plan-load-time-zero-invocations.deal",
             Target.JVM, "NON_DEAL",
+            "java.lang.ClassCastException: class java.lang.Long cannot be "
+                + "cast to class java.lang.Integer (java.lang.Long and "
+                + "java.lang.Integer are in module java.base of loader "
+                + "'bootstrap')",
+            1,
             "the emitted JVM host int return projection admits a "
                 + "java.lang.Long and then casts it to Integer (the host "
                 + "boundary int projection realization)"),
         new BehaviorDeficit(
             "backend-runtime/defaults/plan-reexecuted-calls.deal",
             Target.JVM, "NON_DEAL",
+            "java.lang.ClassCastException: class java.lang.Long cannot be "
+                + "cast to class java.lang.Integer (java.lang.Long and "
+                + "java.lang.Integer are in module java.base of loader "
+                + "'bootstrap')",
+            1,
             "the emitted JVM host int return projection admits a "
                 + "java.lang.Long and then casts it to Integer (the host "
                 + "boundary int projection realization)"),
         new BehaviorDeficit(
             "backend-runtime/defaults/plan-phase-order-provided-before-defaults.deal",
             Target.JVM, "NON_DEAL",
+            "java.lang.ClassCastException: class java.lang.Long cannot be "
+                + "cast to class java.lang.Integer (java.lang.Long and "
+                + "java.lang.Integer are in module java.base of loader "
+                + "'bootstrap')",
+            1,
             "the emitted JVM host int return projection admits a "
                 + "java.lang.Long and then casts it to Integer (the host "
                 + "boundary int projection realization)"),
         new BehaviorDeficit(
             "backend-runtime/stdlib/table/keys-nonstring-exclusion.deal",
-            Target.LUAJIT, "E8001",
+            Target.LUAJIT, "E8001", "expected table", 1,
             "the decoded-array (JSON-produced array) table-op admission is not "
                 + "realized (the decoded-array surface, excluded by the bytes "
                 + "realization)"),
         new BehaviorDeficit(
             "backend-runtime/stdlib/table/keys-nonstring-exclusion.deal",
-            Target.JVM, "E8001",
+            Target.JVM, "E8001", "expected table", 1,
             "the decoded-array (JSON-produced array) table-op admission is not "
                 + "realized (the decoded-array surface, excluded by the bytes "
                 + "realization)"));
 
-    /** The pinned interim behavior deficit of one cell, or null. */
+    /** The recorded interim behavior deficit of one cell, or null. */
     static BehaviorDeficit behaviorDeficitOf(String corpusPath, Target target) {
         for (BehaviorDeficit deficit : BEHAVIOR_DEFICITS) {
             if (deficit.corpusPath().equals(corpusPath)
@@ -317,6 +356,382 @@ public class ProductionCorpusAuditTest {
             }
         }
         return null;
+    }
+
+    /**
+     * The evidence match of one runtime-ok capture failure against the
+     * recorded behavior inventory: the cell, the captured code and message,
+     * both raw streams (empty) and the probe's failure status must all equal
+     * the recorded entry.
+     */
+    static boolean matchesBehaviorDeficit(BehaviorDeficit deficit,
+            Capture capture, Execution execution) {
+        return deficit != null
+            && capture != null && capture.error()
+            && Objects.equals(deficit.capturedCode(), capture.code())
+            && Objects.equals(deficit.capturedMessage(), capture.message())
+            && execution.stdout() != null && execution.stdout().length == 0
+            && execution.stderr() != null && execution.stderr().length == 0
+            && execution.exitCode() == deficit.probeExitCode();
+    }
+
+    /**
+     * One recorded interim projection deficit: a runtime-error leg whose
+     * sidecar pins one canonical failure but whose production artifact
+     * raises a different pinned arm, projects the pinned arm at another
+     * position, or projects its value kind as another token (the sibling
+     * canonical-failure-projection realization, owned outside this audit).
+     * The evidence is bound to the whole observable projection: the entry
+     * records the sidecar's pinned code and message, the exact normalized
+     * capture, and the stream/status conditions. Any other mismatch is an
+     * unclassified failure, never this deficit.
+     */
+    record ProjectionDeficit(String corpusPath, Target target,
+                             String pinnedCode, String pinnedMessage,
+                             String capturedCode, String capturedMessage,
+                             String capturedFile, int capturedLine,
+                             int capturedColumn, String capturedExpected,
+                             String capturedActual, String family) {
+    }
+
+    /**
+     * The recorded interim projection inventory. These legs stay FAILS: they
+     * are reported per fixture and target, are counted in every acceptance
+     * verdict, and become fatal as soon as the compile criterion is met.
+     * Every captured value below is the evidence observed at this tree
+     * state; a divergence from it (another arm, another message, another
+     * position, another token, extra output or another status) is NOT this
+     * deficit and is fatal in every mode.
+     */
+    private static final List<ProjectionDeficit> PROJECTION_DEFICITS = List.of(
+        new ProjectionDeficit(
+            "backend-runtime/arithmetic/int32-pow-infinity.deal",
+            Target.JVM, "E8001", "expected int, got infinity",
+            "E8004", "int out of safe range",
+            "backend-runtime/arithmetic/int32-pow-infinity.deal", 7, 10,
+            null, null,
+            "the canonical failure arm: the artifact raises a different error than the " +
+                "sidecar pins"),
+        new ProjectionDeficit(
+            "backend-runtime/arithmetic/int32-pow-infinity.deal",
+            Target.LUAJIT, "E8001", "expected int, got infinity",
+            "E8004", "int out of safe range",
+            "backend-runtime/arithmetic/int32-pow-infinity.deal", 7, 10,
+            null, null,
+            "the canonical failure arm: the artifact raises a different error than the " +
+                "sidecar pins"),
+        new ProjectionDeficit(
+            "backend-runtime/arrays/index-oob.deal",
+            Target.JVM, "E8001", "expected int",
+            "E8001", "expected int",
+            "backend-runtime/arrays/index-oob.deal", 8, 3,
+            "int", "nil",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/arrays/index-oob.deal",
+            Target.LUAJIT, "E8001", "expected int",
+            "E8001", "expected int",
+            "backend-runtime/arrays/index-oob.deal", 8, 3,
+            "int", "nil",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/bytes/bytes-dynamic-nested-first-element-e8003.deal",
+            Target.JVM, "E8003", "array element 1 type mismatch",
+            "E8003", "array element 1 type mismatch",
+            "backend-runtime/bytes/bytes-dynamic-nested-first-element-e8003.deal", 10, 11,
+            "[bytes]", "array",
+            "the actual-kind token projection: the pinned arm's value kind is projected as " +
+                "another token"),
+        new ProjectionDeficit(
+            "backend-runtime/bytes/bytes-dynamic-nested-first-element-e8003.deal",
+            Target.LUAJIT, "E8003", "array element 1 type mismatch",
+            "E8003", "array element 1 type mismatch",
+            "backend-runtime/bytes/bytes-dynamic-nested-first-element-e8003.deal", 10, 11,
+            "[bytes]", "array",
+            "the actual-kind token projection: the pinned arm's value kind is projected as " +
+                "another token"),
+        new ProjectionDeficit(
+            "backend-runtime/class-runtime-errors/dynamic-bad-class-array-element-e8001.deal",
+            Target.JVM, "E8003", "array element 1 type mismatch",
+            "E8001", "expected table",
+            "backend-runtime/class-runtime-errors/dynamic-bad-class-array-element-e8001.deal",
+            11, 32,
+            "table", "array",
+            "the canonical failure arm: the artifact raises a different error than the " +
+                "sidecar pins"),
+        new ProjectionDeficit(
+            "backend-runtime/class-runtime-errors/dynamic-bad-class-array-element-e8001.deal",
+            Target.LUAJIT, "E8003", "array element 1 type mismatch",
+            "E8001", "expected table",
+            "backend-runtime/class-runtime-errors/dynamic-bad-class-array-element-e8001.deal",
+            11, 32,
+            "table", "array",
+            "the canonical failure arm: the artifact raises a different error than the " +
+                "sidecar pins"),
+        new ProjectionDeficit(
+            "backend-runtime/class-runtime-errors/dynamic-bad-nullable-class-e8001.deal",
+            Target.JVM, "E8001", "expected class instance",
+            "E8001", "expected class instance",
+            "backend-runtime/class-runtime-errors/dynamic-bad-nullable-class-e8001.deal", 12, 23,
+            "class", "table",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/class-runtime-errors/dynamic-bad-nullable-class-e8001.deal",
+            Target.LUAJIT, "E8001", "expected class instance",
+            "E8001", "expected class instance",
+            "backend-runtime/class-runtime-errors/dynamic-bad-nullable-class-e8001.deal", 12, 23,
+            "class", "table",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/runtime-errors/chained-access-type-error-e8001.deal",
+            Target.JVM, "E8001", "expected int",
+            "E8001", "expected int",
+            "backend-runtime/runtime-errors/chained-access-type-error-e8001.deal", 9, 21,
+            "int", "string",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/runtime-errors/chained-access-type-error-e8001.deal",
+            Target.LUAJIT, "E8001", "expected int",
+            "E8001", "expected int",
+            "backend-runtime/runtime-errors/chained-access-type-error-e8001.deal", 9, 21,
+            "int", "string",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/runtime-errors/nested-array-oob-e8001.deal",
+            Target.JVM, "E8001", "expected int",
+            "E8001", "expected int",
+            "backend-runtime/runtime-errors/nested-array-oob-e8001.deal", 8, 3,
+            "int", "nil",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/runtime-errors/nested-array-oob-e8001.deal",
+            Target.LUAJIT, "E8001", "expected int",
+            "E8001", "expected int",
+            "backend-runtime/runtime-errors/nested-array-oob-e8001.deal", 8, 3,
+            "int", "nil",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/runtime-errors/rethrow-across-function-boundary.deal",
+            Target.JVM, "CROSS_FUNCTION_RETHROW", "boom",
+            "CROSS_FUNCTION_RETHROW", "boom",
+            "backend-runtime/runtime-errors/rethrow-across-function-boundary.deal", 14, 5,
+            null, null,
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/runtime-errors/rethrow-across-function-boundary.deal",
+            Target.LUAJIT, "CROSS_FUNCTION_RETHROW", "boom",
+            "CROSS_FUNCTION_RETHROW", "boom",
+            "backend-runtime/runtime-errors/rethrow-across-function-boundary.deal", 14, 5,
+            null, null,
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/runtime-errors/rethrow-preserves-code.deal",
+            Target.JVM, "USER_RETHROW", "boom",
+            "USER_RETHROW", "boom",
+            "backend-runtime/runtime-errors/rethrow-preserves-code.deal", 10, 5,
+            null, null,
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/runtime-errors/rethrow-preserves-code.deal",
+            Target.LUAJIT, "USER_RETHROW", "boom",
+            "USER_RETHROW", "boom",
+            "backend-runtime/runtime-errors/rethrow-preserves-code.deal", 10, 5,
+            null, null,
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/source-location-precision/stdlib-error-source.deal",
+            Target.JVM, "E8001", "expected string",
+            "E8001", "expected string",
+            "backend-runtime/source-location-precision/stdlib-error-source.deal", 10, 21,
+            "string", "int",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/source-location-precision/stdlib-error-source.deal",
+            Target.LUAJIT, "E8001", "expected string",
+            "E8001", "expected string",
+            "backend-runtime/source-location-precision/stdlib-error-source.deal", 10, 21,
+            "string", "int",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/stdlib-edge/console-log-dynamic-nonstring.deal",
+            Target.JVM, "E8001", "expected string",
+            "E8001", "expected string",
+            "backend-runtime/stdlib-edge/console-log-dynamic-nonstring.deal", 10, 15,
+            "string", "int",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/stdlib-edge/console-log-dynamic-nonstring.deal",
+            Target.LUAJIT, "E8001", "expected string",
+            "E8001", "expected string",
+            "backend-runtime/stdlib-edge/console-log-dynamic-nonstring.deal", 10, 15,
+            "string", "int",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/stdlib-edge/string-length-dynamic-nonstring.deal",
+            Target.JVM, "E8001", "expected string",
+            "E8001", "expected string",
+            "backend-runtime/stdlib-edge/string-length-dynamic-nonstring.deal", 10, 21,
+            "string", "int",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/stdlib-edge/string-length-dynamic-nonstring.deal",
+            Target.LUAJIT, "E8001", "expected string",
+            "E8001", "expected string",
+            "backend-runtime/stdlib-edge/string-length-dynamic-nonstring.deal", 10, 21,
+            "string", "int",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/stdlib-edge/table-keys-dynamic-nontable.deal",
+            Target.JVM, "E8001", "expected table",
+            "E8001", "expected table",
+            "backend-runtime/stdlib-edge/table-keys-dynamic-nontable.deal", 10, 22,
+            "table", "int",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/stdlib-edge/table-keys-dynamic-nontable.deal",
+            Target.LUAJIT, "E8001", "expected table",
+            "E8001", "expected table",
+            "backend-runtime/stdlib-edge/table-keys-dynamic-nontable.deal", 10, 22,
+            "table", "int",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/stdlib/table/keys-nontable-error.deal",
+            Target.JVM, "E8001", "expected table",
+            "E8001", "expected table",
+            "backend-runtime/stdlib/table/keys-nontable-error.deal", 10, 22,
+            "table", "string",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/stdlib/table/keys-nontable-error.deal",
+            Target.LUAJIT, "E8001", "expected table",
+            "E8001", "expected table",
+            "backend-runtime/stdlib/table/keys-nontable-error.deal", 10, 22,
+            "table", "string",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/tables/table-dynamic-read-runtime-error.deal",
+            Target.JVM, "E8001", "expected int",
+            "E8001", "expected int",
+            "backend-runtime/tables/table-dynamic-read-runtime-error.deal", 8, 21,
+            "int", "string",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/tables/table-dynamic-read-runtime-error.deal",
+            Target.LUAJIT, "E8001", "expected int",
+            "E8001", "expected int",
+            "backend-runtime/tables/table-dynamic-read-runtime-error.deal", 8, 21,
+            "int", "string",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/tables/table-missing-read-nonnullable-error.deal",
+            Target.JVM, "E8001", "expected int",
+            "E8001", "expected int",
+            "backend-runtime/tables/table-missing-read-nonnullable-error.deal", 8, 20,
+            "int", "nil",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/tables/table-missing-read-nonnullable-error.deal",
+            Target.LUAJIT, "E8001", "expected int",
+            "E8001", "expected int",
+            "backend-runtime/tables/table-missing-read-nonnullable-error.deal", 8, 20,
+            "int", "nil",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/type-system/dynamic-nonfunction-to-function-e8001.deal",
+            Target.JVM, "E8001", "expected function",
+            "E8001", "expected function",
+            "backend-runtime/type-system/dynamic-nonfunction-to-function-e8001.deal", 8, 10,
+            "function", "int",
+            "the actual-kind token projection: the pinned arm's value kind is projected as " +
+                "another token"),
+        new ProjectionDeficit(
+            "backend-runtime/type-system/dynamic-nonfunction-to-function-e8001.deal",
+            Target.LUAJIT, "E8001", "expected function",
+            "E8001", "expected function",
+            "backend-runtime/type-system/dynamic-nonfunction-to-function-e8001.deal", 8, 10,
+            "function", "int",
+            "the actual-kind token projection: the pinned arm's value kind is projected as " +
+                "another token"),
+        new ProjectionDeficit(
+            "backend-runtime/type-system/dynamic-wrong-to-nullable-e8001.deal",
+            Target.JVM, "E8001", "expected int",
+            "E8001", "expected int",
+            "backend-runtime/type-system/dynamic-wrong-to-nullable-e8001.deal", 8, 23,
+            "int", "string",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position"),
+        new ProjectionDeficit(
+            "backend-runtime/type-system/dynamic-wrong-to-nullable-e8001.deal",
+            Target.LUAJIT, "E8001", "expected int",
+            "E8001", "expected int",
+            "backend-runtime/type-system/dynamic-wrong-to-nullable-e8001.deal", 8, 23,
+            "int", "string",
+            "the origin/span projection: the pinned arm's coordinates are projected at " +
+                "another position")
+    );
+
+    /** The recorded interim projection deficit of one cell, or null. */
+    static ProjectionDeficit projectionDeficitOf(String corpusPath, Target target) {
+        for (ProjectionDeficit deficit : PROJECTION_DEFICITS) {
+            if (deficit.corpusPath().equals(corpusPath)
+                    && deficit.target() == target) {
+                return deficit;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The evidence match of one runtime-error leg against the recorded
+     * projection inventory: the cell must carry a recorded deficit, the
+     * sidecar's pinned code and message must equal the recorded pin, the
+     * whole normalized capture must equal the recorded capture, and both raw
+     * streams must be empty with the pinned exit code.
+     */
+    static boolean matchesProjectionDeficit(ProjectionDeficit deficit,
+            Capture capture, Execution execution,
+            SidecarExpectations.RuntimeExpectation.Executed executed) {
+        return deficit != null
+            && isDealErrorCapture(capture)
+            && Objects.equals(deficit.pinnedCode(), executed.error().code())
+            && Objects.equals(deficit.pinnedMessage(), executed.error().message())
+            && capture != null
+            && Objects.equals(deficit.capturedCode(), capture.code())
+            && Objects.equals(deficit.capturedMessage(), capture.message())
+            && Objects.equals(deficit.capturedFile(), capture.sourceFile())
+            && Integer.valueOf(deficit.capturedLine()).equals(capture.line())
+            && Integer.valueOf(deficit.capturedColumn()).equals(capture.column())
+            && Objects.equals(deficit.capturedExpected(), capture.expected())
+            && Objects.equals(deficit.capturedActual(), capture.actual())
+            && execution.stdout() != null && execution.stdout().length == 0
+            && execution.stderr() != null && execution.stderr().length == 0
+            && execution.exitCode() == executed.exitCode();
     }
 
     private static void check(boolean condition, String message) {
@@ -733,7 +1148,7 @@ public class ProductionCorpusAuditTest {
         if (cached != null) {
             return cached;
         }
-        synchronized (ProductionCorpusAuditTest.class) {
+        synchronized (ProductionCorpusAudit.class) {
             cached = auditNativeLibraryPath;
             if (cached != null) {
                 return cached;
@@ -877,7 +1292,7 @@ public class ProductionCorpusAuditTest {
                           String detail) {
 
         boolean guardFired() {
-            return errors.stream().anyMatch(ProductionCorpusAuditTest::isGuardDiagnostic);
+            return errors.stream().anyMatch(ProductionCorpusAudit::isGuardDiagnostic);
         }
 
         String firstErrorDetail() {
@@ -1404,19 +1819,70 @@ public class ProductionCorpusAuditTest {
             stderr[0] = readAll(process.getErrorStream()), "audit-stderr");
         outThread.setDaemon(true);
         errThread.setDaemon(true);
-        outThread.start();
-        errThread.start();
-        if (!process.waitFor(SUBPROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-            process.destroyForcibly();
-            process.waitFor();
-            throw new IllegalStateException("the subprocess exceeded the "
-                + SUBPROCESS_TIMEOUT_SECONDS + "s bounded deadline");
+        try {
+            outThread.start();
+            errThread.start();
+            if (!process.waitFor(SUBPROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("the subprocess exceeded the "
+                    + SUBPROCESS_TIMEOUT_SECONDS + "s bounded deadline");
+            }
+            outThread.join(1000);
+            errThread.join(1000);
+            return new ProcessOutcome(process.exitValue(),
+                stdout[0] == null ? new byte[0] : stdout[0],
+                stderr[0] == null ? new byte[0] : stderr[0]);
+        } finally {
+            // Every post-start exit path — the bounded deadline, an
+            // interruption of the calling worker, a reader failure, and the
+            // normal return — closes the owned child and both readers before
+            // control leaves the call. A cancelled audit therefore leaves no
+            // live child or reader behind, and the scratch/native cleanup
+            // that follows never races an ongoing execution.
+            closeOwnedProcess(process, outThread, errThread);
         }
-        outThread.join(1000);
-        errThread.join(1000);
-        return new ProcessOutcome(process.exitValue(),
-            stdout[0] == null ? new byte[0] : stdout[0],
-            stderr[0] == null ? new byte[0] : stderr[0]);
+    }
+
+    /**
+     * The bounded teardown of one owned process and its readers: the child is
+     * terminated, then force-killed if it does not exit within the bounded
+     * window, and each reader is joined within the same bound. The caller's
+     * interruption status is preserved for the propagation path.
+     */
+    private static void closeOwnedProcess(Process process, Thread... readers) {
+        boolean interrupted = Thread.interrupted();
+        try {
+            process.destroy();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (process.isAlive() && System.nanoTime() < deadline) {
+                try {
+                    process.waitFor(50, TimeUnit.MILLISECONDS);
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                    process.destroyForcibly();
+                }
+            }
+            if (process.isAlive()) {
+                process.destroyForcibly();
+            }
+            for (Thread reader : readers) {
+                if (reader == null) {
+                    continue;
+                }
+                long joinDeadline = System.nanoTime()
+                    + TimeUnit.SECONDS.toNanos(5);
+                while (reader.isAlive() && System.nanoTime() < joinDeadline) {
+                    try {
+                        reader.join(50);
+                    } catch (InterruptedException e) {
+                        interrupted = true;
+                    }
+                }
+            }
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     private static byte[] readAll(java.io.InputStream stream) {
@@ -1686,9 +2152,9 @@ public class ProductionCorpusAuditTest {
                     + outcome.firstErrorDetail());
         }
         if (outcome.errors().stream()
-                .anyMatch(ProductionCorpusAuditTest::isConstructGuard)) {
+                .anyMatch(ProductionCorpusAudit::isConstructGuard)) {
             boolean constructOnly = outcome.errors().stream()
-                .allMatch(ProductionCorpusAuditTest::isConstructGuard);
+                .allMatch(ProductionCorpusAudit::isConstructGuard);
             if (!constructOnly) {
                 return new CellVerdict(false, LegClass.DEFECT, fixtureLabel
                     + " [" + target.laneName() + "] the compile failure mixes "
@@ -1772,15 +2238,17 @@ public class ProductionCorpusAuditTest {
     }
 
     /**
-     * The capture verdict of one driven cell. Only a genuinely framed DEAL
-     * error may be a permitted interim projection deficit: the raw stdout
-     * and stderr must be untouched (the canonical framing is appended to the
-     * executed stdout, never substituted for it) and the exit code must be
-     * the pinned one. A probe defect, a NON_DEAL outcome, a normal
-     * completion, extra output on either stream, or any other exit code is
-     * an unclassified failure and fatal in every mode. A runtime-ok failure
-     * is permitted only when its cell and its captured code are exactly the
-     * pinned behavior inventory's.
+     * The capture verdict of one driven cell. A permitted interim projection
+     * deficit is bound to the recorded projection inventory: the cell, the
+     * sidecar's pinned code and message, the whole normalized capture, and
+     * the stream/status conditions (both raw streams empty, the pinned exit
+     * code) must all equal one recorded entry. A probe defect, a NON_DEAL
+     * outcome, a normal completion, an unrelated code, a changed message, a
+     * changed projection, extra output on either stream, or any other exit
+     * code is an unclassified failure and fatal in every mode. A runtime-ok
+     * failure is permitted only when the cell and the captured code and
+     * message equal one recorded behavior-inventory entry with both streams
+     * empty and the probe's failure status.
      */
     static CellVerdict captureVerdict(String corpusPath, Target target,
             Capture capture, Execution execution,
@@ -1805,40 +2273,49 @@ public class ProductionCorpusAuditTest {
         SidecarExpectations.RuntimeExpectation.Executed executed =
             (SidecarExpectations.RuntimeExpectation.Executed) expectation;
         if (executed.isRuntimeError()) {
-            boolean framed = isDealErrorCapture(capture)
-                && execution.stdout() != null && execution.stdout().length == 0
-                && execution.stderr() != null && execution.stderr().length == 0
-                && execution.exitCode() == executed.exitCode();
-            if (framed) {
+            ProjectionDeficit deficit = projectionDeficitOf(corpusPath, target);
+            if (matchesProjectionDeficit(deficit, capture, execution, executed)) {
                 return new CellVerdict(false, LegClass.PROJECTION_DEFICIT,
-                    detail + " - " + captureDetail(capture, executed.error()));
+                    detail + " [recorded projection deficit: "
+                        + deficit.family() + "] - "
+                        + captureDetail(capture, executed.error()));
             }
             return new CellVerdict(false, LegClass.DEFECT, detail
                 + " (the drive did not present the pinned runtime-error "
-                + "outcome: the capture is "
+                + "outcome as a recorded projection deficit: the capture is "
                 + (capture == null ? "absent" : capture.code() + ": "
-                    + capture.message())
+                    + capture.message() + " at " + capture.sourceFile()
+                    + ":" + capture.line() + ":" + capture.column())
                 + ", stdout bytes=" + (execution.stdout() == null ? 0
                     : execution.stdout().length)
                 + ", stderr bytes=" + (execution.stderr() == null ? 0
                     : execution.stderr().length)
                 + ", exitCode=" + execution.exitCode()
-                + "; pinned exitCode=" + executed.exitCode() + ")");
+                + "; pinned exitCode=" + executed.exitCode()
+                + ", recorded projection deficit="
+                + (deficit == null ? "none" : deficit.family()) + ")");
         }
         BehaviorDeficit deficit = behaviorDeficitOf(corpusPath, target);
-        if (deficit != null && capture != null && capture.error()
-                && deficit.capturedCode().equals(capture.code())) {
+        if (matchesBehaviorDeficit(deficit, capture, execution)) {
             return new CellVerdict(false, LegClass.BEHAVIOR_DEFICIT, detail
-                + " [interim behavior deficit: " + deficit.family() + "]");
+                + " [recorded interim behavior deficit: " + deficit.family()
+                + "]");
         }
         return new CellVerdict(false, LegClass.DEFECT, detail
             + (deficit == null
                 ? " (unclassified behavioral failure: the cell carries no "
-                    + "pinned interim behavior deficit)"
-                : " (the pinned interim behavior deficit expects the captured "
-                    + "code " + deficit.capturedCode() + ", got "
+                    + "recorded interim behavior deficit)"
+                : " (the recorded interim behavior deficit expects "
+                    + deficit.capturedCode() + ": "
+                    + deficit.capturedMessage() + " with empty streams and "
+                    + "status " + deficit.probeExitCode() + ", got "
                     + (capture == null ? "no capture"
-                        : capture.code() + ": " + capture.message()) + ")"));
+                        : capture.code() + ": " + capture.message())
+                    + " with stdout bytes=" + (execution.stdout() == null ? 0
+                        : execution.stdout().length)
+                    + ", stderr bytes=" + (execution.stderr() == null ? 0
+                        : execution.stderr().length)
+                    + ", exitCode=" + execution.exitCode() + ")"));
     }
 
     // =========================================================================
@@ -1847,19 +2324,16 @@ public class ProductionCorpusAuditTest {
 
     private static void testCorpusInvariants(CorpusDiscovery.DiscoveryResult discovery)
             throws Exception {
-        System.out.println("-- the corpus invariants: the dispatched set, its "
-            + "count, the sidecar schema, and the three-backend dispatch --");
+        System.out.println("-- the corpus invariants: the current validated "
+            + "discovery's dispatched set, the sidecar schema, and the "
+            + "three-backend dispatch --");
         checkEq(0, discovery.failures().size(),
             "every corpus fixture classifies (no classification failure)");
         Map<String, CorpusDiscovery.Fixture> byPath = discovery.corpusByPath();
-        List<CorpusDiscovery.Fixture> dispatched = new ArrayList<>();
-        for (CorpusDiscovery.Fixture fixture : discovery.fixtures()) {
-            if (fixture.runtimeClassified()) {
-                dispatched.add(fixture);
-            }
-        }
-        checkEq(DISPATCHED_COUNT_PIN, dispatched.size(),
-            "the dispatched runtime-fixture count is the pinned value");
+        List<CorpusDiscovery.Fixture> dispatched = dispatchedOf(discovery);
+        check(!dispatched.isEmpty(),
+            "the current validated discovery dispatches runtime fixtures "
+                + "(the accounting is derived from the discovery itself)");
         Set<String> corpusIndex = discovery.corpusModuleIndex();
         int validated = 0;
         for (CorpusDiscovery.Fixture fixture : dispatched) {
@@ -1890,6 +2364,18 @@ public class ProductionCorpusAuditTest {
         }
         checkEq(dispatched.size(), validated,
             "every dispatched sidecar validates clean against schema version 1");
+    }
+
+    /** The dispatched runtime fixtures of the current validated discovery. */
+    static List<CorpusDiscovery.Fixture> dispatchedOf(
+            CorpusDiscovery.DiscoveryResult discovery) {
+        List<CorpusDiscovery.Fixture> dispatched = new ArrayList<>();
+        for (CorpusDiscovery.Fixture fixture : discovery.fixtures()) {
+            if (fixture.runtimeClassified()) {
+                dispatched.add(fixture);
+            }
+        }
+        return dispatched;
     }
 
     // =========================================================================
@@ -1933,7 +2419,7 @@ public class ProductionCorpusAuditTest {
                 expectationOf(fixture, target);
             CellVerdict compileLeg = compileVerdict(label, target, outcome,
                 expectation, staged);
-            record(compileLeg, target, report);
+            record(label, target, LegKind.COMPILE, compileLeg, report);
             if (!compileLeg.pass()) {
                 return;
             }
@@ -1957,17 +2443,17 @@ public class ProductionCorpusAuditTest {
                 // A broken tool invocation, a corrupted artifact, or a failed
                 // artifact load is infrastructure, never a construct or
                 // capture deficit: fatal in every mode.
-                record(new CellVerdict(false, LegClass.INFRASTRUCTURE, label
-                    + " [" + target.laneName() + "]: the drive failed: " + e),
-                    target, report);
+                record(label, target, LegKind.CAPTURE, new CellVerdict(false,
+                    LegClass.INFRASTRUCTURE, label + " ["
+                    + target.laneName() + "]: the drive failed: " + e), report);
                 return;
             }
             captureLegs.incrementAndGet();
             Capture normalized = normalize(project, execution.capture());
             Optional<String> mismatch = compareCell(label, target, normalized,
                 execution, expectation);
-            record(captureVerdict(label, target, normalized, execution,
-                expectation, mismatch), target, report);
+            record(label, target, LegKind.CAPTURE, captureVerdict(label, target,
+                normalized, execution, expectation, mismatch), report);
         } finally {
             deleteRecursively(project.root());
         }
@@ -2017,15 +2503,16 @@ public class ProductionCorpusAuditTest {
     }
 
     /** Records one cell: the ordered report line, the pass tally, and the leg. */
-    private static void record(CellVerdict verdict, Target target,
-            List<String> report) {
+    private static void record(String corpusPath, Target target, LegKind kind,
+            CellVerdict verdict, List<String> report) {
         synchronized (report) {
             report.add(verdict.line());
         }
         if (verdict.pass()) {
             passed.incrementAndGet();
         }
-        legs.add(new Leg(target, verdict.clazz(), verdict.line()));
+        legs.add(new Leg(corpusPath, target, kind, verdict.clazz(),
+            verdict.line()));
     }
 
     // =========================================================================
@@ -2157,7 +2644,72 @@ public class ProductionCorpusAuditTest {
         }
         runtimeErrorComparisonControls();
         rejectionControls();
+        projectionInventoryControls();
         unclassifiedBehaviorControls();
+        subprocessCancellationControl();
+    }
+
+    /**
+     * The subprocess-cancellation control: a worker interrupted while its
+     * owned child runs returns with the interruption observed, the owned
+     * child is gone, and no audit-owned reader thread survives, so the
+     * scratch/native cleanup can never race an ongoing execution.
+     */
+    private static void subprocessCancellationControl() throws Exception {
+        System.out.println("-- the subprocess-cancellation control: an "
+            + "interrupted cell closes its owned child and readers --");
+        Path root = Files.createTempDirectory("production-corpus-audit-cancel-");
+        try {
+            Path pidFile = root.resolve("child.pid");
+            java.util.concurrent.atomic.AtomicBoolean interrupted =
+                new java.util.concurrent.atomic.AtomicBoolean();
+            java.util.concurrent.atomic.AtomicReference<String> failure =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            Thread worker = new Thread(() -> {
+                try {
+                    runProcess(new ProcessBuilder("sh", "-c",
+                        "echo $$ > " + pidFile + "; exec sleep 30"));
+                    failure.set("the cancelled drive returned normally");
+                } catch (InterruptedException e) {
+                    interrupted.set(true);
+                } catch (Exception e) {
+                    failure.set("the cancelled drive raised " + e);
+                }
+            }, "audit-cancellation-control");
+            worker.setDaemon(true);
+            worker.start();
+            long startDeadline = System.nanoTime()
+                + TimeUnit.SECONDS.toNanos(10);
+            while (!Files.isRegularFile(pidFile)
+                    && System.nanoTime() < startDeadline) {
+                Thread.sleep(20);
+            }
+            check(Files.isRegularFile(pidFile),
+                "the cancellation control's owned child started");
+            if (!Files.isRegularFile(pidFile)) {
+                return;
+            }
+            worker.interrupt();
+            worker.join(TimeUnit.SECONDS.toMillis(20));
+            check(!worker.isAlive(),
+                "the interrupted subprocess worker returns");
+            check(interrupted.get(), "the worker observed the interruption: "
+                + failure.get());
+            long pid = Long.parseLong(
+                Files.readString(pidFile, StandardCharsets.UTF_8).trim());
+            ProcessHandle child = ProcessHandle.of(pid).orElse(null);
+            check(child == null || !child.isAlive(),
+                "the owned child is gone after the cancellation (pid " + pid
+                    + ")");
+            long readers = Thread.getAllStackTraces().keySet().stream()
+                .filter(Thread::isAlive)
+                .filter(thread -> thread.getName().startsWith("audit-"))
+                .count();
+            checkEq(0L, readers,
+                "no audit-owned reader thread survives the cancellation");
+        } finally {
+            deleteRecursively(root);
+        }
     }
 
     /**
@@ -2258,9 +2810,39 @@ public class ProductionCorpusAuditTest {
             check(isFatal(captureVerdict(corpusPath, Target.LUAJIT, capture,
                     exitAbove, expectation, aboveMismatch).clazz(), false),
                 "an exit code above the pinned one is unclassified and fatal");
+
+            // The int-div-zero cell carries no recorded interim deficit, so
+            // an unrelated code, or the pinned code with another message or
+            // projection, is never permitted on it.
+            check(projectionDeficitOf(corpusPath, Target.LUAJIT) == null
+                    && behaviorDeficitOf(corpusPath, Target.LUAJIT) == null,
+                "the int-div-zero control cell carries no recorded interim "
+                    + "deficit");
+            Capture unrelated = new Capture("E9999", "unrelated failure",
+                null, null, null, null, null, null);
+            assertFatalBothModes(captureVerdict(corpusPath, Target.LUAJIT,
+                unrelated, pristine, expectation, Optional.of("control")),
+                "an unrelated runtime-error code on a cell without a recorded "
+                    + "projection deficit");
+            Capture changedMessage = new Capture(capture.code(),
+                capture.message() + " (changed)", capture.sourceFile(),
+                capture.line(), capture.column(), capture.expected(),
+                capture.actual(), null);
+            assertFatalBothModes(captureVerdict(corpusPath, Target.LUAJIT,
+                changedMessage, pristine, expectation, Optional.of("control")),
+                "a changed message on a cell without a recorded projection "
+                    + "deficit");
         } finally {
             deleteRecursively(project.root());
         }
+    }
+
+    /** Asserts a verdict fails and is fatal in both acceptance modes. */
+    private static void assertFatalBothModes(CellVerdict verdict, String what) {
+        check(!verdict.pass() && isFatal(verdict.clazz(), false)
+                && isFatal(verdict.clazz(), true),
+            what + " is fatal in every mode: " + verdict.clazz() + " - "
+                + verdict.line());
     }
 
     /**
@@ -2320,46 +2902,166 @@ public class ProductionCorpusAuditTest {
     }
 
     /**
-     * The unclassified-behavior controls: a runtime-ok capture failure on a
-     * cell outside the pinned interim behavior inventory is never permitted,
-     * while the inventory's own cell and captured code are — and the same
-     * inventory cell with a different captured code is not.
+     * The recorded-projection-inventory controls: the real
+     * arrays/index-oob cell's normalized capture equals its recorded entry
+     * (the inventory is the observed evidence, not a re-derivation), and
+     * every divergence — an unrelated code, a changed message, another
+     * position, another value-kind token, extra output on either stream, and
+     * the exit codes immediately below and above the pinned one — is an
+     * unclassified failure, fatal in both modes.
+     */
+    private static void projectionInventoryControls() throws Exception {
+        System.out.println("-- the recorded-projection controls: only the "
+            + "recorded capture of a recorded cell is permitted --");
+        String corpusPath = "backend-runtime/arrays/index-oob.deal";
+        CorpusDiscovery.Fixture fixture = fixtureOf(corpusPath);
+        List<Export> exports = exportsOf(fixture.source(), corpusPath);
+        Project project = materialize(corpusPath,
+            CorpusDiscovery.compilationSet(fixture,
+                CorpusDiscovery.discover(CONFORMANCE).corpusByPath(),
+                CONFORMANCE), Target.LUAJIT, true);
+        try {
+            CompileOutcome outcome = compile(project);
+            check(outcome.compiled(), "the projection control fixture "
+                + "compiles: " + outcome.firstErrorDetail());
+            if (!outcome.compiled()) {
+                return;
+            }
+            Execution pristine = execute(project, exports, Target.LUAJIT);
+            Capture capture = normalize(project, pristine.capture());
+            SidecarExpectations.RuntimeExpectation expectation =
+                expectationOf(fixture, Target.LUAJIT);
+            SidecarExpectations.RuntimeExpectation.Executed executed =
+                (SidecarExpectations.RuntimeExpectation.Executed) expectation;
+            ProjectionDeficit recorded = projectionDeficitOf(corpusPath,
+                Target.LUAJIT);
+            check(recorded != null, "the arrays/index-oob cell carries its "
+                + "recorded projection deficit");
+            Optional<String> mismatch = compareCell(corpusPath, Target.LUAJIT,
+                capture, pristine, expectation);
+            check(mismatch.isPresent(), "the recorded projection deficit is a "
+                + "sidecar mismatch");
+            check(matchesProjectionDeficit(recorded, capture, pristine,
+                    executed),
+                "the recorded projection entry equals the observed evidence: "
+                    + captureDetail(capture, executed.error()));
+            CellVerdict recordedVerdict = captureVerdict(corpusPath,
+                Target.LUAJIT, capture, pristine, expectation,
+                mismatch.isEmpty() ? Optional.of("control") : mismatch);
+            check(recordedVerdict.clazz() == LegClass.PROJECTION_DEFICIT,
+                "the recorded evidence classifies as the projection deficit: "
+                    + recordedVerdict.line());
+            check(!isFatal(recordedVerdict.clazz(), false)
+                    && isFatal(recordedVerdict.clazz(), true),
+                "the recorded projection deficit is reported while the "
+                    + "compile criterion is unmet and fatal once it is met");
+
+            assertFatalBothModes(captureVerdict(corpusPath, Target.LUAJIT,
+                new Capture("E9999", "unrelated failure", null, null, null,
+                    null, null, null), pristine, expectation,
+                Optional.of("control")),
+                "an unrelated runtime-error code on a recorded cell");
+            assertFatalBothModes(captureVerdict(corpusPath, Target.LUAJIT,
+                new Capture(capture.code(), capture.message() + " (changed)",
+                    capture.sourceFile(), capture.line(), capture.column(),
+                    capture.expected(), capture.actual(), null),
+                pristine, expectation, Optional.of("control")),
+                "the recorded code with a changed message");
+            assertFatalBothModes(captureVerdict(corpusPath, Target.LUAJIT,
+                new Capture(capture.code(), capture.message(),
+                    capture.sourceFile(), capture.line(), capture.column() + 1,
+                    capture.expected(), capture.actual(), null),
+                pristine, expectation, Optional.of("control")),
+                "the recorded capture at another position");
+            assertFatalBothModes(captureVerdict(corpusPath, Target.LUAJIT,
+                new Capture(capture.code(), capture.message(),
+                    capture.sourceFile(), capture.line(), capture.column(),
+                    capture.expected(), "table", null),
+                pristine, expectation, Optional.of("control")),
+                "the recorded capture with another value-kind token");
+            assertFatalBothModes(captureVerdict(corpusPath, Target.LUAJIT,
+                capture, new Execution(pristine.exitCode(), new byte[]{'x'},
+                    pristine.stderr(), capture), expectation,
+                Optional.of("control")),
+                "extra stdout on a recorded projection cell");
+            assertFatalBothModes(captureVerdict(corpusPath, Target.LUAJIT,
+                capture, new Execution(pristine.exitCode(), pristine.stdout(),
+                    new byte[]{'x'}, capture), expectation,
+                Optional.of("control")),
+                "extra stderr on a recorded projection cell");
+            assertFatalBothModes(captureVerdict(corpusPath, Target.LUAJIT,
+                capture, new Execution(executed.exitCode() - 1,
+                    pristine.stdout(), pristine.stderr(), capture),
+                expectation, Optional.of("control")),
+                "the exit code immediately below the pinned one on a recorded "
+                    + "projection cell");
+            assertFatalBothModes(captureVerdict(corpusPath, Target.LUAJIT,
+                capture, new Execution(executed.exitCode() + 1,
+                    pristine.stdout(), pristine.stderr(), capture),
+                expectation, Optional.of("control")),
+                "the exit code immediately above the pinned one on a recorded "
+                    + "projection cell");
+        } finally {
+            deleteRecursively(project.root());
+        }
+    }
+
+    /**
+     * The recorded-behavior-inventory controls: the recorded cell's code,
+     * message, streams and probe status are permitted, while a different
+     * code, a changed message, extra output on either stream, another
+     * status, and a cell outside the inventory are unclassified failures,
+     * fatal in both modes.
      */
     private static void unclassifiedBehaviorControls() throws Exception {
-        System.out.println("-- the unclassified-behavior controls: only the "
-            + "pinned interim inventory cells may be permitted --");
-        CorpusDiscovery.Fixture fixture = fixtureOf(
-            "backend-runtime/control-flow/for-of-string-unicode.deal");
+        System.out.println("-- the recorded-behavior controls: only the "
+            + "recorded evidence of a recorded cell is permitted --");
+        String corpusPath =
+            "backend-runtime/control-flow/for-of-string-unicode.deal";
+        CorpusDiscovery.Fixture fixture = fixtureOf(corpusPath);
         SidecarExpectations.RuntimeExpectation.Executed expectation =
             (SidecarExpectations.RuntimeExpectation.Executed) expectationOf(
                 fixture, Target.LUAJIT);
-        Execution execution = new Execution(1, new byte[0], new byte[0], null);
-        Capture pinned = new Capture("TEST_FAIL", "expected 5 scalar values",
-            null, null, null, null, null, null);
-        Optional<String> pinnedMismatch = Optional.of("pin mismatch");
-        CellVerdict permitted = captureVerdict(fixture.corpusPath(),
-            Target.LUAJIT, pinned, execution, expectation, pinnedMismatch);
+        BehaviorDeficit recorded = behaviorDeficitOf(corpusPath, Target.LUAJIT);
+        check(recorded != null, "the for-of-string-unicode LuaJIT cell carries "
+            + "its recorded behavior deficit");
+        Execution execution = new Execution(recorded.probeExitCode(),
+            new byte[0], new byte[0], null);
+        Capture pinned = new Capture(recorded.capturedCode(),
+            recorded.capturedMessage(), null, null, null, null, null, null);
+        Optional<String> mismatch = Optional.of("control mismatch");
+        CellVerdict permitted = captureVerdict(corpusPath, Target.LUAJIT,
+            pinned, execution, expectation, mismatch);
         check(permitted.clazz() == LegClass.BEHAVIOR_DEFICIT,
-            "the pinned interim behavior cell and code are permitted: "
-                + permitted.line());
-
-        Capture changed = new Capture("E8005", "a different failure",
-            null, null, null, null, null, null);
-        CellVerdict unlistedCode = captureVerdict(fixture.corpusPath(),
-            Target.LUAJIT, changed, execution, expectation, pinnedMismatch);
-        check(unlistedCode.clazz() == LegClass.DEFECT
-                && isFatal(unlistedCode.clazz(), false)
-                && isFatal(unlistedCode.clazz(), true),
-            "the same cell with a different captured code is an unclassified "
-                + "failure, fatal in every mode: " + unlistedCode.line());
-
-        CellVerdict unlistedCell = captureVerdict(
+            "the recorded behavior evidence is permitted: " + permitted.line());
+        check(!isFatal(permitted.clazz(), false),
+            "the recorded behavior deficit is non-fatal while the compile "
+                + "criterion is unmet");
+        assertFatalBothModes(captureVerdict(corpusPath, Target.LUAJIT,
+            new Capture("E8005", "a different failure", null, null, null, null,
+                null, null), execution, expectation, mismatch),
+            "a different captured code on a recorded behavior cell");
+        assertFatalBothModes(captureVerdict(corpusPath, Target.LUAJIT,
+            new Capture(recorded.capturedCode(), "unrelated failure", null,
+                null, null, null, null, null), execution, expectation,
+            mismatch),
+            "the recorded code with a changed message");
+        assertFatalBothModes(captureVerdict(corpusPath, Target.LUAJIT, pinned,
+            new Execution(recorded.probeExitCode(), new byte[]{'x'},
+                new byte[0], null), expectation, mismatch),
+            "extra stdout on the recorded behavior cell");
+        assertFatalBothModes(captureVerdict(corpusPath, Target.LUAJIT, pinned,
+            new Execution(recorded.probeExitCode(), new byte[0],
+                new byte[]{'x'}, null), expectation, mismatch),
+            "extra stderr on the recorded behavior cell");
+        assertFatalBothModes(captureVerdict(corpusPath, Target.LUAJIT, pinned,
+            new Execution(7, new byte[0], new byte[0], null), expectation,
+            mismatch),
+            "another status on the recorded behavior cell");
+        assertFatalBothModes(captureVerdict(
             "backend-runtime/control-flow/for-of-break-continue.deal",
-            Target.LUAJIT, changed, execution, expectation, pinnedMismatch);
-        check(unlistedCell.clazz() == LegClass.DEFECT
-                && isFatal(unlistedCell.clazz(), false),
-            "a runtime-ok failure outside the inventory is an unclassified "
-                + "failure, fatal in every mode: " + unlistedCell.line());
+            Target.LUAJIT, pinned, execution, expectation, mismatch),
+            "a runtime-ok failure outside the recorded inventory");
     }
 
     /** A synthetic control diagnostic for the rejection-verdict controls. */
@@ -2573,17 +3275,27 @@ public class ProductionCorpusAuditTest {
     }
 
     // =========================================================================
-    // Main
+    // The drive entry point (invoked by the retained acceptance suite)
     // =========================================================================
 
-    public static void main(String[] args) throws Exception {
-        System.out.println("=== Production-Corpus Audit Tests (ISSUE-0703) ===");
-        // The audit's own bounded measurement pool: the registered gate runs
-        // the suite with `--jobs 1`, and the whole dispatch measured serially
-        // would exceed the harness's command budget, so the audit keeps a
-        // bounded internal pool (default min(8, processors); the
+    /** The accounting key of one fixture and target cell. */
+    private static String cellKey(String corpusPath, Target target) {
+        return corpusPath + " [" + target.laneName() + "]";
+    }
+
+    /**
+     * Runs the corpus audit and returns its fatal-failure count; the
+     * retained acceptance suite folds the count into its own verdict.
+     */
+    static int run() throws Exception {
+        System.out.println("=== Production-Corpus Acceptance Audit "
+            + "(ISSUE-0703) ===");
+        // The audit's own bounded measurement pool: the retained suite runs
+        // under the gate with `--jobs 1`, and the whole dispatch measured
+        // serially would exceed the harness's command budget, so the audit
+        // keeps a bounded internal pool (default min(8, processors); the
         // `deal.audit.jobs` property overrides it) and reports it. The
-        // pool only drives this test's own compiles and toolchain
+        // pool only drives the audit's own compiles and toolchain
         // subprocesses; the harness's suite-level scheduling is unchanged.
         int auditJobs = Integer.getInteger("deal.audit.jobs",
             Math.max(1, Math.min(8,
@@ -2595,9 +3307,7 @@ public class ProductionCorpusAuditTest {
         CorpusDiscovery.DiscoveryResult discovery =
             CorpusDiscovery.discover(CONFORMANCE);
         testCorpusInvariants(discovery);
-        List<CorpusDiscovery.Fixture> dispatched = discovery.fixtures().stream()
-            .filter(CorpusDiscovery.Fixture::runtimeClassified)
-            .toList();
+        List<CorpusDiscovery.Fixture> dispatched = dispatchedOf(discovery);
 
         // The audit-owned native directory (the corpus C library is
         // bootstrapped there, never in the repository build/ directory) and
@@ -2666,9 +3376,79 @@ public class ProductionCorpusAuditTest {
         for (String line : ordered) {
             System.out.println("  " + line);
         }
+        // One compile outcome per dispatched fixture and production target,
+        // derived from the complete current validated discovery (never a
+        // fixed count lock): an authorized corpus addition or removal moves
+        // the accounting with the discovery. Each producible, non-rejected
+        // cell additionally carries exactly one capture outcome.
+        Map<String, Set<Target>> measured = new LinkedHashMap<>();
+        long compileLegCount = 0;
+        long captureLegCount = 0;
+        for (Leg leg : legs) {
+            if (leg.kind() == LegKind.COMPILE) {
+                compileLegCount++;
+                measured.computeIfAbsent(leg.corpusPath(),
+                    key -> java.util.EnumSet.noneOf(Target.class))
+                    .add(leg.target());
+            } else {
+                captureLegCount++;
+            }
+        }
+        checkEq(dispatched.size(), measured.size(),
+            "every fixture of the current validated discovery carries its "
+                + "compile outcome (the accounting is the discovered set)");
+        for (CorpusDiscovery.Fixture fixture : dispatched) {
+            checkEq(java.util.EnumSet.allOf(Target.class),
+                measured.getOrDefault(fixture.corpusPath(),
+                    java.util.EnumSet.noneOf(Target.class)),
+                fixture.corpusPath() + ": one compile outcome per production "
+                    + "target");
+        }
+        checkEq((long) dispatched.size() * Target.values().length,
+            compileLegCount,
+            "one compile outcome per dispatched fixture and production target");
+        for (Leg leg : legs) {
+            check(leg.kind() == LegKind.COMPILE
+                    || measured.containsKey(leg.corpusPath()),
+                "the capture outcome belongs to a dispatched fixture: "
+                    + leg.corpusPath());
+        }
+        checkEq((long) captureLegs.get(), captureLegCount,
+            "the capture outcomes are the driven producible cells");
+        // Every producible, non-rejected cell carries exactly one capture
+        // outcome, and a sanctioned rejection carries none: the expected
+        // accounting is the current validated discovery and its sidecars.
+        Map<String, Integer> capturesPerCell = new LinkedHashMap<>();
+        Set<String> passingCompileCells = new LinkedHashSet<>();
+        for (Leg leg : legs) {
+            String key = cellKey(leg.corpusPath(), leg.target());
+            if (leg.kind() == LegKind.CAPTURE) {
+                capturesPerCell.merge(key, 1, Integer::sum);
+            } else if (leg.clazz() == LegClass.PASS) {
+                passingCompileCells.add(key);
+            }
+        }
+        for (CorpusDiscovery.Fixture fixture : dispatched) {
+            for (Target target : Target.values()) {
+                String key = cellKey(fixture.corpusPath(), target);
+                if (!passingCompileCells.contains(key)) {
+                    continue;
+                }
+                if (expectationOf(fixture, target)
+                        instanceof SidecarExpectations.RuntimeExpectation.Rejected) {
+                    checkEq(0, capturesPerCell.getOrDefault(key, 0),
+                        key + ": a sanctioned rejection carries no capture "
+                            + "outcome");
+                    continue;
+                }
+                checkEq(1, capturesPerCell.getOrDefault(key, 0),
+                    key + ": exactly one capture outcome for the producible "
+                        + "cell");
+            }
+        }
         System.out.println();
         System.out.println("dispatched fixtures: " + dispatched.size()
-            + " (pin " + DISPATCHED_COUNT_PIN + ")");
+            + " (the complete current validated discovery)");
         System.out.println("compile legs: " + compileLegs.get()
             + " pass / " + (dispatched.size() * Target.values().length
                 - compileLegs.get() - rejectLegs.get()) + " fail, "
@@ -2755,7 +3535,7 @@ public class ProductionCorpusAuditTest {
             for (String line : fatalLines) {
                 System.out.println("  " + line);
             }
-            System.exit(1);
         }
+        return fatalCount.get();
     }
 }
