@@ -708,25 +708,45 @@ public class BytesCoverageTest {
                     }
                 }
 
-                // The production artifacts under the real toolchains.
+                // The production artifacts under the real toolchains. Every
+                // capture is compared exactly (status, complete streams,
+                // capture health) before the framed outcome is read.
                 ArtifactRun lua = luaProduction(drive);
                 ArtifactRun jvm = jvmProduction(drive);
                 if (fixture.runtimeOk()) {
+                    assertTranscript(fixture.what(), "luajit probe", lua.probe(), 0,
+                        "OK\n");
+                    assertTranscript(fixture.what(), "jvm probe", jvm.probe(), 0,
+                        "OK\n");
+                    check(lua.terminal() == null && jvm.terminal() == null,
+                        fixture.what() + ": a runtime-ok fixture runs no direct "
+                            + "terminal artifact");
                     checkEq("OK", lua.outcome(), fixture.what()
                         + ": the LuaJIT production artifact runs the fixture to its "
                         + "pinned outcome");
                     checkEq("OK", jvm.outcome(), fixture.what()
                         + ": the JVM production artifact runs the fixture to its pinned "
                         + "outcome");
-                    checkEq("", lua.terminalLine(), fixture.what() + ": no LuaJIT "
-                        + "terminal on a runtime-ok fixture");
-                    checkEq("", jvm.terminalLine(), fixture.what()
-                        + ": no JVM terminal on a runtime-ok fixture");
                 } else {
                     String expectedOrigin = compiledOrigin(drive, fixture.line(),
                         fixture.column());
                     String expectedPrefix = "ERR:" + fixture.code() + "|"
                         + fixture.message() + "|" + expectedOrigin + "|";
+                    String probeTranscript = expectedPrefix
+                        + (fixture.pinsExpectedActual() ? fixture.expected() : "")
+                        + "|"
+                        + (fixture.pinsExpectedActual() ? fixture.actual() : "")
+                        + "\n";
+                    String terminalTranscript = "DEAL_ERROR_CODE: "
+                        + fixture.code() + "\n";
+                    assertTranscript(fixture.what(), "luajit probe", lua.probe(), 0,
+                        probeTranscript);
+                    assertTranscript(fixture.what(), "jvm probe", jvm.probe(), 0,
+                        probeTranscript);
+                    assertTranscript(fixture.what(), "luajit terminal", lua.terminal(),
+                        1, terminalTranscript);
+                    assertTranscript(fixture.what(), "jvm terminal", jvm.terminal(), 1,
+                        terminalTranscript);
                     if (fixture.pinsExpectedActual()) {
                         // The exact-tuple rows (including the decoded nested
                         // element row): a divergent field fails by value.
@@ -746,10 +766,6 @@ public class BytesCoverageTest {
                             + ": the JVM production artifact projects the pinned row at "
                             + "the pinned origin: " + jvm.outcome());
                     }
-                    checkEq("DEAL_ERROR_CODE: " + fixture.code(), lua.terminalLine(),
-                        fixture.what() + ": the LuaJIT artifact's pinned terminal line");
-                    checkEq("DEAL_ERROR_CODE: " + fixture.code(), jvm.terminalLine(),
-                        fixture.what() + ": the JVM artifact's pinned terminal line");
                 }
             } finally {
                 deleteRecursively(compiled.root());
@@ -1236,18 +1252,23 @@ public class BytesCoverageTest {
                 : Path.of("test", "conformance", "host-fixtures", hostStem + ".lua");
             Path hostJava = hostStem == null ? null
                 : Path.of("test", "conformance", "host-fixtures", hostStem + ".java");
-            String pinnedOutcome = "ERR:" + pinned.code() + "|" + pinned.message()
-                + "|" + origin + "|" + pinned.expected() + "|" + pinned.actual();
+            String probeTranscript = "ERR:" + pinned.code() + "|" + pinned.message()
+                + "|" + origin + "|" + pinned.expected() + "|" + pinned.actual()
+                + "\n";
+            String terminalTranscript = "DEAL_ERROR_CODE: " + pinned.code() + "\n";
+            String pinnedOutcome = probeTranscript.strip();
             ArtifactRun lua = luaProduction(drive, hostSpecifier, hostLua);
+            assertTranscript(label, "luajit probe", lua.probe(), 0, probeTranscript);
+            assertTranscript(label, "luajit terminal", lua.terminal(), 1,
+                terminalTranscript);
             checkEq(pinnedOutcome, lua.outcome(), label
                 + ": the LuaJIT production artifact reproduces the exact tuple");
-            checkEq("DEAL_ERROR_CODE: " + pinned.code(), lua.terminalLine(), label
-                + ": the LuaJIT artifact's pinned terminal line");
             ArtifactRun jvm = jvmProduction(drive, hostSpecifier, hostJava);
+            assertTranscript(label, "jvm probe", jvm.probe(), 0, probeTranscript);
+            assertTranscript(label, "jvm terminal", jvm.terminal(), 1,
+                terminalTranscript);
             checkEq(pinnedOutcome, jvm.outcome(), label
                 + ": the JVM production artifact reproduces the exact tuple");
-            checkEq("DEAL_ERROR_CODE: " + pinned.code(), jvm.terminalLine(), label
-                + ": the JVM artifact's pinned terminal line");
         } finally {
             deleteRecursively(root);
         }
@@ -1279,15 +1300,17 @@ public class BytesCoverageTest {
                 label + ": the oracle runs the decoded tree to success: "
                     + oracle.terminal());
             ArtifactRun lua = luaProduction(drive);
+            assertTranscript(label, "luajit probe", lua.probe(), 0, "OK\n");
+            check(lua.terminal() == null, label
+                + ": a runtime-ok drive runs no direct terminal artifact");
             checkEq("OK", lua.outcome(), label
                 + ": the LuaJIT production artifact runs to success");
-            checkEq("", lua.terminalLine(), label
-                + ": no LuaJIT terminal on the successful drive");
             ArtifactRun jvm = jvmProduction(drive);
+            assertTranscript(label, "jvm probe", jvm.probe(), 0, "OK\n");
+            check(jvm.terminal() == null, label
+                + ": a runtime-ok drive runs no direct terminal artifact");
             checkEq("OK", jvm.outcome(), label
                 + ": the JVM production artifact runs to success");
-            checkEq("", jvm.terminalLine(), label
-                + ": no JVM terminal on the successful drive");
         } finally {
             deleteRecursively(root);
         }
@@ -1805,10 +1828,10 @@ public class BytesCoverageTest {
                 end
                 """).formatted(artifact.toAbsolutePath().toString(),
                     drive.fixtureModule().path(), export), StandardCharsets.UTF_8);
-            String stdout = runLua(workspace, probe, true);
-            check(stdout.contains("OK:0") && !stdout.contains("ERR:"), spec.what()
-                + ": the LuaJIT production artifact runs the async fixture's own "
-                + "test export to the pinned outcome: " + stdout);
+            BoundedRun probeRun = runLua(workspace, probe,
+                Map.of("DEAL_DEFER_MAIN", "1"));
+            assertTranscript(spec.what(), "luajit async probe", probeRun, 0,
+                "OK:0\n");
         } finally {
             deleteRecursively(workspace);
         }
@@ -1862,16 +1885,14 @@ public class BytesCoverageTest {
             Files.createDirectories(classes);
             BoundedRun compile = runJavac(workspace, classes,
                 List.of(className + ".java", "Probe.java"));
-            checkEq(0, compile.exitCode(), spec.what() + ": the JVM async fixture "
-                + "compiles with the emitted production artifact: "
-                + compile.stdout() + compile.stderr());
+            check(compile.captureClean() && compile.exitCode() == 0, spec.what()
+                + ": the JVM async fixture compiles with the emitted production "
+                + "artifact: " + compile.stdout() + compile.stderr());
             if (compile.exitCode() != 0) {
                 return;
             }
-            String stdout = runJava(absoluteClasspath(), classes, "Probe");
-            check(stdout.contains("OK:0") && !stdout.contains("ERR:"), spec.what()
-                + ": the JVM production artifact runs the async fixture's own test "
-                + "export to the pinned outcome: " + stdout);
+            assertTranscript(spec.what(), "jvm async probe",
+                runJava(absoluteClasspath(), classes, "Probe"), 0, "OK:0\n");
         } finally {
             deleteRecursively(workspace);
         }
@@ -1906,10 +1927,9 @@ public class BytesCoverageTest {
                 end
                 """).formatted(artifact.toAbsolutePath().toString(),
                     drive.fixtureModule().path(), HOST_EXPORT), StandardCharsets.UTF_8);
-            String stdout = runLua(workspace, probe, true);
-            check(stdout.contains("OK") && !stdout.contains("ERR:"), spec.what()
-                + ": the LuaJIT production artifact runs the async host fixture to "
-                + "the pinned outcome: " + stdout);
+            BoundedRun probeRun = runLua(workspace, probe,
+                Map.of("DEAL_DEFER_MAIN", "1"));
+            assertTranscript(spec.what(), "luajit host probe", probeRun, 0, "OK\n");
         } finally {
             deleteRecursively(workspace);
         }
@@ -1962,16 +1982,15 @@ public class BytesCoverageTest {
             Files.createDirectories(classes);
             BoundedRun compile = runJavac(workspace, classes,
                 List.of(className + ".java", hostClass + ".java", "Probe.java"));
-            checkEq(0, compile.exitCode(), spec.what() + ": the JVM host fixture "
-                + "compiles with the emitted host ABI surface and the deployed host "
-                + "class: " + compile.stdout() + compile.stderr());
+            check(compile.captureClean() && compile.exitCode() == 0, spec.what()
+                + ": the JVM host fixture compiles with the emitted host ABI surface "
+                + "and the deployed host class: " + compile.stdout()
+                + compile.stderr());
             if (compile.exitCode() != 0) {
                 return;
             }
-            String stdout = runJava(absoluteClasspath(), classes, "Probe");
-            check(stdout.contains("OK") && !stdout.contains("ERR:"), spec.what()
-                + ": the JVM production artifact runs the async host fixture to the "
-                + "pinned outcome: " + stdout);
+            assertTranscript(spec.what(), "jvm host probe",
+                runJava(absoluteClasspath(), classes, "Probe"), 0, "OK\n");
         } finally {
             deleteRecursively(workspace);
         }
@@ -2088,12 +2107,25 @@ public class BytesCoverageTest {
     // =========================================================================
 
     /**
-     * One production artifact run: the probe's outcome framing ({@code OK}
-     * or {@code ERR:code|message|origin|expected|actual}), the artifact's
-     * stdout, and the artifact's {@code DEAL_ERROR_CODE} terminal line of a
-     * direct run (empty for a runtime-ok drive).
+     * One production artifact run: the complete bounded capture of the framed
+     * probe run and, on a failing drive, of the artifact's direct
+     * {@code DEAL_ERROR_CODE} terminal run ({@code null} for a runtime-ok
+     * drive). The drives compare both captures exactly (status, stdout,
+     * stderr, capture health) before they read the framed outcome.
      */
-    private record ArtifactRun(String outcome, String stdout, String terminalLine) {
+    private record ArtifactRun(BoundedRun probe, BoundedRun terminal) {
+
+        /** The framed outcome line; read only after the transcript comparison. */
+        String outcome() {
+            return extractOutcome(probe.stdout());
+        }
+    }
+
+    /** The probe framing: the last {@code ERR:}/{@code OK} line of a stdout. */
+    private static String extractOutcome(String stdout) {
+        return stdout.lines()
+            .filter(line -> line.startsWith("ERR:") || line.equals("OK"))
+            .reduce((first, second) -> second).orElse("");
     }
 
     private static String absoluteClasspath() {
@@ -2112,65 +2144,234 @@ public class BytesCoverageTest {
     }
 
     /**
-     * The bounded subprocess contract (the harness budget): each stream is
-     * drained concurrently with the wait up to the 1 MiB cap and to EOF; a
-     * child that outlives the 300 s budget is killed, reaped, and reported
-     * as a hard failure, never as a skip. Scratch cleanup stays with the
-     * caller's {@code finally}.
+     * The bounded subprocess contract (the harness budget): the child wait
+     * and both concurrent stream drains share one monotonic deadline; the
+     * 1 MiB cap reports overflow instead of truncating; a read failure stays
+     * a visible capture-health outcome; every post-start path stops the
+     * tracked process tree, closes the pipes, and reaps the child; and an
+     * interrupt stops the tree, reaps, and preserves the interrupt status.
+     * Scratch cleanup stays with the caller's {@code finally}.
      */
     private static final int STREAM_CAP_BYTES = 1 << 20;
     private static final long PROCESS_BUDGET_SECONDS = 300;
+    private static final long KILL_GRACE_SECONDS = 10;
+    private static final long DESCENDANT_POLL_NANOS = TimeUnit.MILLISECONDS.toNanos(10);
 
-    /** One bounded subprocess run; the streams stay separate. */
-    private record BoundedRun(int exitCode, String stdout, String stderr) {
-    }
+    /**
+     * One bounded subprocess run: the exit status, the complete separate
+     * stdout and stderr captures, and the capture health.
+     */
+    private record BoundedRun(int exitCode, String stdout, String stderr,
+                              boolean stdoutOverflow, boolean stderrOverflow,
+                              boolean stdoutReadFailure, boolean stderrReadFailure) {
 
-    /** Drains one stream to EOF, retaining at most the 1 MiB cap. */
-    private static String drainCapped(InputStream stream) throws java.io.IOException {
-        java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
-        byte[] buffer = new byte[8192];
-        long total = 0;
-        int read;
-        while ((read = stream.read(buffer)) >= 0) {
-            if (total < STREAM_CAP_BYTES) {
-                int keep = (int) Math.min(read, STREAM_CAP_BYTES - total);
-                captured.write(buffer, 0, keep);
-                total += keep;
-            }
-        }
-        return captured.toString(StandardCharsets.UTF_8);
-    }
-
-    /** Drains one stream; a closed stream keeps the bytes read so far. */
-    private static String drainQuietly(InputStream stream) {
-        try {
-            return drainCapped(stream);
-        } catch (java.io.IOException ignored) {
-            return "";
+        boolean captureClean() {
+            return !stdoutOverflow() && !stderrOverflow()
+                && !stdoutReadFailure() && !stderrReadFailure();
         }
     }
 
-    /** Runs one subprocess under the bounded-output and deadline contract. */
+    /** One drained stream: the retained text and its capture health. */
+    private record Capture(String text, boolean overflow, boolean readFailure) {
+    }
+
+    /**
+     * The artifact transcript comparison: the exact expected exit status, the
+     * complete stdout, an empty stderr, and the capture health. Returns the
+     * first divergence by name or {@code null} when the run is pin-exact. The
+     * probe framing and the source-coordinate origin are the only
+     * transformations applied to the raw streams.
+     */
+    private static String transcriptDivergence(BoundedRun run, int expectedExit,
+            String expectedStdout) {
+        if (run.stdoutOverflow() || run.stderrOverflow()) {
+            return "capture overflow: the "
+                + (run.stdoutOverflow() ? "stdout" : "stderr")
+                + " capture exceeded the " + STREAM_CAP_BYTES + "-byte cap";
+        }
+        if (run.stdoutReadFailure() || run.stderrReadFailure()) {
+            return "capture read failure: the "
+                + (run.stdoutReadFailure() ? "stdout" : "stderr")
+                + " capture did not drain to EOF";
+        }
+        if (run.exitCode() != expectedExit) {
+            return "exit: captured " + run.exitCode() + ", pinned " + expectedExit;
+        }
+        if (!expectedStdout.equals(run.stdout())) {
+            return "stdout: captured " + escaped(run.stdout()) + ", pinned "
+                + escaped(expectedStdout);
+        }
+        if (!run.stderr().isEmpty()) {
+            return "stderr: captured " + escaped(run.stderr()) + ", pinned none";
+        }
+        return null;
+    }
+
+    private static String escaped(String text) {
+        return "'" + text.replace("\\", "\\\\").replace("\r", "\\r")
+            .replace("\n", "\\n") + "'";
+    }
+
+    /** Asserts the exact status and complete transcript of one artifact run. */
+    private static void assertTranscript(String label, String target, BoundedRun run,
+            int expectedExit, String expectedStdout) {
+        if (run == null) {
+            check(false, label + " (" + target + "): no artifact run was captured");
+            return;
+        }
+        String divergence = transcriptDivergence(run, expectedExit, expectedStdout);
+        check(divergence == null, label + " (" + target + "): the exit status and the "
+            + "complete transcript are pin-exact, but " + divergence);
+    }
+
+    /**
+     * Runs one subprocess under the bounded-output and deadline contract. The
+     * child wait and both drains share one monotonic deadline; a held pipe or
+     * a live descendant is stopped, drained within a fixed grace window, and
+     * reported as a hard timeout, never as a skip.
+     */
     private static BoundedRun runBounded(List<String> argv, Path workingDir,
             Map<String, String> environment) throws Exception {
+        return runBounded(argv, workingDir, environment, PROCESS_BUDGET_SECONDS);
+    }
+
+    private static BoundedRun runBounded(List<String> argv, Path workingDir,
+            Map<String, String> environment, long budgetSeconds) throws Exception {
         ProcessBuilder builder = new ProcessBuilder(argv);
         builder.directory(workingDir.toFile());
         builder.environment().putAll(environment);
         Process process = builder.start();
-        CompletableFuture<String> stdout =
-            CompletableFuture.supplyAsync(() -> drainQuietly(process.getInputStream()));
-        CompletableFuture<String> stderr =
-            CompletableFuture.supplyAsync(() -> drainQuietly(process.getErrorStream()));
-        boolean finished = process.waitFor(PROCESS_BUDGET_SECONDS, TimeUnit.SECONDS);
-        if (!finished) {
-            process.descendants().forEach(ProcessHandle::destroyForcibly);
-            process.destroyForcibly();
-            process.waitFor();
-            stdout.join();
-            stderr.join();
-            throw new AssertionError("BOUNDED_PROCESS_TIMEOUT " + argv.get(0));
+        Set<ProcessHandle> descendants =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+        long deadline = System.nanoTime()
+            + TimeUnit.SECONDS.toNanos(budgetSeconds);
+        CompletableFuture<Capture> stdout = drainAsync(process.getInputStream());
+        CompletableFuture<Capture> stderr = drainAsync(process.getErrorStream());
+        try {
+            boolean drained = awaitExit(process, descendants, deadline)
+                && awaitDrains(stdout, stderr, deadline);
+            if (!drained) {
+                stopProcessTree(process, descendants);
+                closePipes(process);
+                awaitDrains(stdout, stderr, System.nanoTime()
+                    + TimeUnit.SECONDS.toNanos(KILL_GRACE_SECONDS));
+                throw new AssertionError("BOUNDED_PROCESS_TIMEOUT " + argv.get(0));
+            }
+            Capture out = stdout.join();
+            Capture err = stderr.join();
+            return new BoundedRun(process.exitValue(), out.text(), err.text(),
+                out.overflow(), err.overflow(), out.readFailure(), err.readFailure());
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw interrupted;
+        } finally {
+            stopProcessTree(process, descendants);
+            closePipes(process);
+            reap(process);
         }
-        return new BoundedRun(process.exitValue(), stdout.join(), stderr.join());
+    }
+
+    /**
+     * Waits for the child under the deadline while snapshotting its
+     * descendants, so a descendant that survives the direct child stays
+     * tracked for the stop path.
+     */
+    private static boolean awaitExit(Process process, Set<ProcessHandle> descendants,
+            long deadline) throws InterruptedException {
+        while (true) {
+            process.descendants().forEach(descendants::add);
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) {
+                return !process.isAlive();
+            }
+            if (process.waitFor(Math.min(remaining, DESCENDANT_POLL_NANOS),
+                    TimeUnit.NANOSECONDS)) {
+                return true;
+            }
+        }
+    }
+
+    /** Waits for both captures under the deadline; never blocks past it. */
+    private static boolean awaitDrains(CompletableFuture<Capture> stdout,
+            CompletableFuture<Capture> stderr, long deadline)
+            throws InterruptedException {
+        while (System.nanoTime() < deadline) {
+            if (stdout.isDone() && stderr.isDone()) {
+                return true;
+            }
+            long remaining = Math.max(1, deadline - System.nanoTime());
+            TimeUnit.NANOSECONDS.sleep(Math.min(DESCENDANT_POLL_NANOS, remaining));
+        }
+        return stdout.isDone() && stderr.isDone();
+    }
+
+    /** Drains one stream to EOF in the background; capture failures are data. */
+    private static CompletableFuture<Capture> drainAsync(InputStream stream) {
+        return CompletableFuture.supplyAsync(() -> drainCapped(stream));
+    }
+
+    /**
+     * Drains one stream to EOF, retaining at most the cap. Bytes past the cap
+     * set the overflow signal, and a read failure keeps the bytes read so far
+     * with the read-failure signal - neither is silently dropped.
+     */
+    private static Capture drainCapped(InputStream stream) {
+        java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        boolean overflow = false;
+        try {
+            int read;
+            while ((read = stream.read(buffer)) >= 0) {
+                int room = STREAM_CAP_BYTES - captured.size();
+                if (read <= room) {
+                    captured.write(buffer, 0, read);
+                } else {
+                    if (room > 0) {
+                        captured.write(buffer, 0, room);
+                    }
+                    overflow = true;
+                }
+            }
+        } catch (java.io.IOException failure) {
+            return new Capture(captured.toString(StandardCharsets.UTF_8), overflow,
+                true);
+        }
+        return new Capture(captured.toString(StandardCharsets.UTF_8), overflow, false);
+    }
+
+    /** Stops the child and every snapshotted descendant. */
+    private static void stopProcessTree(Process process, Set<ProcessHandle> descendants) {
+        process.descendants().forEach(descendants::add);
+        descendants.forEach(ProcessHandle::destroyForcibly);
+        process.destroyForcibly();
+    }
+
+    /** Closes the child pipes so a drain blocked on a held pipe can finish. */
+    private static void closePipes(Process process) {
+        try {
+            process.getInputStream().close();
+        } catch (Exception ignored) {
+            // the pipe is already gone
+        }
+        try {
+            process.getErrorStream().close();
+        } catch (Exception ignored) {
+            // the pipe is already gone
+        }
+    }
+
+    /** Reaps the child within a bounded wait, preserving the interrupt status. */
+    private static void reap(Process process) {
+        boolean interrupted = Thread.interrupted();
+        try {
+            process.waitFor(KILL_GRACE_SECONDS, TimeUnit.SECONDS);
+        } catch (InterruptedException interruption) {
+            interrupted = true;
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     private static ArtifactRun luaProduction(Drive drive) throws Exception {
@@ -2202,9 +2403,12 @@ public class BytesCoverageTest {
                 local ok, err = __dealMain()
                 if not ok then
                   if type(err) == "table" and err.__d then
-                    print("ERR:" .. err.code .. "|" .. tostring(err.m) .. "|"
-                      .. tostring(err.o) .. "|" .. tostring(err.e) .. "|"
-                      .. tostring(err.a))
+                    local expected = err.e
+                    local actual = err.a
+                    if expected == nil then expected = "" end
+                    if actual == nil then actual = "" end
+                    print("ERR:" .. err.code .. "|" .. err.m .. "|" .. err.o .. "|"
+                      .. expected .. "|" .. actual)
                   else
                     print("ERR:" .. tostring(err))
                   end
@@ -2213,31 +2417,21 @@ public class BytesCoverageTest {
                 print("OK")
                 """.formatted(artifact.toAbsolutePath().toString()),
                 StandardCharsets.UTF_8);
-            String stdout = runLua(workspace, probe, true);
-            String outcome = stdout.lines()
-                .filter(line -> line.startsWith("ERR:") || line.equals("OK"))
-                .reduce((first, second) -> second).orElse("");
-            check(!outcome.isEmpty(), drive.spec().what() + " (luajit): the production "
-                + "artifact publishes its outcome: " + stdout);
-            String terminalLine = "";
-            if (!drive.spec().runtimeOk()) {
-                terminalLine = runLua(workspace, artifact, false).strip();
-            }
-            return new ArtifactRun(outcome, stdout, terminalLine);
+            BoundedRun probeRun = runLua(workspace, probe,
+                Map.of("DEAL_DEFER_MAIN", "1"));
+            BoundedRun terminalRun = drive.spec().runtimeOk() ? null
+                : runLua(workspace, artifact, Map.of());
+            return new ArtifactRun(probeRun, terminalRun);
         } finally {
             deleteRecursively(workspace);
         }
     }
 
-    private static String runLua(Path workspace, Path script, boolean deferMain)
-            throws Exception {
-        BoundedRun run = runBounded(List.of("luajit", script.toAbsolutePath().toString()),
-            workspace, deferMain ? Map.of("DEAL_DEFER_MAIN", "1") : Map.of());
-        check(deferMain ? run.exitCode() == 0 : run.exitCode() == 1,
-            "the luajit run of " + script.getFileName() + " exits "
-                + (deferMain ? 0 : 1) + ": stdout=" + run.stdout() + " stderr="
-                + run.stderr());
-        return run.stdout();
+    /** One bounded run of a Lua script in the artifact workspace. */
+    private static BoundedRun runLua(Path workspace, Path script,
+            Map<String, String> environment) throws Exception {
+        return runBounded(List.of("luajit", script.toAbsolutePath().toString()),
+            workspace, environment);
     }
 
     private static void deployRuntime(Path workspace) throws Exception {
@@ -2289,8 +2483,9 @@ public class BytesCoverageTest {
                       %s.dealMain();
                     } catch (deal.codegen.jvm.JvmRuntime.DealError error) {
                       System.out.println("ERR:" + error.code + "|" + error.msg + "|"
-                          + error.origin + "|" + error.expected + "|"
-                          + error.actual);
+                          + error.origin + "|"
+                          + (error.expected == null ? "" : error.expected) + "|"
+                          + (error.actual == null ? "" : error.actual));
                       return;
                     }
                     System.out.println("OK");
@@ -2301,24 +2496,17 @@ public class BytesCoverageTest {
             Path classes = workspace.resolve("classes");
             Files.createDirectories(classes);
             BoundedRun compile = runJavac(workspace, classes, sources);
-            checkEq(0, compile.exitCode(), drive.spec().what() + ": the JVM production "
-                + "artifact compiles (javac --release 25 -proc:none): "
-                + compile.stdout() + compile.stderr());
+            check(compile.captureClean() && compile.exitCode() == 0,
+                drive.spec().what() + ": the JVM production artifact compiles "
+                    + "(javac --release 25 -proc:none): " + compile.stdout()
+                    + compile.stderr());
             if (compile.exitCode() != 0) {
-                return new ArtifactRun("", "", "");
+                return new ArtifactRun(failedRun(), null);
             }
-            String stdout = runJava(absoluteClasspath(), classes, "Probe");
-            String outcome = stdout.lines()
-                .filter(line -> line.startsWith("ERR:") || line.equals("OK"))
-                .reduce((first, second) -> second).orElse("");
-            check(!outcome.isEmpty(), drive.spec().what() + " (java): the production "
-                + "artifact publishes its outcome: " + stdout);
-            String terminalLine = "";
-            if (!drive.spec().runtimeOk()) {
-                terminalLine = runJava(absoluteClasspath(), classes,
-                    className).strip();
-            }
-            return new ArtifactRun(outcome, stdout, terminalLine);
+            BoundedRun probeRun = runJava(absoluteClasspath(), classes, "Probe");
+            BoundedRun terminalRun = drive.spec().runtimeOk() ? null
+                : runJava(absoluteClasspath(), classes, className);
+            return new ArtifactRun(probeRun, terminalRun);
         } finally {
             deleteRecursively(workspace);
         }
@@ -2333,15 +2521,292 @@ public class BytesCoverageTest {
         return runBounded(argv, workspace, Map.of());
     }
 
-    private static String runJava(String classpath, Path classes, String mainClass)
+    /** One bounded {@code java} run of a compiled artifact or probe. */
+    private static BoundedRun runJava(String classpath, Path classes, String mainClass)
             throws Exception {
-        BoundedRun run = runBounded(List.of("java", "-cp",
+        return runBounded(List.of("java", "-cp",
             classpath + File.pathSeparator + classes, mainClass),
             classes.getParent(), Map.of());
-        check(run.exitCode() == 0 || run.exitCode() == 1,
-            "the java run of " + mainClass + " exits 0 or 1: stdout=" + run.stdout()
-                + " stderr=" + run.stderr());
-        return run.stdout();
+    }
+
+    /** The failed-run placeholder: a compile that produced no artifact. */
+    private static BoundedRun failedRun() {
+        return new BoundedRun(-1, "", "", false, false, false, false);
+    }
+
+    // =========================================================================
+    // 7. The focused runner contract: exact status and transcript, capture
+    //    health, and the bounded process lifecycle (ISSUE-0710)
+    // =========================================================================
+
+    /** A runtime-ok program that prints one unexpected stdout line. */
+    private static final String EXTRA_STDOUT_SOURCE = """
+        import * as console from "std/console"
+
+        export function main(): null {
+          console.log("UNEXPECTED_STDOUT")
+          return null
+        }
+        """;
+
+    /** A runtime-ok program that prints one unexpected stderr line. */
+    private static final String EXTRA_STDERR_SOURCE = """
+        import * as console from "std/console"
+
+        export function main(): null {
+          console.error("UNEXPECTED_STDERR")
+          return null
+        }
+        """;
+
+    /**
+     * The focused acceptance contract's runner and comparison paths: extra
+     * stdout, extra stderr, a wrong exit status, an over-cap capture, and a
+     * read failure each fail by name; an interrupted run stops its child and
+     * preserves the interrupt status; and a descendant that survives its
+     * parent while holding the pipes is stopped within a bounded window.
+     */
+    private static void testFocusedRunnerContract() throws Exception {
+        System.out.println("-- the focused runner contract: exact status and "
+            + "transcript, capture health, and the bounded process lifecycle "
+            + "(ISSUE-0710) --");
+        Path scratch = Files.createTempDirectory("bytes-runner-");
+        try {
+            BoundedRun extraStdout = runBounded(List.of("sh", "-c",
+                "printf 'OK\\nUNEXPECTED_STDOUT\\n'"), scratch, Map.of());
+            String stdoutDivergence = transcriptDivergence(extraStdout, 0, "OK\n");
+            check(stdoutDivergence != null && stdoutDivergence.startsWith("stdout:"),
+                "extra stdout fails the transcript comparison by name: "
+                    + stdoutDivergence);
+            check(transcriptDivergence(extraStdout, 0,
+                    "OK\nUNEXPECTED_STDOUT\n") == null,
+                "the same capture is pin-exact against its true transcript");
+
+            BoundedRun extraStderr = runBounded(List.of("sh", "-c",
+                "printf 'OK\\n'; printf 'UNEXPECTED_STDERR\\n' >&2"), scratch,
+                Map.of());
+            String stderrDivergence = transcriptDivergence(extraStderr, 0, "OK\n");
+            check(stderrDivergence != null && stderrDivergence.startsWith("stderr:"),
+                "extra stderr fails the transcript comparison by name: "
+                    + stderrDivergence);
+
+            BoundedRun wrongStatus = runBounded(List.of("sh", "-c",
+                "printf 'OK\\n'; exit 3"), scratch, Map.of());
+            String statusDivergence = transcriptDivergence(wrongStatus, 0, "OK\n");
+            check(statusDivergence != null && statusDivergence.startsWith("exit:"),
+                "a wrong exit status fails the transcript comparison by name: "
+                    + statusDivergence);
+            checkEq(3, wrongStatus.exitCode(), "the wrong-status control keeps its "
+                + "exit status through the runner");
+
+            Capture underCap = drainCapped(fixedStream(STREAM_CAP_BYTES - 1));
+            Capture atCap = drainCapped(fixedStream(STREAM_CAP_BYTES));
+            Capture overCap = drainCapped(fixedStream(STREAM_CAP_BYTES + 1));
+            check(!underCap.overflow() && !atCap.overflow()
+                    && underCap.text().length() == STREAM_CAP_BYTES - 1
+                    && atCap.text().length() == STREAM_CAP_BYTES,
+                "a capture at or below the cap keeps every byte and no overflow "
+                    + "signal");
+            check(overCap.overflow()
+                    && overCap.text().length() == STREAM_CAP_BYTES,
+                "a capture past the cap reports overflow and keeps the capped bytes");
+
+            Capture readFailure = drainCapped(new InputStream() {
+                @Override
+                public int read() {
+                    return 'x';
+                }
+
+                @Override
+                public int read(byte[] bytes, int offset, int length)
+                        throws java.io.IOException {
+                    throw new java.io.IOException("synthetic read failure");
+                }
+            });
+            check(readFailure.readFailure(),
+                "a read failure is reported through the capture path");
+            check(!readFailure.overflow(),
+                "a read failure is not conflated with an overflow");
+        } finally {
+            deleteRecursively(scratch);
+        }
+
+        checkProgramOutputFailsTheTranscript();
+        checkInterruptedRunStopsItsChild();
+        checkHeldPipeDescendantRunIsBounded();
+    }
+
+    /** A stream of exactly {@code length} 'x' bytes, then EOF. */
+    private static InputStream fixedStream(int length) {
+        return new InputStream() {
+            private int remaining = length;
+
+            @Override
+            public int read() {
+                return remaining-- > 0 ? 'x' : -1;
+            }
+
+            @Override
+            public int read(byte[] bytes, int offset, int count) {
+                if (remaining <= 0) {
+                    return -1;
+                }
+                int produced = Math.min(count, remaining);
+                java.util.Arrays.fill(bytes, offset, offset + produced, (byte) 'x');
+                remaining -= produced;
+                return produced;
+            }
+        };
+    }
+
+    /**
+     * The reviewer-visible trigger: a real production program that prints
+     * beyond its pinned transcript is caught by the drive's transcript
+     * comparison on both production targets, and nothing reports success.
+     */
+    private static void checkProgramOutputFailsTheTranscript() throws Exception {
+        checkProgramOutput(EXTRA_STDOUT_SOURCE, "stdout:");
+        checkProgramOutput(EXTRA_STDERR_SOURCE, "stderr:");
+    }
+
+    private static void checkProgramOutput(String source, String expectedFacet)
+            throws Exception {
+        Path root = Files.createTempDirectory("bytes-program-output-");
+        try {
+            BytesFixture spec = new BytesFixture(BYTES_DIR, "program-output", "main",
+                "null", List.of(), null, null, 0, 0);
+            Compiled compiled = compileFocused(root, source, null, null);
+            if (compiled == null) {
+                return;
+            }
+            Drive drive = lowerFocused(compiled, spec);
+            if (drive == null) {
+                return;
+            }
+            String label = "the real program output control (" + expectedFacet + ")";
+            String luaDivergence = transcriptDivergence(luaProduction(drive).probe(), 0,
+                "OK\n");
+            check(luaDivergence != null && luaDivergence.startsWith(expectedFacet),
+                label + ": the LuaJIT artifact's unexpected output fails the "
+                    + "transcript comparison: " + luaDivergence);
+            String jvmDivergence = transcriptDivergence(jvmProduction(drive).probe(), 0,
+                "OK\n");
+            check(jvmDivergence != null && jvmDivergence.startsWith(expectedFacet),
+                label + ": the JVM artifact's unexpected output fails the transcript "
+                    + "comparison: " + jvmDivergence);
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * An interrupted run must stop its child, reap it, and preserve the
+     * interrupt status; the child must not survive the interruption.
+     */
+    private static void checkInterruptedRunStopsItsChild() throws Exception {
+        Path scratch = Files.createTempDirectory("bytes-interrupt-");
+        Path pidFile = scratch.resolve("child.pid");
+        boolean[] interrupted = { false };
+        boolean[] interruptPreserved = { false };
+        Throwable[] unexpected = { null };
+        Thread runner = new Thread(() -> {
+            try {
+                runBounded(List.of("sh", "-c",
+                    "echo $$ > " + pidFile + "; exec sleep 30"), scratch, Map.of());
+                unexpected[0] = new AssertionError("the interrupted run returned");
+            } catch (InterruptedException expected) {
+                interrupted[0] = true;
+                interruptPreserved[0] = Thread.currentThread().isInterrupted();
+            } catch (Throwable failure) {
+                unexpected[0] = failure;
+            }
+        });
+        runner.start();
+        long child = awaitPid(pidFile);
+        runner.interrupt();
+        runner.join(TimeUnit.SECONDS.toMillis(20));
+        try {
+            check(!runner.isAlive(),
+                "the interrupted runner completes within its budget");
+            checkEq(null, unexpected[0],
+                "the interrupted runner reports no other failure");
+            check(interrupted[0],
+                "the interrupted run reports InterruptedException");
+            check(interruptPreserved[0],
+                "the interrupted run preserves the interrupt status");
+            check(child > 0, "the interruption control captured its child pid");
+            check(awaitGone(child, 5_000),
+                "the interrupted child is stopped, not leaked");
+        } finally {
+            deleteRecursively(scratch);
+        }
+    }
+
+    /**
+     * A descendant that survives its parent while holding the pipes is
+     * stopped by the runner and reported as a bounded timeout, never as an
+     * unbounded drain.
+     */
+    private static void checkHeldPipeDescendantRunIsBounded() throws Exception {
+        Path scratch = Files.createTempDirectory("bytes-held-pipe-");
+        Path pidFile = scratch.resolve("descendant.pid");
+        long started = System.nanoTime();
+        AssertionError timeout = null;
+        try {
+            runBounded(List.of("sh", "-c",
+                "sleep 30 & echo $! > " + pidFile + "; sleep 0.2; exit 0"),
+                scratch, Map.of(), 1);
+        } catch (AssertionError failure) {
+            timeout = failure;
+        }
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(
+            System.nanoTime() - started);
+        try {
+            check(timeout != null && timeout.getMessage() != null
+                    && timeout.getMessage().contains("BOUNDED_PROCESS_TIMEOUT"),
+                "the held-pipe run is reported as a bounded timeout: " + timeout);
+            check(elapsedMillis < 30_000, "the held-pipe run completes bounded: "
+                + elapsedMillis + " ms");
+            long descendant = awaitPid(pidFile);
+            check(descendant > 0,
+                "the held-pipe control captured its descendant pid");
+            check(awaitGone(descendant, 5_000),
+                "the held-pipe descendant is stopped, not leaked");
+        } finally {
+            deleteRecursively(scratch);
+        }
+    }
+
+    /** Waits (bounded) for a child-written pid file; -1 when none appears. */
+    private static long awaitPid(Path file) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        while (System.nanoTime() < deadline) {
+            if (Files.exists(file)) {
+                try {
+                    String text = Files.readString(file).strip();
+                    if (!text.isEmpty()) {
+                        return Long.parseLong(text);
+                    }
+                } catch (Exception notYet) {
+                    // the writer is still completing the file; retry
+                }
+            }
+            TimeUnit.MILLISECONDS.sleep(10);
+        }
+        return -1;
+    }
+
+    /** Bounded wait for a killed process to leave the process table. */
+    private static boolean awaitGone(long pid, long millis)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
+        while (System.nanoTime() < deadline) {
+            if (ProcessHandle.of(pid).map(handle -> !handle.isAlive()).orElse(true)) {
+                return true;
+            }
+            TimeUnit.MILLISECONDS.sleep(20);
+        }
+        return ProcessHandle.of(pid).map(handle -> !handle.isAlive()).orElse(true);
     }
 
     // =========================================================================
@@ -2354,6 +2819,7 @@ public class BytesCoverageTest {
         testReadShapeAndWriteChain();
         testBytesBoundaryContext();
         testDecodedArrayMark();
+        testFocusedRunnerContract();
         testOracleRealization();
         System.out.println();
         System.out.println("BytesCoverageTest: " + passed + " passed, " + failed
