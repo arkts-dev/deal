@@ -120,31 +120,46 @@ import java.util.stream.Stream;
  *       still carries a checker-valid {@code CONSTRUCT_UNLOWERED} deficit
  *       (the sibling-owned realization work has not landed), the audit
  *       runs in its <em>pre-precondition reporting mode</em>: every
- *       failing leg is named by fixture and target and the run exits
- *       zero, exactly as
+ *       failing leg is named by fixture and target, classified, and the
+ *       run exits zero, exactly as
  *       {@code conformance-cutover-guards-pins-and-production-source-removal}
  *       HR4(a) and {@code dispatched-corpus-production-acceptance} A5 and
  *       CD5 prescribe ("before it, the corpus run reports the residual
- *       failures per fixture and never skips"). As soon as the compile
- *       criterion is met (zero {@code CONSTRUCT_UNLOWERED} legs), the
- *       audit engages its <em>strict acceptance mode</em>: every
- *       non-pin-exact capture leg fails the audit by fixture and field —
- *       the combined-with-dependencies step. {@code RETAINED_ABI_DEFERRED}
- *       and {@code SHARED_EMITTER_COVERAGE} legs, non-guard compile
- *       failures, pinned-rejection mismatches, and the audit-input defects
- *       (an unresolvable declaration wiring, a missing sidecar, a missing
- *       host implementation) are fatal in both modes; nothing is skipped,
- *       excluded, or fabricated in either mode.</li>
- *   <li><b>The materialization fidelity.</b> The declaration wiring is
+ *       failures per fixture and never skips"). Only three leg classes are
+ *       permitted in that mode: the sibling-owned construct deficit, a
+ *       cleanly framed runtime-error projection difference (the canonical
+ *       failure-projection family, with the raw streams untouched and the
+ *       pinned exit code), and the explicitly pinned interim behavior
+ *       inventory. Everything else — a failed drive, a missing or
+ *       unloadable artifact, a probe defect, a {@code NON_DEAL} or
+ *       normally-completing runtime-error drive, extra output on either
+ *       stream, a wrong exit code, a non-guard compile failure, a
+ *       mixed-guard failure, a pinned-rejection mismatch, a rejection that
+ *       staged output, and every unclassified behavioral failure — is
+ *       fatal in both modes. A construct deficit in one cell therefore
+ *       never disables enforcement of any other cell or of any other
+ *       failure class. As soon as the compile criterion is met (zero
+ *       {@code CONSTRUCT_UNLOWERED} legs), the audit engages its
+ *       <em>strict acceptance mode</em>: every non-pin-exact capture leg,
+ *       the projection and pinned-behavior deficits included, fails the
+ *       audit by fixture and field — the combined-with-dependencies step.
+ *       Nothing is skipped, excluded, or fabricated in either mode.</li>
+ *   <li><b>The materialization fidelity.</b> The complete validated
+ *       compilation set is materialized with the lanes' layout and bytes
+ *       (declaration modules included), and the declaration wiring is
  *       load-bearing: a probe that omits the host/FFI declaration
  *       externals reproduces the frontend E2003 gap, while the audit's
- *       materialized drive compiles the same fixture.</li>
+ *       materialized drive compiles the same fixture and stages exactly
+ *       the production entry artifact.</li>
  * </ol>
  *
  * <p>The drive is read-only over the corpus: every temp project is
- * deleted, no fixture, sidecar, lane file, or repository artifact is
- * written, and the audit selects no invocation other than the
- * release-owned production one.</p>
+ * deleted, the corpus C library is bootstrapped in an audit-owned
+ * temporary native directory (never in the repository {@code build/}
+ * directory, whose contents the audit snapshots and re-asserts), no
+ * fixture, sidecar, lane file, or repository artifact is written, and the
+ * audit selects no invocation other than the release-owned production
+ * one.</p>
  */
 public class ProductionCorpusAuditTest {
 
@@ -179,21 +194,39 @@ public class ProductionCorpusAuditTest {
 
     /**
      * One measured cell's class. The class decides whether the cell's verdict
-     * is fatal or reported: the pre-precondition rule (HR4(a), A5, CD5) keeps
-     * the sibling-owned construct and capture deficit visible but non-fatal
-     * until the compile criterion is met, after which every non-pass leg is
-     * fatal.
+     * is fatal or reported:
+     *
+     * <ul>
+     *   <li>{@link #INFRASTRUCTURE}, {@link #ARCHITECTURAL_GUARD} and
+     *       {@link #DEFECT} are fatal in every mode: a broken tool
+     *       invocation, a corrupted or unloadable artifact, a failed
+     *       project load, a non-guard compile failure, a pinned-rejection
+     *       mismatch, an artifact-staging rejection, and every unclassified
+     *       behavioral failure are never excused by another cell's
+     *       construct deficit;</li>
+     *   <li>{@link #CONSTRUCT_DEFICIT} (the sibling-owned construct
+     *       families), {@link #PROJECTION_DEFICIT} (the canonical
+     *       failure-projection family) and {@link #BEHAVIOR_DEFICIT} (the
+     *       pinned, evidence-bound interim behavior inventory below) are
+     *       the permitted early-leaf deficits: reported per fixture and
+     *       target while the compile criterion is unmet (HR4(a), A5, CD5),
+     *       and fatal as soon as the construct criterion is met.</li>
+     * </ul>
      */
     enum LegClass {
         /** The cell reproduced its pin (or its sanctioned compile-reject pin). */
         PASS,
-        /** A checker-valid E6005 {@code CONSTRUCT_UNLOWERED} leg. */
+        /** A checker-valid E6005 {@code CONSTRUCT_UNLOWERED} leg (permitted interim). */
         CONSTRUCT_DEFICIT,
-        /** A pinned-field mismatch, or a production drive/load/emission failure. */
-        CAPTURE_DEFICIT,
+        /** A cleanly framed runtime-error projection difference (permitted interim). */
+        PROJECTION_DEFICIT,
+        /** A pinned interim behavior deficit (permitted interim; evidence-bound). */
+        BEHAVIOR_DEFICIT,
+        /** A drive/load/toolchain failure: fatal in every mode. */
+        INFRASTRUCTURE,
         /** A {@code RETAINED_ABI_DEFERRED}/{@code SHARED_EMITTER_COVERAGE} leg. */
         ARCHITECTURAL_GUARD,
-        /** A non-guard compile failure or a pinned-rejection mismatch. */
+        /** An unclassified failure, a rejection mismatch, or a staged rejection. */
         DEFECT
     }
 
@@ -205,9 +238,85 @@ public class ProductionCorpusAuditTest {
     static boolean isFatal(LegClass clazz, boolean acceptanceMode) {
         return switch (clazz) {
             case PASS -> false;
-            case ARCHITECTURAL_GUARD, DEFECT -> true;
-            case CONSTRUCT_DEFICIT, CAPTURE_DEFICIT -> acceptanceMode;
+            case INFRASTRUCTURE, ARCHITECTURAL_GUARD, DEFECT -> true;
+            case CONSTRUCT_DEFICIT, PROJECTION_DEFICIT, BEHAVIOR_DEFICIT ->
+                acceptanceMode;
         };
+    }
+
+    /**
+     * One pinned interim behavior deficit: a cell whose production behavior
+     * the corpus pins byte-exact but whose realizing work has not landed.
+     * The pin is evidence-bound: the cell is permitted only while its drive
+     * raises exactly the recorded captured code. A different captured code, a
+     * probe defect, a normal completion, or an artifact/load failure is an
+     * unclassified failure, never this deficit, and is fatal in every mode.
+     */
+    record BehaviorDeficit(String corpusPath, Target target,
+                           String capturedCode, String family) {
+    }
+
+    /**
+     * The pinned interim behavior inventory (the not-yet-realized production
+     * behavior families owned outside this audit). These legs stay FAILS:
+     * they are reported per fixture and target and are counted in every
+     * acceptance verdict; they are never skipped, excluded, or converted
+     * into a pass. They become fatal as soon as the compile criterion is
+     * met (the strict acceptance ratchet), and every runtime-ok capture
+     * failure whose cell or captured evidence is not in this inventory is an
+     * unclassified behavioral failure and fatal in every mode.
+     */
+    private static final List<BehaviorDeficit> BEHAVIOR_DEFICITS = List.of(
+        new BehaviorDeficit(
+            "backend-runtime/control-flow/for-of-string-unicode.deal",
+            Target.LUAJIT, "TEST_FAIL",
+            "the production LuaJIT FOR_EACH over a string iterates bytes, not "
+                + "Unicode scalar values (the scalar-iteration realization)"),
+        new BehaviorDeficit(
+            "backend-runtime/control-flow/for-of-unicode-scalar.deal",
+            Target.LUAJIT, "TEST_FAIL",
+            "the production LuaJIT FOR_EACH over a string iterates bytes, not "
+                + "Unicode scalar values (the scalar-iteration realization)"),
+        new BehaviorDeficit(
+            "backend-runtime/defaults/plan-load-time-zero-invocations.deal",
+            Target.JVM, "NON_DEAL",
+            "the emitted JVM host int return projection admits a "
+                + "java.lang.Long and then casts it to Integer (the host "
+                + "boundary int projection realization)"),
+        new BehaviorDeficit(
+            "backend-runtime/defaults/plan-reexecuted-calls.deal",
+            Target.JVM, "NON_DEAL",
+            "the emitted JVM host int return projection admits a "
+                + "java.lang.Long and then casts it to Integer (the host "
+                + "boundary int projection realization)"),
+        new BehaviorDeficit(
+            "backend-runtime/defaults/plan-phase-order-provided-before-defaults.deal",
+            Target.JVM, "NON_DEAL",
+            "the emitted JVM host int return projection admits a "
+                + "java.lang.Long and then casts it to Integer (the host "
+                + "boundary int projection realization)"),
+        new BehaviorDeficit(
+            "backend-runtime/stdlib/table/keys-nonstring-exclusion.deal",
+            Target.LUAJIT, "E8001",
+            "the decoded-array (JSON-produced array) table-op admission is not "
+                + "realized (the decoded-array surface, excluded by the bytes "
+                + "realization)"),
+        new BehaviorDeficit(
+            "backend-runtime/stdlib/table/keys-nonstring-exclusion.deal",
+            Target.JVM, "E8001",
+            "the decoded-array (JSON-produced array) table-op admission is not "
+                + "realized (the decoded-array surface, excluded by the bytes "
+                + "realization)"));
+
+    /** The pinned interim behavior deficit of one cell, or null. */
+    static BehaviorDeficit behaviorDeficitOf(String corpusPath, Target target) {
+        for (BehaviorDeficit deficit : BEHAVIOR_DEFICITS) {
+            if (deficit.corpusPath().equals(corpusPath)
+                    && deficit.target() == target) {
+                return deficit;
+            }
+        }
+        return null;
     }
 
     private static void check(boolean condition, String message) {
@@ -350,51 +459,33 @@ public class ProductionCorpusAuditTest {
         return hosts;
     }
 
-    private static void collectRelativeClosure(String corpusPath,
-            List<String> ordered, Set<String> seen) throws Exception {
-        if (!seen.add(corpusPath)) {
-            return;
-        }
-        String stripped = ConformanceHarnessMetadata
-            .stripClassificationHeaders(Files.readString(
-                CONFORMANCE.resolve(corpusPath), StandardCharsets.UTF_8));
-        for (String importPath : CorpusDiscovery.relativeImportPaths(stripped)) {
-            String resolved = CorpusDiscovery.resolveRelativeImport(corpusPath,
-                importPath, CONFORMANCE);
-            if (resolved != null) {
-                collectRelativeClosure(resolved, ordered, seen);
-            }
-        }
-        ordered.add(corpusPath);
-    }
-
-    private static List<String> relativeClosureOf(String rootCorpusPath)
-            throws Exception {
-        List<String> ordered = new ArrayList<>();
-        collectRelativeClosure(rootCorpusPath, ordered, new LinkedHashSet<>());
-        return ordered;
-    }
-
     /**
-     * Materializes one fixture exactly as the lanes do: the fixture is the
-     * entry module, its transitively imported companions sit at their
-     * entry-directory-relative layout (with the explicit-{@code .deal}
-     * alias copies), the host declarations land under {@code bindings/}, the
-     * corpus FFI declarations carry their corpus {@code nativeLibrary}
-     * wiring, and one generated {@code deal.json} wires the module root, the
-     * output, the target backend, and the externals.
+     * Materializes one fixture exactly as the lanes do: the complete
+     * validated compilation set (the fixture plus every transitively
+     * imported corpus module, declaration modules included) sits at its
+     * entry-directory-relative layout carrying the validated header-stripped
+     * bytes (with the explicit-{@code .deal} alias copies), the host
+     * declarations land under {@code bindings/}, the corpus FFI declarations
+     * carry their corpus {@code nativeLibrary} wiring bound to the
+     * audit-owned native directory, and one generated {@code deal.json}
+     * wires the module root, the output, the target backend, and the
+     * externals.
      *
-     * @param fixtureRel       the corpus-relative fixture path without the
-     *                         {@code .deal} extension
+     * @param label            the fixture label for fail-closed messages
+     * @param compilationSet   the validated compilation set (the entry
+     *                         module first, as {@code CorpusDiscovery}
+     *                         produces it)
      * @param target           the emission target
      * @param wireDeclarations {@code false} omits the externals wiring (the
      *                         load-bearing fidelity probe)
      */
-    private static Project materialize(String fixtureRel, Target target,
-            boolean wireDeclarations) throws Exception {
+    private static Project materialize(String label,
+            List<SidecarSchemaValidator.CompilationModule> compilationSet,
+            Target target, boolean wireDeclarations) throws Exception {
         Path root = Files.createTempDirectory("production-corpus-audit-");
         try {
-            return materializeInto(root, fixtureRel, target, wireDeclarations);
+            return materializeInto(root, label, compilationSet, target,
+                wireDeclarations);
         } catch (Exception | Error e) {
             // The post-state rule holds on the failure paths too: a
             // materialization that cannot resolve a declaration (the
@@ -405,12 +496,14 @@ public class ProductionCorpusAuditTest {
     }
 
     /** The materialization body; {@code root} is owned by the caller. */
-    private static Project materializeInto(Path root, String fixtureRel,
+    private static Project materializeInto(Path root, String label,
+            List<SidecarSchemaValidator.CompilationModule> compilationSet,
             Target target, boolean wireDeclarations) throws Exception {
         Path srcRoot = root.resolve("src");
         Files.createDirectories(srcRoot);
         Path bindings = root.resolve("bindings");
-        Path entryCorpus = CONFORMANCE.resolve(fixtureRel + ".deal")
+        SidecarSchemaValidator.CompilationModule entryModule = compilationSet.get(0);
+        Path entryCorpus = CONFORMANCE.resolve(entryModule.corpusPath())
             .toAbsolutePath().normalize();
         Path entryDir = entryCorpus.getParent();
 
@@ -421,31 +514,39 @@ public class ProductionCorpusAuditTest {
         Map<String, String> modulePathToCorpus = new LinkedHashMap<>();
         Map<String, String> moduleDirToCorpus = new LinkedHashMap<>();
 
-        // 1. The compilation set with the lane's entry-relative layout.
-        for (String corpusPath : relativeClosureOf(CorpusDiscovery.slash(
-                CONFORMANCE.toAbsolutePath().normalize().relativize(entryCorpus)))) {
-            Path corpusFile = CONFORMANCE.resolve(corpusPath).toAbsolutePath()
-                .normalize();
+        // 1. The complete compilation set with the lane's entry-relative
+        // layout: every module lands at the lane's moduleTarget path with
+        // its validated header-stripped bytes, the declaration (.d.deal)
+        // modules included — exactly the sources the sidecar validation
+        // verified, never a private re-derivation.
+        for (SidecarSchemaValidator.CompilationModule module : compilationSet) {
+            Path corpusFile = CONFORMANCE.resolve(module.corpusPath())
+                .toAbsolutePath().normalize();
             String raw = Files.readString(corpusFile, StandardCharsets.UTF_8);
             String stripped = ConformanceHarnessMetadata
                 .stripClassificationHeaders(raw);
+            if (!stripped.equals(module.source())) {
+                throw new AuditInputException(label
+                    + ": the corpus module " + module.corpusPath()
+                    + " does not carry the validated compilation-set bytes");
+            }
             int headers = raw.split("\n", -1).length
-                - stripped.split("\n", -1).length;
+                - module.source().split("\n", -1).length;
             Path targetPath = moduleTarget(corpusFile, entryDir, srcRoot);
             Files.createDirectories(targetPath.getParent());
-            Files.writeString(targetPath, stripped, StandardCharsets.UTF_8);
+            Files.writeString(targetPath, module.source(), StandardCharsets.UTF_8);
             modules.put(targetPath.toAbsolutePath().normalize().toString(),
-                new Materialized(corpusPath, stripped, headers));
+                new Materialized(module.corpusPath(), module.source(), headers));
             String modulePath = CorpusDiscovery.slash(srcRoot.relativize(targetPath));
             if (modulePath.endsWith(".deal")) {
                 modulePath = modulePath.substring(0,
                     modulePath.length() - ".deal".length());
             }
-            modulePathToCorpus.put(modulePath, corpusPath);
-            modulePathToCorpus.put(modulePath.replace('/', '.'), corpusPath);
+            modulePathToCorpus.put(modulePath, module.corpusPath());
+            modulePathToCorpus.put(modulePath.replace('/', '.'), module.corpusPath());
             int slash = modulePath.lastIndexOf('/');
             moduleDirToCorpus.putIfAbsent(slash < 0 ? ""
-                : modulePath.substring(0, slash), corpusPath);
+                : modulePath.substring(0, slash), module.corpusPath());
         }
         String entryStem = moduleNameOf(entryCorpus.getFileName().toString());
 
@@ -510,7 +611,7 @@ public class ProductionCorpusAuditTest {
             for (String hostName : hostNames) {
                 Path declaration = HOST_FIXTURES.resolve(hostName + ".d.deal");
                 if (!Files.isRegularFile(declaration)) {
-                    throw new AuditInputException(fixtureRel
+                    throw new AuditInputException(label
                         + ": the host declaration " + declaration + " is missing");
                 }
                 Files.writeString(bindings.resolve(hostName + ".d.deal"),
@@ -523,13 +624,13 @@ public class ProductionCorpusAuditTest {
             for (String raw : ffiImports) {
                 CorpusFfi.Wiring wiring = CorpusFfi.wiringFor(CONFORMANCE, raw);
                 if (wiring == null) {
-                    throw new AuditInputException(fixtureRel
+                    throw new AuditInputException(label
                         + ": no corpus FFI wiring for " + raw);
                 }
                 Path declaration = CONFORMANCE.resolve(CorpusFfi.FFI_DIR)
                     .resolve(wiring.declarationCorpusPath());
                 if (!Files.isRegularFile(declaration)) {
-                    throw new AuditInputException(fixtureRel
+                    throw new AuditInputException(label
                         + ": the corpus FFI declaration " + declaration
                         + " is missing");
                 }
@@ -564,7 +665,7 @@ public class ProductionCorpusAuditTest {
                     entry.getKey());
                 if (wiring != null) {
                     dealJson.append(", \"nativeLibrary\": \"")
-                        .append(CorpusFfi.loaderTextFor(CONFORMANCE, wiring))
+                        .append(auditNativeLoaderText(label, wiring))
                         .append("\"");
                 }
                 dealJson.append(" }");
@@ -577,6 +678,157 @@ public class ProductionCorpusAuditTest {
         return new Project(root, srcRoot, srcRoot.resolve(entryStem + ".deal"),
             entryStem, modules, rawToDeclaration, hostNames, ffiImports,
             root.resolve("out"), modulePathToCorpus, moduleDirToCorpus);
+    }
+
+    // =========================================================================
+    // The audit-owned native-library bootstrap (the read-only post-state rule)
+    // =========================================================================
+
+    /**
+     * The audit-owned native directory: the corpus C library is bootstrapped
+     * here (once per run), never in the repository {@code build/} directory.
+     * {@code CorpusFfi.nativeLibraryPath} would compile into
+     * {@code <checkout>/build/libcandidate_native.so}; the audit instead
+     * owns the library path it binds into its temp manifests, so the
+     * repository's existing artifacts — an existing native library
+     * included — stay untouched. The directory is created by the main run
+     * and removed with the audit.
+     */
+    private static volatile Path auditNativeDirectory;
+
+    /** The lazily bootstrapped audit-owned library path (once per run). */
+    private static volatile String auditNativeLibraryPath;
+
+    /**
+     * The loader text the audit binds into one temp manifest: the authored
+     * loader basename under the audit-owned native directory. The
+     * bootstrapped corpus library is compiled there on first use; the
+     * intentionally missing-library wiring binds its never-built sibling
+     * path under the same directory, preserving the honest missing-library
+     * behavior.
+     */
+    static String auditNativeLoaderText(String label, CorpusFfi.Wiring wiring) {
+        Path directory = auditNativeDirectory;
+        if (directory == null) {
+            throw new IllegalStateException("the audit native directory is "
+                + "not initialized");
+        }
+        String basename = Path.of(wiring.nativeLibraryLoaderText())
+            .getFileName().toString();
+        if (CorpusFfi.NATIVE_LIBRARY_NAME.equals(basename)) {
+            return auditNativeLibrary(label);
+        }
+        return directory.resolve(basename).toAbsolutePath().normalize()
+            .toString();
+    }
+
+    /**
+     * The audit-owned compile of {@code support/native.c}: one GCC run per
+     * audit, into the audit's native directory, fail closed on a missing
+     * source, a missing GCC, or a failed compile (an audit-input defect,
+     * never a construct gap).
+     */
+    private static String auditNativeLibrary(String label) {
+        String cached = auditNativeLibraryPath;
+        if (cached != null) {
+            return cached;
+        }
+        synchronized (ProductionCorpusAuditTest.class) {
+            cached = auditNativeLibraryPath;
+            if (cached != null) {
+                return cached;
+            }
+            Path source = CONFORMANCE.resolve(CorpusFfi.SUPPORT_DIR)
+                .resolve(CorpusFfi.NATIVE_SOURCE_NAME)
+                .toAbsolutePath().normalize();
+            if (!Files.isRegularFile(source)) {
+                throw new AuditInputException(label
+                    + ": the committed FFI C fixture is missing: " + source);
+            }
+            Path library = auditNativeDirectory
+                .resolve(CorpusFfi.NATIVE_LIBRARY_NAME)
+                .toAbsolutePath().normalize();
+            try {
+                Process gcc = new ProcessBuilder("gcc", "-shared", "-fPIC",
+                    "-O2", "-o", library.toString(), source.toString())
+                    .redirectErrorStream(true)
+                    .start();
+                String output = new String(gcc.getInputStream().readAllBytes(),
+                    StandardCharsets.UTF_8);
+                int exit = gcc.waitFor();
+                if (exit != 0 || !Files.isRegularFile(library)) {
+                    throw new AuditInputException(label
+                        + ": the audit-owned FFI native-library bootstrap "
+                        + "failed (gcc exit " + exit + "): " + output.trim());
+                }
+            } catch (java.io.IOException | InterruptedException e) {
+                Thread.interrupted(); // clear the residual flag (no-op normally)
+                throw new AuditInputException(label
+                    + ": the audit-owned FFI native-library bootstrap failed: "
+                    + e.getMessage());
+            }
+            cached = library.toString();
+            auditNativeLibraryPath = cached;
+            return cached;
+        }
+    }
+
+    /**
+     * The repository build directory's content snapshot (relative path ->
+     * size, modification time, and content digest). The audit asserts its
+     * own read-only post-state against this snapshot, so a native bootstrap
+     * or any other write into the shared repository build products is
+     * detected even when {@code git status} cannot see it.
+     */
+    static Map<String, String> snapshotBuildDirectory() {
+        Path build = Path.of("build").toAbsolutePath().normalize();
+        Map<String, String> snapshot = new java.util.TreeMap<>();
+        if (!Files.isDirectory(build)) {
+            return snapshot;
+        }
+        try (Stream<Path> walk = Files.walk(build)) {
+            for (Path path : walk.filter(Files::isRegularFile)
+                    .sorted().toList()) {
+                String rel = CorpusDiscovery.slash(build.relativize(path));
+                String digest;
+                try {
+                    digest = sha256(Files.readAllBytes(path));
+                } catch (Exception e) {
+                    digest = "unreadable";
+                }
+                long modified;
+                try {
+                    modified = Files.getLastModifiedTime(path).toMillis();
+                } catch (Exception e) {
+                    modified = -1L;
+                }
+                snapshot.put(rel, Files.exists(path)
+                    ? sizeOf(path) + ":" + modified + ":" + digest : "absent");
+            }
+        } catch (Exception ignored) {
+            snapshot.put("<unreadable>", "<unreadable>");
+        }
+        return snapshot;
+    }
+
+    private static long sizeOf(Path path) {
+        try {
+            return Files.size(path);
+        } catch (Exception e) {
+            return -1L;
+        }
+    }
+
+    private static String sha256(byte[] bytes) throws Exception {
+        java.security.MessageDigest digest =
+            java.security.MessageDigest.getInstance("SHA-256");
+        byte[] hashed = digest.digest(bytes);
+        StringBuilder hex = new StringBuilder(hashed.length * 2);
+        for (byte b : hashed) {
+            hex.append(Character.forDigit((b >> 4) & 0xF, 16))
+                .append(Character.forDigit(b & 0xF, 16));
+        }
+        return hex.toString();
     }
 
     /**
@@ -1285,6 +1537,25 @@ public class ProductionCorpusAuditTest {
         return framing.getBytes(StandardCharsets.UTF_8);
     }
 
+    /**
+     * The runtime-error drive's framed stdout (the landed lane rule): the
+     * canonical capture framing is appended to the executed stdout, while
+     * the actual stderr and the exact exit code are preserved. Nothing is
+     * fabricated and nothing observable is discarded. The comparison then
+     * detects extra output on either stream and every process result other
+     * than the pinned one.
+     */
+    static byte[] framedRuntimeErrorStdout(Execution execution, Capture capture,
+            SidecarExpectations.ErrorExpectation pinned) {
+        byte[] framing = framedSnapshot(capture, pinned);
+        byte[] stdout = execution.stdout() == null
+            ? new byte[0] : execution.stdout();
+        byte[] joined = new byte[stdout.length + framing.length];
+        System.arraycopy(stdout, 0, joined, 0, stdout.length);
+        System.arraycopy(framing, 0, joined, stdout.length, framing.length);
+        return joined;
+    }
+
     /** The sidecar's typed expectation of one fixture and target. */
     static SidecarExpectations.RuntimeExpectation expectationOf(
             CorpusDiscovery.Fixture fixture, Target target) throws Exception {
@@ -1326,8 +1597,8 @@ public class ProductionCorpusAuditTest {
                     + (capture == null ? " (no capture)" : ""));
             }
             laneExecution = new LaneExecution.Executed(
-                framedSnapshot(capture, executed.error()),
-                new byte[0], 1);
+                framedRuntimeErrorStdout(execution, capture, executed.error()),
+                execution.stderr(), execution.exitCode());
         } else {
             if (capture != null && capture.error()) {
                 return Optional.of(fixtureLabel + " [" + target.laneName()
@@ -1378,55 +1649,61 @@ public class ProductionCorpusAuditTest {
         });
     }
 
+    /** True iff the diagnostic carries the CONSTRUCT_UNLOWERED guard rule. */
+    static boolean isConstructGuard(CompilerDiagnostic diagnostic) {
+        String message = diagnostic.message() == null ? ""
+            : diagnostic.message();
+        return message.contains(SemanticLowerer.CONSTRUCT_UNLOWERED);
+    }
+
+    /** True iff the capture is a genuine DEAL error (never a probe or non-DEAL outcome). */
+    static boolean isDealErrorCapture(Capture capture) {
+        return capture != null && capture.error() && capture.code() != null
+            && capture.message() != null
+            && !"NON_DEAL".equals(capture.code())
+            && !"PROBE_DEFECT".equals(capture.code());
+    }
+
     /**
      * The compile criterion of one cell: a compile with zero guard rules; on
      * the JVM the extern-C group's pinned rejection is the sanctioned
      * outcome. The declaration-import group is measured by this same
-     * materializing drive. A checker-valid guard leg is classed as the
-     * sibling-owned construct deficit (reported before the precondition,
-     * fatal once the compile criterion is met); the two architectural guards,
-     * a non-guard compile failure, and a pinned-rejection mismatch are always
-     * fatal.
+     * materializing drive. A guard leg is classed as the sibling-owned
+     * construct deficit only when every error it carries is the
+     * CONSTRUCT_UNLOWERED guard — a failure that mixes the guard with any
+     * other diagnostic is unclassified and fatal. The two architectural
+     * guards, a non-guard compile failure, and a pinned-rejection mismatch
+     * are always fatal.
      */
     static CellVerdict compileVerdict(String fixtureLabel, Target target,
             CompileOutcome outcome,
-            SidecarExpectations.RuntimeExpectation expectation) {
-        if (outcome.guardFired()) {
-            LegClass clazz = architecturalGuardFired(outcome)
-                ? LegClass.ARCHITECTURAL_GUARD : LegClass.CONSTRUCT_DEFICIT;
-            return new CellVerdict(false, clazz, fixtureLabel + " ["
-                + target.laneName() + "] compile E6005 guard: "
-                + outcome.firstErrorDetail());
+            SidecarExpectations.RuntimeExpectation expectation,
+            List<String> stagedArtifacts) {
+        if (architecturalGuardFired(outcome)) {
+            return new CellVerdict(false, LegClass.ARCHITECTURAL_GUARD,
+                fixtureLabel + " [" + target.laneName()
+                    + "] compile E6005 architectural guard: "
+                    + outcome.firstErrorDetail());
+        }
+        if (outcome.errors().stream()
+                .anyMatch(ProductionCorpusAuditTest::isConstructGuard)) {
+            boolean constructOnly = outcome.errors().stream()
+                .allMatch(ProductionCorpusAuditTest::isConstructGuard);
+            if (!constructOnly) {
+                return new CellVerdict(false, LegClass.DEFECT, fixtureLabel
+                    + " [" + target.laneName() + "] the compile failure mixes "
+                    + "the CONSTRUCT_UNLOWERED guard with other diagnostics ("
+                    + outcome.errors().stream().map(CompilerDiagnostic::code)
+                        .toList() + "): " + outcome.firstErrorDetail());
+            }
+            return new CellVerdict(false, LegClass.CONSTRUCT_DEFICIT,
+                fixtureLabel + " [" + target.laneName()
+                    + "] compile E6005 guard: " + outcome.firstErrorDetail());
         }
         if (expectation instanceof SidecarExpectations.RuntimeExpectation.Rejected
                 rejected) {
-            if (outcome.compiled()) {
-                return new CellVerdict(false, LegClass.DEFECT, fixtureLabel
-                    + " [" + target.laneName() + "] the sidecar pins compile "
-                    + "rejection " + rejected.code() + " but the production "
-                    + "compile emitted an artifact");
-            }
-            Optional<GateMismatch> mismatch = StructuredExpectationComparator
-                .compare(target.laneName(), expectation,
-                    new LaneExecution.Rejected(
-                        outcome.errors().isEmpty() ? "<none>"
-                            : outcome.errors().get(0).code(),
-                        rejected.line().isPresent()
-                            ? OptionalInt.of(outcome.errors().isEmpty() ? 0
-                                : outcome.errors().get(0).line())
-                            : OptionalInt.empty(),
-                        rejected.column().isPresent()
-                            ? OptionalInt.of(outcome.errors().isEmpty() ? 0
-                                : outcome.errors().get(0).column())
-                            : OptionalInt.empty()));
-            if (mismatch.isPresent()) {
-                return new CellVerdict(false, LegClass.DEFECT, fixtureLabel
-                    + " [" + target.laneName() + "] " + mismatch.get().clazz()
-                    + ": " + mismatch.get().detail());
-            }
-            return new CellVerdict(true, LegClass.PASS, fixtureLabel + " ["
-                + target.laneName() + "] PASS compile-reject "
-                + rejected.code());
+            return rejectionVerdict(fixtureLabel, target, outcome.compiled(),
+                outcome.errors(), rejected, stagedArtifacts);
         }
         if (!outcome.compiled()) {
             String rule = outcome.errors().stream().map(CompilerDiagnostic::code)
@@ -1438,6 +1715,130 @@ public class ProductionCorpusAuditTest {
         }
         return new CellVerdict(true, LegClass.PASS, fixtureLabel + " ["
             + target.laneName() + "] PASS compile");
+    }
+
+    /**
+     * The sanctioned compile-reject verdict (the extern-C divergent form,
+     * corpus C6). The complete diagnostic-code set must equal the pinned
+     * code — an additional declaration error (E2003) or any other extra code
+     * is a defect regardless of diagnostic ordering — and the failed compile
+     * must have staged nothing at all. Only then is the pinned diagnostic
+     * object reduced through the landed comparator.
+     */
+    static CellVerdict rejectionVerdict(String fixtureLabel, Target target,
+            boolean compiled, List<CompilerDiagnostic> errors,
+            SidecarExpectations.RuntimeExpectation.Rejected rejected,
+            List<String> stagedArtifacts) {
+        String label = fixtureLabel + " [" + target.laneName() + "]";
+        if (compiled) {
+            return new CellVerdict(false, LegClass.DEFECT, label
+                + " the sidecar pins compile rejection " + rejected.code()
+                + " but the production compile emitted an artifact");
+        }
+        List<String> codes = errors.stream().map(CompilerDiagnostic::code)
+            .toList();
+        if (codes.isEmpty()) {
+            return new CellVerdict(false, LegClass.DEFECT, label
+                + " the sidecar pins compile rejection " + rejected.code()
+                + " but the compile carries no diagnostic");
+        }
+        Set<String> distinct = new LinkedHashSet<>(codes);
+        if (!distinct.equals(Set.of(rejected.code()))) {
+            return new CellVerdict(false, LegClass.DEFECT, label
+                + " the sanctioned rejection pin is [" + rejected.code()
+                + "] but the compile carries " + codes
+                + " (the full code set is validated, never the first "
+                + "diagnostic only)");
+        }
+        if (!stagedArtifacts.isEmpty()) {
+            return new CellVerdict(false, LegClass.DEFECT, label
+                + " the rejected compile staged output: " + stagedArtifacts
+                + " (the rejection contract is reject-before-any-artifact)");
+        }
+        CompilerDiagnostic first = errors.get(0);
+        Optional<GateMismatch> mismatch = StructuredExpectationComparator
+            .compare(target.laneName(), rejected,
+                new LaneExecution.Rejected(first.code(),
+                    rejected.line().isPresent()
+                        ? OptionalInt.of(first.line()) : OptionalInt.empty(),
+                    rejected.column().isPresent()
+                        ? OptionalInt.of(first.column()) : OptionalInt.empty()));
+        if (mismatch.isPresent()) {
+            return new CellVerdict(false, LegClass.DEFECT, label + " "
+                + mismatch.get().clazz() + ": " + mismatch.get().detail());
+        }
+        return new CellVerdict(true, LegClass.PASS, label
+            + " PASS compile-reject " + rejected.code());
+    }
+
+    /**
+     * The capture verdict of one driven cell. Only a genuinely framed DEAL
+     * error may be a permitted interim projection deficit: the raw stdout
+     * and stderr must be untouched (the canonical framing is appended to the
+     * executed stdout, never substituted for it) and the exit code must be
+     * the pinned one. A probe defect, a NON_DEAL outcome, a normal
+     * completion, extra output on either stream, or any other exit code is
+     * an unclassified failure and fatal in every mode. A runtime-ok failure
+     * is permitted only when its cell and its captured code are exactly the
+     * pinned behavior inventory's.
+     */
+    static CellVerdict captureVerdict(String corpusPath, Target target,
+            Capture capture, Execution execution,
+            SidecarExpectations.RuntimeExpectation expectation,
+            Optional<String> mismatch) {
+        String label = corpusPath + " [" + target.laneName() + "]";
+        if (mismatch.isEmpty()) {
+            return new CellVerdict(true, LegClass.PASS, label + " PASS capture");
+        }
+        String detail = mismatch.get();
+        if (capture != null && capture.defect() != null) {
+            return new CellVerdict(false, LegClass.INFRASTRUCTURE, label
+                + " the deferred-entry probe reported a defect: "
+                + capture.defect());
+        }
+        if (expectation instanceof SidecarExpectations.RuntimeExpectation.Rejected
+                rejected) {
+            return new CellVerdict(false, LegClass.DEFECT, label
+                + " the sidecar pins compile rejection (" + rejected.code()
+                + ") but the reachable arm executed");
+        }
+        SidecarExpectations.RuntimeExpectation.Executed executed =
+            (SidecarExpectations.RuntimeExpectation.Executed) expectation;
+        if (executed.isRuntimeError()) {
+            boolean framed = isDealErrorCapture(capture)
+                && execution.stdout() != null && execution.stdout().length == 0
+                && execution.stderr() != null && execution.stderr().length == 0
+                && execution.exitCode() == executed.exitCode();
+            if (framed) {
+                return new CellVerdict(false, LegClass.PROJECTION_DEFICIT,
+                    detail + " - " + captureDetail(capture, executed.error()));
+            }
+            return new CellVerdict(false, LegClass.DEFECT, detail
+                + " (the drive did not present the pinned runtime-error "
+                + "outcome: the capture is "
+                + (capture == null ? "absent" : capture.code() + ": "
+                    + capture.message())
+                + ", stdout bytes=" + (execution.stdout() == null ? 0
+                    : execution.stdout().length)
+                + ", stderr bytes=" + (execution.stderr() == null ? 0
+                    : execution.stderr().length)
+                + ", exitCode=" + execution.exitCode()
+                + "; pinned exitCode=" + executed.exitCode() + ")");
+        }
+        BehaviorDeficit deficit = behaviorDeficitOf(corpusPath, target);
+        if (deficit != null && capture != null && capture.error()
+                && deficit.capturedCode().equals(capture.code())) {
+            return new CellVerdict(false, LegClass.BEHAVIOR_DEFICIT, detail
+                + " [interim behavior deficit: " + deficit.family() + "]");
+        }
+        return new CellVerdict(false, LegClass.DEFECT, detail
+            + (deficit == null
+                ? " (unclassified behavioral failure: the cell carries no "
+                    + "pinned interim behavior deficit)"
+                : " (the pinned interim behavior deficit expects the captured "
+                    + "code " + deficit.capturedCode() + ", got "
+                    + (capture == null ? "no capture"
+                        : capture.code() + ": " + capture.message()) + ")"));
     }
 
     // =========================================================================
@@ -1496,9 +1897,8 @@ public class ProductionCorpusAuditTest {
     // =========================================================================
 
     private static void testFixture(CorpusDiscovery.Fixture fixture,
-            List<String> report, List<String> declarationImports) throws Exception {
-        String fixtureRel = fixture.corpusPath().substring(0,
-            fixture.corpusPath().length() - ".deal".length());
+            List<String> report, List<String> declarationImports,
+            Map<String, CorpusDiscovery.Fixture> byPath) throws Exception {
         String label = fixture.corpusPath();
         List<Export> exports;
         try {
@@ -1512,23 +1912,27 @@ public class ProductionCorpusAuditTest {
                 || fixture.source().contains("candidate/")) {
             declarationImports.add(label);
         }
+        List<SidecarSchemaValidator.CompilationModule> compilationSet =
+            CorpusDiscovery.compilationSet(fixture, byPath, CONFORMANCE);
         for (Target target : Target.values()) {
-            materializeCompileDrive(fixture, fixtureRel, label, target, exports,
-                report);
+            materializeCompileDrive(fixture, compilationSet, label, target,
+                exports, report);
         }
     }
 
     /** One fixture/target cell: materialize, compile, and (when producible) drive. */
     private static void materializeCompileDrive(CorpusDiscovery.Fixture fixture,
-            String fixtureRel, String label, Target target, List<Export> exports,
+            List<SidecarSchemaValidator.CompilationModule> compilationSet,
+            String label, Target target, List<Export> exports,
             List<String> report) throws Exception {
-        Project project = materialize(fixtureRel, target, true);
+        Project project = materialize(label, compilationSet, target, true);
         try {
             CompileOutcome outcome = compile(project);
+            List<String> staged = stagedOutputFiles(project);
             SidecarExpectations.RuntimeExpectation expectation =
                 expectationOf(fixture, target);
             CellVerdict compileLeg = compileVerdict(label, target, outcome,
-                expectation);
+                expectation, staged);
             record(compileLeg, target, report);
             if (!compileLeg.pass()) {
                 return;
@@ -1550,7 +1954,10 @@ public class ProductionCorpusAuditTest {
                 fatal(label + " [" + target.laneName() + "] audit input: " + e);
                 return;
             } catch (Exception e) {
-                record(new CellVerdict(false, LegClass.CAPTURE_DEFICIT, label
+                // A broken tool invocation, a corrupted artifact, or a failed
+                // artifact load is infrastructure, never a construct or
+                // capture deficit: fatal in every mode.
+                record(new CellVerdict(false, LegClass.INFRASTRUCTURE, label
                     + " [" + target.laneName() + "]: the drive failed: " + e),
                     target, report);
                 return;
@@ -1559,22 +1966,53 @@ public class ProductionCorpusAuditTest {
             Capture normalized = normalize(project, execution.capture());
             Optional<String> mismatch = compareCell(label, target, normalized,
                 execution, expectation);
-            if (mismatch.isEmpty()) {
-                record(new CellVerdict(true, LegClass.PASS, label + " ["
-                    + target.laneName() + "] PASS capture"), target, report);
-                return;
-            }
-            String detail = mismatch.get();
-            if ((expectation
-                    instanceof SidecarExpectations.RuntimeExpectation.Executed
-                        executed) && executed.isRuntimeError()) {
-                detail = detail + " - " + captureDetail(normalized,
-                    executed.error());
-            }
-            record(new CellVerdict(false, LegClass.CAPTURE_DEFICIT, detail),
-                target, report);
+            record(captureVerdict(label, target, normalized, execution,
+                expectation, mismatch), target, report);
         } finally {
             deleteRecursively(project.root());
+        }
+    }
+
+    /**
+     * Every staged file of one compiled project, relative to its output root
+     * (the rejection pre-artifact check: a sanctioned rejection stages
+     * nothing at all).
+     */
+    static List<String> stagedOutputFiles(Project project) {
+        Path out = project.outputRoot();
+        if (!Files.isDirectory(out)) {
+            return List.of();
+        }
+        try (Stream<Path> walk = Files.walk(out)) {
+            return walk.filter(Files::isRegularFile)
+                .map(path -> CorpusDiscovery.slash(out.relativize(path)))
+                .sorted().toList();
+        } catch (Exception e) {
+            return List.of("<unreadable: " + e.getMessage() + ">");
+        }
+    }
+
+    /**
+     * The staged module artifacts of one compiled project, relative to its
+     * output root: every emitted module artifact, never the deployed
+     * runtime/stdlib surface (the production arm stages exactly the entry
+     * artifact, no per-module sibling). Used as the fidelity artifact-set
+     * assertion.
+     */
+    static List<String> stagedModuleArtifacts(Project project) {
+        Path out = project.outputRoot();
+        if (!Files.isDirectory(out)) {
+            return List.of();
+        }
+        try (Stream<Path> walk = Files.walk(out)) {
+            return walk.filter(Files::isRegularFile)
+                .map(path -> CorpusDiscovery.slash(out.relativize(path)))
+                .filter(rel -> !rel.startsWith("deal/")
+                    && !rel.startsWith("std/"))
+                .filter(rel -> rel.endsWith(".lua") || rel.endsWith(".java"))
+                .sorted().toList();
+        } catch (Exception e) {
+            return List.of("<unreadable: " + e.getMessage() + ">");
         }
     }
 
@@ -1596,11 +2034,15 @@ public class ProductionCorpusAuditTest {
 
     private static void testNegativeControl() throws Exception {
         System.out.println("-- the negative control: a corrupted staged artifact "
-            + "fails the audit by name --");
+            + "fails the audit by name, and the driver's own verdict function "
+            + "decides it --");
         String fixtureRel = "backend-runtime/control-flow/for-of-break-continue";
         CorpusDiscovery.Fixture fixture = fixtureOf(fixtureRel + ".deal");
         List<Export> exports = exportsOf(fixture.source(), fixture.corpusPath());
-        Project project = materialize(fixtureRel, Target.LUAJIT, true);
+        Project project = materialize(fixture.corpusPath(),
+            CorpusDiscovery.compilationSet(fixture,
+                CorpusDiscovery.discover(CONFORMANCE).corpusByPath(),
+                CONFORMANCE), Target.LUAJIT, true);
         try {
             CompileOutcome outcome = compile(project);
             check(outcome.compiled(), "the negative-control fixture compiles: "
@@ -1654,8 +2096,22 @@ public class ProductionCorpusAuditTest {
                     && corruptedMismatch.get().contains(fixture.corpusPath()),
                 "the corrupted-artifact failure names the fixture: "
                     + corruptedMismatch.orElse(""));
+
+            // The corpus driver's own verdict function decides this cell, and
+            // the corrupted artifact reaches a fatal class in every mode: the
+            // negative control proves the criterion is not vacuous, not just
+            // that a mismatch string exists.
+            CellVerdict corruptedVerdict = captureVerdict(fixture.corpusPath(),
+                Target.LUAJIT, capture, corruptedExecution, expectation,
+                corruptedMismatch);
+            check(!corruptedVerdict.pass()
+                    && isFatal(corruptedVerdict.clazz(), false)
+                    && isFatal(corruptedVerdict.clazz(), true),
+                "the corrupted-artifact verdict is fatal in every mode: "
+                    + corruptedVerdict.clazz() + " - "
+                    + corruptedVerdict.line());
             System.out.println("  negative control: "
-                + corruptedMismatch.orElse("<no failure>"));
+                + corruptedVerdict.line());
 
             // The compile criterion's guard detection is not vacuous: a
             // hand-built E6005 guard diagnostic is reported by the detector.
@@ -1669,30 +2125,248 @@ public class ProductionCorpusAuditTest {
                 "the guard detector reports a hand-built CONSTRUCT_UNLOWERED "
                     + "E6005");
 
-            // The acceptance policy's truth table is not vacuous: the
-            // pre-precondition rule reports the construct and capture deficit
-            // while the compile criterion is unmet, and the strict acceptance
-            // mode makes every non-pass leg fatal once it is met.
+            // The acceptance policy's truth table is not vacuous. The
+            // permitted early-leaf deficits are reported while the compile
+            // criterion is unmet and fatal once it is met; infrastructure
+            // failures, architectural guards, unclassified defects and
+            // rejection mismatches are fatal in both modes — no construct
+            // deficit in one cell can excuse any of them.
             check(!isFatal(LegClass.CONSTRUCT_DEFICIT, false)
-                    && !isFatal(LegClass.CAPTURE_DEFICIT, false),
-                "the pre-precondition reporting rule makes the construct and "
-                    + "capture deficit non-fatal while the compile criterion "
-                    + "is unmet");
+                    && !isFatal(LegClass.PROJECTION_DEFICIT, false)
+                    && !isFatal(LegClass.BEHAVIOR_DEFICIT, false),
+                "the pre-precondition reporting rule makes the construct, "
+                    + "projection and pinned behavior deficits non-fatal while "
+                    + "the compile criterion is unmet");
             check(isFatal(LegClass.CONSTRUCT_DEFICIT, true)
-                    && isFatal(LegClass.CAPTURE_DEFICIT, true),
+                    && isFatal(LegClass.PROJECTION_DEFICIT, true)
+                    && isFatal(LegClass.BEHAVIOR_DEFICIT, true),
                 "the strict acceptance mode makes every non-pass leg fatal");
             check(isFatal(LegClass.ARCHITECTURAL_GUARD, false)
                     && isFatal(LegClass.ARCHITECTURAL_GUARD, true)
                     && isFatal(LegClass.DEFECT, false)
-                    && isFatal(LegClass.DEFECT, true),
-                "architectural-guard legs and non-guard defects are fatal in "
-                    + "both modes");
+                    && isFatal(LegClass.DEFECT, true)
+                    && isFatal(LegClass.INFRASTRUCTURE, false)
+                    && isFatal(LegClass.INFRASTRUCTURE, true),
+                "architectural-guard, infrastructure and unclassified-defect "
+                    + "legs are fatal in both modes");
             check(!isFatal(LegClass.PASS, false)
                     && !isFatal(LegClass.PASS, true),
                 "a pin-exact leg is never fatal");
         } finally {
             deleteRecursively(project.root());
         }
+        runtimeErrorComparisonControls();
+        rejectionControls();
+        unclassifiedBehaviorControls();
+    }
+
+    /**
+     * The runtime-error comparison contract (the landed lane rule): the
+     * canonical framing is appended to the executed stdout, and the actual
+     * stderr and the exact exit code are preserved. A pin-exact execution
+     * passes; one extra byte on either stream and the exit codes immediately
+     * below and above the pinned one are detected, and every such failure is
+     * an unclassified defect (fatal in every mode), never a projection
+     * deficit.
+     */
+    private static void runtimeErrorComparisonControls() throws Exception {
+        System.out.println("-- the runtime-error comparison controls: the "
+            + "framing is appended, the streams and the status are preserved "
+            + "--");
+        String corpusPath = "backend-runtime/runtime-errors/int-div-zero-e8005.deal";
+        CorpusDiscovery.Fixture fixture = fixtureOf(corpusPath);
+        List<Export> exports = exportsOf(fixture.source(), corpusPath);
+        Project project = materialize(corpusPath,
+            CorpusDiscovery.compilationSet(fixture,
+                CorpusDiscovery.discover(CONFORMANCE).corpusByPath(),
+                CONFORMANCE), Target.LUAJIT, true);
+        try {
+            CompileOutcome outcome = compile(project);
+            check(outcome.compiled(), "the runtime-error control fixture "
+                + "compiles: " + outcome.firstErrorDetail());
+            if (!outcome.compiled()) {
+                return;
+            }
+            Execution pristine = execute(project, exports, Target.LUAJIT);
+            Capture capture = normalize(project, pristine.capture());
+            SidecarExpectations.RuntimeExpectation expectation =
+                expectationOf(fixture, Target.LUAJIT);
+            SidecarExpectations.RuntimeExpectation.Executed executed =
+                (SidecarExpectations.RuntimeExpectation.Executed) expectation;
+            check(capture != null && capture.error(),
+                "the runtime-error control drive captures the DEAL error");
+            checkEq(0, pristine.stdout() == null ? 0 : pristine.stdout().length,
+                "the pin-exact runtime-error drive writes no raw stdout");
+            checkEq(0, pristine.stderr() == null ? 0 : pristine.stderr().length,
+                "the pin-exact runtime-error drive writes no raw stderr");
+            Optional<String> exactMismatch = compareCell(corpusPath,
+                Target.LUAJIT, capture, pristine, expectation);
+            check(exactMismatch.isEmpty(),
+                "the pin-exact runtime-error execution passes: "
+                    + exactMismatch.orElse(""));
+            check(captureVerdict(corpusPath, Target.LUAJIT, capture, pristine,
+                    expectation, exactMismatch).pass(),
+                "the pin-exact runtime-error cell passes the driver's own "
+                    + "verdict function");
+
+            // The pin-exact execution above has empty raw streams; the
+            // comparison appends the canonical framing to the executed
+            // stdout, so any extra bytes on either stream (before the
+            // framing included) and any other process status must be
+            // detected and classified as an unclassified defect.
+            byte[] extraStdoutBytes = new byte[1];
+            extraStdoutBytes[0] = 'x';
+            Execution extraStdout = new Execution(executed.exitCode(),
+                extraStdoutBytes, pristine.stderr(), capture);
+            Optional<String> stdoutMismatch = compareCell(corpusPath,
+                Target.LUAJIT, capture, extraStdout, expectation);
+            check(stdoutMismatch.isPresent(),
+                "one extra stdout byte on a runtime-error drive is detected");
+            check(isFatal(captureVerdict(corpusPath, Target.LUAJIT, capture,
+                    extraStdout, expectation, stdoutMismatch).clazz(), false)
+                    && isFatal(captureVerdict(corpusPath, Target.LUAJIT, capture,
+                        extraStdout, expectation, stdoutMismatch).clazz(), true),
+                "extra stdout on a runtime-error cell is unclassified and fatal "
+                    + "in every mode");
+
+            Execution extraStderr = new Execution(executed.exitCode(),
+                pristine.stdout(), new byte[]{'x'}, capture);
+            Optional<String> stderrMismatch = compareCell(corpusPath,
+                Target.LUAJIT, capture, extraStderr, expectation);
+            check(stderrMismatch.isPresent(),
+                "one extra stderr byte on a runtime-error drive is detected");
+            check(isFatal(captureVerdict(corpusPath, Target.LUAJIT, capture,
+                    extraStderr, expectation, stderrMismatch).clazz(), false),
+                "extra stderr on a runtime-error cell is unclassified and fatal");
+
+            Execution exitBelow = new Execution(executed.exitCode() - 1,
+                pristine.stdout(), pristine.stderr(), capture);
+            Optional<String> belowMismatch = compareCell(corpusPath,
+                Target.LUAJIT, capture, exitBelow, expectation);
+            check(belowMismatch.isPresent(),
+                "the exit code immediately below the pinned one is detected");
+            check(isFatal(captureVerdict(corpusPath, Target.LUAJIT, capture,
+                    exitBelow, expectation, belowMismatch).clazz(), false),
+                "an exit code below the pinned one is unclassified and fatal");
+
+            Execution exitAbove = new Execution(executed.exitCode() + 1,
+                pristine.stdout(), pristine.stderr(), capture);
+            Optional<String> aboveMismatch = compareCell(corpusPath,
+                Target.LUAJIT, capture, exitAbove, expectation);
+            check(aboveMismatch.isPresent(),
+                "the exit code immediately above the pinned one is detected");
+            check(isFatal(captureVerdict(corpusPath, Target.LUAJIT, capture,
+                    exitAbove, expectation, aboveMismatch).clazz(), false),
+                "an exit code above the pinned one is unclassified and fatal");
+        } finally {
+            deleteRecursively(project.root());
+        }
+    }
+
+    /**
+     * The sanctioned compile-reject controls: the exact pinned code set with
+     * nothing staged passes; no diagnostics, an extra diagnostic in either
+     * order, a staged artifact beside the rejection, and a clean compile
+     * against a rejection pin are defects, fatal in every mode. This is the
+     * control that pins the full-code-set and pre-artifact rules the corpus
+     * driver's rejection verdict applies.
+     */
+    private static void rejectionControls() {
+        System.out.println("-- the sanctioned-rejection controls: the full code "
+            + "set and the staged-artifact state decide the verdict --");
+        SidecarExpectations.RuntimeExpectation.Rejected rejected =
+            new SidecarExpectations.RuntimeExpectation.Rejected("compile-reject",
+                "E6006", OptionalInt.empty(), OptionalInt.empty());
+        List<CompilerDiagnostic> pinned = List.of(controlDiagnostic(
+            deal.diagnostics.DiagnosticCode.E6006, "the pinned rejection"));
+        List<CompilerDiagnostic> extraAfter = List.of(
+            controlDiagnostic(deal.diagnostics.DiagnosticCode.E6006,
+                "the pinned rejection"),
+            controlDiagnostic(deal.diagnostics.DiagnosticCode.E2003,
+                "an additional declaration error"));
+        List<CompilerDiagnostic> extraBefore = List.of(
+            controlDiagnostic(deal.diagnostics.DiagnosticCode.E2003,
+                "an additional declaration error"),
+            controlDiagnostic(deal.diagnostics.DiagnosticCode.E6006,
+                "the pinned rejection"));
+
+        CellVerdict pass = rejectionVerdict("sample", Target.JVM, false, pinned,
+            rejected, List.of());
+        check(pass.pass(), "the exact pinned rejection set with nothing staged "
+            + "passes");
+        CellVerdict none = rejectionVerdict("sample", Target.JVM, false,
+            List.of(), rejected, List.of());
+        check(!none.pass(), "a rejection without diagnostics is a defect");
+        CellVerdict after = rejectionVerdict("sample", Target.JVM, false,
+            extraAfter, rejected, List.of());
+        CellVerdict before = rejectionVerdict("sample", Target.JVM, false,
+            extraBefore, rejected, List.of());
+        check(!after.pass() && !before.pass(),
+            "an additional diagnostic in either order is a defect");
+        CellVerdict staged = rejectionVerdict("sample", Target.JVM, false, pinned,
+            rejected, List.of("Sample.java"));
+        check(!staged.pass(),
+            "a rejection accompanied by a staged artifact is a defect");
+        CellVerdict compiled = rejectionVerdict("sample", Target.JVM, true,
+            List.of(), rejected, List.of());
+        check(!compiled.pass(),
+            "a clean compile against a rejection pin is a defect");
+        for (CellVerdict verdict : List.of(none, after, before, staged, compiled)) {
+            check(!verdict.pass() && isFatal(verdict.clazz(), false)
+                    && isFatal(verdict.clazz(), true),
+                "the rejection control is fatal in every mode: "
+                    + verdict.clazz() + " - " + verdict.line());
+        }
+    }
+
+    /**
+     * The unclassified-behavior controls: a runtime-ok capture failure on a
+     * cell outside the pinned interim behavior inventory is never permitted,
+     * while the inventory's own cell and captured code are — and the same
+     * inventory cell with a different captured code is not.
+     */
+    private static void unclassifiedBehaviorControls() throws Exception {
+        System.out.println("-- the unclassified-behavior controls: only the "
+            + "pinned interim inventory cells may be permitted --");
+        CorpusDiscovery.Fixture fixture = fixtureOf(
+            "backend-runtime/control-flow/for-of-string-unicode.deal");
+        SidecarExpectations.RuntimeExpectation.Executed expectation =
+            (SidecarExpectations.RuntimeExpectation.Executed) expectationOf(
+                fixture, Target.LUAJIT);
+        Execution execution = new Execution(1, new byte[0], new byte[0], null);
+        Capture pinned = new Capture("TEST_FAIL", "expected 5 scalar values",
+            null, null, null, null, null, null);
+        Optional<String> pinnedMismatch = Optional.of("pin mismatch");
+        CellVerdict permitted = captureVerdict(fixture.corpusPath(),
+            Target.LUAJIT, pinned, execution, expectation, pinnedMismatch);
+        check(permitted.clazz() == LegClass.BEHAVIOR_DEFICIT,
+            "the pinned interim behavior cell and code are permitted: "
+                + permitted.line());
+
+        Capture changed = new Capture("E8005", "a different failure",
+            null, null, null, null, null, null);
+        CellVerdict unlistedCode = captureVerdict(fixture.corpusPath(),
+            Target.LUAJIT, changed, execution, expectation, pinnedMismatch);
+        check(unlistedCode.clazz() == LegClass.DEFECT
+                && isFatal(unlistedCode.clazz(), false)
+                && isFatal(unlistedCode.clazz(), true),
+            "the same cell with a different captured code is an unclassified "
+                + "failure, fatal in every mode: " + unlistedCode.line());
+
+        CellVerdict unlistedCell = captureVerdict(
+            "backend-runtime/control-flow/for-of-break-continue.deal",
+            Target.LUAJIT, changed, execution, expectation, pinnedMismatch);
+        check(unlistedCell.clazz() == LegClass.DEFECT
+                && isFatal(unlistedCell.clazz(), false),
+            "a runtime-ok failure outside the inventory is an unclassified "
+                + "failure, fatal in every mode: " + unlistedCell.line());
+    }
+
+    /** A synthetic control diagnostic for the rejection-verdict controls. */
+    private static CompilerDiagnostic controlDiagnostic(
+            deal.diagnostics.DiagnosticCode code, String message) {
+        return CompilerDiagnostic.error(code, message,
+            deal.diagnostics.DiagnosticRange.synthetic("sample.deal"));
     }
 
     private static CorpusDiscovery.Fixture fixtureOf(String corpusPath)
@@ -1712,9 +2386,11 @@ public class ProductionCorpusAuditTest {
     // =========================================================================
 
     private static void testMaterializationFidelity() throws Exception {
-        System.out.println("-- the materialization fidelity: the declaration "
-            + "wiring and the companion layout are load-bearing (an omitted "
-            + "declaration reproduces the frontend E2003 gap) --");
+        System.out.println("-- the materialization fidelity: the complete "
+            + "compilation set with the lanes' layout and bytes, the "
+            + "declaration wiring, the compile outcome and the production "
+            + "artifact set (no declaration exemption; an omitted declaration "
+            + "still reproduces the frontend E2003 gap) --");
         String[] samples = {
             "backend-runtime/host-abi/host-array-return-ok",
             "backend-runtime/ffi/012-ffi-double-roundtrip",
@@ -1723,23 +2399,39 @@ public class ProductionCorpusAuditTest {
         };
         for (String fixtureRel : samples) {
             CorpusDiscovery.Fixture fixture = fixtureOf(fixtureRel + ".deal");
-            Project wired = materialize(fixtureRel, Target.LUAJIT, true);
+            List<SidecarSchemaValidator.CompilationModule> compilationSet =
+                CorpusDiscovery.compilationSet(fixture,
+                    CorpusDiscovery.discover(CONFORMANCE).corpusByPath(),
+                    CONFORMANCE);
+            Project wired = materialize(fixture.corpusPath(), compilationSet,
+                Target.LUAJIT, true);
             try {
-                // (a) The materialized layout: the implementation modules of
-                // the compilation set (the declaration modules are wired as
-                // bindings), the alias copy, and the nested companion.
+                // (a) The materialization equals the lanes': exactly the
+                // validated compilation set (the declaration modules
+                // included, never exempt), each at the lane's moduleTarget
+                // path with byte-identical validated stripped bytes.
                 Set<String> materialized = new LinkedHashSet<>(wired.modules()
                     .values().stream().map(Materialized::corpusPath).toList());
+                checkEq(new LinkedHashSet<>(compilationSet.stream()
+                        .map(SidecarSchemaValidator.CompilationModule::corpusPath)
+                        .toList()), materialized,
+                    fixtureRel + ": the materialized module set is exactly "
+                        + "the validated compilation set (declaration modules "
+                        + "included)");
                 for (SidecarSchemaValidator.CompilationModule module
-                        : CorpusDiscovery.compilationSet(fixture,
-                            CorpusDiscovery.discover(CONFORMANCE).corpusByPath(),
-                            CONFORMANCE)) {
-                    if (module.corpusPath().endsWith(".d.deal")) {
-                        continue; // a declaration module is wired as a binding
+                        : compilationSet) {
+                    Path expected = expectedModuleTarget(fixture,
+                        module.corpusPath(), wired.srcRoot());
+                    check(Files.isRegularFile(expected),
+                        fixtureRel + ": the compilation-set module "
+                            + module.corpusPath() + " sits at the lane's path "
+                            + wired.srcRoot().relativize(expected));
+                    if (Files.isRegularFile(expected)) {
+                        checkEq(module.source(), Files.readString(expected),
+                            fixtureRel + ": the materialized bytes of "
+                                + module.corpusPath()
+                                + " are the validated stripped source");
                     }
-                    check(materialized.contains(module.corpusPath()),
-                        fixtureRel + ": the materialization carries the "
-                            + "compilation-set module " + module.corpusPath());
                 }
                 if (fixtureRel.contains("async-cross-module")) {
                     check(Files.isRegularFile(wired.srcRoot()
@@ -1757,23 +2449,73 @@ public class ProductionCorpusAuditTest {
                             .resolve("ffi_candidate_native.d.deal")),
                         fixtureRel + ": the corpus FFI declaration is wired "
                             + "under bindings/");
+                    // The externals binding is the audit-owned native path,
+                    // never the repository build directory's library.
+                    String manifest = Files.readString(
+                        wired.root().resolve("deal.json"));
+                    check(manifest.contains(auditNativeDirectory
+                            .toAbsolutePath().normalize().toString()),
+                        fixtureRel + ": the nativeLibrary wiring binds the "
+                            + "audit-owned native directory");
                 }
                 for (String declaration : wired.rawToDeclaration().values()) {
                     check(Files.isRegularFile(wired.root().resolve(declaration)),
                         fixtureRel + ": the wired declaration exists: "
                             + declaration);
                 }
-                CompileOutcome outcome = compile(wired);
-                check(outcome.compiled(), fixtureRel + ": the wired "
-                    + "materialization compiles: " + outcome.firstErrorDetail());
+                // (b) The compile outcome and the production artifact set on
+                // both production targets: the wired materialization
+                // reproduces the sidecar's mode (compiled, or the sanctioned
+                // pinned rejection with nothing staged), and the production
+                // arm stages exactly the entry artifact (no per-module
+                // sibling).
+                for (Target target : Target.values()) {
+                    Project compiled = materialize(fixture.corpusPath(),
+                        compilationSet, target, true);
+                    try {
+                        CompileOutcome outcome = compile(compiled);
+                        SidecarExpectations.RuntimeExpectation expectation =
+                            expectationOf(fixture, target);
+                        if (expectation
+                                instanceof SidecarExpectations.RuntimeExpectation.Rejected
+                                    rejected) {
+                            CellVerdict verdict = rejectionVerdict(
+                                fixture.corpusPath(), target, outcome.compiled(),
+                                outcome.errors(), rejected,
+                                stagedOutputFiles(compiled));
+                            check(verdict.pass(), fixtureRel + " ["
+                                + target.laneName() + "]: the sample "
+                                + "reproduces the pinned rejection: "
+                                + verdict.line());
+                        } else {
+                            check(outcome.compiled(), fixtureRel + " ["
+                                + target.laneName() + "]: the wired "
+                                + "materialization compiles: "
+                                + outcome.firstErrorDetail());
+                            String entryArtifact = target == Target.JVM
+                                ? JvmBackend.classNameFor(
+                                    compiled.modulePath()) + ".java"
+                                : compiled.modulePath() + ".lua";
+                            checkEq(List.of(entryArtifact),
+                                stagedModuleArtifacts(compiled),
+                                fixtureRel + " [" + target.laneName()
+                                    + "]: the production arm stages exactly "
+                                    + "the entry artifact (no per-module "
+                                    + "sibling)");
+                        }
+                    } finally {
+                        deleteRecursively(compiled.root());
+                    }
+                }
             } finally {
                 deleteRecursively(wired.root());
             }
 
-            // (b) The load-bearing probe: omit the declaration wiring (host/
+            // (c) The load-bearing probe: omit the declaration wiring (host/
             // FFI) or the companion copy (relative import) and observe the
             // frontend E2003 gap the lanes' materialization prevents.
-            Project unwired = materialize(fixtureRel, Target.LUAJIT,
+            Project unwired = materialize(fixture.corpusPath(), compilationSet,
+                Target.LUAJIT,
                 !(fixtureRel.contains("host-abi") || fixtureRel.contains("ffi/012")));
             try {
                 if (fixtureRel.contains("modid-class-identity")) {
@@ -1797,6 +2539,16 @@ public class ProductionCorpusAuditTest {
                 deleteRecursively(unwired.root());
             }
         }
+    }
+
+    /** The lane's moduleTarget path of one compilation-set module. */
+    private static Path expectedModuleTarget(CorpusDiscovery.Fixture fixture,
+            String corpusPath, Path srcRoot) {
+        Path entryCorpus = CONFORMANCE.resolve(fixture.corpusPath())
+            .toAbsolutePath().normalize();
+        Path corpusFile = CONFORMANCE.resolve(corpusPath)
+            .toAbsolutePath().normalize();
+        return moduleTarget(corpusFile, entryCorpus.getParent(), srcRoot);
     }
 
     // =========================================================================
@@ -1847,39 +2599,65 @@ public class ProductionCorpusAuditTest {
             .filter(CorpusDiscovery.Fixture::runtimeClassified)
             .toList();
 
-        System.out.println("-- the compile and capture criteria: every dispatched "
-            + "fixture compiles on both production targets with zero producer "
-            + "guards, and every producible fixture's capture reproduces its "
-            + "sidecar through the landed comparison --");
+        // The audit-owned native directory (the corpus C library is
+        // bootstrapped there, never in the repository build/ directory) and
+        // the repository build-directory snapshot: the audit asserts its own
+        // read-only post-state against the snapshot, so a write into the
+        // shared build products is detected even where git status cannot see
+        // it.
+        auditNativeDirectory =
+            Files.createTempDirectory("production-corpus-audit-native-");
+        Map<String, String> buildBefore = snapshotBuildDirectory();
+        System.out.println("Repository build snapshot: " + buildBefore.size()
+            + " file(s) before the run"
+            + (buildBefore.containsKey(CorpusFfi.NATIVE_LIBRARY_NAME)
+                ? " (including " + CorpusFfi.NATIVE_LIBRARY_NAME + ")" : ""));
+
         List<String> report = Collections.synchronizedList(new ArrayList<>());
         List<String> declarationImports =
             Collections.synchronizedList(new ArrayList<>());
-        ExecutorService pool = Executors.newFixedThreadPool(auditJobs);
         try {
-            List<Future<?>> futures = new ArrayList<>();
-            for (CorpusDiscovery.Fixture fixture : dispatched) {
-                futures.add(pool.submit(() -> {
-                    try {
-                        testFixture(fixture, report, declarationImports);
-                    } catch (Exception e) {
-                        // An audit-input defect (an unresolvable declaration
-                        // wiring, a missing sidecar, a missing host
-                        // implementation): fatal, never a construct gap.
-                        fatal(fixture.corpusPath() + ": audit input: " + e);
-                    }
-                }));
+            System.out.println("-- the compile and capture criteria: every "
+                + "dispatched fixture compiles on both production targets "
+                + "with zero producer guards, and every producible fixture's "
+                + "capture reproduces its sidecar through the landed "
+                + "comparison --");
+            ExecutorService pool = Executors.newFixedThreadPool(auditJobs);
+            try {
+                List<Future<?>> futures = new ArrayList<>();
+                for (CorpusDiscovery.Fixture fixture : dispatched) {
+                    futures.add(pool.submit(() -> {
+                        try {
+                            testFixture(fixture, report, declarationImports,
+                                discovery.corpusByPath());
+                        } catch (Exception e) {
+                            // An audit-input defect (an unresolvable
+                            // declaration wiring, a missing sidecar, a
+                            // missing host implementation): fatal, never a
+                            // construct gap.
+                            fatal(fixture.corpusPath() + ": audit input: " + e);
+                        }
+                    }));
+                }
+                for (Future<?> future : futures) {
+                    future.get();
+                }
+            } finally {
+                pool.shutdown();
             }
-            for (Future<?> future : futures) {
-                future.get();
-            }
-        } finally {
-            pool.shutdown();
-        }
-        System.out.println("  declaration-importing group measured: "
-            + declarationImports.size() + " fixtures");
+            System.out.println("  declaration-importing group measured: "
+                + declarationImports.size() + " fixtures");
 
-        testNegativeControl();
-        testMaterializationFidelity();
+            testNegativeControl();
+            testMaterializationFidelity();
+        } finally {
+            deleteRecursively(auditNativeDirectory);
+        }
+
+        checkEq(buildBefore, snapshotBuildDirectory(),
+            "the audit leaves the repository build directory unchanged "
+                + "(no native-library bootstrap or any other write into the "
+                + "shared build products)");
 
         List<String> ordered = new ArrayList<>(report);
         ordered.sort(Comparator.naturalOrder());
@@ -1919,8 +2697,12 @@ public class ProductionCorpusAuditTest {
             leg.clazz() == LegClass.CONSTRUCT_DEFICIT).count();
         long architecturalDeficit = legs.stream().filter(leg ->
             leg.clazz() == LegClass.ARCHITECTURAL_GUARD).count();
-        long captureDeficit = legs.stream().filter(leg ->
-            leg.clazz() == LegClass.CAPTURE_DEFICIT).count();
+        long projectionDeficit = legs.stream().filter(leg ->
+            leg.clazz() == LegClass.PROJECTION_DEFICIT).count();
+        long behaviorDeficit = legs.stream().filter(leg ->
+            leg.clazz() == LegClass.BEHAVIOR_DEFICIT).count();
+        long infrastructure = legs.stream().filter(leg ->
+            leg.clazz() == LegClass.INFRASTRUCTURE).count();
         long defects = legs.stream().filter(leg ->
             leg.clazz() == LegClass.DEFECT).count();
         List<String> deficits = new ArrayList<>();
@@ -1929,9 +2711,9 @@ public class ProductionCorpusAuditTest {
                 continue;
             }
             if (isFatal(leg.clazz(), acceptanceMode)) {
-                fatal(leg.line());
+                fatal("[" + leg.clazz() + "] " + leg.line());
             } else {
-                deficits.add(leg.line());
+                deficits.add("[" + leg.clazz() + "] " + leg.line());
             }
         }
         System.out.println();
@@ -1943,11 +2725,14 @@ public class ProductionCorpusAuditTest {
             + (architecturalDeficit == 0 ? "PASS"
                 : "FAIL (" + architecturalDeficit + " legs)"));
         System.out.println("byte-exact captures on the producible set: "
-            + (captureDeficit == 0 ? "PASS"
-                : "FAIL (" + captureDeficit + " legs)"));
-        System.out.println("non-guard compile failures and pinned-rejection "
-            + "mismatches: " + (defects == 0 ? "none"
-                : defects + " legs"));
+            + (projectionDeficit + behaviorDeficit == 0 ? "PASS"
+                : "FAIL (" + projectionDeficit + " projection + "
+                    + behaviorDeficit + " pinned-behavior legs)"));
+        System.out.println("infrastructure failures (drive/load/toolchain): "
+            + (infrastructure == 0 ? "none" : infrastructure + " legs"));
+        System.out.println("non-guard compile failures, pinned-rejection "
+            + "mismatches, staged rejections and unclassified capture "
+            + "failures: " + (defects == 0 ? "none" : defects + " legs"));
         System.out.println("strict acceptance mode: " + (acceptanceMode
             ? "ENGAGED (every non-pin-exact capture leg is fatal)"
             : "DISENGAGED (the pre-precondition reporting rule: the "
