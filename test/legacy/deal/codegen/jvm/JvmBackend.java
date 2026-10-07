@@ -13038,6 +13038,25 @@ public final class JvmBackend {
 
     private String emitIndexRead(IndexExpr idx, Type target) {
         Type arrayType = typeOf(idx.array());
+        if (arrayType instanceof Type.Table) {
+            // ISSUE-0717 (defect snippets 01/02): the computed table read
+            // t["key"] (the checker pins the key's static type to string)
+            // shares the member read's contextual target projection. The
+            // receiver evaluates first, then the key (the spec's strict
+            // left-to-right order); a literal string key is carried
+            // statically, every other string-typed key emits its own
+            // expression.
+            String receiverCode = emitExpression(idx.array());
+            String keyCode;
+            if (idx.index() instanceof LiteralExpr literal
+                    && literal.value()
+                        instanceof LiteralValue.StringLiteral stringLiteral) {
+                keyCode = quoteJavaString(stringLiteral.value());
+            } else {
+                keyCode = emitExpression(idx.index());
+            }
+            return emitTableRead(receiverCode, keyCode, target, idx.span(), null);
+        }
         if (arrayType instanceof Type.Bytes) {
 
             List<String> codes = emitOperandsInOrder(
@@ -13524,15 +13543,30 @@ public final class JvmBackend {
         return sb.append("})").toString();
     }
 
-    private String emitTableRead(MemberAccessExpr mae) {
-        String obj = emitExpression(mae.object());
-        Type target = typeOf(mae);
-        String get = "(" + obj + ").get(" + quoteJavaString(mae.field()) + ")";
+    private String emitTableRead(String obj, String keyExpr, Type target,
+                                   Span span, MemberAccessExpr deferralNode) {
+        String get = "(" + obj + ").get(" + keyExpr + ")";
         if ((deferredHostArgReads != null
-                && deferredHostArgReads.contains(mae))
+                && deferralNode != null
+                && deferredHostArgReads.contains(deferralNode))
                 || (deferredConstructionReads != null
-                    && deferredConstructionReads.contains(mae))) {
-
+                    && deferralNode != null
+                    && deferredConstructionReads.contains(deferralNode))) {
+            // ISSUE-0303 D2 read-site deferral: ONLY a typed table read
+            // whose value is the whole (direct) host-call argument
+            // yields the raw value — the host-call boundary raises
+            // E8010 at the call, never a masking read-site E8001/E8003
+            // (the only read-shape in the corpus with a changed check
+            // site). A read nested inside the argument expression is a
+            // different node and keeps its pinned read-site check, so
+            // its statically-typed consumers still receive the checked
+            // carrier (pre-fix, the depth counter deferred every nested
+            // read too and a checker-legal program published an
+            // artifact javac rejected: Object cannot be converted to
+            // __StringArray). The receiver evaluates exactly once in
+            // order, exactly like the checked nullable/array branches
+            // below. The same deferral applies to a construction
+            // provided value whose field validates at phase 3 (D5).
             String temp = nextEvalTempName();
             preStatements.add(new PreLine(
                 "java.lang.Object " + temp + " = " + get + ";", 0));
@@ -13540,7 +13574,20 @@ public final class JvmBackend {
             return temp;
         }
         if (target instanceof Type.Class cls) {
-
+            // Locality is decided from the Type.Class MODULE PATH, then
+            // the name-keyed lookup — a same-named local class must not
+            // satisfy the guard for a foreign path (the read would run
+            // the LOCAL nominal check against a lib.C value, corrupting
+            // the nominal identity). An imported class (ISSUE-0109)
+            // dispatches on the DECLARING module's shared seam
+            // ({@code Lib.$check("@lib/C", v)}): its {@code instanceof}
+            // test and module-qualified identity string compare against
+            // the declaring module's generated class, so a genuine
+            // instance passes and a same-name sibling from another
+            // module reports E8001 "expected instance of @lib/C, got
+            // @other/C". A declared host class (ISSUE-0303 D4)
+            // dispatches on THIS module's seam against the synthesized
+            // shared record.
             if (isHostModuleClass(cls)) {
                 String record = hostRecordJavaRef(cls);
                 if (record == null) return "null";
@@ -13549,7 +13596,7 @@ public final class JvmBackend {
                         get) + ")";
             }
             if (!isLocalClassType(cls)) {
-                String importedModule = importedClassModuleRef(cls, mae.span());
+                String importedModule = importedClassModuleRef(cls, span);
                 if (importedModule == null) return "null";
                 return "((" + importedModule + "." + classNameForClass(cls.name())
                     + ") " + checkCall(
@@ -13559,7 +13606,7 @@ public final class JvmBackend {
             if (!moduleClasses.containsKey(cls.name())) {
                 unsupported("class-typed table read for class '"
                     + cls.name() + "' (only local module-level classes "
-                    + "are supported)", mae.span());
+                    + "are supported)", span);
                 return "null";
             }
             return "((" + classNameForClass(cls.name()) + ") "
@@ -13571,7 +13618,10 @@ public final class JvmBackend {
                 + ")";
         }
         if (target instanceof Type.Int) {
-
+            // ISSUE-0102: primitive table reads route through the
+            // descriptor-driven seam — a Long passes (checked against
+            // the int safe range), an integral in-range Double
+            // converts, anything else raises E8001.
             return int32Mode
                 ? "((java.lang.Integer) " + checkCall("\"int\"", get)
                     + ").intValue()"
@@ -13587,28 +13637,44 @@ public final class JvmBackend {
                 + ").booleanValue()";
         }
         if (target instanceof Type.Func f) {
-
+            // ISSUE-0102: a function-typed table read checks the stored
+            // wrapper's runtime descriptor through the shared seam's
+            // function branch ($FnValue) — a non-function or
+            // wrong-signature value raises E8001.
             String shape = registerWrapperShape(f);
             if (shape == null) {
                 unsupported("table field reads with target type "
-                    + typeName(target), mae.span());
+                    + typeName(target), span);
                 return "null";
             }
             return "((" + shape + ") "
                 + checkCall(quoteJavaString(typeDescriptor(f)), get) + ")";
         }
         if (target instanceof Type.String) {
-
+            // ISSUE-0106 (v1.2 boundary string validation): a string
+            // crossing the table boundary must be a java.lang.String with
+            // no unpaired surrogate code units — the seam's "string"
+            // branch runs the surrogate scan.
             return "((java.lang.String) " + checkCall("\"string\"", get)
                 + ")";
         }
         if (target instanceof Type.Bytes) {
-
+            // ISSUE-0160 D5 (dynamic boundaries): a table-held bytes
+            // read routes through the canonical $check realization —
+            // the bytes row accepts exactly a $DealRt.Bytes and raises
+            // E8001 "expected bytes, got {actual}" otherwise. The write
+            // side stores the raw wrapper reference (emitTableWrite), so
+            // the roundtrip preserves reference identity.
             return "(($DealRt.Bytes) " + checkCall("\"bytes\"", get)
                 + ")";
         }
         if (target instanceof Type.Nullable nn) {
-
+            // Nullable boundary checks (ISSUE-0108, unified ISSUE-0110):
+            // the read materializes the table lookup into an Object
+            // temporary (the receiver must evaluate exactly once) and the
+            // seam's ?T prefix applies check_nullable — null passes as
+            // the DEAL null, a value of the inner type passes, anything
+            // else raises E8001.
             String temp = nextEvalTempName();
             preStatements.add(new PreLine(
                 "java.lang.Object " + temp + " = " + get + ";", 0));
@@ -13618,7 +13684,7 @@ public final class JvmBackend {
                 if (!isLocalClassType(cls) || !moduleClasses.containsKey(cls.name())) {
                     unsupported("class-typed table read for class '"
                         + cls.name() + "' (only local module-level classes "
-                        + "are supported)", mae.span());
+                        + "are supported)", span);
                     return "null";
                 }
                 return "((" + classNameForClass(cls.name()) + ") "
@@ -13643,16 +13709,25 @@ public final class JvmBackend {
                         temp) + ")";
             }
             if (inner instanceof Type.Bytes) {
-
+                // ISSUE-0160 D5: the ?bytes row — Java null (the
+                // DEAL null) passes the ? prefix strip, exactly a
+                // $DealRt.Bytes passes, anything else raises E8001
+                // "expected bytes, got {actual}".
                 return "(($DealRt.Bytes) " + checkCall("\"?bytes\"", temp)
                     + ")";
             }
             if (inner instanceof Type.Func f) {
-
+                // ISSUE-0550 (dynamic boundary rows): a ?(bytes)->bytes
+                // read routes through the canonical seam's ? strip plus
+                // the function row — Java null (the DEAL null) passes,
+                // a wrapper whose carried descriptor byte-equals the
+                // expected canonical text passes, a descriptor delta
+                // raises E8010 and a non-wrapper raises E8001 "expected
+                // function".
                 String shape = registerWrapperShape(f);
                 if (shape == null) {
                     unsupported("table field reads with target type "
-                        + typeName(target), mae.span());
+                        + typeName(target), span);
                     return "null";
                 }
                 return "((" + shape + ") "
@@ -13666,19 +13741,25 @@ public final class JvmBackend {
                 // exactly these four inner types; anything else falls
                 // through to the single E6000 below (the pre-join gate
                 // order, so the diagnostic surface stays identical).
-                return "((" + nullableJavaType(inner, mae.span()) + ") "
+                return "((" + nullableJavaType(inner, span) + ") "
                     + checkCall(
                         quoteJavaString(runtimeTypeDescriptor(target)),
                         temp) + ")";
             }
             unsupported("table field reads with target type "
-                + typeName(target), mae.span());
+                + typeName(target), span);
             return "null";
         }
         if (target instanceof Type.Array arr) {
             String elementDesc = elementCheckDescriptor(arr.element());
             if (elementDesc == null) {
-
+                // ISSUE-0301 D5: nested-array, function-array, and
+                // bytes-array table reads route through the generated
+                // recursive $checkArray — the per-element-shape branch
+                // accepts the matching shared wrapper (identity) and an
+                // array-mode $DealRt.Table (elements checked recursively
+                // in index order, E8003 at the first failing index,
+                // converted into fresh wrapper storage).
                 if (arrayWrapperName(arr.element()) != null
                         && (arr.element() instanceof Type.Array
                             || arr.element() instanceof Type.Func
@@ -13688,7 +13769,7 @@ public final class JvmBackend {
                     elementDesc = typeDescriptor(arr.element());
                 } else {
                     unsupported("table field reads with target type "
-                        + typeName(target), mae.span());
+                        + typeName(target), span);
                     return "null";
                 }
             }
@@ -13702,8 +13783,20 @@ public final class JvmBackend {
         }
         unsupported("table field reads with target type " + typeName(target)
             + " (this slice checks class, nullable, array, and table "
-            + "targets only)", mae.span());
+            + "targets only)", span);
         return "null";
+    }
+
+    /**
+     * The member-access entry of the shared table read (ISSUE-0717): the
+     * static key {@code t.key} passes the read-site deferral node so the
+     * host-argument/construction deferral keeps working; a computed read
+     * ({@code t["key"]}) passes {@code null} (its node is never in the
+     * member-access deferral sets).
+     */
+    private String emitTableRead(MemberAccessExpr mae) {
+        return emitTableRead(emitExpression(mae.object()),
+            quoteJavaString(mae.field()), typeOf(mae), mae.span(), mae);
     }
 
     private String emitIntrinsicCall(String name, CallExpr call) {
@@ -13844,8 +13937,38 @@ public final class JvmBackend {
 
             Type indexType = typeOf(idx);
             if (indexType instanceof Type.Table) {
-                unsupported("table indexing", idx.span());
-                return "null";
+                // ISSUE-0717 (defect snippets 01/02): the computed table
+                // write t["key"] = v — the receiver, the string key, and
+                // the RHS evaluate left to right, and the value is stored
+                // raw through the same $tPut seam the member write uses
+                // (the spec's table write: no field-level schema, no
+                // runtime check).
+                Type valueType = typeOf(ae.value());
+                List<String> codes = emitOperandsInOrder(
+                    List.of(idx.array(), idx.index(), ae.value()));
+                String valueCode = adaptIntBoundary(ae.value(), codes.get(2),
+                    valueType);
+                String boxed = switch (valueType) {
+                    case Type.Int ignored ->
+                        (int32Mode ? "java.lang.Integer" : "java.lang.Long")
+                            + ".valueOf(" + valueCode + ")";
+                    case Type.Number ignored ->
+                        "java.lang.Double.valueOf(" + codes.get(2) + ")";
+                    case Type.Boolean ignored ->
+                        "java.lang.Boolean.valueOf(" + codes.get(2) + ")";
+                    case Type.Null ignored -> "(java.lang.Object) null";
+                    case Type.Bytes ignored -> codes.get(2);
+                    default -> codes.get(2);
+                };
+                String unbox = switch (valueType) {
+                    case Type.Int ignored ->
+                        int32Mode ? ".intValue()" : ".longValue()";
+                    case Type.Number ignored -> ".doubleValue()";
+                    case Type.Boolean ignored -> ".booleanValue()";
+                    default -> "";
+                };
+                return "$tPut(" + codes.get(0) + ", " + codes.get(1)
+                    + ", " + boxed + ")" + unbox;
             }
             if (indexType instanceof Type.Error) {
                 unsupported("array element assignment to an errored type",
