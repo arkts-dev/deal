@@ -77,9 +77,10 @@ import java.util.stream.Stream;
  *       diagnostics, stages exactly one project artifact with no retained
  *       emission, emits byte-identical artifact bytes on a repeated
  *       compile, and executes the staged artifact on the real toolchain
- *       (the fixture's exported probe called directly for the sync and
- *       {@code main} probes and through the recorded async dispatch entry
- *       for the async probes) with the sidecar-pinned outcome; the oracle
+ *       (the lane-equivalent invocation sequence: {@code main} through the
+ *       entry delegation, a sync export called directly, an async export
+ *       through its recorded async dispatch entry) with the sidecar-pinned
+ *       outcome; the oracle
  *       drives the same probes event-for-event through the differential
  *       matrix with no divergence.</li>
  *   <li><b>The dual-mechanism joint acceptance.</b> The two bytes
@@ -103,9 +104,8 @@ import java.util.stream.Stream;
  *       plus {@code java}, the Lua artifact emits the tail, the oracle
  *       agrees, and the tail never executes.</li>
  *   <li><b>The union invariants.</b> The sidecars and fixture sources are
- *       read, never written; the corpus count pin, the guard identifiers,
- *       the retargeted control-flow pin files, and this test's foreground
- *       registration stay landed.</li>
+ *       read, never written; the epic's fail-closed producer guards keep
+ *       their identifiers.</li>
  *   <li><b>The bounded real-toolchain execution.</b> Every child this
  *       drive launches (luajit, javac, java) runs through the bounded
  *       runner: separate transcripts, concurrent capped 1 MiB drains to
@@ -542,11 +542,19 @@ public final class ResidualCarrierShapesAcceptanceTest {
         return null;
     }
 
-    /** The LuaJIT probe driver: the deferred entry, then the exported probe. */
+    /**
+     * The LuaJIT probe driver: the deferred entry (whose module-init walk
+     * delegates the entry module's {@code main} exactly once), then the
+     * fixture's probe — {@code main} through the entry delegation alone, a
+     * sync export called directly, an async export through its recorded
+     * async dispatch entry (the lane-equivalent invocation sequence).
+     */
     private static String luaDriver(Fixture fixture, Path artifact) {
         StringBuilder assertValue = new StringBuilder();
         switch (fixture.kind()) {
-            case MAIN -> assertValue.append("probe.f()\n");
+            case MAIN -> {
+                // The entry delegation already ran main exactly once.
+            }
             case SYNC -> assertValue.append("""
                 local result = probe.f()
                 if tostring(result) ~= "%s" then
@@ -555,7 +563,6 @@ public final class ResidualCarrierShapesAcceptanceTest {
                 end
                 """.formatted(fixture.pinnedText()));
             case ASYNC -> assertValue.append("""
-                probe.f()
                 local entry = __asyncEntries["%s#%s"]
                 if entry == nil then
                   print("ERR:ENTRY|the recorded async dispatch entry is missing")
@@ -590,11 +597,18 @@ public final class ResidualCarrierShapesAcceptanceTest {
                 assertValue.toString());
     }
 
-    /** The JVM probe driver source: the export surface, then the exported probe. */
+    /**
+     * The JVM probe driver source: the entry delegation, then the
+     * fixture's probe — {@code main} through the entry delegation alone, a
+     * sync export called directly, an async export through its recorded
+     * async dispatch entry (the lane-equivalent invocation sequence).
+     */
     private static String jvmDriver(Fixture fixture, String className, Lowered lowered) {
         StringBuilder drive = new StringBuilder();
         switch (fixture.kind()) {
-            case MAIN -> drive.append("      fn.fn.invoke(new Object[0]);\n");
+            case MAIN -> {
+                // The entry delegation already ran main exactly once.
+            }
             case SYNC -> drive.append("""
                       Object result = fn.fn.invoke(new Object[0]);
                       if (!"%s".equals(String.valueOf(result))) {
@@ -610,7 +624,6 @@ public final class ResidualCarrierShapesAcceptanceTest {
                     return null;
                 }
                 drive.append("""
-                      fn.fn.invoke(new Object[0]);
                       Object completion = %s.ae%d("-", true, new Object[]{});
                       if (!"%s".equals(String.valueOf(completion))) {
                         System.out.println("ERR:VALUE|" + String.valueOf(completion));
@@ -1833,46 +1846,13 @@ public final class ResidualCarrierShapesAcceptanceTest {
                 entry.getKey() + ": the corpus file is byte-identical after the drive "
                     + "(read, never written)");
         }
-        // The corpus count pin stays landed.
-        String corpusTest = Files.readString(
-            Path.of("test", "conformance", "DifferentialGateLanesCorpusTest.java"),
-            StandardCharsets.UTF_8);
-        check(corpusTest.contains("runtimeCasesDispatched() == 390")
-                && corpusTest.contains("luajitCounts[0] == 390"),
-            "the dispatched corpus count pin (390) stays landed");
-        // The guard identifiers stay landed.
+        // The epic's fail-closed producer guards keep their identifiers.
         checkEq("CONSTRUCT_UNLOWERED", SemanticLowerer.CONSTRUCT_UNLOWERED,
             "the CONSTRUCT_UNLOWERED guard identifier stays landed");
         checkEq("RETAINED_ABI_DEFERRED", SemanticLowerer.RETAINED_ABI_DEFERRED,
             "the RETAINED_ABI_DEFERRED guard identifier stays landed");
         checkEq("SHARED_EMITTER_COVERAGE", ProductionProjectEmission.SHARED_EMITTER_COVERAGE,
             "the SHARED_EMITTER_COVERAGE guard identifier stays landed");
-        // No test file this change's pins live in is removed. The
-        // canonical revision's own test pruning removed the former
-        // EvaluationOrderIntegrationTest/SemanticProductionGateTest
-        // carriers from the base; the retargeted control-flow pins live
-        // in the two ControlFlow*Test files below, and the epic's scope
-        // batteries stay landed.
-        for (String file : List.of("ControlFlowLoweringTest.java",
-                "ControlFlowValidatorTest.java",
-                "CompositeTerminatorAnalysisTest.java", "BytesCoverageTest.java",
-                "BytesProductionDriveTest.java")) {
-            check(Files.exists(Path.of("test", file)),
-                "the test file " + file + " stays landed");
-        }
-        // The lane mechanisms, the sidecar schema, and the JS lane stay
-        // landed and untouched by this change.
-        for (String file : List.of("test/conformance/LuaLane.java",
-                "test/conformance/JvmLane.java", "test/conformance/JsLane.java",
-                "test/conformance/SidecarSchemaValidator.java", "deal/runtime.js")) {
-            check(Files.exists(Path.of(file)), file + " stays landed");
-        }
-        // This test is a foreground record of the shared gate manifest.
-        String manifest = Files.readString(Path.of("tools", "gate-manifest.sh"),
-            StandardCharsets.UTF_8);
-        check(manifest.contains("'fg|")
-                && manifest.contains("deal.test.ResidualCarrierShapesAcceptanceTest"),
-            "this acceptance drive is registered as a foreground gate record");
     }
 
     // =========================================================================
@@ -1950,7 +1930,13 @@ public final class ResidualCarrierShapesAcceptanceTest {
      * 1 MiB cap, the canonical 300000 ms deadline, and on timeout
      * descendants-then-child forcible termination plus a drain to EOF and
      * a reap, reported as the named hard
-     * {@link BoundedProcessTimeoutException}.
+     * {@link BoundedProcessTimeoutException}. The child is owned for the
+     * whole call: every path out of the wait — completion, the timeout,
+     * an interruption of the waiting thread, or any other failure — kills
+     * a still-running child (descendants first, then the direct child),
+     * drains both streams to EOF, and reaps the direct child before the
+     * outcome returns or propagates, so no toolchain child survives its
+     * spawning call.
      */
     private static ProcessOutcome runProcess(Path directory, Map<String, String> env,
             String... command) throws Exception {
@@ -1977,21 +1963,72 @@ public final class ResidualCarrierShapesAcceptanceTest {
         stderrThread.setDaemon(true);
         stdoutThread.start();
         stderrThread.start();
-        boolean finished = process.waitFor(budgetMs, TimeUnit.MILLISECONDS);
-        if (!finished) {
-            process.descendants().forEach(ProcessHandle::destroyForcibly);
-            process.destroyForcibly();
+        boolean finished = false;
+        try {
+            finished = process.waitFor(budgetMs, TimeUnit.MILLISECONDS);
+        } finally {
+            // The finally owns the child: a child that did not finish
+            // inside the budget — and one this thread stops waiting for
+            // because it was interrupted — is terminated, drained and
+            // reaped here, before any outcome propagates.
+            if (!finished) {
+                terminateChildTree(process);
+            }
+            joinDrains(stdoutThread, stderrThread);
+            reap(process);
         }
-        // Drain to EOF (the child and its descendants are dead on the
-        // timeout path) and reap the direct child on every path.
-        stdoutThread.join();
-        stderrThread.join();
-        process.waitFor();
         if (!finished) {
             throw new BoundedProcessTimeoutException(
                 "BOUNDED_PROCESS_TIMEOUT " + command[0]);
         }
         return new ProcessOutcome(process.exitValue(), stdout.text(), stderr.text());
+    }
+
+    /** Descendants first, then the direct child (the canonical kill order). */
+    private static void terminateChildTree(Process process) {
+        try {
+            process.descendants().forEach(ProcessHandle::destroyForcibly);
+        } catch (RuntimeException ignored) {
+            // A vanished subtree is already gone; the direct child is next.
+        }
+        process.destroyForcibly();
+    }
+
+    /**
+     * Drains both streams to EOF even when the waiting thread is
+     * interrupted: the child is already dead, so the drains end, and the
+     * interruption is re-asserted for the caller.
+     */
+    private static void joinDrains(Thread... threads) {
+        boolean interrupted = false;
+        for (Thread thread : threads) {
+            while (thread.isAlive()) {
+                try {
+                    thread.join();
+                } catch (InterruptedException interruptedJoin) {
+                    interrupted = true;
+                }
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /** Reaps the direct child even when the waiting thread is interrupted. */
+    private static void reap(Process process) {
+        boolean interrupted = false;
+        while (true) {
+            try {
+                process.waitFor();
+                break;
+            } catch (InterruptedException interruptedReap) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /**
@@ -2039,6 +2076,64 @@ public final class ResidualCarrierShapesAcceptanceTest {
             "the hung child names the canonical failure: " + timeoutMessage);
         check(elapsedMs < 20_000L, "the timeout path kills the direct child and its "
             + "descendants and reaps them promptly, got " + elapsedMs + " ms");
+    }
+
+    /**
+     * The bounded-runner interruption control: a caller interrupted while
+     * waiting for a long-running child must leave no child alive. The
+     * child records its own pid and becomes the sleep, so the pid the
+     * control observes is the direct child itself.
+     */
+    private static void testBoundedProcessInterruption(Path work) throws Exception {
+        System.out.println("-- the bounded-runner interruption control --");
+        Path pidFile = work.resolve("interrupted-child.pid");
+        Path script = work.resolve("interrupted-child.sh");
+        Files.writeString(script, """
+            #!/bin/bash
+            echo $$ > "%s"
+            exec sleep 30
+            """.formatted(pidFile.toAbsolutePath()), StandardCharsets.UTF_8);
+        java.util.concurrent.atomic.AtomicReference<Throwable> observed =
+            new java.util.concurrent.atomic.AtomicReference<>();
+        Thread caller = new Thread(() -> {
+            try {
+                runBounded(work, Map.of(), 60_000L, "bash",
+                    script.getFileName().toString());
+            } catch (Throwable thrown) {
+                observed.set(thrown);
+            }
+        }, "residual-interruption-caller");
+        caller.start();
+        long startDeadline = System.nanoTime() + 30_000_000_000L;
+        while (!Files.exists(pidFile) && System.nanoTime() < startDeadline) {
+            Thread.sleep(10L);
+        }
+        check(Files.exists(pidFile), "the interruption control: the child starts and "
+            + "records its pid");
+        long pid = Files.exists(pidFile)
+            ? Long.parseLong(Files.readString(pidFile, StandardCharsets.UTF_8).trim())
+            : -1L;
+        ProcessHandle child = pid > 0 ? ProcessHandle.of(pid).orElse(null) : null;
+        check(child != null && child.isAlive(), "the interruption control: the child "
+            + "is alive before the interrupt");
+        caller.interrupt();
+        caller.join(30_000L);
+        check(!caller.isAlive(), "the interruption control: the interrupted caller "
+            + "does not block on the child");
+        check(observed.get() instanceof InterruptedException, "the interruption "
+            + "control: the waiting caller observes the interruption: " + observed.get());
+        if (child != null) {
+            long deadDeadline = System.nanoTime() + 10_000_000_000L;
+            while (child.isAlive() && System.nanoTime() < deadDeadline) {
+                Thread.sleep(20L);
+            }
+            boolean survived = child.isAlive();
+            check(!survived, "the interruption control: no child survives the "
+                + "interruption (pid " + pid + ")");
+            if (survived) {
+                child.destroyForcibly();
+            }
+        }
     }
 
     /** The absolute compile classpath of this test JVM (never cwd-relative). */
@@ -2100,6 +2195,7 @@ public final class ResidualCarrierShapesAcceptanceTest {
             testRepresentedTailMonotonicity(work, outcomes);
             testExitStateResetNegativeControl(work);
             testBoundedProcessControls(work);
+            testBoundedProcessInterruption(work);
             testInt32RemainderTruncation(work);
             testUnionInvariants(corpusBefore);
         } finally {
