@@ -109,10 +109,14 @@ import java.util.stream.Stream;
  *   <li><b>The bounded real-toolchain execution.</b> Every child this
  *       drive launches (luajit, javac, java) runs through the bounded
  *       runner: separate transcripts, concurrent capped 1 MiB drains to
- *       EOF, the canonical 300000 ms deadline, descendant-then-child
- *       forcible termination, and the named hard
+ *       EOF, one monotonic deadline over the child and its stream
+ *       drainage, complete owned-tree termination (the child leads its
+ *       own process group, so a descendant that outlives the direct child
+ *       dies before the call returns), and the named hard
  *       {@code BOUNDED_PROCESS_TIMEOUT} failure — with a finite
- *       stderr-flood check and a timeout check.</li>
+ *       stderr-flood check, a timeout check, an interruption check, and
+ *       descendant-cleanup checks for inherited pipes and redirected
+ *       streams.</li>
  * </ol>
  */
 public final class ResidualCarrierShapesAcceptanceTest {
@@ -1925,18 +1929,55 @@ public final class ResidualCarrierShapesAcceptanceTest {
     }
 
     /**
+     * The bounded post-kill drainage grace: once the owned tree is
+     * terminated the pipes reach EOF promptly, so the ownership cleanup
+     * after the kill cannot extend the invocation beyond this window.
+     */
+    private static final long POST_KILL_DRAIN_BUDGET_MS = 5_000L;
+
+    /** The bounded reap window for the direct child. */
+    private static final long REAP_BUDGET_MS = 5_000L;
+
+    /**
+     * The process-group tools of the bounded runner. Every child starts
+     * through {@code setsid}, so the direct child leads its own process
+     * group: the runner can kill the whole owned tree — including a
+     * descendant that outlives the direct child and is reparented, which
+     * {@link Process#descendants()} can no longer see — instead of only
+     * the processes that are still parented. Both tools are resolved once,
+     * by absolute path, so a child environment's {@code PATH} cannot
+     * redirect them; when {@code setsid} is unavailable the runner
+     * degrades to descendant-then-child termination inside the same
+     * deadline.
+     */
+    private static final String SETSID_BINARY = firstExecutable("/usr/bin/setsid", "/bin/setsid");
+    private static final String KILL_BINARY = firstExecutable("/bin/kill", "/usr/bin/kill");
+
+    private static String firstExecutable(String... candidates) {
+        for (String candidate : candidates) {
+            if (Files.isExecutable(Path.of(candidate))) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /**
      * The bounded real-toolchain runner: separate stdout/stderr
      * transcripts, both streams drained concurrently with the canonical
      * 1 MiB cap, the canonical 300000 ms deadline, and on timeout
-     * descendants-then-child forcible termination plus a drain to EOF and
-     * a reap, reported as the named hard
-     * {@link BoundedProcessTimeoutException}. The child is owned for the
-     * whole call: every path out of the wait — completion, the timeout,
-     * an interruption of the waiting thread, or any other failure — kills
-     * a still-running child (descendants first, then the direct child),
+     * descendants-then-group-then-child forcible termination plus a drain
+     * to EOF and a reap, reported as the named hard
+     * {@link BoundedProcessTimeoutException}. One monotonic deadline
+     * covers the direct child and the drainage of both streams: a
+     * descendant that inherited the pipes cannot stretch the invocation
+     * past the deadline and is terminated with the rest of the owned tree.
+     * The child is owned for the whole call: every path out of the wait —
+     * the child's completion, the deadline, an interruption of the waiting
+     * thread, or any other failure — terminates the whole owned tree,
      * drains both streams to EOF, and reaps the direct child before the
-     * outcome returns or propagates, so no toolchain child survives its
-     * spawning call.
+     * outcome returns or propagates, so no toolchain child and no
+     * descendant survives its spawning call.
      */
     private static ProcessOutcome runProcess(Path directory, Map<String, String> env,
             String... command) throws Exception {
@@ -1950,10 +1991,17 @@ public final class ResidualCarrierShapesAcceptanceTest {
      */
     private static ProcessOutcome runBounded(Path directory, Map<String, String> env,
             long budgetMs, String... command) throws Exception {
-        ProcessBuilder builder = new ProcessBuilder(command);
+        boolean ownGroup = SETSID_BINARY != null;
+        List<String> argv = new ArrayList<>();
+        if (ownGroup) {
+            argv.add(SETSID_BINARY);
+        }
+        argv.addAll(Arrays.asList(command));
+        ProcessBuilder builder = new ProcessBuilder(argv);
         builder.directory(directory.toFile());
         builder.redirectErrorStream(false);
         builder.environment().putAll(env);
+        long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs);
         Process process = builder.start();
         CappedDrain stdout = new CappedDrain(process.getInputStream());
         CappedDrain stderr = new CappedDrain(process.getErrorStream());
@@ -1963,71 +2011,161 @@ public final class ResidualCarrierShapesAcceptanceTest {
         stderrThread.setDaemon(true);
         stdoutThread.start();
         stderrThread.start();
+        boolean[] interrupted = {false};
         boolean finished = false;
+        boolean drained = false;
+        String timeout = null;
         try {
-            finished = process.waitFor(budgetMs, TimeUnit.MILLISECONDS);
+            finished = waitForChild(process, deadlineNanos, interrupted);
+            // The same deadline bounds the child and its stream drainage:
+            // a reparented descendant that holds the inherited pipes ends
+            // the invocation with the named timeout, never with a delay.
+            drained = awaitDrains(stdoutThread, stderrThread, deadlineNanos, interrupted);
+            if (!finished) {
+                timeout = "BOUNDED_PROCESS_TIMEOUT " + command[0];
+            } else if (!drained) {
+                timeout = "BOUNDED_PROCESS_TIMEOUT " + command[0]
+                    + " (the stream drainage exceeded the child deadline)";
+            }
         } finally {
-            // The finally owns the child: a child that did not finish
+            // The finally owns the whole tree: a child that did not finish
             // inside the budget — and one this thread stops waiting for
             // because it was interrupted — is terminated, drained and
             // reaped here, before any outcome propagates.
-            if (!finished) {
-                terminateChildTree(process);
-            }
-            joinDrains(stdoutThread, stderrThread);
-            reap(process);
+            terminateTree(process, ownGroup, interrupted);
+            awaitDrains(stdoutThread, stderrThread,
+                System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(POST_KILL_DRAIN_BUDGET_MS),
+                interrupted);
+            reap(process, interrupted);
         }
-        if (!finished) {
-            throw new BoundedProcessTimeoutException(
-                "BOUNDED_PROCESS_TIMEOUT " + command[0]);
+        if (interrupted[0]) {
+            Thread.interrupted();
+            throw new InterruptedException("interrupted while waiting for " + command[0]);
+        }
+        if (timeout != null) {
+            throw new BoundedProcessTimeoutException(timeout);
         }
         return new ProcessOutcome(process.exitValue(), stdout.text(), stderr.text());
     }
 
-    /** Descendants first, then the direct child (the canonical kill order). */
-    private static void terminateChildTree(Process process) {
+    /**
+     * Waits for the direct child inside the one deadline; {@code false}
+     * means the deadline expired. An interruption is recorded and left to
+     * the caller's finally, which owns the tree before the interruption
+     * propagates.
+     */
+    private static boolean waitForChild(Process process, long deadlineNanos, boolean[] interrupted)
+            throws InterruptedException {
+        long remaining = deadlineNanos - System.nanoTime();
+        if (remaining <= 0) {
+            return false;
+        }
+        try {
+            return process.waitFor(remaining, TimeUnit.NANOSECONDS);
+        } catch (InterruptedException interruptedWait) {
+            interrupted[0] = true;
+            throw interruptedWait;
+        }
+    }
+
+    /**
+     * Terminates the owned tree in the canonical order — descendants
+     * first, then the child's process group (when the runner created one),
+     * then the direct child — so nothing outlives the call.
+     */
+    private static void terminateTree(Process process, boolean ownGroup, boolean[] interrupted) {
         try {
             process.descendants().forEach(ProcessHandle::destroyForcibly);
         } catch (RuntimeException ignored) {
             // A vanished subtree is already gone; the direct child is next.
         }
+        if (ownGroup) {
+            killProcessGroup(process.pid(), interrupted);
+        }
         process.destroyForcibly();
     }
 
     /**
-     * Drains both streams to EOF even when the waiting thread is
-     * interrupted: the child is already dead, so the drains end, and the
-     * interruption is re-asserted for the caller.
+     * Kills every remaining member of the child's process group from
+     * outside the group: the child leads its own group (it was started
+     * through {@code setsid}), so its pid is the group id, and a
+     * descendant that outlived the direct child — reparented, therefore
+     * invisible to {@link Process#descendants()} — dies here. An already
+     * empty group yields the helper's not-found status and nothing else.
+     * The helper is a containment utility, not a toolchain child: its
+     * streams are discarded and its own wait is bounded.
      */
-    private static void joinDrains(Thread... threads) {
-        boolean interrupted = false;
-        for (Thread thread : threads) {
-            while (thread.isAlive()) {
-                try {
-                    thread.join();
-                } catch (InterruptedException interruptedJoin) {
-                    interrupted = true;
-                }
+    private static void killProcessGroup(long groupId, boolean[] interrupted) {
+        List<String> argv = KILL_BINARY != null
+            ? List.of(KILL_BINARY, "-KILL", "--", "-" + groupId)
+            : List.of("bash", "-c", "kill -KILL -- -\"$1\"", "residual-kill-group",
+                Long.toString(groupId));
+        try {
+            ProcessBuilder killerBuilder = new ProcessBuilder(argv);
+            killerBuilder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            killerBuilder.redirectError(ProcessBuilder.Redirect.DISCARD);
+            Process killer = killerBuilder.start();
+            boolean killed = false;
+            try {
+                killed = killer.waitFor(POST_KILL_DRAIN_BUDGET_MS, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException interruptedKill) {
+                interrupted[0] = true;
             }
-        }
-        if (interrupted) {
-            Thread.currentThread().interrupt();
+            if (!killed) {
+                killer.destroyForcibly();
+            }
+        } catch (Exception ignored) {
+            // The direct child's destroyForcibly remains the backstop.
         }
     }
 
-    /** Reaps the direct child even when the waiting thread is interrupted. */
-    private static void reap(Process process) {
-        boolean interrupted = false;
-        while (true) {
-            try {
-                process.waitFor();
-                break;
-            } catch (InterruptedException interruptedReap) {
-                interrupted = true;
+    /**
+     * Joins both capped drains to EOF inside the deadline; an interruption
+     * is recorded and the join retried, so the ownership cleanup completes
+     * before an interruption propagates. {@code false} means a drain was
+     * still alive at the deadline.
+     */
+    private static boolean awaitDrains(Thread stdoutThread, Thread stderrThread,
+            long deadlineNanos, boolean[] interrupted) {
+        boolean drained = true;
+        for (Thread thread : new Thread[] {stdoutThread, stderrThread}) {
+            while (thread.isAlive()) {
+                long remaining = deadlineNanos - System.nanoTime();
+                if (remaining <= 0) {
+                    drained = false;
+                    break;
+                }
+                try {
+                    thread.join(Math.max(1L, TimeUnit.NANOSECONDS.toMillis(remaining)));
+                } catch (InterruptedException interruptedJoin) {
+                    interrupted[0] = true;
+                }
             }
         }
-        if (interrupted) {
-            Thread.currentThread().interrupt();
+        return drained;
+    }
+
+    /**
+     * Reaps the direct child inside a bounded window even when the waiting
+     * thread is interrupted; a child that cannot be reaped inside the
+     * window is SIGKILLed once more and left to the OS reaper.
+     */
+    private static void reap(Process process, boolean[] interrupted) {
+        long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(REAP_BUDGET_MS);
+        while (process.isAlive()) {
+            long remaining = deadlineNanos - System.nanoTime();
+            if (remaining <= 0) {
+                process.destroyForcibly();
+                return;
+            }
+            try {
+                if (process.waitFor(Math.max(1L, TimeUnit.NANOSECONDS.toMillis(remaining)),
+                        TimeUnit.MILLISECONDS)) {
+                    return;
+                }
+            } catch (InterruptedException interruptedReap) {
+                interrupted[0] = true;
+            }
         }
     }
 
@@ -2036,8 +2174,8 @@ public final class ResidualCarrierShapesAcceptanceTest {
      * the pipe capacity completes without a deadlock and returns the
      * capped transcript with the truncation marker, and a child that
      * outlives the budget fails hard with the named
-     * {@code BOUNDED_PROCESS_TIMEOUT} after the descendant-then-child
-     * kill and the reap.
+     * {@code BOUNDED_PROCESS_TIMEOUT} after the descendants-then-group-
+     * then-child kill and the reap.
      */
     private static void testBoundedProcessControls(Path work) throws Exception {
         System.out.println("-- the bounded-subprocess controls: the finite stderr "
@@ -2076,6 +2214,114 @@ public final class ResidualCarrierShapesAcceptanceTest {
             "the hung child names the canonical failure: " + timeoutMessage);
         check(elapsedMs < 20_000L, "the timeout path kills the direct child and its "
             + "descendants and reaps them promptly, got " + elapsedMs + " ms");
+    }
+
+    /**
+     * The descendant-cleanup controls. First, a direct child that exits
+     * inside the budget but leaves a descendant that inherited the pipes:
+     * the invocation must end at the one deadline with the named
+     * {@code BOUNDED_PROCESS_TIMEOUT} — never block on the descendant's
+     * pipe — and kill the descendant. Second, a direct child that exits
+     * immediately and leaves a detached descendant whose streams are
+     * redirected: the invocation must return the child's outcome inside
+     * the budget with the descendant killed before the call returns, so no
+     * process survives even when no pipe reports it.
+     */
+    private static void testBoundedProcessDescendantCleanup(Path work) throws Exception {
+        System.out.println("-- the bounded-runner descendant-cleanup controls "
+            + "(inherited pipes and redirected streams) --");
+        Path inheritedPidFile = work.resolve("inherited-descendant.pid");
+        Path inheritedScript = work.resolve("inherited-descendant.sh");
+        Files.writeString(inheritedScript, """
+            #!/bin/bash
+            sleep 30 &
+            echo $! > "%s"
+            sleep .2
+            """.formatted(inheritedPidFile.toAbsolutePath()), StandardCharsets.UTF_8);
+        long inheritedStart = System.nanoTime();
+        boolean inheritedTimedOut = false;
+        String inheritedMessage = null;
+        try {
+            runBounded(work, Map.of(), 1_000L, "bash",
+                inheritedScript.getFileName().toString());
+        } catch (BoundedProcessTimeoutException timeout) {
+            inheritedTimedOut = true;
+            inheritedMessage = timeout.getMessage();
+        }
+        long inheritedMs = (System.nanoTime() - inheritedStart) / 1_000_000L;
+        check(inheritedTimedOut, "the inherited-pipe descendant: the invocation fails "
+            + "hard at the one deadline instead of hanging on the descendant's pipe: "
+            + inheritedMessage);
+        check(inheritedMessage != null && inheritedMessage.startsWith(
+                "BOUNDED_PROCESS_TIMEOUT bash"),
+            "the inherited-pipe descendant: the canonical failure token: "
+                + inheritedMessage);
+        check(inheritedMs < 20_000L, "the inherited-pipe descendant: the deadline "
+            + "bounds the child and its stream drainage, got " + inheritedMs + " ms");
+        long inheritedPid = readPid(inheritedPidFile);
+        check(awaitDeath(inheritedPid, 10_000L), "the inherited-pipe descendant: no "
+            + "descendant survives the invocation (pid " + inheritedPid + ")");
+
+        Path redirectedScript = work.resolve("redirected-descendant.sh");
+        Files.writeString(redirectedScript, """
+            #!/bin/bash
+            sleep 30 >/dev/null 2>&1 &
+            echo $!
+            """, StandardCharsets.UTF_8);
+        long redirectedStart = System.nanoTime();
+        ProcessOutcome redirected = runBounded(work, Map.of(), 5_000L, "bash",
+            redirectedScript.getFileName().toString());
+        long redirectedMs = (System.nanoTime() - redirectedStart) / 1_000_000L;
+        checkEq(0, redirected.exitCode(), "the redirected-stream descendant: the "
+            + "direct child's outcome returns inside the one deadline: stdout="
+            + redirected.stdout() + " stderr=" + redirected.stderr());
+        long redirectedPid = readPid(redirected.stdout());
+        check(redirectedPid > 0, "the redirected-stream descendant: the child reports "
+            + "the descendant pid: " + redirected.stdout());
+        check(redirectedMs < 20_000L, "the redirected-stream descendant: the "
+            + "invocation returns promptly, got " + redirectedMs + " ms");
+        check(awaitDeath(redirectedPid, 10_000L), "the redirected-stream descendant: "
+            + "no descendant survives the invocation (pid " + redirectedPid + ")");
+    }
+
+    /** Reads a pid recorded by a control child; -1 when absent or unparseable. */
+    private static long readPid(Path file) {
+        try {
+            return Files.exists(file)
+                ? Long.parseLong(Files.readString(file, StandardCharsets.UTF_8).trim())
+                : -1L;
+        } catch (Exception unreadable) {
+            return -1L;
+        }
+    }
+
+    /** Reads a pid rendered on a control child's stdout; -1 when unparseable. */
+    private static long readPid(String text) {
+        try {
+            return Long.parseLong(text.trim());
+        } catch (RuntimeException unparseable) {
+            return -1L;
+        }
+    }
+
+    /**
+     * Waits up to the budget for the recorded pid to die and destroys any
+     * survivor as a backstop, so a failing control cannot leak a process.
+     */
+    private static boolean awaitDeath(long pid, long budgetMs) throws InterruptedException {
+        if (pid <= 0) {
+            return false;
+        }
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs);
+        ProcessHandle handle = ProcessHandle.of(pid).orElse(null);
+        while (handle != null && handle.isAlive() && System.nanoTime() < deadline) {
+            Thread.sleep(20L);
+        }
+        boolean dead = handle == null || !handle.isAlive();
+        if (!dead) {
+            handle.destroyForcibly();
+        }
+        return dead;
     }
 
     /**
@@ -2195,6 +2441,7 @@ public final class ResidualCarrierShapesAcceptanceTest {
             testRepresentedTailMonotonicity(work, outcomes);
             testExitStateResetNegativeControl(work);
             testBoundedProcessControls(work);
+            testBoundedProcessDescendantCleanup(work);
             testBoundedProcessInterruption(work);
             testInt32RemainderTruncation(work);
             testUnionInvariants(corpusBefore);
