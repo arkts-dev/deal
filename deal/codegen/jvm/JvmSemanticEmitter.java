@@ -1207,18 +1207,150 @@ public final class JvmSemanticEmitter {
             };
         }
 
-        /** Whether the emitted Java of one block's last op can complete normally. */
+        /**
+         * Whether the emitted Java of one block can complete normally:
+         * the block's reachable prefix is walked exactly like the
+         * emission walk (the non-owned, non-skipped ops in order) and the
+         * walk stops at the first op whose statement cannot complete
+         * normally, because every op behind it is unreachable in the
+         * emitted Java (JLS §14.21) and is skipped. Reading the raw block
+         * tail would answer for a represented source tail that is never
+         * emitted (a statement behind a terminator, or behind a composite
+         * whose every path transfers), so a block whose reachable prefix
+         * ends in a transfer would be misreported as completing.
+         */
         private boolean blockCompletesNormally(BlockId block) {
             StructuredBodyTable ownerTable = blockTableOf.get(block);
             if (ownerTable == null) {
                 ownerTable = table;
             }
             java.util.List<OpId> ops = ownerTable.blockOps().get(block);
-            if (ops == null || ops.isEmpty()) {
+            if (ops == null) {
                 return true;
             }
-            SemanticOp last = opsById.get(ops.get(ops.size() - 1));
-            return last == null || completesNormally(last);
+            for (OpId opId : ops) {
+                if (ownedChildren.contains(opId) || skippedOps.contains(opId)) {
+                    continue;
+                }
+                SemanticOp op = opsById.get(opId);
+                if (op != null && !completesNormally(op)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /**
+         * Whether the emitted {@code FOR} body can reach the update block:
+         * the emitted {@code CONT: do { body } while (false);} completes
+         * normally when the body's reachable prefix can complete normally,
+         * or when some reachable path executes a continue targeting this
+         * loop — the {@code CONT} label re-tests the constant-false
+         * condition and falls through to the update. A body whose every
+         * emitted path leaves by {@code break}/{@code return}/{@code throw}
+         * never reaches the update, so its emitted update statements would
+         * be unreachable Java (JLS &sect;14.21).
+         */
+        private boolean forUpdateReachable(BlockId bodyBlock, OpId loopId) {
+            return blockReachesForUpdate(bodyBlock, loopId, true);
+        }
+
+        /**
+         * Whether a block's emitted reachable prefix reaches the update:
+         * the same walk the emission applies (the non-owned, non-skipped
+         * members in order, stopping at the first op whose emitted
+         * statement cannot complete normally), with the two update-reaching
+         * paths — a reachable {@code continue} targeting this loop exits the
+         * do's constant-false test to the update, and a composite carrying
+         * such a continue on one of its emitted paths does the same.
+         * {@code fallsThrough} is true only for the do statement's own body,
+         * whose fall-through reaches the false condition test and so the
+         * update. A composite sub-block's fall-through only returns to the
+         * enclosing block, whose remaining members the caller keeps walking,
+         * so a later unconditional transfer still makes the update
+         * unreachable.
+         */
+        private boolean blockReachesForUpdate(BlockId block, OpId loopId,
+                                              boolean fallsThrough) {
+            StructuredBodyTable ownerTable = blockTableOf.get(block);
+            if (ownerTable == null) {
+                ownerTable = table;
+            }
+            List<OpId> ops = ownerTable.blockOps().get(block);
+            if (ops == null) {
+                return fallsThrough;
+            }
+            for (OpId opId : ops) {
+                if (ownedChildren.contains(opId) || skippedOps.contains(opId)) {
+                    continue;
+                }
+                SemanticOp op = opsById.get(opId);
+                if (op == null) {
+                    continue;
+                }
+                if (reachesForUpdate(op, loopId)) {
+                    return true;
+                }
+                if (!completesNormally(op)) {
+                    return false;
+                }
+            }
+            return fallsThrough;
+        }
+
+        /**
+         * Whether some emitted path of one op reaches the update block: a
+         * {@code continue} targeting this loop exits the emitted
+         * {@code CONT} do statement to the update, and a composite does so
+         * when one of its emitted sub-blocks carries such a path. Ordinary
+         * fall-through is deliberately not an immediate answer here — a
+         * composite that can complete normally returns to the enclosing
+         * block, so the caller keeps walking its remaining members and
+         * reports the update unreachable only at the first non-completing
+         * statement after it.
+         */
+        private boolean reachesForUpdate(SemanticOp op, OpId loopId) {
+            return switch (op.kind()) {
+                case CONTINUE -> ((KindPayload.ContinuePayload) op.payload())
+                    .loopId().equals(loopId);
+                case TRY_CATCH -> {
+                    KindPayload.TryCatchPayload payload =
+                        (KindPayload.TryCatchPayload) op.payload();
+                    yield blockReachesForUpdate(payload.tryBlock(), loopId, false)
+                        || blockReachesForUpdate(payload.catchBlock(), loopId, false);
+                }
+                case BRANCH -> {
+                    KindPayload.BranchPayload payload =
+                        (KindPayload.BranchPayload) op.payload();
+                    yield blockReachesForUpdate(payload.selectedBlock(), loopId, false)
+                        || (payload.alternateBlock() != null
+                            && blockReachesForUpdate(payload.alternateBlock(),
+                                loopId, false));
+                }
+                default -> false;
+            };
+        }
+
+        /**
+         * Whether the emission walk of one block emits at least one
+         * statement: the same owned/skipped filter {@code emitBlockOps}
+         * applies, without the reachability walk.
+         */
+        private boolean blockHasEmittedOps(BlockId block) {
+            StructuredBodyTable ownerTable = blockTableOf.get(block);
+            if (ownerTable == null) {
+                ownerTable = table;
+            }
+            List<OpId> ops = ownerTable.blockOps().get(block);
+            if (ops == null) {
+                return false;
+            }
+            for (OpId opId : ops) {
+                if (!ownedChildren.contains(opId) && !skippedOps.contains(opId)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /**
@@ -1494,6 +1626,67 @@ public final class JvmSemanticEmitter {
                 }
                 emitPlainSuccess(ancestor, indent);
             }
+        }
+
+        /**
+         * Whether a transfer's target label is defined at the given op's
+         * emission level (the landed Lua rule, {@code transferTargetVisible}):
+         * the walk from the emitting op's block outward reaches the target
+         * loop before any TRY_CATCH ancestor exactly when the target's
+         * labels are defined at the same level — the closer targets are at
+         * the current level, while a farther one lies outside the nearest
+         * enclosing protected body, where its label is not in scope. A
+         * target the walk never reaches is not an enclosing structure — it
+         * lives inside a protected body of this level (the transferred loop
+         * resets at its own level) — and is equally invisible. A RETURN's
+         * label lives at the function's top level, outside every protected
+         * body, so it is visible exactly when the level carries no enclosing
+         * boundary (the {@code null} target).
+         */
+        private boolean transferTargetVisible(SemanticOp emittingOp,
+                                              SemanticOp targetLoop) {
+            if (targetLoop == null) {
+                return tryDepth == 0;
+            }
+            for (SemanticOp ancestor
+                    : structureAncestors(opBlock.get(emittingOp.opId()))) {
+                if (ancestor.kind() == SemanticOpKind.TRY_CATCH) {
+                    return false;
+                }
+                if (ancestor.opId().equals(targetLoop.opId())) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /**
+         * The emitted jump of one BREAK transfer (the label its target loop
+         * defines): a FOR_EACH loop owns {@code FE<id>}, every other loop
+         * form owns {@code LOOP<id>}.
+         */
+        private String breakJump(OpId loopId, SemanticOp target) {
+            if (target != null && target.kind() == SemanticOpKind.FOR_EACH) {
+                return "break FE" + loopId.id() + ";";
+            }
+            return "break " + loopLabel(loopId) + ";";
+        }
+
+        /**
+         * The emitted jump of one CONTINUE transfer (the label its target
+         * loop defines): a FOR_EACH loop owns {@code FE<id>}, a FOR loop
+         * owns {@code CONT<id>}, and a WHILE loop owns {@code LOOP<id>}.
+         */
+        private String continueJump(OpId loopId, SemanticOp target) {
+            if (target != null && target.kind() == SemanticOpKind.FOR_EACH) {
+                return "continue FE" + loopId.id() + ";";
+            }
+            if (target != null && target.kind() == SemanticOpKind.LOOP
+                    && ((KindPayload.LoopPayload) target.payload()).selector()
+                        == deal.semantic.ir.ControlSelector.FOR) {
+                return "continue CONT" + loopId.id() + ";";
+            }
+            return "continue " + loopLabel(loopId) + ";";
         }
 
         private void emitFailureEvent(OpId id, String kindName, SemanticOp op,
@@ -1971,7 +2164,9 @@ public final class JvmSemanticEmitter {
                 .append(";\n");
             emitFieldBoundaryCheck(op,
                 boundaryChildOfKind(op, BoundaryKind.OPTIONAL_FIELD_READ),
-                read, slot((ValueId) op.result()), indent);
+                read, "__frc_" + op.opId().id(), indent);
+            out.append(indent(indent)).append(slot((ValueId) op.result()))
+                .append(" = __frc_").append(op.opId().id()).append(";\n");
             emitResultSuccess(op, slot((ValueId) op.result()),
                 (RuntimeDescriptor) op.resultType(), indent);
         }
@@ -5035,7 +5230,21 @@ public final class JvmSemanticEmitter {
                     emitBlockOps(payload.bodyBlock(), indent + 2);
                     out.append(indent(indent)).append("  } while (false);\n");
                     if (payload.updateBlock() != null) {
-                        emitBlockOps(payload.updateBlock(), indent + 1);
+                        if (forUpdateReachable(payload.bodyBlock(), op.opId())) {
+                            emitBlockOps(payload.updateBlock(), indent + 1);
+                        } else if (blockHasEmittedOps(payload.updateBlock())) {
+                            // JLS §14.21: the emitted CONT do statement
+                            // cannot complete normally (every path of the
+                            // emitted body leaves by break/return/throw and
+                            // no reachable continue targets this loop), so
+                            // the update statements would be unreachable
+                            // Java — javac rejects them, and the oracle's
+                            // loop walk stops on the same non-completing
+                            // path. Emit the skip marker instead; the update
+                            // ops stay in the lowered unit.
+                            out.append(indent(indent)).append("  // unreachable: the"
+                                + " preceding statement cannot complete normally\n");
+                        }
                     }
                     out.append(indent(indent)).append("}\n");
                 }
@@ -5145,55 +5354,144 @@ public final class JvmSemanticEmitter {
         }
 
         /** The transfer dispatch: each distinct BREAK/CONTINUE/RETURN of the
-         *  block re-applies after emitting the TRY_CATCH SUCCESS. */
+         *  block's emitted reachable prefix re-applies after emitting the
+         *  TRY_CATCH SUCCESS. A transfer whose target label is defined at
+         *  this level takes the emitted jump; a farther target leaves the
+         *  protected region as the re-raised marker (the next enclosing
+         *  dispatch owns the jump) — no emitted jump references a label
+         *  outside its scope. */
         private void emitJvmTransferDispatch(SemanticOp tryOp, BlockId block, int indent) {
             List<SemanticOp> transfers = new ArrayList<>();
-            collectTransfers(block, transfers);
+            collectReachableTransfers(block, transfers);
             for (SemanticOp transfer : transfers) {
                 switch (transfer.kind()) {
                     case BREAK -> {
                         KindPayload.BreakPayload breakPayload =
                             (KindPayload.BreakPayload) transfer.payload();
+                        SemanticOp target = opsById.get(breakPayload.loopId());
+                        boolean visible = transferTargetVisible(tryOp, target);
                         out.append(indent(indent)).append("if (\"break\".equals(__tr.kind) ")
                             .append("&& __tr.id == ").append(breakPayload.loopId().id())
                             .append("L) {\n");
                         emitPlainSuccess(tryOp, indent + 1);
-                        emitTransferClosures(tryOp, opsById.get(breakPayload.loopId()),
-                            false, indent + 1);
-                        out.append(indent(indent)).append("  break ")
-                            .append(loopLabel(breakPayload.loopId())).append(";\n");
+                        emitTransferClosures(tryOp, target, !visible, indent + 1);
+                        if (visible) {
+                            out.append(indent(indent)).append("  ")
+                                .append(breakJump(breakPayload.loopId(), target))
+                                .append("\n");
+                        } else {
+                            out.append(indent(indent)).append("  throw __tr;\n");
+                        }
                         out.append(indent(indent)).append("}\n");
                     }
                     case CONTINUE -> {
                         KindPayload.ContinuePayload continuePayload =
                             (KindPayload.ContinuePayload) transfer.payload();
+                        SemanticOp target = opsById.get(continuePayload.loopId());
+                        boolean visible = transferTargetVisible(tryOp, target);
                         out.append(indent(indent)).append("if (\"continue\".equals(__tr.kind) ")
                             .append("&& __tr.id == ").append(continuePayload.loopId().id())
                             .append("L) {\n");
                         emitPlainSuccess(tryOp, indent + 1);
-                        emitTransferClosures(tryOp, opsById.get(continuePayload.loopId()),
-                            false, indent + 1);
-                        SemanticOp target = opsById.get(continuePayload.loopId());
-                        if (target != null && target.kind() == SemanticOpKind.LOOP
-                                && ((KindPayload.LoopPayload) target.payload()).selector()
-                                    == deal.semantic.ir.ControlSelector.FOR) {
-                            out.append(indent(indent)).append("  continue CONT")
-                                .append(continuePayload.loopId().id()).append(";\n");
+                        emitTransferClosures(tryOp, target, !visible, indent + 1);
+                        if (visible) {
+                            out.append(indent(indent)).append("  ")
+                                .append(continueJump(continuePayload.loopId(), target))
+                                .append("\n");
                         } else {
-                            out.append(indent(indent)).append("  continue ")
-                                .append(loopLabel(continuePayload.loopId())).append(";\n");
+                            out.append(indent(indent)).append("  throw __tr;\n");
                         }
                         out.append(indent(indent)).append("}\n");
                     }
                     case RETURN -> {
+                        boolean visible = transferTargetVisible(tryOp, null);
                         out.append(indent(indent)).append("if (\"return\".equals(__tr.kind)) {\n");
                         emitPlainSuccess(tryOp, indent + 1);
-                        emitTransferClosures(tryOp, null, false, indent + 1);
-                        out.append(indent(indent)).append("  return __tr.value;\n");
+                        emitTransferClosures(tryOp, null, !visible, indent + 1);
+                        if (visible) {
+                            out.append(indent(indent)).append("  return __tr.value;\n");
+                        } else {
+                            out.append(indent(indent)).append("  throw __tr;\n");
+                        }
                         out.append(indent(indent)).append("}\n");
                     }
                     default -> {
                     }
+                }
+            }
+        }
+
+
+        /**
+         * The reachable transfer ops of one block: the same walk the
+         * emission applies (the non-owned, non-skipped members in order,
+         * entering each op's structure payloads), stopping at the first op
+         * whose emitted statement cannot complete normally. Every op behind
+         * that one is unreachable Java (JLS &sect;14.21) and is skipped by
+         * the block walk, so its transfers are never signalled and their
+         * target labels are not in scope at the dispatch site — collecting
+         * them would emit a jump to a label the skipped subtree never
+         * defines. The raw structural walk
+         * ({@link EmitterSessionBase#collectTransfers}) is used by the Lua
+         * target, which emits every tail op; this reachability-aware form is
+         * the JVM target's dispatch collection.
+         */
+        private void collectReachableTransfers(BlockId block, List<SemanticOp> transfers) {
+            StructuredBodyTable ownerTable = blockTableOf.get(block);
+            if (ownerTable == null) {
+                ownerTable = table;
+            }
+            List<OpId> memberOps = ownerTable.blockOps().get(block);
+            if (memberOps == null) {
+                throw new IllegalStateException("block " + block
+                    + " has no membership row in its owning unit's table (a malformed"
+                    + " table — the production validator rejects this)");
+            }
+            for (OpId opId : memberOps) {
+                if (ownedChildren.contains(opId) || skippedOps.contains(opId)) {
+                    continue;
+                }
+                SemanticOp op = opsById.get(opId);
+                if (op == null) {
+                    continue;
+                }
+                switch (op.kind()) {
+                    case BREAK, CONTINUE, RETURN -> transfers.add(op);
+                    case BRANCH -> {
+                        KindPayload.BranchPayload payload =
+                            (KindPayload.BranchPayload) op.payload();
+                        collectReachableTransfers(payload.selectedBlock(), transfers);
+                        if (payload.alternateBlock() != null) {
+                            collectReachableTransfers(payload.alternateBlock(), transfers);
+                        }
+                    }
+                    case LOOP -> {
+                        KindPayload.LoopPayload payload =
+                            (KindPayload.LoopPayload) op.payload();
+                        if (payload.initBlock() != null) {
+                            collectReachableTransfers(payload.initBlock(), transfers);
+                        }
+                        collectReachableTransfers(payload.bodyBlock(), transfers);
+                        if (payload.updateBlock() != null) {
+                            collectReachableTransfers(payload.updateBlock(), transfers);
+                        }
+                    }
+                    case FOR_EACH -> {
+                        KindPayload.ForEachPayload payload =
+                            (KindPayload.ForEachPayload) op.payload();
+                        collectReachableTransfers(payload.body(), transfers);
+                    }
+                    case TRY_CATCH -> {
+                        KindPayload.TryCatchPayload payload =
+                            (KindPayload.TryCatchPayload) op.payload();
+                        collectReachableTransfers(payload.tryBlock(), transfers);
+                        collectReachableTransfers(payload.catchBlock(), transfers);
+                    }
+                    default -> {
+                    }
+                }
+                if (!completesNormally(op)) {
+                    return;
                 }
             }
         }
@@ -5267,7 +5565,7 @@ public final class JvmSemanticEmitter {
             emitBoundaryAdmission(op, boundary, "__rv_" + op.opId().id(), rvc,
                 caught, rejection, indent);
             emitPlainSuccess(op, indent);
-            if (tryDepth > 0) {
+            if (!transferTargetVisible(op, null)) {
                 emitTransferClosures(op, null, true, indent);
                 out.append(indent(indent))
                     .append("throw new JvmRuntime.Transfer(\"return\", 0L, __rvc_")
@@ -5283,20 +5581,15 @@ public final class JvmSemanticEmitter {
             KindPayload.BreakPayload payload = (KindPayload.BreakPayload) op.payload();
             emitStart(op, indent);
             emitPlainSuccess(op, indent);
-            if (tryDepth > 0) {
-                emitTransferClosures(op, opsById.get(payload.loopId()), true, indent);
+            SemanticOp target = opsById.get(payload.loopId());
+            if (transferTargetVisible(op, target)) {
+                emitTransferClosures(op, target, false, indent);
+                out.append(indent(indent)).append(breakJump(payload.loopId(), target))
+                    .append("\n");
+            } else {
+                emitTransferClosures(op, target, true, indent);
                 out.append(indent(indent)).append("throw new JvmRuntime.Transfer(\"break\", ")
                     .append(payload.loopId().id()).append("L, null);\n");
-            } else {
-                emitTransferClosures(op, opsById.get(payload.loopId()), false, indent);
-                SemanticOp target = opsById.get(payload.loopId());
-                if (target != null && target.kind() == SemanticOpKind.FOR_EACH) {
-                    out.append(indent(indent)).append("break FE")
-                        .append(payload.loopId().id()).append(";\n");
-                } else {
-                    out.append(indent(indent)).append("break ")
-                        .append(loopLabel(payload.loopId())).append(";\n");
-                }
             }
         }
 
@@ -5304,26 +5597,16 @@ public final class JvmSemanticEmitter {
             KindPayload.ContinuePayload payload = (KindPayload.ContinuePayload) op.payload();
             emitStart(op, indent);
             emitPlainSuccess(op, indent);
-            if (tryDepth > 0) {
-                emitTransferClosures(op, opsById.get(payload.loopId()), true, indent);
+            SemanticOp target = opsById.get(payload.loopId());
+            if (transferTargetVisible(op, target)) {
+                emitTransferClosures(op, target, false, indent);
+                out.append(indent(indent))
+                    .append(continueJump(payload.loopId(), target)).append("\n");
+            } else {
+                emitTransferClosures(op, target, true, indent);
                 out.append(indent(indent))
                     .append("throw new JvmRuntime.Transfer(\"continue\", ")
                     .append(payload.loopId().id()).append("L, null);\n");
-            } else {
-                emitTransferClosures(op, opsById.get(payload.loopId()), false, indent);
-                SemanticOp target = opsById.get(payload.loopId());
-                if (target != null && target.kind() == SemanticOpKind.FOR_EACH) {
-                    out.append(indent(indent)).append("continue FE")
-                        .append(payload.loopId().id()).append(";\n");
-                } else if (target != null && target.kind() == SemanticOpKind.LOOP
-                        && ((KindPayload.LoopPayload) target.payload()).selector()
-                            == deal.semantic.ir.ControlSelector.FOR) {
-                    out.append(indent(indent)).append("continue CONT")
-                        .append(payload.loopId().id()).append(";\n");
-                } else {
-                    out.append(indent(indent)).append("continue ")
-                        .append(loopLabel(payload.loopId())).append(";\n");
-                }
             }
         }
 

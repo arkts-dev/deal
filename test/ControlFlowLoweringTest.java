@@ -1159,7 +1159,7 @@ public class ControlFlowLoweringTest {
         check(table != null, "the seam returns the produced block-membership table");
 
         // The produced table passes the production-time control-flow
-        // validator (tree, dominance, exits).
+        // validator (tree, exits).
         Optional<CompilerDiagnostic> validation = ControlFlowValidator.validate(unit, table);
         check(validation.isEmpty(),
             "the produced table passes ControlFlowValidator: " + validation);
@@ -1240,8 +1240,12 @@ public class ControlFlowLoweringTest {
         LoweredModuleUnit unit = result.unit();
         StructuredBodyTable table = result.table();
 
-        // --- (a) An op after a terminator in its block: append a synthetic
-        //     CONST op to the body block after the BREAK. ---
+        // --- (a) An op after a terminator in its block is the represented
+        //     unreachable tail: appending a synthetic CONST op to the body
+        //     block after the BREAK validates (the dominance clause is
+        //     removed). The retargeted live negative then corrupts the same
+        //     unit differently — the appended op is listed in two blocks —
+        //     and still fails E6005 CONTROL_BLOCK_TREE. ---
         {
             SemanticOp breakOp = ofKind(unit.ops(), SemanticOpKind.BREAK).get(0);
             OpId extraId = new OpId(MODULE, 999_999);
@@ -1249,20 +1253,40 @@ public class ControlFlowLoweringTest {
                 new KindPayload.ConstPayload(new ScalarValue.Int(1)),
                 new ValueId(999_999), RuntimeDescriptor.Int.INSTANCE,
                 FailurePolicyId.NO_DEAL_FAILURE, null);
-            List<SemanticOp> corruptOps = new ArrayList<>(unit.ops());
-            corruptOps.add(extra);
-            Map<BlockId, List<OpId>> corruptBlocks = new LinkedHashMap<>();
+            List<SemanticOp> tailOps = new ArrayList<>(unit.ops());
+            tailOps.add(extra);
+            Map<BlockId, List<OpId>> tailBlocks = new LinkedHashMap<>();
             for (Map.Entry<BlockId, List<OpId>> entry : table.blockOps().entrySet()) {
                 List<OpId> ids = new ArrayList<>(entry.getValue());
                 if (ids.contains(breakOp.opId())) {
                     ids.add(extraId);
                 }
+                tailBlocks.put(entry.getKey(), ids);
+            }
+            StructuredBodyTable tail = rebuildTable(tailBlocks, unit);
+            Optional<CompilerDiagnostic> validation = ControlFlowValidator.validate(
+                withOps(unit, tailOps), tail);
+            check(validation.isEmpty(),
+                "an op after a terminator in its block validates as the represented "
+                    + "unreachable tail: " + validation);
+
+            // The retargeted live negative: the same appended op listed in
+            // two blocks is a corrupted unit and still fails closed with
+            // CONTROL_BLOCK_TREE.
+            Map<BlockId, List<OpId>> corruptBlocks = new LinkedHashMap<>();
+            boolean first = true;
+            for (Map.Entry<BlockId, List<OpId>> entry : tailBlocks.entrySet()) {
+                List<OpId> ids = new ArrayList<>(entry.getValue());
+                if (first) {
+                    ids.add(extraId);
+                    first = false;
+                }
                 corruptBlocks.put(entry.getKey(), ids);
             }
-            StructuredBodyTable corrupt = rebuildTable(corruptBlocks, unit);
             assertControlE6005(
-                ControlFlowValidator.validate(withOps(unit, corruptOps), corrupt),
-                ControlFlowValidator.CONTROL_BLOCK_TREE, "after a terminator");
+                ControlFlowValidator.validate(withOps(unit, tailOps),
+                    rebuildTable(corruptBlocks, unit)),
+                ControlFlowValidator.CONTROL_BLOCK_TREE, "member of more than one block");
         }
 
         // --- (b) A BREAK targeting a non-loop op. ---

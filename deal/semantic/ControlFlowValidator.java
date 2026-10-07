@@ -27,7 +27,7 @@ import java.util.Set;
 
 public final class ControlFlowValidator {
 
-    /** The block-tree/membership/dominance rule (C-D2 a/b). */
+    /** The block-tree/membership rule (C-D2 a). */
     public static final String CONTROL_BLOCK_TREE = "CONTROL_BLOCK_TREE";
 
     /** The exit rule (C-D2 c). */
@@ -50,7 +50,7 @@ public final class ControlFlowValidator {
 
     /**
      * Validates one unit plus its block-membership table against the
-     * pinned block-tree, dominance, and exit checks. Returns empty on
+     * pinned block-tree and exit checks. Returns empty on
      * pass and exactly one E6005 diagnostic naming the first failing rule
      * on failure. No mutation; deterministic; linear in ops plus block
      * edges.
@@ -62,10 +62,6 @@ public final class ControlFlowValidator {
         Objects.requireNonNull(table, "table must not be null");
         Context context = Context.build(unit, table);
         Optional<CompilerDiagnostic> failure = checkBlockTree(context);
-        if (failure.isPresent()) {
-            return failure;
-        }
-        failure = checkDominance(context);
         if (failure.isPresent()) {
             return failure;
         }
@@ -345,11 +341,6 @@ public final class ControlFlowValidator {
         return blocks;
     }
 
-    private static boolean isTerminator(SemanticOpKind kind) {
-        return kind == SemanticOpKind.RETURN || kind == SemanticOpKind.BREAK
-            || kind == SemanticOpKind.CONTINUE || kind == SemanticOpKind.THROW;
-    }
-
     // =========================================================================
     // Block tree (C-D2 a): membership + tree shape
     // =========================================================================
@@ -515,27 +506,6 @@ public final class ControlFlowValidator {
             }
         }
 
-        return Optional.empty();
-    }
-
-    // =========================================================================
-    // Dominance (C-D2 b): no op after a terminator within its block
-    // =========================================================================
-
-    private static Optional<CompilerDiagnostic> checkDominance(Context ctx) {
-        for (Map.Entry<BlockId, List<OpId>> entry : ctx.table.blockOps().entrySet()) {
-            boolean terminated = false;
-            for (OpId opId : entry.getValue()) {
-                if (terminated) {
-                    return fail(ctx, CONTROL_BLOCK_TREE, "unreachable op " + opId
-                        + " after a terminator in block " + entry.getKey());
-                }
-                SemanticOp op = ctx.unitOps.get(opId); // non-null after the membership checks
-                if (isTerminator(op.kind())) {
-                    terminated = true;
-                }
-            }
-        }
         return Optional.empty();
     }
 

@@ -2222,11 +2222,12 @@ public final class SemanticLowerer {
          */
         private final ArrayDeque<OpId> loopTargets = new ArrayDeque<>();
         /**
-         * The per-block termination flags (C-D2 dominance): a
-         * {@code THROW}/{@code BREAK}/{@code CONTINUE} terminates its
-         * block; a following statement in the same block is unreachable
-         * source and fails closed — the validated block model never
-         * admits an op after a terminator in its block.
+         * The per-block termination flags (C-D2): a
+         * {@code RETURN}/{@code THROW}/{@code BREAK}/{@code CONTINUE}
+         * terminates its block; a following statement in the same block
+         * is represented behind the terminator and never executes, and
+         * the flag is monotone (a later statement neither clears nor
+         * changes it).
          */
         private final java.util.LinkedHashMap<BlockId, Boolean> blockTerminated =
             new java.util.LinkedHashMap<>();
@@ -3032,10 +3033,13 @@ public final class SemanticLowerer {
 
         /**
          * Marks the current emission block terminated after a
-         * {@code RETURN}/{@code THROW} emission (C-D2 dominance: no op
-         * may follow a terminator in its block) and records the leaf
+         * {@code RETURN}/{@code THROW} emission and records the leaf
          * transfer's closed exit state
-         * ({@link BlockExitState#RETURN_OR_THROW}).
+         * ({@link BlockExitState#RETURN_OR_THROW}). The state is monotone:
+         * a source statement after the terminator in the same block lowers
+         * normally into ops that are members of the same block behind the
+         * terminator, is never executed, and neither clears nor changes
+         * this state.
          */
         private void terminateBlock() {
             blockTerminated.put(blockStack.peek(), true);
@@ -3108,22 +3112,6 @@ public final class SemanticLowerer {
             return expression instanceof LiteralExpr literal
                 && literal.value() instanceof LiteralValue.BooleanLiteral bool
                 && bool.value();
-        }
-
-        /**
-         * Fails closed when the current emission block already carries a
-         * terminator: a source statement following a
-         * {@code THROW}/{@code BREAK}/{@code CONTINUE} in the same block
-         * is unreachable and not representable in the validated block
-         * model — {@code CONSTRUCT_UNLOWERED}, never a silent drop and
-         * never an inferred block.
-         */
-        private void ensureBlockOpen() {
-            if (Boolean.TRUE.equals(blockTerminated.get(blockStack.peek()))) {
-                throw new ConstructUnlowered("statement after a terminator "
-                    + "(THROW/BREAK/CONTINUE) in the same block — unreachable source "
-                    + "statements are not representable in the validated block model");
-            }
         }
 
         // ---------------------------------------------------------------------
@@ -9236,7 +9224,6 @@ public final class SemanticLowerer {
             Map<FunctionDeclaration, List<FunctionDeclaration>> groupMembership =
                 groupCore ? groupMembership(statements) : Map.of();
             for (StatementNode statement : statements) {
-                ensureBlockOpen();
                 if (statement instanceof VariableDeclaration decl) {
                     lowerBindingVarDecl(decl);
                     continue;
@@ -9806,7 +9793,6 @@ public final class SemanticLowerer {
 
         private void lowerStatements(List<StatementNode> statements) {
             for (StatementNode statement : statements) {
-                ensureBlockOpen();
                 if (statement instanceof ForOfStatement forOf) {
                     lowerForOfStatement(forOf);
                     continue;
@@ -10120,7 +10106,7 @@ public final class SemanticLowerer {
          * frames active; control transfers to the nearest enclosing
          * {@code TRY_CATCH}, else the error escapes as the host-visible
          * {@code DEALRuntimeError}. {@code THROW} terminates its block
-         * (C-D2 dominance).
+         * (its exit state is closed for the implicit-return analysis).
          */
         private void lowerThrow(ThrowStatement statement) {
             ValueId errorValue = lowerExpression(statement.expr());
