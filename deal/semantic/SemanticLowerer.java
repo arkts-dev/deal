@@ -2437,6 +2437,25 @@ public final class SemanticLowerer {
         private final Set<FunctionId> groupMemberBodiesPendingCaptures =
             new LinkedHashSet<>();
         /**
+         * The member binding cells of every nested (non-module-level)
+         * recursive group of this lowering. A member binding's cell is
+         * published by the group's {@code RECURSIVE_GROUP_INIT} and holds
+         * the member's closure carrier; an identifier call of such a
+         * binding must invoke that carrier instead of reconstructing the
+         * member's factory at the call site, because a call-site
+         * reconstruction resolves the target's captures from the calling
+         * function's own frame and cannot name the group instance's cells
+         * for a target that is not one of the caller's own captures (an
+         * enclosing-function-returned group observed through a second
+         * creation would re-resolve the first creation's sibling cells to
+         * the latest creation's global cells). The module-level member
+         * bindings are not in this set: their captures are module-level
+         * cells with a single incarnation, so the landed static
+         * direct-call shape is exact there.
+         */
+        private final Set<BindingId> nestedGroupMemberBindings =
+            new LinkedHashSet<>();
+        /**
          * The produced function-execution-bindings registry (the unit's
          * {@code functionBindings} map; the registry child's production
          * class, B5 — closure-core mode): exactly one registration per
@@ -5078,6 +5097,11 @@ public final class SemanticLowerer {
                         parameterTypeSpans(member.params()));
                     contextsByFunctionId.put(memberFunctionId, context);
                     contextsByBindingId.put(memberBindings.get(i), context);
+                    // The nested member's published carrier is the only
+                    // invocation source whose creation-site captures name
+                    // this group instance ({@link
+                    // #nestedGroupMemberBindings}).
+                    nestedGroupMemberBindings.add(memberBindings.get(i));
                 }
                 if (context != null) {
                     registry.registerGroupMember(new FunctionAllocationIdentity(
@@ -7654,6 +7678,24 @@ public final class SemanticLowerer {
                             + "(function-typed parameters/loads and imported functions are "
                             + "E7's registry resolution)");
                     }
+                    return lowerUserCallBinding(call, slot, identifier);
+                }
+                if (nestedGroupMemberBindings.contains(site.binding())) {
+                    // A nested group member call: the group publication
+                    // wrote the member's closure carrier into the member
+                    // cell, and that carrier holds the creation-site
+                    // captures of its own group instance. The static
+                    // direct-call arm would rebuild the member's factory
+                    // at the call site and re-resolve the target's
+                    // captures from the calling function's frame — exact
+                    // only for module-level (single-incarnation) captures
+                    // and for targets that are the caller's own captures.
+                    // A sibling, self, or enclosing-body call of a nested
+                    // member goes through the same value-carried
+                    // resolution every ordinary function-value call uses,
+                    // preserving the member-owned invocation identity and
+                    // return boundary ({@link #lowerIndirectCall}'s
+                    // LoweredBody arm).
                     return lowerUserCallBinding(call, slot, identifier);
                 }
                 return lowerDirectCall(call, slot, identifier, context);

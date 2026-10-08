@@ -14,6 +14,7 @@ import deal.semantic.ReleaseConfiguration;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticRuntimeModel;
+import deal.semantic.ir.BlockId;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.FunctionAllocationIdentity;
@@ -108,6 +109,15 @@ import java.util.stream.Stream;
  *       and module-level variants) compiles on both production lanes, its
  *       invocation identity is materialized by the alias's value-carried call,
  *       and the three consumers agree with the pinned terminal and effects.</li>
+ *
+ *   <li><b>The escaped nested group.</b> {@code make} returns one member and
+ *       the entry creates two independent groups; every nested member call is
+ *       the value-carried (indirect) callee shape resolving the member's
+ *       published carrier — a factory reconstruction at the call site would
+ *       re-resolve the target's captures from the calling member's frame and
+ *       let the first creation observe the second creation's cells — and the
+ *       two returned groups execute to their own pinned results on the oracle
+ *       and both production artifacts.</li>
  * </ol>
  */
 public class NestedGroupProductionTest {
@@ -373,6 +383,56 @@ public class NestedGroupProductionTest {
         """,
         List.of("module-group-alias-ok"), true, List.of(true, true), false, true);
 
+    /**
+     * The escaped nested group: {@code make} returns one member closure,
+     * and {@code main} creates <em>two</em> independent groups (base 10
+     * and base 20) and invokes each returned closure. The sibling calls
+     * inside the members must be value-carried: the group publication
+     * writes each member's closure carrier — holding that creation's
+     * captured cells (the sibling cell and {@code base}) — into the member
+     * cell, and a factory reconstruction at the call site re-resolves the
+     * target's captures from the <em>calling</em> member's frame, which
+     * cannot name the first creation's cells once a second creation
+     * overwrote the shared cell slots. Both returned groups must observe
+     * their own {@code base}.
+     */
+    private static final Case ESCAPED_TWO_GROUPS = new Case(
+        "escaped-two-groups",
+        """
+        import * as console from "std/console"
+
+        export function main(): null {
+          let a: (n: int) => int = make(10);
+          let b: (n: int) => int = make(20);
+          if (a(3) === 10) {
+            console.log("escaped-group-a-ok");
+          } else {
+            console.log("escaped-group-a-bad");
+          }
+          if (b(3) === 20) {
+            console.log("escaped-group-b-ok");
+          } else {
+            console.log("escaped-group-b-bad");
+          }
+          return null;
+        }
+
+        function make(base: int): (n: int) => int {
+          function f(n: int): int {
+            if (n <= 0) {
+              return base;
+            }
+            return g(n - 1);
+          }
+          function g(n: int): int {
+            return f(n);
+          }
+          return f;
+        }
+        """,
+        List.of("escaped-group-a-ok", "escaped-group-b-ok"), true,
+        List.of(true, true), false, false);
+
     /** The review's seed: a never-called nested group with explicit null returns. */
     private static final Case NEVER_CALLED_EXPLICIT_NULL = new Case(
         "never-called-explicit-null",
@@ -487,7 +547,7 @@ public class NestedGroupProductionTest {
         CALLED_EXPLICIT, CALLED_IMPLICIT, CALLED_VALUE_REFERENCE,
         CALLED_ALIAS, CALLED_ALIAS_CAPTURED, CALLED_ALIAS_LATER, MODULE_GROUP_ALIAS,
         NEVER_CALLED_EXPLICIT_NULL, NEVER_CALLED_EXPLICIT_INT, NEVER_CALLED_IMPLICIT,
-        CAPTURED_CALLED, NESTED_INSIDE_FUNCTION);
+        CAPTURED_CALLED, NESTED_INSIDE_FUNCTION, ESCAPED_TWO_GROUPS);
 
     // =========================================================================
     // The case driver
@@ -653,7 +713,8 @@ public class NestedGroupProductionTest {
 
     /**
      * The member ownership battery: the group publication, the per-member
-     * return cell, and the per-member invocation identity.
+     * return cell, the per-member invocation identity, and (for a nested
+     * group) the value-carried member calls.
      */
     private static void checkMemberOwnership(Case testCase, LoweredModuleUnit unit,
                                              StructuredBodyTable table) {
@@ -773,6 +834,68 @@ public class NestedGroupProductionTest {
         if (testCase.aliasInvocation()) {
             checkAliasInvocation(testCase, unit, group);
         }
+        BlockId groupBlock = table.opBlocks().get(groupOp.opId());
+        if (groupBlock != null
+                && !groupBlock.equals(unit.moduleInit().initBlock())) {
+            // A nested group: every member-resolving call must be the
+            // value-carried (indirect) callee shape, because only the
+            // published carrier holds the group instance's creation-site
+            // cells. A module-level group keeps the landed static shape
+            // (its captures are single-incarnation module cells).
+            checkValueCarriedMemberCalls(testCase, unit, group);
+        }
+    }
+
+    /**
+     * The nested-group carrier-preservation battery: no call of a capture-
+     * carrying member body may be a factory reconstruction at the call
+     * site. The escaped group is the discriminating case — a static
+     * reconstruction of the sibling would re-resolve the target's
+     * captures from the calling member's frame and observe the latest
+     * creation's cells; the published carrier holds its own creation's
+     * cells.
+     */
+    private static void checkValueCarriedMemberCalls(Case testCase,
+            LoweredModuleUnit unit, KindPayload.RecursiveGroupInitPayload group) {
+        boolean anyMemberCalled = testCase.memberCalled().stream()
+            .anyMatch(Boolean::booleanValue);
+        int memberCalls = 0;
+        int staticCaptureCalls = 0;
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() != SemanticOpKind.CALL
+                    || !(op.payload() instanceof KindPayload.CallPayload payload)) {
+                continue;
+            }
+            FunctionExecutionBinding resolved = switch (payload.callee()) {
+                case KindPayload.CallCallee.Static stat -> stat.binding();
+                case KindPayload.CallCallee.Indirect indirect ->
+                    unit.functionBindings().get(
+                        new FunctionAllocationIdentity(indirect.callee().id()));
+                case KindPayload.CallCallee.Dynamic ignored -> null;
+            };
+            if (!(resolved instanceof FunctionExecutionBinding.LoweredBody body)
+                    || !group.functions().contains(body.functionId())) {
+                continue;
+            }
+            memberCalls++;
+            LoweredFunction target = unit.functions().get(body.functionId());
+            boolean captures = target != null && !target.captures().isEmpty();
+            if (captures
+                    && !(payload.callee()
+                        instanceof KindPayload.CallCallee.Indirect)) {
+                staticCaptureCalls++;
+                fail(testCase.name() + ": the member call " + op.opId()
+                    + " of capture-carrying member " + body.functionId()
+                    + " is a factory reconstruction at the call site; the "
+                    + "value-carried carrier is required");
+            }
+        }
+        check(staticCaptureCalls == 0, testCase.name()
+            + ": every capture-carrying member call is value-carried; got "
+            + staticCaptureCalls + " static reconstruction(s)");
+        check(memberCalls >= 1 || !anyMemberCalled, testCase.name()
+            + ": the group's member references are materialized as calls; got "
+            + memberCalls);
     }
 
     /**
