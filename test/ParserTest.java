@@ -1195,6 +1195,25 @@ public class ParserTest {
             + "  return null;\n"
             + "}\n");
         assertParseError(beforeTry, "E1053", "let before try");
+
+        // ISSUE-0717 review: `async` is a keyword and is not on the
+        // spec's whitelist (§Semicolon rules), so an async function
+        // declaration never follows a terminator-requiring statement
+        // without the `;`; the explicit-semicolon form parses.
+        ParseResult beforeAsync = parse("export function main(): null {\n"
+            + "  let n: int = 1\n"
+            + "  async function f(): null { return null; }\n"
+            + "  return null;\n"
+            + "}\n");
+        assertParseError(beforeAsync, "E1053", "let before async function");
+
+        ParseResult beforeAsyncSemicolon = parse("export function main(): null {\n"
+            + "  let n: int = 1;\n"
+            + "  async function f(): null { return null; }\n"
+            + "  return null;\n"
+            + "}\n");
+        assertNoParseErrors(beforeAsyncSemicolon,
+            "let with an explicit semicolon before async function");
     }
 
     /**

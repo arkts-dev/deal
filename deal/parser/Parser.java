@@ -2297,10 +2297,6 @@ public final class Parser {
         return switch (type) {
             case EOF, RBRACE, SEMICOLON, LET, CLASS, FUNCTION, RETURN, IF,
                  WHILE, FOR, BREAK, CONTINUE, IMPORT, EXPORT, DELETE -> true;
-            // The `function` whitelist entry covers the async function
-            // declaration form; its first token is the `async` contextual
-            // keyword.
-            case ASYNC -> true;
             default -> false;
         };
     }

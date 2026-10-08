@@ -1283,6 +1283,111 @@ public class ContainerLoweringArmsTest {
         }
     }
 
+    /**
+     * The dynamic-key computed table read ({@code t[k]}, ISSUE-0717
+     * review): the receiver completes before the key, the key's closed
+     * table slot is published by {@code INDEX_NORMALIZE(TABLE_READ)}, and
+     * the {@code INDEX_READ} carries the read's
+     * {@code CONTEXTUAL_TABLE_READ} boundary child — the literal member
+     * read's contextual validation, execution order, and key identity.
+     */
+    static void testDynamicTableIndexReadArm() {
+        System.out.println("-- Dynamic-key computed table read: the normalize + "
+            + "contextual read shape --");
+
+        CheckedSlice slice = checkSlice("""
+            function f(t: table, k: string): null {
+              let n: int = t[k]
+              return null
+            }
+            """);
+        if (slice == null) {
+            return;
+        }
+        IndexExpr index = first(slice.program(), IndexExpr.class);
+        check(index != null, "the slice carries t[k]");
+        if (index == null) {
+            return;
+        }
+        SemanticLowerer.ModuleLowerer lowerer = lowerer(slice.checks());
+        SemanticLowerer.ForEachFrame receiver = lowerer.openForEachScope("t");
+        SemanticLowerer.ForEachFrame key = lowerer.openForEachScope("k");
+        ValueId readValue = lowerer.lowerExpression(index);
+        lowerer.closeForEachScope();
+        lowerer.closeForEachScope();
+        List<SemanticOp> ops = lowerer.ops();
+        check(ops.size() == 5,
+            "t[k] produces the receiver load + the key load + INDEX_NORMALIZE + "
+                + "INDEX_READ + its contextual child = 5 ops; got " + ops.size());
+        if (ops.size() != 5) {
+            return;
+        }
+        KindPayload.BindingLoadPayload receiverLoad =
+            (KindPayload.BindingLoadPayload) ops.get(0).payload();
+        KindPayload.BindingLoadPayload keyLoad =
+            (KindPayload.BindingLoadPayload) ops.get(1).payload();
+        check(receiverLoad.binding().equals(receiver.binding()),
+            "op 0 loads the receiver binding (receiver before key)");
+        check(keyLoad.binding().equals(key.binding()),
+            "op 1 loads the key binding (the dynamic key is one prior step)");
+
+        SemanticOp normalize = ops.get(2);
+        check(normalize.kind() == SemanticOpKind.INDEX_NORMALIZE,
+            "op 2 is INDEX_NORMALIZE");
+        KindPayload.IndexNormalizePayload normalizePayload =
+            (KindPayload.IndexNormalizePayload) normalize.payload();
+        check(normalizePayload.mode()
+                == deal.semantic.ir.IndexMode.TABLE_READ,
+            "the normalize mode is TABLE_READ");
+        check(normalizePayload.rawKey().equals(ops.get(1).result()),
+            "the normalize rawKey is the key load's result");
+        check(normalizePayload.currentLength().equals(ops.get(1).result()),
+            "the table normalize's unused currentLength references the raw key "
+                + "identity (no length read for table targets)");
+        check(normalize.resultType().equals(RuntimeDescriptor.String.INSTANCE),
+            "the normalize result is the closed table slot key (string)");
+        check(normalize.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE,
+            "the normalize is pure (NO_DEAL_FAILURE)");
+
+        SemanticOp read = ops.get(3);
+        check(read.kind() == SemanticOpKind.INDEX_READ, "op 3 is INDEX_READ");
+        KindPayload.IndexReadPayload readPayload =
+            (KindPayload.IndexReadPayload) read.payload();
+        check(readPayload.container().equals(ops.get(0).result()),
+            "the read container is the receiver load's result (exactly once)");
+        check(readPayload.slot().equals(normalize.result()),
+            "the read slot is the normalize's closed table slot");
+        check(read.result().equals(readValue),
+            "INDEX_READ publishes its result ValueId");
+        check(read.resultType().equals(RuntimeDescriptor.Int.INSTANCE),
+            "the read resultType is the contextual type's descriptor (int)");
+        check(read.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE,
+            "INDEX_READ policy NO_DEAL_FAILURE");
+        checkOrigin("INDEX_READ", read, index.span(), SourceOriginKind.USER, null);
+
+        SemanticOp child = ops.get(4);
+        check(child.kind() == SemanticOpKind.BOUNDARY,
+            "op 4 is the single contextual child");
+        check(child.opId().equals(readPayload.elementBoundaryOpId()),
+            "the child is the read's payload-referenced element boundary");
+        KindPayload.BoundaryPayload boundary =
+            (KindPayload.BoundaryPayload) child.payload();
+        check(boundary.kind() == BoundaryKind.CONTEXTUAL_TABLE_READ,
+            "child kind CONTEXTUAL_TABLE_READ");
+        check(boundary.descriptor().equals(RuntimeDescriptor.Int.INSTANCE),
+            "child descriptor D(contextual type) = int");
+        check(boundary.input().equals(read.result()),
+            "child input is the INDEX_READ result ValueId");
+        check(boundary.realization().equals(new BoundaryRealization.RuntimeValidation(
+                SemanticLowerer.CANONICAL_RUNTIME_VALIDATION_ID)),
+            "child realization is the pinned RuntimeValidation("
+                + SemanticLowerer.CANONICAL_RUNTIME_VALIDATION_ID + ")");
+        check(child.failurePolicy() == FailurePolicyId.TYPE_DESCRIPTOR,
+            "child policy is the descriptor-kind rule: TYPE_DESCRIPTOR");
+        checkOrigin("contextual child", child, index.span(),
+            SourceOriginKind.SYNTHETIC, read.opId());
+    }
+
     // =========================================================================
     // 9. FOR_EACH arm — the exact shape, the nested body, the empty body
     // =========================================================================
@@ -1952,6 +2057,7 @@ public class ContainerLoweringArmsTest {
         testTemplateArms();
         testArrayLengthArm();
         testMemberReadArm();
+        testDynamicTableIndexReadArm();
         testForEachArm(nested);
         testConstructUnloweredNegatives();
         testDescriptorNegatives();

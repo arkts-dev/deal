@@ -1490,17 +1490,26 @@ public final class JvmSemanticEmitter {
             if (!trace) {
                 return;
             }
+            boolean tableSlot = !op.operandTypes().isEmpty()
+                && op.operandTypes().get(0) instanceof RuntimeDescriptor.Table;
             StringBuilder inputs = new StringBuilder();
             inputs.append("JvmRuntime.atom(").append(slot(op.operands().get(0)))
                 .append(", ").append(javaString(staticKind(op.operandTypes().get(0))))
                 .append("), ");
-            inputs.append("\"slot:\" + ((long[]) ").append(slot(op.operands().get(1)))
-                .append(")[0] + \"/\" + (((long[]) ").append(slot(op.operands().get(1)))
-                .append(")[0] < ((long[]) ").append(slot(op.operands().get(1)))
-                .append(")[1]) + \"/\" + (((long[]) ").append(slot(op.operands().get(1)))
-                .append(")[2] == 1 && ((long[]) ").append(slot(op.operands().get(1)))
-                .append(")[0] == ((long[]) ").append(slot(op.operands().get(1)))
-                .append(")[1])");
+            if (tableSlot) {
+                // The closed table slot atom (the oracle's keyslot atom):
+                // the normalized key with its escaped text.
+                inputs.append("\"keyslot:\" + JvmRuntime.esc((String) ((Object[]) ")
+                    .append(slot(op.operands().get(1))).append(")[1])");
+            } else {
+                inputs.append("\"slot:\" + ((long[]) ").append(slot(op.operands().get(1)))
+                    .append(")[0] + \"/\" + (((long[]) ").append(slot(op.operands().get(1)))
+                    .append(")[0] < ((long[]) ").append(slot(op.operands().get(1)))
+                    .append(")[1]) + \"/\" + (((long[]) ").append(slot(op.operands().get(1)))
+                    .append(")[2] == 1 && ((long[]) ").append(slot(op.operands().get(1)))
+                    .append(")[0] == ((long[]) ").append(slot(op.operands().get(1)))
+                    .append(")[1])");
+            }
             for (int i = 2; i < op.operands().size(); i++) {
                 inputs.append(", JvmRuntime.atom(").append(slot(op.operands().get(i)))
                     .append(", ").append(javaString(staticKind(op.operandTypes().get(i))))
@@ -1898,6 +1907,81 @@ public final class JvmSemanticEmitter {
             return false;
         }
 
+        /**
+         * The contextual-read boundary tail of a table read (the static
+         * MEMBER_READ and the dynamic-key INDEX_READ table arm): the
+         * boundary START with the raw input atom, the deferred
+         * pass-through or the {@code __bcheck} admission, the
+         * boundary/op FAILURE pair at the boundary origin, and the
+         * boundary/op SUCCESS terminals.
+         */
+        private void emitContextualTableReadBoundaryTail(SemanticOp op,
+                                                         SemanticOp boundary,
+                                                         String target, int indent) {
+            KindPayload.BoundaryPayload boundaryPayload =
+                (KindPayload.BoundaryPayload) boundary.payload();
+            if (trace) {
+                // Custom boundary START: the input atom renders the
+                // actual value kind (the oracle's atomOf — a
+                // wrong-kind present value atomizes as its own kind).
+                out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
+                    .append(javaString(opKey(boundary.opId())))
+                    .append(", \"START\", \"BOUNDARY\", ")
+                    .append(javaString(boundary.contract().canonicalDigest()))
+                    .append(", ")
+                    .append(javaString(parentKey(boundary.origin().parentOpId())))
+                    .append(", List.of(JvmRuntime.rawAtom(")
+                    .append(target).append(", ")
+                    .append(javaString(staticKind(boundaryPayload.descriptor())))
+                    .append(")), null, null);\n");
+            }
+            out.append(indent(indent)).append("  Object __mr_")
+                .append(boundary.opId().id()).append(";\n");
+            out.append(indent(indent)).append("  try {\n");
+            if (defersContextualCheck(boundaryPayload.descriptor())) {
+                out.append(indent(indent)).append("    __mr_")
+                    .append(boundary.opId().id()).append(" = ")
+                    .append(target).append(";\n");
+            } else {
+                out.append(indent(indent)).append("    __mr_")
+                    .append(boundary.opId().id())
+                    .append(" = ")
+                    .append(bcheckArgs(boundaryPayload.descriptor(), target))
+                    .append(";\n");
+            }
+            out.append(indent(indent)).append("  } catch (JvmRuntime.DealError __be) {\n");
+            out.append(indent(indent))
+                .append("    JvmRuntime.DealError __bre = new JvmRuntime.DealError("
+                    + "__be.code, __be.msg, ")
+                .append(javaString(originOf(boundary)))
+                .append(", __be.expected, __be.actual, __be.frames, null);\n");
+            if (trace) {
+                emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
+                    "JvmRuntime.errtext(__bre)", indent + 1);
+                emitFailureEvent(op.opId(), op.kind().name(), op,
+                    "JvmRuntime.errtext(__bre)", indent + 1);
+            }
+            out.append(indent(indent)).append("    throw __bre;\n");
+            out.append(indent(indent)).append("  }\n");
+            out.append(indent(indent)).append(target).append(" = __mr_")
+                .append(boundary.opId().id()).append(";\n");
+            if (defersContextualCheck(boundaryPayload.descriptor())) {
+                emitBoundarySuccessAtom(boundary, "JvmRuntime.rawAtom("
+                    + target + ", "
+                    + javaString(staticKind(boundaryPayload.descriptor())) + ")",
+                    indent);
+                // The deferred composite read's own SUCCESS atom renders
+                // the value's own kind too (the oracle's value-aware
+                // publish, never the declared kind).
+                emitResultSuccessAtom(op, target, indent);
+            } else {
+                emitBoundarySuccess(boundary, target,
+                    boundaryPayload.descriptor(), indent);
+                emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(),
+                    indent);
+            }
+        }
+
         private void emitMemberRead(SemanticOp op, int indent) {
             KindPayload.MemberReadPayload payload = (KindPayload.MemberReadPayload) op.payload();
             emitStart(op, indent);
@@ -1907,69 +1991,7 @@ public final class JvmSemanticEmitter {
                 .append(javaString(payload.key())).append(");\n");
             SemanticOp boundary = boundaryChildOf(op);
             if (boundary != null) {
-                KindPayload.BoundaryPayload boundaryPayload =
-                    (KindPayload.BoundaryPayload) boundary.payload();
-                if (trace) {
-                    // Custom boundary START: the input atom renders the
-                    // actual value kind (the oracle's atomOf — a
-                    // wrong-kind present value atomizes as its own kind).
-                    out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
-                        .append(javaString(opKey(boundary.opId())))
-                        .append(", \"START\", \"BOUNDARY\", ")
-                        .append(javaString(boundary.contract().canonicalDigest()))
-                        .append(", ")
-                        .append(javaString(parentKey(boundary.origin().parentOpId())))
-                        .append(", List.of(JvmRuntime.rawAtom(")
-                        .append(target).append(", ")
-                        .append(javaString(staticKind(boundaryPayload.descriptor())))
-                        .append(")), null, null);\n");
-                }
-                out.append(indent(indent)).append("  Object __mr_")
-                    .append(boundary.opId().id()).append(";\n");
-                out.append(indent(indent)).append("  try {\n");
-                if (defersContextualCheck(boundaryPayload.descriptor())) {
-
-                    out.append(indent(indent)).append("    __mr_")
-                        .append(boundary.opId().id()).append(" = ")
-                        .append(target).append(";\n");
-                } else {
-                    out.append(indent(indent)).append("    __mr_")
-                        .append(boundary.opId().id())
-                        .append(" = ")
-                        .append(bcheckArgs(boundaryPayload.descriptor(), target))
-                        .append(";\n");
-                }
-                out.append(indent(indent)).append("  } catch (JvmRuntime.DealError __be) {\n");
-                out.append(indent(indent))
-                    .append("    JvmRuntime.DealError __bre = new JvmRuntime.DealError("
-                        + "__be.code, __be.msg, ")
-                    .append(javaString(originOf(boundary)))
-                    .append(", __be.expected, __be.actual, __be.frames, null);\n");
-                if (trace) {
-                    emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
-                        "JvmRuntime.errtext(__bre)", indent + 1);
-                    emitFailureEvent(op.opId(), op.kind().name(), op,
-                        "JvmRuntime.errtext(__bre)", indent + 1);
-                }
-                out.append(indent(indent)).append("    throw __bre;\n");
-                out.append(indent(indent)).append("  }\n");
-                out.append(indent(indent)).append(target).append(" = __mr_")
-                    .append(boundary.opId().id()).append(";\n");
-                if (defersContextualCheck(boundaryPayload.descriptor())) {
-                    emitBoundarySuccessAtom(boundary, "JvmRuntime.rawAtom("
-                        + target + ", "
-                        + javaString(staticKind(boundaryPayload.descriptor())) + ")",
-                        indent);
-                    // The deferred composite read's own SUCCESS atom renders
-                    // the value's own kind too (the oracle's value-aware
-                    // publish, never the declared kind).
-                    emitResultSuccessAtom(op, target, indent);
-                } else {
-                    emitBoundarySuccess(boundary, target,
-                        boundaryPayload.descriptor(), indent);
-                    emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(),
-                        indent);
-                }
+                emitContextualTableReadBoundaryTail(op, boundary, target, indent);
                 return;
             }
             // The OPTIONAL_READ envelope shape: the raw read publishes the
@@ -2376,6 +2398,22 @@ public final class JvmSemanticEmitter {
             }
             emitSlotOperandStart(op, indent);
             String target = slot((ValueId) op.result());
+            if (!op.operandTypes().isEmpty()
+                    && op.operandTypes().get(0) instanceof RuntimeDescriptor.Table) {
+                // The dynamic-key computed table read (the shared
+                // dynamic-key read seam): the normalized slot carries the
+                // evaluated string key; the read resolves the same
+                // missing-aware table entry the static member read does,
+                // and the op's CONTEXTUAL_TABLE_READ boundary child runs
+                // the identical admission (deferred for composite
+                // descriptors) as the literal spelling.
+                out.append(indent(indent)).append(target).append(" = ((")
+                    .append("JvmRuntime.Table) ").append(slot(payload.container()))
+                    .append(").read((String) ((Object[]) ")
+                    .append(slot(payload.slot())).append(")[1]);\n");
+                emitContextualTableReadBoundaryTail(op, boundary, target, indent);
+                return;
+            }
             out.append(indent(indent)).append(target).append(" = JvmRuntime.arrayRead(")
                 .append(javaString(opKey(op.opId()))).append(", ")
                 .append(javaString(op.contract().canonicalDigest())).append(", ")

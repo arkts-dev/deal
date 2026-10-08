@@ -3284,7 +3284,21 @@ public final class SemanticOracle {
                     Value.TableValue target = (Value.TableValue) container;
                     Value read = target.entries().get(table.key());
                     if (read == null) {
+                        // The module-namespace dynamic read resolves the
+                        // module's own surface entry exactly like the
+                        // static member read (K15 item 3): the read through
+                        // a namespace value and its direct spelling observe
+                        // one entry per (module, export).
+                        read = resolveNamespaceSurfaceEntry(op, target, table.key(),
+                            descriptor);
+                    }
+                    if (read == null) {
                         read = Value.MissingValue.INSTANCE;
+                    } else {
+                        keyNamespaceSurfaceEntry(target, table.key(), read, descriptor);
+                    }
+                    if (defersContextualCheck(descriptor)) {
+                        return publish(op, runDeferredBoundaryChild(boundary, read));
                     }
                     Value checked = runBoundaryChild(boundary, read, BoundaryContext.none());
                     return contextualReadDecision(op, checked, descriptor);

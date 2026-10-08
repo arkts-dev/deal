@@ -714,6 +714,59 @@ public class LuaProductionProjectEmissionTest {
             deleteRecursively(shadow.root());
         }
 
+        // (b4) The dynamic-key computed table read probe (ISSUE-0717
+        //      review): a variable key and an effectful key expression
+        //      resolve the same read shape as the literal spelling, and a
+        //      missing key reads null at a nullable position. Real luajit
+        //      must exit 0.
+        String dynamicTableSource = """
+            export function main(): null {
+              let t: table = { x: 7 };
+              let k: string = "x";
+              let n: int = t[k];
+              if (n !== 7) { throw { code: "DYN_FAIL", message: "variable key" }; }
+              let u: table = {};
+              let mk: () => string = function(): string { return "y"; };
+              u[mk()] = 9;
+              let m: int = u[mk()];
+              if (m !== 9) { throw { code: "DYN_FAIL", message: "effectful key" }; }
+              let q: table = {};
+              let miss: int | null = q[k];
+              if (miss !== null) { throw { code: "DYN_FAIL", message: "missing" }; }
+              let v: table = { s: 1 };
+              let nn: int | null = v["s"];
+              let got: int = 0;
+              if (nn !== null) { got = nn; }
+              if (got !== 1) { throw { code: "DYN_FAIL", message: "nullable" }; }
+              return null;
+            }
+            """;
+        Fixture dynamicTable = compileProject(LIB_SOURCE, dynamicTableSource);
+        Path dynamicWorkspace = Files.createTempDirectory("lua-production-project-dyntable");
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(dynamicTable);
+            if (result.project() == null) {
+                fail("the dynamic-table-read fixture lowers: " + result.diagnostics());
+                return;
+            }
+            Path artifact = dynamicWorkspace.resolve("project.lua");
+            Files.writeString(artifact, LuaSemanticEmitter.emitProductionProject(
+                result.project(), result.tables(), result.registries(),
+                dynamicTable.surface()),
+                StandardCharsets.UTF_8);
+            deployRuntime(dynamicWorkspace);
+            ProcessOutcome run = runProcess(List.of("luajit",
+                artifact.toAbsolutePath().toString()), dynamicWorkspace);
+            checkEq(0, run.exitCode(),
+                "the dynamic-table-read fixture exits 0 under luajit: stdout="
+                    + escaped(run.stdout()) + " stderr=" + escaped(run.stderr()));
+            checkEq("", run.stderr(),
+                "the dynamic-table-read fixture publishes no trace protocol on stderr");
+        } finally {
+            deleteRecursively(dynamicWorkspace);
+            deleteRecursively(dynamicTable.root());
+        }
+
         // (c) The conversion-overflow fixture: exit 1, DEAL_ERROR_CODE: E8004
         //     on stdout (never a trace terminal).
         Fixture overflow = compileProject(OVERFLOW_APP_SOURCE);

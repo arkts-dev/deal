@@ -2197,6 +2197,30 @@ public final class LuaSemanticEmitter {
                 ? ((RuntimeDescriptor.Nullable) descriptor).inner() : descriptor;
             emitSlotOperandStart(op);
             if (!op.operandTypes().isEmpty()
+                    && op.operandTypes().get(0) instanceof RuntimeDescriptor.Table) {
+                // The dynamic-key computed table read (the shared
+                // dynamic-key read seam): the normalized slot carries the
+                // evaluated string key; __member resolves the same
+                // missing-aware entry the static member read does, and the
+                // op's CONTEXTUAL_TABLE_READ boundary child runs the
+                // identical admission (deferred for composite descriptors)
+                // as the literal spelling.
+                String tableTarget = slot((ValueId) op.result());
+                out.append(tableTarget).append(" = __member(")
+                    .append(slot(payload.container())).append(", ")
+                    .append(slot(payload.slot())).append(".k)\n");
+                out.append(tableTarget).append(" = __readVar(")
+                    .append(slot(payload.container())).append(", ")
+                    .append(slot(payload.slot())).append(".k, ")
+                    .append(tableTarget).append(", ")
+                    .append(isNumberKind(staticKind(descriptor)) ? "true" : "false")
+                    .append(")\n");
+                emitBoundaryCheckStartAtom(boundary, tableTarget);
+                emitBoundaryCheckBlock(op, boundary, tableTarget);
+                emitBoundarySuccessTail(op, boundary, tableTarget);
+                return;
+            }
+            if (!op.operandTypes().isEmpty()
                     && op.operandTypes().get(0) instanceof RuntimeDescriptor.Bytes) {
                 // K6 item 2: the bytes element read — the length read's
                 // result is the normalize's currentLength and the

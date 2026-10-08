@@ -255,6 +255,9 @@ public class CheckerTest {
 
         testLocalNullableClassMemberAccessRejected();
         testLocalNullableClassMemberAccessNarrowedOk();
+        testNullablePropertyPathAndAssignmentInvalidation();
+        testNestedDeclarationDoesNotClearEnclosingPending();
+        testShadowingInitializerReadsEnclosingNarrowing();
         testNestedClass();
         // ISSUE-0717 (defect snippet 47): a nested class that shadows an
         // enclosing class of the same name stays a distinct declaration;
@@ -1508,6 +1511,93 @@ public class CheckerTest {
             "}"
         );
         assertNoErrors(out, "narrowed local nullable class member access");
+    }
+
+    /**
+     * ISSUE-0717 review: the supported null narrowing is binding-based
+     * only (docs/spec-v1.2.md §Nullable semantics — "No property-path
+     * narrowing"), so a nullable member-path receiver stays rejected even
+     * after a {@code path !== null} test, and an assignment to a narrowed
+     * binding invalidates its refinement (the later dereference is
+     * rejected).
+     */
+    static void testNullablePropertyPathAndAssignmentInvalidation() {
+        System.out.println("-- Nullable property paths never narrow; assignment "
+            + "invalidates the binding's refinement --");
+
+        CheckerOutput path = checkProgram(
+            "class Child { n: int = 0; }\n" +
+            "class Parent { child: Child | null = null; }\n" +
+            "export function f(p: Parent): int {\n" +
+            "  if (p.child !== null) {\n" +
+            "    return p.child.n;\n" +
+            "  }\n" +
+            "  return 0;\n" +
+            "}"
+        );
+        assertError(path, "E3003",
+            "a guarded nullable property path is not narrowed (no property-path "
+                + "narrowing)");
+
+        CheckerOutput assigned = checkProgram(
+            "class C { n: int = 0; }\n" +
+            "export function f(): int {\n" +
+            "  let x: C | null = {};\n" +
+            "  if (x !== null) {\n" +
+            "    x = null;\n" +
+            "    return x.n;\n" +
+            "  }\n" +
+            "  return 0;\n" +
+            "}"
+        );
+        assertError(assigned, "E3003",
+            "assigning null invalidates the binding's narrowing, so the "
+                + "dereference is rejected");
+    }
+
+    /**
+     * ISSUE-0717 review: only the declaration-owning scope clears its
+     * pending let name (docs/spec-v1.2.md §Declaration order and §Scope),
+     * so an inner block's same-name declaration never makes an enclosing
+     * block's later declaration visible to an earlier reference.
+     */
+    static void testNestedDeclarationDoesNotClearEnclosingPending() {
+        System.out.println("-- Nested same-name declaration keeps the enclosing "
+            + "pending let invisible --");
+        CheckerOutput out = checkProgram(
+            "export function f(): null {\n" +
+            "  {\n" +
+            "    let x: int = 1;\n" +
+            "  }\n" +
+            "  let y: int = x;\n" +
+            "  let x: int = 2;\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(out, "E2001",
+            "the outer x is declared after the reference; the inner block's x "
+                + "must not make it visible");
+    }
+
+    /**
+     * ISSUE-0717 review: a shadowing declaration's initializer is checked
+     * before the outer refinement is cleared, so it reads the enclosing
+     * binding with its current narrowing (docs/spec-v1.2.md §Declaration
+     * order and §Nullable semantics).
+     */
+    static void testShadowingInitializerReadsEnclosingNarrowing() {
+        System.out.println("-- Shadowing initializer reads the enclosing "
+            + "narrowed binding --");
+        CheckerOutput out = checkProgram(
+            "export function f(): null {\n" +
+            "  let x: string | null = \"a\";\n" +
+            "  if (x !== null) {\n" +
+            "    let x: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(out, "the initializer reads the narrowed enclosing x");
     }
 
     /**

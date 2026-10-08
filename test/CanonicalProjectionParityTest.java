@@ -2419,6 +2419,137 @@ public class CanonicalProjectionParityTest {
     }
 
     // =========================================================================
+    // 4b. The dynamic-key computed table read (ISSUE-0717 review)
+    // =========================================================================
+
+    /**
+     * The dynamic-key table read seed: a variable key, an effectful key
+     * call, a missing key at a nullable position, and a present nullable
+     * value's narrowed read.
+     */
+    private static final String DYNAMIC_TABLE_READ_SOURCE = """
+        function keyOf(): string { return "x"; }
+        function main(): null {
+          let t: table = { x: 7 };
+          let k: string = "x";
+          let n: int = t[k];
+          let n2: int = t[keyOf()];
+          let u: table = {};
+          u["y"] = 9;
+          let ky: string = "y";
+          let m: int = u[ky];
+          let q: table = {};
+          let miss: int | null = q[k];
+          let v: table = { s: 1 };
+          let nn: int | null = v["s"];
+          let nz: int = 0;
+          if (nn !== null) { nz = nn; }
+          return null;
+        }
+        """;
+
+    /**
+     * The dynamic-key table read's contextual validation failure: a
+     * present wrong-kind value at a nullable read position (E8001 at the
+     * read's origin).
+     */
+    private static final String DYNAMIC_TABLE_READ_WRONG_KIND_SOURCE = """
+        function main(): null {
+          let t: table = { x: "str" };
+          let k: string = "x";
+          let n: int | null = t[k];
+          return null;
+        }
+        """;
+
+    /**
+     * The dynamic-key table read's missing failure: an absent key at a
+     * non-nullable read position (E8001 at the read's origin).
+     */
+    private static final String DYNAMIC_TABLE_READ_MISSING_SOURCE = """
+        function main(): null {
+          let t: table = {};
+          let k: string = "x";
+          let n: int = t[k];
+          return null;
+        }
+        """;
+
+    /**
+     * The dynamic-key computed table read ({@code t[k]}): the receiver
+     * completes before the key, the key's closed table slot is published
+     * by {@code INDEX_NORMALIZE(TABLE_READ)}, and the {@code INDEX_READ}'s
+     * {@code CONTEXTUAL_TABLE_READ} boundary child runs the literal
+     * member read's contextual admission. The oracle, the LuaJIT artifact,
+     * and the JVM artifact must agree event-for-event and on the pinned
+     * terminal for the success and both failure shapes.
+     */
+    private static void testDynamicTableRead() throws Exception {
+        System.out.println("-- the dynamic-key computed table read: the "
+            + "three-consumer trace and terminal identity --");
+        Seed success = lowerSeed(DYNAMIC_TABLE_READ_SOURCE,
+            "the dynamic table read seed");
+        if (success != null) {
+            Path workspace = Files.createTempDirectory("projection-dyntable");
+            try {
+                SemanticDifferentialHarness.Verdict verdict =
+                    SemanticDifferentialHarness.run(success.unit(), success.table(),
+                        SemanticDifferentialHarness.Expectation.success(
+                            "the dynamic table read", List.of(), "null"),
+                        workspace);
+                checkEq(3, verdict.runs().size(), "the dynamic table read drive "
+                    + "produced the three consumers: " + verdict.failures());
+                check(verdict.pass(), "the dynamic table read three-consumer "
+                    + "verdict passes: " + verdict.failures() + "\n" + verdict.report());
+            } finally {
+                deleteRecursively(workspace);
+            }
+        }
+
+        Seed wrongKind = lowerSeed(DYNAMIC_TABLE_READ_WRONG_KIND_SOURCE,
+            "the dynamic table read wrong-kind seed");
+        if (wrongKind != null) {
+            Path workspace = Files.createTempDirectory("projection-dyntable-kind");
+            try {
+                SemanticDifferentialHarness.Verdict verdict =
+                    SemanticDifferentialHarness.run(wrongKind.unit(), wrongKind.table(),
+                        SemanticDifferentialHarness.Expectation.failure(
+                            "the dynamic table read wrong-kind value", List.of(),
+                            "E8001", "test.deal:4:23"),
+                        workspace);
+                checkEq(3, verdict.runs().size(), "the wrong-kind drive produced "
+                    + "the three consumers: " + verdict.failures());
+                check(verdict.pass(), "the wrong-kind three-consumer verdict "
+                    + "passes (the contextual admission's pinned E8001): "
+                    + verdict.failures() + "\n" + verdict.report());
+            } finally {
+                deleteRecursively(workspace);
+            }
+        }
+
+        Seed missing = lowerSeed(DYNAMIC_TABLE_READ_MISSING_SOURCE,
+            "the dynamic table read missing seed");
+        if (missing != null) {
+            Path workspace = Files.createTempDirectory("projection-dyntable-missing");
+            try {
+                SemanticDifferentialHarness.Verdict verdict =
+                    SemanticDifferentialHarness.run(missing.unit(), missing.table(),
+                        SemanticDifferentialHarness.Expectation.failure(
+                            "the dynamic table read missing key", List.of(),
+                            "E8001", "test.deal:4:16"),
+                        workspace);
+                checkEq(3, verdict.runs().size(), "the missing-key drive produced "
+                    + "the three consumers: " + verdict.failures());
+                check(verdict.pass(), "the missing-key three-consumer verdict "
+                    + "passes (the read origin's pinned E8001): "
+                    + verdict.failures() + "\n" + verdict.report());
+            } finally {
+                deleteRecursively(workspace);
+            }
+        }
+    }
+
+    // =========================================================================
     // 5. The row/arm completeness negatives and the single-source control
     // =========================================================================
 
@@ -2601,6 +2732,7 @@ public class CanonicalProjectionParityTest {
         testMarkedArmsAndFieldShapes();
         testHostInnerReasonPassThroughs();
         testForEachDeletedSlot();
+        testDynamicTableRead();
         testCompletenessAndSingleSourceNegatives();
         testUnchangedSurfaces();
         System.out.println();

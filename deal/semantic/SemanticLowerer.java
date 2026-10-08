@@ -11493,25 +11493,87 @@ public final class SemanticLowerer {
         }
 
         /**
-         * The computed table read ({@code t["key"]}) — the shared
-         * contextual-read form over the same {@code MEMBER_READ} shape
-         * the static member read uses (a table's string keys are the
-         * same keys in both spellings; the checker's context algorithm
-         * admits both forms identically). The literal string key is
-         * carried as the read's key (an interpreter-invisible
-         * difference from {@code t.key}); no call-argument deferral
-         * applies (that seam is the static member read's).
+         * The computed table read ({@code t["key"]} / {@code t[k]}) — the
+         * shared contextual-read form over the same {@code MEMBER_READ}
+         * shape the static member read uses for a literal string key (a
+         * table's string keys are the same keys in both spellings; the
+         * checker's context algorithm admits both forms identically). A
+         * non-literal key keeps the literal read's semantics through the
+         * shared dynamic-key read seam: the receiver completes before
+         * the key, {@code INDEX_NORMALIZE(TABLE_READ)} publishes the
+         * evaluated key's closed table slot, and the {@code INDEX_READ}
+         * carries the read's {@code CONTEXTUAL_TABLE_READ} boundary
+         * child — the same contextual validation, execution order, and
+         * key identity as the literal spelling.
          */
         private ValueId lowerTableIndexRead(IndexExpr index, ValueId slot) {
-            if (!(index.index() instanceof LiteralExpr literal)
-                    || !(literal.value()
-                        instanceof LiteralValue.StringLiteral stringLiteral)) {
-                throw new ConstructUnlowered("table index read with a non-literal key "
-                    + "(the computed table read carries a literal string key; a "
-                    + "dynamic table key is not admitted by this arm)");
+            if (index.index() instanceof LiteralExpr literal
+                    && literal.value()
+                        instanceof LiteralValue.StringLiteral stringLiteral) {
+                // The literal-key optimization: the constant key needs no
+                // evaluation step (the static member read's shape).
+                return lowerTableRead(lowerExpression(index.array()),
+                    stringLiteral.value(), index.span(), checkedType(index), slot,
+                    null);
             }
-            return lowerTableRead(lowerExpression(index.array()), stringLiteral.value(),
-                index.span(), checkedType(index), slot, null);
+            return lowerDynamicTableIndexRead(index, slot);
+        }
+
+        /**
+         * The dynamic-key computed table read: {@code [containerOp,
+         * keyOp, normalizeOp(INDEX_NORMALIZE TABLE_READ), INDEX_READ]}
+         * with the read's {@code CONTEXTUAL_TABLE_READ} boundary child.
+         * The key is statically {@code string} by the checker's
+         * read-key gate, so the normalize is total with no coercion and
+         * preserves key identity exactly.
+         */
+        private ValueId lowerDynamicTableIndexRead(IndexExpr index, ValueId slot) {
+            Type contextualType = checkedType(index);
+            RuntimeDescriptor resultType =
+                ContainerPayloadDescriptors.resultDescriptorOf(contextualType);
+            RuntimeDescriptor tableDescriptor =
+                ContainerPayloadDescriptors.resultDescriptorOf(Type.Table.INSTANCE);
+            RuntimeDescriptor stringDescriptor =
+                ContainerPayloadDescriptors.resultDescriptorOf(Type.String.INSTANCE);
+            // Receiver before key (the spec's evaluation order).
+            ValueId container = lowerExpression(index.array());
+            ValueId key = lowerExpression(index.index());
+            ValueId normalizedSlot = emitOperandOp(SemanticOpKind.INDEX_NORMALIZE,
+                new KindPayload.IndexNormalizePayload(IndexMode.TABLE_READ, key, key),
+                List.of(key, key), List.of(stringDescriptor, stringDescriptor),
+                index.span(), stringDescriptor, FailurePolicyId.NO_DEAL_FAILURE);
+            ValueId result = slot != null ? slot
+                : ids.nextValueId(module, nextOrdinal++, 0);
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            AnchorId boundaryAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId boundaryOpId = ids.nextOpId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(index.span()),
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(opId, SemanticOpKind.INDEX_READ,
+                new KindPayload.IndexReadPayload(container, normalizedSlot, boundaryOpId),
+                result, resultType, List.of(container, normalizedSlot), List.of(
+                    tableDescriptor, stringDescriptor),
+                FailurePolicyId.NO_DEAL_FAILURE, origin));
+            FailurePolicyId childPolicy = resultType instanceof RuntimeDescriptor.Func
+                ? FailurePolicyId.FUNCTION_SIGNATURE : FailurePolicyId.TYPE_DESCRIPTOR;
+            SourceOrigin boundaryOrigin = new SourceOrigin(sourceId,
+                toSourceSpan(index.span()), SourceOriginKind.SYNTHETIC, boundaryAnchor,
+                opId);
+            emit(buildOp(boundaryOpId, SemanticOpKind.BOUNDARY,
+                new KindPayload.BoundaryPayload(BoundaryKind.CONTEXTUAL_TABLE_READ,
+                    resultType, result,
+                    new BoundaryRealization.RuntimeValidation(
+                        CANONICAL_RUNTIME_VALIDATION_ID)),
+                null, null, childPolicy, boundaryOrigin));
+            if (creationRuleAnalysis && resultType instanceof RuntimeDescriptor.Func) {
+                recordBoundaryClassification(BoundaryKind.CONTEXTUAL_TABLE_READ,
+                    contextualType, contextualType);
+            }
+            // The producer rule's index-read arm: a function-typed element
+            // read registers exactly one dynamic materialization.
+            registerDynamicMaterialization(result, opId, resultType);
+            return result;
         }
 
         /**

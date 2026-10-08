@@ -487,19 +487,6 @@ public final class TypeChecker {
     // =======================================================================
 
     private void checkVariableDeclaration(VariableDeclaration vd) {
-        // A block-local declaration shadows any outer binding of the same
-        // name: the outer binding's narrowing must not apply to the new
-        // symbol. The entry is remembered so the declaring block's exit
-        // restores it for the enclosing scope.
-        Type outerNarrowed = narrowing.getNarrowedType(vd.name());
-        if (outerNarrowed != null) {
-            narrowing.onAssignment(vd.name());
-            if (!shadowedByDeclaration.isEmpty()) {
-                shadowedByDeclaration.peek().add(
-                    Map.entry(vd.name(), outerNarrowed));
-            }
-        }
-
         Type targetType;
         if (vd.typeAnnotation().isPresent()) {
             targetType = nameResolver.resolveTypeNode(vd.typeAnnotation().get());
@@ -511,6 +498,36 @@ public final class TypeChecker {
         expectedType = targetType;
         Type exprType = checkExpression(vd.initializer());
         expectedType = savedExpected;
+
+        // The declaration is complete: the name is now visible to the
+        // following statements of its block. Only the declaration's own
+        // scope stops treating it as pending — an inner block's
+        // same-name declaration never makes an enclosing scope's pending
+        // declaration visible early (docs/spec-v1.2.md §Declaration
+        // order: a let declaration is visible only after its declaration
+        // and only in its own block).
+        for (PendingScope ps : pendingScopes) {
+            if (ps.scope == currentScope) {
+                ps.remaining.remove(vd.name());
+                break;
+            }
+        }
+
+        // A block-local declaration shadows any outer binding of the same
+        // name: the outer binding's narrowing must not apply to the new
+        // symbol. The initializer above still resolved against the
+        // enclosing binding with its current refinement (the new
+        // declaration is not yet visible there), so the entry is cleared
+        // only now. It is remembered so the declaring block's exit
+        // restores it for the enclosing scope.
+        Type outerNarrowed = narrowing.getNarrowedType(vd.name());
+        if (outerNarrowed != null) {
+            narrowing.onAssignment(vd.name());
+            if (!shadowedByDeclaration.isEmpty()) {
+                shadowedByDeclaration.peek().add(
+                    Map.entry(vd.name(), outerNarrowed));
+            }
+        }
 
         // A rejected initializer (an error-recovery type) or an
         // un-inferable declaration skips the assignment gate — but the
@@ -536,12 +553,6 @@ public final class TypeChecker {
             if (targetType != null) {
                 checkAssignment(targetType, exprType, vd.initializer().span());
             }
-        }
-
-        // The declaration is complete: the name is now visible to the
-        // following statements of its block.
-        for (PendingScope ps : pendingScopes) {
-            ps.remaining.remove(vd.name());
         }
 
         recordAssignment(vd.name());
@@ -703,17 +714,11 @@ public final class TypeChecker {
         elseNarrowing = narrowing;
 
         if (is.elseBranch().isEmpty()) {
-            // A then-branch that cannot complete normally (it returns,
-            // throws, or transfers out of the loop) leaves only the
-            // condition's false arm reaching the code after the if. The
-            // false arm's null guards persist (a guarded member path stays
-            // dereferenceable); the arm's *type* narrowing does not — the
-            // declaration type stays visible to the comparison rules, so a
-            // later `x === null` over the declared `T | null` keeps its
-            // admission (ISSUE-0717 regression guard).
-            if (ReturnAnalysis.cannotCompleteNormally(is.thenBlock())) {
-                savedNarrowing.adoptGuards(elseNarrowing);
-            }
+            // No else branch: the then arm's narrowing stays inside its
+            // block and is not adopted for the code after the if — the
+            // false arm keeps the declaration types visible to the
+            // comparison rules (a later `x === null` over the declared
+            // `T | null` keeps its admission).
             narrowing = savedNarrowing;
         } else {
             thenNarrowing.merge(elseNarrowing);
@@ -1079,12 +1084,11 @@ public final class TypeChecker {
         // block's earlier statements (a forward or self reference)
         // resolves against the enclosing scopes.
         for (PendingScope ps : pendingScopes) {
-            if (ps.remaining.contains(id.name()) && sym != null
-                    && ps.scope != null
+            if (sym != null && ps.scope != null
+                    && ps.remaining.contains(id.name())
                     && ps.scope.resolveLocal(id.name()) == sym) {
                 sym = ps.scope.parent() != null
                     ? ps.scope.parent().resolve(id.name()) : null;
-                break;
             }
         }
         if (sym == null) {
@@ -1367,23 +1371,14 @@ public final class TypeChecker {
         // Class field access (including built-in Error class).
         //
         // ISSUE-0717 (defect snippet 30): a nullable-typed receiver must
-        // be guarded before its fields are read. A plain identifier
-        // receiver is narrowed by the null-narrowing analysis inside its
-        // guarded branch (the declared type is nullable, an unguarded read
-        // stays E3003). A member-path receiver (the conformance-gap-02
-        // seam: a foreign companion's field path, e.g. `child?: Child |
-        // null`, resolves through the owning module with no variable
-        // narrowing) is admitted only when the exact receiver path carries
-        // a non-null guard in the current flow position (the guard set
-        // persists past a returning then-branch), never silently unwrapped.
+        // be narrowed before its fields are read. Narrowing is supported
+        // only for local variables and parameters (docs/spec-v1.2.md
+        // §Nullable semantics — "No property-path narrowing"), so a
+        // plain identifier receiver is narrowed by the null-narrowing
+        // analysis inside its guarded branch and an unguarded read — a
+        // property-path receiver included — stays E3003: the receiver's
+        // declared nullable type is never unwrapped here.
         Type classTarget = objType;
-        if (classTarget instanceof Type.Nullable nullable
-                && nullable.inner() instanceof Type.Class) {
-            String path = NullNarrowing.pathOf(mae.object());
-            if (path != null && narrowing.isPathGuarded(path)) {
-                classTarget = nullable.inner();
-            }
-        }
         if (classTarget instanceof Type.Class cls) {
             Symbol sym = currentScope.resolve(cls.name());
             // If not found locally, try identity-keyed cross-module

@@ -674,6 +674,85 @@ public class JvmProductionProjectEmissionTest {
     }
 
     // =========================================================================
+    // 6. The dynamic-key computed table read (ISSUE-0717 review)
+    // =========================================================================
+
+    /**
+     * The dynamic-key computed table read: a variable key and an
+     * effectful key expression both resolve the same read shape as the
+     * literal spelling (receiver before key, contextual validation), and
+     * a missing key reads null at a nullable position. The production
+     * artifact must compile and exit 0 under the real toolchain.
+     */
+    private static void testDynamicTableRead() throws Exception {
+        System.out.println("-- the dynamic-key computed table read compiles and "
+            + "runs under the real toolchain --");
+        String source = """
+            export function main(): null {
+              let t: table = { x: 7 };
+              let k: string = "x";
+              let n: int = t[k];
+              if (n !== 7) { throw { code: "DYN_FAIL", message: "variable key" }; }
+              let u: table = {};
+              let mk: () => string = function(): string { return "y"; };
+              u[mk()] = 9;
+              let m: int = u[mk()];
+              if (m !== 9) { throw { code: "DYN_FAIL", message: "effectful key" }; }
+              let q: table = {};
+              let miss: int | null = q[k];
+              if (miss !== null) { throw { code: "DYN_FAIL", message: "missing" }; }
+              let v: table = { s: 1 };
+              let nn: int | null = v["s"];
+              let got: int = 0;
+              if (nn !== null) { got = nn; }
+              if (got !== 1) { throw { code: "DYN_FAIL", message: "nullable" }; }
+              return null;
+            }
+            """;
+        Fixture fixture = compileProject(source, "src/main.deal");
+        Path workspace = Files.createTempDirectory("jvm-production-project-dyntable");
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+            if (result.project() == null) {
+                fail("the dynamic-table-read fixture project lowers: "
+                    + result.diagnostics());
+                return;
+            }
+            ExecutableLoweredProject project = result.project();
+            String className = JvmBackend.classNameFor(project.entryModule().path());
+            JvmSemanticEmitter.EmissionResult emission =
+                JvmSemanticEmitter.emitProductionProject(project, result.tables(),
+                    result.registries(), className, fixture.surface());
+
+            Path artifact = workspace.resolve(className + ".java");
+            Files.writeString(artifact, emission.source(), StandardCharsets.UTF_8);
+            Path classes = workspace.resolve("classes");
+            Files.createDirectories(classes);
+            String classpath = absoluteClasspath();
+            ProcessOutcome javacRun = runProcess(List.of("javac", "--release", "25",
+                "-proc:none", "-cp", classpath, "-d", classes.toString(),
+                artifact.toAbsolutePath().toString()), workspace);
+            check(javacRun.exitCode() == 0,
+                "the dynamic-table-read artifact compiles with javac --release 25 "
+                    + "-proc:none: " + javacRun.output());
+            if (javacRun.exitCode() != 0) {
+                return;
+            }
+            ProcessOutcome run = runProcess(List.of("java", "-cp",
+                classpath + java.io.File.pathSeparator + classes, className), workspace);
+            checkEq(0, run.exitCode(),
+                "the dynamic-table-read artifact exits 0: " + run.output());
+            checkEq("", run.stdout(),
+                "the dynamic-table-read run prints nothing on stdout");
+            checkEq("", run.stderr(),
+                "the dynamic-table-read run prints nothing on stderr");
+        } finally {
+            deleteRecursively(workspace);
+            deleteRecursively(fixture.root());
+        }
+    }
+
+    // =========================================================================
     // Driver sources
     // =========================================================================
 
@@ -912,6 +991,7 @@ public class JvmProductionProjectEmissionTest {
             testCompileAndRun(baseline);
             testOverflowTerminal();
             testShadowingBindings();
+            testDynamicTableRead();
         } finally {
             deleteRecursively(fixture.root());
         }
