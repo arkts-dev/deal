@@ -104,6 +104,13 @@ import java.util.stream.Stream;
  *       the harness's two known re-entry pairing notices on each consumer (the
  *       accepted recursion shape of the direct-recursion fixtures); every
  *       other failure fails the case.</li>
+ *
+ *   <li><b>The production async drive.</b> The <em>staged</em> LuaJIT chunk
+ *       and the <em>staged</em> JVM class additionally execute the async
+ *       export through their production async-entry surface (no trace
+ *       instrumentation) and publish the pinned console effects and the
+ *       pinned result — the production emission's value-carried async start
+ *       end to end, not only the shared trace emission.</li>
  *   <li><b>The called sibling alias.</b> A member invoked through an ordinary
  *       function-value alias (nested, capture-carrying, later-declared target,
  *       and module-level variants) compiles on both production lanes, its
@@ -671,12 +678,52 @@ public class NestedGroupProductionTest {
         List.of(true, true), false, false, null, new AsyncDrive("drive"),
         "int:30");
 
+    /**
+     * The awaited nested-member declared-parameter origin (the cycle-3
+     * finding's async-origin requirement): {@code await g(bad.x)} carries a
+     * contextual table member argument, and its kind check must run at
+     * {@code g}'s declared parameter annotation — the value-carried async
+     * start keeps {@code lowerCallArgument}'s deferral, exactly like the
+     * synchronous declared-callee arm, instead of composing the argument
+     * read's own {@code CONTEXTUAL_TABLE_READ} cell. The read's origin is not
+     * admissible on any of the three consumers.
+     */
+    private static final Case ASYNC_PARAM_ORIGIN = new Case(
+        "async-param-origin",
+        """
+        export async function drive(): int {
+          let bad: table = { x: "wrong" };
+          let a: async (n: int) => int = make(10, bad);
+          return await a(3);
+        }
+
+        function make(base: int, bad: table): async (n: int) => int {
+          async function f(n: int): int {
+            if (n <= 0) {
+              return base;
+            }
+            return await g(bad.x);
+          }
+          async function g(n: int): int {
+            return await f(n);
+          }
+          return f;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """,
+        List.of(), true, List.of(true, true), false, false,
+        new FailurePin("E8001", "async function g(n: "), new AsyncDrive("drive"),
+        "null");
+
     private static final List<Case> CASES = List.of(
         CALLED_EXPLICIT, CALLED_IMPLICIT, CALLED_VALUE_REFERENCE,
         CALLED_ALIAS, CALLED_ALIAS_CAPTURED, CALLED_ALIAS_LATER, MODULE_GROUP_ALIAS,
         NEVER_CALLED_EXPLICIT_NULL, NEVER_CALLED_EXPLICIT_INT, NEVER_CALLED_IMPLICIT,
         CAPTURED_CALLED, NESTED_INSIDE_FUNCTION, ESCAPED_TWO_GROUPS,
-        PARAM_ORIGIN_CONTEXTUAL, ASYNC_ESCAPED_TWO_GROUPS);
+        PARAM_ORIGIN_CONTEXTUAL, ASYNC_ESCAPED_TWO_GROUPS, ASYNC_PARAM_ORIGIN);
 
     // =========================================================================
     // The case driver
@@ -713,6 +760,16 @@ public class NestedGroupProductionTest {
 
             // Surface 3: the three-consumer differential matrix.
             differential(testCase, lowered, entry);
+
+            // Surface 4: the staged production artifacts execute the async
+            // export on both release-owned lanes (the trace matrix above
+            // proves oracle agreement; this drive proves production emission).
+            // A failure-pin case is driven by the three-consumer matrix only:
+            // the staged production artifacts report the code, not the trace
+            // projection the failure assertion pins.
+            if (testCase.asyncDrive() != null && testCase.failure() == null) {
+                driveProductionAsync(testCase, project, lowered);
+            }
         } finally {
             deleteRecursively(project);
         }
@@ -781,6 +838,156 @@ public class NestedGroupProductionTest {
         int exit = compile.waitFor();
         check(exit == 0, testCase.name() + " [jvm]: the staged artifact compiles under "
             + "javac --release 25 -proc:none: " + compileOut);
+    }
+
+    /**
+     * Surface 4: the staged production artifacts execute the case's async
+     * export on both release-owned lanes through their production async-entry
+     * surface (a success case; the trace matrix owns the failure pins). The
+     * LuaJIT probe loads the staged chunk, runs module initialization and
+     * {@code main()} exactly once, and calls the staged {@code __asyncEntries}
+     * entry; the JVM probe runs {@code Main.dealMain()} and the staged
+     * {@code Main.ae<id>} entry. Both must publish exactly the case's pinned
+     * console effects and the pinned result, with an empty stderr and exit 0.
+     */
+    private static void driveProductionAsync(Case testCase, Path project, Lowered lowered)
+            throws Exception {
+        String export = testCase.asyncDrive().exportName();
+        String marker = "NESTED_GROUP_ASYNC_RESULT:";
+        String expectedResult = productionResultText(testCase.resultAtom());
+        List<String> expectedStdout = new ArrayList<>(testCase.effects());
+        expectedStdout.add(marker + expectedResult);
+
+        Path luaOut = project.resolve("out-luajit");
+        Path chunk = luaOut.resolve("main.lua");
+        check(Files.isRegularFile(chunk), testCase.name()
+            + " [luajit]: the staged chunk carries the async case: " + chunk);
+        if (Files.isRegularFile(chunk)) {
+            Path probe = luaOut.resolve("__nested_group_async_probe.lua");
+            Files.writeString(probe,
+                "dofile(\"" + luaString(chunk.toAbsolutePath().normalize().toString())
+                    + "\")\n"
+                    + "local __ok, __err = __dealMain()\n"
+                    + "if not __ok then error(__err, 0) end\n"
+                    + "local __okA, __resA = pcall(__asyncEntries[\""
+                    + luaString(lowered.project().entryModule().path() + "#" + export)
+                    + "\"], \"-\", true)\n"
+                    + "if not __okA then error(__resA, 0) end\n"
+                    + "print(\"" + marker + "\" .. tostring(__resA))\n",
+                StandardCharsets.UTF_8);
+            ProcessBuilder builder = new ProcessBuilder("luajit",
+                probe.getFileName().toString());
+            builder.directory(luaOut.toFile());
+            builder.environment().put("DEAL_DEFER_MAIN", "1");
+            ProcessOutput run = runProcess(builder);
+            check(run.exit() == 0 && run.stderr().isEmpty(), testCase.name()
+                + " [luajit]: the staged chunk executes the async case: " + run.describe());
+            check(run.stdout().equals(expectedStdout), testCase.name()
+                + " [luajit]: the staged chunk publishes the pinned effects and result "
+                + expectedStdout + "; got " + run.stdout());
+        }
+
+        Path jvmOut = project.resolve("out-jvm");
+        Path artifact = jvmOut.resolve(JvmNames.classNameFor("main") + ".java");
+        check(Files.isRegularFile(artifact), testCase.name()
+            + " [jvm]: the staged artifact carries the async case: " + artifact);
+        Long entryId = asyncEntryIdOf(lowered.unit(), export);
+        check(entryId != null, testCase.name() + " [jvm]: the unit records the async "
+            + "export's EXTERNAL_ENTRY over the production entry surface");
+        if (Files.isRegularFile(artifact) && entryId != null) {
+            Path classes = jvmOut.resolve("async-drive-classes");
+            Files.createDirectories(classes);
+            Path probe = jvmOut.resolve("NestedGroupAsyncProbe.java");
+            Files.writeString(probe,
+                "public final class NestedGroupAsyncProbe {\n"
+                    + "  public static void main(String[] args) {\n"
+                    + "    Main.dealMain();\n"
+                    + "    Object result = Main.ae" + entryId
+                    + "(\"-\", true, new Object[]{});\n"
+                    + "    System.out.println(\"" + marker + "\" + result);\n"
+                    + "    System.exit(0);\n"
+                    + "  }\n"
+                    + "}\n",
+                StandardCharsets.UTF_8);
+            ProcessBuilder javac = new ProcessBuilder("javac", "--release", "25",
+                "-proc:none", "-cp", absoluteClasspath(), "-d", classes.toString(),
+                artifact.toString(), probe.toString());
+            javac.directory(jvmOut.toFile());
+            ProcessOutput compile = runProcess(javac);
+            check(compile.exit() == 0, testCase.name() + " [jvm]: the staged artifact "
+                + "and the async probe compile under javac --release 25 -proc:none: "
+                + compile.describe());
+            if (compile.exit() == 0) {
+                ProcessBuilder java = new ProcessBuilder("java", "-cp",
+                    absoluteClasspath() + File.pathSeparator + classes,
+                    "NestedGroupAsyncProbe");
+                java.directory(jvmOut.toFile());
+                ProcessOutput run = runProcess(java);
+                check(run.exit() == 0 && run.stderr().isEmpty(), testCase.name()
+                    + " [jvm]: the staged artifact executes the async case: "
+                    + run.describe());
+                check(run.stdout().equals(expectedStdout), testCase.name()
+                    + " [jvm]: the staged artifact publishes the pinned effects and "
+                    + "result " + expectedStdout + "; got " + run.stdout());
+            }
+        }
+    }
+
+    /** The printed form of the pinned result atom (descriptor prefix removed). */
+    private static String productionResultText(String atom) {
+        int colon = atom.indexOf(':');
+        return colon < 0 ? atom : atom.substring(colon + 1);
+    }
+
+    /** The async EXTERNAL_ENTRY op id of the entry module's export, or null. */
+    private static Long asyncEntryIdOf(LoweredModuleUnit unit, String export) {
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
+                    && op.payload() instanceof KindPayload.ExternalEntryPayload payload
+                    && payload.async() && export.equals(payload.exportName())) {
+                return op.opId().id();
+            }
+        }
+        return null;
+    }
+
+    /** The captured outcome of one real-toolchain process. */
+    private record ProcessOutput(int exit, List<String> stdout, List<String> stderr) {
+
+        String describe() {
+            return "exit=" + exit + " stdout=" + stdout + " stderr=" + stderr;
+        }
+    }
+
+    private static ProcessOutput runProcess(ProcessBuilder builder) throws Exception {
+        Process process = builder.start();
+        String out = new String(process.getInputStream().readAllBytes(),
+            StandardCharsets.UTF_8);
+        String err = new String(process.getErrorStream().readAllBytes(),
+            StandardCharsets.UTF_8);
+        int exit = process.waitFor();
+        return new ProcessOutput(exit, splitLines(out), splitLines(err));
+    }
+
+    private static List<String> splitLines(String text) {
+        if (text.isEmpty()) {
+            return List.of();
+        }
+        List<String> lines = new ArrayList<>(List.of(text.split("\n", -1)));
+        if (!lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
+            lines.remove(lines.size() - 1);
+        }
+        List<String> normalized = new ArrayList<>();
+        for (String line : lines) {
+            normalized.add(line.endsWith("\r")
+                ? line.substring(0, line.length() - 1) : line);
+        }
+        return normalized;
+    }
+
+    /** One Lua short-string literal body (no long strings, no interpolation). */
+    private static String luaString(String text) {
+        return text.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     // =========================================================================
