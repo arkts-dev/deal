@@ -1503,6 +1503,28 @@ const $rt = {
     return v;
   },
 
+  // arrayAt: the position read of an array value checkArray admitted —
+  // the carrier split is checkArray's own (a native Array first, the
+  // json-array-marked Map second), so an emitted consumer sees exactly
+  // the elements the boundary checked. A native Array reads v[i] (the
+  // real-Array walk's 0-based position); a marked Map — the std/json
+  // decode of a JSON array, whose elements are the string keys "1".."n"
+  // in element order — reads the key "i+1", the same positions the
+  // marked-Map check walk validates (1..max). A position outside the
+  // carrier's element range yields the nil-equivalent $undefined, never
+  // an error: that is the stop cell of the emitted array for-of (the
+  // LuaJIT ipairs stop-at-first-nil semantics), so a deleted element or
+  // a past-the-end position ends the iteration exactly like a native
+  // Array's out-of-range read. Pure read: no mutation, no allocation,
+  // and never a materialized copy — the carrier identity is untouched,
+  // so writes and reads through the same table stay aliased.
+  arrayAt: function $arrayAt(v, i) {
+    if (!$Array.isArray(v) && $rt.isJsonArrayTable(v)) {
+      return v.get(String(i + 1));
+    }
+    return v[i];
+  },
+
   // checkFunctionSig: the named surface member the emitter calls where the
   // value's signature is read directly (D3) — a mismatch raises E8010 with
   // the two signature strings as expected/actual; a match returns v
