@@ -4,7 +4,7 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
-MINIMUMS = {"LINE": 75, "BRANCH": 69}
+MINIMUMS = {"LINE": 80, "BRANCH": 70}
 
 
 def check_coverage(report):

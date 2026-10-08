@@ -1226,7 +1226,7 @@ public class BytesCoverageTest {
         System.out.println("-- the decoded-array mark: real decode producers, exact "
             + "tuples, and projection-only inertness (ISSUE-0710) --");
 
-        driveFocusedFailure("bytes decoded nested element (marked)",
+        String markedChunk = driveFocusedFailure("bytes decoded nested element (marked)",
             DECODED_NESTED_SOURCE, null, null, 5, 11,
             new Tuple("E8003", "array element 1 type mismatch", "[bytes]", "table"));
 
@@ -1253,9 +1253,7 @@ public class BytesCoverageTest {
             DECODED_DEEP_NESTED_SOURCE, null, null, 5, 11,
             new Tuple("E8003", "array element 1 type mismatch", "[[bytes]]", "table"));
 
-        driveFocusedSuccess("decoded-array inertness", DECODED_INERTNESS_SOURCE);
-
-        checkEmittedMarkSurface();
+        checkEmittedMarkSurface(markedChunk);
 
         driveFocusedFailure("decoded array at a table descriptor",
             DECODED_ADMISSION_SOURCE, null, null, 6, 34,
@@ -1286,7 +1284,7 @@ public class BytesCoverageTest {
      * production artifact, and the JVM production artifact, and asserts the
      * exact pinned tuple on every consumer.
      */
-    private static void driveFocusedFailure(String label, String source,
+    private static String driveFocusedFailure(String label, String source,
             String hostStem, String hostSpecifier, int line, int column, Tuple pinned)
             throws Exception {
         Path root = Files.createTempDirectory("bytes-mark-");
@@ -1295,11 +1293,11 @@ public class BytesCoverageTest {
                 List.of(), pinned.code(), pinned.message(), line, column);
             Compiled compiled = compileFocused(root, source, hostStem, hostSpecifier);
             if (compiled == null) {
-                return;
+                return null;
             }
             Drive drive = lowerFocused(compiled, spec);
             if (drive == null) {
-                return;
+                return null;
             }
             int[] calls = { 0 };
             SemanticOracle.HostResponder responder = hostStem == null ? null
@@ -1332,7 +1330,9 @@ public class BytesCoverageTest {
                 + "\n";
             String terminalTranscript = "DEAL_ERROR_CODE: " + pinned.code() + "\n";
             String pinnedOutcome = probeTranscript.strip();
-            ArtifactRun lua = luaProduction(drive, hostSpecifier, hostLua);
+            String chunk = LuaSemanticEmitter.emitProductionProject(drive.project(),
+                drive.tables(), drive.registries(), drive.compiled().surface());
+            ArtifactRun lua = luaProduction(drive, hostSpecifier, hostLua, chunk);
             assertTranscript(label, "luajit probe", lua.probe(), 0, probeTranscript);
             assertTranscript(label, "luajit terminal", lua.terminal(), 1,
                 terminalTranscript);
@@ -1344,6 +1344,7 @@ public class BytesCoverageTest {
                 terminalTranscript);
             checkEq(pinnedOutcome, jvm.outcome(), label
                 + ": the JVM production artifact reproduces the exact tuple");
+            return chunk;
         } finally {
             deleteRecursively(root);
         }
@@ -1358,37 +1359,41 @@ public class BytesCoverageTest {
             throws Exception {
         Path root = Files.createTempDirectory("bytes-inert-");
         try {
-            BytesFixture spec = new BytesFixture(BYTES_DIR, label, "main", "null",
-                List.of(), null, null, 0, 0);
             Compiled compiled = compileFocused(root, source, null, null);
-            if (compiled == null) {
-                return;
+            if (compiled != null) {
+                driveFocusedSuccess(label, compiled);
             }
-            Drive drive = lowerFocused(compiled, spec);
-            if (drive == null) {
-                return;
-            }
-            SemanticRuntimeModel.ConsumerRun oracle =
-                SemanticOracle.executeProjectInits(drive.project(), drive.tables(),
-                    drive.registries(), null);
-            check(oracle.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
-                label + ": the oracle runs the decoded tree to success: "
-                    + oracle.terminal());
-            ArtifactRun lua = luaProduction(drive);
-            assertTranscript(label, "luajit probe", lua.probe(), 0, "OK\n");
-            check(lua.terminal() == null, label
-                + ": a runtime-ok drive runs no direct terminal artifact");
-            checkEq("OK", lua.outcome(), label
-                + ": the LuaJIT production artifact runs to success");
-            ArtifactRun jvm = jvmProduction(drive);
-            assertTranscript(label, "jvm probe", jvm.probe(), 0, "OK\n");
-            check(jvm.terminal() == null, label
-                + ": a runtime-ok drive runs no direct terminal artifact");
-            checkEq("OK", jvm.outcome(), label
-                + ": the JVM production artifact runs to success");
         } finally {
             deleteRecursively(root);
         }
+    }
+
+    private static void driveFocusedSuccess(String label, Compiled compiled)
+            throws Exception {
+        BytesFixture spec = new BytesFixture(BYTES_DIR, label, "main", "null",
+            List.of(), null, null, 0, 0);
+        Drive drive = lowerFocused(compiled, spec);
+        if (drive == null) {
+            return;
+        }
+        SemanticRuntimeModel.ConsumerRun oracle =
+            SemanticOracle.executeProjectInits(drive.project(), drive.tables(),
+                drive.registries(), null);
+        check(oracle.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+            label + ": the oracle runs the decoded tree to success: "
+                + oracle.terminal());
+        ArtifactRun lua = luaProduction(drive);
+        assertTranscript(label, "luajit probe", lua.probe(), 0, "OK\n");
+        check(lua.terminal() == null, label
+            + ": a runtime-ok drive runs no direct terminal artifact");
+        checkEq("OK", lua.outcome(), label
+            + ": the LuaJIT production artifact runs to success");
+        ArtifactRun jvm = jvmProduction(drive);
+        assertTranscript(label, "jvm probe", jvm.probe(), 0, "OK\n");
+        check(jvm.terminal() == null, label
+            + ": a runtime-ok drive runs no direct terminal artifact");
+        checkEq("OK", jvm.outcome(), label
+            + ": the JVM production artifact runs to success");
     }
 
     /**
@@ -1674,10 +1679,9 @@ public class BytesCoverageTest {
      * whose definition and single call site are its only other occurrences —
      * so no other emitted surface sets or consults the mark.
      */
-    private static void checkEmittedMarkSurface() throws Exception {
+    private static void checkEmittedMarkSurface(String chunk) {
         System.out.println("-- the decoded-array mark's emission surface: one writer "
             + "and one reader --");
-        String chunk = emittedChunk(DECODED_NESTED_SOURCE);
         if (chunk == null) {
             return;
         }
@@ -1701,30 +1705,6 @@ public class BytesCoverageTest {
             index += needle.length();
         }
         return count;
-    }
-
-    /**
-     * The emitted LuaJIT production chunk of one focused program (the real
-     * emission surface, without an artifact execution).
-     */
-    private static String emittedChunk(String source) throws Exception {
-        Path root = Files.createTempDirectory("bytes-chunk-");
-        try {
-            BytesFixture spec = new BytesFixture(BYTES_DIR, "emitted chunk", "main",
-                "null", List.of(), null, null, 0, 0);
-            Compiled compiled = compileFocused(root, source, null, null);
-            if (compiled == null) {
-                return null;
-            }
-            Drive drive = lowerFocused(compiled, spec);
-            if (drive == null) {
-                return null;
-            }
-            return LuaSemanticEmitter.emitProductionProject(drive.project(),
-                drive.tables(), drive.registries(), drive.compiled().surface());
-        } finally {
-            deleteRecursively(root);
-        }
     }
 
     /**
@@ -1852,15 +1832,27 @@ public class BytesCoverageTest {
             Files.createDirectories(src);
             Files.writeString(src.resolve("main.deal"), DECODED_INERTNESS_SOURCE,
                 StandardCharsets.UTF_8);
+            Compiled inertness = null;
             for (Backend backend : List.of(Backend.LUAJIT, Backend.JVM)) {
                 String artifact = backend == Backend.JVM
                     ? JvmBackend.classNameFor("main") + ".java" : "main.lua";
-                String first = compileArtifact(root, src, backend, artifact);
+                String first;
+                if (backend == Backend.LUAJIT) {
+                    inertness = compileFocused(root, DECODED_INERTNESS_SOURCE,
+                        null, null);
+                    first = inertness == null ? null : Files.readString(
+                        root.resolve("out").resolve(artifact), StandardCharsets.UTF_8);
+                } else {
+                    first = compileArtifact(root, src, backend, artifact);
+                }
                 String second = compileArtifact(root, src, backend, artifact);
                 check(first != null && second != null, "the " + backend
                     + " determinism drive publishes its artifact");
                 checkEq(first, second, "repeated " + backend + " lowering and "
                     + "emission are byte-identical");
+            }
+            if (inertness != null) {
+                driveFocusedSuccess("decoded-array inertness", inertness);
             }
         } finally {
             deleteRecursively(root);
@@ -2797,12 +2789,17 @@ public class BytesCoverageTest {
      */
     private static ArtifactRun luaProduction(Drive drive, String hostModule,
             Path hostImplementation) throws Exception {
+        return luaProduction(drive, hostModule, hostImplementation,
+            LuaSemanticEmitter.emitProductionProject(drive.project(), drive.tables(),
+                drive.registries(), drive.compiled().surface()));
+    }
+
+    private static ArtifactRun luaProduction(Drive drive, String hostModule,
+            Path hostImplementation, String chunk) throws Exception {
         Path workspace = Files.createTempDirectory("bytes-lua");
         try {
             Path artifact = workspace.resolve("project.lua");
-            Files.writeString(artifact, LuaSemanticEmitter.emitProductionProject(
-                drive.project(), drive.tables(), drive.registries(),
-                drive.compiled().surface()), StandardCharsets.UTF_8);
+            Files.writeString(artifact, chunk, StandardCharsets.UTF_8);
             deployRuntime(workspace);
             if (hostModule != null) {
                 Path hostDir = workspace.resolve("host");

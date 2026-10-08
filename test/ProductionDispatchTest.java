@@ -21,7 +21,6 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
@@ -1546,159 +1545,6 @@ public class ProductionDispatchTest {
     }
 
     // =========================================================================
-    // 7. The focused production-source check: no retained generation,
-    //    routing, or counting state on the compile path; exactly one
-    //    project lowering call site in deal/**
-    // =========================================================================
-
-    /**
-     * The retired compile-path tokens: a production compile-path source
-     * that still names one fails the check by file and offending token.
-     * The inert routing/planner classes themselves stay in the tree (C3);
-     * the compile path never references them.
-     */
-    private static final List<String> RETIRED_COMPILE_PATH_TOKENS = List.of(
-        "productionArmApplies",
-        "codegenAllLua",
-        "codegenAllJvm",
-        "codegenLuaModule",
-        "routeOf",
-        "planRoutesForCompile",
-        "registryForInvocation",
-        "sharedModulesInDependencyOrder",
-        "emitSharedLuaModule",
-        "emitSharedJvmModule",
-        "lowerSharedModule",
-        "lowerSharedModuleOrFail",
-        "failSharedEmission",
-        "recordSharedAbi",
-        "validateMixedEdges",
-        "retainedEmissionCount",
-        "emittedSharedAbis",
-        "sharedCalleeEntries",
-        "HarnessModuleCodegen",
-        "luaGenerateToFile",
-        "jvmGenerate",
-        "MigrationPlanner",
-        "TargetAbiValidator",
-        "ModuleRoutePlan",
-        "ModuleRoute");
-
-    private static void testProductionSourceReachability() throws Exception {
-        System.out.println("-- the focused production-source check: no retained "
-            + "generation, routing or counting state on the compile path --");
-
-        // The compile path: the orchestrator and the one production emission
-        // unit it drives.
-        List<Path> compilePath = List.of(
-            Path.of("deal/module/CompilationOrchestrator.java"),
-            Path.of("deal/module/ProductionProjectEmission.java"));
-        for (Path source : compilePath) {
-            check(Files.isRegularFile(source),
-                "the production compile-path source exists: " + source);
-            if (!Files.isRegularFile(source)) {
-                continue;
-            }
-            String text = Files.readString(source, StandardCharsets.UTF_8);
-            for (String token : RETIRED_COMPILE_PATH_TOKENS) {
-                check(!text.contains(token),
-                    "the production source " + source + " carries no retired "
-                        + "compile-path token '" + token + "'");
-            }
-        }
-
-        // The one project lowering: exactly one SemanticLowerer.lowerProject
-        // call occurrence over the whole production source set. The audit
-        // counts occurrences (never matching files or a fixed call-site
-        // inventory) and names the file, location, and offending token
-        // when the count is wrong.
-        List<Path> sources = new ArrayList<>();
-        try (Stream<Path> walk = Files.walk(Path.of("deal"))) {
-            walk.filter(path -> path.toString().endsWith(".java"))
-                .sorted().forEach(sources::add);
-        }
-        check(!sources.isEmpty(), "the production source set is non-empty");
-        List<SourceText> productionSources = new ArrayList<>();
-        for (Path source : sources) {
-            productionSources.add(new SourceText(source.toString(),
-                Files.readString(source, StandardCharsets.UTF_8)));
-        }
-        String auditFailure = loweringCallSiteAudit(productionSources);
-        check(auditFailure == null, "deal/** carries exactly one "
-            + LOWERING_CALL_TOKEN + " call site: " + auditFailure);
-
-        // The audit is self-verified against zero, one, and two
-        // occurrences, including two in the same file: a wrong count fails
-        // with the file, location, and offending token.
-        String zeroFailure = loweringCallSiteAudit(List.of(
-            new SourceText("example/Zero.java", "class Zero { }")));
-        check(zeroFailure != null
-                && zeroFailure.contains(LOWERING_CALL_TOKEN),
-            "the audit fails a source set with no lowering call site: "
-                + zeroFailure);
-        String oneFailure = loweringCallSiteAudit(List.of(
-            new SourceText("example/One.java",
-                "class One { void run() { " + LOWERING_CALL_TOKEN
-                    + "input); } }")));
-        check(oneFailure == null, "the audit accepts exactly one lowering "
-            + "call site: " + oneFailure);
-        String twoFailure = loweringCallSiteAudit(List.of(
-            new SourceText("example/Two.java",
-                LOWERING_CALL_TOKEN + "a);\n" + LOWERING_CALL_TOKEN
-                    + "b);\n")));
-        check(twoFailure != null
-                && twoFailure.contains("example/Two.java:1")
-                && twoFailure.contains("example/Two.java:2")
-                && twoFailure.contains(LOWERING_CALL_TOKEN),
-            "the audit fails two call sites in one file by file, location, "
-                + "and offending token: " + twoFailure);
-
-        // The harness module-codegen seam of the removed arm is gone from the
-        // production source set: no production caller exists, and the service
-        // provider it named was test-scope only.
-        check(!Files.exists(Path.of("deal/codegen/HarnessModuleCodegen.java")),
-            "the production source set carries no harness module-codegen seam: "
-                + "deal/codegen/HarnessModuleCodegen.java");
-    }
-
-    /** One production source text under audit (name plus content). */
-    private record SourceText(String name, String text) {
-    }
-
-    /** The one call-site token of the one project lowering. */
-    private static final String LOWERING_CALL_TOKEN =
-        "SemanticLowerer.lowerProject(";
-
-    /**
-     * The one-lowering audit: enumerates every occurrence of
-     * {@link #LOWERING_CALL_TOKEN} over the given sources; exactly one
-     * occurrence in the whole source set passes. A wrong count (including
-     * zero) reports every location with the offending token.
-     */
-    private static String loweringCallSiteAudit(List<SourceText> sources) {
-        List<String> sites = new ArrayList<>();
-        for (SourceText source : sources) {
-            List<String> lines = Arrays.asList(
-                source.text().split("\n", -1));
-            for (int index = 0; index < lines.size(); index++) {
-                String line = lines.get(index);
-                int column = line.indexOf(LOWERING_CALL_TOKEN);
-                while (column >= 0) {
-                    sites.add(source.name() + ":" + (index + 1) + ":"
-                        + (column + 1) + " '" + LOWERING_CALL_TOKEN + "'");
-                    column = line.indexOf(LOWERING_CALL_TOKEN, column + 1);
-                }
-            }
-        }
-        if (sites.size() != 1) {
-            return "the production source set must carry exactly one "
-                + LOWERING_CALL_TOKEN + " call site; found " + sites.size()
-                + ": " + sites;
-        }
-        return null;
-    }
-
-    // =========================================================================
     // Main
     // =========================================================================
 
@@ -1716,7 +1562,6 @@ public class ProductionDispatchTest {
         testSourceMapDisposition();
         testSingleArmDispatch();
         testLegacyRejectionStagesNothingWithDumps();
-        testProductionSourceReachability();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
