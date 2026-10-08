@@ -1220,11 +1220,15 @@ public class JsBackendTest {
               let w: B.Wrap = B.make(7);
               let json: string = B.Wrap$toJson(w);
               let w2: B.Wrap | null = B.Wrap$fromJson(json);
-              if (w2 === null) { console.log("xmod-jsonable-null"); return null; }
-              if (w2.inner.v !== 7) { console.log("xmod-jsonable-inner-mismatch"); return null; }
-              if (w2.children[0].v !== 8) { console.log("xmod-jsonable-array-mismatch"); return null; }
-              console.log("xmod-jsonable-ok");
-              return null;
+              if (w2 === null) {
+                console.log("xmod-jsonable-null");
+                return null;
+              } else {
+                if (w2.inner.v !== 7) { console.log("xmod-jsonable-inner-mismatch"); return null; }
+                if (w2.children[0].v !== 8) { console.log("xmod-jsonable-array-mismatch"); return null; }
+                console.log("xmod-jsonable-ok");
+                return null;
+              }
             }
             """);
 

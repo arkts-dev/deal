@@ -715,10 +715,12 @@ public final class TypeChecker {
 
         if (is.elseBranch().isEmpty()) {
             // No else branch: the then arm's narrowing stays inside its
-            // block and is not adopted for the code after the if — the
-            // false arm keeps the declaration types visible to the
-            // comparison rules (a later `x === null` over the declared
-            // `T | null` keeps its admission).
+            // block and is not adopted for the statements after the if
+            // (the spec's narrowing is block-scoped: `!== null` narrows in
+            // its block, `=== null` in the else block, and there is no
+            // post-if persistence). A nullable binding is therefore
+            // dereferenced only inside its narrowing block or after an
+            // explicit re-narrowing.
             narrowing = savedNarrowing;
         } else {
             thenNarrowing.merge(elseNarrowing);

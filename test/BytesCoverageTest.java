@@ -4542,7 +4542,7 @@ public class BytesCoverageTest {
           let b: bytes = inferred(3)
           let carried: ((x: int) => bytes)[] = [bytes]
           let c: bytes = carried[0](4)
-          let alias: bytes = a
+          let alias: bytes = a;
           a[0] = 7
           if (alias[0] !== 7 || a.length !== 2 || b.length !== 3 || c.length !== 4) {
             throw { code: "TEST_FAIL", message: "indirect allocation identity" }
