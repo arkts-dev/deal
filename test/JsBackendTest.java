@@ -1709,7 +1709,9 @@ public class JsBackendTest {
         if (plain != null && !plain.hasErrors()) {
             check(plain.source().contains("$arr[$idx] = $rt.undefined;"),
                 "the delete write spells $rt.undefined");
-            check(plain.source().contains("if ($iter[$i] === $rt.undefined) { break; }"),
+            check(plain.source().contains("const $el = $rt.arrayAt($iter, $i);"),
+                "the for-of element read routes through $rt.arrayAt");
+            check(plain.source().contains("if ($el === $rt.undefined) { break; }"),
                 "the for-of nil-stop comparison spells $rt.undefined");
             String residual = plain.source().replace("$rt.undefined", "");
             if (residual.contains("undefined")) {
@@ -1737,7 +1739,9 @@ public class JsBackendTest {
                 "the user binding named undefined emits as declared");
             check(js.contains("$arr[$idx] = $rt.undefined;"),
                 "the delete write spells $rt.undefined despite the binding");
-            check(js.contains("if ($iter[$i] === $rt.undefined) { break; }"),
+            check(js.contains("const $el = $rt.arrayAt($iter, $i);"),
+                "the for-of element read routes through $rt.arrayAt despite the binding");
+            check(js.contains("if ($el === $rt.undefined) { break; }"),
                 "the for-of nil-stop spells $rt.undefined despite the binding");
             check(!js.contains("= undefined;") && !js.contains("=== undefined")
                     && !js.contains("!== undefined"),

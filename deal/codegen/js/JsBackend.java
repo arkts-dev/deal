@@ -2165,14 +2165,29 @@ public final class JsBackend {
 
     /**
      * For-of. Array iteration (js-backend-architecture D6): index-based
-     * over {@code 0..length-1} via the generated {@code $i} loop
-     * variable, the iterable hoisted to a generated {@code $iter} local
-     * for single evaluation, the loop breaking before the first element
-     * equal to the runtime nil-equivalent {@code $rt.undefined} (the
-     * LuaJIT {@code ipairs} stop-at-first-nil semantics — a {@code null}
-     * element is a value and iterates), and the fresh per-iteration
-     * element binding as a {@code let} declared inside the loop body
-     * (never {@code const} — a checker-accepted mutation of the element
+     * via the generated {@code $i} loop variable, the iterable hoisted
+     * to a generated {@code $iter} local for single evaluation, and the
+     * element at each 0-based position read through {@code $rt.arrayAt}
+     * — the carrier-agnostic position read (the runtime member) that
+     * keeps a real Array's native indexing and a JSON-decoded array's
+     * marked-Map string-key lookup on one seam, so a value admitted by
+     * {@code checkArray}'s array split iterates identically whichever
+     * carrier it arrived with (ISSUE-0740: {@code checkArray} accepts
+     * the marked Map {@code std/json.parse} produces for a JSON array,
+     * and the native {@code $iter.length}/{@code $iter[$i]} form read
+     * that carrier as an empty array). The loop's only exit is the
+     * nil-stop cell: it breaks before the first element equal to the
+     * runtime nil-equivalent {@code $rt.undefined} (the LuaJIT
+     * {@code ipairs} stop-at-first-nil semantics — a {@code null}
+     * element is a value and iterates), which is exactly the value
+     * {@code arrayAt} answers past a carrier's element range (a real
+     * Array's out-of-range read, a marked Map's missing array-form key).
+     * The stop cell therefore replaces the previous length guard without
+     * changing real-Array behavior: growth during iteration stays
+     * visible, a deleted element still stops the loop, and an empty
+     * array still iterates zero times. The fresh per-iteration element
+     * binding is a {@code let} declared inside the loop body (never
+     * {@code const} — a checker-accepted mutation of the element
      * variable must not throw). The body statements sit in a nested
      * block scope so a checker-accepted shadowing of the loop variable
      * stays a legal strict-mode redeclaration in a child scope. String
@@ -2188,10 +2203,11 @@ public final class JsBackend {
         line("const $iter = " + emitExpression(node.iterable()) + ";");
         declareLocal(node.varName());
         if (iterableType instanceof Type.Array) {
-            line("for (let $i = 0; $i < $iter.length; $i++) {");
+            line("for (let $i = 0; ; $i++) {");
             indent++;
-            line("if ($iter[$i] === $rt.undefined) { break; }");
-            line("let " + varName + " = $iter[$i];");
+            line("const $el = $rt.arrayAt($iter, $i);");
+            line("if ($el === $rt.undefined) { break; }");
+            line("let " + varName + " = $el;");
             line("{");
             indent++;
             walkScopedBlock(node.body().statements());
