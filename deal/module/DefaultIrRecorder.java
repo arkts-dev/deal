@@ -318,8 +318,8 @@ final class DefaultIrRecorder {
         } else if (call.callee() instanceof IdentifierExpr cid) {
             Symbol sym = scope.resolve(cid.name());
             if (sym instanceof Symbol.IntrinsicSymbol) {
-                // The int/number conversion intrinsics serialize as
-                // builtin-target calls.
+                // The int/number conversion (and bytes allocation)
+                // intrinsics serialize as builtin-target calls.
                 target = DefaultIrNode.Target.intrinsic(cid.name());
             }
         }

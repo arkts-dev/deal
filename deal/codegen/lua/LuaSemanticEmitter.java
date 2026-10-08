@@ -815,10 +815,14 @@ public final class LuaSemanticEmitter {
 
         /**
          * Whether the session's op walk carries at least one bytes op (K6
-         * items 1/2/4/7): the allocation intrinsic, a bytes normalize mode,
-         * a bytes element boundary, or a bytes-receiver length read. A
-         * chunk that carries one binds the deployed runtime and emits the
-         * bytes surface prelude in both modes.
+         * items 1/2/4/7): the allocation intrinsic (a direct
+         * {@code INTRINSIC_CALL} or a call whose resolved binding is the
+         * seeded bytes intrinsic, statically or through an adapter), a
+         * function-typed materialization of the seeded bytes intrinsic, a
+         * bytes normalize mode, a bytes element boundary, or a
+         * bytes-receiver length read. A chunk that carries one binds the
+         * deployed runtime and emits the bytes surface prelude in both
+         * modes.
          */
         private boolean bindsBytesRuntime() {
             for (LoweredModuleUnit moduleUnit : units.values()) {
@@ -827,6 +831,14 @@ public final class LuaSemanticEmitter {
                             && op.payload() instanceof KindPayload.IntrinsicCallPayload
                                 intrinsic
                             && intrinsic.kind() == IntrinsicKind.BYTES_NEW) {
+                        return true;
+                    }
+                    if (op.kind() == SemanticOpKind.CALL
+                            && op.payload() instanceof KindPayload.CallPayload call
+                            && intrinsicBytesCall(call)) {
+                        return true;
+                    }
+                    if (bytesIntrinsicMaterialization(op)) {
                         return true;
                     }
                     if (op.payload() instanceof KindPayload.IndexNormalizePayload normalize
@@ -845,6 +857,85 @@ public final class LuaSemanticEmitter {
                             && !op.operandTypes().isEmpty()
                             && op.operandTypes().get(0)
                                 instanceof RuntimeDescriptor.Bytes) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        /**
+         * Whether one call's resolved binding is the seeded bytes
+         * intrinsic: the static callee's binding, or the runtime callee
+         * value's registered binding for the value-carried callee shapes.
+         */
+        private boolean intrinsicBytesCall(KindPayload.CallPayload payload) {
+            FunctionExecutionBinding binding = switch (payload.callee()) {
+                case KindPayload.CallCallee.Static staticCallee -> staticCallee.binding();
+                case KindPayload.CallCallee.Indirect indirect ->
+                    bindingOfIdentity(indirect.callee());
+                case KindPayload.CallCallee.Dynamic ignored -> null;
+            };
+            return namesBytesIntrinsic(binding);
+        }
+
+        /**
+         * Whether one binding is the seeded bytes intrinsic or an adapter
+         * over it. A null binding names no intrinsic.
+         */
+        private boolean namesBytesIntrinsic(FunctionExecutionBinding binding) {
+            if (binding instanceof FunctionExecutionBinding.IntrinsicFunction intrinsic) {
+                return intrinsic.kind() == IntrinsicKind.BYTES_NEW;
+            }
+            if (binding instanceof FunctionExecutionBinding.AdapterBinding adapter) {
+                return adapterIntrinsicKind(adapter) == IntrinsicKind.BYTES_NEW;
+            }
+            return false;
+        }
+
+        /**
+         * Whether one op materializes the seeded bytes intrinsic as a
+         * function value: a function-typed load of its seeded identity, or
+         * a {@code FUNCTION_ADAPT} over it.
+         */
+        private boolean bytesIntrinsicMaterialization(SemanticOp op) {
+            if (op.kind() == SemanticOpKind.BINDING_LOAD
+                    && op.result() instanceof ValueId result) {
+                return registeredIntrinsicKindOf(result) == IntrinsicKind.BYTES_NEW;
+            }
+            if (op.kind() == SemanticOpKind.FUNCTION_ADAPT
+                    && op.payload() instanceof KindPayload.FunctionAdaptPayload adapt) {
+                return adaptsBytesIntrinsic(adapt);
+            }
+            return false;
+        }
+
+        /**
+         * Whether one adapter's recorded source names the seeded bytes
+         * intrinsic: a VALUE operand through its registration, a
+         * SHARED_CELL through the cell's seed init, a thunk never (its
+         * source is reevaluated at execution and carries no static kind
+         * fact).
+         */
+        private boolean adaptsBytesIntrinsic(KindPayload.FunctionAdaptPayload payload) {
+            return switch (payload.source()) {
+                case AdaptSourceRef.Value value ->
+                    intrinsicKindOf(value.value()) == IntrinsicKind.BYTES_NEW;
+                case AdaptSourceRef.SharedCell shared ->
+                    bindingCarriesBytesIntrinsic(shared.binding());
+                case AdaptSourceRef.Thunk ignored -> false;
+            };
+        }
+
+        /** Whether one binding's seed init carries the bytes intrinsic identity. */
+        private boolean bindingCarriesBytesIntrinsic(BindingId binding) {
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                for (SemanticOp op : moduleUnit.ops()) {
+                    if (op.kind() == SemanticOpKind.BINDING_INIT
+                            && op.payload() instanceof KindPayload.BindingInitPayload init
+                            && init.binding().equals(binding)
+                            && registeredIntrinsicKindOf(init.value())
+                                == IntrinsicKind.BYTES_NEW) {
                         return true;
                     }
                 }
@@ -3162,21 +3253,15 @@ public final class LuaSemanticEmitter {
                     + intrinsic.descriptor().paramTypes().size() + " declared "
                     + "parameter(s) (a producer defect)");
             }
-            String helper = intrinsic.kind() == IntrinsicKind.INT_CONVERT
-                ? "__intConv" : "__numConv";
+            String helper = intrinsicHelper(intrinsic.kind());
             out.append("__resT = ").append(helper).append("(__hbT[1], ")
-                .append(luaString(op.kind().name())).append(", ")
-                .append(luaString(staticKind(
-                    intrinsic.descriptor().paramTypes().get(0))))
-                .append(", ").append(luaString(opKey(op.opId()))).append(", ")
-                .append(luaString(op.contract().canonicalDigest())).append(", ")
-                .append(luaString(parentKey(op.origin().parentOpId()))).append(", ")
-                .append(luaString(originOf(op))).append(")\n");
+                .append(intrinsicInvocationArgs(op, intrinsic.kind())).append(")\n");
             SemanticOp returnBoundary = payload.returnBoundaryOpId() == null
                 ? null : opsById.get(payload.returnBoundaryOpId());
-            // The converted value is a plain chunk value (a DEAL int/number,
-            // never a host carrier), admitted by the same general check the
-            // direct arm's and the cataloged callable's recorded cells run.
+            // The produced value is a plain chunk value (a DEAL
+            // int/number/bytes, never a host carrier), admitted by the same
+            // general check the direct arm's and the cataloged callable's
+            // recorded cells run.
             emitHostReturnCellRun(op, returnBoundary, "__atom");
             String result = slot((ValueId) op.result());
             out.append(result).append(" = __resT\n");
@@ -3191,30 +3276,53 @@ public final class LuaSemanticEmitter {
             return intrinsicKindOf(value.value());
         }
 
-        private void emitIntrinsicLadder(SemanticOp op, IntrinsicKind kind, String input,
-                                         String indent) {
-            String helper = kind == IntrinsicKind.INT_CONVERT ? "__intConv" : "__numConv";
-            out.append(indent).append("__resT = ").append(helper).append("(")
-                .append(input).append(", ").append(luaString(op.kind().name()))
-                .append(", ")
-                .append(luaString(staticKind(kind.declaredSignature().paramTypes().get(0))))
-                .append(", ").append(luaString(opKey(op.opId()))).append(", ")
+        /** The emitted helper of one intrinsic kind's invocation ladder. */
+        private static String intrinsicHelper(IntrinsicKind kind) {
+            return switch (kind) {
+                case INT_CONVERT -> "__intConv";
+                case NUMBER_CONVERT -> "__numConv";
+                case BYTES_NEW -> "__bytesNew";
+            };
+        }
+
+        /**
+         * The trailing argument list of one intrinsic invocation: the
+         * invoking op's kind label, the declared parameter's static kind
+         * for a conversion, and the op key, the contract digest, the
+         * parent key, and the origin — plus the source span triplet of
+         * the bytes allocation's runtime entry. The invocation's declared
+         * signature is the only descriptor source (never a call site's or
+         * an adapter target's).
+         */
+        private String intrinsicInvocationArgs(SemanticOp op, IntrinsicKind kind) {
+            StringBuilder args = new StringBuilder();
+            args.append(luaString(op.kind().name())).append(", ");
+            if (kind != IntrinsicKind.BYTES_NEW) {
+                args.append(luaString(staticKind(
+                    kind.declaredSignature().paramTypes().get(0)))).append(", ");
+            }
+            args.append(luaString(opKey(op.opId()))).append(", ")
                 .append(luaString(op.contract().canonicalDigest())).append(", ")
                 .append(luaString(parentKey(op.origin().parentOpId()))).append(", ")
-                .append(luaString(originOf(op))).append(")\n");
+                .append(luaString(originOf(op)));
+            if (kind == IntrinsicKind.BYTES_NEW) {
+                args.append(", ").append(spanTripletArgs(op));
+            }
+            return args.toString();
+        }
+
+        private void emitIntrinsicLadder(SemanticOp op, IntrinsicKind kind, String input,
+                                         String indent) {
+            out.append(indent).append("__resT = ").append(intrinsicHelper(kind))
+                .append("(").append(input).append(", ")
+                .append(intrinsicInvocationArgs(op, kind)).append(")\n");
         }
 
         private void emitIntrinsicLadderPcall(SemanticOp op, IntrinsicKind kind,
                                               String input, String indent) {
-            String helper = kind == IntrinsicKind.INT_CONVERT ? "__intConv" : "__numConv";
-            out.append(indent).append("__okA, __resA = pcall(").append(helper)
-                .append(", ").append(input).append(", ")
-                .append(luaString(op.kind().name())).append(", ")
-                .append(luaString(staticKind(kind.declaredSignature().paramTypes().get(0))))
-                .append(", ").append(luaString(opKey(op.opId()))).append(", ")
-                .append(luaString(op.contract().canonicalDigest())).append(", ")
-                .append(luaString(parentKey(op.origin().parentOpId()))).append(", ")
-                .append(luaString(originOf(op))).append(")\n");
+            out.append(indent).append("__okA, __resA = pcall(")
+                .append(intrinsicHelper(kind)).append(", ").append(input).append(", ")
+                .append(intrinsicInvocationArgs(op, kind)).append(")\n");
         }
 
         private void emitAdapterOverIntrinsicRun(SemanticOp op,
@@ -3511,6 +3619,9 @@ public final class LuaSemanticEmitter {
                 out.append("    elseif __dynS.__it == \"NUMBER_CONVERT\" then\n");
                 emitIntrinsicLadder(op, IntrinsicKind.NUMBER_CONVERT, dynamicInput,
                     "      ");
+                out.append("    elseif __dynS.__it == \"BYTES_NEW\" then\n");
+                emitIntrinsicLadder(op, IntrinsicKind.BYTES_NEW, dynamicInput,
+                    "      ");
                 out.append("    else\n");
                 out.append("      __dynC = __dynS\n");
                 emitDynamicCarrierFailure(op, origin);
@@ -3550,13 +3661,10 @@ public final class LuaSemanticEmitter {
                     .append(luaString(originOf(op))).append(")\n");
                 emitHostReturnCellRun(op, returnBoundary, "__atom");
                 out.append("  elseif __dynC.__it == \"NUMBER_CONVERT\" then\n");
-                out.append("    __resT = __numConv(").append(input)
-                    .append(", ").append(luaString(op.kind().name())).append(", ")
-                    .append(declaredKind).append(", ")
-                    .append(luaString(opKey(op.opId()))).append(", ")
-                    .append(luaString(op.contract().canonicalDigest())).append(", ")
-                    .append(luaString(parentKey(op.origin().parentOpId()))).append(", ")
-                    .append(luaString(originOf(op))).append(")\n");
+                emitIntrinsicLadder(op, IntrinsicKind.NUMBER_CONVERT, input, "  ");
+                emitHostReturnCellRun(op, returnBoundary, "__atom");
+                out.append("  elseif __dynC.__it == \"BYTES_NEW\" then\n");
+                emitIntrinsicLadder(op, IntrinsicKind.BYTES_NEW, input, "  ");
                 emitHostReturnCellRun(op, returnBoundary, "__atom");
                 out.append("  elseif __dynC.__sid ~= nil then\n");
             } else {
@@ -7315,7 +7423,7 @@ local function __rtFail(e, origin)
   end
   return __failExpr(e.code, e.message, o, e.expected, e.actual)
 end
-local function __bytesNew(length, evKind, opKey, digest, parent, origin, src, line, col)
+__bytesNew = function(length, evKind, opKey, digest, parent, origin, src, line, col)
   local n = __num(length)
   if n < 0 then
     local e = __arm("BYTES_ALLOCATE", nil, origin, nil, nil)
@@ -7593,7 +7701,12 @@ local function __allocId(v)
   return id
 end
 local __intrinsicInvoke
--- The conversion intrinsics' memoized carriers (J2; published by the
+-- The bytes allocation helper (K6 item 1) is declared as a forward local
+-- so the carrier's generic invoker below resolves it; the bytes prelude
+-- assigns it when the chunk carries a bytes op, exactly the
+-- __intrinsicInvoke pattern.
+local __bytesNew
+-- The intrinsics' memoized carriers (J2; published by the
 -- seed's BINDING_INIT, the adapter's producer-less VALUE operand and a
 -- residual export-read kind arm whose identity carries a seed
 -- registration): one callable, class-tagged
@@ -8737,6 +8850,12 @@ __intrinsicInvoke = function(it, v, evKind, kind, opKey, digest, parent, origin)
   if it == "INT_CONVERT" then
     return __intConv(v, evKind, kind, opKey, digest, parent, origin)
   end
+  if it == "BYTES_NEW" then
+    -- The allocation ladder with the generic caller's context and no
+    -- call-site span (a non-DEAL caller owns no call expression): the
+    -- runtime entry's own coordinates stay the diagnostic origin.
+    return __bytesNew(v, evKind, opKey, digest, parent, origin, "-", 0, 0)
+  end
   return __numConv(v, evKind, kind, opKey, digest, parent, origin)
 end
 local function __arrayRead(opKey, digest, parent, bKey, bDigest, bParent, desc, inner,
@@ -8852,16 +8971,16 @@ local function __unfn(v)
 end
 -- The dynamic dispatch's carrier-class resolution (ISSUE-0658;
 -- dynamic-call-shape-production-and-emission Y2/Y3/Y5; ISSUE-0678 for the
--- cataloged callable's tag; ISSUE-0679 for the conversion intrinsic's): the
+-- cataloged callable's tag; ISSUE-0679 for the seeded intrinsic's): the
 -- carrier's own tag selects exactly one closed resolution class — never the
 -- checked descriptor, the callee spelling, or an argument value. A DEAL
 -- closure or compiled export read carries its function id (__fid); an adapter
 -- carries its capture mode (__mode); a loaded host surface entry carries the
 -- host ABI wrapper kind (__kind == "function"); the cataloged stdlib callable
 -- carries its closed catalog row tag (__sid) and resolves the HOST class,
--- whose catalog row invoker the call site runs; the conversion intrinsic
--- carries its closed kind tag (__it) and resolves the HOST class, whose
--- conversion ladder the call site runs. Every other value identifies no class
+-- whose catalog row invoker the call site runs; a seeded intrinsic
+-- (int/number/bytes) carries its closed kind tag (__it) and resolves the HOST
+-- class, whose conversion/allocation ladder the call site runs. Every other value identifies no class
 -- (nil) and the dynamic call fails closed at its origin.
 local function __dynClass(v)
   if type(v) ~= "table" then return nil end

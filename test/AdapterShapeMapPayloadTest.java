@@ -1276,9 +1276,9 @@ public class AdapterShapeMapPayloadTest {
                 "each adapter identity registers exactly one AdapterBinding naming its "
                     + "producing op");
         }
-        check(unit.functionBindings().size() == 13,
-            "the registry holds exactly thirteen bindings: five bodies (inner, even, "
-                + "odd, main, the function expression) + six adapters + the two "
+        check(unit.functionBindings().size() == 14,
+            "the registry holds exactly fourteen bindings: five bodies (inner, even, "
+                + "odd, main, the function expression) + six adapters + the three "
                 + "producer-less intrinsic seeds (ISSUE-0632); got "
                 + unit.functionBindings().size());
 

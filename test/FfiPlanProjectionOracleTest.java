@@ -188,7 +188,8 @@ public class FfiPlanProjectionOracleTest {
             fixture.externCModules(),
             BuiltinErrorDeclaration.synthesized(
                 fixture.checkedProject().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW),
             Set.of());
     }
 
@@ -219,7 +220,8 @@ public class FfiPlanProjectionOracleTest {
                 fixture.externCModules(), fixture.sourceRoot().toString(),
                 BuiltinErrorDeclaration.synthesized(
                     fixture.checkedProject().modules().get(0).ast().span()),
-                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
+                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW),
                 Set.of(), Backend.LUAJIT, false,
                 DistributionHome.forManifestDirectory(
                     fixture.sourceRoot().toString()),

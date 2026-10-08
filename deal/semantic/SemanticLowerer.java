@@ -3407,9 +3407,9 @@ public final class SemanticLowerer {
         }
 
         /**
-         * Seeds the {@code int}/{@code number} intrinsic bindings at
-         * module-init top (B1): exactly the root
-         * {@code Symbol.IntrinsicSymbol} bindings of those two names
+         * Seeds the {@code int}/{@code number}/{@code bytes} intrinsic
+         * bindings at module-init top (B1): exactly the root
+         * {@code Symbol.IntrinsicSymbol} bindings of those three names
          * (shadowed-by-declaration names resolve to the user declaration,
          * never the intrinsic — the checker removes the root binding
          * before defining the shadow, so the symbol fact decides). Each
@@ -3444,7 +3444,7 @@ public final class SemanticLowerer {
 
             List<IntrinsicKind> declared = declaredConversionIntrinsics.isEmpty()
                 ? List.of(IntrinsicKind.values()) : declaredConversionIntrinsics;
-            for (String name : List.of("int", "number")) {
+            for (String name : List.of("int", "number", "bytes")) {
                 if (!(checks.symbolTable().resolve(name)
                         instanceof Symbol.IntrinsicSymbol intrinsic)) {
                     continue;
@@ -3456,9 +3456,9 @@ public final class SemanticLowerer {
                         + intrinsic.name() + "' (producer defect)");
                 }
                 if (!declared.contains(kind)) {
-                    throw new ConstructUnlowered("the module's conversion intrinsic '"
+                    throw new ConstructUnlowered("the module's seeded intrinsic '"
                         + name + "' is not part of the compilation's declared"
-                        + " conversion intrinsics " + declared + " (a mismatch between"
+                        + " intrinsic set " + declared + " (a mismatch between"
                         + " the module's checker facts and the compiler constants is a"
                         + " producer defect)");
                 }
@@ -3468,7 +3468,7 @@ public final class SemanticLowerer {
                     false, BindingProducer.BINDING_ALLOC, false);
                 registerBinding(name, binding, incarnation);
                 if (proofAnalysis) {
-                    // B7: intrinsic bindings (int/number) always carry
+                    // B7: intrinsic bindings (int/number/bytes) always carry
                     // the proof — builtin, unassignable — regardless of
                     // any assignment fact.
                     assignmentAnalysis.markIntrinsic(binding);
@@ -11302,11 +11302,11 @@ public final class SemanticLowerer {
         }
 
         /**
-         * The intrinsic-call classifier (I3): exactly {@code int(...)}
-         * and {@code number(...)} calls of the root
+         * The intrinsic-call classifier (I3): exactly {@code int(...)},
+         * {@code number(...)}, and {@code bytes(...)} calls of the root
          * {@code Symbol.IntrinsicSymbol} bindings lower; every other call
-         * shape — including {@code bytes(...)}, {@code has(...)} call
-         * fallbacks, and ordinary user calls — fails closed.
+         * shape — including {@code has(...)} call fallbacks and ordinary
+         * user calls — fails closed.
          */
         private IntrinsicKind intrinsicKindOf(CallExpr call) {
             if (call.args().size() == 1
@@ -11317,9 +11317,6 @@ public final class SemanticLowerer {
                     if (kind != null) {
                         return kind;
                     }
-                    if ("bytes".equals(intrinsic.name())) {
-                        return IntrinsicKind.BYTES_NEW;
-                    }
                 }
             }
             throw new ConstructUnlowered("call expression (only the int()/number() "
@@ -11328,18 +11325,19 @@ public final class SemanticLowerer {
         }
 
         /**
-         * The two conversion intrinsics' name-to-kind map (the seed's and
-         * the intrinsic-call classifier's single authority): {@code int}
-         * is {@code INT_CONVERT} and {@code number} is
-         * {@code NUMBER_CONVERT}; every other name — including the
-         * {@code bytes}/{@code has} intrinsics — maps to no conversion
-         * kind.
+         * The conversion/allocation intrinsics' name-to-kind map (the
+         * seed's and the intrinsic-call classifier's single authority):
+         * {@code int} is {@code INT_CONVERT}, {@code number} is
+         * {@code NUMBER_CONVERT}, and {@code bytes} is
+         * {@code BYTES_NEW}; every other name — including the
+         * {@code has} intrinsic — maps to no intrinsic kind.
          *
          */
         private static IntrinsicKind conversionIntrinsicKind(String name) {
             return switch (name) {
                 case "int" -> IntrinsicKind.INT_CONVERT;
                 case "number" -> IntrinsicKind.NUMBER_CONVERT;
+                case "bytes" -> IntrinsicKind.BYTES_NEW;
                 default -> null;
             };
         }
@@ -11621,8 +11619,9 @@ public final class SemanticLowerer {
         private String describeExpression(ExpressionNode expr) {
             return switch (expr) {
                 case deal.ast.CallExpr ignored ->
-                    "call expression (only int()/number() intrinsic calls lower in this "
-                        + "slice — INTRINSIC_CALL is the I3 terminal-check arm; the CALL "
+                    "call expression (only the int()/number() conversion and bytes() "
+                        + "allocation intrinsic calls lower in this slice — "
+                        + "INTRINSIC_CALL is the I3 terminal-check arm; the CALL "
                         + "machinery is E7's)";
                 case deal.ast.IndexExpr ignored ->
                     "index access expression (INDEX_NORMALIZE/INDEX_READ are E5's, "

@@ -3774,10 +3774,11 @@ public final class SemanticOracle {
             return switch (intrinsic.kind()) {
                 case INT_CONVERT -> convertInt(op, argument);
                 case NUMBER_CONVERT -> convertNumber(op, argument);
-                case BYTES_NEW -> throw new IllegalStateException(
-                    "the bytes allocation intrinsic is never a first-class function "
-                        + "value (no IntrinsicFunction registration exists for '"
-                        + intrinsic.kind() + "') — a producer defect, never executed");
+                // The bytes allocation intrinsic's value call (the seeded
+                // {@code (int) -> bytes} binding): the one allocation
+                // algorithm, with the FAILURE arm at the invoking call
+                // op's origin (the call expression).
+                case BYTES_NEW -> allocateBytes(op, argument);
             };
         }
 

@@ -312,7 +312,8 @@ public class CompositeTerminatorAnalysisTest {
             manifests.manifests(), orchestrator.hostDeclarationSurface(), Map.of(),
             Map.of(), BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT), Set.of());
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW), Set.of());
         check(!result.hasErrors() && result.project() != null,
             "the one project lowering reports zero diagnostics: "
                 + result.diagnostics());

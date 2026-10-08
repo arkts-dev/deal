@@ -26,6 +26,7 @@ import deal.semantic.ir.BoundaryFailure;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.BoundaryOutcome;
 import deal.semantic.ir.BoundaryValueView;
+import deal.semantic.ir.CallMode;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.FailurePolicyId;
@@ -523,7 +524,8 @@ public class BytesCoverageTest {
             compiled.manifests(), compiled.surface(), compiled.identities(), Map.of(),
             BuiltinErrorDeclaration.synthesized(
                 compiled.checkedProject().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT), Set.of());
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW), Set.of());
         check(result.project() != null, fixture.what() + ": the production project "
             + "entry lowers the fixture with zero diagnostics: " + result.diagnostics());
         if (result.project() == null) {
@@ -810,7 +812,8 @@ public class BytesCoverageTest {
             orchestrator.hostDeclarationSurface(), Map.of(), Map.of(),
             BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT), Set.of());
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW), Set.of());
         check(result.project() != null, "the shape drive lowers: " + result.diagnostics());
         if (result.project() == null) {
             deleteRecursively(root);
@@ -1389,6 +1392,282 @@ public class BytesCoverageTest {
     }
 
     /**
+     * One differential matrix case of the indirect bytes drive: its
+     * source, whether the drive is expected to fail, and the pinned
+     * call-expression coordinate of a failure case.
+     */
+    private record DifferentialCase(String label, String source, boolean failure,
+                                    int line, int column) {
+    }
+
+    // =========================================================================
+    // 5c. The indirect bytes allocation: the seeded bytes intrinsic value
+    // =========================================================================
+
+    /**
+     * The indirect allocation drive: zero fill, distinct allocation
+     * identities, and an alias observing an in-place write — through the
+     * seeded {@code (int) -> bytes} function value.
+     */
+    private static final String INDIRECT_BYTES_SOURCE = """
+        export function main(): null {
+          let f: (x: int) => bytes = bytes;
+          let b: bytes = f(2);
+          let c: bytes = f(3);
+          if (b.length !== 2 || c.length !== 3) {
+            throw { code: "TEST_FAIL", message: "indirect length" }
+          }
+          if (b[0] !== 0 || b[1] !== 0 || c[2] !== 0) {
+            throw { code: "TEST_FAIL", message: "indirect zero fill" }
+          }
+          if (b === c) {
+            throw { code: "TEST_FAIL", message: "indirect allocation identity" }
+          }
+          let alias: bytes = b;
+          b[0] = 7;
+          if (alias[0] !== 7 || b[0] !== 7) {
+            throw { code: "TEST_FAIL", message: "alias observes the write" }
+          }
+          return null
+        }
+        """;
+
+    /**
+     * The remaining first-class value positions: the arity-extension
+     * adapter, a function-typed parameter (callback), and an array
+     * element call.
+     */
+    private static final String INDIRECT_BYTES_VALUE_POSITIONS_SOURCE = """
+        function call(f: (x: int) => bytes): bytes {
+          return f(2)
+        }
+
+        export function main(): null {
+          let g: (x: int, y: int) => bytes = bytes;
+          let adapted: bytes = g(2, 3);
+          if (adapted.length !== 2) {
+            throw { code: "TEST_FAIL", message: "adapter length" }
+          }
+          let viaCallback: bytes = call(bytes);
+          if (viaCallback.length !== 2) {
+            throw { code: "TEST_FAIL", message: "callback length" }
+          }
+          let xs: ((x: int) => bytes)[] = [bytes];
+          let viaElement: bytes = xs[0](3);
+          if (viaElement.length !== 3) {
+            throw { code: "TEST_FAIL", message: "element length" }
+          }
+          return null
+        }
+        """;
+
+    /** The negative length at the direct indirect call expression. */
+    private static final String INDIRECT_BYTES_NEGATIVE_SOURCE = """
+        export function main(): null {
+          let f: (x: int) => bytes = bytes;
+          let neg: bytes = f(-1);
+          return null
+        }
+        """;
+
+    /** The negative length through the arity-extension adapter. */
+    private static final String INDIRECT_BYTES_ADAPTER_NEGATIVE_SOURCE = """
+        export function main(): null {
+          let g: (x: int, y: int) => bytes = bytes;
+          let neg: bytes = g(-1, 0);
+          return null
+        }
+        """;
+
+    /**
+     * The indirect bytes allocation drive (K14/R2): the structural seed
+     * and call cells, the zero-fill/identity/alias behaviors on the
+     * oracle and both production artifacts, the pinned E8012 tuple at
+     * the call expression, and the three-consumer differential matrix.
+     */
+    private static void testIndirectBytesAllocation() throws Exception {
+        System.out.println("-- the indirect bytes allocation: the seeded bytes "
+            + "intrinsic value (K14/R2) --");
+        checkIndirectBytesStructure();
+        driveFocusedSuccess("indirect bytes allocation", INDIRECT_BYTES_SOURCE);
+        driveFocusedSuccess("bytes intrinsic value positions",
+            INDIRECT_BYTES_VALUE_POSITIONS_SOURCE);
+        driveFocusedFailure("indirect bytes negative length",
+            INDIRECT_BYTES_NEGATIVE_SOURCE, null, null, 3, 20,
+            new Tuple("E8012", "bytes length must be non-negative", "", ""));
+        driveFocusedFailure("bytes adapter negative length",
+            INDIRECT_BYTES_ADAPTER_NEGATIVE_SOURCE, null, null, 3, 20,
+            new Tuple("E8012", "bytes length must be non-negative", "", ""));
+        checkIndirectBytesDifferential();
+    }
+
+    /**
+     * The lowered structure of one indirect bytes allocation: the seeded
+     * {@code BYTES_NEW} registration with its pinned declared signature,
+     * the identity-preserving load publishing the seeded identity, the
+     * indirect call's recorded {@code IntrinsicFunction} binding and host
+     * cell family, and the call-expression origin.
+     */
+    private static void checkIndirectBytesStructure() throws Exception {
+        Path root = Files.createTempDirectory("bytes-intrinsic-");
+        try {
+            BytesFixture spec = new BytesFixture(BYTES_DIR, "indirect bytes", "main",
+                "null", List.of(), null, null, 0, 0);
+            Compiled compiled = compileFocused(root, INDIRECT_BYTES_SOURCE, null, null);
+            if (compiled == null) {
+                return;
+            }
+            Drive drive = lowerFocused(compiled, spec);
+            if (drive == null) {
+                return;
+            }
+            LoweredModuleUnit unit = drive.unit();
+            FunctionAllocationIdentity seed = null;
+            for (Map.Entry<FunctionAllocationIdentity, FunctionExecutionBinding> entry
+                    : unit.functionBindings().entrySet()) {
+                if (entry.getValue()
+                        instanceof FunctionExecutionBinding.IntrinsicFunction intrinsic
+                        && intrinsic.kind() == IntrinsicKind.BYTES_NEW) {
+                    seed = entry.getKey();
+                    checkEq(IntrinsicKind.BYTES_NEW.declaredSignature(),
+                        intrinsic.descriptor(),
+                        "the bytes seed registration carries its pinned "
+                            + "(int)->bytes declared signature");
+                }
+            }
+            check(seed != null, "the unit carries the BYTES_NEW intrinsic seed "
+                + "registration");
+            if (seed == null) {
+                return;
+            }
+            int published = 0;
+            boolean allLoads = true;
+            for (SemanticOp op : unit.ops()) {
+                if (op.result() instanceof ValueId result && result.id() == seed.id()) {
+                    published++;
+                    allLoads = allLoads && op.kind() == SemanticOpKind.BINDING_LOAD;
+                }
+            }
+            check(published >= 1 && allLoads, "the seeded bytes identity is published "
+                + "only by identity-preserving binding loads; got " + published
+                + " publishing op(s)");
+            SemanticOp indirect = null;
+            int intrinsicCalls = 0;
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() != SemanticOpKind.CALL
+                        || !(op.payload() instanceof KindPayload.CallPayload call)) {
+                    continue;
+                }
+                if (call.callee() instanceof KindPayload.CallCallee.Static staticCallee
+                        && staticCallee.binding()
+                            instanceof FunctionExecutionBinding.IntrinsicFunction intrinsic
+                        && intrinsic.kind() == IntrinsicKind.BYTES_NEW) {
+                    intrinsicCalls++;
+                    if (indirect == null) {
+                        indirect = op;
+                    }
+                }
+            }
+            checkEq(2, intrinsicCalls, "both indirect calls record the seeded "
+                + "IntrinsicFunction binding");
+            check(indirect != null, "the indirect call of the bytes intrinsic records "
+                + "the seeded IntrinsicFunction binding");
+            if (indirect == null) {
+                return;
+            }
+            KindPayload.CallPayload payload =
+                (KindPayload.CallPayload) indirect.payload();
+            checkEq(CallMode.INDIRECT, payload.mode(), "the intrinsic-value call is "
+                + "the INDIRECT mode with the statically resolved binding");
+            SemanticOp parameter = payload.parameterBoundaryOpIds().isEmpty() ? null
+                : opById(unit, payload.parameterBoundaryOpIds().get(0));
+            check(parameter != null
+                    && ((KindPayload.BoundaryPayload) parameter.payload()).kind()
+                        == BoundaryKind.DEAL_TO_HOST
+                    && parameter.failurePolicy() == FailurePolicyId.HOST_PARAMETER
+                    && RuntimeDescriptor.Int.INSTANCE.equals(
+                        ((KindPayload.BoundaryPayload) parameter.payload())
+                            .descriptor()),
+                "the declared int parameter is the DEAL_TO_HOST + HOST_PARAMETER "
+                    + "cell");
+            SemanticOp returned = payload.returnBoundaryOpId() == null ? null
+                : opById(unit, payload.returnBoundaryOpId());
+            check(returned != null
+                    && ((KindPayload.BoundaryPayload) returned.payload()).kind()
+                        == BoundaryKind.HOST_TO_DEAL
+                    && returned.failurePolicy() == FailurePolicyId.HOST_SYNC_RETURN
+                    && RuntimeDescriptor.Bytes.INSTANCE.equals(
+                        ((KindPayload.BoundaryPayload) returned.payload())
+                            .descriptor()),
+                "the bytes return is the HOST_TO_DEAL + HOST_SYNC_RETURN cell");
+            checkEq(3, indirect.origin().span().startLine(),
+                "the indirect call's origin is the call expression's line");
+            checkEq(18, indirect.origin().span().startColumn(),
+                "the indirect call's origin is the call expression's column");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * The three-consumer differential matrix of the indirect bytes drive:
+     * each case runs the oracle and both production artifacts and must
+     * agree event-for-event (a success terminal, or the pinned E8012 at
+     * the call expression).
+     */
+    private static void checkIndirectBytesDifferential() throws Exception {
+        List<DifferentialCase> cases = List.of(
+            new DifferentialCase("the indirect bytes allocation",
+                INDIRECT_BYTES_SOURCE, false, 0, 0),
+            new DifferentialCase("the indirect bytes failure",
+                INDIRECT_BYTES_NEGATIVE_SOURCE, true, 3, 20),
+            new DifferentialCase("the bytes intrinsic value positions",
+                INDIRECT_BYTES_VALUE_POSITIONS_SOURCE, false, 0, 0),
+            new DifferentialCase("the bytes adapter failure",
+                INDIRECT_BYTES_ADAPTER_NEGATIVE_SOURCE, true, 3, 20));
+        for (DifferentialCase differential : cases) {
+            Path root = Files.createTempDirectory("bytes-intrinsic-matrix-");
+            try {
+                BytesFixture spec = new BytesFixture(BYTES_DIR, differential.label(),
+                    "main", "null", List.of(), null, null, 0, 0);
+                Compiled compiled =
+                    compileFocused(root, differential.source(), null, null);
+                if (compiled == null) {
+                    continue;
+                }
+                Drive drive = lowerFocused(compiled, spec);
+                if (drive == null) {
+                    continue;
+                }
+                SemanticDifferentialHarness.Expectation expectation =
+                    differential.failure()
+                        ? SemanticDifferentialHarness.Expectation.failure(
+                            differential.label(), List.of(), "E8012",
+                            root.resolve("src").resolve("main.deal").toAbsolutePath()
+                                + ":" + differential.line() + ":"
+                                + differential.column())
+                        : SemanticDifferentialHarness.Expectation.success(
+                            differential.label(), List.of(), "null");
+                Path artifacts =
+                    Files.createTempDirectory("bytes-intrinsic-artifacts-");
+                try {
+                    SemanticDifferentialHarness.Verdict verdict =
+                        SemanticDifferentialHarness.runProject(drive.project(),
+                            drive.tables(), drive.registries(), expectation, artifacts);
+                    checkEq(3, verdict.runs().size(), spec.what() + ": the drive "
+                        + "produced the three consumers: " + verdict.failures());
+                    check(verdict.pass(), spec.what() + ": the three-consumer "
+                        + "differential verdict passes: " + verdict.failures());
+                } finally {
+                    deleteRecursively(artifacts);
+                }
+            } finally {
+                deleteRecursively(root);
+            }
+        }
+    }
+
+    /**
      * The mark's emission surface (B3, per consumer): the emitted LuaJIT
      * prelude carries exactly one mark writer — the stdlib JSON decode
      * realization — and exactly one reader — the array-element token helper,
@@ -1537,7 +1816,8 @@ public class BytesCoverageTest {
             compiled.manifests(), compiled.surface(), compiled.identities(), Map.of(),
             BuiltinErrorDeclaration.synthesized(
                 compiled.checkedProject().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT), Set.of());
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW), Set.of());
         check(result.project() != null, spec.what() + ": the production project entry "
             + "lowers the focused program with zero diagnostics: "
             + result.diagnostics());
@@ -1701,7 +1981,8 @@ public class BytesCoverageTest {
             orchestrator.hostDeclarationSurface(), Map.of(), Map.of(),
             BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT), Set.of());
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW), Set.of());
         check(result.project() != null, "the oracle drive lowers: "
             + result.diagnostics());
         if (result.project() == null) {
@@ -2951,6 +3232,7 @@ public class BytesCoverageTest {
         testReadShapeAndWriteChain();
         testBytesBoundaryContext();
         testDecodedArrayMark();
+        testIndirectBytesAllocation();
         testFocusedRunnerContract();
         testOracleRealization();
         System.out.println();
