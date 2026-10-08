@@ -5391,6 +5391,15 @@ public final class LuaSemanticEmitter {
             }
             FunctionExecutionBinding binding = switch (payload.callee()) {
                 case KindPayload.CallCallee.Static staticCallee -> staticCallee.binding();
+                case KindPayload.CallCallee.Indirect indirect -> {
+                    FunctionExecutionBinding resolved = bindingOfIdentity(indirect.callee());
+                    if (resolved == null) {
+                        throw new IllegalStateException("ASYNC_START " + op.opId()
+                            + " resolves the indirect callee identity " + indirect.callee()
+                            + " to no registered FunctionExecutionBinding (producer defect)");
+                    }
+                    yield resolved;
+                }
                 default -> throw new IllegalStateException("ASYNC_START " + op.opId()
                     + " resolves a callee outside the statically-resolved slice: "
                     + payload.callee());
@@ -5412,9 +5421,21 @@ public final class LuaSemanticEmitter {
                     out.append("  table.insert(__frames, 1, ")
                         .append(luaString(String.valueOf(body.functionId().id())))
                         .append(")\n");
-                    out.append("  local __okA, __resA = pcall(")
-                        .append(fnFactory(body.functionId())).append("(").append(caps)
-                        .append("), unpack(S.__sa").append(op.opId().id())
+                    out.append("  local __okA, __resA = pcall(");
+                    if (payload.callee()
+                            instanceof KindPayload.CallCallee.Indirect indirect) {
+                        // The value-carried async invocation (a nested group
+                        // member with creation-site captures): the closure
+                        // value the binding holds runs its own invoker, whose
+                        // captured cells are the ones its creation published —
+                        // never a call-site re-resolution of a per-creation
+                        // incarnation.
+                        out.append("__unfn(").append(slot(indirect.callee())).append(")");
+                    } else {
+                        out.append(fnFactory(body.functionId())).append("(")
+                            .append(caps).append(")");
+                    }
+                    out.append(", unpack(S.__sa").append(op.opId().id())
                         .append(", 1, #S.__sa").append(op.opId().id()).append("))\n");
                     out.append("  table.remove(__frames, 1)\n");
                     out.append("  if not __okA then error(__resA, 0) end\n");

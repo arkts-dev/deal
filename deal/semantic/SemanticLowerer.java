@@ -8183,8 +8183,19 @@ public final class SemanticLowerer {
             }
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
+            boolean declaredBodyCallee =
+                binding instanceof FunctionExecutionBinding.LoweredBody;
             for (ExpressionNode argument : call.args()) {
-                args.add(lowerExpression(argument));
+                // A resolved declared body keeps the declared-callee
+                // contextual-argument handling: the argument walk defers a
+                // contextual table member read's kind check to the callee's
+                // own parameter cell (whose origin is the declared
+                // parameter annotation), exactly like {@link
+                // #lowerDirectCall}. Every other binding kind resolves its
+                // own parameter boundaries at the call site and keeps the
+                // read's own check.
+                args.add(declaredBodyCallee
+                    ? lowerCallArgument(argument) : lowerExpression(argument));
                 argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
                     checkedType(argument)));
             }
@@ -8769,6 +8780,21 @@ public final class SemanticLowerer {
                 FunctionContext context = site == null
                     ? null : contextsByBindingId.get(site.binding());
                 if (context != null) {
+                    if (nestedGroupMemberBindings.contains(site.binding())) {
+                        // A nested-group member await: the group publication
+                        // wrote the member's closure carrier into the member
+                        // cell, and that carrier holds the creation-site
+                        // captures of its own group instance. The static
+                        // DEAL body arm would rebuild the member's factory at
+                        // the await site and re-resolve the target's captures
+                        // from the calling function's frame — exact only for
+                        // module-level (single-incarnation) captures — so the
+                        // awaited sibling/self/enclosing-body call goes
+                        // through the value-carried `Indirect` shape, exactly
+                        // like the synchronous nested-member call arm.
+                        return lowerAwaitMemberCarrier(call, slot, awaitSpan,
+                            identifier);
+                    }
                     return lowerAwaitDeclared(call, slot, awaitSpan, identifier, context);
                 }
                 FrameResolution resolution = resolveFrame(identifier.name());
@@ -8922,6 +8948,43 @@ public final class SemanticLowerer {
         }
 
         /**
+         * The awaited nested-group member arm: the member cell's published
+         * closure carrier is the only invocation source whose creation-site
+         * captures name this group instance (the async twin of
+         * {@link #lowerUserCallBinding}'s value-carried nested-member call).
+         * The member context's reserved call-site identity and single return
+         * boundary stay the invocation's own ({@link #lowerAsyncStart}'s
+         * {@code LoweredBody} arm), and the carrier supplies the captured
+         * cells to the member body.
+         */
+        private ValueId lowerAwaitMemberCarrier(CallExpr call, ValueId slot,
+                                                Span awaitSpan,
+                                                IdentifierExpr identifier) {
+            ValueId calleeValue = lowerExpression(identifier);
+            FunctionExecutionBinding binding = registry.bindings().get(
+                new FunctionAllocationIdentity(calleeValue.id()));
+            if (binding == null) {
+                throw new ConstructUnlowered("await callee '" + identifier.name()
+                    + "' identity " + calleeValue
+                    + " has no registered FunctionExecutionBinding (producer defect)");
+            }
+            if (!(binding instanceof FunctionExecutionBinding.LoweredBody)) {
+                throw new ConstructUnlowered("await callee '" + identifier.name()
+                    + "' identity " + calleeValue + " resolves the static class "
+                    + binding.getClass().getSimpleName()
+                    + " instead of the member's published body carrier "
+                    + "(producer defect)");
+            }
+            return lowerAsyncStart(call, slot, awaitSpan, binding, false, calleeValue);
+        }
+
+        /** The statically resolved async start (no value-carried callee). */
+        private ValueId lowerAsyncStart(CallExpr call, ValueId slot, Span awaitSpan,
+                                        FunctionExecutionBinding binding, boolean nested) {
+            return lowerAsyncStart(call, slot, awaitSpan, binding, nested, null);
+        }
+
+        /**
          * The shared {@code ASYNC_START}+{@code AWAIT} emission over the
          * resolved binding: the parameter-boundary cells per the closed
          * table, one token per call, and exactly one
@@ -8929,10 +8992,24 @@ public final class SemanticLowerer {
          * arguments lower through {@link #lowerCallArgument}: a declared
          * callee's parameter cell performs the contextual member read's
          * kind check at its own origin, exactly as the synchronous
-         * declared-callee arms do.
+         * declared-callee arms do. A non-null carrier callee emits the
+         * value-carried {@code CallCallee.Indirect} shape over the
+         * published closure value (the awaited nested-group member arm),
+         * so the task invokes the carrier's own captured cells instead of
+         * reconstructing the member's factory at the await site; the
+         * callee's reserved call-site identity and single return boundary
+         * stay the invocation's own either way.
          */
         private ValueId lowerAsyncStart(CallExpr call, ValueId slot, Span awaitSpan,
-                                        FunctionExecutionBinding binding, boolean nested) {
+                                        FunctionExecutionBinding binding, boolean nested,
+                                        ValueId carrierCallee) {
+            if (carrierCallee != null
+                    && !(binding instanceof FunctionExecutionBinding.LoweredBody)) {
+                throw new ConstructUnlowered("the value-carried async start of '"
+                    + describeDynamicCallee(call.callee()) + "' resolves the static class "
+                    + binding.getClass().getSimpleName()
+                    + " instead of a declared body carrier (producer defect)");
+            }
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
             for (ExpressionNode argument : call.args()) {
@@ -9090,7 +9167,9 @@ public final class SemanticLowerer {
                 SourceOriginKind.USER, anchor, currentParent());
             emit(buildOp(startOpId, SemanticOpKind.ASYNC_START,
                 new KindPayload.AsyncStartPayload(
-                    new KindPayload.CallCallee.Static(binding), source,
+                    carrierCallee == null
+                        ? new KindPayload.CallCallee.Static(binding)
+                        : new KindPayload.CallCallee.Indirect(carrierCallee), source,
                     nested ? ParameterBoundaryMode.ELIDED_BY_ADAPTER : ParameterBoundaryMode.RUN,
                     parameterBoundaryIds, completion, returnBoundaryOpId,
                     hostOperationLabel, externalAsyncLink),

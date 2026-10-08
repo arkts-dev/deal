@@ -118,6 +118,19 @@ import java.util.stream.Stream;
  *       let the first creation observe the second creation's cells — and the
  *       two returned groups execute to their own pinned results on the oracle
  *       and both production artifacts.</li>
+ *
+ *   <li><b>The declared-parameter failure origin.</b> A nested-member call
+ *       with a contextual table member argument fails at the callee's
+ *       declared parameter annotation on the oracle and both artifacts — the
+ *       value-carried routing keeps the declared-callee contextual-argument
+ *       deferral; the argument read's own origin is not admissible.</li>
+ *
+ *   <li><b>The async escaped nested group.</b> The same two-instance shape
+ *       with async members awaited through the published carriers: every
+ *       awaited member invocation is the value-carried (indirect) callee
+ *       shape, each task keeps the member's own return cell, and the two
+ *       creations complete to their own pinned values on the oracle and both
+ *       artifacts.</li>
  * </ol>
  */
 public class NestedGroupProductionTest {
@@ -156,11 +169,37 @@ public class NestedGroupProductionTest {
      * whether each member (in declaration order) is invoked by a call site,
      * whether the member returns are the implicit trailing null returns
      * (rather than explicit source returns), and whether the source invokes
-     * a member through an ordinary function-value alias.
+     * a member through an ordinary function-value alias. A failure pin turns
+     * the differential drive into the pinned three-consumer failure
+     * projection (the terminal code and the exact origin computed from the
+     * source anchor); an async drive invokes the named async export through
+     * the async-entry matrix instead of the init-only project matrix.
      */
     private record Case(String name, String source, List<String> effects,
                         boolean recursive, List<Boolean> memberCalled,
-                        boolean implicitReturns, boolean aliasInvocation) {
+                        boolean implicitReturns, boolean aliasInvocation,
+                        FailurePin failure, AsyncDrive asyncDrive,
+                        String resultAtom) {
+
+        /** The init-only success case with the pinned null terminal. */
+        private Case(String name, String source, List<String> effects,
+                     boolean recursive, List<Boolean> memberCalled,
+                     boolean implicitReturns, boolean aliasInvocation) {
+            this(name, source, effects, recursive, memberCalled, implicitReturns,
+                aliasInvocation, null, null, "null");
+        }
+    }
+
+    /**
+     * The pinned failure projection: the terminal code and the source anchor
+     * whose end is the exact origin (the declared parameter annotation the
+     * {@code FUNCTION_PARAMETER} cell reports).
+     */
+    private record FailurePin(String code, String anchor) {
+    }
+
+    /** The async-entry drive: the invoked async export of the case program. */
+    private record AsyncDrive(String exportName) {
     }
 
     /** The called, mutually recursive, explicit-return group (a computed value). */
@@ -543,11 +582,101 @@ public class NestedGroupProductionTest {
         List.of("nested-group-inside-function-ok"), true, List.of(true, true), false,
         false);
 
+    /**
+     * The declared parameter-origin regression (the review's cycle-3 seed):
+     * a synchronous nested-group identifier call with a contextual table
+     * member argument. The argument's kind check must run at the callee's
+     * declared parameter cell — origin {@code f}'s {@code int} annotation —
+     * exactly like every other declared-callee call, never at the argument
+     * read: routing the nested-member call through the value-carried carrier
+     * must keep {@code lowerCallArgument}'s deferral. Before the fix the
+     * read composed its own {@code CONTEXTUAL_TABLE_READ} cell and reported
+     * the read's origin instead of the annotation on all three consumers.
+     */
+    private static final Case PARAM_ORIGIN_CONTEXTUAL = new Case(
+        "param-origin-contextual",
+        """
+        import * as console from "std/console"
+
+        export function main(): null {
+          function f(n: int): int {
+            let gRef: (n: int) => int = g;
+            return n;
+          }
+          function g(n: int): int {
+            let fRef: (n: int) => int = f;
+            return n;
+          }
+          let t: table = { x: "wrong" };
+          f(t.x);
+          return null;
+        }
+        """,
+        List.of(), false, List.of(true, false), false, false,
+        new FailurePin("E8001", "function f(n: "), null, "null");
+
+    /**
+     * The async escaped nested group (the review's cycle-3 async seed):
+     * {@code make} declares mutually recursive async members, {@code f}
+     * returns the creation's {@code base} and otherwise awaits sibling
+     * {@code g}, {@code g} awaits {@code f}, and the exported async driver
+     * creates two independent groups and awaits each returned closure. The
+     * awaited sibling calls must be value-carried: a static factory
+     * reconstruction at the await site re-resolves the target's captures
+     * from the calling member's frame, so the first creation observed the
+     * second creation's cells ({@code a-bad}, {@code b-ok} before the fix);
+     * the published carrier holds its own creation's cells.
+     */
+    private static final Case ASYNC_ESCAPED_TWO_GROUPS = new Case(
+        "async-escaped-two-groups",
+        """
+        import * as console from "std/console"
+
+        export async function drive(): int {
+          let a: async (n: int) => int = make(10);
+          let b: async (n: int) => int = make(20);
+          let av: int = await a(3);
+          if (av === 10) {
+            console.log("async-escaped-group-a-ok");
+          } else {
+            console.log("async-escaped-group-a-bad");
+          }
+          let bv: int = await b(3);
+          if (bv === 20) {
+            console.log("async-escaped-group-b-ok");
+          } else {
+            console.log("async-escaped-group-b-bad");
+          }
+          return av + bv;
+        }
+
+        function make(base: int): async (n: int) => int {
+          async function f(n: int): int {
+            if (n <= 0) {
+              return base;
+            }
+            return await g(n - 1);
+          }
+          async function g(n: int): int {
+            return await f(n);
+          }
+          return f;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """,
+        List.of("async-escaped-group-a-ok", "async-escaped-group-b-ok"), true,
+        List.of(true, true), false, false, null, new AsyncDrive("drive"),
+        "int:30");
+
     private static final List<Case> CASES = List.of(
         CALLED_EXPLICIT, CALLED_IMPLICIT, CALLED_VALUE_REFERENCE,
         CALLED_ALIAS, CALLED_ALIAS_CAPTURED, CALLED_ALIAS_LATER, MODULE_GROUP_ALIAS,
         NEVER_CALLED_EXPLICIT_NULL, NEVER_CALLED_EXPLICIT_INT, NEVER_CALLED_IMPLICIT,
-        CAPTURED_CALLED, NESTED_INSIDE_FUNCTION, ESCAPED_TWO_GROUPS);
+        CAPTURED_CALLED, NESTED_INSIDE_FUNCTION, ESCAPED_TWO_GROUPS,
+        PARAM_ORIGIN_CONTEXTUAL, ASYNC_ESCAPED_TWO_GROUPS);
 
     // =========================================================================
     // The case driver
@@ -583,7 +712,7 @@ public class NestedGroupProductionTest {
             }
 
             // Surface 3: the three-consumer differential matrix.
-            differential(testCase, lowered);
+            differential(testCase, lowered, entry);
         } finally {
             deleteRecursively(project);
         }
@@ -815,10 +944,9 @@ public class NestedGroupProductionTest {
                 if (memberCalled) {
                     SemanticOp invocation = byId.get(returned.enclosingInvocationOpId());
                     check(invocation != null
-                            && invocation.kind() == SemanticOpKind.CALL
-                            && isCallOf(invocation, member, unit),
+                            && isInvocationOf(invocation, member, unit),
                         testCase.name() + ": member " + member
-                            + "'s invocation identity is its own CALL op; got "
+                            + "'s invocation identity is its own CALL/ASYNC_START op; got "
                             + returned.enclosingInvocationOpId());
                 } else {
                     check(returned.enclosingInvocationOpId().equals(groupOp.opId()),
@@ -847,10 +975,10 @@ public class NestedGroupProductionTest {
     }
 
     /**
-     * The nested-group carrier-preservation battery: no call of a capture-
-     * carrying member body may be a factory reconstruction at the call
-     * site. The escaped group is the discriminating case — a static
-     * reconstruction of the sibling would re-resolve the target's
+     * The nested-group carrier-preservation battery: no call or async start
+     * of a capture-carrying member body may be a factory reconstruction at
+     * the call site. The escaped groups are the discriminating cases — a
+     * static reconstruction of the sibling would re-resolve the target's
      * captures from the calling member's frame and observe the latest
      * creation's cells; the published carrier holds its own creation's
      * cells.
@@ -862,11 +990,11 @@ public class NestedGroupProductionTest {
         int memberCalls = 0;
         int staticCaptureCalls = 0;
         for (SemanticOp op : unit.ops()) {
-            if (op.kind() != SemanticOpKind.CALL
-                    || !(op.payload() instanceof KindPayload.CallPayload payload)) {
+            KindPayload.CallCallee callee = invocationCallee(op);
+            if (callee == null) {
                 continue;
             }
-            FunctionExecutionBinding resolved = switch (payload.callee()) {
+            FunctionExecutionBinding resolved = switch (callee) {
                 case KindPayload.CallCallee.Static stat -> stat.binding();
                 case KindPayload.CallCallee.Indirect indirect ->
                     unit.functionBindings().get(
@@ -881,20 +1009,19 @@ public class NestedGroupProductionTest {
             LoweredFunction target = unit.functions().get(body.functionId());
             boolean captures = target != null && !target.captures().isEmpty();
             if (captures
-                    && !(payload.callee()
-                        instanceof KindPayload.CallCallee.Indirect)) {
+                    && !(callee instanceof KindPayload.CallCallee.Indirect)) {
                 staticCaptureCalls++;
-                fail(testCase.name() + ": the member call " + op.opId()
+                fail(testCase.name() + ": the member invocation " + op.opId()
                     + " of capture-carrying member " + body.functionId()
                     + " is a factory reconstruction at the call site; the "
                     + "value-carried carrier is required");
             }
         }
         check(staticCaptureCalls == 0, testCase.name()
-            + ": every capture-carrying member call is value-carried; got "
+            + ": every capture-carrying member invocation is value-carried; got "
             + staticCaptureCalls + " static reconstruction(s)");
         check(memberCalls >= 1 || !anyMemberCalled, testCase.name()
-            + ": the group's member references are materialized as calls; got "
+            + ": the group's member references are materialized as invocations; got "
             + memberCalls);
     }
 
@@ -933,13 +1060,25 @@ public class NestedGroupProductionTest {
             + aliasCalls);
     }
 
-    /** Whether one CALL op resolves to a call of the given body. */
-    private static boolean isCallOf(SemanticOp callOp, FunctionId member,
-                                    LoweredModuleUnit unit) {
-        if (!(callOp.payload() instanceof KindPayload.CallPayload payload)) {
+    /** The callee reference of one invocation op (CALL or ASYNC_START). */
+    private static KindPayload.CallCallee invocationCallee(SemanticOp invocation) {
+        return switch (invocation.kind()) {
+            case CALL -> invocation.payload()
+                instanceof KindPayload.CallPayload call ? call.callee() : null;
+            case ASYNC_START -> invocation.payload()
+                instanceof KindPayload.AsyncStartPayload start ? start.callee() : null;
+            default -> null;
+        };
+    }
+
+    /** Whether one CALL/ASYNC_START op resolves to an invocation of the given body. */
+    private static boolean isInvocationOf(SemanticOp invocation, FunctionId member,
+                                          LoweredModuleUnit unit) {
+        KindPayload.CallCallee callee = invocationCallee(invocation);
+        if (callee == null) {
             return false;
         }
-        FunctionExecutionBinding binding = switch (payload.callee()) {
+        FunctionExecutionBinding binding = switch (callee) {
             case KindPayload.CallCallee.Static stat -> stat.binding();
             case KindPayload.CallCallee.Indirect indirect -> unit.functionBindings().get(
                 new FunctionAllocationIdentity(indirect.callee().id()));
@@ -953,16 +1092,26 @@ public class NestedGroupProductionTest {
     // Surface 3: the three-consumer differential matrix
     // =========================================================================
 
-    private static void differential(Case testCase, Lowered lowered) throws Exception {
+    private static void differential(Case testCase, Lowered lowered, Path entry)
+            throws Exception {
         Path workspace = Files.createTempDirectory(
             "nested-group-matrix-" + testCase.name() + "-");
         try {
-            SemanticDifferentialHarness.Verdict verdict =
-                SemanticDifferentialHarness.runProject(lowered.project(),
-                    lowered.tables(), lowered.registries(),
-                    SemanticDifferentialHarness.Expectation.success(testCase.name(),
-                        testCase.effects(), "null"),
-                    workspace);
+            String failureOrigin = testCase.failure() == null ? null
+                : originTextAt(testCase.source(), testCase.failure().anchor(), entry);
+            check(testCase.failure() == null || failureOrigin != null, testCase.name()
+                + ": the failure pin's origin anchor is present in the source");
+            SemanticDifferentialHarness.Expectation expectation = testCase.failure() == null
+                ? SemanticDifferentialHarness.Expectation.success(testCase.name(),
+                    testCase.effects(), testCase.resultAtom())
+                : SemanticDifferentialHarness.Expectation.failure(testCase.name(),
+                    testCase.effects(), testCase.failure().code(), failureOrigin);
+            SemanticDifferentialHarness.Verdict verdict = testCase.asyncDrive() == null
+                ? SemanticDifferentialHarness.runProject(lowered.project(),
+                    lowered.tables(), lowered.registries(), expectation, workspace)
+                : SemanticDifferentialHarness.runAsyncEntry(lowered.project(),
+                    lowered.tables(), testCase.asyncDrive().exportName(), List.of(),
+                    expectation, workspace, null);
             check(verdict.runs().size() == 3, testCase.name()
                 + ": the differential matrix produced the three consumers: "
                 + verdict.failures());
@@ -984,11 +1133,16 @@ public class NestedGroupProductionTest {
                     + verdict.failures());
             }
             for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+                if (testCase.failure() != null) {
+                    checkFailureProjection(testCase, run, failureOrigin);
+                    continue;
+                }
                 check(run.terminal()
                         instanceof SemanticRuntimeModel.Terminal.Success success
-                        && "null".equals(success.resultAtom()),
+                        && testCase.resultAtom().equals(success.resultAtom()),
                     testCase.name() + " [" + run.consumer()
-                        + "]: the pinned success terminal; got " + run.terminal());
+                        + "]: the pinned success terminal " + testCase.resultAtom()
+                        + "; got " + run.terminal());
                 List<String> texts = new ArrayList<>();
                 for (SemanticRuntimeModel.EffectEvent effect : run.effects()) {
                     texts.add(effect.text());
@@ -1000,6 +1154,59 @@ public class NestedGroupProductionTest {
         } finally {
             deleteRecursively(workspace);
         }
+    }
+
+    /**
+     * The pinned failure projection of one failing consumer: the exact
+     * terminal code and origin (never the argument read's origin), the
+     * closed kind arm's message, and its expected/actual tokens.
+     */
+    private static void checkFailureProjection(Case testCase,
+            SemanticRuntimeModel.ConsumerRun run, String failureOrigin) {
+        if (!(run.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure failed)) {
+            fail(testCase.name() + " [" + run.consumer()
+                + "]: the pinned failure terminal; got " + run.terminal());
+            return;
+        }
+        SemanticRuntimeModel.ErrorSnapshot error = failed.error();
+        check(testCase.failure().code().equals(error.code()), testCase.name() + " ["
+            + run.consumer() + "]: the pinned failure code " + testCase.failure().code()
+            + "; got " + error.code());
+        check(failureOrigin != null && failureOrigin.equals(error.origin()),
+            testCase.name() + " [" + run.consumer()
+                + "]: the declared parameter annotation origin " + failureOrigin
+                + "; got " + error.origin());
+        check("expected int".equals(error.message()), testCase.name() + " ["
+            + run.consumer() + "]: the kind arm's suffix-less text; got "
+            + error.message());
+        check("int".equals(error.expected()), testCase.name() + " [" + run.consumer()
+            + "]: the pinned expected token; got " + error.expected());
+        check("string".equals(error.actual()), testCase.name() + " [" + run.consumer()
+            + "]: the pinned actual token; got " + error.actual());
+    }
+
+    /**
+     * The exact origin text of the source offset following one anchor: the
+     * line and column of the anchor's end, in the entry module's source id
+     * (the located source path the production compile records).
+     */
+    private static String originTextAt(String source, String anchor, Path entry) {
+        int anchorIndex = source.indexOf(anchor);
+        if (anchorIndex < 0) {
+            return null;
+        }
+        int offset = anchorIndex + anchor.length();
+        int line = 1;
+        int column = 1;
+        for (int i = 0; i < offset; i++) {
+            if (source.charAt(i) == '\n') {
+                line++;
+                column = 1;
+            } else {
+                column++;
+            }
+        }
+        return entry.toAbsolutePath().normalize() + ":" + line + ":" + column;
     }
 
     /**

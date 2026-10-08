@@ -6158,6 +6158,15 @@ public final class JvmSemanticEmitter {
             }
             FunctionExecutionBinding binding = switch (payload.callee()) {
                 case KindPayload.CallCallee.Static staticCallee -> staticCallee.binding();
+                case KindPayload.CallCallee.Indirect indirect -> {
+                    FunctionExecutionBinding resolved = bindingOfIdentity(indirect.callee());
+                    if (resolved == null) {
+                        throw new IllegalStateException("ASYNC_START " + op.opId()
+                            + " resolves the indirect callee identity " + indirect.callee()
+                            + " to no registered FunctionExecutionBinding (producer defect)");
+                    }
+                    yield resolved;
+                }
                 default -> throw new IllegalStateException("ASYNC_START " + op.opId()
                     + " resolves a callee outside the statically-resolved slice: "
                     + payload.callee());
@@ -6183,10 +6192,23 @@ public final class JvmSemanticEmitter {
                         .append(javaString(String.valueOf(body.functionId().id())))
                         .append(");\n");
                     out.append(indent(indent + 1)).append("try {\n");
-                    out.append(indent(indent + 2)).append("return ")
-                        .append(fnFactory(body.functionId())).append("(").append(caps)
-                        .append(").fn.invoke(new Object[]{")
-                        .append(String.join(", ", args)).append("});\n");
+                    out.append(indent(indent + 2)).append("return ");
+                    if (payload.callee()
+                            instanceof KindPayload.CallCallee.Indirect indirect) {
+                        // The value-carried async invocation (a nested group
+                        // member with creation-site captures): the closure
+                        // value the binding holds runs its own invoker, whose
+                        // captured cells are the ones its creation published —
+                        // never a call-site re-resolution of a per-creation
+                        // incarnation.
+                        out.append("((JvmRuntime.FunctionValue) ")
+                            .append(slot(indirect.callee()))
+                            .append(").fn.invoke(new Object[]{");
+                    } else {
+                        out.append(fnFactory(body.functionId())).append("(").append(caps)
+                            .append(").fn.invoke(new Object[]{");
+                    }
+                    out.append(String.join(", ", args)).append("});\n");
                     out.append(indent(indent + 1)).append("} finally {\n");
                     out.append(indent(indent + 2)).append("JvmRuntime.popFrame();\n");
                     out.append(indent(indent + 2)).append("JvmRuntime.setModule(__prevM);\n");
