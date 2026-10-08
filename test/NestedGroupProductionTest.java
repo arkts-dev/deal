@@ -9,6 +9,7 @@ import deal.project.ProjectLocator;
 import deal.semantic.CheckedProjectBuildResult;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
+import deal.semantic.ControlFlowValidator;
 import deal.semantic.ReleaseConfiguration;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
@@ -490,6 +491,12 @@ public class NestedGroupProductionTest {
      */
     private static void checkMemberOwnership(Case testCase, LoweredModuleUnit unit,
                                              StructuredBodyTable table) {
+        // The exact rule that rejected the pre-fix unit: a member's RETURN
+        // named the enclosing function while its block belonged to the member
+        // (CONTROL_EXIT).
+        check(ControlFlowValidator.validate(unit, table).isEmpty(), testCase.name()
+            + ": the control-flow validator admits the nested members: "
+            + ControlFlowValidator.validate(unit, table));
         List<SemanticOp> groupOps = new ArrayList<>();
         Map<OpId, SemanticOp> byId = new LinkedHashMap<>();
         for (SemanticOp op : unit.ops()) {
@@ -514,17 +521,10 @@ public class NestedGroupProductionTest {
             testCase.name() + ": the group op publishes both members (functions="
                 + group.functions() + " bindings=" + group.bindings() + ")");
 
-        FunctionId enclosing = null;
-        for (FunctionId function : unit.functions().keySet()) {
-            if (!group.functions().contains(function)) {
-                enclosing = function;
-            }
-        }
-        check(enclosing != null, testCase.name()
+        boolean hasEnclosing = unit.functions().keySet().stream()
+            .anyMatch(function -> !group.functions().contains(function));
+        check(hasEnclosing, testCase.name()
             + ": the enclosing function is a lowered function of the unit");
-        if (enclosing == null) {
-            return;
-        }
 
         Map<FunctionId, List<SemanticOp>> returnsByFunction = new LinkedHashMap<>();
         for (SemanticOp op : unit.ops()) {
@@ -537,13 +537,17 @@ public class NestedGroupProductionTest {
         }
         // The defect's exact signature: a member's explicit return named the
         // enclosing function, so the enclosing function carried the members'
-        // RETURN ops. A correct lowering keeps exactly one RETURN under the
-        // enclosing function.
-        int enclosingReturns = returnsByFunction
-            .getOrDefault(enclosing, List.of()).size();
-        check(enclosingReturns == 1, testCase.name()
-            + ": exactly one RETURN op names the enclosing function (the members' "
-            + "returns never do); got " + enclosingReturns);
+        // RETURN ops. Every non-member function still owns a return op, and
+        // the validator above rejects any RETURN whose block is not rooted at
+        // the named function's body.
+        for (FunctionId function : unit.functions().keySet()) {
+            if (group.functions().contains(function)) {
+                continue;
+            }
+            check(!returnsByFunction.getOrDefault(function, List.of()).isEmpty(),
+                testCase.name() + ": the non-member function " + function
+                    + " owns a RETURN op");
+        }
 
         for (FunctionId member : group.functions()) {
             LoweredFunction lowered = unit.functions().get(member);
