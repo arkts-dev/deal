@@ -3330,13 +3330,17 @@ public final class JvmSemanticEmitter {
         }
 
         /**
-         * The re-entrant invocation's private-state save, or {@code null}
-         * when the callee body has no private state. Only a nested
-         * invocation of the same body (recursion) can overwrite the
-         * enclosing invocation's own state, so the emitted arm records
-         * whether the body is already active and saves the state exactly
-         * then — a plain call keeps the flat observable state the
-         * artifact's slots always had.
+         * The synchronous invocation's private-state save, or {@code null}
+         * when the callee body has no private state. The saved array is
+         * built <em>unconditionally</em> and its matching restore
+         * ({@link #emitInvocationStateRestore}) copies it back on every
+         * path: the enclosing invocation may have been started by a route
+         * this call site cannot name at compile time (a dynamic dispatch of
+         * an escaped carrier, an entry of another unit), so the active
+         * marker cannot gate the save — the copied values are the enclosing
+         * invocation's private state whatever started it. The marker itself
+         * is still maintained, so a re-entrant invocation leaves it in place
+         * and only the outermost clears it.
          */
         private StateSlot emitInvocationStateSave(FunctionId callee, OpId invocation,
                                                   int indent) {
@@ -3350,45 +3354,48 @@ public final class JvmSemanticEmitter {
                 .append(" = __bodyActive.contains(").append(callee.id())
                 .append("L);\n");
             out.append(indent(indent)).append("Object[] ").append(saved)
-                .append(" = ").append(previous).append(" ? new Object[]{")
-                .append(String.join(", ", keys)).append("} : null;\n");
+                .append(" = new Object[]{").append(String.join(", ", keys))
+                .append("};\n");
             out.append(indent(indent)).append("__bodyActive.add(")
                 .append(callee.id()).append("L);\n");
             return new StateSlot(previous, saved);
         }
 
-        /** The matching re-entrant restore, executed on every path. */
+        /**
+         * The matching unconditional restore, executed on every path: the
+         * body's own slots and cell references return to the enclosing
+         * invocation's state whichever route started it. A re-entrant
+         * invocation leaves the enclosing invocation's marker in place; only
+         * the outermost one clears it.
+         */
         private void emitInvocationStateRestore(FunctionId callee, StateSlot slot,
                                                 int indent) {
             if (slot == null) {
                 return;
             }
             List<String> keys = bodyStateKeys(callee);
-            out.append(indent(indent)).append("if (").append(slot.previous())
-                .append(") {\n");
             for (int i = 0; i < keys.size(); i++) {
-                out.append(indent(indent + 1)).append(keys.get(i)).append(" = ")
+                out.append(indent(indent)).append(keys.get(i)).append(" = ")
                     .append(slot.saved()).append("[").append(i).append("];\n");
             }
-            // A re-entrant invocation leaves the enclosing invocation's
-            // marker in place; only the outermost one clears it.
-            out.append(indent(indent)).append("} else {\n");
+            out.append(indent(indent)).append("if (!").append(slot.previous())
+                .append(") {\n");
             out.append(indent(indent + 1)).append("__bodyActive.remove(")
                 .append(callee.id()).append("L);\n");
             out.append(indent(indent)).append("}\n");
         }
 
         /**
-         * The async body-task invocation's private-state save. Unlike the
-         * synchronous arm, the frame's saved array is built
-         * <em>unconditionally</em> and its matching restore
-         * ({@link #emitAsyncInvocationStateRestore}) copies it back on every
-         * path: the task's body executes at the enclosing invocation's
-         * serial drain, and that enclosing invocation may have been started
-         * by a callee this arm cannot name at compile time (a dynamic
-         * dispatch body task) or by an entry of another unit, so the active
-         * marker cannot gate the save. The marker is still maintained, so
-         * the synchronous arm's conditional protocol stays exact.
+         * The async body-task invocation's private-state save. The frame's
+         * saved array is built <em>unconditionally</em> and its matching
+         * restore ({@link #emitAsyncInvocationStateRestore}) copies it back
+         * on every path, exactly like the synchronous arm's: the task's body
+         * executes at the enclosing invocation's serial drain, and that
+         * enclosing invocation may have been started by a callee this arm
+         * cannot name at compile time (a dynamic dispatch body task) or by
+         * an entry of another unit, so the active marker cannot gate the
+         * save. The marker is still maintained, so a re-entrant invocation
+         * leaves it in place and only the outermost clears it.
          */
         private StateSlot emitAsyncInvocationStateSave(FunctionId callee,
                                                        OpId invocation, int indent) {

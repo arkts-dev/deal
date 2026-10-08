@@ -156,6 +156,18 @@ import java.util.stream.Stream;
  *       never the cell's contents — so the two creations keep their own
  *       incarnations while in-place commits through a shared cell stay
  *       visible.</li>
+ *
+ *   <li><b>The synchronous post-recursion member state.</b> A nested member
+ *       that reads its own parameter and local after a recursive sibling
+ *       call keeps its invocation's private state when the nested
+ *       invocation returns. The synchronous save/restore is unconditional
+ *       (exactly like the async body task's): the escaped entry — a dynamic
+ *       dispatch of the returned carrier — never sets the active marker, so
+ *       a marker-gated restore would let the deepest re-entry's slots
+ *       answer the resumed invocation. The declared-name and typed-alias
+ *       shapes (the latter with captured, shared-cell parameters and
+ *       locals) execute to their own pinned results on the oracle and both
+ *       staged production artifacts.</li>
  * </ol>
  */
 public class NestedGroupProductionTest {
@@ -198,20 +210,44 @@ public class NestedGroupProductionTest {
      * the differential drive into the pinned three-consumer failure
      * projection (the terminal code and the exact origin computed from the
      * source anchor); an async drive invokes the named async export through
-     * the async-entry matrix instead of the init-only project matrix.
+     * the async-entry matrix instead of the init-only project matrix; a
+     * staged sync drive additionally executes the staged production
+     * artifacts' sync entry on both release-owned lanes.
      */
     private record Case(String name, String source, List<String> effects,
                         boolean recursive, List<Boolean> memberCalled,
                         boolean implicitReturns, boolean aliasInvocation,
                         FailurePin failure, AsyncDrive asyncDrive,
-                        String resultAtom) {
+                        String resultAtom, boolean stagedSync) {
 
         /** The init-only success case with the pinned null terminal. */
         private Case(String name, String source, List<String> effects,
                      boolean recursive, List<Boolean> memberCalled,
                      boolean implicitReturns, boolean aliasInvocation) {
             this(name, source, effects, recursive, memberCalled, implicitReturns,
-                aliasInvocation, null, null, "null");
+                aliasInvocation, null, null, "null", false);
+        }
+
+        /**
+         * The case shape of the earlier coordinates (the failure pin or the
+         * async drive set explicitly), with the staged sync drive off.
+         */
+        private Case(String name, String source, List<String> effects,
+                     boolean recursive, List<Boolean> memberCalled,
+                     boolean implicitReturns, boolean aliasInvocation,
+                     FailurePin failure, AsyncDrive asyncDrive,
+                     String resultAtom) {
+            this(name, source, effects, recursive, memberCalled, implicitReturns,
+                aliasInvocation, failure, asyncDrive, resultAtom, false);
+        }
+
+        /** The staged sync drive case: the pinned null terminal. */
+        private Case(String name, String source, List<String> effects,
+                     boolean recursive, List<Boolean> memberCalled,
+                     boolean implicitReturns, boolean aliasInvocation,
+                     boolean stagedSync) {
+            this(name, source, effects, recursive, memberCalled, implicitReturns,
+                aliasInvocation, null, null, "null", stagedSync);
         }
     }
 
@@ -496,6 +532,117 @@ public class NestedGroupProductionTest {
         """,
         List.of("escaped-group-a-ok", "escaped-group-b-ok"), true,
         List.of(true, true), false, false);
+
+    /**
+     * The synchronous escaped group's post-recursion state (the review's
+     * cycle-3 seed): the same two-instance {@code make}/{@code f}/{@code g}
+     * shape, but the awaiting member reads its own parameter and a local
+     * <em>after</em> the recursive sibling call returns ({@code g(n - 1);
+     * return base + n + m;}). The recursive re-entry writes the member's
+     * module-level slots, so the enclosing invocation's private state must
+     * be restored when the nested invocation returns. Before the fix the
+     * synchronous restore was gated on the {@code __bodyActive} marker, and
+     * the escaped entry (the dynamic dispatch of the returned carrier in
+     * {@code main}) never set that marker: the first re-entry treated the
+     * already-live member as inactive, so {@code f(3)} resumed with the
+     * deepest invocation's {@code n}/{@code m} and both creations printed
+     * their bad effects (15/25 instead of 17/27). The staged production
+     * artifacts execute the sync entry on both lanes, and the differential
+     * matrix proves oracle agreement.
+     */
+    private static final Case ESCAPED_TWO_GROUPS_RECURSION = new Case(
+        "escaped-two-groups-recursion",
+        """
+        import * as console from "std/console"
+
+        export function main(): null {
+          let a: (n: int) => int = make(10);
+          let b: (n: int) => int = make(20);
+          if (a(3) === 17) {
+            console.log("escaped-group-recursion-a-ok");
+          } else {
+            console.log("escaped-group-recursion-a-bad");
+          }
+          if (b(3) === 27) {
+            console.log("escaped-group-recursion-b-ok");
+          } else {
+            console.log("escaped-group-recursion-b-bad");
+          }
+          return null;
+        }
+
+        function make(base: int): (n: int) => int {
+          function f(n: int): int {
+            if (n <= 0) {
+              return base;
+            }
+            let m: int = n + 1;
+            g(n - 1);
+            return base + n + m;
+          }
+          function g(n: int): int {
+            return f(n);
+          }
+          return f;
+        }
+        """,
+        List.of("escaped-group-recursion-a-ok", "escaped-group-recursion-b-ok"),
+        true, List.of(true, true), false, false, true);
+
+    /**
+     * The awaited sibling-alias variant of the post-recursion state
+     * regression: {@code f} calls the later-declared sibling through an
+     * ordinary typed alias ({@code let sibling: (n: int) => int = g}), and
+     * a closure makes {@code f}'s parameter {@code n} and local {@code m}
+     * shared cells while the member still reads them directly after the
+     * recursion — the shared-cell incarnation references the member body
+     * itself publishes through the module-level slots are saved and
+     * restored alongside its value slots. The value-carried alias resolves
+     * the published carrier (the target's capture list is still pending
+     * when {@code f} walks), so the invocation keeps the creation's own
+     * cells on top of the restored private state.
+     */
+    private static final Case ESCAPED_TWO_GROUPS_ALIAS_RECURSION = new Case(
+        "escaped-two-groups-alias-recursion",
+        """
+        import * as console from "std/console"
+
+        export function main(): null {
+          let a: (n: int) => int = make(10);
+          let b: (n: int) => int = make(20);
+          if (a(3) === 17) {
+            console.log("escaped-group-alias-recursion-a-ok");
+          } else {
+            console.log("escaped-group-alias-recursion-a-bad");
+          }
+          if (b(3) === 27) {
+            console.log("escaped-group-alias-recursion-b-ok");
+          } else {
+            console.log("escaped-group-alias-recursion-b-bad");
+          }
+          return null;
+        }
+
+        function make(base: int): (n: int) => int {
+          function f(n: int): int {
+            if (n <= 0) {
+              return base;
+            }
+            let m: int = n + 1;
+            let cell: () => int = function(): int { return n + m; };
+            let sibling: (n: int) => int = g;
+            sibling(n - 1);
+            return base + n + m;
+          }
+          function g(n: int): int {
+            return f(n);
+          }
+          return f;
+        }
+        """,
+        List.of("escaped-group-alias-recursion-a-ok",
+            "escaped-group-alias-recursion-b-ok"),
+        true, List.of(true, true), false, true, true);
 
     /** The review's seed: a never-called nested group with explicit null returns. */
     private static final Case NEVER_CALLED_EXPLICIT_NULL = new Case(
@@ -1101,6 +1248,7 @@ public class NestedGroupProductionTest {
         CALLED_ALIAS, CALLED_ALIAS_CAPTURED, CALLED_ALIAS_LATER, MODULE_GROUP_ALIAS,
         NEVER_CALLED_EXPLICIT_NULL, NEVER_CALLED_EXPLICIT_INT, NEVER_CALLED_IMPLICIT,
         CAPTURED_CALLED, NESTED_INSIDE_FUNCTION, ESCAPED_TWO_GROUPS,
+        ESCAPED_TWO_GROUPS_RECURSION, ESCAPED_TWO_GROUPS_ALIAS_RECURSION,
         PARAM_ORIGIN_CONTEXTUAL, ASYNC_ESCAPED_TWO_GROUPS, ASYNC_PARAM_ORIGIN,
         ASYNC_ESCAPED_TWO_GROUPS_ALIAS, ASYNC_ESCAPED_TWO_GROUPS_ALIAS_LATER,
         ASYNC_ESCAPED_TWO_GROUPS_PARAM, ASYNC_ESCAPED_TWO_GROUPS_ALIAS_PARAM,
@@ -1151,6 +1299,15 @@ public class NestedGroupProductionTest {
             // projection the failure assertion pins.
             if (testCase.asyncDrive() != null && testCase.failure() == null) {
                 driveProductionAsync(testCase, project, lowered);
+            }
+
+            // Surface 5: the staged production artifacts execute the sync
+            // entry on both release-owned lanes through their production
+            // entry surface (no trace instrumentation); the differential
+            // matrix above proves oracle agreement, this drive proves the
+            // production emission end to end.
+            if (testCase.stagedSync() && testCase.failure() == null) {
+                driveProductionSync(testCase, project);
             }
         } finally {
             deleteRecursively(project);
@@ -1312,6 +1469,55 @@ public class NestedGroupProductionTest {
                     + " [jvm]: the staged artifact publishes the pinned effects and "
                     + "result " + expectedStdout + "; got " + run.stdout());
             }
+        }
+    }
+
+    /**
+     * Surface 5: the staged production artifacts execute the case's sync
+     * entry on both release-owned lanes through their production entry
+     * surface (no trace instrumentation). The LuaJIT probe loads the staged
+     * chunk and the module-init walk runs {@code main()} exactly once; the
+     * JVM probe runs the staged class's production {@code main}. Both must
+     * publish exactly the case's pinned console effects, with an empty
+     * stderr and exit 0.
+     */
+    private static void driveProductionSync(Case testCase, Path project)
+            throws Exception {
+        List<String> expectedStdout = testCase.effects();
+
+        Path luaOut = project.resolve("out-luajit");
+        Path chunk = luaOut.resolve("main.lua");
+        check(Files.isRegularFile(chunk), testCase.name()
+            + " [luajit]: the staged chunk carries the sync case: " + chunk);
+        if (Files.isRegularFile(chunk)) {
+            ProcessBuilder builder = new ProcessBuilder("luajit", "main.lua");
+            builder.directory(luaOut.toFile());
+            ProcessOutput run = runProcess(builder);
+            check(run.exit() == 0 && run.stderr().isEmpty(), testCase.name()
+                + " [luajit]: the staged chunk executes the sync case: "
+                + run.describe());
+            check(run.stdout().equals(expectedStdout), testCase.name()
+                + " [luajit]: the staged chunk publishes the pinned effects "
+                + expectedStdout + "; got " + run.stdout());
+        }
+
+        String className = JvmNames.classNameFor("main");
+        Path jvmOut = project.resolve("out-jvm");
+        Path classes = jvmOut.resolve("classes");
+        check(Files.isRegularFile(classes.resolve(className + ".class")),
+            testCase.name() + " [jvm]: the staged artifact is compiled for the "
+                + "sync drive: " + classes.resolve(className + ".class"));
+        if (Files.isRegularFile(classes.resolve(className + ".class"))) {
+            ProcessBuilder java = new ProcessBuilder("java", "-cp",
+                absoluteClasspath() + File.pathSeparator + classes, className);
+            java.directory(jvmOut.toFile());
+            ProcessOutput run = runProcess(java);
+            check(run.exit() == 0 && run.stderr().isEmpty(), testCase.name()
+                + " [jvm]: the staged artifact executes the sync case: "
+                + run.describe());
+            check(run.stdout().equals(expectedStdout), testCase.name()
+                + " [jvm]: the staged artifact publishes the pinned effects "
+                + expectedStdout + "; got " + run.stdout());
         }
     }
 

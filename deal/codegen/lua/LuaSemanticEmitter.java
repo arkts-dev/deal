@@ -3028,13 +3028,17 @@ public final class LuaSemanticEmitter {
         }
 
         /**
-         * The re-entrant invocation's private-state save, or {@code null}
-         * when the callee body has no private state or is not already
-         * active. The frame it pushes carries the previous active marker
-         * and the saved state: only a nested invocation of the same body
-         * (recursion) can overwrite the enclosing invocation's own state,
-         * so only it saves and restores — a plain call keeps the flat
-         * observable state the artifact's slots always had.
+         * The synchronous invocation's private-state save, or {@code null}
+         * when the callee body has no private state. The frame it pushes
+         * carries the previous active marker and the saved state; the
+         * matching restore is <em>unconditional</em> (like the async body
+         * task's): the enclosing invocation may have been started by a
+         * route this call site cannot name at compile time (a dynamic
+         * dispatch of an escaped carrier, an entry of another unit), so
+         * the active marker cannot gate the restore — the copied values
+         * are the enclosing invocation's private state whatever started
+         * it. The marker itself is still maintained so a re-entrant
+         * invocation leaves it in place and only the outermost clears it.
          */
         private String emitInvocationStateSave(FunctionId callee, OpId invocation) {
             List<String> keys = bodyStateKeys(callee);
@@ -3068,13 +3072,16 @@ public final class LuaSemanticEmitter {
             return "__svStack[#__svStack]";
         }
 
-        /** The matching re-entrant restore and pop, on every path. */
+        /**
+         * The matching unconditional restore and pop, on every success and
+         * failure path: the body's own slots and cell references return to
+         * the enclosing invocation's state whichever route started it.
+         */
         private void emitInvocationStateRestore(FunctionId callee, String frame) {
             if (frame == null) {
                 return;
             }
             List<String> keys = bodyStateKeys(callee);
-            out.append("if ").append(frame).append("[1] then\n");
             for (int start = 0; start < keys.size(); start += STATE_CHUNK) {
                 int end = Math.min(start + STATE_CHUNK, keys.size());
                 StringBuilder targets = new StringBuilder();
@@ -3087,27 +3094,25 @@ public final class LuaSemanticEmitter {
                     targets.append(keys.get(i));
                     values.append(frame).append("[").append(i + 2).append("]");
                 }
-                out.append("  ").append(targets).append(" = ").append(values)
-                    .append("\n");
+                out.append(targets).append(" = ").append(values).append("\n");
             }
-            out.append("end\n");
             out.append("__bodyActive[").append(callee.id()).append("] = ")
                 .append(frame).append("[1]\n");
             out.append("__svStack[#__svStack] = nil\n");
         }
 
         /**
-         * The async body-task invocation's private-state save. Unlike the
-         * synchronous invocation's arm, the frame it pushes is restored
-         * <em>unconditionally</em> by {@link
-         * #emitAsyncInvocationStateRestore}: the task's body executes at the
-         * enclosing invocation's drain, and that enclosing invocation may
-         * have been started by a callee this arm cannot name at compile time
-         * (a dynamic-dispatch body task) or by an entry of another unit, so
-         * the active marker cannot gate the restore — the copied values are
-         * the enclosing invocation's private state whatever started it. The
-         * marker itself is still maintained, so the synchronous arm's
-         * conditional protocol stays exact.
+         * The async body-task invocation's private-state save. The frame it
+         * pushes is restored <em>unconditionally</em> by {@link
+         * #emitAsyncInvocationStateRestore}, exactly like the synchronous
+         * arm's: the task's body executes at the enclosing invocation's
+         * drain, and that enclosing invocation may have been started by a
+         * callee this arm cannot name at compile time (a dynamic-dispatch
+         * body task) or by an entry of another unit, so the active marker
+         * cannot gate the restore — the copied values are the enclosing
+         * invocation's private state whatever started it. The marker itself
+         * is still maintained, so a re-entrant invocation leaves it in place
+         * and only the outermost clears it.
          */
         private String emitAsyncInvocationStateSave(FunctionId callee, OpId invocation,
                                                     String pad) {
