@@ -3097,6 +3097,84 @@ public final class LuaSemanticEmitter {
         }
 
         /**
+         * The async body-task invocation's private-state save. Unlike the
+         * synchronous invocation's arm, the frame it pushes is restored
+         * <em>unconditionally</em> by {@link
+         * #emitAsyncInvocationStateRestore}: the task's body executes at the
+         * enclosing invocation's drain, and that enclosing invocation may
+         * have been started by a callee this arm cannot name at compile time
+         * (a dynamic-dispatch body task) or by an entry of another unit, so
+         * the active marker cannot gate the restore — the copied values are
+         * the enclosing invocation's private state whatever started it. The
+         * marker itself is still maintained, so the synchronous arm's
+         * conditional protocol stays exact.
+         */
+        private String emitAsyncInvocationStateSave(FunctionId callee, OpId invocation,
+                                                    String pad) {
+            List<String> keys = bodyStateKeys(callee);
+            if (keys.isEmpty()) {
+                return null;
+            }
+            long functionId = callee.id();
+            out.append(pad).append("__svStack[#__svStack + 1] = {__bodyActive[")
+                .append(functionId).append("]}\n");
+            // The frame's slots are filled in bounded chunks: one
+            // multi-assignment carrying every key of a large body would
+            // exceed LuaJIT's per-statement variable-name and
+            // expression-complexity limits (the bytes corpus' allocation
+            // and closure fixtures carry hundreds of slots per body).
+            for (int start = 0; start < keys.size(); start += STATE_CHUNK) {
+                int end = Math.min(start + STATE_CHUNK, keys.size());
+                StringBuilder targets = new StringBuilder();
+                StringBuilder values = new StringBuilder();
+                for (int i = start; i < end; i++) {
+                    if (i > start) {
+                        targets.append(", ");
+                        values.append(", ");
+                    }
+                    targets.append("__svStack[#__svStack][").append(i + 2)
+                        .append("]");
+                    values.append(keys.get(i));
+                }
+                out.append(pad).append(targets).append(" = ").append(values)
+                    .append("\n");
+            }
+            out.append(pad).append("__bodyActive[").append(functionId)
+                .append("] = true\n");
+            return "__svStack[#__svStack]";
+        }
+
+        /**
+         * The matching unconditional restore and pop, on every success and
+         * failure path of the async body task.
+         */
+        private void emitAsyncInvocationStateRestore(FunctionId callee, String frame,
+                                                     String pad) {
+            if (frame == null) {
+                return;
+            }
+            List<String> keys = bodyStateKeys(callee);
+            for (int start = 0; start < keys.size(); start += STATE_CHUNK) {
+                int end = Math.min(start + STATE_CHUNK, keys.size());
+                StringBuilder targets = new StringBuilder();
+                StringBuilder values = new StringBuilder();
+                for (int i = start; i < end; i++) {
+                    if (i > start) {
+                        targets.append(", ");
+                        values.append(", ");
+                    }
+                    targets.append(keys.get(i));
+                    values.append(frame).append("[").append(i + 2).append("]");
+                }
+                out.append(pad).append(targets).append(" = ").append(values)
+                    .append("\n");
+            }
+            out.append(pad).append("__bodyActive[").append(callee.id()).append("] = ")
+                .append(frame).append("[1]\n");
+            out.append(pad).append("__svStack[#__svStack] = nil\n");
+        }
+
+        /**
          * The registered execution binding of one allocation identity. The
          * project session's units share one identity space (every semantic
          * id is globally unique within the closure), so the registration is
@@ -5421,6 +5499,14 @@ public final class LuaSemanticEmitter {
                     out.append("  table.insert(__frames, 1, ")
                         .append(luaString(String.valueOf(body.functionId().id())))
                         .append(")\n");
+                    // The task's body execution is the async counterpart of
+                    // the synchronous invocation: a recursive await of the
+                    // same body runs the nested task inline (the FIFO drain)
+                    // while the enclosing invocation is still live, so the
+                    // callee body's private slots are saved before the body
+                    // runs and restored on the success and failure paths.
+                    String savedState = emitAsyncInvocationStateSave(body.functionId(),
+                        op.opId(), "  ");
                     out.append("  local __okA, __resA = pcall(");
                     if (payload.callee()
                             instanceof KindPayload.CallCallee.Indirect indirect) {
@@ -5438,6 +5524,7 @@ public final class LuaSemanticEmitter {
                     out.append(", unpack(S.__sa").append(op.opId().id())
                         .append(", 1, #S.__sa").append(op.opId().id()).append("))\n");
                     out.append("  table.remove(__frames, 1)\n");
+                    emitAsyncInvocationStateRestore(body.functionId(), savedState, "  ");
                     out.append("  if not __okA then error(__resA, 0) end\n");
                     out.append("  return __resA\n");
                     out.append("end), S.__sa").append(op.opId().id()).append(")\n");

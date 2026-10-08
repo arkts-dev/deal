@@ -848,13 +848,130 @@ public class NestedGroupProductionTest {
         true, List.of(true, true), false, false, null, new AsyncDrive("drive"),
         "int:30");
 
+    /**
+     * The awaited member's post-await parameter use (the review's cycle-1
+     * seed), through the declared sibling name: {@code f} awaits sibling
+     * {@code g} as a statement and then returns {@code base + n}. Each
+     * recursive async invocation re-entered the same body while the
+     * enclosing invocation's private slots were still live, so the resumed
+     * invocation read the deepest re-entry's {@code n} (0) and both
+     * creations published {@code base} instead of {@code base + n} (13/23,
+     * total 36). The async body-task arm must save the callee body's private
+     * state before a re-entrant body execution and restore it on the success
+     * and failure paths — the async counterpart of the synchronous
+     * invocation's save/restore protocol. The oracle, the trace artifacts,
+     * and the staged production artifacts must all observe the pinned
+     * per-creation results.
+     */
+    private static final Case ASYNC_ESCAPED_TWO_GROUPS_PARAM = new Case(
+        "async-escaped-two-groups-param",
+        """
+        import * as console from "std/console"
+
+        export async function drive(): int {
+          let a: async (n: int) => int = make(10);
+          let b: async (n: int) => int = make(20);
+          let av: int = await a(3);
+          if (av === 13) {
+            console.log("async-escaped-group-param-a-ok");
+          } else {
+            console.log("async-escaped-group-param-a-bad");
+          }
+          let bv: int = await b(3);
+          if (bv === 23) {
+            console.log("async-escaped-group-param-b-ok");
+          } else {
+            console.log("async-escaped-group-param-b-bad");
+          }
+          return av + bv;
+        }
+
+        function make(base: int): async (n: int) => int {
+          async function f(n: int): int {
+            if (n <= 0) {
+              return base;
+            }
+            await g(n - 1);
+            return base + n;
+          }
+          async function g(n: int): int {
+            return await f(n);
+          }
+          return f;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """,
+        List.of("async-escaped-group-param-a-ok", "async-escaped-group-param-b-ok"),
+        true, List.of(true, true), false, false, null, new AsyncDrive("drive"),
+        "int:36");
+
+    /**
+     * The same post-await parameter use through an ordinary typed sibling
+     * alias ({@code let sibling: async (n: int) => int = g}): the value-carried
+     * async arm resolves the alias to the member's {@code LoweredBody}, so the
+     * invocation must keep the published capture carrier while it saves and
+     * restores the member's private state around the re-entrant body
+     * execution. The target {@code g} is declared after the awaiting member,
+     * so its capture list is still pending when {@code f} walks.
+     */
+    private static final Case ASYNC_ESCAPED_TWO_GROUPS_ALIAS_PARAM = new Case(
+        "async-escaped-two-groups-alias-param",
+        """
+        import * as console from "std/console"
+
+        export async function drive(): int {
+          let a: async (n: int) => int = make(10);
+          let b: async (n: int) => int = make(20);
+          let av: int = await a(3);
+          if (av === 13) {
+            console.log("async-escaped-group-alias-param-a-ok");
+          } else {
+            console.log("async-escaped-group-alias-param-a-bad");
+          }
+          let bv: int = await b(3);
+          if (bv === 23) {
+            console.log("async-escaped-group-alias-param-b-ok");
+          } else {
+            console.log("async-escaped-group-alias-param-b-bad");
+          }
+          return av + bv;
+        }
+
+        function make(base: int): async (n: int) => int {
+          async function f(n: int): int {
+            if (n <= 0) {
+              return base;
+            }
+            let sibling: async (n: int) => int = g;
+            await sibling(n - 1);
+            return base + n;
+          }
+          async function g(n: int): int {
+            return await f(n);
+          }
+          return f;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """,
+        List.of("async-escaped-group-alias-param-a-ok",
+            "async-escaped-group-alias-param-b-ok"),
+        true, List.of(true, true), false, false, null, new AsyncDrive("drive"),
+        "int:36");
+
     private static final List<Case> CASES = List.of(
         CALLED_EXPLICIT, CALLED_IMPLICIT, CALLED_VALUE_REFERENCE,
         CALLED_ALIAS, CALLED_ALIAS_CAPTURED, CALLED_ALIAS_LATER, MODULE_GROUP_ALIAS,
         NEVER_CALLED_EXPLICIT_NULL, NEVER_CALLED_EXPLICIT_INT, NEVER_CALLED_IMPLICIT,
         CAPTURED_CALLED, NESTED_INSIDE_FUNCTION, ESCAPED_TWO_GROUPS,
         PARAM_ORIGIN_CONTEXTUAL, ASYNC_ESCAPED_TWO_GROUPS, ASYNC_PARAM_ORIGIN,
-        ASYNC_ESCAPED_TWO_GROUPS_ALIAS, ASYNC_ESCAPED_TWO_GROUPS_ALIAS_LATER);
+        ASYNC_ESCAPED_TWO_GROUPS_ALIAS, ASYNC_ESCAPED_TWO_GROUPS_ALIAS_LATER,
+        ASYNC_ESCAPED_TWO_GROUPS_PARAM, ASYNC_ESCAPED_TWO_GROUPS_ALIAS_PARAM);
 
     // =========================================================================
     // The case driver
