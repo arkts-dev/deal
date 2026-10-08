@@ -682,6 +682,10 @@ public class CompositeTerminatorAnalysisTest {
      * the transfer, does not terminate the enclosing body, and the pinned
      * implicit null return is retained as the body block's trailing
      * statement — for every literal-true loop form and every partial shape.
+     * The reachable break-exit shapes also pin the public compile surface's
+     * one-E5002 rejection (the spec's no-fall-off rule; ISSUE-0717 defect
+     * snippets 25/26); the retained harness profile is the one that keeps
+     * the implicit null return observable.
      */
     static void testPartialTransferKeepsImplicitReturn() throws Exception {
         System.out.println("-- the partial transfers: an open-branch composite's "
@@ -694,41 +698,42 @@ public class CompositeTerminatorAnalysisTest {
             new LoopForm("for (; true; )", "for (; true; ) {"),
             new LoopForm("for (;;)", "for (;;) {"),
             new LoopForm("for-let", "for (let i: int = 0; true; i = i + 1) {"));
-        record PartialShape(String name, String body) {
+        record PartialShape(String name, String body, boolean publicFallOff) {
         }
         List<PartialShape> shapes = List.of(
             new PartialShape("if without else then return", """
                 if (c) { break; }
-                return null;"""),
+                return null;""", true),
             new PartialShape("if without else then throw", """
                 if (c) { break; }
-                throw { code: "PARTIAL", message: "partial" }"""),
+                throw { code: "PARTIAL", message: "partial" }""", true),
             new PartialShape("if/else with one open branch then return", """
                 if (c) { break; } else { }
-                return null;"""),
+                return null;""", true),
             new PartialShape("try/catch with one open branch then return", """
                 try { if (c) { break; } } catch (e) { }
-                return null;"""),
+                return null;""", true),
             new PartialShape("if/else with a transferring else then return", """
                 if (c) { } else { break; }
-                return null;"""),
+                return null;""", true),
             new PartialShape("try/catch with a transferring catch then return", """
                 try { } catch (e) { if (c) { break; } }
-                return null;"""),
+                return null;""", true),
             new PartialShape("if without else with continue then return", """
                 if (c) { continue; }
-                return null;"""),
+                return null;""", false),
             new PartialShape("try/catch with continue then return", """
                 try { if (c) { continue; } } catch (e) { }
-                return null;"""),
+                return null;""", false),
             new PartialShape("if without else with continue then throw", """
                 if (c) { continue; }
-                throw { code: "PARTIAL", message: "partial" }"""),
+                throw { code: "PARTIAL", message: "partial" }""", false),
             new PartialShape("try/catch with continue then throw", """
                 try { if (c) { continue; } } catch (e) { }
-                throw { code: "PARTIAL", message: "partial" }"""));
+                throw { code: "PARTIAL", message: "partial" }""", false));
         List<String> names = new ArrayList<>();
         StringBuilder source = new StringBuilder();
+        int fallOffProbes = 0;
         for (LoopForm form : forms) {
             for (PartialShape shape : shapes) {
                 source.append("export function probe").append(names.size())
@@ -737,14 +742,26 @@ public class CompositeTerminatorAnalysisTest {
                     .append("    ").append(shape.body().replace("\n", "\n    "))
                     .append("\n  }\n}\n");
                 names.add(form.name() + ", " + shape.name());
+                if (shape.publicFallOff()) {
+                    fallOffProbes++;
+                }
             }
         }
         checkEq(40, names.size(), "the partial-transfer matrix carries all forty probes");
         if (names.size() != 40) {
             return;
         }
+        // The public build rejects every reachable break-exit body with one
+        // E5002 (the spec's no-fall-off rule; ISSUE-0717 defect snippets
+        // 25/26), so the batched public program is pinned once here; the
+        // retained harness invocation — whose implicit-null-return tolerance
+        // keeps the closed analysis's OPEN marking observable — drives the
+        // batched lowering below.
+        checkPublicFallOffCount("the partial-transfer matrix",
+            probeProgram(source.toString()), fallOffProbes);
         Lowered lowered = lowerProbe("partial-transfer matrix",
-            probeProgram(source.toString()));
+            probeProgram(source.toString()),
+            ConformanceHarnessMetadata.invocation(SemanticProfile.DEAL_V1_2_INT32));
         if (lowered == null) {
             return;
         }
@@ -784,12 +801,15 @@ public class CompositeTerminatorAnalysisTest {
      * fabricated transfer path would wrongly keep a literal-true loop's
      * implicit return), and a nested body's partial transfer never reaches
      * an enclosing body's state (the bodies' blocks are disjoint — the
-     * enclosing loop still terminates its body).
+     * enclosing loop still terminates its body). The nested open body's
+     * public one-E5002 rejection is pinned through the harness invocation
+     * the open shape drives.
      */
     static void testPartialTransferMonotonicity() throws Exception {
         System.out.println("-- the unreachable tails and nested bodies never modify "
             + "the partial-transfer state --");
-        record Terminated(String name, String source, int implicitReturns) {
+        record Terminated(String name, String source, int implicitReturns,
+                          boolean publicFallOff) {
         }
         List<Terminated> terminated = List.of(
             new Terminated("return then break tail", probeProgram("""
@@ -799,7 +819,7 @@ public class CompositeTerminatorAnalysisTest {
                     if (c) { break; }
                   }
                 }
-                """), 0),
+                """), 0, false),
             new Terminated("both-branch return then partial break tail",
                 probeProgram("""
                     export function probe(c: boolean): null {
@@ -808,7 +828,7 @@ public class CompositeTerminatorAnalysisTest {
                         if (c) { break; }
                       }
                     }
-                    """), 0),
+                    """), 0, false),
             new Terminated("nested body's partial transfer", probeProgram("""
                 export function probe(c: boolean): null {
                   while (true) {
@@ -821,11 +841,21 @@ public class CompositeTerminatorAnalysisTest {
                     return null;
                   }
                 }
-                """), 1));
+                """), 1, true));
         for (Terminated shape : terminated) {
-            Lowered lowered = lowerProbe(shape.name(), shape.source());
+            Lowered lowered = shape.publicFallOff()
+                ? lowerProbe(shape.name(), shape.source(),
+                    ConformanceHarnessMetadata.invocation(SemanticProfile.DEAL_V1_2_INT32))
+                : lowerProbe(shape.name(), shape.source());
             if (lowered == null) {
                 continue;
+            }
+            if (shape.publicFallOff()) {
+                // The nested body's reachable break-exit falls off and is
+                // rejected by the public surface; the enclosing body still
+                // definitely returns and the retained harness profile keeps
+                // the nested body's implicit null return observable.
+                checkPublicFallOff(shape.name(), shape.source());
             }
             checkEq(shape.implicitReturns(), lowered.implicitReturns().size(),
                 shape.name() + ": only the genuinely open bodies keep the pinned "
@@ -1646,7 +1676,11 @@ public class CompositeTerminatorAnalysisTest {
      * affected transfer/error paths execute — the four finite
      * partial-continue paths (each continue runs exactly once) and the
      * four caught partial-transfer throw bodies (each throw runs exactly
-     * once) per consumer.
+     * once) per consumer. The same program's public compile is rejected
+     * with one E5002 per open probe body (the spec's no-fall-off rule;
+     * ISSUE-0717 defect snippets 25/26), so the parity drive uses the
+     * retained harness profile that keeps the landed implicit null
+     * returns observable.
      */
     static void testPartialTransferProductionParity() throws Exception {
         System.out.println("-- the partial-transfer probes through the oracle and "
@@ -1654,10 +1688,18 @@ public class CompositeTerminatorAnalysisTest {
         Path root = Files.createTempDirectory("partial-transfer-parity-");
         try {
             write(root, "src/app.deal", PARTIAL_TRANSFER_PROBE_SOURCE);
-            Lowered lowered = lowerProjectRoot(root, "src/app.deal");
+            // The open break-exit probes fall off under the spec's rule, so
+            // the public build rejects all fourteen (pinned below); the
+            // retained harness profile keeps the landed implicit null
+            // returns the closed analysis marks and drives the same lowered
+            // project through the real toolchains.
+            Lowered lowered = lowerProjectRoot(root, "src/app.deal",
+                ConformanceHarnessMetadata.invocation(SemanticProfile.DEAL_V1_2_INT32));
             if (lowered == null) {
                 return;
             }
+            checkPublicFallOffCount("the fourteen partial-transfer probes",
+                PARTIAL_TRANSFER_PROBE_SOURCE, 14);
             List<SemanticOp> implicit = lowered.implicitReturns();
             checkEq(14, implicit.size(), "the fourteen partial-transfer probes each "
                 + "retain their implicit null return");
@@ -1865,6 +1907,17 @@ public class CompositeTerminatorAnalysisTest {
      */
     private static void checkPublicFallOff(String name, String source)
             throws Exception {
+        checkPublicFallOffCount(name, source, 1);
+    }
+
+    /**
+     * Pins the public build's rejection of a program with exactly the
+     * expected number of E5002 fall-off diagnostics (one per open
+     * {@code : null} body; the spec's no-fall-off rule, ISSUE-0717 defect
+     * snippets 25/26).
+     */
+    private static void checkPublicFallOffCount(String name, String source,
+                                                int expected) throws Exception {
         List<CompilerDiagnostic> diagnostics = publicBuildDiagnostics(source);
         int fallOff = 0;
         for (CompilerDiagnostic diagnostic : diagnostics) {
@@ -1872,8 +1925,8 @@ public class CompositeTerminatorAnalysisTest {
                 fallOff++;
             }
         }
-        checkEq(1, fallOff, name + ": the public build reports exactly one "
-            + "E5002 fall-off rejection: " + diagnostics);
+        checkEq(expected, fallOff, name + ": the public build reports exactly "
+            + expected + " E5002 fall-off rejection(s): " + diagnostics);
     }
 
     /** One orchestrator compile through the named invocation record. */

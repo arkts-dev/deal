@@ -184,13 +184,18 @@ public final class ReturnAnalysis {
     /**
      * Whether a loop body carries a reachable {@code break} of this loop
      * (nested loops and nested function bodies bind their own transfers,
-     * so their {@code break} statements do not break this loop).
+     * so their {@code break} statements do not break this loop; a
+     * {@code break} behind a terminator is unreachable and never counts —
+     * the spec's "unconditional return before any possible break" rule).
      */
     private static boolean containsBreak(StatementNode stmt) {
         if (stmt instanceof BreakStatement) return true;
         if (stmt instanceof Block block) {
             for (StatementNode child : block.statements()) {
                 if (containsBreak(child)) return true;
+                // The first statement that cannot complete normally ends
+                // the block's reachable prefix: later breaks are dead.
+                if (cannotCompleteNormally(child)) return false;
             }
             return false;
         }
