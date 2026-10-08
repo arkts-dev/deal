@@ -305,7 +305,8 @@ public class CrossModuleCallRealizationTest {
             fixture.externCModules(),
             BuiltinErrorDeclaration.synthesized(
                 fixture.checkedProject().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW),
             java.util.Set.of());
     }
 
@@ -319,7 +320,8 @@ public class CrossModuleCallRealizationTest {
             fixture.distributionHome().manifestDirectoryText(),
             BuiltinErrorDeclaration.synthesized(
                 fixture.checkedProject().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW),
             java.util.Set.of(), backend, false, fixture.distributionHome(), stager);
     }
 

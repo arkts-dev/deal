@@ -300,17 +300,17 @@ public final class JvmRuntime {
     }
 
     /**
-     * The intrinsic carrier's generic invoker (J2): the conversion
-     * ladder of the carrier's kind over the caller's first argument, with
-     * the invoking call's context when one is supplied (the DEAL
-     * convention packs the static kind, the op key, the digest, the
-     * parent key, and the origin after the value) and the absent context
-     * otherwise — total and deterministic for any non-DEAL caller (the
-     * host bridge and any generic unwrap). DEAL call sites run the ladder
-     * directly with the invoking op's own context; the carrier's invoker
-     * never invents a call site's origin, and its declared-parameter kind
-     * is the default static kind (the intrinsic's declared signature is
-     * the only descriptor source).
+     * The intrinsic carrier's generic invoker (J2): the conversion or
+     * allocation ladder of the carrier's kind over the caller's first
+     * argument, with the invoking call's context when one is supplied
+     * (the DEAL convention packs the static kind, the op key, the digest,
+     * the parent key, and the origin after the value) and the absent
+     * context otherwise — total and deterministic for any non-DEAL caller
+     * (the host bridge and any generic unwrap). DEAL call sites run the
+     * ladder directly with the invoking op's own context; the carrier's
+     * invoker never invents a call site's origin, and its
+     * declared-parameter kind is the default static kind (the intrinsic's
+     * declared signature is the only descriptor source).
      */
     static Object intrinsicInvoke(String kind, Object[] args) {
         Object value = args.length > 0 ? args[0] : null;
@@ -324,6 +324,13 @@ public final class JvmRuntime {
         String origin = args.length > 6 && args[6] instanceof String text ? text : "-";
         if ("INT_CONVERT".equals(kind)) {
             return intConv(value, evKind, staticKind, opKey, digest, parent, origin);
+        }
+        if ("BYTES_NEW".equals(kind)) {
+            // The allocation ladder with the generic caller's context and
+            // no call-site span: the runtime entry's own coordinates stay
+            // the diagnostic origin. The generic caller owns no call
+            // expression, so no pinned call origin is invented.
+            return bytesNew(value, evKind, opKey, digest, parent, origin);
         }
         return numConv(value, evKind, staticKind, opKey, digest, parent, origin);
     }

@@ -23,17 +23,23 @@ import java.util.List;
  * ({@code deal/checker/NameResolver.seedIntrinsics}): {@code INT_CONVERT}
  * is {@code (number) -> int}, {@code NUMBER_CONVERT} is
  * {@code (int) -> number}, and {@code BYTES_NEW} is
- * {@code (int) -> bytes}. For the two conversions the signature is the
- * closed descriptor position of the
- * {@code FunctionExecutionBinding.IntrinsicFunction} shape
- * ({@link #declaredSignature()}); a binding carrying any other
- * {@code (kind, descriptor)} pair fails the closed gate. The allocation
- * intrinsic is outside the seeded first-class intrinsic set (K14's two
- * conversion intrinsics): {@code bytes(length)} lowers as the
+ * {@code (int) -> bytes}. The signature is the closed descriptor
+ * position of the {@code FunctionExecutionBinding.IntrinsicFunction}
+ * shape ({@link #declaredSignature()}); a binding carrying any other
+ * {@code (kind, descriptor)} pair fails the closed gate. All three
+ * intrinsics are seeded first-class values: the constant's
+ * {@code INTRINSIC_CALL} producer carries the pinned input/result
+ * descriptors, and the seeded binding registers the kind's declared
+ * signature for the emission of every materialization (a direct call, a
+ * function-typed load, an adapter operand) and for the value call's
+ * allocation/conversion ladder at the call expression's origin.</p>
+ *
+ * <p>The {@code bytes} allocation kind additionally realizes the
+ * allocation side: {@code bytes(length)} lowers as an
  * {@code INTRINSIC_CALL(BYTES_NEW)} producer whose payload carries the
  * pinned {@code int} input descriptor and the {@code bytes} result
- * descriptor, and no {@code IntrinsicFunction} binding is registered for
- * it.</p>
+ * descriptor, and an indirect call of the seeded binding runs the same
+ * allocation ladder with the invoking call expression's origin.</p>
  */
 public enum IntrinsicKind {
 
@@ -53,13 +59,13 @@ public enum IntrinsicKind {
     BYTES_NEW;
 
     /**
-     * The pinned declared signature of this conversion intrinsic: the
-     * intrinsic's declared function type as the compilation's single
+     * The pinned declared signature of this intrinsic: the intrinsic's
+     * declared function type as the compilation's single
      * {@code deal.semantic.DescriptorService} descriptor producer renders it —
-     * {@code INT_CONVERT} is {@code (number)->int} and
-     * {@code NUMBER_CONVERT} is {@code (int)->number}. It is the only
-     * descriptor admissible in a {@code FunctionExecutionBinding
-     * .IntrinsicFunction} shape of this kind.
+     * {@code INT_CONVERT} is {@code (number)->int}, {@code NUMBER_CONVERT}
+     * is {@code (int)->number}, and {@code BYTES_NEW} is
+     * {@code (int)->bytes}. It is the only descriptor admissible in a
+     * {@code FunctionExecutionBinding.IntrinsicFunction} shape of this kind.
      *
      */
     public RuntimeDescriptor.Func declaredSignature() {

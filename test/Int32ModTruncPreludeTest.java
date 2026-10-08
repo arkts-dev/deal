@@ -259,7 +259,8 @@ public final class Int32ModTruncPreludeTest {
             manifests.manifests(), orchestrator.hostDeclarationSurface(), Map.of(),
             Map.of(), BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW),
             Set.of());
         check(result.project() != null && !result.hasErrors(), what + ": the one "
             + "project lowering reports zero diagnostics: " + result.diagnostics());

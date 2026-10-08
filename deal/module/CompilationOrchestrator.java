@@ -1995,7 +1995,8 @@ public final class CompilationOrchestrator {
             declarationModuleIdentities(), externCGeneratedModules(),
             context.manifestDirectory(),
             builtinErrorDeclaration(checked.input()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW),
             Set.of(), backend, sourceMapExplicit, distributionHome, stager);
         if (result.emitted()) {
             semanticEmissionCount++;

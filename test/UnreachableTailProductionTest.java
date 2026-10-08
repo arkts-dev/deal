@@ -523,7 +523,8 @@ public class UnreachableTailProductionTest {
             Map.of(), Map.of(),
             BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW),
             Set.of());
         check(result.project() != null, name + ": the oracle closure lowers with "
             + "zero diagnostics: " + result.diagnostics());

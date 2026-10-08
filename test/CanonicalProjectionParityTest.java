@@ -479,7 +479,8 @@ public class CanonicalProjectionParityTest {
                     .filter(module -> module.moduleId()
                         .equals(built.input().entryModule()))
                     .findFirst().orElseThrow().ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW),
             Set.of());
         if (lowering.hasErrors() || lowering.project() == null) {
             deleteRecursively(root);
@@ -1098,7 +1099,8 @@ public class CanonicalProjectionParityTest {
         return SemanticLowerer.lowerProject(invocation, built.input(), built.index(),
             manifests.manifests(), new HostDeclarationSurface(Map.of()), Map.of(),
             Map.of(), BuiltinErrorDeclaration.synthesized(program.span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW),
             Set.of());
     }
 
@@ -1152,7 +1154,8 @@ public class CanonicalProjectionParityTest {
             seed.manifests().manifests(), new HostDeclarationSurface(Map.of()),
             Map.of(), Map.of(), BuiltinErrorDeclaration.synthesized(
                 seed.input().ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW),
             callbackExports);
         if (lowering == null || lowering.hasErrors() || lowering.project() == null) {
             fail(what + ": the production project lowering fails: "
@@ -1448,7 +1451,8 @@ public class CanonicalProjectionParityTest {
                         .filter(module -> module.moduleId()
                             .equals(compiled.checkedProject().entryModule()))
                         .findFirst().orElseThrow().ast().span()),
-                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
+                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW),
                 Set.of(), backend, false,
                 deal.distribution.DistributionHome.forManifestDirectory(
                     compiled.mirror().toString()), stager);

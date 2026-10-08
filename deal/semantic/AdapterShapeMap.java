@@ -24,7 +24,10 @@ public final class AdapterShapeMap {
         /** A {@code FunctionExpr} — the {@code CLOSURE_NEW} result (materialized operand). */
         FUNCTION_EXPRESSION,
 
-        /** A first-class {@code int}/{@code number} intrinsic function value. */
+        /**
+         * A first-class {@code int}/{@code number}/{@code bytes}
+         * intrinsic function value.
+         */
         INTRINSIC_FUNCTION_VALUE,
 
         /** An identifier-resolved function-typed binding reference. */
@@ -49,7 +52,7 @@ public final class AdapterShapeMap {
     /**
      * The source-shape classification of one adapted source expression
      * (B7): a {@code FunctionExpr} → {@link SourceShape#FUNCTION_EXPRESSION};
-     * an identifier resolving to the root {@code int}/{@code number}
+     * an identifier resolving to the root {@code int}/{@code number}/{@code bytes}
      * intrinsic binding → {@link SourceShape#INTRINSIC_FUNCTION_VALUE}
      * (the checker removes the root intrinsic binding before a user
      * shadow, so the symbol fact decides — a shadowed name is a user
@@ -71,7 +74,8 @@ public final class AdapterShapeMap {
             Symbol symbol = resolve.apply(identifier.name());
             if (symbol instanceof Symbol.IntrinsicSymbol intrinsic
                     && ("int".equals(intrinsic.name())
-                        || "number".equals(intrinsic.name()))) {
+                        || "number".equals(intrinsic.name())
+                        || "bytes".equals(intrinsic.name()))) {
                 return SourceShape.INTRINSIC_FUNCTION_VALUE;
             }
             return SourceShape.BINDING_REFERENCE;

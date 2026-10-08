@@ -240,7 +240,8 @@ public class DynamicFunctionValueGateTest {
         lowerer.setModuleImports(fixture.module().imports());
         lowerer.setRegistrationSeeds(ClassRegistrationSeeds.builtinErrorOnly());
         lowerer.setDeclaredConversionIntrinsics(
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT));
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW));
         lowerer.setE7Facts(fixture.module().exports(), Map.of(), Map.of(), Set.of());
         try {
             lowerer.lowerProjectModule(fixture.module().ast().statements());

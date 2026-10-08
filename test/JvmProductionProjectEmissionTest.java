@@ -159,7 +159,8 @@ public class JvmProductionProjectEmissionTest {
             project.declarationIdentities(), project.externCModules(),
             BuiltinErrorDeclaration.synthesized(
                 project.checkedProject().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW),
             Set.of());
     }
 

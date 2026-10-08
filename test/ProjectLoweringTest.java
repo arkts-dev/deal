@@ -392,7 +392,8 @@ public class ProjectLoweringTest {
             project.declarationIdentities(), project.externCModules(),
             BuiltinErrorDeclaration.synthesized(
                 project.checkedProject().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW),
             Set.of());
     }
 
@@ -545,7 +546,7 @@ public class ProjectLoweringTest {
                     "required-present is the declaration's optional-negation");
             }
 
-            // The closed IntrinsicFunction bindings of both conversion
+            // The closed IntrinsicFunction bindings of the three seeded
             // intrinsics, per unit, with their declared signatures.
             for (LoweredModuleUnit unit : result.project().modules().values()) {
                 List<FunctionExecutionBinding.IntrinsicFunction> intrinsics =
@@ -558,8 +559,8 @@ public class ProjectLoweringTest {
                         intrinsics.add(intrinsic);
                     }
                 }
-                check(intrinsics.size() == 2,
-                    "module " + unit.moduleId() + " carries exactly the two closed "
+                check(intrinsics.size() == 3,
+                    "module " + unit.moduleId() + " carries exactly the three closed "
                         + "intrinsic bindings; got " + intrinsics.size());
                 Set<IntrinsicKind> kinds = new LinkedHashSet<>();
                 for (FunctionExecutionBinding.IntrinsicFunction intrinsic
@@ -571,8 +572,8 @@ public class ProjectLoweringTest {
                             + " carries its pinned declared signature");
                 }
                 checkEq(Set.of(IntrinsicKind.INT_CONVERT,
-                        IntrinsicKind.NUMBER_CONVERT), kinds,
-                    "the two conversion intrinsics are registered");
+                        IntrinsicKind.NUMBER_CONVERT, IntrinsicKind.BYTES_NEW), kinds,
+                    "the three seeded intrinsics are registered");
                 // The dump carries the registration: the closed shape tag and
                 // the alias cells of the module's completions.
                 String dump = new String(
@@ -1170,7 +1171,7 @@ public class ProjectLoweringTest {
                     BuiltinErrorDeclaration.synthesized(
                         modules.get(0).ast().span()),
                     List.of(IntrinsicKind.INT_CONVERT,
-                        IntrinsicKind.NUMBER_CONVERT),
+                        IntrinsicKind.NUMBER_CONVERT, IntrinsicKind.BYTES_NEW),
                     Set.of());
             check(result.hasErrors() && result.project() == null,
                 "the inconsistent-fact seed produces no project: "
@@ -1670,7 +1671,7 @@ public class ProjectLoweringTest {
                     BuiltinErrorDeclaration.synthesized(
                         project.checkedProject().modules().get(1).ast().span()),
                     List.of(IntrinsicKind.INT_CONVERT,
-                        IntrinsicKind.NUMBER_CONVERT),
+                        IntrinsicKind.NUMBER_CONVERT, IntrinsicKind.BYTES_NEW),
                     Set.of());
             check(result.hasErrors() && result.project() == null,
                 "the legacy invocation produces no project");
@@ -1717,7 +1718,8 @@ public class ProjectLoweringTest {
                 project.externCModules(),
                 BuiltinErrorDeclaration.synthesized(
                     project.checkedProject().modules().get(0).ast().span()),
-                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
+                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW),
                 Set.of());
             check(result.hasErrors() && result.project() == null,
                 "the unresolved alias produces no project");
