@@ -1919,14 +1919,18 @@ public class CompositeTerminatorAnalysisTest {
     private static void checkPublicFallOffCount(String name, String source,
                                                 int expected) throws Exception {
         List<CompilerDiagnostic> diagnostics = publicBuildDiagnostics(source);
-        int fallOff = 0;
+        List<String> fallOff = new ArrayList<>();
         for (CompilerDiagnostic diagnostic : diagnostics) {
             if ("E5002".equals(diagnostic.code())) {
-                fallOff++;
+                fallOff.add(diagnostic.file() + ":" + diagnostic.line()
+                    + ":" + diagnostic.column());
             }
         }
-        checkEq(expected, fallOff, name + ": the public build reports exactly "
+        checkEq(expected, fallOff.size(), name + ": the public build reports exactly "
             + expected + " E5002 fall-off rejection(s): " + diagnostics);
+        checkEq((long) expected, fallOff.stream().distinct().count(), name
+            + ": every E5002 fall-off rejection names a distinct open body: "
+            + fallOff);
     }
 
     /** One orchestrator compile through the named invocation record. */
