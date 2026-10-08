@@ -37,6 +37,8 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -126,7 +128,12 @@ import java.util.stream.Stream;
  *       direct child is reaped, and no owned reader survives the call on
  *       the deadline path or the cancellation path — so the audit-owned
  *       native bootstrap and every drive are deadline- and
- *       cancellation-bounded with nothing left behind.</li>
+ *       cancellation-bounded with nothing left behind. Every owned-tree
+ *       removal is fail-closed as well: the sweep attempts every path,
+ *       retains each deletion or traversal failure, re-checks the root,
+ *       and records a surviving artifact with its owned path and the
+ *       fixture/target context as a fatal audit failure, so a leftover
+ *       staged program or native library can never leave the run green.</li>
  *   <li><b>The acceptance verdicts and the pre-precondition rule.</b> The
  *       run computes the three acceptance verdicts — zero
  *       {@code CONSTRUCT_UNLOWERED}, zero {@code RETAINED_ABI_DEFERRED}/
@@ -176,12 +183,13 @@ import java.util.stream.Stream;
  * </ol>
  *
  * <p>The drive is read-only over the corpus: every temp project is
- * deleted, the corpus C library is bootstrapped in an audit-owned
- * temporary native directory (never in the repository {@code build/}
- * directory, whose contents the audit snapshots and re-asserts), no
- * fixture, sidecar, lane file, or repository artifact is written, and the
- * audit selects no invocation other than the release-owned production
- * one.</p>
+ * deleted under the fail-closed cleanup (a surviving owned artifact is
+ * reported by path and cell and fails the run), the corpus C library is
+ * bootstrapped in an audit-owned temporary native directory (never in the
+ * repository {@code build/} directory, whose contents the audit snapshots
+ * and re-asserts), no fixture, sidecar, lane file, or repository artifact
+ * is written, and the audit selects no invocation other than the
+ * release-owned production one.</p>
  */
 public class ProductionCorpusAudit {
 
@@ -953,7 +961,7 @@ public class ProductionCorpusAudit {
             // The post-state rule holds on the failure paths too: a
             // materialization that cannot resolve a declaration (the
             // fail-closed audit-input defect) removes its temp project.
-            deleteRecursively(root);
+            deleteRecursively(root, label);
             throw e;
         }
     }
@@ -2964,7 +2972,8 @@ public class ProductionCorpusAudit {
             record(label, target, LegKind.CAPTURE, captureVerdict(label, target,
                 normalized, execution, expectation, mismatch), report);
         } finally {
-            deleteRecursively(project.root());
+            deleteRecursively(project.root(),
+                label + " [" + target.laneName() + "]");
         }
     }
 
@@ -3149,7 +3158,7 @@ public class ProductionCorpusAudit {
                     && !isFatal(LegClass.PASS, true),
                 "a pin-exact leg is never fatal");
         } finally {
-            deleteRecursively(project.root());
+            deleteRecursively(project.root(), fixtureRel);
         }
         runtimeErrorComparisonControls();
         rejectionControls();
@@ -3161,6 +3170,7 @@ public class ProductionCorpusAudit {
         ownedTreeTeardownControls();
         subprocessDrainControls();
         nativeBootstrapControls();
+        cleanupFailureControl();
     }
 
     /**
@@ -3389,7 +3399,7 @@ public class ProductionCorpusAudit {
             checkEq(0L, auditReaderThreads(),
                 "no audit-owned reader thread survives the pool teardown");
         } finally {
-            deleteRecursively(root);
+            deleteRecursively(root, "audit-pool-cancellation-control");
         }
     }
 
@@ -3452,7 +3462,7 @@ public class ProductionCorpusAudit {
                 "no owned reader thread survives the owned-tree deadline "
                     + "teardown");
         } finally {
-            deleteRecursively(deadlineRoot);
+            deleteRecursively(deadlineRoot, "owned-tree-deadline-control");
         }
 
         // (b) The cancellation path: the same persistent descendant, with
@@ -3504,7 +3514,8 @@ public class ProductionCorpusAudit {
                 "no owned reader thread survives the owned-tree "
                     + "cancellation teardown");
         } finally {
-            deleteRecursively(cancelRoot);
+            deleteRecursively(cancelRoot,
+                "owned-tree-cancellation-control");
         }
     }
 
@@ -3595,7 +3606,7 @@ public class ProductionCorpusAudit {
             checkEq(0L, auditReaderThreads(),
                 "no audit-owned reader thread survives the cancellation");
         } finally {
-            deleteRecursively(root);
+            deleteRecursively(root, "subprocess-cancellation-control");
         }
     }
 
@@ -3673,7 +3684,7 @@ public class ProductionCorpusAudit {
             checkEq(0L, auditReaderThreads(),
                 "no audit-owned reader thread survives the incomplete drain");
         } finally {
-            deleteRecursively(root);
+            deleteRecursively(root, "transcript-drain-control");
         }
     }
 
@@ -3779,7 +3790,86 @@ public class ProductionCorpusAudit {
                 "no audit-owned reader thread survives the native-bootstrap "
                     + "cancellation");
         } finally {
-            deleteRecursively(root);
+            deleteRecursively(root, "native-bootstrap-control");
+        }
+    }
+
+    /**
+     * The cleanup-failure control: an owned temporary tree that cannot be
+     * removed (a read-only owned directory whose staged artifact survives)
+     * is detected by the removal attempt, reported with the owned path and
+     * the owning cell's context, and recorded through the audit's own fatal
+     * verdict channel. The control drives that channel exactly as a real
+     * scratch/native cleanup failure would and then withdraws its own
+     * deliberate probe before returning, so an unsuccessful cleanup provably
+     * cannot leave the registered audit green.
+     */
+    private static void cleanupFailureControl() throws Exception {
+        System.out.println("-- the cleanup-failure control: an owned artifact "
+            + "that survives its removal reaches the audit's fatal verdict --");
+        Path root = Files.createTempDirectory("production-corpus-audit-cleanup-");
+        Path artifact = root.resolve("staged-program.lua");
+        Set<PosixFilePermission> originalPermissions = null;
+        try {
+            Files.writeString(artifact, "print('staged')\n",
+                StandardCharsets.UTF_8);
+            originalPermissions = Files.getPosixFilePermissions(root);
+            Files.setPosixFilePermissions(root,
+                PosixFilePermissions.fromString("r-x------"));
+            check(!Files.isWritable(root),
+                "the control's owned directory is read-only: " + root);
+
+            // The real recording path every scratch/native cleanup uses:
+            // the surviving artifact becomes one fatal audit failure naming
+            // the owned path and the context.
+            int fatalBefore = fatalCount.get();
+            int linesBefore = fatalLines.size();
+            CleanupResult recorded = deleteRecursively(root,
+                "cleanup-control");
+            int recordedFatals = fatalCount.get() - fatalBefore;
+            String recordedLine = null;
+            synchronized (fatalLines) {
+                if (fatalLines.size() > linesBefore) {
+                    recordedLine = fatalLines.get(linesBefore);
+                    while (fatalLines.size() > linesBefore) {
+                        fatalLines.remove(fatalLines.size() - 1);
+                    }
+                }
+            }
+            // Withdraw the control's own deliberate probe from the verdict
+            // before asserting: it is not a corpus failure, and the captured
+            // values above prove the wiring.
+            fatalCount.set(fatalBefore);
+
+            check(!recorded.cleaned(),
+                "the removal attempt detects the surviving owned artifact: "
+                    + recorded.description());
+            check(recorded.failures().stream().anyMatch(failure ->
+                    failure.contains(artifact.toString())),
+                "the removal attempt retains the deletion failure with its "
+                    + "path: " + recorded.description());
+            check(recorded.failures().stream().anyMatch(failure ->
+                    failure.contains("survived")),
+                "the removal attempt verifies the root and reports the "
+                    + "survivor: " + recorded.description());
+            check(Files.exists(artifact),
+                "the control's staged artifact really survived the removal "
+                    + "attempt: " + artifact);
+            checkEq(1, recordedFatals,
+                "an unsuccessful cleanup is recorded as exactly one fatal "
+                    + "audit failure");
+            check(recordedLine != null
+                    && recordedLine.contains(root.toString())
+                    && recordedLine.contains("cleanup-control"),
+                "the recorded cleanup failure names the owned path and the "
+                    + "context: " + recordedLine);
+        } finally {
+            if (originalPermissions != null) {
+                Files.setPosixFilePermissions(root, originalPermissions);
+            }
+            // The control's own tree must now be removable; a survivor is a
+            // genuine leftover and is recorded fatal like any other.
+            deleteRecursively(root, "cleanup-control teardown");
         }
     }
 
@@ -3926,7 +4016,7 @@ public class ProductionCorpusAudit {
                 "a changed message on a cell without a recorded projection "
                     + "deficit");
         } finally {
-            deleteRecursively(project.root());
+            deleteRecursively(project.root(), corpusPath);
         }
     }
 
@@ -4187,7 +4277,7 @@ public class ProductionCorpusAudit {
                 "the exit code immediately above the pinned one on a recorded "
                     + "projection cell");
         } finally {
-            deleteRecursively(project.root());
+            deleteRecursively(project.root(), corpusPath);
         }
     }
 
@@ -4402,11 +4492,12 @@ public class ProductionCorpusAudit {
                                     + "sibling)");
                         }
                     } finally {
-                        deleteRecursively(compiled.root());
+                        deleteRecursively(compiled.root(), fixtureRel + " ["
+                            + target.laneName() + "]");
                     }
                 }
             } finally {
-                deleteRecursively(wired.root());
+                deleteRecursively(wired.root(), fixtureRel);
             }
 
             // (c) The load-bearing probe: omit the declaration wiring (host/
@@ -4434,7 +4525,8 @@ public class ProductionCorpusAudit {
                     + "reproduces the frontend E2003 gap: "
                     + outcome.firstErrorDetail());
             } finally {
-                deleteRecursively(unwired.root());
+                deleteRecursively(unwired.root(),
+                    fixtureRel + " (non-materializing probe)");
             }
         }
     }
@@ -4453,21 +4545,93 @@ public class ProductionCorpusAudit {
     // Utilities
     // =========================================================================
 
-    static void deleteRecursively(Path dir) {
-        if (dir == null || !Files.exists(dir)) {
-            return;
+    /**
+     * The outcome of one owned-tree removal attempt: the root and every
+     * failure the attempt retained. {@link #cleaned()} is true iff the root
+     * was removed and no deletion or traversal failure was recorded.
+     */
+    record CleanupResult(Path root, List<String> failures) {
+
+        boolean cleaned() {
+            return failures.isEmpty();
         }
+
+        String description() {
+            return failures.isEmpty() ? root + ": removed"
+                : root + ": " + String.join("; ", failures);
+        }
+    }
+
+    /**
+     * Removes an audit-owned temporary tree and reports everything the
+     * attempt could not remove. Every path is attempted (one deletion
+     * failure never stops the sweep), each deletion and traversal failure is
+     * retained with its path and cause, and the root is re-checked after the
+     * sweep, so a surviving owned artifact is always surfaced to the caller
+     * instead of being silently accepted.
+     */
+    static CleanupResult removeOwnedTree(Path dir) {
+        if (dir == null) {
+            return new CleanupResult(null, List.of());
+        }
+        if (!Files.exists(dir)) {
+            return new CleanupResult(dir, List.of());
+        }
+        List<String> failures = new ArrayList<>();
         try (Stream<Path> walk = Files.walk(dir)) {
             for (Path path : walk.sorted(Comparator.reverseOrder()).toList()) {
                 try {
                     Files.deleteIfExists(path);
-                } catch (Exception ignored) {
-                    // best-effort temp cleanup
+                } catch (Exception e) {
+                    failures.add("cannot delete " + path + " (" + e + ")");
                 }
             }
-        } catch (Exception ignored) {
-            // best-effort temp cleanup
+        } catch (Exception e) {
+            failures.add("cannot traverse " + dir + " (" + e + ")");
         }
+        if (Files.exists(dir)) {
+            failures.add("the owned root survived the sweep");
+        }
+        return new CleanupResult(dir, List.copyOf(failures));
+    }
+
+    /**
+     * The fail-closed cleanup verdict: the audit-owned tree could not be
+     * removed, so the post-state rule (all temp projects removed, no
+     * repository artifact, read-only) is violated. The message names the
+     * context (the fixture/target cell or the audit-owned artifact) and the
+     * owned paths that remain; a clean removal yields {@code null}.
+     */
+    static String cleanupFailureLine(String context, CleanupResult result) {
+        if (result.cleaned()) {
+            return null;
+        }
+        return "[" + context + "] the audit-owned temporary artifact was not "
+            + "removed: " + result.description();
+    }
+
+    /**
+     * Removes an audit-owned temporary project or scratch/native directory
+     * and records a fatal audit failure when anything survives: cleanup is
+     * fail-closed, so a leftover staged program or native library can never
+     * leave the registered audit green.
+     */
+    static CleanupResult deleteRecursively(Path dir) {
+        return deleteRecursively(dir, "audit-owned temporary artifact");
+    }
+
+    /**
+     * The context-naming form used by the per-fixture/target and per-control
+     * call sites, so a surviving artifact is reported with the cell it came
+     * from.
+     */
+    static CleanupResult deleteRecursively(Path dir, String context) {
+        CleanupResult result = removeOwnedTree(dir);
+        String failure = cleanupFailureLine(context, result);
+        if (failure != null) {
+            fatal(failure);
+        }
+        return result;
     }
 
     // =========================================================================
@@ -4565,7 +4729,8 @@ public class ProductionCorpusAudit {
             testMaterializationFidelity();
         } finally {
             if (auditPoolStopped) {
-                deleteRecursively(auditNativeDirectory);
+                deleteRecursively(auditNativeDirectory,
+                    "audit-owned native directory");
             } else {
                 // The owned worker pool did not confirm termination: its
                 // workers may still run owned subprocesses and bootstrap the
