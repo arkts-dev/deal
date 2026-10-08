@@ -88,9 +88,10 @@ WARNING: node not found, skipping standard library JS tests'
   # production path; design source dispatched-corpus-production-realization
   # R3 and the helper contract, luajit-jvm-single-lowering-production-
   # cutover C1/C2/C4): the family production drive — every fixture of the
-  # family (the 30 sidecar fixtures of backend-runtime/jsonable/**, the
-  # near-collision and helper-export-keys structural fixtures, and the
-  # pinned compile-error fixture) compiles through the release-owned
+  # family (the sidecar-bearing fixtures discovered from
+  # backend-runtime/jsonable/**, the near-collision and helper-export-keys
+  # structural fixtures, and the pinned compile-error fixture) compiles
+  # through the release-owned
   # production invocation on LuaJIT and JVM with zero E6005, publishes its
   # artifact, and executes under the real toolchain with the sidecar
   # byte-exact (the runtime-ok transcripts and exit codes; the cyclic-table
@@ -134,9 +135,12 @@ WARNING: node not found, skipping standard library JS tests'
   # declared number field and array element with its own variant's
   # spelling, and the carrier produced by an omitted nested-class default
   # conforms at its declared number, number | null, and number[] positions
-  # (with its explicit-value control). The pinned-failure sidecar
-  # comparison is covered by negative controls for unexpected process
-  # stdout, an incorrect process exit status, or wrong stderr; a main-only
+  # (with its explicit-value control). The exact-text artifact leg is only
+  # credited when the process completes its tested body (exit 0, empty
+  # transcripts, no probe defect, no failure transport), and the
+  # pinned-failure sidecar comparison is covered by negative controls for
+  # unexpected process stdout, an incorrect process exit status, or wrong
+  # stderr; a main-only
   # control proves the oracle's main leg captures a deliberate main
   # failure exactly once; and the inconsistent-fact negatives prove that a
   # missing generated helper export fails the production arm closed with
