@@ -5022,21 +5022,54 @@ public final class SemanticLowerer {
                 memberIdentities.add(identity);
                 memberEntries.add(entry);
             }
+            // The member body contexts, all created and registered before
+            // any member body walks (C10/K12: every lowered body owns
+            // exactly one invocation identity and one return cell). A
+            // module-level member reuses the context the hoist reserved
+            // (B1); a nested member's context is created here and
+            // registered under its group binding, so a sibling direct call
+            // resolves through contextsByBindingId and an explicit return
+            // names the member's own FunctionId — never the enclosing
+            // function's.
+            List<FunctionContext> memberContexts = new ArrayList<>();
+            for (int i = 0; i < members.size(); i++) {
+                FunctionDeclaration member = members.get(i);
+                FunctionContext context = null;
+                if (moduleLevel) {
+                    if (fullProgram) {
+                        context = functionContexts.get(memberEntries.get(i).incarnation());
+                        if (context == null) {
+                            throw new IllegalStateException("hoisted module-level "
+                                + "member context missing for '" + member.name()
+                                + "' (producer defect)");
+                        }
+                    }
+                } else if (fullProgram) {
+                    FunctionId memberFunctionId =
+                        ids.nextFunctionId(module, nextOrdinal++, 0);
+                    BlockId memberBodyBlock = allocateBlock();
+                    context = new FunctionContext(memberFunctionId, memberBodyBlock,
+                        functionSignatureOf(member),
+                        ids.nextOpId(module, nextOrdinal++, 0),
+                        ids.nextOpId(module, nextOrdinal++, 0),
+                        parameterTypeSpans(member.params()));
+                    contextsByFunctionId.put(memberFunctionId, context);
+                    contextsByBindingId.put(memberBindings.get(i), context);
+                }
+                memberContexts.add(context);
+            }
             // Phase 1 walk: every member body lowers through the buffered
             // detached-body walk with capture collection (B3) — siblings
-            // resolve because every member binding registered before any
-            // body walk.
+            // resolve because every member binding and its body context
+            // registered before any body walk.
             List<List<SemanticOp>> bodyOpLists = new ArrayList<>();
             List<List<BindingGeneration>> captureIdLists = new ArrayList<>();
             List<BlockId> bodyBlocks = new ArrayList<>();
             List<RuntimeDescriptor.Func> signatures = new ArrayList<>();
             List<List<CapturedCell>> capturedLists = new ArrayList<>();
-            for (FunctionDeclaration member : members) {
-
-                FrameEntry hoistedEntry = moduleLevel ? frameEntryOf(member.name()) : null;
-                FunctionContext reservedContext = fullProgram && moduleLevel
-                        && hoistedEntry != null
-                    ? functionContexts.get(hoistedEntry.incarnation()) : null;
+            for (int memberIndex = 0; memberIndex < members.size(); memberIndex++) {
+                FunctionDeclaration member = members.get(memberIndex);
+                FunctionContext reservedContext = memberContexts.get(memberIndex);
                 BlockId bodyBlock = reservedContext != null
                     ? reservedContext.bodyBlock : allocateBlock();
                 FunctionId functionId = reservedContext != null
