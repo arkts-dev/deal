@@ -109,8 +109,18 @@ public class CompositeTerminatorAnalysisTest {
         new Fixture("error-handling/error-roundtrip", "test_error_roundtrip",
             "\"error roundtrip ok\"", false));
 
+    /**
+     * The named direct-recursion acceptance subject (ISSUE-0733): the
+     * corpus fixture's nested self-recursive declaration — the shape the
+     * removed SemanticProductionGateTest drove — compiles through the
+     * release-owned production invocation to exactly one emitted project
+     * artifact per target that runs.
+     */
+    private static final Fixture DIRECT_RECURSION_FIXTURE = new Fixture(
+        "functions/direct-recursion", "test_direct_recursion", "0", false);
+
     private static final List<Fixture> NESTED_BODY_FIXTURES = List.of(
-        new Fixture("functions/direct-recursion", "test_direct_recursion", "0", false),
+        DIRECT_RECURSION_FIXTURE,
         new Fixture("functions/nested-scope-recursion", "test_nested_scope_recursion",
             "0", false),
         new Fixture("control-flow/return-in-try", "test_return_in_try_loop", "5", false));
@@ -1094,9 +1104,12 @@ public class CompositeTerminatorAnalysisTest {
     }
 
     static void testProductionArtifacts() throws Exception {
-        System.out.println("-- the four fixtures through the release-owned production "
+        System.out.println("-- the four composite fixtures and the direct-recursion "
+            + "acceptance subject through the release-owned production "
             + "invocation on LuaJIT and JVM --");
-        for (Fixture fixture : FIXTURES) {
+        List<Fixture> stagedFixtures = new ArrayList<>(FIXTURES);
+        stagedFixtures.add(DIRECT_RECURSION_FIXTURE);
+        for (Fixture fixture : stagedFixtures) {
             Path root = Files.createTempDirectory("composite-terminator-fixture-");
             try {
                 write(root, "src/" + fixture.relativePath() + ".deal",
