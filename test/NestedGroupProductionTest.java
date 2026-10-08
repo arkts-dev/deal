@@ -494,9 +494,10 @@ public class NestedGroupProductionTest {
         // The exact rule that rejected the pre-fix unit: a member's RETURN
         // named the enclosing function while its block belonged to the member
         // (CONTROL_EXIT).
-        check(ControlFlowValidator.validate(unit, table).isEmpty(), testCase.name()
-            + ": the control-flow validator admits the nested members: "
-            + ControlFlowValidator.validate(unit, table));
+        java.util.Optional<CompilerDiagnostic> admission =
+            ControlFlowValidator.validate(unit, table);
+        check(admission.isEmpty(), testCase.name()
+            + ": the control-flow validator admits the nested members: " + admission);
         List<SemanticOp> groupOps = new ArrayList<>();
         Map<OpId, SemanticOp> byId = new LinkedHashMap<>();
         for (SemanticOp op : unit.ops()) {
