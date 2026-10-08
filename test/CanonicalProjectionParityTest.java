@@ -1855,6 +1855,32 @@ public class CanonicalProjectionParityTest {
                 local ok2, err2 = pcall(function() error(__arm("HOST_STRING_SURROGATE",
                   {}, "-", nil, nil), 0) end)
                 print("ROW|HOST_STRING_TOP_LEVEL|" .. (ok2 and "RENDERED" or "DEFECT"))
+                __arms["MARKED_ORIGIN"] = {c = "E8001",
+                  t = "cyclic value cannot be encoded as JSON", e = "NONE",
+                  a = "NONE", s = "TOP_LEVEL", o = "SIBLING_OWNED", k = ""}
+                local ok3 = pcall(__arm, "MARKED_ORIGIN", nil, "-", nil, nil)
+                print("ROW|MARKED_ORIGIN|" .. (ok3 and "RENDERED" or "DEFECT"))
+                __arms["MARKED_SOURCE"] = {c = "E8001",
+                  t = "value at {fieldPath} is not JSON serializable: {actual}",
+                  e = "NONE", a = "TYPED_BOUNDARY", s = "TOP_LEVEL",
+                  o = "CALL_EXPRESSION",
+                  k = "fieldPath=FIELD_PATH,actual=SIBLING_OWNED_ACTUAL"}
+                local ok4 = pcall(__arm, "MARKED_SOURCE",
+                  {fieldPath = "data.k", actual = "function"}, "-", nil, "function")
+                print("ROW|MARKED_SOURCE|" .. (ok4 and "RENDERED" or "DEFECT"))
+                local ok5, value5 = pcall(__arm, "JSON_TO_WALK",
+                  {fieldPath = "data.k", actual = "function"}, "-", nil, "function")
+                print("ROW|WALK_CONTROL|" .. (ok5 and value5.m or "DEFECT"))
+                local ok6, value6 = pcall(__arm, "JSON_TO_WALK_CYCLE", nil, "-",
+                  nil, nil)
+                print("ROW|CYCLE_CONTROL|" .. (ok6 and value6.m or "DEFECT"))
+                __arms["MARKED_INNER_SOURCE"] = {c = "E8010",
+                  t = "parameter {index} type mismatch: {inner}", e = "NONE",
+                  a = "NONE", s = "INNER_ONLY", o = "CALL_EXPRESSION",
+                  k = "index=PARAMETER_INDEX,inner=SIBLING_OWNED_ACTUAL"}
+                local ok7 = pcall(__innerArm, "MARKED_INNER_SOURCE",
+                  {index = "1", inner = "the inner reason"})
+                print("ROW|MARKED_INNER_SOURCE|" .. (ok7 and "RENDERED" or "DEFECT"))
                 ]==]
                 local chunk = assert(load(text:sub(1, #text - #tail) .. body, "arms"))
                 chunk()
@@ -1974,6 +2000,25 @@ public class CanonicalProjectionParityTest {
         check(inner.getOrDefault("MARKED_PROBE", "").startsWith("DEFECT"),
             "the emitted prelude refuses a SIBLING_OWNED entry injected into the "
                 + "chunk-level arm table: " + inner);
+        check(inner.getOrDefault("MARKED_ORIGIN", "").startsWith("DEFECT"),
+            "the emitted prelude refuses a SIBLING_OWNED origin convention injected "
+                + "into the chunk-level arm table, even with a supplied origin "
+                + "operand: " + inner);
+        check(inner.getOrDefault("MARKED_SOURCE", "").startsWith("DEFECT"),
+            "the emitted prelude refuses a SIBLING_OWNED_ACTUAL parameter source "
+                + "injected into the chunk-level arm table, even with its declared "
+                + "parameters and fields supplied: " + inner);
+        check(inner.getOrDefault("MARKED_INNER_SOURCE", "").startsWith("DEFECT"),
+            "the emitted prelude's parameter parser refuses a SIBLING_OWNED_ACTUAL "
+                + "parameter source on the inner-only render path: " + inner);
+        checkEq("value at data.k is not JSON serializable: function",
+            inner.getOrDefault("WALK_CONTROL", ""),
+            "the emitted prelude keeps rendering the valid walk arm after the "
+                + "marked-slot guards");
+        checkEq("cyclic value cannot be encoded as JSON",
+            inner.getOrDefault("CYCLE_CONTROL", ""),
+            "the emitted prelude keeps rendering the valid cycle arm after the "
+                + "marked-slot guards");
         check(inner.getOrDefault("HOST_STRING_TOP_LEVEL", "").startsWith("DEFECT"),
             "the emitted prelude refuses an INNER_ONLY arm rendered top-level: "
                 + inner);
