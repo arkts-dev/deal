@@ -1198,7 +1198,8 @@ public class JsonableHelperProductionDriveTest {
             manifests.manifests(), surface, Map.of(), Map.of(),
             BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW),
             Set.of());
         check(result.project() != null, label + ": the oracle closure lowers with "
             + "zero diagnostics: " + result.diagnostics());
@@ -1869,7 +1870,7 @@ public class JsonableHelperProductionDriveTest {
                         BuiltinErrorDeclaration.synthesized(
                             built.input().modules().get(0).ast().span()),
                         List.of(IntrinsicKind.INT_CONVERT,
-                            IntrinsicKind.NUMBER_CONVERT),
+                            IntrinsicKind.NUMBER_CONVERT, IntrinsicKind.BYTES_NEW),
                         Set.of(),
                         target == Target.JVM ? Backend.JVM : Backend.LUAJIT, false,
                         DistributionHome.forManifestDirectory(
