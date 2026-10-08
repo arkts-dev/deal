@@ -1,8 +1,18 @@
 package deal.test;
 
+import deal.checker.CheckResult;
+import deal.checker.NameResolver;
+import deal.checker.SymbolTable;
+import deal.checker.TypeChecker;
 import deal.codegen.Backend;
+import deal.codegen.jvm.JvmBackend;
+import deal.codegen.jvm.JvmNames;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.lexer.LexResult;
+import deal.lexer.Lexer;
 import deal.module.CompilationOrchestrator;
+import deal.parser.ParseResult;
+import deal.parser.Parser;
 import deal.project.CliOverrides;
 import deal.project.ProjectLocator;
 import deal.publication.PublicationStager;
@@ -1545,6 +1555,115 @@ public class ProductionDispatchTest {
     }
 
     // =========================================================================
+    // 7. The still-live test-scope retained emitters: direct emission from
+    //    test/legacy, never a production compile route
+    // =========================================================================
+
+    /**
+     * The retained AST-walking emitters under {@code test/legacy} stay
+     * test-scope only (test/AGENTS.md) and still live: a test-scope
+     * subject calls each one directly — the direct-emission contract
+     * ISSUE-0693 records for a retained-emitter-only subject (a retained
+     * compile route is never restored to keep a test green).
+     *
+     * <p>The emitted artifacts are the retained emitters' own: the LuaJIT
+     * chunk publishes and invokes the entry main and runs under the real
+     * interpreter with the deployed runtime; the JVM entry class carries
+     * the shared naming surface's derivation, compiles under
+     * {@code javac --release 25 -proc:none}, and runs. The release-owned
+     * production dispatch reaches neither emitter (the one-arm checks
+     * above).</p>
+     */
+    private static void testRetainedTestScopeEmitters() throws Exception {
+        System.out.println("-- the still-live test-scope retained emitters: "
+            + "direct emission, no production compile route --");
+
+        String source = """
+            export function main(): null {
+              return null
+            }
+            """;
+        LexResult lex = new Lexer(source, "main.deal").tokenize();
+        check(lex.diagnostics().isEmpty(), "the retained-emitter probe lexes "
+            + "cleanly: " + lex.diagnostics());
+        if (lex.hasErrors()) { return; }
+        ParseResult parse = new Parser(lex.tokens(), "main.deal",
+            lex.directiveEvents()).parse();
+        check(parse.diagnostics().isEmpty(), "the retained-emitter probe "
+            + "parses cleanly: " + parse.diagnostics());
+        if (parse.hasErrors()) { return; }
+        NameResolver resolver = new NameResolver("main.deal", null);
+        SymbolTable symbols = resolver.resolve(parse.program());
+        check(resolver.diagnostics().isEmpty(), "the retained-emitter probe "
+            + "resolves cleanly: " + resolver.diagnostics());
+        CheckResult checks = TypeChecker.check("main.deal", symbols, resolver,
+            parse.program());
+        check(!checks.hasErrors(), "the retained-emitter probe checks cleanly: "
+            + checks.diagnostics());
+        if (checks.hasErrors()) { return; }
+
+        // The retained LuaJIT emitter (test/legacy/deal/codegen/lua/LuaBackend):
+        // the direct test-scope call emits the one module chunk, whose entry
+        // invokes main exactly once, and the chunk runs under real luajit with
+        // the deployed runtime.
+        deal.codegen.lua.LuaBackend lua = new deal.codegen.lua.LuaBackend(
+            checks.typeMap(), symbols, "main");
+        String chunk = lua.generateFromInstance(parse.program(), true);
+        check(lua.diagnostics().isEmpty(), "the retained LuaJIT emitter "
+            + "reports no diagnostic: " + lua.diagnostics());
+        check(chunk != null && chunk.contains("exports.main.f()"),
+            "the retained LuaJIT entry chunk publishes and invokes the entry "
+                + "main");
+        Path luaOut = Files.createTempDirectory(
+            "production-dispatch-retained-lua-");
+        try {
+            write(luaOut, "deal/runtime.lua",
+                Files.readString(Path.of("deal", "runtime.lua")));
+            write(luaOut, "main.lua", chunk);
+            ProcessOutcome run = runProcess(luaOut, "luajit", "main.lua");
+            checkEq(0, run.exitCode(), "the retained LuaJIT chunk runs under "
+                + "real luajit: " + run.output());
+            checkEq("", run.output(), "the retained LuaJIT chunk runs "
+                + "silently: " + run.output());
+        } finally {
+            deleteRecursively(luaOut);
+        }
+
+        // The retained JVM emitter (test/legacy/deal/codegen/jvm/JvmBackend):
+        // the direct static call emits the one entry class through the shared
+        // naming surface the production emitters resolve; the class compiles
+        // under javac --release 25 -proc:none and runs.
+        JvmBackend.JvmCodegenResult jvm = JvmBackend.generate(parse.program(),
+            checks, "main");
+        check(!jvm.hasErrors(), "the retained JVM emitter reports no error: "
+            + jvm.diagnostics());
+        checkEq(JvmNames.classNameFor("main"), jvm.className(),
+            "the retained JVM emitter derives the shared naming surface's "
+                + "entry class name");
+        check(jvm.source().contains("public final class " + jvm.className()),
+            "the retained JVM artifact declares its entry class");
+        Path jvmOut = Files.createTempDirectory(
+            "production-dispatch-retained-jvm-");
+        try {
+            Path jvmSource = jvmOut.resolve(jvm.className() + ".java");
+            Files.writeString(jvmSource, jvm.source(), StandardCharsets.UTF_8);
+            ProcessOutcome javac = runProcess(jvmOut, "javac", "--release",
+                "25", "-proc:none", "-d", jvmOut.toString(),
+                jvmSource.toString());
+            checkEq(0, javac.exitCode(), "the retained JVM artifact compiles "
+                + "under javac --release 25 -proc:none: " + javac.output());
+            if (javac.exitCode() == 0) {
+                ProcessOutcome run = runProcess(jvmOut, "java", "-cp",
+                    jvmOut.toString(), jvm.className());
+                checkEq(0, run.exitCode(), "the retained JVM artifact runs: "
+                    + run.output());
+            }
+        } finally {
+            deleteRecursively(jvmOut);
+        }
+    }
+
+    // =========================================================================
     // Main
     // =========================================================================
 
@@ -1562,6 +1681,7 @@ public class ProductionDispatchTest {
         testSourceMapDisposition();
         testSingleArmDispatch();
         testLegacyRejectionStagesNothingWithDumps();
+        testRetainedTestScopeEmitters();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
