@@ -1937,9 +1937,9 @@ public class FailureArmAuthorityTest {
         // behind it: the table-typed field holds the unsupported function
         // under 'bad' before its own re-entry under 'self', so the first
         // failure precedes the cycle. Every consumer must render the walk
-        // arm at the earlier position (the oracle's adapter maps the value
-        // through the E8 seam, and the cycle must never be reached by that
-        // mapping).
+        // arm at the earlier position (the oracle's adapter returns the
+        // selected failure before the E8 seam is ever consulted, so the
+        // cycle behind it is never traversed).
         cases.add(walkCase("unsupported-before-table-cycle", "JSON_TO_WALK", "data.bad",
             "function",
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Int(1),

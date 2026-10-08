@@ -2324,8 +2324,7 @@ public class JsonClassExecutorTest {
         // An array element failure before a cycle reached through a later
         // element: element 0 holds the unsupported function, and element 1's
         // table re-enters the containing array, so the first failure is the
-        // element itself and the mapping of the cyclic sibling behind it
-        // stays unreachable.
+        // element itself and the cyclic sibling behind it stays unreachable.
         ClassLayout arrayLayout = layoutOf(POINT,
             field("data", new RuntimeDescriptor.Array(TABLE), true));
         ValueId arrayClassId = nextValue();
@@ -2357,8 +2356,8 @@ public class JsonClassExecutorTest {
         // The same mixed shape nested one level deeper: the table's key 'a'
         // holds an array whose first element is the unsupported value and
         // whose second element's key 'x' holds that array again, so the
-        // mapping truncates the re-entered array container behind the first
-        // failure.
+        // re-entered array container behind the first failure is never
+        // traversed.
         SemanticTable<Value> nestedTable = new SemanticTable<>();
         Value.Table nestedTableValue = new Value.Table(nestedTable);
         SemanticTable<Value> innerTable = new SemanticTable<>();
@@ -2394,6 +2393,42 @@ public class JsonClassExecutorTest {
                 + "the exact message at data.a[0], no expected field, the function "
                 + "token, the literal fieldPath metadata, and the supplied call "
                 + "origin)");
+
+        // The deep-tail regression (the acceptance finding's reproducer): a
+        // selected noncycle failure followed by a 50,000-container chain that
+        // ends in a self-referential table. The chain is far deeper than any
+        // recursion the mapping could survive, so the adapter must return the
+        // already-selected failure at data.bad without descending into it at
+        // all — the pre-remediation eager toStdlib mapping exhausted the stack
+        // long before it reached the re-entry.
+        Value.Table deepTail = selfReferentialTable();
+        for (int i = 0; i < 50000; i++) {
+            SemanticTable<Value> level = new SemanticTable<>();
+            Value.Table levelValue = new Value.Table(level);
+            level.put("k", deepTail);
+            deepTail = levelValue;
+        }
+        SemanticTable<Value> deepTailRoot = new SemanticTable<>();
+        Value.Table deepTailRootValue = new Value.Table(deepTailRoot);
+        deepTailRoot.put("bad", functionValue());
+        deepTailRoot.put("later", deepTail);
+        JsonStringify deepTailCarrier = JsonClassAlgorithmAdapter.stringifier()
+            .stringify(deepTailRootValue, "data");
+        check(deepTailCarrier instanceof JsonStringify.Failure failure
+                && !failure.cycle()
+                && failure.fieldPath().equals("data.bad")
+                && failure.actual().equals("function"),
+            "the production adapter returns the selected walk-arm failure carrier at "
+                + "data.bad without traversing the 50,000-container cyclic tail "
+                + "behind it (never a mapping crash)");
+    }
+
+    /** A table holding itself under the key {@code self}. */
+    private static Value.Table selfReferentialTable() {
+        SemanticTable<Value> table = new SemanticTable<>();
+        Value.Table carrier = new Value.Table(table);
+        table.put("self", carrier);
+        return carrier;
     }
 
     /** The closed function carrier of the walk's unsupported-value positions. */
