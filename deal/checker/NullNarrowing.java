@@ -4,8 +4,12 @@ import deal.ast.*;
 import deal.types.Type;
 import deal.types.Types;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
@@ -26,6 +30,16 @@ public final class NullNarrowing {
 
     /** Maps variable name → narrowed type. */
     private final Map<String, Type> narrowed = new HashMap<>();
+
+    // -- Shadow frames: one frame per open block, holding the narrowed
+    //    entries a block-local declaration removed from the enclosing
+    //    binding. Frames live on the narrowing object, so the frame
+    //    state is scoped to the enclosing function exactly like the
+    //    narrowed entries (a function boundary swaps the object; an
+    //    await's invalidateAll clears the frames together with the
+    //    entries, so an invalidated snapshot is never restored). --
+    private final Deque<List<Map.Entry<String, Type>>> shadowFrames =
+        new ArrayDeque<>();
 
     /** Creates an empty narrowing state. */
     public NullNarrowing() {}
@@ -126,12 +140,32 @@ public final class NullNarrowing {
         narrowed.remove(varName);
     }
 
+    /** Opens one block's shadow frame (the declaring block's entries). */
+    public void pushShadowFrame() {
+        shadowFrames.push(new ArrayList<>());
+    }
+
     /**
-     * Restores a narrowed entry removed by a shadowing block-local
-     * declaration when the declaring block exits.
+     * Records one narrowed entry removed by a shadowing block-local
+     * declaration; the innermost frame's entries are restored when the
+     * declaring block exits. A declaration without an open frame (the
+     * module scope) has no enclosing binding to restore.
      */
-    public void restore(String varName, Type type) {
-        narrowed.put(varName, type);
+    public void recordShadowed(String varName, Type type) {
+        if (!shadowFrames.isEmpty()) {
+            shadowFrames.peek().add(Map.entry(varName, type));
+        }
+    }
+
+    /**
+     * Closes the innermost block's shadow frame, restoring the entries
+     * the block's own declarations removed from the enclosing scope.
+     */
+    public void popShadowFrame() {
+        if (shadowFrames.isEmpty()) return;
+        for (Map.Entry<String, Type> entry : shadowFrames.pop()) {
+            narrowed.put(entry.getKey(), entry.getValue());
+        }
     }
 
     /**
@@ -158,6 +192,12 @@ public final class NullNarrowing {
      */
     public void invalidateAll() {
         narrowed.clear();
+        // Every saved shadowed entry is a refinement of the enclosing
+        // async function too: after the suspension no block exit may
+        // resurrect an entry the invalidation cleared.
+        for (List<Map.Entry<String, Type>> frame : shadowFrames) {
+            frame.clear();
+        }
     }
 
     /**

@@ -56,15 +56,10 @@ public final class TypeChecker {
 
     // -- Variables assigned inside the innermost loop body: the loop
     //    back-edge invalidates their narrowed types after the loop (v1.2
-    //    "narrowing does not cross loop back-edges") --
-    private final Deque<Set<String>> loopAssignments = new ArrayDeque<>();
-
-    // -- Narrowed entries removed by a shadowing declaration; restored
-    //    when the declaring block exits (a block-local declaration must
-    //    not inherit the outer binding's narrowing, and must not destroy
-    //    the outer binding's narrowing for the enclosing scope) --
-    private final Deque<List<Map.Entry<String, Type>>> shadowedByDeclaration =
-        new ArrayDeque<>();
+    //    "narrowing does not cross loop back-edges"). Entries are the
+    //    resolved binding symbols (identity, never value equality: two
+    //    same-named declarations are distinct bindings). --
+    private Deque<Set<Symbol>> loopAssignments = new ArrayDeque<>();
 
     // -- Non-hoisting let visibility (v1.2 declaration order): one frame
     //    per open block scope, holding the block's own let-declared names
@@ -167,7 +162,7 @@ public final class TypeChecker {
         // A block introduces a lexical scope: narrowing entries removed by
         // block-local declarations are restored when the block exits.
         boolean blockScope = stmt instanceof Block;
-        if (blockScope) shadowedByDeclaration.push(new ArrayList<>());
+        if (blockScope) narrowing.pushShadowFrame();
 
         // Check for scope change
         SymbolTable savedScope = currentScope;
@@ -204,9 +199,7 @@ public final class TypeChecker {
         nameResolver.setCurrentScope(savedScope);
 
         if (blockScope) {
-            for (Map.Entry<String, Type> entry : shadowedByDeclaration.pop()) {
-                narrowing.restore(entry.getKey(), entry.getValue());
-            }
+            narrowing.popShadowFrame();
             pendingScopes.pop();
         }
     }
@@ -523,10 +516,7 @@ public final class TypeChecker {
         Type outerNarrowed = narrowing.getNarrowedType(vd.name());
         if (outerNarrowed != null) {
             narrowing.onAssignment(vd.name());
-            if (!shadowedByDeclaration.isEmpty()) {
-                shadowedByDeclaration.peek().add(
-                    Map.entry(vd.name(), outerNarrowed));
-            }
+            narrowing.recordShadowed(vd.name(), outerNarrowed);
         }
 
         // A rejected initializer (an error-recovery type) or an
@@ -555,14 +545,29 @@ public final class TypeChecker {
             }
         }
 
-        recordAssignment(vd.name());
+        recordDeclaration(vd.name());
     }
 
     /**
-     * Assignment bookkeeping shared by declarations and assignment
-     * expressions: the narrowed entry is cleared immediately, and the
-     * name is recorded for the enclosing loop (a loop back-edge
-     * invalidates the entry for the code after the loop).
+     * Declaration bookkeeping: a new binding neither inherits a
+     * same-named binding's narrowing (the shadowing branch above clears
+     * the entry) nor assigns an enclosing binding, so it is never
+     * recorded as a loop-body assignment.
+     */
+    private void recordDeclaration(String varName) {
+        narrowing.onAssignment(varName);
+        if (insideTry) {
+            varsAssignedInTry.add(varName);
+        }
+    }
+
+    /**
+     * Assignment bookkeeping shared by assignment expressions: the
+     * narrowed entry is cleared immediately, and the resolved binding is
+     * recorded for the enclosing loop (a loop back-edge invalidates the
+     * entry for the code after the loop). The binding is identified by
+     * its resolved symbol, never by name: a loop-local declaration's
+     * same-named binding is not an assignment to the enclosing binding.
      */
     private void recordAssignment(String varName) {
         narrowing.onAssignment(varName);
@@ -570,7 +575,10 @@ public final class TypeChecker {
             varsAssignedInTry.add(varName);
         }
         if (!loopAssignments.isEmpty()) {
-            loopAssignments.peek().add(varName);
+            Symbol binding = resolveVisibleBinding(varName);
+            if (binding != null) {
+                loopAssignments.peek().add(binding);
+            }
         }
     }
 
@@ -608,13 +616,19 @@ public final class TypeChecker {
         //
         // Narrowed flow types are not captured and do not cross function
         // boundaries (v1.2 narrowing invalidation); break/continue bind
-        // only to loops of the same function body.
+        // only to loops of the same function body, and the loop
+        // assignment bookkeeping is isolated with the narrowing state (an
+        // assignment inside the nested body never invalidates an enclosing
+        // loop's bindings).
         NullNarrowing savedNarrowing = narrowing;
         narrowing = new NullNarrowing();
+        Deque<Set<Symbol>> savedLoopAssignments = loopAssignments;
+        loopAssignments = new ArrayDeque<>();
         int savedLoopDepth = loopDepth;
         loopDepth = 0;
         walkStatement(fd.body());
         narrowing = savedNarrowing;
+        loopAssignments = savedLoopAssignments;
         loopDepth = savedLoopDepth;
 
         if (funcType != null && !fd.isExternal()) {
@@ -747,18 +761,13 @@ public final class TypeChecker {
         NullNarrowing savedNarrowing = narrowing;
         narrowing = new NullNarrowing();
         loopDepth++;
-        loopAssignments.push(new LinkedHashSet<>());
+        loopAssignments.push(newLoopAssignmentSet());
         walkStatement(ws.body());
-        // The loop back-edge invalidates every variable assigned in the
+        // The loop back-edge invalidates every binding assigned in the
         // body (v1.2 narrowing does not cross loop back-edges).
-        Set<String> assigned = loopAssignments.pop();
+        Set<Symbol> assigned = loopAssignments.pop();
         loopDepth--;
-        if (!loopAssignments.isEmpty()) {
-            loopAssignments.peek().addAll(assigned);
-        }
-        for (String name : assigned) {
-            savedNarrowing.invalidate(name);
-        }
+        closeLoopAssignments(assigned, savedNarrowing);
         narrowing = savedNarrowing;
     }
 
@@ -792,17 +801,37 @@ public final class TypeChecker {
         NullNarrowing savedNarrowing = narrowing;
         narrowing = new NullNarrowing();
         loopDepth++;
-        loopAssignments.push(new LinkedHashSet<>());
+        loopAssignments.push(newLoopAssignmentSet());
         walkStatement(fs.body());
-        Set<String> assigned = loopAssignments.pop();
+        Set<Symbol> assigned = loopAssignments.pop();
         loopDepth--;
+        closeLoopAssignments(assigned, savedNarrowing);
+        narrowing = savedNarrowing;
+    }
+
+    /**
+     * The fresh binding-identity assignment set of one loop body.
+     */
+    private static Set<Symbol> newLoopAssignmentSet() {
+        return Collections.newSetFromMap(new IdentityHashMap<>());
+    }
+
+    /**
+     * Closes one loop's assignment frame: the recorded bindings
+     * propagate to an enclosing loop's frame, and each binding that is
+     * still visible after the loop loses its narrowed entry (a loop-local
+     * declaration's same-named binding is a distinct binding and never
+     * invalidates the enclosing one).
+     */
+    private void closeLoopAssignments(Set<Symbol> assigned, NullNarrowing saved) {
         if (!loopAssignments.isEmpty()) {
             loopAssignments.peek().addAll(assigned);
         }
-        for (String name : assigned) {
-            savedNarrowing.invalidate(name);
+        for (Symbol binding : assigned) {
+            if (resolveVisibleBinding(binding.name()) == binding) {
+                saved.invalidate(binding.name());
+            }
         }
-        narrowing = savedNarrowing;
     }
 
     // =======================================================================
@@ -1080,19 +1109,7 @@ public final class TypeChecker {
     // =======================================================================
 
     private Type checkIdentifier(IdentifierExpr id) {
-        Symbol sym = currentScope.resolve(id.name());
-        // v1.2 declaration order: a let declaration is visible only after
-        // its declaration, so a reference from inside the declaring
-        // block's earlier statements (a forward or self reference)
-        // resolves against the enclosing scopes.
-        for (PendingScope ps : pendingScopes) {
-            if (sym != null && ps.scope != null
-                    && ps.remaining.contains(id.name())
-                    && ps.scope.resolveLocal(id.name()) == sym) {
-                sym = ps.scope.parent() != null
-                    ? ps.scope.parent().resolve(id.name()) : null;
-            }
-        }
+        Symbol sym = resolveVisibleBinding(id.name());
         if (sym == null) {
             error(DiagnosticCode.E2001, "Undeclared identifier '" + id.name() + "'", id.span());
             return Type.Error.INSTANCE;
@@ -1714,10 +1731,13 @@ public final class TypeChecker {
         // enclosing loop context.
         NullNarrowing savedNarrowing = narrowing;
         narrowing = new NullNarrowing();
+        Deque<Set<Symbol>> savedLoopAssignments = loopAssignments;
+        loopAssignments = new ArrayDeque<>();
         int savedLoopDepth = loopDepth;
         loopDepth = 0;
         walkStatement(fe.body());
         narrowing = savedNarrowing;
+        loopAssignments = savedLoopAssignments;
         loopDepth = savedLoopDepth;
 
         // ISSUE-0717: the reachability-ordered walk (the null-returning
@@ -1912,7 +1932,7 @@ public final class TypeChecker {
      */
     private Symbol.ClassSymbol declaredClassOf(ExpressionNode expr) {
         if (expr instanceof IdentifierExpr id) {
-            Symbol sym = currentScope.resolve(id.name());
+            Symbol sym = resolveVisibleBinding(id.name());
             if (sym instanceof Symbol.VariableSymbol vs) {
                 return vs.declaredClass();
             }
@@ -2022,7 +2042,7 @@ public final class TypeChecker {
     // =======================================================================
 
     private Type declaredTypeOf(String varName) {
-        Symbol sym = currentScope.resolve(varName);
+        Symbol sym = resolveVisibleBinding(varName);
         if (sym instanceof Symbol.VariableSymbol vs) {
             Type t = vs.type();
             if (t != null) return t;
@@ -2032,6 +2052,29 @@ public final class TypeChecker {
             return is.type();
         }
         return Type.Error.INSTANCE;
+    }
+
+    /**
+     * Resolves a name to the binding the declaration-order rules make
+     * visible at the current statement (docs/spec-v1.2.md §Declaration
+     * order and §Scope): a let declaration is visible only after its
+     * declaration, so a reference from inside the declaring block's
+     * earlier statements (a forward or self reference) resolves against
+     * the enclosing scopes. The same resolution feeds identifier reads,
+     * declared-type lookups, and assignment bookkeeping, so an assignment
+     * inside a shadowing initializer targets the enclosing binding.
+     */
+    private Symbol resolveVisibleBinding(String name) {
+        Symbol sym = currentScope.resolve(name);
+        for (PendingScope ps : pendingScopes) {
+            if (sym != null && ps.scope != null
+                    && ps.remaining.contains(name)
+                    && ps.scope.resolveLocal(name) == sym) {
+                sym = ps.scope.parent() != null
+                    ? ps.scope.parent().resolve(name) : null;
+            }
+        }
+        return sym;
     }
 
     private Type getDeclaredType(Symbol sym) {

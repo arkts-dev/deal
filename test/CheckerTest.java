@@ -258,6 +258,9 @@ public class CheckerTest {
         testNullablePropertyPathAndAssignmentInvalidation();
         testNestedDeclarationDoesNotClearEnclosingPending();
         testShadowingInitializerReadsEnclosingNarrowing();
+        testShadowingInitializerAssignmentTargetsEnclosingBinding();
+        testAwaitInsideShadowingBlockInvalidatesSnapshot();
+        testLoopLocalShadowDoesNotInvalidateEnclosingNarrowing();
         testNestedClass();
         // ISSUE-0717 (defect snippet 47): a nested class that shadows an
         // enclosing class of the same name stays a distinct declaration;
@@ -1598,6 +1601,141 @@ public class CheckerTest {
             "}"
         );
         assertNoErrors(out, "the initializer reads the narrowed enclosing x");
+    }
+
+    /**
+     * ISSUE-0717 review: an await inside a shadowing block invalidates the
+     * enclosing async function's refinements together with the snapshot a
+     * shadowing declaration removed (docs/spec-v1.2.md §Nullable
+     * semantics): the block exit must not resurrect the invalidated
+     * refinement. The no-await block exit still restores it, and an await
+     * inside a nested function body stays scoped to that function.
+     */
+    static void testAwaitInsideShadowingBlockInvalidatesSnapshot() {
+        System.out.println("-- an await inside a shadowing block does not leave the "
+            + "invalidated refinement restorable --");
+        CheckerOutput out = checkProgram(
+            "async function tick(): null { return null; }\n" +
+            "export async function run(): null {\n" +
+            "  let x: string | null = \"ok\";\n" +
+            "  if (x !== null) {\n" +
+            "    {\n" +
+            "      let x: int = 0;\n" +
+            "      await tick();\n" +
+            "    }\n" +
+            "    let s: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(out, "E3001",
+            "the await invalidates the shadowed refinement; the block exit "
+                + "must not restore it");
+
+        CheckerOutput restored = checkProgram(
+            "export function run(): null {\n" +
+            "  let x: string | null = \"ok\";\n" +
+            "  if (x !== null) {\n" +
+            "    {\n" +
+            "      let x: int = 0;\n" +
+            "    }\n" +
+            "    let s: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(restored,
+            "without an await the block exit restores the enclosing refinement");
+
+        CheckerOutput nested = checkProgram(
+            "async function tick(): null { return null; }\n" +
+            "export async function run(): null {\n" +
+            "  let x: string | null = \"ok\";\n" +
+            "  if (x !== null) {\n" +
+            "    {\n" +
+            "      let x: int = 0;\n" +
+            "      let f = async function(): null { await tick(); return null; };\n" +
+            "    }\n" +
+            "    let s: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(nested,
+            "an await inside a nested function body is scoped to that function");
+    }
+
+    /**
+     * ISSUE-0717 review: an assignment inside a shadowing declaration's
+     * initializer targets the enclosing binding (docs/spec-v1.2.md
+     * §Declaration order), so its gate is the enclosing binding's
+     * declared type — never the not-yet-visible inner declaration's type.
+     */
+    static void testShadowingInitializerAssignmentTargetsEnclosingBinding() {
+        System.out.println("-- an assignment inside a shadowing initializer "
+            + "targets the enclosing binding --");
+        CheckerOutput valid = checkProgram(
+            "export function f(): null {\n" +
+            "  let x: int | null = 1;\n" +
+            "  if (x !== null) {\n" +
+            "    let x: number = number(x = 2);\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(valid,
+            "int is assignable to the enclosing int | null");
+
+        CheckerOutput invalid = checkProgram(
+            "export function f(): null {\n" +
+            "  let x: int | null = 1;\n" +
+            "  if (x !== null) {\n" +
+            "    let x: number = (x = 2.5);\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(invalid, "E3001",
+            "number is not assignable to the enclosing int | null");
+    }
+
+    /**
+     * ISSUE-0717 review: a loop-local declaration of the same name is a
+     * distinct binding, so the loop back-edge invalidates only the
+     * bindings actually assigned in the body (docs/spec-v1.2.md §Nullable
+     * semantics): the enclosing refinement survives, while an assignment
+     * to the enclosing binding still invalidates it.
+     */
+    static void testLoopLocalShadowDoesNotInvalidateEnclosingNarrowing() {
+        System.out.println("-- a same-name loop-local declaration leaves the "
+            + "enclosing narrowing intact --");
+        CheckerOutput out = checkProgram(
+            "export function f(): null {\n" +
+            "  let x: string | null = \"ok\";\n" +
+            "  if (x !== null) {\n" +
+            "    while (false) { let x: int = 1; }\n" +
+            "    let s: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(out,
+            "the loop-local x is a different binding; the enclosing refinement "
+                + "survives the loop");
+
+        CheckerOutput assigned = checkProgram(
+            "export function f(): null {\n" +
+            "  let x: string | null = \"ok\";\n" +
+            "  if (x !== null) {\n" +
+            "    while (true) { x = null; break; }\n" +
+            "    let s: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(assigned, "E3001",
+            "an assignment to the enclosing binding inside the loop still "
+                + "invalidates it");
     }
 
     /**

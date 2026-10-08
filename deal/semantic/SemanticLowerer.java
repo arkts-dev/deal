@@ -6108,26 +6108,6 @@ public final class SemanticLowerer {
             return checks.scopeMap().get(checkerScopeNodes.peek());
         }
 
-        /**
-         * The declared type of one identifier assignment target: resolved
-         * from the checker's scope table (never the flow-narrowed
-         * refinement) so the assignment boundary checks the value against
-         * the declared type, exactly as the checker's assignment gate
-         * does (v1.2: assigning null to a `T | null` binding inside a
-         * narrowed block is legal).
-         */
-        private Type declaredTargetTypeOf(IdentifierExpr target) {
-            SymbolTable scope = currentCheckerScope();
-            if (scope != null) {
-                Symbol symbol = scope.resolve(target.name());
-                if (symbol instanceof Symbol.VariableSymbol variable
-                        && variable.type() != null) {
-                    return variable.type();
-                }
-            }
-            return checkedType(target);
-        }
-
         /** The block identity binding ALLOCs in the current site carry as their scope. */
         private BlockId currentBlock() {
             return blockStack.peek();
@@ -6795,7 +6775,7 @@ public final class SemanticLowerer {
                 resolution.entry().cell().id, resolution.entry().incarnation().generation(),
                 null);
             RuntimeDescriptor targetDescriptor =
-                ContainerPayloadDescriptors.resultDescriptorOf(declaredTargetTypeOf(target));
+                ContainerPayloadDescriptors.resultDescriptorOf(checkedType(target));
             if (targetDescriptor instanceof RuntimeDescriptor.Func) {
                 functionIdentity.put(resolution.entry().incarnation(), value);
             }
@@ -6825,7 +6805,7 @@ public final class SemanticLowerer {
                 // position relative to an adaptation site).
                 assignmentAnalysis.recordAssignment(target.name(), binding, generation);
             }
-            Type targetType = declaredTargetTypeOf(target);
+            Type targetType = checkedType(target);
             if ((shapeMapAnalysis || e7Calls) && targetType instanceof Type.Func) {
                 Type sourceType = checkedType(assignment.value());
                 if (AdapterCreationRule.variableDisposition(sourceType, targetType)
@@ -9898,10 +9878,17 @@ public final class SemanticLowerer {
                     // block's checker scope node keeps declared-type
                     // resolution (the boundary descriptors of shadowing
                     // declarations) inside the block, never against the
-                    // enclosing scope.
+                    // enclosing scope, and its binding frame keeps the
+                    // block's declarations out of the enclosing binding
+                    // environment after the block exits.
                     checkerScopeNodes.push(block);
-                    statementWalk.walk(block.statements(), false);
-                    checkerScopeNodes.pop();
+                    pushBindingFrame();
+                    try {
+                        statementWalk.walk(block.statements(), false);
+                    } finally {
+                        popBindingFrame();
+                        checkerScopeNodes.pop();
+                    }
                     continue;
                 }
                 if (statement instanceof IfStatement ifStatement) {
@@ -10449,9 +10436,11 @@ public final class SemanticLowerer {
          */
         private void walkScopedBody(Block body) {
             checkerScopeNodes.push(body);
+            pushBindingFrame();
             try {
                 statementWalk.walk(body.statements(), false);
             } finally {
+                popBindingFrame();
                 checkerScopeNodes.pop();
             }
         }

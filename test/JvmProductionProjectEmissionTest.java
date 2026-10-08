@@ -610,9 +610,20 @@ public class JvmProductionProjectEmissionTest {
             export function main(): null {
               let x: int = 3;
               {
-                let x: int = x;
-                if (x !== 3) { throw { code: "SHADOW_FAIL", message: "shadowing initializer" }; }
+                let x: int = x + 1;
+                if (x !== 4) { throw { code: "SHADOW_FAIL", message: "shadowing initializer" }; }
               }
+              if (x !== 3) { throw { code: "SHADOW_FAIL", message: "block outer restored" }; }
+              if (true) {
+                let x: int = 9;
+                if (x !== 9) { throw { code: "SHADOW_FAIL", message: "if-body shadow" }; }
+              }
+              if (x !== 3) { throw { code: "SHADOW_FAIL", message: "if-body outer restored" }; }
+              while (false) {
+                let x: int = 11;
+                if (x !== 11) { throw { code: "SHADOW_FAIL", message: "loop-body shadow" }; }
+              }
+              if (x !== 3) { throw { code: "SHADOW_FAIL", message: "loop-body outer restored" }; }
               let sum: int = 0;
               let values: int[] = [1, 2];
               for (let v: int of values) {
