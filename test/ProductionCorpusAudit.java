@@ -2460,10 +2460,16 @@ public class ProductionCorpusAudit {
      * The compile criterion of one cell: a compile with zero guard rules; on
      * the JVM the extern-C group's pinned rejection is the sanctioned
      * outcome. The declaration-import group is measured by this same
-     * materializing drive. A guard leg is classed as the sibling-owned
-     * construct deficit only when every error it carries is the
-     * CONSTRUCT_UNLOWERED guard — a failure that mixes the guard with any
-     * other diagnostic is unclassified and fatal. The two architectural
+     * materializing drive. The sanctioned rejection contract is validated
+     * before the interim construct classification: a rejection cell whose
+     * compile carries the CONSTRUCT_UNLOWERED guard instead of the pinned
+     * rejection (or any other code set) is a rejection mismatch and fatal in
+     * both modes. A failed compile that published output is likewise fatal
+     * before any interim classification — the fail-closed contract stages
+     * nothing, in every mode. After that a guard leg is classed as the
+     * sibling-owned construct deficit only when every error it carries is
+     * the CONSTRUCT_UNLOWERED guard — a failure that mixes the guard with
+     * any other diagnostic is unclassified and fatal. The two architectural
      * guards, a non-guard compile failure, and a pinned-rejection mismatch
      * are always fatal.
      */
@@ -2476,6 +2482,22 @@ public class ProductionCorpusAudit {
                 fixtureLabel + " [" + target.laneName()
                     + "] compile E6005 architectural guard: "
                     + outcome.firstErrorDetail());
+        }
+        // The sanctioned rejection pin is a pin, never an interim deficit:
+        // a construct-guard (or any other) diagnostic where the rejection
+        // code is required is a fatal rejection mismatch.
+        if (expectation instanceof SidecarExpectations.RuntimeExpectation.Rejected
+                rejected) {
+            return rejectionVerdict(fixtureLabel, target, outcome.compiled(),
+                outcome.errors(), rejected, stagedArtifacts);
+        }
+        // A failed compile must stage nothing at all, whatever its interim
+        // classification: published output from a fail-closed failure is a
+        // defect, fatal in every mode.
+        if (!outcome.compiled() && !stagedArtifacts.isEmpty()) {
+            return new CellVerdict(false, LegClass.DEFECT, fixtureLabel + " ["
+                + target.laneName() + "] the failed compile published output: "
+                + stagedArtifacts + " (a failed compile must stage nothing)");
         }
         if (outcome.errors().stream()
                 .anyMatch(ProductionCorpusAudit::isConstructGuard)) {
@@ -2491,11 +2513,6 @@ public class ProductionCorpusAudit {
             return new CellVerdict(false, LegClass.CONSTRUCT_DEFICIT,
                 fixtureLabel + " [" + target.laneName()
                     + "] compile E6005 guard: " + outcome.firstErrorDetail());
-        }
-        if (expectation instanceof SidecarExpectations.RuntimeExpectation.Rejected
-                rejected) {
-            return rejectionVerdict(fixtureLabel, target, outcome.compiled(),
-                outcome.errors(), rejected, stagedArtifacts);
         }
         if (!outcome.compiled()) {
             String rule = outcome.errors().stream().map(CompilerDiagnostic::code)
@@ -3577,13 +3594,67 @@ public class ProductionCorpusAudit {
                 "the rejection control is fatal in every mode: "
                     + verdict.clazz() + " - " + verdict.line());
         }
+
+        // The rejection contract is checked before the interim construct
+        // classification: a construct-guard diagnostic where the pinned
+        // rejection is required is a rejection mismatch, never a construct
+        // deficit — with or without staged output beside it. These controls
+        // go through the same compileVerdict the corpus driver applies.
+        List<CompilerDiagnostic> constructGuard = List.of(controlDiagnostic(
+            deal.diagnostics.DiagnosticCode.E6005,
+            "SemanticLowerer " + SemanticLowerer.CONSTRUCT_UNLOWERED
+                + " (control)"));
+        CellVerdict constructRejected = compileVerdict("sample", Target.JVM,
+            new CompileOutcome(false, true, constructGuard, constructGuard,
+                "control"),
+            rejected, List.of());
+        check(!constructRejected.pass()
+                && constructRejected.clazz() == LegClass.DEFECT,
+            "a construct guard instead of the pinned rejection is a "
+                + "rejection mismatch, never a construct deficit: "
+                + constructRejected.line());
+        assertFatalBothModes(constructRejected,
+            "a construct guard instead of the pinned rejection");
+        assertFatalBothModes(compileVerdict("sample", Target.JVM,
+            new CompileOutcome(false, true, constructGuard, constructGuard,
+                "control"),
+            rejected, List.of("Unexpected.java")),
+            "a construct guard beside a staged artifact under a rejection "
+                + "pin");
+
+        // The guard-only leg stays the reported construct deficit when it
+        // staged nothing, but published output beside it is fatal in every
+        // mode whatever the interim classification.
+        SidecarExpectations.RuntimeExpectation.Executed executed =
+            new SidecarExpectations.RuntimeExpectation.Executed("runtime-ok",
+                new byte[0], new byte[0], 0, null);
+        CellVerdict constructExecuted = compileVerdict("sample", Target.JVM,
+            new CompileOutcome(false, true, constructGuard, constructGuard,
+                "control"),
+            executed, List.of());
+        check(!constructExecuted.pass()
+                && constructExecuted.clazz() == LegClass.CONSTRUCT_DEFICIT,
+            "a guard-only failed compile without staged output stays the "
+                + "reported construct deficit: "
+                + constructExecuted.line());
+        assertFatalBothModes(compileVerdict("sample", Target.JVM,
+            new CompileOutcome(false, true, constructGuard, constructGuard,
+                "control"),
+            executed, List.of("Unexpected.java")),
+            "a failed construct-guard compile that published output");
     }
 
     /**
-     * The recorded-projection-inventory controls: the real
-     * arrays/index-oob cell's normalized capture equals its recorded entry
-     * (the inventory is the observed evidence, not a re-derivation), and
-     * every divergence — an unrelated code, a changed message, another
+     * The recorded-projection-inventory controls: the recorded evidence —
+     * the inventory entry's capture tuple, both raw streams empty and the
+     * pinned exit code — classifies as the projection deficit, exercised
+     * with synthetic evidence so a sibling origin realization that makes
+     * the real cell sidecar-exact leaves this control green instead of
+     * requiring the defect to survive. The real arrays/index-oob cell is
+     * driven as well: while it diverges its observed evidence must equal
+     * the recorded entry and classify as the projection deficit; once it
+     * is sidecar-exact that ratchet target is reported, not forbidden.
+     * Every divergence — an unrelated code, a changed message, another
      * position, another value-kind token, extra output on either stream, and
      * the exit codes immediately below and above the pinned one — is an
      * unclassified failure, fatal in both modes.
@@ -3593,6 +3664,43 @@ public class ProductionCorpusAudit {
             + "recorded capture of a recorded cell is permitted --");
         String corpusPath = "backend-runtime/arrays/index-oob.deal";
         CorpusDiscovery.Fixture fixture = fixtureOf(corpusPath);
+        SidecarExpectations.RuntimeExpectation expectation =
+            expectationOf(fixture, Target.LUAJIT);
+        SidecarExpectations.RuntimeExpectation.Executed executed =
+            (SidecarExpectations.RuntimeExpectation.Executed) expectation;
+        ProjectionDeficit recorded = projectionDeficitOf(corpusPath,
+            Target.LUAJIT);
+        check(recorded != null, "the arrays/index-oob cell carries its "
+            + "recorded projection deficit");
+
+        // The historical-deficit branch with synthetic recorded evidence:
+        // the exact recorded capture tuple with empty streams and the pinned
+        // exit code classifies as the projection deficit. This reads no
+        // production artifact, so a sibling origin correction cannot fail
+        // it.
+        if (recorded != null) {
+            Capture synthetic = new Capture(recorded.capturedCode(),
+                recorded.capturedMessage(), recorded.capturedFile(),
+                recorded.capturedLine(), recorded.capturedColumn(),
+                recorded.capturedExpected(), recorded.capturedActual(), null);
+            Execution syntheticExecution = new Execution(executed.exitCode(),
+                new byte[0], new byte[0], synthetic);
+            check(matchesProjectionDeficit(recorded, synthetic,
+                    syntheticExecution, executed),
+                "the recorded entry matches its own synthetic evidence: "
+                    + captureDetail(synthetic, executed.error()));
+            CellVerdict syntheticVerdict = captureVerdict(corpusPath,
+                Target.LUAJIT, synthetic, syntheticExecution, expectation,
+                Optional.of("control"));
+            check(syntheticVerdict.clazz() == LegClass.PROJECTION_DEFICIT,
+                "the recorded evidence classifies as the projection deficit: "
+                    + syntheticVerdict.line());
+            check(!isFatal(syntheticVerdict.clazz(), false)
+                    && isFatal(syntheticVerdict.clazz(), true),
+                "the recorded projection deficit is reported while the "
+                    + "compile criterion is unmet and fatal once it is met");
+        }
+
         List<Export> exports = exportsOf(fixture.source(), corpusPath);
         Project project = materialize(corpusPath,
             CorpusDiscovery.compilationSet(fixture,
@@ -3607,32 +3715,35 @@ public class ProductionCorpusAudit {
             }
             Execution pristine = execute(project, exports, Target.LUAJIT);
             Capture capture = normalize(project, pristine.capture());
-            SidecarExpectations.RuntimeExpectation expectation =
-                expectationOf(fixture, Target.LUAJIT);
-            SidecarExpectations.RuntimeExpectation.Executed executed =
-                (SidecarExpectations.RuntimeExpectation.Executed) expectation;
-            ProjectionDeficit recorded = projectionDeficitOf(corpusPath,
-                Target.LUAJIT);
-            check(recorded != null, "the arrays/index-oob cell carries its "
-                + "recorded projection deficit");
             Optional<String> mismatch = compareCell(corpusPath, Target.LUAJIT,
                 capture, pristine, expectation);
-            check(mismatch.isPresent(), "the recorded projection deficit is a "
-                + "sidecar mismatch");
-            check(matchesProjectionDeficit(recorded, capture, pristine,
-                    executed),
-                "the recorded projection entry equals the observed evidence: "
-                    + captureDetail(capture, executed.error()));
-            CellVerdict recordedVerdict = captureVerdict(corpusPath,
-                Target.LUAJIT, capture, pristine, expectation,
-                mismatch.isEmpty() ? Optional.of("control") : mismatch);
-            check(recordedVerdict.clazz() == LegClass.PROJECTION_DEFICIT,
-                "the recorded evidence classifies as the projection deficit: "
-                    + recordedVerdict.line());
-            check(!isFatal(recordedVerdict.clazz(), false)
-                    && isFatal(recordedVerdict.clazz(), true),
-                "the recorded projection deficit is reported while the "
-                    + "compile criterion is unmet and fatal once it is met");
+            if (mismatch.isPresent()) {
+                // The sibling projection realization has not landed for this
+                // cell yet: the observed evidence must be exactly the
+                // recorded deficit, never some other mismatch.
+                check(matchesProjectionDeficit(recorded, capture, pristine,
+                        executed),
+                    "the recorded projection entry equals the observed "
+                        + "evidence: "
+                        + captureDetail(capture, executed.error()));
+                CellVerdict recordedVerdict = captureVerdict(corpusPath,
+                    Target.LUAJIT, capture, pristine, expectation, mismatch);
+                check(recordedVerdict.clazz() == LegClass.PROJECTION_DEFICIT,
+                    "the observed evidence classifies as the projection "
+                        + "deficit: " + recordedVerdict.line());
+                check(!isFatal(recordedVerdict.clazz(), false)
+                        && isFatal(recordedVerdict.clazz(), true),
+                    "the recorded projection deficit is reported while the "
+                        + "compile criterion is unmet and fatal once it is "
+                        + "met");
+            } else {
+                // The sibling projection realization landed: the capture is
+                // sidecar-exact, the ratchet target. The control must not
+                // require the historical defect to survive.
+                System.out.println("   arrays/index-oob is sidecar-exact on "
+                    + "LuaJIT: the recorded projection deficit is realized; "
+                    + "the predicted ratchet target holds");
+            }
 
             assertFatalBothModes(captureVerdict(corpusPath, Target.LUAJIT,
                 new Capture("E9999", "unrelated failure", null, null, null,
