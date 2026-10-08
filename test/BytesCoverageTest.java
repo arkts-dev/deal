@@ -3232,11 +3232,23 @@ public class BytesCoverageTest {
     private static final String STDLIB_JSON_CORPUS = "backend-runtime/stdlib/json";
     private static final String FFI_CORPUS = "backend-runtime/ffi";
     private static final String FFI_BYTES_FIXTURE = "016-ffi-bytes-pointer-length";
+    private static final String FFI_NATIVE_SOURCE = FFI_CORPUS + "/support/native.c";
+    private static final String FFI_NATIVE_LIBRARY = "libcandidate_native.so";
     private static final String ACCEPT_TRANSPORT = "__accept_transport.txt";
 
-    /** One manifest-authored corpus project materialized under a temp root. */
+    /** The pinned phase-3.9 JVM extern-C rejection message. */
+    private static final String JVM_FFI_REJECTION_MESSAGE =
+        "JVM backend: C FFI (@extern-c) declarations are not supported"
+            + " (FFI_UNSUPPORTED_BACKEND)";
+
+    /**
+     * One manifest-authored corpus project materialized under a temp root.
+     * The {@code ffiDeclaration} is the materialized extern-C declaration
+     * companion of an FFI project (null otherwise).
+     */
     private record ManifestProject(Path root, Path entry, Path out, String corpusRel,
-                                   int strippedHeaderLines, String modulePath) {
+                                   int strippedHeaderLines, String modulePath,
+                                   Path ffiDeclaration) {
     }
 
     /** One manifest-authored compile: the orchestrator and its outcome. */
@@ -3258,10 +3270,12 @@ public class BytesCoverageTest {
      * Materializes one corpus fixture as the manifest entry of a temp
      * project: the header-stripped fixture keeps its corpus-relative path,
      * and the manifest names the target backend (plus the corpus FFI wiring
-     * when the fixture imports the extern-C declaration).
+     * when the fixture imports the extern-C declaration). The FFI wiring
+     * carries the caller-owned native library (never the checkout's shared
+     * build output), materialized alongside the declaration companion.
      */
     private static ManifestProject materializeCorpusProject(String corpusRel,
-            String backend, boolean ffi) throws Exception {
+            String backend, boolean ffi, Path nativeLibrary) throws Exception {
         Path root = Files.createTempDirectory("bytes-manifest-");
         Path entry = root.resolve(corpusRel);
         Files.createDirectories(entry.getParent());
@@ -3272,13 +3286,18 @@ public class BytesCoverageTest {
             - stripped.split("\n", -1).length;
         Files.writeString(entry, stripped, StandardCharsets.UTF_8);
         String externals = "";
+        Path declaration = null;
         if (ffi) {
             CorpusFfi.Wiring wiring = CorpusFfi.wiring(CORPUS).get("candidate/native");
             if (wiring == null) {
                 throw new IllegalStateException("the corpus FFI wiring carries no "
                     + "'candidate/native' entry");
             }
-            Path declaration = root.resolve("support").resolve("native.d.deal");
+            if (nativeLibrary == null) {
+                throw new IllegalStateException("the FFI project requires a "
+                    + "caller-owned native library");
+            }
+            declaration = root.resolve("support").resolve("native.d.deal");
             Files.createDirectories(declaration.getParent());
             Files.writeString(declaration, ConformanceHarnessMetadata
                 .stripClassificationHeaders(Files.readString(
@@ -3286,7 +3305,8 @@ public class BytesCoverageTest {
                     StandardCharsets.UTF_8)), StandardCharsets.UTF_8);
             externals = ",\n  \"externals\": { \"candidate/native\": { "
                 + "\"declaration\": \"support/native.d.deal\", \"nativeLibrary\": \""
-                + CorpusFfi.nativeLibraryPath(CORPUS).replace("\\", "\\\\")
+                + nativeLibrary.toAbsolutePath().normalize().toString()
+                    .replace("\\", "\\\\")
                 + "\" } }";
         }
         Files.writeString(root.resolve("deal.json"),
@@ -3296,7 +3316,7 @@ public class BytesCoverageTest {
         String modulePath = corpusRel.substring(0,
             corpusRel.length() - ".deal".length()).replace('/', '.');
         return new ManifestProject(root, entry, root.resolve("out"), corpusRel,
-            strippedLines, modulePath);
+            strippedLines, modulePath, declaration);
     }
 
     /**
@@ -3354,7 +3374,7 @@ public class BytesCoverageTest {
 
     private static ManifestProject asManifestProject(ScratchProject project) {
         return new ManifestProject(project.root(), project.entry(), project.out(),
-            "src/main.deal", 0, project.modulePath());
+            "src/main.deal", 0, project.modulePath(), null);
     }
 
     private static String luaStringLiteral(String text) {
@@ -3610,7 +3630,7 @@ public class BytesCoverageTest {
                     .resolve(fixture + ".expect.json"), StandardCharsets.UTF_8));
 
         ManifestProject luaProject = materializeCorpusProject(corpusRel, "luajit",
-            false);
+            false, null);
         try {
             ManifestCompile lua = compileManifest(luaProject, "luajit");
             check(lua.success(), fixture + ": the LuaJIT production compile "
@@ -3638,7 +3658,8 @@ public class BytesCoverageTest {
             deleteRecursively(luaProject.root());
         }
 
-        ManifestProject jvmProject = materializeCorpusProject(corpusRel, "jvm", false);
+        ManifestProject jvmProject = materializeCorpusProject(corpusRel, "jvm", false,
+            null);
         try {
             ManifestCompile jvm = compileManifest(jvmProject, "jvm");
             check(jvm.success(), fixture + ": the JVM production compile succeeds: "
@@ -3680,9 +3701,13 @@ public class BytesCoverageTest {
      * ffi/016 through the manifest-authored production invocation: the
      * LuaJIT staged artifact executes the native pointer-plus-length fold
      * (width, sign, order, length) to its pinned runtime-ok outcome, and
-     * the JVM compile is rejected before publication with the pinned E6006
-     * FFI_UNSUPPORTED_BACKEND, stages nothing, and preserves the previous
-     * artifact set byte-identical.
+     * both JVM runs are rejected before publication with the sidecar-pinned
+     * E6006 — exactly one error, the pinned FFI_UNSUPPORTED_BACKEND message
+     * at the materialized declaration's {@code @extern-c} range, no FFI
+     * metadata, stages nothing — and the previous artifact set stays
+     * byte-identical. The native library is compiled into a private temp
+     * directory through the bounded subprocess contract and deleted after
+     * all artifact executions finish.
      */
     private static void driveFfiBytesPointerLength() throws Exception {
         String corpusRel = FFI_CORPUS + "/" + FFI_BYTES_FIXTURE + ".deal";
@@ -3697,65 +3722,162 @@ public class BytesCoverageTest {
                 CORPUS.resolve(FFI_CORPUS).resolve(FFI_BYTES_FIXTURE
                     + ".expect.json"), StandardCharsets.UTF_8));
 
-        ManifestProject luaProject = materializeCorpusProject(corpusRel, "luajit",
-            true);
+        Path nativeDir = Files.createTempDirectory("bytes-ffi-native-");
         try {
-            ManifestCompile lua = compileManifest(luaProject, "luajit");
-            check(lua.success(), "ffi/016: the LuaJIT production compile succeeds: "
-                + diagnosticsOf(lua));
-            if (lua.success()) {
-                Path artifact = luaProject.out().resolve(
-                    luaProject.modulePath().replace('.', '/') + ".lua");
-                check(Files.isRegularFile(artifact), "ffi/016: the staged LuaJIT "
-                    + "artifact exists: " + artifact);
-                if (Files.isRegularFile(artifact)) {
-                    Path transport = luaProject.out().resolve(ACCEPT_TRANSPORT);
-                    Path probe = luaProject.out().resolve("__accept_probe.lua");
-                    Files.writeString(probe, luaAcceptanceProbe(
-                        artifact.toAbsolutePath().toString(), List.of(), transport),
-                        StandardCharsets.UTF_8);
-                    BoundedRun run = runBounded(List.of("luajit",
-                        "__accept_probe.lua"), luaProject.out(),
-                        Map.of("DEAL_DEFER_MAIN", "1"));
-                    assertPinnedRuntimeOk("ffi/016 (luajit staged artifact)", sidecar,
-                        "luajit", run);
+            Path nativeLibrary = compileCorpusNativeLibrary(nativeDir);
+            ManifestProject luaProject = materializeCorpusProject(corpusRel, "luajit",
+                true, nativeLibrary);
+            try {
+                ManifestCompile lua = compileManifest(luaProject, "luajit");
+                check(lua.success(), "ffi/016: the LuaJIT production compile succeeds: "
+                    + diagnosticsOf(lua));
+                if (lua.success()) {
+                    Path artifact = luaProject.out().resolve(
+                        luaProject.modulePath().replace('.', '/') + ".lua");
+                    check(Files.isRegularFile(artifact), "ffi/016: the staged LuaJIT "
+                        + "artifact exists: " + artifact);
+                    if (Files.isRegularFile(artifact)) {
+                        Path transport = luaProject.out().resolve(ACCEPT_TRANSPORT);
+                        Path probe = luaProject.out().resolve("__accept_probe.lua");
+                        Files.writeString(probe, luaAcceptanceProbe(
+                            artifact.toAbsolutePath().toString(), List.of(), transport),
+                            StandardCharsets.UTF_8);
+                        BoundedRun run = runBounded(List.of("luajit",
+                            "__accept_probe.lua"), luaProject.out(),
+                            Map.of("DEAL_DEFER_MAIN", "1"));
+                        assertPinnedRuntimeOk("ffi/016 (luajit staged artifact)",
+                            sidecar, "luajit", run);
+                    }
                 }
+            } finally {
+                deleteRecursively(luaProject.root());
+            }
+
+            ManifestProject preserved = materializeCorpusProject(corpusRel, "jvm",
+                true, nativeLibrary);
+            try {
+                Files.createDirectories(preserved.out());
+                Files.writeString(preserved.out().resolve("previous-artifact.java"),
+                    "previous\n", StandardCharsets.UTF_8);
+                Map<String, byte[]> before = snapshotTree(preserved.out());
+                ManifestCompile jvm = compileManifest(preserved, "jvm");
+                assertPinnedJvmFfiRejection("ffi/016 (preserved output root)",
+                    sidecar, jvm);
+                checkTreeIdentical(before, preserved.out(), "ffi/016: the JVM rejection "
+                    + "stages nothing and preserves the previous artifact set "
+                    + "byte-identical");
+            } finally {
+                deleteRecursively(preserved.root());
+            }
+
+            ManifestProject fresh = materializeCorpusProject(corpusRel, "jvm", true,
+                nativeLibrary);
+            try {
+                ManifestCompile jvm = compileManifest(fresh, "jvm");
+                assertPinnedJvmFfiRejection("ffi/016 (fresh output root)", sidecar, jvm);
+                check(!Files.exists(fresh.out()), "ffi/016: a rejected JVM compile stages "
+                    + "no output root");
+            } finally {
+                deleteRecursively(fresh.root());
             }
         } finally {
-            deleteRecursively(luaProject.root());
+            deleteRecursively(nativeDir);
         }
+    }
 
-        ManifestProject preserved = materializeCorpusProject(corpusRel, "jvm", true);
-        try {
-            Files.createDirectories(preserved.out());
-            Files.writeString(preserved.out().resolve("previous-artifact.java"),
-                "previous\n", StandardCharsets.UTF_8);
-            Map<String, byte[]> before = snapshotTree(preserved.out());
-            ManifestCompile jvm = compileManifest(preserved, "jvm");
-            check(!jvm.success(), "ffi/016: the JVM production compile is rejected");
-            check(jvm.orchestrator() != null && jvm.orchestrator().diagnostics()
-                    .stream().anyMatch(diagnostic -> "E6006".equals(diagnostic.code())
-                        && diagnostic.message() != null
-                        && diagnostic.message().contains("FFI_UNSUPPORTED_BACKEND")),
-                "ffi/016: the JVM rejection is the pinned E6006 "
-                    + "FFI_UNSUPPORTED_BACKEND: " + diagnosticsOf(jvm));
-            checkTreeIdentical(before, preserved.out(), "ffi/016: the JVM rejection "
-                + "stages nothing and preserves the previous artifact set "
-                + "byte-identical");
-        } finally {
-            deleteRecursively(preserved.root());
+    /**
+     * Compiles the committed FFI C fixture ({@code ffi/support/native.c})
+     * into the caller-owned temporary directory through the bounded
+     * subprocess contract: the drive never writes the checkout's shared
+     * {@code build/} output, the GCC compile is deadline- and
+     * capture-bounded, and a missing source, an unclean or failed compile,
+     * or a missing library fails closed (never a skip). The caller deletes
+     * the directory after all artifact executions finish.
+     */
+    private static Path compileCorpusNativeLibrary(Path nativeDir) throws Exception {
+        Path source = CORPUS.resolve(FFI_NATIVE_SOURCE).toAbsolutePath().normalize();
+        check(Files.isRegularFile(source),
+            "ffi/016: the committed FFI C fixture exists: " + source);
+        Path library = nativeDir.resolve(FFI_NATIVE_LIBRARY);
+        if (!Files.isRegularFile(source)) {
+            return library;
         }
+        BoundedRun compile = runBounded(List.of("gcc", "-shared", "-fPIC", "-O2",
+            "-o", library.toString(), source.toString()), nativeDir, Map.of());
+        check(compile.captureClean(), "ffi/016: the private native-library "
+            + "compile is capture-clean");
+        checkEq(0, compile.exitCode(), "ffi/016: the private native-library "
+            + "compile succeeds: " + compile.stdout() + compile.stderr());
+        check(Files.isRegularFile(library), "ffi/016: the private native library "
+            + "exists: " + library);
+        return library;
+    }
 
-        ManifestProject fresh = materializeCorpusProject(corpusRel, "jvm", true);
-        try {
-            ManifestCompile jvm = compileManifest(fresh, "jvm");
-            check(!jvm.success(), "ffi/016: the JVM rejection also holds for a fresh "
-                + "output root");
-            check(!Files.exists(fresh.out()), "ffi/016: a rejected JVM compile stages "
-                + "no output root");
-        } finally {
-            deleteRecursively(fresh.root());
+    /**
+     * The exact JVM pre-publication rejection of one ffi/016 compile: the
+     * sidecar's compile-reject leg is the mode/code authority, the
+     * orchestrator reports exactly one error — the pinned phase-3.9
+     * {@code FFI_UNSUPPORTED_BACKEND} message at the materialized
+     * declaration's {@code @extern-c} directive range — and no FFI metadata
+     * is generated (the rejection precedes the lowering).
+     */
+    private static void assertPinnedJvmFfiRejection(String label,
+            SidecarExpectations.StructuredExpectationSidecar sidecar,
+            ManifestCompile compile) throws Exception {
+        check(!compile.success(), label + ": the JVM production compile is rejected");
+        SidecarExpectations.RuntimeExpectation leg = sidecar.expectationFor("jvm");
+        check(leg instanceof SidecarExpectations.RuntimeExpectation.Rejected rejected
+                && "compile-reject".equals(rejected.mode()),
+            label + ": the sidecar pins the JVM compile-reject mode");
+        if (!(leg instanceof SidecarExpectations.RuntimeExpectation.Rejected rejected)) {
+            return;
         }
+        Path declaration = compile.project().ffiDeclaration();
+        check(declaration != null && Files.isRegularFile(declaration),
+            label + ": the materialized extern-C declaration exists: " + declaration);
+        if (declaration == null || !Files.isRegularFile(declaration)) {
+            return;
+        }
+        List<CompilerDiagnostic> errors = compile.orchestrator() == null
+            ? List.of()
+            : compile.orchestrator().diagnostics().stream()
+                .filter(diagnostic -> "error".equals(diagnostic.severity())).toList();
+        checkEq(1, errors.size(), label + ": exactly one error diagnostic: "
+            + diagnosticsOf(compile));
+        if (errors.size() != 1) {
+            return;
+        }
+        CompilerDiagnostic rejection = errors.get(0);
+        checkEq(rejected.code(), rejection.code(),
+            label + ": the sidecar-pinned rejection code");
+        checkEq(JVM_FFI_REJECTION_MESSAGE, rejection.message(),
+            label + ": the pinned FFI_UNSUPPORTED_BACKEND message");
+        String text = Files.readString(declaration, StandardCharsets.UTF_8);
+        int directive = text.indexOf("// @extern-c");
+        check(directive >= 0, label + ": the materialized declaration carries the "
+            + "@extern-c directive");
+        if (directive < 0) {
+            return;
+        }
+        int lineStart = text.lastIndexOf('\n', directive) + 1;
+        int line = text.substring(0, lineStart).split("\n", -1).length;
+        int lineEnd = directive;
+        while (lineEnd < text.length() && text.charAt(lineEnd) != '\n'
+                && text.charAt(lineEnd) != '\r') {
+            lineEnd++;
+        }
+        checkEq(line, rejection.range().startLine(),
+            label + ": the E6006 range starts at the materialized @extern-c line");
+        checkEq(directive - lineStart + 1, rejection.range().startColumn(),
+            label + ": the E6006 range starts at the materialized @extern-c column");
+        checkEq(line, rejection.range().endLine(),
+            label + ": the E6006 range ends on the materialized @extern-c line");
+        checkEq(lineEnd - lineStart + 1, rejection.range().endColumn(),
+            label + ": the E6006 range covers the materialized @extern-c comment");
+        checkEq(declaration.toRealPath().toString(), rejection.range().file(),
+            label + ": the E6006 range names the materialized declaration");
+        check(compile.orchestrator().ffiGenerations().isEmpty(), label + ": the JVM "
+            + "rejection publishes no FFI metadata");
     }
 
     /**
