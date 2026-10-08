@@ -103,7 +103,11 @@ import java.util.stream.Stream;
  * container's token and path); the oracle's array executor view must stay
  * live behind a class field's in-place element replacement, append, and
  * deletion (exact text for replacement and append, outcome parity for the
- * deleted missing slot); a null element in {@code (int | null)[]} must
+ * deleted missing slot); a committed field write on a class instance held
+ * as another class's declared field or as an array element must be
+ * serialized by the parent's helper call as the committed state (exact
+ * text on all three consumers, including a second parent alias of the same
+ * child identity); a null element in {@code (int | null)[]} must
  * roundtrip on all three consumers while the same document stays rejected
  * by {@code int[]}; a read-derived numeric variant carrier must
  * serialize at a declared {@code number} field and array element with its
@@ -797,7 +801,7 @@ public class JsonableHelperProductionDriveTest {
         Files.createDirectories(classes);
         String classpath = absoluteClasspath();
         StringBuilder probe = new StringBuilder();
-        probe.append("public final class Probe {\n");
+        probe.append("public final class JsonableArtifactProbe {\n");
         probe.append("  static final String TRANSPORT = \"")
             .append(transport.toString().replace("\\", "\\\\")).append("\";\n");
         probe.append("  public static void main(String[] args) {\n");
@@ -849,7 +853,7 @@ public class JsonableHelperProductionDriveTest {
             + ".replace(\"\\n\", \"\\\\n\").replace(\"\\t\", \"\\\\t\");\n");
         probe.append("    out.append(key).append('\\t').append(escaped).append('\\n');\n");
         probe.append("  }\n}\n");
-        Path probeFile = out.resolve("Probe.java");
+        Path probeFile = out.resolve("JsonableArtifactProbe.java");
         Files.writeString(probeFile, probe.toString(), StandardCharsets.UTF_8);
         ProcessOutcome compile = runProcess(out, Map.of(), BOUNDED_PROCESS_BUDGET_MS,
             "javac", "--release", "25", "-proc:none", "-cp", classpath, "-d",
@@ -863,7 +867,8 @@ public class JsonableHelperProductionDriveTest {
             return new Execution(-1, "", compileOut, null, false);
         }
         ProcessOutcome outcome = runProcess(out, Map.of(), BOUNDED_PROCESS_BUDGET_MS,
-            "java", "-cp", classpath + File.pathSeparator + classes, "Probe");
+            "java", "-cp", classes + File.pathSeparator + classpath,
+            "JsonableArtifactProbe");
         Capture capture = readTransport(transport);
         boolean defect = capture != null && "PROBE_DEFECT".equals(capture.code());
         return new Execution(outcome.exitCode(), outcome.stdout(), outcome.stderr(),
@@ -2694,6 +2699,81 @@ public class JsonableHelperProductionDriveTest {
     }
 
     /**
+     * The committed nested-class view (the three-consumer regression): a
+     * field write on a class instance held as another class's declared
+     * field is observable through the parent's helper call on the oracle,
+     * the LuaJIT artifact, and the JVM artifact alike — the cached executor
+     * view of the child is updated in place rather than rebound, so the
+     * parent view that embeds it never serializes the stale pre-commit
+     * state. The alias function proves the same commit through two parents
+     * that hold the same child identity.
+     */
+    private static void testNestedClassFieldViewSync() throws Exception {
+        System.out.println("-- the committed nested-class view: a field write "
+            + "through the parent serializes on all three consumers --");
+        String expected = dealStringLiteral("{\"child\":{\"x\":2}}");
+        String source = "// @jsonable\nexport class Child {\n  x: int = 0;\n}\n\n"
+            + "// @jsonable\nexport class Box {\n  child: Child = {};\n}\n\n"
+            + "export function test_nested_class_mutation(): null {\n"
+            + "  let b: Box = { child: { x: 1 } };\n"
+            + "  b.child.x = 2;\n"
+            + "  let json: string = Box$toJson(b);\n"
+            + "  let expected: string = " + expected + ";\n"
+            + "  if (json !== expected) {\n"
+            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "  }\n"
+            + "  return null;\n"
+            + "}\n\n"
+            + "export function test_nested_class_alias_mutation(): null {\n"
+            + "  let c: Child = { x: 1 };\n"
+            + "  let p: Box = { child: c };\n"
+            + "  let q: Box = { child: c };\n"
+            + "  p.child.x = 2;\n"
+            + "  let expected: string = " + expected + ";\n"
+            + "  let jsonP: string = Box$toJson(p);\n"
+            + "  if (jsonP !== expected) {\n"
+            + "    throw { code: \"MISMATCH\", message: jsonP };\n"
+            + "  }\n"
+            + "  let jsonQ: string = Box$toJson(q);\n"
+            + "  if (jsonQ !== expected) {\n"
+            + "    throw { code: \"MISMATCH\", message: jsonQ };\n"
+            + "  }\n"
+            + "  return null;\n"
+            + "}\n\n"
+            + "export function main(): null {\n  return null;\n}\n";
+        driveExactHelperText("nested-class-field-view-sync", source);
+    }
+
+    /**
+     * The array-held committed class view (the three-consumer regression):
+     * a field write on a separately constructed class instance held in a
+     * declared {@code Child[]} is observable through the parent's helper
+     * call on the oracle, the LuaJIT artifact, and the JVM artifact alike —
+     * the array's cached view embeds the one instance view, which is
+     * updated in place by the commit.
+     */
+    private static void testArrayHeldClassViewSync() throws Exception {
+        System.out.println("-- the committed array-held class view: a field write "
+            + "through b.children[0].x serializes on all three consumers --");
+        String source = "// @jsonable\nexport class Child {\n  x: int = 0;\n}\n\n"
+            + "// @jsonable\nexport class Box {\n  children: Child[] = [];\n}\n\n"
+            + "export function test_array_held_class_mutation(): null {\n"
+            + "  let c: Child = { x: 1 };\n"
+            + "  let b: Box = { children: [c] };\n"
+            + "  b.children[0].x = 2;\n"
+            + "  let json: string = Box$toJson(b);\n"
+            + "  let expected: string = "
+            + dealStringLiteral("{\"children\":[{\"x\":2}]}") + ";\n"
+            + "  if (json !== expected) {\n"
+            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "  }\n"
+            + "  return null;\n"
+            + "}\n\n"
+            + "export function main(): null {\n  return null;\n}\n";
+        driveExactHelperText("array-held-class-view-sync", source);
+    }
+
+    /**
      * The nullable-array element admission (the three-consumer regression):
      * a null element is admitted exactly where the element descriptor admits
      * it — {@code (int | null)[]} roundtrips the null element on the oracle,
@@ -3026,6 +3106,8 @@ public class JsonableHelperProductionDriveTest {
         testNestedClassDepthBound();
         testArrayExecutorViewSync();
         testArrayExecutorViewDeleteParity();
+        testNestedClassFieldViewSync();
+        testArrayHeldClassViewSync();
         testNullableArrayElements();
         testReadDerivedNumericCarriers();
         testNestedClassDefaultNumericCarrier();

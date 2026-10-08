@@ -124,7 +124,11 @@ WARNING: node not found, skipping standard library JS tests'
   # 512 fail through the walk arm); the oracle's array executor view stays
   # live behind a class field's in-place element replacement, append, and
   # deletion (exact text for replacement and append, outcome parity for
-  # the deleted missing slot); a null element in (int | null)[] roundtrips
+  # the deleted missing slot); a committed field write on a class instance
+  # held as another class's declared field or as an array element
+  # serializes through the parent's helper call as the committed state
+  # (exact text on all three consumers, including a second parent alias of
+  # the same child identity); a null element in (int | null)[] roundtrips
   # on all three consumers while the same document stays rejected by
   # int[]; a read-derived numeric variant carrier serializes at a
   # declared number field and array element with its own variant's
