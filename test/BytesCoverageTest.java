@@ -3,12 +3,15 @@ package deal.test;
 import deal.checker.BuiltinErrorDeclaration;
 import deal.codegen.Backend;
 import deal.codegen.jvm.JvmBackend;
+import deal.codegen.jvm.JvmNames;
 import deal.codegen.jvm.JvmSemanticEmitter;
 import deal.codegen.lua.LuaSemanticEmitter;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
 import deal.identity.CanonicalModuleIdentity;
 import deal.module.CompilationOrchestrator;
+import deal.project.CliOverrides;
+import deal.project.ProjectLocator;
 import deal.semantic.CheckedProjectBuildResult;
 import deal.semantic.CheckedProjectInput;
 import deal.semantic.CompilerInvocation;
@@ -47,6 +50,8 @@ import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ValueId;
+import deal.test.conformance.CorpusFfi;
+import deal.test.conformance.ErrorSnapshot;
 import deal.test.conformance.SidecarExpectations;
 
 import java.io.File;
@@ -3206,6 +3211,1027 @@ public class BytesCoverageTest {
     }
 
     // =========================================================================
+    // 9. The manifest-authored production acceptance: the std/json bytes
+    //    companions and ffi/016 through the release-owned invocation
+    // =========================================================================
+
+    private static final String STDLIB_JSON_CORPUS = "backend-runtime/stdlib/json";
+    private static final String FFI_CORPUS = "backend-runtime/ffi";
+    private static final String FFI_BYTES_FIXTURE = "016-ffi-bytes-pointer-length";
+    private static final String FFI_NATIVE_SOURCE = FFI_CORPUS + "/support/native.c";
+    private static final String FFI_NATIVE_LIBRARY = "libcandidate_native.so";
+    private static final String ACCEPT_TRANSPORT = "__accept_transport.txt";
+
+    /** The pinned phase-3.9 JVM extern-C rejection message. */
+    private static final String JVM_FFI_REJECTION_MESSAGE =
+        "JVM backend: C FFI (@extern-c) declarations are not supported"
+            + " (FFI_UNSUPPORTED_BACKEND)";
+
+    /**
+     * One manifest-authored corpus project materialized under a temp root.
+     * The {@code ffiDeclaration} is the materialized extern-C declaration
+     * companion of an FFI project (null otherwise).
+     */
+    private record ManifestProject(Path root, Path entry, Path out, String corpusRel,
+                                   int strippedHeaderLines, String modulePath,
+                                   Path ffiDeclaration) {
+    }
+
+    /** One manifest-authored compile: the orchestrator and its outcome. */
+    private record ManifestCompile(ManifestProject project,
+                                   CompilationOrchestrator orchestrator,
+                                   boolean success) {
+    }
+
+    /** One manifest-authored scratch project (the first-class bytes drives). */
+    private record ScratchProject(Path root, Path entry, Path out, String modulePath) {
+    }
+
+    /** The artifact-transported DEAL failure tuple of one staged-artifact run. */
+    private record CapturedTuple(String code, String message, String file, Integer line,
+                                 Integer column, String expected, String actual) {
+    }
+
+    /**
+     * Materializes one corpus fixture as the manifest entry of a temp
+     * project: the header-stripped fixture keeps its corpus-relative path,
+     * and the manifest names the target backend (plus the corpus FFI wiring
+     * when the fixture imports the extern-C declaration). The FFI wiring
+     * carries the caller-owned native library (never the checkout's shared
+     * build output), materialized alongside the declaration companion.
+     */
+    private static ManifestProject materializeCorpusProject(String corpusRel,
+            String backend, boolean ffi, Path nativeLibrary) throws Exception {
+        Path root = Files.createTempDirectory("bytes-manifest-");
+        Path entry = root.resolve(corpusRel);
+        Files.createDirectories(entry.getParent());
+        String raw = Files.readString(CORPUS.resolve(corpusRel),
+            StandardCharsets.UTF_8);
+        String stripped = ConformanceHarnessMetadata.stripClassificationHeaders(raw);
+        int strippedLines = raw.split("\n", -1).length
+            - stripped.split("\n", -1).length;
+        Files.writeString(entry, stripped, StandardCharsets.UTF_8);
+        String externals = "";
+        Path declaration = null;
+        if (ffi) {
+            CorpusFfi.Wiring wiring = CorpusFfi.wiring(CORPUS).get("candidate/native");
+            if (wiring == null) {
+                throw new IllegalStateException("the corpus FFI wiring carries no "
+                    + "'candidate/native' entry");
+            }
+            if (nativeLibrary == null) {
+                throw new IllegalStateException("the FFI project requires a "
+                    + "caller-owned native library");
+            }
+            declaration = root.resolve("support").resolve("native.d.deal");
+            Files.createDirectories(declaration.getParent());
+            Files.writeString(declaration, ConformanceHarnessMetadata
+                .stripClassificationHeaders(Files.readString(
+                    CORPUS.resolve(FFI_CORPUS).resolve(wiring.declarationCorpusPath()),
+                    StandardCharsets.UTF_8)), StandardCharsets.UTF_8);
+            externals = ",\n  \"externals\": { \"candidate/native\": { "
+                + "\"declaration\": \"support/native.d.deal\", \"nativeLibrary\": \""
+                + nativeLibrary.toAbsolutePath().normalize().toString()
+                    .replace("\\", "\\\\")
+                + "\" } }";
+        }
+        Files.writeString(root.resolve("deal.json"),
+            "{\n  \"languageVersion\": \"1.2\",\n  \"moduleRoots\": [\".\"],\n"
+                + "  \"output\": \"out\",\n  \"backend\": \"" + backend + "\""
+                + externals + "\n}\n", StandardCharsets.UTF_8);
+        String modulePath = corpusRel.substring(0,
+            corpusRel.length() - ".deal".length()).replace('/', '.');
+        return new ManifestProject(root, entry, root.resolve("out"), corpusRel,
+            strippedLines, modulePath, declaration);
+    }
+
+    /**
+     * The manifest-authored release invocation: the project context is
+     * resolved by the production locator, the backend is the manifest's
+     * authored backend, the compile runs on the release-owned production
+     * invocation, and the orchestrator is the manifest-context constructor
+     * (never the isolated-phase test constructor).
+     */
+    private static ManifestCompile compileManifest(ManifestProject project,
+            String backend) throws Exception {
+        ProjectLocator.LocateResult located = ProjectLocator.locate(
+            project.entry().toAbsolutePath().toString(),
+            new CliOverrides(null, null));
+        check(located.context() != null, project.corpusRel()
+            + ": the manifest resolves a project context");
+        if (located.context() == null) {
+            return new ManifestCompile(project, null, false);
+        }
+        checkEq(backend, located.context().backend(), project.corpusRel()
+            + ": the manifest authors the target backend");
+        CompilerInvocation invocation = productionInvocation();
+        check(CompilationOrchestrator.isProductionInvocation(invocation),
+            project.corpusRel() + ": the compile runs on the release-owned "
+                + "production invocation");
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            located.context(), project.entry().toAbsolutePath(), false, false,
+            false, false, null, invocation);
+        return new ManifestCompile(project, orchestrator, orchestrator.compile());
+    }
+
+    private static String diagnosticsOf(ManifestCompile compile) {
+        return compile.orchestrator() == null ? "no context"
+            : String.valueOf(compile.orchestrator().diagnostics());
+    }
+
+    /**
+     * One header-free scratch project under {@code src/} with a manifest
+     * that names the target backend, the {@code src} module root, and the
+     * {@code out} output root — the first-class bytes drives' project.
+     */
+    private static ScratchProject materializeScratchProject(String source,
+            String backend) throws Exception {
+        Path root = Files.createTempDirectory("bytes-first-class-");
+        Path src = root.resolve("src");
+        Files.createDirectories(src);
+        Files.writeString(src.resolve("main.deal"), source, StandardCharsets.UTF_8);
+        Files.writeString(root.resolve("deal.json"),
+            "{\n  \"languageVersion\": \"1.2\",\n  \"moduleRoots\": [\"src\"],\n"
+                + "  \"output\": \"out\",\n  \"backend\": \"" + backend + "\"\n}\n",
+            StandardCharsets.UTF_8);
+        return new ScratchProject(root, src.resolve("main.deal"), root.resolve("out"),
+            "main");
+    }
+
+    private static ManifestProject asManifestProject(ScratchProject project) {
+        return new ManifestProject(project.root(), project.entry(), project.out(),
+            "src/main.deal", 0, project.modulePath(), null);
+    }
+
+    private static String luaStringLiteral(String text) {
+        StringBuilder out = new StringBuilder("\"");
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            switch (c) {
+                case '"' -> out.append("\\\"");
+                case '\\' -> out.append("\\\\");
+                case '\n' -> out.append("\\n");
+                case '\r' -> out.append("\\r");
+                case '\t' -> out.append("\\t");
+                default -> out.append(c);
+            }
+        }
+        return out.append('"').toString();
+    }
+
+    private static String javaString(String text) {
+        StringBuilder out = new StringBuilder("\"");
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            switch (c) {
+                case '"' -> out.append("\\\"");
+                case '\\' -> out.append("\\\\");
+                case '\n' -> out.append("\\n");
+                default -> out.append(c);
+            }
+        }
+        return out.append('"').toString();
+    }
+
+    /**
+     * The staged Lua artifact's acceptance probe: the fixture is the
+     * already-staged chunk; the probe drives {@code __dealMain()} and each
+     * named export through the artifact's own export surface, and
+     * transports the caught DEAL tuple (code, message, origin-derived
+     * file/line/column, expected, actual) to the given path. A non-DEAL
+     * error is transported as NON_DEAL, never silently swallowed.
+     */
+    private static String luaAcceptanceProbe(String artifactPath,
+            List<String> exports, Path transport) {
+        StringBuilder probe = new StringBuilder();
+        probe.append("local __transport = ")
+            .append(luaStringLiteral(transport.toAbsolutePath().toString()))
+            .append("\n");
+        probe.append("local function __esc(s)\n")
+            .append("  s = tostring(s)\n")
+            .append("  s = string.gsub(s, \"\\\\\", \"\\\\\\\\\")\n")
+            .append("  s = string.gsub(s, \"\\n\", \"\\\\n\")\n")
+            .append("  s = string.gsub(s, \"\\t\", \"\\\\t\")\n")
+            .append("  return s\n")
+            .append("end\n");
+        probe.append("local function __write(fields)\n")
+            .append("  local f = io.open(__transport, \"w\")\n")
+            .append("  if not f then os.exit(2) end\n")
+            .append("  for _, kv in ipairs(fields) do\n")
+            .append("    f:write(kv[1], \"\\t\", __esc(kv[2] or \"\"), \"\\n\")\n")
+            .append("  end\n")
+            .append("  f:close()\n")
+            .append("end\n");
+        probe.append("local function __capture(err)\n")
+            .append("  if type(err) ~= \"table\" or err.code == nil then\n")
+            .append("    __write({ {\"code\", \"NON_DEAL\"}, ")
+            .append("{\"message\", tostring(err)} })\n")
+            .append("    os.exit(1)\n")
+            .append("  end\n")
+            .append("  local file, line, column = err.file, err.line, err.column\n")
+            .append("  if err.o ~= nil then\n")
+            .append("    local f, l, c = tostring(err.o):match(")
+            .append("\"^(.*):(%d+):(%d+)$\")\n")
+            .append("    if f ~= nil then file, line, column = f, tonumber(l), ")
+            .append("tonumber(c) end\n")
+            .append("  end\n")
+            .append("  __write({ {\"code\", err.code}, ")
+            .append("{\"message\", err.m or err.message},\n")
+            .append("    {\"file\", file}, {\"line\", line}, {\"column\", column},\n")
+            .append("    {\"expected\", err.e}, {\"actual\", err.a} })\n")
+            .append("  os.exit(1)\n")
+            .append("end\n");
+        probe.append("local __surface = dofile(")
+            .append(luaStringLiteral(artifactPath)).append(")\n");
+        probe.append("local __ok, __err = __dealMain()\n");
+        probe.append("if not __ok then __capture(__err) end\n");
+        for (String export : exports) {
+            probe.append("do\n")
+                .append("  local __v = __surface[")
+                .append(luaStringLiteral(export)).append("]\n")
+                .append("  if type(__v) ~= \"table\" or type(__v.f) ~= \"function\" ")
+                .append("then os.exit(2) end\n")
+                .append("  local __okE, __errE = xpcall(__v.f, ")
+                .append("function(e) return e end)\n")
+                .append("  if not __okE then __capture(__errE) end\n")
+                .append("end\n");
+        }
+        probe.append("os.exit(0)\n");
+        return probe.toString();
+    }
+
+    /**
+     * The staged JVM artifact's acceptance probe: the fixture is the
+     * already-staged class; the probe drives {@code dealMain()} and each
+     * named export through the runtime's own export surface, and
+     * transports the caught DEAL tuple (code, message, origin, expected,
+     * actual) to the given path. A non-DEAL error is transported as
+     * NON_DEAL, never silently swallowed.
+     */
+    private static String jvmAcceptanceProbe(String className, String modulePath,
+            List<String> exports, Path transport) {
+        StringBuilder probe = new StringBuilder();
+        probe.append("public final class Probe {\n");
+        probe.append("  public static void main(String[] args) {\n");
+        probe.append("    try {\n");
+        probe.append("      ").append(className).append(".dealMain();\n");
+        for (String export : exports) {
+            probe.append("      {\n")
+                .append("        Object v = deal.codegen.jvm.JvmRuntime.exportSurface(")
+                .append(javaString(modulePath)).append(").read(")
+                .append(javaString(export)).append(");\n")
+                .append("        if (!(v instanceof deal.codegen.jvm.JvmRuntime.")
+                .append("FunctionValue)) { System.exit(2); }\n")
+                .append("        ((deal.codegen.jvm.JvmRuntime.FunctionValue) v).fn.")
+                .append("invoke(new Object[]{});\n")
+                .append("      }\n");
+        }
+        probe.append("      System.exit(0);\n");
+        probe.append("    } catch (Throwable error) {\n");
+        probe.append("      transport(error);\n");
+        probe.append("    }\n");
+        probe.append("  }\n");
+        probe.append("  static void transport(Throwable error) {\n");
+        probe.append("    Throwable e = error;\n");
+        probe.append("    while (e != null && !(e instanceof deal.codegen.jvm.")
+            .append("JvmRuntime.DealError) && e.getCause() != null) {\n");
+        probe.append("      e = e.getCause();\n");
+        probe.append("    }\n");
+        probe.append("    StringBuilder out = new StringBuilder();\n");
+        probe.append("    if (e instanceof deal.codegen.jvm.JvmRuntime.DealError d) {\n");
+        probe.append("      append(out, \"code\", d.code);\n");
+        probe.append("      append(out, \"message\", d.msg);\n");
+        probe.append("      append(out, \"origin\", d.origin);\n");
+        probe.append("      append(out, \"expected\", d.expected);\n");
+        probe.append("      append(out, \"actual\", d.actual);\n");
+        probe.append("    } else {\n");
+        probe.append("      append(out, \"code\", \"NON_DEAL\");\n");
+        probe.append("      append(out, \"message\", String.valueOf(error));\n");
+        probe.append("    }\n");
+        probe.append("    try {\n");
+        probe.append("      java.nio.file.Files.writeString(java.nio.file.Path.of(")
+            .append(javaString(transport.toAbsolutePath().toString()))
+            .append("), out.toString());\n");
+        probe.append("    } catch (java.io.IOException ignored) { }\n");
+        probe.append("    System.exit(1);\n");
+        probe.append("  }\n");
+        probe.append("  static void append(StringBuilder out, String key, ")
+            .append("String value) {\n");
+        probe.append("    if (value == null) { return; }\n");
+        probe.append("    String escaped = value.replace(\"\\\\\", \"\\\\\\\\\")")
+            .append(".replace(\"\\n\", \"\\\\n\").replace(\"\\t\", \"\\\\t\");\n");
+        probe.append("    out.append(key).append('\\t').append(escaped).append('\\n');\n");
+        probe.append("  }\n");
+        probe.append("}\n");
+        return probe.toString();
+    }
+
+    /** The transported tuple, or {@code null} when the probe wrote none. */
+    private static CapturedTuple readAcceptanceTuple(Path transport) throws Exception {
+        if (!Files.isRegularFile(transport)) {
+            return null;
+        }
+        Map<String, String> fields = new LinkedHashMap<>();
+        for (String line : Files.readAllLines(transport, StandardCharsets.UTF_8)) {
+            int tab = line.indexOf('\t');
+            if (tab < 0) {
+                continue;
+            }
+            String key = line.substring(0, tab);
+            String value = line.substring(tab + 1);
+            if (!value.isEmpty()) {
+                fields.put(key, unescapeField(value));
+            }
+        }
+        Integer line = integerField(fields.get("line"));
+        Integer column = integerField(fields.get("column"));
+        String origin = fields.get("origin");
+        if (origin != null) {
+            int lastColon = origin.lastIndexOf(':');
+            int previousColon = lastColon < 0 ? -1
+                : origin.lastIndexOf(':', lastColon - 1);
+            if (previousColon >= 0 && lastColon > previousColon + 1) {
+                fields.putIfAbsent("file", origin.substring(0, previousColon));
+                if (line == null) {
+                    line = integerField(origin.substring(previousColon + 1,
+                        lastColon));
+                }
+                if (column == null) {
+                    column = integerField(origin.substring(lastColon + 1));
+                }
+            }
+        }
+        return new CapturedTuple(fields.get("code"), fields.get("message"),
+            fields.get("file"), line, column, fields.get("expected"),
+            fields.get("actual"));
+    }
+
+    private static Integer integerField(String text) {
+        return text == null || text.isEmpty() ? null : Integer.valueOf(text);
+    }
+
+    private static String unescapeField(String text) {
+        StringBuilder out = new StringBuilder(text.length());
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c != '\\' || i + 1 >= text.length()) {
+                out.append(c);
+                continue;
+            }
+            char next = text.charAt(++i);
+            switch (next) {
+                case 'n' -> out.append('\n');
+                case 't' -> out.append('\t');
+                case '\\' -> out.append('\\');
+                default -> out.append(next);
+            }
+        }
+        return out.toString();
+    }
+
+    private static void testManifestProductionAcceptance() throws Exception {
+        System.out.println("-- the manifest-authored production acceptance: the "
+            + "std/json bytes companions and ffi/016 --");
+        driveJsonBytesCompanion("json-stringify-bytes-error",
+            "test_json_stringify_bytes_error");
+        driveJsonBytesCompanion("json-stringify-nested-bytes-error",
+            "test_json_stringify_nested_bytes_error");
+        driveFfiBytesPointerLength();
+    }
+
+    /**
+     * One std/json bytes companion through the manifest-authored production
+     * invocation: the fixture is the entry, the staged LuaJIT chunk and the
+     * staged JVM class are executed with the artifact's own transport, and
+     * every sidecar-pinned field (code, message, raw-coordinate rebased
+     * line, column, expected, actual, source file, exit code, streams) is
+     * compared exactly.
+     */
+    private static void driveJsonBytesCompanion(String fixture, String export)
+            throws Exception {
+        String corpusRel = STDLIB_JSON_CORPUS + "/" + fixture + ".deal";
+        SidecarExpectations.StructuredExpectationSidecar sidecar =
+            SidecarExpectations.StructuredExpectationSidecar.parse(Files.readString(
+                CORPUS.resolve(STDLIB_JSON_CORPUS)
+                    .resolve(fixture + ".expect.json"), StandardCharsets.UTF_8));
+
+        ManifestProject luaProject = materializeCorpusProject(corpusRel, "luajit",
+            false, null);
+        try {
+            ManifestCompile lua = compileManifest(luaProject, "luajit");
+            check(lua.success(), fixture + ": the LuaJIT production compile "
+                + "succeeds: " + diagnosticsOf(lua));
+            if (lua.success()) {
+                Path artifact = luaProject.out().resolve(
+                    luaProject.modulePath().replace('.', '/') + ".lua");
+                check(Files.isRegularFile(artifact), fixture + ": the staged LuaJIT "
+                    + "artifact exists: " + artifact);
+                if (Files.isRegularFile(artifact)) {
+                    Path transport = luaProject.out().resolve(ACCEPT_TRANSPORT);
+                    Path probe = luaProject.out().resolve("__accept_probe.lua");
+                    Files.writeString(probe, luaAcceptanceProbe(
+                        artifact.toAbsolutePath().toString(), List.of(export),
+                        transport), StandardCharsets.UTF_8);
+                    BoundedRun run = runBounded(List.of("luajit",
+                        "__accept_probe.lua"), luaProject.out(),
+                        Map.of("DEAL_DEFER_MAIN", "1"));
+                    assertPinnedRuntimeError(fixture + " (luajit staged artifact)",
+                        sidecar, "luajit", readAcceptanceTuple(transport), run,
+                        luaProject);
+                }
+            }
+        } finally {
+            deleteRecursively(luaProject.root());
+        }
+
+        ManifestProject jvmProject = materializeCorpusProject(corpusRel, "jvm", false,
+            null);
+        try {
+            ManifestCompile jvm = compileManifest(jvmProject, "jvm");
+            check(jvm.success(), fixture + ": the JVM production compile succeeds: "
+                + diagnosticsOf(jvm));
+            if (jvm.success()) {
+                String className = JvmNames.classNameFor(jvmProject.modulePath());
+                Path artifact = jvmProject.out().resolve(className + ".java");
+                check(Files.isRegularFile(artifact), fixture + ": the staged JVM "
+                    + "artifact exists: " + artifact);
+                if (Files.isRegularFile(artifact)) {
+                    Path transport = jvmProject.out().resolve(ACCEPT_TRANSPORT);
+                    Files.writeString(jvmProject.out().resolve("Probe.java"),
+                        jvmAcceptanceProbe(className, jvmProject.modulePath(),
+                            List.of(export), transport), StandardCharsets.UTF_8);
+                    Path classes = jvmProject.out().resolve("classes");
+                    Files.createDirectories(classes);
+                    BoundedRun compile = runJavac(jvmProject.out(), classes,
+                        List.of(artifact.toString(), "Probe.java"));
+                    check(compile.captureClean() && compile.exitCode() == 0,
+                        fixture + ": the staged JVM artifact compiles with javac "
+                            + "--release 25 -proc:none: " + compile.stdout()
+                            + compile.stderr());
+                    if (compile.exitCode() == 0) {
+                        BoundedRun run = runBounded(List.of("java", "-cp",
+                            absoluteClasspath() + File.pathSeparator + classes,
+                            "Probe"), jvmProject.out(), Map.of());
+                        assertPinnedRuntimeError(fixture + " (jvm staged artifact)",
+                            sidecar, "jvm", readAcceptanceTuple(transport), run,
+                            jvmProject);
+                    }
+                }
+            }
+        } finally {
+            deleteRecursively(jvmProject.root());
+        }
+    }
+
+    /**
+     * ffi/016 through the manifest-authored production invocation: the
+     * LuaJIT staged artifact executes the native pointer-plus-length fold
+     * (width, sign, order, length) to its pinned runtime-ok outcome, and
+     * both JVM runs are rejected before publication with the sidecar-pinned
+     * E6006 — exactly one error, the pinned FFI_UNSUPPORTED_BACKEND message
+     * at the materialized declaration's {@code @extern-c} range, no FFI
+     * metadata, stages nothing — and the previous artifact set stays
+     * byte-identical. The native library is compiled into a private temp
+     * directory through the bounded subprocess contract and deleted after
+     * all artifact executions finish.
+     */
+    private static void driveFfiBytesPointerLength() throws Exception {
+        String corpusRel = FFI_CORPUS + "/" + FFI_BYTES_FIXTURE + ".deal";
+        String raw = Files.readString(CORPUS.resolve(corpusRel),
+            StandardCharsets.UTF_8);
+        check(raw.contains("data[0] = 128") && raw.contains("data[1] = 255")
+                && raw.contains("data[2] = 1") && raw.contains("59443587"),
+            "ffi/016 carries the unsigned byte order and the folded native sum "
+                + "pin (width, sign, order, length)");
+        SidecarExpectations.StructuredExpectationSidecar sidecar =
+            SidecarExpectations.StructuredExpectationSidecar.parse(Files.readString(
+                CORPUS.resolve(FFI_CORPUS).resolve(FFI_BYTES_FIXTURE
+                    + ".expect.json"), StandardCharsets.UTF_8));
+
+        Path nativeDir = Files.createTempDirectory("bytes-ffi-native-");
+        try {
+            Path nativeLibrary = compileCorpusNativeLibrary(nativeDir);
+            ManifestProject luaProject = materializeCorpusProject(corpusRel, "luajit",
+                true, nativeLibrary);
+            try {
+                ManifestCompile lua = compileManifest(luaProject, "luajit");
+                check(lua.success(), "ffi/016: the LuaJIT production compile succeeds: "
+                    + diagnosticsOf(lua));
+                if (lua.success()) {
+                    Path artifact = luaProject.out().resolve(
+                        luaProject.modulePath().replace('.', '/') + ".lua");
+                    check(Files.isRegularFile(artifact), "ffi/016: the staged LuaJIT "
+                        + "artifact exists: " + artifact);
+                    if (Files.isRegularFile(artifact)) {
+                        Path transport = luaProject.out().resolve(ACCEPT_TRANSPORT);
+                        Path probe = luaProject.out().resolve("__accept_probe.lua");
+                        Files.writeString(probe, luaAcceptanceProbe(
+                            artifact.toAbsolutePath().toString(), List.of(), transport),
+                            StandardCharsets.UTF_8);
+                        BoundedRun run = runBounded(List.of("luajit",
+                            "__accept_probe.lua"), luaProject.out(),
+                            Map.of("DEAL_DEFER_MAIN", "1"));
+                        assertPinnedRuntimeOk("ffi/016 (luajit staged artifact)",
+                            sidecar, "luajit", run);
+                    }
+                }
+            } finally {
+                deleteRecursively(luaProject.root());
+            }
+
+            ManifestProject preserved = materializeCorpusProject(corpusRel, "jvm",
+                true, nativeLibrary);
+            try {
+                Files.createDirectories(preserved.out());
+                Files.writeString(preserved.out().resolve("previous-artifact.java"),
+                    "previous\n", StandardCharsets.UTF_8);
+                Map<String, byte[]> before = snapshotTree(preserved.out());
+                ManifestCompile jvm = compileManifest(preserved, "jvm");
+                assertPinnedJvmFfiRejection("ffi/016 (preserved output root)",
+                    sidecar, jvm);
+                checkTreeIdentical(before, preserved.out(), "ffi/016: the JVM rejection "
+                    + "stages nothing and preserves the previous artifact set "
+                    + "byte-identical");
+            } finally {
+                deleteRecursively(preserved.root());
+            }
+
+            ManifestProject fresh = materializeCorpusProject(corpusRel, "jvm", true,
+                nativeLibrary);
+            try {
+                ManifestCompile jvm = compileManifest(fresh, "jvm");
+                assertPinnedJvmFfiRejection("ffi/016 (fresh output root)", sidecar, jvm);
+                check(!Files.exists(fresh.out()), "ffi/016: a rejected JVM compile stages "
+                    + "no output root");
+            } finally {
+                deleteRecursively(fresh.root());
+            }
+        } finally {
+            deleteRecursively(nativeDir);
+        }
+    }
+
+    /**
+     * Compiles the committed FFI C fixture ({@code ffi/support/native.c})
+     * into the caller-owned temporary directory through the bounded
+     * subprocess contract: the drive never writes the checkout's shared
+     * {@code build/} output, the GCC compile is deadline- and
+     * capture-bounded, and a missing source, an unclean or failed compile,
+     * or a missing library fails closed (never a skip). The caller deletes
+     * the directory after all artifact executions finish.
+     */
+    private static Path compileCorpusNativeLibrary(Path nativeDir) throws Exception {
+        Path source = CORPUS.resolve(FFI_NATIVE_SOURCE).toAbsolutePath().normalize();
+        check(Files.isRegularFile(source),
+            "ffi/016: the committed FFI C fixture exists: " + source);
+        Path library = nativeDir.resolve(FFI_NATIVE_LIBRARY);
+        if (!Files.isRegularFile(source)) {
+            return library;
+        }
+        BoundedRun compile = runBounded(List.of("gcc", "-shared", "-fPIC", "-O2",
+            "-o", library.toString(), source.toString()), nativeDir, Map.of());
+        check(compile.captureClean(), "ffi/016: the private native-library "
+            + "compile is capture-clean");
+        checkEq(0, compile.exitCode(), "ffi/016: the private native-library "
+            + "compile succeeds: " + compile.stdout() + compile.stderr());
+        check(Files.isRegularFile(library), "ffi/016: the private native library "
+            + "exists: " + library);
+        return library;
+    }
+
+    /**
+     * The exact JVM pre-publication rejection of one ffi/016 compile: the
+     * sidecar's compile-reject leg is the mode/code authority, the
+     * orchestrator reports exactly one error — the pinned phase-3.9
+     * {@code FFI_UNSUPPORTED_BACKEND} message at the materialized
+     * declaration's {@code @extern-c} directive range — and no FFI metadata
+     * is generated (the rejection precedes the lowering).
+     */
+    private static void assertPinnedJvmFfiRejection(String label,
+            SidecarExpectations.StructuredExpectationSidecar sidecar,
+            ManifestCompile compile) throws Exception {
+        check(!compile.success(), label + ": the JVM production compile is rejected");
+        SidecarExpectations.RuntimeExpectation leg = sidecar.expectationFor("jvm");
+        check(leg instanceof SidecarExpectations.RuntimeExpectation.Rejected rejected
+                && "compile-reject".equals(rejected.mode()),
+            label + ": the sidecar pins the JVM compile-reject mode");
+        if (!(leg instanceof SidecarExpectations.RuntimeExpectation.Rejected rejected)) {
+            return;
+        }
+        Path declaration = compile.project().ffiDeclaration();
+        check(declaration != null && Files.isRegularFile(declaration),
+            label + ": the materialized extern-C declaration exists: " + declaration);
+        if (declaration == null || !Files.isRegularFile(declaration)) {
+            return;
+        }
+        List<CompilerDiagnostic> errors = compile.orchestrator() == null
+            ? List.of()
+            : compile.orchestrator().diagnostics().stream()
+                .filter(diagnostic -> "error".equals(diagnostic.severity())).toList();
+        checkEq(1, errors.size(), label + ": exactly one error diagnostic: "
+            + diagnosticsOf(compile));
+        if (errors.size() != 1) {
+            return;
+        }
+        CompilerDiagnostic rejection = errors.get(0);
+        checkEq(rejected.code(), rejection.code(),
+            label + ": the sidecar-pinned rejection code");
+        checkEq(JVM_FFI_REJECTION_MESSAGE, rejection.message(),
+            label + ": the pinned FFI_UNSUPPORTED_BACKEND message");
+        String text = Files.readString(declaration, StandardCharsets.UTF_8);
+        int directive = text.indexOf("// @extern-c");
+        check(directive >= 0, label + ": the materialized declaration carries the "
+            + "@extern-c directive");
+        if (directive < 0) {
+            return;
+        }
+        int lineStart = text.lastIndexOf('\n', directive) + 1;
+        int line = text.substring(0, lineStart).split("\n", -1).length;
+        int lineEnd = directive;
+        while (lineEnd < text.length() && text.charAt(lineEnd) != '\n'
+                && text.charAt(lineEnd) != '\r') {
+            lineEnd++;
+        }
+        checkEq(line, rejection.range().startLine(),
+            label + ": the E6006 range starts at the materialized @extern-c line");
+        checkEq(directive - lineStart + 1, rejection.range().startColumn(),
+            label + ": the E6006 range starts at the materialized @extern-c column");
+        checkEq(line, rejection.range().endLine(),
+            label + ": the E6006 range ends on the materialized @extern-c line");
+        checkEq(lineEnd - lineStart + 1, rejection.range().endColumn(),
+            label + ": the E6006 range covers the materialized @extern-c comment");
+        checkEq(declaration.toRealPath().toString(), rejection.range().file(),
+            label + ": the E6006 range names the materialized declaration");
+        check(compile.orchestrator().ffiGenerations().isEmpty(), label + ": the JVM "
+            + "rejection publishes no FFI metadata");
+    }
+
+    /**
+     * The pinned runtime-error leg of one staged-artifact run: the artifact
+     * reports the fixture itself as the entry source (fixture-as-entry
+     * materialization), the raw coordinates rebase across the stripped
+     * headers, and every sidecar-pinned field plus the exit status and both
+     * streams compare exactly. The sidecar's own stdout is the canonical
+     * framing of the captured tuple.
+     */
+    private static void assertPinnedRuntimeError(String label,
+            SidecarExpectations.StructuredExpectationSidecar sidecar, String backend,
+            CapturedTuple tuple, BoundedRun run, ManifestProject project) {
+        SidecarExpectations.RuntimeExpectation leg = sidecar.expectationFor(backend);
+        check(leg instanceof SidecarExpectations.RuntimeExpectation.Executed executed
+                && executed.isRuntimeError(),
+            label + ": the sidecar pins a runtime-error leg");
+        if (!(leg instanceof SidecarExpectations.RuntimeExpectation.Executed executed)
+                || !executed.isRuntimeError()) {
+            return;
+        }
+        check(run != null && run.captureClean(), label + ": the staged-artifact run "
+            + "is capture-clean");
+        check(tuple != null, label + ": the staged artifact transports the DEAL "
+            + "failure tuple");
+        if (tuple == null) {
+            return;
+        }
+        SidecarExpectations.ErrorExpectation pinned = executed.error();
+        check(pinned != null, label + ": the sidecar pins the error snapshot");
+        if (pinned == null) {
+            return;
+        }
+        Path reported = tuple.file() == null ? null
+            : Path.of(tuple.file()).toAbsolutePath().normalize();
+        String relative = reported == null ? null
+            : project.root().relativize(reported).toString()
+                .replace(File.separatorChar, '/');
+        checkEq(project.corpusRel(), relative, label + ": the artifact reports the "
+            + "fixture itself as the entry source (fixture-as-entry materialization)");
+        Integer rebasedLine = tuple.line() == null ? null
+            : tuple.line() + project.strippedHeaderLines();
+        checkEq(pinned.code(), tuple.code(), label + ": the pinned code");
+        checkEq(pinned.message(), tuple.message(), label + ": the pinned message");
+        checkEq(pinned.line(), rebasedLine, label + ": the pinned raw line (rebased "
+            + "across the stripped headers)");
+        checkEq(pinned.column(), tuple.column(), label + ": the pinned column");
+        checkEq(pinned.expected().orElse(null), tuple.expected(), label + ": the "
+            + "pinned expected token");
+        checkEq(pinned.actual().orElse(null), tuple.actual(), label + ": the pinned "
+            + "actual token");
+        checkEq(executed.exitCode(), run.exitCode(), label + ": the pinned exit code");
+        checkEq("", run.stdout(), label + ": the probe prints nothing on stdout");
+        checkEq(new String(executed.stderr(), StandardCharsets.UTF_8), run.stderr(),
+            label + ": the pinned stderr");
+        SidecarExpectations.ErrorExpectation captured =
+            new SidecarExpectations.ErrorExpectation(tuple.code(), tuple.message(),
+                relative, rebasedLine, tuple.column(),
+                pinned.pinsOptional("expected")
+                    ? java.util.Optional.ofNullable(tuple.expected())
+                    : java.util.Optional.empty(),
+                pinned.pinsOptional("actual")
+                    ? java.util.Optional.ofNullable(tuple.actual())
+                    : java.util.Optional.empty(),
+                java.util.Optional.empty(), java.util.Optional.empty());
+        String framing = ErrorSnapshot.CODE_LINE_PREFIX + tuple.code() + "\n"
+            + ErrorSnapshot.SNAPSHOT_LINE_PREFIX
+            + ErrorSnapshot.canonicalJson(captured) + "\n";
+        checkEq(new String(executed.stdout(), StandardCharsets.UTF_8), framing,
+            label + ": the sidecar stdout is the canonical framing of the captured "
+                + "tuple");
+    }
+
+    /** The pinned runtime-ok leg of one staged-artifact run. */
+    private static void assertPinnedRuntimeOk(String label,
+            SidecarExpectations.StructuredExpectationSidecar sidecar, String backend,
+            BoundedRun run) {
+        SidecarExpectations.RuntimeExpectation leg = sidecar.expectationFor(backend);
+        check(leg instanceof SidecarExpectations.RuntimeExpectation.Executed,
+            label + ": the sidecar pins an executed leg");
+        if (!(leg instanceof SidecarExpectations.RuntimeExpectation.Executed executed)) {
+            return;
+        }
+        checkEq("runtime-ok", executed.mode(), label + ": the pinned mode");
+        check(executed.error() == null, label + ": a runtime-ok leg pins no error "
+            + "snapshot");
+        check(run != null && run.captureClean(), label + ": the staged-artifact run "
+            + "is capture-clean");
+        if (run == null) {
+            return;
+        }
+        checkEq(executed.exitCode(), run.exitCode(), label + ": the pinned exit code");
+        checkEq(new String(executed.stdout(), StandardCharsets.UTF_8), run.stdout(),
+            label + ": the pinned stdout");
+        checkEq(new String(executed.stderr(), StandardCharsets.UTF_8), run.stderr(),
+            label + ": the pinned stderr");
+    }
+
+    private static Map<String, byte[]> snapshotTree(Path root) throws Exception {
+        Map<String, byte[]> snapshot = new LinkedHashMap<>();
+        if (!Files.isDirectory(root)) {
+            return snapshot;
+        }
+        try (var walk = Files.walk(root)) {
+            for (Path file : walk.filter(Files::isRegularFile).sorted().toList()) {
+                snapshot.put(root.relativize(file).toString()
+                    .replace(File.separatorChar, '/'), Files.readAllBytes(file));
+            }
+        }
+        return snapshot;
+    }
+
+    private static void checkTreeIdentical(Map<String, byte[]> before, Path root,
+            String message) throws Exception {
+        Map<String, byte[]> after = snapshotTree(root);
+        checkEq(before.keySet(), after.keySet(), message + " (the file set)");
+        for (Map.Entry<String, byte[]> entry : before.entrySet()) {
+            check(java.util.Arrays.equals(entry.getValue(), after.get(entry.getKey())),
+                message + " (" + entry.getKey() + ")");
+        }
+    }
+
+    // =========================================================================
+    // 10. The first-class bytes allocation: the indirect ladder on all three
+    //     consumers
+    // =========================================================================
+
+    /** The first-class bytes allocation success program (K14's bytes member). */
+    private static final String FIRST_CLASS_BYTES_ALLOCATE_SOURCE = """
+        export function main(): null {
+          let annotated: (x: int) => bytes = bytes
+          let inferred = bytes
+          let a: bytes = annotated(2)
+          let b: bytes = inferred(3)
+          let carried: ((x: int) => bytes)[] = [bytes]
+          let c: bytes = carried[0](4)
+          let alias: bytes = a
+          a[0] = 7
+          if (alias[0] !== 7 || a.length !== 2 || b.length !== 3 || c.length !== 4) {
+            throw { code: "TEST_FAIL", message: "indirect allocation identity" }
+          }
+          if (a[1] !== 0 || b[2] !== 0 || c[3] !== 0) {
+            throw { code: "TEST_FAIL", message: "indirect zero fill" }
+          }
+          return null
+        }
+        """;
+
+    /** The negative arm: the indirect call's E8012 at the call expression. */
+    private static final String FIRST_CLASS_BYTES_NEGATIVE_SOURCE = """
+        export function main(): null {
+          let g: (x: int) => bytes = bytes
+          let bad: bytes = g(-1)
+          return null
+        }
+        """;
+
+    private static void testFirstClassBytesAllocation() throws Exception {
+        System.out.println("-- the first-class bytes allocation: indirect zero fill, "
+            + "identity, and the negative arm on all three consumers --");
+        driveFirstClassBytesSuccess();
+        driveFirstClassBytesNegative();
+    }
+
+    private static void driveFirstClassBytesSuccess() throws Exception {
+        String label = "first-class bytes allocation";
+        for (String backend : List.of("luajit", "jvm")) {
+            ScratchProject project = materializeScratchProject(
+                FIRST_CLASS_BYTES_ALLOCATE_SOURCE, backend);
+            try {
+                ManifestCompile compile = compileManifest(asManifestProject(project),
+                    backend);
+                check(compile.success(), label + " (" + backend + "): the "
+                    + "manifest-authored compile succeeds: " + diagnosticsOf(compile));
+                if (!compile.success()) {
+                    continue;
+                }
+                if ("luajit".equals(backend)) {
+                    SemanticRuntimeModel.ConsumerRun oracle =
+                        runManifestOracle(compile.orchestrator());
+                    check(oracle != null && oracle.terminal()
+                            instanceof SemanticRuntimeModel.Terminal.Success,
+                        label + ": the oracle runs the indirect allocations to "
+                            + "success: " + (oracle == null ? "no lowering"
+                                : oracle.terminal()));
+                }
+                executeScratchArtifact(project, backend, label, true, null);
+            } finally {
+                deleteRecursively(project.root());
+            }
+        }
+    }
+
+    private static void driveFirstClassBytesNegative() throws Exception {
+        String label = "first-class bytes negative length";
+        String sentinel = "g(-1)";
+        for (String backend : List.of("luajit", "jvm")) {
+            ScratchProject project = materializeScratchProject(
+                FIRST_CLASS_BYTES_NEGATIVE_SOURCE, backend);
+            try {
+                ManifestCompile compile = compileManifest(asManifestProject(project),
+                    backend);
+                check(compile.success(), label + " (" + backend + "): the "
+                    + "manifest-authored compile succeeds: " + diagnosticsOf(compile));
+                if (!compile.success()) {
+                    continue;
+                }
+                String expectedOrigin = project.entry().toAbsolutePath().toString()
+                    + ":" + sentinelLine(FIRST_CLASS_BYTES_NEGATIVE_SOURCE, sentinel)
+                    + ":" + sentinelColumn(FIRST_CLASS_BYTES_NEGATIVE_SOURCE, sentinel);
+                if ("luajit".equals(backend)) {
+                    SemanticRuntimeModel.ConsumerRun oracle =
+                        runManifestOracle(compile.orchestrator());
+                    boolean pinned = oracle != null && oracle.terminal()
+                            instanceof SemanticRuntimeModel.Terminal.DealFailure failure
+                        && "E8012".equals(failure.error().code())
+                        && "bytes length must be non-negative".equals(
+                            failure.error().message())
+                        && expectedOrigin.equals(failure.error().origin());
+                    check(pinned, label + ": the oracle projects the pinned E8012 at "
+                        + "the indirect call expression: " + (oracle == null
+                            ? "no lowering" : oracle.terminal()));
+                }
+                executeScratchArtifact(project, backend, label, false,
+                    expectedOrigin);
+            } finally {
+                deleteRecursively(project.root());
+            }
+        }
+    }
+
+    private static int sentinelLine(String source, String sentinel) {
+        String[] lines = source.split("\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            if (lines[i].contains(sentinel)) {
+                return i + 1;
+            }
+        }
+        throw new IllegalStateException("the sentinel '" + sentinel
+            + "' is absent from the source");
+    }
+
+    private static int sentinelColumn(String source, String sentinel) {
+        String[] lines = source.split("\n", -1);
+        for (String line : lines) {
+            int index = line.indexOf(sentinel);
+            if (index >= 0) {
+                return index + 1;
+            }
+        }
+        throw new IllegalStateException("the sentinel '" + sentinel
+            + "' is absent from the source");
+    }
+
+    /** The oracle's run of one manifest-authored compile over the closure. */
+    private static SemanticRuntimeModel.ConsumerRun runManifestOracle(
+            CompilationOrchestrator orchestrator) {
+        CheckedProjectBuildResult checked = orchestrator.checkedProject();
+        RequirementManifestResult manifests = orchestrator.requirementManifests();
+        SemanticLowerer.ProjectLoweringResult result = SemanticLowerer.lowerProject(
+            productionInvocation(), checked.input(), checked.index(),
+            manifests.manifests(), orchestrator.hostDeclarationSurface(), Map.of(),
+            Map.of(), BuiltinErrorDeclaration.synthesized(
+                checked.input().modules().get(0).ast().span()),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW), Set.of());
+        check(result.project() != null, "the manifest oracle lowering runs with zero "
+            + "diagnostics: " + result.diagnostics());
+        if (result.project() == null) {
+            return null;
+        }
+        return SemanticOracle.executeProjectInits(result.project(), result.tables(),
+            result.registries(), null);
+    }
+
+    /**
+     * Executes the actual staged artifacts of one scratch project on the
+     * named backend and asserts the exact status and streams plus the
+     * transported DEAL tuple.
+     */
+    private static void executeScratchArtifact(ScratchProject project, String backend,
+            String label, boolean expectSuccess, String expectedOrigin)
+            throws Exception {
+        if ("luajit".equals(backend)) {
+            Path artifact = project.out().resolve(
+                project.modulePath().replace('.', '/') + ".lua");
+            check(Files.isRegularFile(artifact), label + " (" + backend + "): the "
+                + "staged LuaJIT artifact exists: " + artifact);
+            if (!Files.isRegularFile(artifact)) {
+                return;
+            }
+            Path transport = project.out().resolve(ACCEPT_TRANSPORT);
+            Path probe = project.out().resolve("__accept_probe.lua");
+            Files.writeString(probe, luaAcceptanceProbe(
+                artifact.toAbsolutePath().toString(), List.of(), transport),
+                StandardCharsets.UTF_8);
+            BoundedRun run = runBounded(List.of("luajit", "__accept_probe.lua"),
+                project.out(), Map.of("DEAL_DEFER_MAIN", "1"));
+            assertScratchRun(label + " (" + backend + ")", run,
+                readAcceptanceTuple(transport), expectSuccess, expectedOrigin);
+            return;
+        }
+        String className = JvmNames.classNameFor(project.modulePath());
+        Path artifact = project.out().resolve(className + ".java");
+        check(Files.isRegularFile(artifact), label + " (" + backend + "): the staged "
+            + "JVM artifact exists: " + artifact);
+        if (!Files.isRegularFile(artifact)) {
+            return;
+        }
+        Path transport = project.out().resolve(ACCEPT_TRANSPORT);
+        Files.writeString(project.out().resolve("Probe.java"),
+            jvmAcceptanceProbe(className, project.modulePath(), List.of(), transport),
+            StandardCharsets.UTF_8);
+        Path classes = project.out().resolve("classes");
+        Files.createDirectories(classes);
+        BoundedRun compile = runJavac(project.out(), classes,
+            List.of(artifact.toString(), "Probe.java"));
+        check(compile.captureClean() && compile.exitCode() == 0, label + " ("
+            + backend + "): the staged JVM artifact compiles with javac --release "
+            + "25 -proc:none: " + compile.stdout() + compile.stderr());
+        if (compile.exitCode() != 0) {
+            return;
+        }
+        BoundedRun run = runBounded(List.of("java", "-cp",
+            absoluteClasspath() + File.pathSeparator + classes, "Probe"),
+            project.out(), Map.of());
+        assertScratchRun(label + " (" + backend + ")", run,
+            readAcceptanceTuple(transport), expectSuccess, expectedOrigin);
+    }
+
+    /** The scratch drives' exact status, streams, and transported tuple. */
+    private static void assertScratchRun(String label, BoundedRun run,
+            CapturedTuple tuple, boolean expectSuccess, String expectedOrigin) {
+        check(run != null && run.captureClean(), label + ": the staged-artifact run "
+            + "is capture-clean");
+        if (run == null) {
+            return;
+        }
+        if (expectSuccess) {
+            checkEq(0, run.exitCode(), label + ": the staged artifact exits zero");
+            checkEq("", run.stdout(), label + ": the staged artifact prints nothing "
+                + "on stdout");
+            checkEq("", run.stderr(), label + ": the staged artifact prints nothing "
+                + "on stderr");
+            check(tuple == null, label + ": the staged artifact projects no DEAL "
+                + "error");
+            return;
+        }
+        checkEq(1, run.exitCode(), label + ": the staged artifact exits one on the "
+            + "pinned DEAL failure");
+        checkEq("", run.stdout(), label + ": the probe prints nothing on stdout");
+        checkEq("", run.stderr(), label + ": the probe prints nothing on stderr");
+        check(tuple != null, label + ": the staged artifact transports the DEAL "
+            + "failure tuple");
+        if (tuple == null) {
+            return;
+        }
+        checkEq("E8012", tuple.code(), label + ": the pinned code");
+        checkEq("bytes length must be non-negative", tuple.message(),
+            label + ": the pinned message");
+        checkEq(expectedOrigin, tuple.file() + ":" + tuple.line() + ":"
+            + tuple.column(), label + ": the pinned origin is the indirect call "
+            + "expression");
+        check(tuple.expected() == null && tuple.actual() == null,
+            label + ": the allocation row pins no expected/actual tokens");
+    }
+
+    // =========================================================================
     // Entry point
     // =========================================================================
 
@@ -3218,6 +4244,8 @@ public class BytesCoverageTest {
         testIndirectBytesAllocation();
         testFocusedRunnerContract();
         testOracleRealization();
+        testFirstClassBytesAllocation();
+        testManifestProductionAcceptance();
         System.out.println();
         System.out.println("BytesCoverageTest: " + passed + " passed, " + failed
             + " failed");
