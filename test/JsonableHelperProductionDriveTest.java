@@ -65,8 +65,9 @@ import java.util.stream.Stream;
  *
  * <p>One drive compiles every fixture of the family through the
  * release-owned production invocation on LuaJIT and JVM and executes each
- * published artifact under its real toolchain: the 30 sidecar fixtures of
- * {@code backend-runtime/jsonable/**}, the two structural fixtures
+ * published artifact under its real toolchain: the sidecar-bearing fixtures
+ * of {@code backend-runtime/jsonable/**} (the current corpus discovery, not
+ * a frozen inventory), the two structural fixtures
  * ({@code lua-abi/jsonable-helper-name-near-collision},
  * {@code lua-abi-structural/jsonable-helper-export-keys}), and the
  * family's pinned compile-error fixture
@@ -116,7 +117,10 @@ import java.util.stream.Stream;
  * {@code number | null}, and {@code number[]} positions (with its
  * explicit-value control). The pinned-failure leg's comparison is itself
  * covered by negative controls: unexpected process stdout, an incorrect
- * process exit status, or wrong stderr is rejected.</p>
+ * process exit status, or wrong stderr is rejected, and the exact-text
+ * artifact leg is only credited when the process completes its tested body
+ * with exit 0, empty transcripts, no probe defect, and no failure transport
+ * (the nonzero-without-transport control included).</p>
  *
  * <p>The combined dependency step runs the oracle over every fixture of
  * the family through the same one-lowering closure (the runtime-ok
@@ -176,42 +180,33 @@ public class JsonableHelperProductionDriveTest {
     private static final String COMPILE_REJECT =
         FAMILY_DIR + "/jsonable-minimal-table-nested-array-access";
 
-    /** The pinned 30-fixture sidecar family (this revision). */
-    private static final List<String> FAMILY_FIXTURES = List.of(
-        "fromjson-extra-key-runtime",
-        "fromjson-failure-no-partial-object",
-        "jsonable-complex-roundtrip",
-        "jsonable-cross-module",
-        "jsonable-cross-module-nested-class-array",
-        "jsonable-empty-array-accepted",
-        "jsonable-fromjson",
-        "jsonable-fromjson-extra-keys",
-        "jsonable-fromjson-nested-depth3",
-        "jsonable-fromjson-null",
-        "jsonable-fromjson-top-level-scalar",
-        "jsonable-helper-exports",
-        "jsonable-local-nested-class-array",
-        "jsonable-malformed-input",
-        "jsonable-minimal-nested-class-array-access",
-        "jsonable-nested",
-        "jsonable-nested-array-extra-key",
-        "jsonable-nested-array-malformed-element",
-        "jsonable-null-field-accepts-null",
-        "jsonable-null-field-rejects-value",
-        "jsonable-optional-nullable",
-        "jsonable-optional-nullable-nested-class",
-        "jsonable-roundtrip",
-        "jsonable-table-field-nested-arrays",
-        "jsonable-tojson",
-        "jsonable-tojson-omits-missing",
-        "jsonable-tojson-rejects-cyclic-table",
-        "nested-array-roundtrip",
-        "optional-nullable-three-state-roundtrip",
-        "table-field-roundtrip");
-
-    /** The family's companions (relative imports; no sidecar of their own). */
-    private static final List<String> FAMILY_COMPANIONS = List.of(
-        "jsonable_batch2_lib", "jsonable_complex_lib", "jsonable_lib");
+    /**
+     * The driven family: the fixtures of {@code backend-runtime/jsonable}
+     * discovered from the current corpus revision — every {@code .deal} file
+     * that carries a sidecar. The discovery is the corpus rule, never a
+     * frozen inventory: an owner-authorized fixture addition or cut changes
+     * the driven set without editing this drive. Companions (relative
+     * imports, no sidecar of their own) and the sidecar-free compile-reject
+     * fixture are excluded by the sidecar rule and stay covered by their own
+     * focused checks below.
+     */
+    private static List<String> discoveredFamilyFixtures() throws Exception {
+        List<String> fixtures = new ArrayList<>();
+        try (Stream<Path> entries = Files.list(CONFORMANCE.resolve(FAMILY_DIR))) {
+            for (Path file : entries.sorted().toList()) {
+                String name = file.getFileName().toString();
+                if (!name.endsWith(".deal")) {
+                    continue;
+                }
+                String stem = name.substring(0, name.length() - ".deal".length());
+                if (Files.isRegularFile(CONFORMANCE.resolve(
+                        FAMILY_DIR + "/" + stem + ".expect.json"))) {
+                    fixtures.add(stem);
+                }
+            }
+        }
+        return fixtures;
+    }
 
     /** The pinned runtime-error fixture (the toJson call origin pin). */
     private static final String CYCLIC_FIXTURE =
@@ -246,45 +241,47 @@ public class JsonableHelperProductionDriveTest {
     // =========================================================================
 
     private static void testCorpusInventory() throws Exception {
-        System.out.println("-- the @jsonable helper family inventory: the pinned "
-            + "30-fixture slate, the companions, and the structural fixtures --");
-        List<String> fixtures = new ArrayList<>();
-        List<String> sidecars = new ArrayList<>();
-        try (Stream<Path> entries = Files.list(CONFORMANCE.resolve(FAMILY_DIR))) {
-            for (Path file : entries.sorted().toList()) {
-                String name = file.getFileName().toString();
-                if (name.endsWith(".deal")) {
-                    fixtures.add(name.substring(0, name.length() - ".deal".length()));
-                } else if (name.endsWith(".expect.json")) {
-                    sidecars.add(name.substring(0,
-                        name.length() - ".expect.json".length()));
-                }
-            }
-        }
-        List<String> pinnedFixtures = new ArrayList<>(FAMILY_FIXTURES);
-        pinnedFixtures.addAll(FAMILY_COMPANIONS);
-        pinnedFixtures.add("jsonable-minimal-table-nested-array-access");
-        pinnedFixtures.sort(String::compareTo);
-        fixtures.sort(String::compareTo);
-        checkEq(pinnedFixtures, fixtures,
-            "the jsonable directory carries exactly the pinned fixture inventory");
-        List<String> pinnedSidecars = new ArrayList<>(FAMILY_FIXTURES);
-        pinnedSidecars.sort(String::compareTo);
-        sidecars.sort(String::compareTo);
-        checkEq(pinnedSidecars, sidecars,
-            "the jsonable directory carries exactly one sidecar per driven fixture");
-        checkEq(30, FAMILY_FIXTURES.size(), "the family is the pinned 30-fixture slate");
-        for (String fixture : FAMILY_FIXTURES) {
-            String path = FAMILY_DIR + "/" + fixture;
-            check(Files.isRegularFile(CONFORMANCE.resolve(path + ".deal")),
-                path + " is a corpus fixture");
-            check(Files.isRegularFile(CONFORMANCE.resolve(path + ".expect.json")),
-                path + " carries its sidecar");
+        System.out.println("-- the @jsonable helper family inventory: current corpus "
+            + "discovery (sidecar-bearing fixtures), the required structural "
+            + "fixtures, and the companion-covered sidecar-free fixtures --");
+        List<String> discovered = discoveredFamilyFixtures();
+        check(!discovered.isEmpty(),
+            "the jsonable directory discovers at least one driven fixture");
+        // The explicitly required fixtures of the helper contract: the
+        // pinned runtime-error fixture (the invoking-call-origin pin) and the
+        // cross-module helper call fixture are part of the discovered set.
+        check(discovered.contains("jsonable-tojson-rejects-cyclic-table"),
+            CYCLIC_FIXTURE + " is discovered as a driven fixture");
+        check(discovered.contains("jsonable-cross-module"),
+            CROSS_MODULE_FIXTURE + " is discovered as a driven fixture");
+        // The sidecar rule is bidirectional: every sidecar in the directory
+        // belongs to a discovered fixture (no orphan expectation), and every
+        // discovery candidate carries its own sidecar by construction.
+        for (String sidecar : sidecarStems()) {
+            check(discovered.contains(sidecar), sidecar + ".expect.json belongs "
+                + "to a discovered fixture (no orphan sidecar)");
         }
         check(Files.isRegularFile(CONFORMANCE.resolve(NEAR_COLLISION + ".deal")),
             "the near-collision structural fixture exists");
         check(Files.isRegularFile(CONFORMANCE.resolve(EXPORT_KEYS + ".deal")),
             "the helper-export-keys structural fixture exists");
+        check(Files.isRegularFile(CONFORMANCE.resolve(COMPILE_REJECT + ".deal")),
+            "the compile-reject structural fixture exists");
+    }
+
+    /** The sidecar stems currently present in the family directory. */
+    private static List<String> sidecarStems() throws Exception {
+        List<String> sidecars = new ArrayList<>();
+        try (Stream<Path> entries = Files.list(CONFORMANCE.resolve(FAMILY_DIR))) {
+            for (Path file : entries.sorted().toList()) {
+                String name = file.getFileName().toString();
+                if (name.endsWith(".expect.json")) {
+                    sidecars.add(name.substring(0,
+                        name.length() - ".expect.json".length()));
+                }
+            }
+        }
+        return sidecars;
     }
 
     // =========================================================================
@@ -962,9 +959,10 @@ public class JsonableHelperProductionDriveTest {
         new LinkedHashMap<>();
 
     private static void testProductionDrive() throws Exception {
+        List<String> discovered = discoveredFamilyFixtures();
         System.out.println("-- the @jsonable helper family production drive: "
-            + FAMILY_FIXTURES.size() + " fixtures on both targets --");
-        List<String> driven = new ArrayList<>(FAMILY_FIXTURES);
+            + discovered.size() + " discovered fixtures on both targets --");
+        List<String> driven = new ArrayList<>(discovered);
         driven.add(NEAR_COLLISION);
         driven.add(EXPORT_KEYS);
         for (String fixture : driven) {
@@ -1306,7 +1304,7 @@ public class JsonableHelperProductionDriveTest {
             + "family fixture (each fixture's main through its own entry "
             + "delegation, the cross-module helper call, and the pinned helper "
             + "JSON failure included) --");
-        List<String> driven = new ArrayList<>(FAMILY_FIXTURES);
+        List<String> driven = new ArrayList<>(discoveredFamilyFixtures());
         driven.add(NEAR_COLLISION);
         driven.add(EXPORT_KEYS);
         for (String fixture : driven) {
@@ -2275,7 +2273,10 @@ public class JsonableHelperProductionDriveTest {
      * returned text against the exact expected string and throws the actual
      * text on any difference, so every consumer that completes proves the
      * exact string value — the oracle, the LuaJIT artifact, and the JVM
-     * artifact alike.
+     * artifact alike. The artifact legs are only credited with the exact
+     * text when the process actually completes its tested body: exit 0, both
+     * transcripts empty, no probe defect, and no failure transport
+     * ({@link #exactHelperArtifactMismatches}).
      */
     private static void driveExactHelperText(String label, String source)
             throws Exception {
@@ -2304,17 +2305,53 @@ public class JsonableHelperProductionDriveTest {
                 }
                 Execution execution = target == Target.LUAJIT
                     ? executeLua(project, exports) : executeJvm(project, exports);
-                Capture capture = execution.capture();
-                check(capture == null, label + " [" + target.laneName()
-                    + "]: the artifact produces the exact expected helper text "
-                    + "(exit " + execution.exitCode() + "; "
-                    + (capture == null ? ""
-                        : capture.code() + " " + capture.message())
-                    + ")");
+                List<String> mismatches = exactHelperArtifactMismatches(execution);
+                for (String mismatch : mismatches) {
+                    check(false, label + " [" + target.laneName() + "]: "
+                        + mismatch);
+                }
             } finally {
                 deleteRecursively(project.root());
             }
         }
+    }
+
+    /**
+     * The exact-text artifact leg's completed-process contract: the process
+     * exits 0, both transcripts stay empty, the probe reaches every export
+     * (no {@code PROBE_DEFECT}), and no failure transport was written. A
+     * nonzero status or a stray transcript is a mismatch, never a credited
+     * exact text: {@code executeLua}/{@code executeJvm} return a null
+     * capture whenever the transport file is absent, which a process that
+     * dies before writing it (or before running the tested body) would
+     * otherwise pass.
+     */
+    private static List<String> exactHelperArtifactMismatches(
+            Execution execution) {
+        List<String> mismatches = new ArrayList<>();
+        if (execution.exitCode() != 0) {
+            mismatches.add("the artifact exits nonzero (exit "
+                + execution.exitCode() + "; stderr " + execution.stderr() + ")");
+        }
+        if (!execution.stdout().isEmpty()) {
+            mismatches.add("the artifact run emits unexpected stdout ("
+                + execution.stdout() + ")");
+        }
+        if (!execution.stderr().isEmpty()) {
+            mismatches.add("the artifact run emits unexpected stderr ("
+                + execution.stderr() + ")");
+        }
+        if (execution.probeDefect()) {
+            mismatches.add("the artifact drive misses an export ("
+                + (execution.capture() == null ? ""
+                    : execution.capture().message()) + ")");
+        }
+        if (execution.capture() != null) {
+            mismatches.add("the artifact raises a failure instead of the exact "
+                + "expected helper text (" + execution.capture().code() + " "
+                + execution.capture().message() + ")");
+        }
+        return mismatches;
     }
 
     /** The shared nested-class fixture: {@code Wrapper.child.data} is the table field. */
@@ -2591,12 +2628,12 @@ public class JsonableHelperProductionDriveTest {
                     ? executeLua(project, exports) : executeJvm(project, exports);
                 Capture capture = execution.capture();
                 if (oracle == null) {
-                    check(capture == null, label + " [" + target.laneName()
-                        + "]: the artifact agrees with the oracle's success (exit "
-                        + execution.exitCode() + "; "
-                        + (capture == null ? ""
-                            : capture.code() + " " + capture.message())
-                        + ")");
+                    for (String mismatch : exactHelperArtifactMismatches(
+                            execution)) {
+                        check(false, label + " [" + target.laneName()
+                            + "]: the artifact agrees with the oracle's success: "
+                            + mismatch);
+                    }
                 } else {
                     check(capture != null, label + " [" + target.laneName()
                         + "]: the artifact agrees with the oracle's failure (exit "
@@ -2697,6 +2734,51 @@ public class JsonableHelperProductionDriveTest {
             + "}\n\n"
             + "export function main(): null {\n  return null;\n}\n";
         driveThreeConsumerParity("table-array-view-delete", tableSource);
+    }
+
+    /**
+     * The exact-text artifact leg's negative controls: the comparator (the
+     * control) accepts a clean zero-status, empty-transcript run and rejects
+     * a nonzero execution without a transport file — the case that only
+     * {@code capture == null} previously credited as the exact text — plus
+     * unexpected stdout, unexpected stderr, a probe defect, and a written
+     * failure transport.
+     */
+    private static void testExactHelperArtifactNegativeControls() {
+        System.out.println("-- the exact-text artifact leg's negative controls: a "
+            + "nonzero execution without a transport file is rejected --");
+        Execution clean = new Execution(0, "", "", null, false);
+        check(exactHelperArtifactMismatches(clean).isEmpty(),
+            "the comparator accepts a completed exact-text run (the control)");
+        Execution nonzeroNoTransport = new Execution(1, "", "", null, false);
+        List<String> nonzero = exactHelperArtifactMismatches(
+            nonzeroNoTransport);
+        check(nonzero.stream().anyMatch(m -> m.contains("exits nonzero")),
+            "the comparator rejects a nonzero execution without a transport "
+                + "file: " + nonzero);
+        Execution strayStdout = new Execution(0, "noise\n", "", null, false);
+        check(exactHelperArtifactMismatches(strayStdout).stream()
+                .anyMatch(m -> m.contains("unexpected stdout")),
+            "the comparator rejects unexpected stdout: "
+                + exactHelperArtifactMismatches(strayStdout));
+        Execution strayStderr = new Execution(0, "", "boom\n", null, false);
+        check(exactHelperArtifactMismatches(strayStderr).stream()
+                .anyMatch(m -> m.contains("unexpected stderr")),
+            "the comparator rejects unexpected stderr: "
+                + exactHelperArtifactMismatches(strayStderr));
+        Capture defect = new Capture("PROBE_DEFECT", "no export", null, null, null,
+            null, null);
+        Execution probeDefect = new Execution(1, "", "", defect, true);
+        check(exactHelperArtifactMismatches(probeDefect).stream()
+                .anyMatch(m -> m.contains("misses an export")),
+            "the comparator rejects a probe defect: "
+                + exactHelperArtifactMismatches(probeDefect));
+        Capture failure = new Capture("E8001", "boom", null, null, null, null, null);
+        Execution captured = new Execution(1, "", "", failure, false);
+        check(exactHelperArtifactMismatches(captured).stream()
+                .anyMatch(m -> m.contains("raises a failure")),
+            "the comparator rejects a written failure transport: "
+                + exactHelperArtifactMismatches(captured));
     }
 
     /**
@@ -3114,6 +3196,7 @@ public class JsonableHelperProductionDriveTest {
         testNestedClassDefaultNumericCarrier();
         testOracleDriverMainCoverage();
         testRuntimeErrorSidecarNegativeControls();
+        testExactHelperArtifactNegativeControls();
         testDeterminismAndExportKey();
         System.out.println("");
         System.out.println("Jsonable helper production drive: " + passed
