@@ -1933,6 +1933,49 @@ public class FailureArmAuthorityTest {
                 "data", "arrCycTable", "tags", "{__a = true, __n = 1, [1] = 1}"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5,
                 "data", jvmCyclicArrayViaTables(), "tags", jvmIntArray(1L))));
+        // A selected noncycle failure with a path-local table re-entry
+        // behind it: the table-typed field holds the unsupported function
+        // under 'bad' before its own re-entry under 'self', so the first
+        // failure precedes the cycle. Every consumer must render the walk
+        // arm at the earlier position (the oracle's adapter returns the
+        // selected failure before the E8 seam is ever consulted, so the
+        // cycle behind it is never traversed).
+        cases.add(walkCase("unsupported-before-table-cycle", "JSON_TO_WALK", "data.bad",
+            "function",
+            Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Int(1),
+                "ratio", new ClassOpsExecutor.Value.Number(0.5),
+                "data", walkFunctionThenCyclicTable(), "tags", walkIntArray(1)),
+            Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
+                "data", "fnCycTable", "tags", "{__a = true, __n = 1, [1] = 1}"),
+            Map.of("name", "n", "age", 1L, "ratio", 0.5,
+                "data", jvmFunctionThenCyclicTable(), "tags", jvmIntArray(1L))));
+        // The same shape with the cycle behind the failure closed through
+        // a mixed table/array path: 'mix' holds an array whose element is
+        // the containing table again, so the re-entry needle is the table
+        // entered before the array.
+        cases.add(walkCase("unsupported-before-mixed-cycle", "JSON_TO_WALK", "data.bad",
+            "function",
+            Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Int(1),
+                "ratio", new ClassOpsExecutor.Value.Number(0.5),
+                "data", walkFunctionThenMixedCycle(), "tags", walkIntArray(1)),
+            Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
+                "data", "fnMixTable", "tags", "{__a = true, __n = 1, [1] = 1}"),
+            Map.of("name", "n", "age", 1L, "ratio", 0.5,
+                "data", jvmFunctionThenMixedCycle(), "tags", jvmIntArray(1L))));
+        // The cycle-first control over the same graph shape: the re-entry
+        // sits under 'self' before the unsupported value under 'zbad', so
+        // the needle's own closed marker still selects the cycle arm (the
+        // selection is the walk's first failure, never the presence of an
+        // unsupported value anywhere in the subtree).
+        cases.add(walkCase("cycle-before-unsupported-value", "JSON_TO_WALK_CYCLE", null,
+            null,
+            Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Int(1),
+                "ratio", new ClassOpsExecutor.Value.Number(0.5),
+                "data", walkCyclicTableThenFunction(), "tags", walkIntArray(1)),
+            Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
+                "data", "cycFirstTable", "tags", "{__a = true, __n = 1, [1] = 1}"),
+            Map.of("name", "n", "age", 1L, "ratio", 0.5,
+                "data", jvmCyclicTableThenFunction(), "tags", jvmIntArray(1L))));
         // A table-content carrier under a key containing braces or the
         // literal spelling of a placeholder: docs/spec-v1.2.md permits
         // arbitrary string keys, so the walk's fieldPath carries the key
@@ -2691,6 +2734,53 @@ public class FailureArmAuthorityTest {
         return carrier;
     }
 
+    /**
+     * The drive's table-typed field with an unsupported function value under
+     * {@code bad} and the table's own path-local re-entry under {@code self}
+     * behind it: the walk's first failure precedes the cycle, so every
+     * consumer selects the walk arm at {@code data.bad}. The keys are declared
+     * in ascending order, so the oracle's first-insertion walk and the emitted
+     * Lua/JVM ascending-key walks agree on the position.
+     */
+    private static ClassOpsExecutor.Value walkFunctionThenCyclicTable() {
+        deal.semantic.ir.SemanticTable<ClassOpsExecutor.Value> table =
+            new deal.semantic.ir.SemanticTable<>();
+        ClassOpsExecutor.Value carrier = new ClassOpsExecutor.Value.Table(table);
+        table.put("bad", walkFunction());
+        table.put("self", carrier);
+        return carrier;
+    }
+
+    /**
+     * The same shape with the cycle closed through a mixed table/array path:
+     * {@code mix} holds an array whose element is the containing table again,
+     * so the re-entry needle is the table the walk entered before the array.
+     */
+    private static ClassOpsExecutor.Value walkFunctionThenMixedCycle() {
+        deal.semantic.ir.SemanticTable<ClassOpsExecutor.Value> table =
+            new deal.semantic.ir.SemanticTable<>();
+        ClassOpsExecutor.Value carrier = new ClassOpsExecutor.Value.Table(table);
+        ClassOpsExecutor.Value array = new ClassOpsExecutor.Value.Array(
+            deal.semantic.ir.SemanticArray.of(List.of(carrier)));
+        table.put("bad", walkFunction());
+        table.put("mix", array);
+        return carrier;
+    }
+
+    /**
+     * The cycle-first control: the path-local re-entry under {@code self}
+     * precedes the unsupported value under {@code zbad}, so the needle's own
+     * marker selects the cycle arm on every consumer.
+     */
+    private static ClassOpsExecutor.Value walkCyclicTableThenFunction() {
+        deal.semantic.ir.SemanticTable<ClassOpsExecutor.Value> table =
+            new deal.semantic.ir.SemanticTable<>();
+        ClassOpsExecutor.Value carrier = new ClassOpsExecutor.Value.Table(table);
+        table.put("self", carrier);
+        table.put("zbad", walkFunction());
+        return carrier;
+    }
+
     /** The drive's table-typed field holding one function value under {@code k}. */
     private static ClassOpsExecutor.Value walkFunctionTable() {
         return walkFunctionTable("k");
@@ -2793,6 +2883,32 @@ public class FailureArmAuthorityTest {
         return table;
     }
 
+    /** The JVM leg of the unsupported-value-before-table-cycle graph. */
+    private static deal.codegen.jvm.JvmRuntime.Table jvmFunctionThenCyclicTable() {
+        deal.codegen.jvm.JvmRuntime.Table table = new deal.codegen.jvm.JvmRuntime.Table();
+        table.write("bad", walkJvmFunction());
+        table.write("self", table);
+        return table;
+    }
+
+    /** The JVM leg of the unsupported-value-before-mixed-cycle graph. */
+    private static deal.codegen.jvm.JvmRuntime.Table jvmFunctionThenMixedCycle() {
+        deal.codegen.jvm.JvmRuntime.Table table = new deal.codegen.jvm.JvmRuntime.Table();
+        deal.codegen.jvm.JvmRuntime.Array array = new deal.codegen.jvm.JvmRuntime.Array(1);
+        array.elements.add(table);
+        table.write("bad", walkJvmFunction());
+        table.write("mix", array);
+        return table;
+    }
+
+    /** The JVM leg of the cycle-first control. */
+    private static deal.codegen.jvm.JvmRuntime.Table jvmCyclicTableThenFunction() {
+        deal.codegen.jvm.JvmRuntime.Table table = new deal.codegen.jvm.JvmRuntime.Table();
+        table.write("self", table);
+        table.write("zbad", walkJvmFunction());
+        return table;
+    }
+
     private static final String LUA_TABLE_CARRIER = "{__t = true, __keys = {}}";
 
     /** The JVM walk plan of the drive's layout. */
@@ -2826,6 +2942,25 @@ public class FailureArmAuthorityTest {
         body.append("local arrCycArr = {__a = true, __n = 1, arrCycTblB}\n");
         body.append("arrCycTblB.b = arrCycArr\n");
         body.append("arrCycTable.a = arrCycArr\n");
+        // A selected noncycle failure with a table cycle behind it: 'bad'
+        // sorts before 'self', so both the ascending-key walk and the
+        // first-insertion declaration order meet the unsupported value
+        // first.
+        body.append("local fnCycTable = {__t = true, __keys = {bad = true, "
+            + "self = true}}\n");
+        body.append("fnCycTable.bad = function() end\n");
+        body.append("fnCycTable.self = fnCycTable\n");
+        // The same shape with the cycle behind the failure closed through a
+        // mixed table/array path.
+        body.append("local fnMixTable = {__t = true, __keys = {bad = true, "
+            + "mix = true}}\n");
+        body.append("fnMixTable.bad = function() end\n");
+        body.append("fnMixTable.mix = {__a = true, __n = 1, fnMixTable}\n");
+        // The cycle-first control over the same graph shape.
+        body.append("local cycFirstTable = {__t = true, __keys = {self = true, "
+            + "zbad = true}}\n");
+        body.append("cycFirstTable.self = cycFirstTable\n");
+        body.append("cycFirstTable.zbad = function() end\n");
         body.append("local cases = {\n");
         for (WalkCase drive : cases) {
             body.append("  {label = ").append(quote(drive.label())).append(", root = ")

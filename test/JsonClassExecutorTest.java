@@ -2197,6 +2197,246 @@ public class JsonClassExecutorTest {
                 + "body's synthetic anchor)");
     }
 
+    // =========================================================================
+    // (h2) JSON_TO_CLASS: a selected noncycle failure with a cycle behind it
+    //      (the acceptance remediation of the eager mapping)
+    // =========================================================================
+
+    private static void testToJsonNoncycleFailureBeforeCycle() {
+        System.out.println("-- toJson: a selected noncycle failure before a path-local "
+            + "cycle (table, mixed table/array, and the cycle-first control) --");
+
+        ClassLayout tableLayout = layoutOf(POINT, field("data", TABLE, true));
+        ValueId classId = nextValue();
+        SemanticOp op = jsonToOp(tableLayout, classId);
+        Map<ClassId, ClassLayout> layouts = Map.of(POINT, tableLayout);
+
+        // The table-typed field holds the unsupported function under 'bad'
+        // and the table's own path-local re-entry under 'self': the first
+        // failure precedes the cycle, so the walk (and the production
+        // adapter's mapping of it) must select the walk arm at data.bad
+        // without ever descending into the later cyclic contents.
+        SemanticTable<Value> fnThenCycle = new SemanticTable<>();
+        Value.Table fnThenCycleTable = new Value.Table(fnThenCycle);
+        fnThenCycle.put("bad", functionValue());
+        fnThenCycle.put("self", fnThenCycleTable);
+        JsonStringify adapterCarrier = JsonClassAlgorithmAdapter.stringifier()
+            .stringify(fnThenCycleTable, "data");
+        check(adapterCarrier instanceof JsonStringify.Failure failure
+                && !failure.cycle()
+                && failure.fieldPath().equals("data.bad")
+                && failure.actual().equals("function"),
+            "the production adapter's mapping of an unsupported value before a table "
+                + "cycle publishes the walk arm's failure carrier at data.bad with the "
+                + "function token (never a mapping crash)");
+        SourceOrigin tableCycleOrigin = nextOrigin(null);
+        Value.Class fnThenCycleInstance = instanceOf(tableLayout,
+            Map.of("data", fnThenCycleTable));
+        Outcome<Value> tableCycleWalk = ClassOpsExecutor.executeJsonToClass(op,
+            Map.of(classId, fnThenCycleInstance), layouts,
+            JsonClassAlgorithmAdapter.stringifier(), tableCycleOrigin);
+        check(tableCycleWalk instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().code() == DiagnosticCode.E8001
+                && failure.failure().failure().message().equals(
+                    "value at data.bad is not JSON serializable: function")
+                && failure.failure().failure().expected() == null
+                && failure.failure().failure().actual().equals("function")
+                && "data.bad".equals(
+                    failure.failure().failure().metadata().get("fieldPath"))
+                && failure.failure().origin().equals(tableCycleOrigin)
+                && !failure.failure().origin().equals(op.origin()),
+            "the production adapter's class walk renders the complete walk tuple for "
+                + "an unsupported value before a table cycle (E8001, the exact message "
+                + "at data.bad, no expected field, the function token, the literal "
+                + "fieldPath metadata, and the supplied call origin, never the "
+                + "generated body's synthetic anchor)");
+
+        // The same shape with the cycle behind the failure closed through a
+        // mixed table/array path: 'mix' holds an array whose element is the
+        // containing table again.
+        SemanticTable<Value> fnThenMixed = new SemanticTable<>();
+        Value.Table fnThenMixedTable = new Value.Table(fnThenMixed);
+        fnThenMixed.put("bad", functionValue());
+        fnThenMixed.put("mix", new Value.Array(
+            SemanticArray.of(fnThenMixedTable)));
+        JsonStringify mixedCarrier = JsonClassAlgorithmAdapter.stringifier()
+            .stringify(fnThenMixedTable, "data");
+        check(mixedCarrier instanceof JsonStringify.Failure failure
+                && !failure.cycle()
+                && failure.fieldPath().equals("data.bad")
+                && failure.actual().equals("function"),
+            "the production adapter's mapping of an unsupported value before a mixed "
+                + "table/array cycle publishes the walk arm's failure carrier at "
+                + "data.bad with the function token (never a mapping crash)");
+        SourceOrigin mixedCycleOrigin = nextOrigin(null);
+        Outcome<Value> mixedCycleWalk = ClassOpsExecutor.executeJsonToClass(op,
+            Map.of(classId, instanceOf(tableLayout, Map.of("data", fnThenMixedTable))),
+            layouts, JsonClassAlgorithmAdapter.stringifier(), mixedCycleOrigin);
+        check(mixedCycleWalk instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().code() == DiagnosticCode.E8001
+                && failure.failure().failure().message().equals(
+                    "value at data.bad is not JSON serializable: function")
+                && failure.failure().failure().expected() == null
+                && failure.failure().failure().actual().equals("function")
+                && "data.bad".equals(
+                    failure.failure().failure().metadata().get("fieldPath"))
+                && failure.failure().origin().equals(mixedCycleOrigin)
+                && !failure.failure().origin().equals(op.origin()),
+            "the production adapter's class walk renders the complete walk tuple for "
+                + "an unsupported value before a mixed table/array cycle (E8001, the "
+                + "exact message at data.bad, no expected field, the function token, "
+                + "the literal fieldPath metadata, and the supplied call origin)");
+
+        // The cycle-first control over the same graph shape: the re-entry
+        // under 'self' precedes the unsupported value under 'zbad', so the
+        // needle's own closed marker still selects the cycle arm with no
+        // parameters, expected or actual — the arm selection is the walk's
+        // first failure, never the presence of an unsupported value.
+        SemanticTable<Value> cycleThenFn = new SemanticTable<>();
+        Value.Table cycleThenFnTable = new Value.Table(cycleThenFn);
+        cycleThenFn.put("self", cycleThenFnTable);
+        cycleThenFn.put("zbad", functionValue());
+        JsonStringify cycleCarrier = JsonClassAlgorithmAdapter.stringifier()
+            .stringify(cycleThenFnTable, "data");
+        check(cycleCarrier instanceof JsonStringify.Failure failure
+                && failure.cycle()
+                && failure.actual().equals("table"),
+            "the production adapter keeps the cycle needle's own marker as the arm "
+                + "selection when an unsupported value follows the re-entry");
+        SourceOrigin cycleFirstOrigin = nextOrigin(null);
+        Outcome<Value> cycleFirstWalk = ClassOpsExecutor.executeJsonToClass(op,
+            Map.of(classId, instanceOf(tableLayout, Map.of("data", cycleThenFnTable))),
+            layouts, JsonClassAlgorithmAdapter.stringifier(), cycleFirstOrigin);
+        check(cycleFirstWalk instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().code() == DiagnosticCode.E8001
+                && failure.failure().failure().message().equals(
+                    "cyclic value cannot be encoded as JSON")
+                && failure.failure().failure().expected() == null
+                && failure.failure().failure().actual() == null
+                && failure.failure().failure().metadata().isEmpty()
+                && failure.failure().origin().equals(cycleFirstOrigin)
+                && !failure.failure().origin().equals(op.origin()),
+            "the production adapter's class walk keeps the cycle arm's parameterless "
+                + "tuple when an unsupported value follows the re-entry (E8001, the "
+                + "cycle text, no expected/actual/metadata, and the supplied call "
+                + "origin)");
+
+        // An array element failure before a cycle reached through a later
+        // element: element 0 holds the unsupported function, and element 1's
+        // table re-enters the containing array, so the first failure is the
+        // element itself and the cyclic sibling behind it stays unreachable.
+        ClassLayout arrayLayout = layoutOf(POINT,
+            field("data", new RuntimeDescriptor.Array(TABLE), true));
+        ValueId arrayClassId = nextValue();
+        SemanticOp arrayOp = jsonToOp(arrayLayout, arrayClassId);
+        SemanticTable<Value> firstElement = new SemanticTable<>();
+        Value.Table firstElementTable = new Value.Table(firstElement);
+        firstElement.put("bad", functionValue());
+        SemanticTable<Value> backReference = new SemanticTable<>();
+        Value.Table backReferenceTable = new Value.Table(backReference);
+        Value.Array elements = new Value.Array(
+            SemanticArray.of(firstElementTable, backReferenceTable));
+        backReference.put("x", elements);
+        SourceOrigin elementOrigin = nextOrigin(null);
+        Outcome<Value> elementWalk = ClassOpsExecutor.executeJsonToClass(arrayOp,
+            Map.of(arrayClassId, instanceOf(arrayLayout, Map.of("data", elements))),
+            Map.of(POINT, arrayLayout), JsonClassAlgorithmAdapter.stringifier(),
+            elementOrigin);
+        check(elementWalk instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().message().equals(
+                    "value at data[0].bad is not JSON serializable: function")
+                && failure.failure().failure().expected() == null
+                && failure.failure().failure().actual().equals("function")
+                && "data[0].bad".equals(
+                    failure.failure().failure().metadata().get("fieldPath"))
+                && failure.failure().origin().equals(elementOrigin),
+            "an array element's unsupported content before the same array's cyclic "
+                + "element renders the walk arm's complete tuple at data[0].bad");
+
+        // The same mixed shape nested one level deeper: the table's key 'a'
+        // holds an array whose first element is the unsupported value and
+        // whose second element's key 'x' holds that array again, so the
+        // re-entered array container behind the first failure is never
+        // traversed.
+        SemanticTable<Value> nestedTable = new SemanticTable<>();
+        Value.Table nestedTableValue = new Value.Table(nestedTable);
+        SemanticTable<Value> innerTable = new SemanticTable<>();
+        Value.Table innerTableValue = new Value.Table(innerTable);
+        Value.Array nestedArray = new Value.Array(
+            SemanticArray.of(functionValue(), innerTableValue));
+        innerTable.put("x", nestedArray);
+        nestedTable.put("a", nestedArray);
+        JsonStringify nestedCarrier = JsonClassAlgorithmAdapter.stringifier()
+            .stringify(nestedTableValue, "data");
+        check(nestedCarrier instanceof JsonStringify.Failure failure
+                && !failure.cycle()
+                && failure.fieldPath().equals("data.a[0]")
+                && failure.actual().equals("function"),
+            "the production adapter's mapping of an unsupported array element before "
+                + "a re-entered array container publishes the walk arm's failure "
+                + "carrier at data.a[0] with the function token");
+        SourceOrigin nestedOrigin = nextOrigin(null);
+        Outcome<Value> nestedWalk = ClassOpsExecutor.executeJsonToClass(op,
+            Map.of(classId, instanceOf(tableLayout, Map.of("data", nestedTableValue))),
+            layouts, JsonClassAlgorithmAdapter.stringifier(), nestedOrigin);
+        check(nestedWalk instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().code() == DiagnosticCode.E8001
+                && failure.failure().failure().message().equals(
+                    "value at data.a[0] is not JSON serializable: function")
+                && failure.failure().failure().expected() == null
+                && failure.failure().failure().actual().equals("function")
+                && "data.a[0]".equals(
+                    failure.failure().failure().metadata().get("fieldPath"))
+                && failure.failure().origin().equals(nestedOrigin),
+            "the production adapter's class walk renders the complete walk tuple for an "
+                + "unsupported array element before a re-entered array container (E8001, "
+                + "the exact message at data.a[0], no expected field, the function "
+                + "token, the literal fieldPath metadata, and the supplied call "
+                + "origin)");
+
+        // The deep-tail regression (the acceptance finding's reproducer): a
+        // selected noncycle failure followed by a 50,000-container chain that
+        // ends in a self-referential table. The chain is far deeper than any
+        // recursion the mapping could survive, so the adapter must return the
+        // already-selected failure at data.bad without descending into it at
+        // all — the pre-remediation eager toStdlib mapping exhausted the stack
+        // long before it reached the re-entry.
+        Value.Table deepTail = selfReferentialTable();
+        for (int i = 0; i < 50000; i++) {
+            SemanticTable<Value> level = new SemanticTable<>();
+            Value.Table levelValue = new Value.Table(level);
+            level.put("k", deepTail);
+            deepTail = levelValue;
+        }
+        SemanticTable<Value> deepTailRoot = new SemanticTable<>();
+        Value.Table deepTailRootValue = new Value.Table(deepTailRoot);
+        deepTailRoot.put("bad", functionValue());
+        deepTailRoot.put("later", deepTail);
+        JsonStringify deepTailCarrier = JsonClassAlgorithmAdapter.stringifier()
+            .stringify(deepTailRootValue, "data");
+        check(deepTailCarrier instanceof JsonStringify.Failure failure
+                && !failure.cycle()
+                && failure.fieldPath().equals("data.bad")
+                && failure.actual().equals("function"),
+            "the production adapter returns the selected walk-arm failure carrier at "
+                + "data.bad without traversing the 50,000-container cyclic tail "
+                + "behind it (never a mapping crash)");
+    }
+
+    /** A table holding itself under the key {@code self}. */
+    private static Value.Table selfReferentialTable() {
+        SemanticTable<Value> table = new SemanticTable<>();
+        Value.Table carrier = new Value.Table(table);
+        table.put("self", carrier);
+        return carrier;
+    }
+
+    /** The closed function carrier of the walk's unsupported-value positions. */
+    private static Value functionValue() {
+        return new Value.Function(new RuntimeDescriptor.Func(List.of(),
+            RuntimeDescriptor.Null.INSTANCE, false));
+    }
+
     private static Value.Class emptyNode() {
         return new Value.Class(INNER, List.of(FieldState.Missing.INSTANCE));
     }
@@ -2373,6 +2613,7 @@ public class JsonClassExecutorTest {
         testToJsonDeterministicText();
         testToJsonFailureTemplateAndOrigin();
         testToJsonCyclesAndDepth();
+        testToJsonNoncycleFailureBeforeCycle();
         testRoundtripAndDefects();
 
         System.out.println("\nJsonClassExecutorTest: " + passed + " passed, "

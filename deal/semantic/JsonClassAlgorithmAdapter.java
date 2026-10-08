@@ -126,37 +126,45 @@ public final class JsonClassAlgorithmAdapter {
     /**
      * Stringifies one JSON-shaped executor value through the E8
      * algorithm: the segment-aware first-failure pre-walk decides the
-     * pinned failure position (and short-circuits cyclic containers,
-     * which the mapping cannot represent), and E8 emits the exact text
-     * of every clean value.
+     * pinned failure position (and selects the walk family's cycle arm
+     * for a path-local container re-entry), and E8 emits the exact text
+     * of every clean value. A value with a selected failure is never
+     * mapped through E8: the mapping would traverse contents behind the
+     * selected failure, and those contents may include a container
+     * re-entry (or an arbitrarily long chain) the mapping cannot
+     * represent.
      */
     private static ClassOpsExecutor.JsonStringify stringify(
             ClassOpsExecutor.Value value, String fieldPathPrefix) {
         Objects.requireNonNull(value, "value must not be null");
         Objects.requireNonNull(fieldPathPrefix, "fieldPathPrefix must not be null");
         FirstFailure first = firstFailure(value);
-        if (first != null && first.cycle()) {
-            // A cyclic container: the needle's own fact selects the walk
-            // family's cycle arm, and the mapping cannot represent the
-            // cycle — the pre-walk is the sole authority (the fixture
-            // delegate's identical walk pins the same arm).
+        if (first != null) {
+            // A selected failure: the pre-walk is its sole authority. The
+            // cycle needle's own closed marker selects the walk family's
+            // cycle arm; every other first failure selects the walk arm at
+            // its pinned position. Contents behind the selected failure
+            // (including any later cycle) stay untraversed.
             return new ClassOpsExecutor.JsonStringify.Failure(
-                fieldPathPrefix + first.pinnedPath(), first.actual(), true);
+                fieldPathPrefix + first.pinnedPath(), first.actual(), first.cycle());
         }
+        // No selected failure: the pre-walk's own closed conditions leave
+        // only acyclic JSON-shaped data (every container is entered once on
+        // its path and every leaf is a JSON-shaped carrier), so the mapping
+        // terminates and E8 emits the exact text of the whole value.
         SharedStdlibSemantics.Value mapped = toStdlib(value);
         if (mapped instanceof SharedStdlibSemantics.Value.Table table) {
-            return stringifyE8(table, fieldPathPrefix, false, first);
+            return stringifyE8(table, fieldPathPrefix, false);
         }
         // Arrays and leaves: the synthetic empty-key wrapper table
         // (no real identifier-derived key can be empty, so no key can
         // collide); E8's exact text of the wrapped value is unwrapped
         // and E8's failure path is relative to the wrapped value itself
-        // (the empty prefix contributes nothing), so the pre-walk over
-        // the direct value cross-checks against E8 uniformly.
+        // (the empty prefix contributes nothing).
         SemanticTable<SharedStdlibSemantics.Value> wrapper = new SemanticTable<>();
         wrapper.put("", mapped);
         return stringifyE8(new SharedStdlibSemantics.Value.Table(wrapper),
-            fieldPathPrefix, true, first);
+            fieldPathPrefix, true);
     }
 
     /**
@@ -164,27 +172,19 @@ public final class JsonClassAlgorithmAdapter {
      * the table E8 stringifies (the mapped table itself, or the
      * synthetic empty-key wrapper for arrays/leaves). On success the
      * emitted text is returned (the wrapper's {@code {"":…}} framing
-     * stripped); on failure the pre-walk's pinned path and actual token
-     * are projected after a fail-closed cross-check of the walk position
-     * against the E8 failure's internal {@code fieldPath} metadata (the
-     * arm's declared actual token follows its own carrier-kind
-     * convention, so the two arms' tokens are not compared).
+     * stripped). A failure here is a fail-closed divergence: the
+     * pre-walk selected no failure over the identical structure, so E8
+     * may not project one.
      */
     private static ClassOpsExecutor.JsonStringify stringifyE8(
             SharedStdlibSemantics.Value.Table e8Root, String fieldPathPrefix,
-            boolean wrapped, FirstFailure first) {
+            boolean wrapped) {
         SharedStdlibSemantics.Outcome<SharedStdlibSemantics.Value> outcome =
             SharedStdlibSemantics.jsonStringify(SEAM_ORIGIN, e8Root.table());
         if (outcome instanceof SharedStdlibSemantics.Outcome.Success<
                 SharedStdlibSemantics.Value> success
                 && success.value() instanceof SharedStdlibSemantics.Value.String text
                 && text.scalar() instanceof UnicodeScalars.Valid valid) {
-            if (first != null) {
-                throw new IllegalStateException("the adapter's first-failure pre-walk "
-                    + "found a failure at " + first.e8Path() + " but the E8 "
-                    + "JSON_STRINGIFY algorithm emitted text for the identical structure "
-                    + "— a walk divergence is a producer defect, never a projection");
-            }
             if (!wrapped) {
                 return new ClassOpsExecutor.JsonStringify.Success(valid);
             }
@@ -203,28 +203,16 @@ public final class JsonClassAlgorithmAdapter {
             return new ClassOpsExecutor.JsonStringify.Success(unwrappedValid);
         }
         if (outcome instanceof SharedStdlibSemantics.Outcome.Failure<?> failure) {
-            // The walk's internal position metadata (the JSON_TO_ERROR row's
-            // fieldPath key): the E8 arm publishes the carrier-kind actual
-            // and no walk position, and the two arms' actual conventions
-            // differ by declaration (the walk arm's canonical tokens vs the
-            // std/json arm's carrier-kind tokens), so the divergence guard
-            // compares the projection-independent position. The pre-walk
-            // owns both the pinned path and the actual token it returns.
-            String reportedPath = failure.failure().failure().metadata().get("fieldPath");
-            if (first == null) {
-                throw new IllegalStateException("the E8 JSON_STRINGIFY algorithm "
-                    + "projected a JSON_TO_ERROR failure at " + reportedPath + " but the "
-                    + "adapter's first-failure pre-walk over the identical structure found "
-                    + "none — a walk divergence is a producer defect, never a projection");
-            }
-            if (reportedPath == null || !first.e8Path().equals(reportedPath)) {
-                throw new IllegalStateException("the adapter's first-failure pre-walk and "
-                    + "the E8 JSON_STRINGIFY algorithm disagree on the failing position "
-                    + "(pre-walk " + first.e8Path() + " vs E8 " + reportedPath + ") — a "
-                    + "walk divergence is a producer defect, never a projection");
-            }
-            return new ClassOpsExecutor.JsonStringify.Failure(
-                fieldPathPrefix + first.pinnedPath(), first.actual());
+            // The pre-walk selected no failure over the identical structure,
+            // so an E8 projection here is a walk divergence: a producer
+            // defect, never a product failure. Only the pre-walk selects a
+            // failure (the E8 failure's internal {fieldPath} metadata stays
+            // an internal position aid and is never projected).
+            throw new IllegalStateException("the E8 JSON_STRINGIFY algorithm projected "
+                + "a JSON_TO_ERROR failure at "
+                + failure.failure().failure().metadata().get("fieldPath") + " but the "
+                + "adapter's first-failure pre-walk over the identical structure found "
+                + "none — a walk divergence is a producer defect, never a projection");
         }
         throw new IllegalStateException("the E8 JSON_STRINGIFY algorithm returned neither "
             + "a valid scalar string nor a JSON_TO_ERROR projection — a producer defect, "
@@ -232,18 +220,13 @@ public final class JsonClassAlgorithmAdapter {
     }
 
     /**
-     * Maps one executor value into the E8 view. JSON-shaped values map
-     * to the same carriers; the unsupported carriers a table-typed (or
-     * array-nested) runtime value may contain map to E8's projections
-     * instead of throwing: a function, a class instance, and the
-     * internal missing view become E8's {@code Value.Other} carriers
-     * with their canonical actual kinds (the closed typed-boundary
-     * projection's own classification), and an invalid-scalar string
-     * maps with its classification preserved — E8's stringify walk then
-     * projects each as the pinned {@code JSON_TO_ERROR} failure via the
-     * seam's {@code Failure(fieldPath, actual)} terminal. Only clean
-     * values reach this mapping (the pre-walk short-circuits every
-     * failing value, cyclic containers included, first).
+     * Maps one clean executor value into the E8 view: JSON-shaped values map
+     * to the same carriers, and the closed scalar classification is preserved
+     * (never cast to Valid). Called only after the pre-walk selected no
+     * failure, so every container is entered at most once on its path: the
+     * mapping terminates and the unsupported carriers (functions, bytes,
+     * classes, the internal missing view, invalid scalars, nonfinite numbers)
+     * cannot occur.
      */
     private static SharedStdlibSemantics.Value toStdlib(ClassOpsExecutor.Value value) {
         return switch (value) {
@@ -256,9 +239,6 @@ public final class JsonClassAlgorithmAdapter {
             case ClassOpsExecutor.Value.Number number ->
                 new SharedStdlibSemantics.Value.Number(number.value());
             case ClassOpsExecutor.Value.String string ->
-                // The closed scalar classification is preserved (never
-                // cast to Valid): E8's stringify walk projects an
-                // Invalid carrier with the pinned invalid-unicode token.
                 SharedStdlibSemantics.Value.string(string.scalar());
             case ClassOpsExecutor.Value.Table table -> {
                 SemanticTable<SharedStdlibSemantics.Value> mapped = new SemanticTable<>();
@@ -267,9 +247,9 @@ public final class JsonClassAlgorithmAdapter {
                         table.table().get(key);
                     if (!(lookup instanceof SemanticTable.Lookup.Present<
                             ClassOpsExecutor.Value> present)) {
-                        throw new IllegalStateException("a table key is always present; got "
-                            + "Missing for '" + key + "' — a producer defect, never a "
-                            + "projection");
+                        throw new IllegalStateException("a table key is always "
+                            + "present; got Missing for '" + key + "' — a "
+                            + "producer defect, never a projection");
                     }
                     mapped.put(key, toStdlib(present.value()));
                 }
@@ -306,36 +286,30 @@ public final class JsonClassAlgorithmAdapter {
      * One first-failure position of the adapter's pre-walk of the
      * stringify rows: {@code pinnedPath} in the pinned
      * {@code JSON_TO_CLASS} segment convention relative to the walked
-     * root, {@code e8Path} in E8's own dot-joined spelling,
-     * {@code actual} the closed typed-boundary token of the offending
-     * value, and {@code cycle} true exactly when the failure is an
-     * identity-based container re-entry (the mapping cannot represent
-     * that value, so the pre-walk is the sole authority and its own
-     * closed marker selects the walk family's cycle arm).
+     * root, {@code actual} the closed typed-boundary token of the
+     * offending value, and {@code cycle} true exactly when the failure
+     * is an identity-based container re-entry (the needle's own closed
+     * marker selects the walk family's cycle arm). A selected failure
+     * is final: the pre-walk stops and the value behind it is never
+     * traversed or mapped.
      */
     private static final class FirstFailure extends RuntimeException {
 
         private static final long serialVersionUID = 1L;
 
         final String pinnedPath;
-        final String e8Path;
         final String actual;
         final boolean cycle;
 
-        FirstFailure(String pinnedPath, String e8Path, String actual, boolean cycle) {
+        FirstFailure(String pinnedPath, String actual, boolean cycle) {
             super("value at " + pinnedPath + " is not JSON serializable: " + actual);
             this.pinnedPath = pinnedPath;
-            this.e8Path = e8Path;
             this.actual = actual;
             this.cycle = cycle;
         }
 
         String pinnedPath() {
             return pinnedPath;
-        }
-
-        String e8Path() {
-            return e8Path;
         }
 
         String actual() {
@@ -348,28 +322,27 @@ public final class JsonClassAlgorithmAdapter {
     }
 
     /**
-     * Walks one executor value in E8's {@code JSON_STRINGIFY} walk
-     * order to find the first failing position without parsing E8's
-     * ambiguous dot-joined failure path back (a dotted table key like
-     * {@code a.0} cannot be told apart from the array element 0 under
-     * key {@code a} from the string alone). The pre-walk uses the same
-     * pre-order (table keys in first-insertion order, array elements
-     * in index order), the same failure conditions (nonfinite numbers,
+     * Walks one executor value in the {@code JSON_STRINGIFY} walk order
+     * to find the first failing position without parsing E8's ambiguous
+     * dot-joined failure path back (a dotted table key like {@code a.0}
+     * cannot be told apart from the array element 0 under key {@code a}
+     * from the string alone). The pre-walk uses the same pre-order
+     * (table keys in first-insertion order, array elements in index
+     * order), the same failure conditions (nonfinite numbers,
      * invalid-scalar strings, the unsupported carriers, and
      * identity-based path-local container re-entry), and the same
-     * depth-first traversal as E8's walk, and records both spellings
-     * of the failing position: the pinned {@code JSON_TO_CLASS}
-     * segments (a table key {@code k} appends {@code ".k"}, an array
-     * element {@code i} appends {@code "[i]"}) and E8's own dot-joined
-     * spelling, so the caller can cross-check the pre-walk against
-     * E8's reported failing position (the row's internal
-     * {@code fieldPath} metadata).
+     * depth-first traversal as E8's walk, and records the failing
+     * position in the pinned {@code JSON_TO_CLASS} segment convention
+     * (a table key {@code k} appends {@code ".k"}, an array element
+     * {@code i} appends {@code "[i]"}). A selected failure ends the walk
+     * (the value behind it stays untraversed), so a cycle later in the
+     * walk order never reaches the mapping.
      *
      */
     private static FirstFailure firstFailure(ClassOpsExecutor.Value root) {
         Set<Object> path = Collections.newSetFromMap(new IdentityHashMap<>());
         try {
-            walkForFirstFailure(root, "", "", path);
+            walkForFirstFailure(root, "", path);
             return null;
         } catch (FirstFailure first) {
             return first;
@@ -378,8 +351,7 @@ public final class JsonClassAlgorithmAdapter {
 
     /** One depth-first pre-order step of the first-failure pre-walk (the E8 traversal). */
     private static void walkForFirstFailure(ClassOpsExecutor.Value value,
-                                            String pinnedPath, String e8Path,
-                                            Set<Object> path) {
+                                            String pinnedPath, Set<Object> path) {
         switch (value) {
             case ClassOpsExecutor.Value.Null ignored -> {
                 // A JSON-shaped leaf: no failure.
@@ -392,21 +364,21 @@ public final class JsonClassAlgorithmAdapter {
             }
             case ClassOpsExecutor.Value.Number number -> {
                 if (!Double.isFinite(number.value())) {
-                    throw new FirstFailure(pinnedPath, e8Path,
+                    throw new FirstFailure(pinnedPath,
                         FailureProjections.typedBoundaryToken(ActualKind.NUMBER, null),
                         false);
                 }
             }
             case ClassOpsExecutor.Value.String string -> {
                 if (!(string.scalar() instanceof UnicodeScalars.Valid)) {
-                    throw new FirstFailure(pinnedPath, e8Path,
+                    throw new FirstFailure(pinnedPath,
                         FailureProjections.typedBoundaryToken(
                             ActualKind.INVALID_UNICODE, null), false);
                 }
             }
             case ClassOpsExecutor.Value.Table table -> {
                 if (!path.add(table.table())) {
-                    throw new FirstFailure(pinnedPath, e8Path,
+                    throw new FirstFailure(pinnedPath,
                         FailureProjections.typedBoundaryToken(ActualKind.TABLE, null),
                         true);
                 }
@@ -421,7 +393,7 @@ public final class JsonClassAlgorithmAdapter {
                                 + "' — a producer defect, never a projection");
                         }
                         walkForFirstFailure(present.value(), pinnedPath + "." + key,
-                            e8Path.isEmpty() ? key : e8Path + "." + key, path);
+                            path);
                     }
                 } finally {
                     path.remove(table.table());
@@ -429,34 +401,32 @@ public final class JsonClassAlgorithmAdapter {
             }
             case ClassOpsExecutor.Value.Array array -> {
                 if (!path.add(array.array())) {
-                    throw new FirstFailure(pinnedPath, e8Path,
+                    throw new FirstFailure(pinnedPath,
                         FailureProjections.typedBoundaryToken(ActualKind.ARRAY, null),
                         true);
                 }
                 try {
                     for (int i = 0; i < array.array().size(); i++) {
                         walkForFirstFailure(array.array().elementAt(i),
-                            pinnedPath + "[" + i + "]",
-                            e8Path.isEmpty() ? Integer.toString(i) : e8Path + "." + i,
-                            path);
+                            pinnedPath + "[" + i + "]", path);
                     }
                 } finally {
                     path.remove(array.array());
                 }
             }
             case ClassOpsExecutor.Value.Function ignored -> throw new FirstFailure(
-                pinnedPath, e8Path,
+                pinnedPath,
                 FailureProjections.typedBoundaryToken(ActualKind.FUNCTION, null), false);
             case ClassOpsExecutor.Value.Bytes ignored -> throw new FirstFailure(
-                pinnedPath, e8Path,
+                pinnedPath,
                 FailureProjections.typedBoundaryToken(ActualKind.BYTES, null), false);
             case ClassOpsExecutor.Value.Class instance -> throw new FirstFailure(
-                pinnedPath, e8Path,
+                pinnedPath,
                 FailureProjections.typedBoundaryToken(ActualKind.CLASS,
                     instance.classId().text()),
                 false);
             case ClassOpsExecutor.Value.Missing ignored -> throw new FirstFailure(
-                pinnedPath, e8Path,
+                pinnedPath,
                 FailureProjections.typedBoundaryToken(ActualKind.MISSING, null), false);
         }
     }
