@@ -137,7 +137,15 @@ import java.util.stream.Stream;
  *       awaited member invocation is the value-carried (indirect) callee
  *       shape, each task keeps the member's own return cell, and the two
  *       creations complete to their own pinned values on the oracle and both
- *       artifacts.</li>
+ *       artifacts. The sibling-alias variant awaits the member
+ *       through an ordinary function-value alias ({@code let sibling = g}):
+ *       the tracked alias preserves the member identity but owns no lowering
+ *       context, so the resolved {@code LoweredBody} must still take the
+ *       carrier — a static reconstruction at the await site re-resolves the
+ *       target's captures from the calling member's frame. Both declaration
+ *       orders are covered: the alias target's capture list is still pending
+ *       when the awaiting member walks first, and already final when the
+ *       target walks first.</li>
  * </ol>
  */
 public class NestedGroupProductionTest {
@@ -718,12 +726,135 @@ public class NestedGroupProductionTest {
         new FailurePin("E8001", "async function g(n: "), new AsyncDrive("drive"),
         "null");
 
+    /**
+     * The awaited sibling <em>alias</em> (the review's cycle-4 seed): the
+     * two-instance async group's {@code f} awaits sibling {@code g} through
+     * an ordinary function-value alias ({@code let sibling: async (n: int) =>
+     * int = g}) instead of the declared name. {@code make} returns member
+     * {@code f}; the exported {@code drive} creates {@code make(10)} and
+     * {@code make(20)} and awaits each returned closure. The tracked alias
+     * preserves the member's allocation identity, so the resolved binding is
+     * the member's {@code LoweredBody} — but the alias binding owns no
+     * lowering context and no group membership, so the resolved body would
+     * reach the static async arm: the await site reconstructs the member's
+     * factory and re-resolves the target's captures from the calling member's
+     * frame, so the first creation observes the second creation's cells
+     * ({@code a-bad}, {@code b-ok} and result 40 before the fix) and the
+     * oracle fails on the uninitialized member binding. The alias carries the
+     * member's published closure, so the awaited invocation must be the
+     * value-carried (indirect) callee shape. Target {@code g} is declared
+     * after the awaiting member, so its capture list is still pending during
+     * {@code f}'s walk — the classification must cover the pending member
+     * too.
+     */
+    private static final Case ASYNC_ESCAPED_TWO_GROUPS_ALIAS = new Case(
+        "async-escaped-two-groups-alias",
+        """
+        import * as console from "std/console"
+
+        export async function drive(): int {
+          let a: async (n: int) => int = make(10);
+          let b: async (n: int) => int = make(20);
+          let av: int = await a(3);
+          if (av === 10) {
+            console.log("async-escaped-group-alias-a-ok");
+          } else {
+            console.log("async-escaped-group-alias-a-bad");
+          }
+          let bv: int = await b(3);
+          if (bv === 20) {
+            console.log("async-escaped-group-alias-b-ok");
+          } else {
+            console.log("async-escaped-group-alias-b-bad");
+          }
+          return av + bv;
+        }
+
+        function make(base: int): async (n: int) => int {
+          async function f(n: int): int {
+            if (n <= 0) {
+              return base;
+            }
+            let sibling: async (n: int) => int = g;
+            return await sibling(n - 1);
+          }
+          async function g(n: int): int {
+            return await f(n);
+          }
+          return f;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """,
+        List.of("async-escaped-group-alias-a-ok", "async-escaped-group-alias-b-ok"),
+        true, List.of(true, true), false, false, null, new AsyncDrive("drive"),
+        "int:30");
+
+    /**
+     * The awaited sibling alias with the reverse declaration order: the
+     * awaited target ({@code g}) is declared <em>before</em> the awaiting
+     * member ({@code f}), so the target's {@code LoweredFunction} record and
+     * its capture list are final when {@code f}'s body walks. The
+     * value-carried classification then comes from the recorded captures
+     * (the target references a sibling, so the list is non-empty) instead of
+     * the pending-member arm — the other half of the carrier selection. The
+     * two created groups must still observe their own {@code base}.
+     */
+    private static final Case ASYNC_ESCAPED_TWO_GROUPS_ALIAS_LATER = new Case(
+        "async-escaped-two-groups-alias-later",
+        """
+        import * as console from "std/console"
+
+        export async function drive(): int {
+          let a: async (n: int) => int = make(10);
+          let b: async (n: int) => int = make(20);
+          let av: int = await a(3);
+          if (av === 10) {
+            console.log("async-escaped-group-alias-later-a-ok");
+          } else {
+            console.log("async-escaped-group-alias-later-a-bad");
+          }
+          let bv: int = await b(3);
+          if (bv === 20) {
+            console.log("async-escaped-group-alias-later-b-ok");
+          } else {
+            console.log("async-escaped-group-alias-later-b-bad");
+          }
+          return av + bv;
+        }
+
+        function make(base: int): async (n: int) => int {
+          async function g(n: int): int {
+            return await f(n);
+          }
+          async function f(n: int): int {
+            if (n <= 0) {
+              return base;
+            }
+            let sibling: async (n: int) => int = g;
+            return await sibling(n - 1);
+          }
+          return f;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """,
+        List.of("async-escaped-group-alias-later-a-ok",
+            "async-escaped-group-alias-later-b-ok"),
+        true, List.of(true, true), false, false, null, new AsyncDrive("drive"),
+        "int:30");
+
     private static final List<Case> CASES = List.of(
         CALLED_EXPLICIT, CALLED_IMPLICIT, CALLED_VALUE_REFERENCE,
         CALLED_ALIAS, CALLED_ALIAS_CAPTURED, CALLED_ALIAS_LATER, MODULE_GROUP_ALIAS,
         NEVER_CALLED_EXPLICIT_NULL, NEVER_CALLED_EXPLICIT_INT, NEVER_CALLED_IMPLICIT,
         CAPTURED_CALLED, NESTED_INSIDE_FUNCTION, ESCAPED_TWO_GROUPS,
-        PARAM_ORIGIN_CONTEXTUAL, ASYNC_ESCAPED_TWO_GROUPS, ASYNC_PARAM_ORIGIN);
+        PARAM_ORIGIN_CONTEXTUAL, ASYNC_ESCAPED_TWO_GROUPS, ASYNC_PARAM_ORIGIN,
+        ASYNC_ESCAPED_TWO_GROUPS_ALIAS, ASYNC_ESCAPED_TWO_GROUPS_ALIAS_LATER);
 
     // =========================================================================
     // The case driver
@@ -1026,7 +1157,8 @@ public class NestedGroupProductionTest {
             Map.of(), Map.of(),
             BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW),
             Set.of());
         check(result.project() != null && result.diagnostics().isEmpty(),
             testCase.name() + ": the nested group lowers with zero diagnostics (no "

@@ -8826,6 +8826,26 @@ public final class SemanticLowerer {
                     return lowerAdapterOverAsync(call, slot, awaitSpan, adapter,
                         identifier.name());
                 }
+                if (binding instanceof FunctionExecutionBinding.LoweredBody
+                        && valueCarriedClosure(binding)) {
+                    // An ordinary function-value alias of a capture-carrying
+                    // declared body (a nested group member awaited through a
+                    // `let`, the async twin of
+                    // {@link #lowerUserCallBinding}'s value-carried call):
+                    // the alias holds the published closure whose
+                    // creation-site captured cells name its own group
+                    // instance, so the await invokes that carrier instead of
+                    // rebuilding the member's factory at the await site —
+                    // the reconstruction re-resolves the target's captures
+                    // from the calling member's frame and cannot name a
+                    // sibling creation's cells. The pending-capture
+                    // classification covers an alias of a member whose own
+                    // body walk is still open. A capture-free body keeps the
+                    // static shape: the await site's reconstruction is the
+                    // same closure.
+                    return lowerAsyncStart(call, slot, awaitSpan, binding, false,
+                        calleeValue);
+                }
                 return lowerAsyncStart(call, slot, awaitSpan, binding, false);
             }
             if (call.callee() instanceof MemberAccessExpr access
@@ -8994,11 +9014,12 @@ public final class SemanticLowerer {
          * kind check at its own origin, exactly as the synchronous
          * declared-callee arms do. A non-null carrier callee emits the
          * value-carried {@code CallCallee.Indirect} shape over the
-         * published closure value (the awaited nested-group member arm),
-         * so the task invokes the carrier's own captured cells instead of
-         * reconstructing the member's factory at the await site; the
-         * callee's reserved call-site identity and single return boundary
-         * stay the invocation's own either way.
+         * published closure value (the awaited nested-group member arm and
+         * the awaited alias of a capture-carrying body), so the task invokes
+         * the carrier's own captured cells instead of reconstructing the
+         * member's factory at the await site; the callee's reserved
+         * call-site identity and single return boundary stay the invocation's
+         * own either way.
          */
         private ValueId lowerAsyncStart(CallExpr call, ValueId slot, Span awaitSpan,
                                         FunctionExecutionBinding binding, boolean nested,
