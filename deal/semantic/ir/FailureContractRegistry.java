@@ -1201,22 +1201,64 @@ public final class FailureContractRegistry {
         }
     }
 
-    /** Instantiates the arm's own template; an unbound placeholder is a defect. */
+    /**
+     * Instantiates the arm's own template; an unbound placeholder is a
+     * defect. The template is scanned exactly once: each {@code {name}}
+     * placeholder is replaced by the value the render supplied for that
+     * name, and the inserted value is never rescanned — a parameter value
+     * that contains braces or the literal spelling of another placeholder
+     * (a table key such as {@code {actual}} reaches the walk's
+     * {@code fieldPath} verbatim) is published byte-for-byte. The
+     * fail-closed checks therefore inspect the template only, never the
+     * inserted data: an unclosed or undeclared placeholder, or a stray
+     * brace of the template itself, remains a producer defect.
+     */
     private static String instantiateArm(FailureArm arm, Map<String, String> parameters) {
-        String message = arm.template();
-        for (String parameter : arm.parameters()) {
-            String value = parameters.get(parameter);
+        String template = arm.template();
+        StringBuilder message = new StringBuilder(template.length());
+        int cursor = 0;
+        while (true) {
+            int open = template.indexOf('{', cursor);
+            if (open < 0) {
+                appendTemplateText(arm, message, template, cursor, template.length());
+                return message.toString();
+            }
+            int close = template.indexOf('}', open + 1);
+            if (close < 0) {
+                throw new BoundaryExecutor.Defect("an uninstantiated placeholder remains in "
+                    + "arm " + arm.id() + "'s template: \"" + template + "\"");
+            }
+            String name = template.substring(open + 1, close);
+            if (!arm.parameters().contains(name)) {
+                throw new BoundaryExecutor.Defect("an uninstantiated placeholder remains in "
+                    + "arm " + arm.id() + "'s template: \"" + template + "\" (the "
+                    + "placeholder {" + name + "} is not one of the arm's declared "
+                    + "parameters " + arm.parameters() + ")");
+            }
+            String value = parameters.get(name);
             if (value == null) {
                 throw new BoundaryExecutor.Defect("arm " + arm.id() + " has no value for its "
-                    + "parameter {" + parameter + "}");
+                    + "parameter {" + name + "}");
             }
-            message = message.replace("{" + parameter + "}", value);
+            appendTemplateText(arm, message, template, cursor, open);
+            message.append(value);
+            cursor = close + 1;
         }
-        if (message.indexOf('{') >= 0 || message.indexOf('}') >= 0) {
+    }
+
+    /**
+     * Appends one literal template segment; a stray closing brace in the
+     * template (never in inserted data) is a fail-closed producer defect.
+     */
+    private static void appendTemplateText(FailureArm arm, StringBuilder message,
+                                           String template, int from, int to) {
+        int stray = template.indexOf('}', from);
+        if (stray >= 0 && stray < to) {
             throw new BoundaryExecutor.Defect("an uninstantiated placeholder remains in "
-                + "arm " + arm.id() + "'s template: \"" + message + "\"");
+                + "arm " + arm.id() + "'s template: \"" + template + "\" (a stray "
+                + "closing brace outside a placeholder)");
         }
-        return message;
+        message.append(template, from, to);
     }
 
     // =========================================================================

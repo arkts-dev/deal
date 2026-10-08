@@ -1873,6 +1873,40 @@ public class JsonClassExecutorTest {
             "the production adapter's walk projects the array-element failure at "
                 + "data.a[0] even with a dotted sibling key present, at the call origin");
 
+        // A table key containing braces or the literal spelling of a
+        // placeholder: string keys are unrestricted, so the pinned fieldPath
+        // carries the key verbatim and the arm's parameter substitution
+        // publishes it byte-for-byte — never a producer defect and never a
+        // placeholder reinterpretation. The failure's fieldPath metadata is
+        // the literal key.
+        for (String key : List.of("{bad}", "{actual}", "{fieldPath}", "a}b", "a{b")) {
+            String bracePath = "data." + key;
+            SemanticTable<Value> braceData = new SemanticTable<>();
+            braceData.put(key, new Value.Function(new RuntimeDescriptor.Func(List.of(),
+                RuntimeDescriptor.Null.INSTANCE, false)));
+            Value.Class braceInTable = instanceOf(point, Map.of(
+                "name", Value.string("n"),
+                "age", new Value.Int(1),
+                "home", instanceOf(nested, Map.of("city", Value.string("c"))),
+                "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
+                "data", new Value.Table(braceData)));
+            Outcome<Value> braceFailure = ClassOpsExecutor.executeJsonToClass(op,
+                Map.of(classId, braceInTable), layouts,
+                JsonClassAlgorithmAdapter.stringifier(), callOrigin);
+            check(braceFailure instanceof Outcome.Failure<Value> failure
+                    && failure.failure().failure().code() == DiagnosticCode.E8001
+                    && failure.failure().failure().message().equals(
+                        "value at " + bracePath + " is not JSON serializable: function")
+                    && failure.failure().origin().equals(callOrigin)
+                    && failure.failure().failure().expected() == null
+                    && failure.failure().failure().actual().equals("function")
+                    && bracePath.equals(
+                        failure.failure().failure().metadata().get("fieldPath")),
+                "the production adapter's walk publishes the literal fieldPath '" + key
+                    + "' (E8001, the exact message, the call origin, no expected "
+                    + "field, the function token, and the literal fieldPath metadata)");
+        }
+
         // A nested-class-field failure under a path: path "home.city".
         Value.Class badNestedField = instanceOf(point, Map.of(
             "name", Value.string("n"),
