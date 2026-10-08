@@ -641,34 +641,53 @@ public class CompositeTerminatorAnalysisTest {
             new PartialShape("try/catch with continue then throw", """
                 try { if (c) { continue; } } catch (e) { }
                 throw { code: "PARTIAL", message: "partial" }"""));
+        List<String> names = new ArrayList<>();
+        StringBuilder source = new StringBuilder();
         for (LoopForm form : forms) {
             for (PartialShape shape : shapes) {
-                String name = form.name() + ", " + shape.name();
-                String source = probeProgram("export function probe(c: boolean): null {\n"
-                    + "  " + form.header() + "\n"
-                    + "    " + shape.body().replace("\n", "\n    ") + "\n"
-                    + "  }\n}\n");
-                Lowered lowered = lowerProbe(name, source);
-                if (lowered == null) {
-                    continue;
-                }
-                List<SemanticOp> implicit = lowered.implicitReturns();
-                checkEq(1, implicit.size(), name + ": the partial-transfer body "
-                    + "keeps the pinned implicit null return");
-                List<BlockId> bodies = lowered.declaredBodyBlocks();
-                if (bodies.isEmpty()) {
-                    continue;
-                }
-                BlockId probeBody = bodies.get(0);
-                List<SemanticOp> ops = lowered.blockOps(probeBody);
-                check(!ops.isEmpty() && ops.get(ops.size() - 1).kind()
-                        == SemanticOpKind.RETURN,
-                    name + ": the implicit return is the body block's trailing "
-                        + "statement (op kinds " + kindsOf(lowered, probeBody) + ")");
-                if (!implicit.isEmpty()) {
-                    check(ops.contains(implicit.get(0)), name + ": the implicit "
-                        + "RETURN is a member of the probe body block");
-                }
+                source.append("export function probe").append(names.size())
+                    .append("(c: boolean): null {\n")
+                    .append("  ").append(form.header()).append('\n')
+                    .append("    ").append(shape.body().replace("\n", "\n    "))
+                    .append("\n  }\n}\n");
+                names.add(form.name() + ", " + shape.name());
+            }
+        }
+        checkEq(40, names.size(), "the partial-transfer matrix carries all forty probes");
+        if (names.size() != 40) {
+            return;
+        }
+        Lowered lowered = lowerProbe("partial-transfer matrix",
+            probeProgram(source.toString()));
+        if (lowered == null) {
+            return;
+        }
+        List<BlockId> bodies = lowered.declaredBodyBlocks();
+        checkEq(41, bodies.size(), "the unit carries the forty probe bodies in source "
+            + "order and the entry main body");
+        if (bodies.size() != 41) {
+            return;
+        }
+        checkEq(41L, bodies.stream().distinct().count(),
+            "the forty probe bodies and main have distinct blocks");
+        List<SemanticOp> allImplicit = lowered.implicitReturns();
+        checkEq(40, allImplicit.size(), "only the forty partial-transfer bodies keep "
+            + "the pinned implicit null returns");
+        for (int i = 0; i < names.size(); i++) {
+            String name = names.get(i);
+            BlockId probeBody = bodies.get(i);
+            List<SemanticOp> ops = lowered.blockOps(probeBody);
+            List<SemanticOp> implicit = allImplicit.stream().filter(ops::contains).toList();
+            checkEq(1, implicit.size(), name + ": the partial-transfer body "
+                + "keeps the pinned implicit null return");
+            check(!ops.isEmpty() && ops.get(ops.size() - 1).kind()
+                    == SemanticOpKind.RETURN,
+                name + ": the implicit return is the body block's trailing "
+                    + "statement (op kinds " + kindsOf(lowered, probeBody) + ")");
+            if (implicit.size() == 1) {
+                check(ops.get(ops.size() - 1).equals(implicit.get(0)), name
+                    + ": the synthetic implicit RETURN is the trailing member of "
+                        + "the probe body block");
             }
         }
     }

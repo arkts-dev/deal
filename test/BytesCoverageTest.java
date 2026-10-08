@@ -1299,55 +1299,62 @@ public class BytesCoverageTest {
             if (drive == null) {
                 return null;
             }
-            int[] calls = { 0 };
-            SemanticOracle.HostResponder responder = hostStem == null ? null
-                : focusedArrayHostResponder(calls);
-            SemanticRuntimeModel.ConsumerRun oracle =
-                SemanticOracle.executeProjectInits(drive.project(), drive.tables(),
-                    drive.registries(), responder);
-            if (hostStem != null) {
-                checkEq(1, calls[0], label + ": the host array return is called once");
-            }
-            String origin = root.resolve("src").resolve("main.deal").toAbsolutePath()
-                + ":" + line + ":" + column;
-            check(oracle.terminal()
-                    instanceof SemanticRuntimeModel.Terminal.DealFailure,
-                label + ": the oracle projects the pinned failure: "
-                    + oracle.terminal());
-            if (oracle.terminal()
-                    instanceof SemanticRuntimeModel.Terminal.DealFailure failure) {
-                checkEq(null, Tuple.of(failure.error()).firstDivergence(pinned),
-                    label + ": the oracle tuple is pin-exact");
-                checkEq(origin, failure.error().origin(),
-                    label + ": the oracle origin is the pinned expression");
-            }
-            Path hostLua = hostStem == null ? null
-                : Path.of("test", "conformance", "host-fixtures", hostStem + ".lua");
-            Path hostJava = hostStem == null ? null
-                : Path.of("test", "conformance", "host-fixtures", hostStem + ".java");
-            String probeTranscript = "ERR:" + pinned.code() + "|" + pinned.message()
-                + "|" + origin + "|" + pinned.expected() + "|" + pinned.actual()
-                + "\n";
-            String terminalTranscript = "DEAL_ERROR_CODE: " + pinned.code() + "\n";
-            String pinnedOutcome = probeTranscript.strip();
-            String chunk = LuaSemanticEmitter.emitProductionProject(drive.project(),
-                drive.tables(), drive.registries(), drive.compiled().surface());
-            ArtifactRun lua = luaProduction(drive, hostSpecifier, hostLua, chunk);
-            assertTranscript(label, "luajit probe", lua.probe(), 0, probeTranscript);
-            assertTranscript(label, "luajit terminal", lua.terminal(), 1,
-                terminalTranscript);
-            checkEq(pinnedOutcome, lua.outcome(), label
-                + ": the LuaJIT production artifact reproduces the exact tuple");
-            ArtifactRun jvm = jvmProduction(drive, hostSpecifier, hostJava);
-            assertTranscript(label, "jvm probe", jvm.probe(), 0, probeTranscript);
-            assertTranscript(label, "jvm terminal", jvm.terminal(), 1,
-                terminalTranscript);
-            checkEq(pinnedOutcome, jvm.outcome(), label
-                + ": the JVM production artifact reproduces the exact tuple");
-            return chunk;
+            return driveFocusedFailure(label, drive, hostStem, hostSpecifier, line,
+                column, pinned);
         } finally {
             deleteRecursively(root);
         }
+    }
+
+    private static String driveFocusedFailure(String label, Drive drive,
+            String hostStem, String hostSpecifier, int line, int column, Tuple pinned)
+            throws Exception {
+        int[] calls = { 0 };
+        SemanticOracle.HostResponder responder = hostStem == null ? null
+            : focusedArrayHostResponder(calls);
+        SemanticRuntimeModel.ConsumerRun oracle =
+            SemanticOracle.executeProjectInits(drive.project(), drive.tables(),
+                drive.registries(), responder);
+        if (hostStem != null) {
+            checkEq(1, calls[0], label + ": the host array return is called once");
+        }
+        String origin = drive.compiled().root().resolve("src").resolve("main.deal")
+            .toAbsolutePath() + ":" + line + ":" + column;
+        check(oracle.terminal()
+                instanceof SemanticRuntimeModel.Terminal.DealFailure,
+            label + ": the oracle projects the pinned failure: "
+                + oracle.terminal());
+        if (oracle.terminal()
+                instanceof SemanticRuntimeModel.Terminal.DealFailure failure) {
+            checkEq(null, Tuple.of(failure.error()).firstDivergence(pinned),
+                label + ": the oracle tuple is pin-exact");
+            checkEq(origin, failure.error().origin(),
+                label + ": the oracle origin is the pinned expression");
+        }
+        Path hostLua = hostStem == null ? null
+            : Path.of("test", "conformance", "host-fixtures", hostStem + ".lua");
+        Path hostJava = hostStem == null ? null
+            : Path.of("test", "conformance", "host-fixtures", hostStem + ".java");
+        String probeTranscript = "ERR:" + pinned.code() + "|" + pinned.message()
+            + "|" + origin + "|" + pinned.expected() + "|" + pinned.actual()
+            + "\n";
+        String terminalTranscript = "DEAL_ERROR_CODE: " + pinned.code() + "\n";
+        String pinnedOutcome = probeTranscript.strip();
+        String chunk = LuaSemanticEmitter.emitProductionProject(drive.project(),
+            drive.tables(), drive.registries(), drive.compiled().surface());
+        ArtifactRun lua = luaProduction(drive, hostSpecifier, hostLua, chunk);
+        assertTranscript(label, "luajit probe", lua.probe(), 0, probeTranscript);
+        assertTranscript(label, "luajit terminal", lua.terminal(), 1,
+            terminalTranscript);
+        checkEq(pinnedOutcome, lua.outcome(), label
+            + ": the LuaJIT production artifact reproduces the exact tuple");
+        ArtifactRun jvm = jvmProduction(drive, hostSpecifier, hostJava);
+        assertTranscript(label, "jvm probe", jvm.probe(), 0, probeTranscript);
+        assertTranscript(label, "jvm terminal", jvm.terminal(), 1,
+            terminalTranscript);
+        checkEq(pinnedOutcome, jvm.outcome(), label
+            + ": the JVM production artifact reproduces the exact tuple");
+        return chunk;
     }
 
     /**
@@ -1355,27 +1362,18 @@ public class BytesCoverageTest {
      * pipeline: the oracle and both production artifacts reach the pinned
      * success with no terminal.
      */
-    private static void driveFocusedSuccess(String label, String source)
-            throws Exception {
-        Path root = Files.createTempDirectory("bytes-inert-");
-        try {
-            Compiled compiled = compileFocused(root, source, null, null);
-            if (compiled != null) {
-                driveFocusedSuccess(label, compiled);
-            }
-        } finally {
-            deleteRecursively(root);
-        }
-    }
-
     private static void driveFocusedSuccess(String label, Compiled compiled)
             throws Exception {
         BytesFixture spec = new BytesFixture(BYTES_DIR, label, "main", "null",
             List.of(), null, null, 0, 0);
         Drive drive = lowerFocused(compiled, spec);
-        if (drive == null) {
-            return;
+        if (drive != null) {
+            driveFocusedSuccess(label, drive);
         }
+    }
+
+    private static void driveFocusedSuccess(String label, Drive drive)
+            throws Exception {
         SemanticRuntimeModel.ConsumerRun oracle =
             SemanticOracle.executeProjectInits(drive.project(), drive.tables(),
                 drive.registries(), null);
@@ -1493,17 +1491,47 @@ public class BytesCoverageTest {
     private static void testIndirectBytesAllocation() throws Exception {
         System.out.println("-- the indirect bytes allocation: the seeded bytes "
             + "intrinsic value (K14/R2) --");
-        checkIndirectBytesStructure();
-        driveFocusedSuccess("indirect bytes allocation", INDIRECT_BYTES_SOURCE);
-        driveFocusedSuccess("bytes intrinsic value positions",
-            INDIRECT_BYTES_VALUE_POSITIONS_SOURCE);
-        driveFocusedFailure("indirect bytes negative length",
-            INDIRECT_BYTES_NEGATIVE_SOURCE, null, null, 3, 20,
-            new Tuple("E8012", "bytes length must be non-negative", "", ""));
-        driveFocusedFailure("bytes adapter negative length",
-            INDIRECT_BYTES_ADAPTER_NEGATIVE_SOURCE, null, null, 3, 20,
-            new Tuple("E8012", "bytes length must be non-negative", "", ""));
-        checkIndirectBytesDifferential();
+        List<DifferentialCase> cases = List.of(
+            new DifferentialCase("indirect bytes allocation",
+                INDIRECT_BYTES_SOURCE, false, 0, 0),
+            new DifferentialCase("bytes intrinsic value positions",
+                INDIRECT_BYTES_VALUE_POSITIONS_SOURCE, false, 0, 0),
+            new DifferentialCase("indirect bytes negative length",
+                INDIRECT_BYTES_NEGATIVE_SOURCE, true, 3, 20),
+            new DifferentialCase("bytes adapter negative length",
+                INDIRECT_BYTES_ADAPTER_NEGATIVE_SOURCE, true, 3, 20));
+        Tuple pinned = new Tuple("E8012", "bytes length must be non-negative", "", "");
+        for (DifferentialCase differential : cases) {
+            Path root = Files.createTempDirectory("bytes-intrinsic-");
+            try {
+                BytesFixture spec = new BytesFixture(BYTES_DIR, differential.label(),
+                    "main", "null", List.of(),
+                    differential.failure() ? pinned.code() : null,
+                    differential.failure() ? pinned.message() : null,
+                    differential.line(), differential.column());
+                Compiled compiled = compileFocused(root, differential.source(), null,
+                    null);
+                if (compiled == null) {
+                    continue;
+                }
+                Drive drive = lowerFocused(compiled, spec);
+                if (drive == null) {
+                    continue;
+                }
+                if (INDIRECT_BYTES_SOURCE.equals(differential.source())) {
+                    checkIndirectBytesStructure(drive);
+                }
+                if (differential.failure()) {
+                    driveFocusedFailure(differential.label(), drive, null, null,
+                        differential.line(), differential.column(), pinned);
+                } else {
+                    driveFocusedSuccess(differential.label(), drive);
+                }
+                checkIndirectBytesDifferential(drive, differential);
+            } finally {
+                deleteRecursively(root);
+            }
+        }
     }
 
     /**
@@ -1513,105 +1541,90 @@ public class BytesCoverageTest {
      * indirect call's recorded {@code IntrinsicFunction} binding and host
      * cell family, and the call-expression origin.
      */
-    private static void checkIndirectBytesStructure() throws Exception {
-        Path root = Files.createTempDirectory("bytes-intrinsic-");
-        try {
-            BytesFixture spec = new BytesFixture(BYTES_DIR, "indirect bytes", "main",
-                "null", List.of(), null, null, 0, 0);
-            Compiled compiled = compileFocused(root, INDIRECT_BYTES_SOURCE, null, null);
-            if (compiled == null) {
-                return;
+    private static void checkIndirectBytesStructure(Drive drive) {
+        LoweredModuleUnit unit = drive.unit();
+        FunctionAllocationIdentity seed = null;
+        for (Map.Entry<FunctionAllocationIdentity, FunctionExecutionBinding> entry
+                : unit.functionBindings().entrySet()) {
+            if (entry.getValue()
+                    instanceof FunctionExecutionBinding.IntrinsicFunction intrinsic
+                    && intrinsic.kind() == IntrinsicKind.BYTES_NEW) {
+                seed = entry.getKey();
+                checkEq(IntrinsicKind.BYTES_NEW.declaredSignature(),
+                    intrinsic.descriptor(),
+                    "the bytes seed registration carries its pinned "
+                        + "(int)->bytes declared signature");
             }
-            Drive drive = lowerFocused(compiled, spec);
-            if (drive == null) {
-                return;
-            }
-            LoweredModuleUnit unit = drive.unit();
-            FunctionAllocationIdentity seed = null;
-            for (Map.Entry<FunctionAllocationIdentity, FunctionExecutionBinding> entry
-                    : unit.functionBindings().entrySet()) {
-                if (entry.getValue()
-                        instanceof FunctionExecutionBinding.IntrinsicFunction intrinsic
-                        && intrinsic.kind() == IntrinsicKind.BYTES_NEW) {
-                    seed = entry.getKey();
-                    checkEq(IntrinsicKind.BYTES_NEW.declaredSignature(),
-                        intrinsic.descriptor(),
-                        "the bytes seed registration carries its pinned "
-                            + "(int)->bytes declared signature");
-                }
-            }
-            check(seed != null, "the unit carries the BYTES_NEW intrinsic seed "
-                + "registration");
-            if (seed == null) {
-                return;
-            }
-            int published = 0;
-            boolean allLoads = true;
-            for (SemanticOp op : unit.ops()) {
-                if (op.result() instanceof ValueId result && result.id() == seed.id()) {
-                    published++;
-                    allLoads = allLoads && op.kind() == SemanticOpKind.BINDING_LOAD;
-                }
-            }
-            check(published >= 1 && allLoads, "the seeded bytes identity is published "
-                + "only by identity-preserving binding loads; got " + published
-                + " publishing op(s)");
-            SemanticOp indirect = null;
-            int intrinsicCalls = 0;
-            for (SemanticOp op : unit.ops()) {
-                if (op.kind() != SemanticOpKind.CALL
-                        || !(op.payload() instanceof KindPayload.CallPayload call)) {
-                    continue;
-                }
-                if (call.callee() instanceof KindPayload.CallCallee.Static staticCallee
-                        && staticCallee.binding()
-                            instanceof FunctionExecutionBinding.IntrinsicFunction intrinsic
-                        && intrinsic.kind() == IntrinsicKind.BYTES_NEW) {
-                    intrinsicCalls++;
-                    if (indirect == null) {
-                        indirect = op;
-                    }
-                }
-            }
-            checkEq(2, intrinsicCalls, "both indirect calls record the seeded "
-                + "IntrinsicFunction binding");
-            check(indirect != null, "the indirect call of the bytes intrinsic records "
-                + "the seeded IntrinsicFunction binding");
-            if (indirect == null) {
-                return;
-            }
-            KindPayload.CallPayload payload =
-                (KindPayload.CallPayload) indirect.payload();
-            checkEq(CallMode.INDIRECT, payload.mode(), "the intrinsic-value call is "
-                + "the INDIRECT mode with the statically resolved binding");
-            SemanticOp parameter = payload.parameterBoundaryOpIds().isEmpty() ? null
-                : opById(unit, payload.parameterBoundaryOpIds().get(0));
-            check(parameter != null
-                    && ((KindPayload.BoundaryPayload) parameter.payload()).kind()
-                        == BoundaryKind.DEAL_TO_HOST
-                    && parameter.failurePolicy() == FailurePolicyId.HOST_PARAMETER
-                    && RuntimeDescriptor.Int.INSTANCE.equals(
-                        ((KindPayload.BoundaryPayload) parameter.payload())
-                            .descriptor()),
-                "the declared int parameter is the DEAL_TO_HOST + HOST_PARAMETER "
-                    + "cell");
-            SemanticOp returned = payload.returnBoundaryOpId() == null ? null
-                : opById(unit, payload.returnBoundaryOpId());
-            check(returned != null
-                    && ((KindPayload.BoundaryPayload) returned.payload()).kind()
-                        == BoundaryKind.HOST_TO_DEAL
-                    && returned.failurePolicy() == FailurePolicyId.HOST_SYNC_RETURN
-                    && RuntimeDescriptor.Bytes.INSTANCE.equals(
-                        ((KindPayload.BoundaryPayload) returned.payload())
-                            .descriptor()),
-                "the bytes return is the HOST_TO_DEAL + HOST_SYNC_RETURN cell");
-            checkEq(3, indirect.origin().span().startLine(),
-                "the indirect call's origin is the call expression's line");
-            checkEq(18, indirect.origin().span().startColumn(),
-                "the indirect call's origin is the call expression's column");
-        } finally {
-            deleteRecursively(root);
         }
+        check(seed != null, "the unit carries the BYTES_NEW intrinsic seed "
+            + "registration");
+        if (seed == null) {
+            return;
+        }
+        int published = 0;
+        boolean allLoads = true;
+        for (SemanticOp op : unit.ops()) {
+            if (op.result() instanceof ValueId result && result.id() == seed.id()) {
+                published++;
+                allLoads = allLoads && op.kind() == SemanticOpKind.BINDING_LOAD;
+            }
+        }
+        check(published >= 1 && allLoads, "the seeded bytes identity is published "
+            + "only by identity-preserving binding loads; got " + published
+            + " publishing op(s)");
+        SemanticOp indirect = null;
+        int intrinsicCalls = 0;
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() != SemanticOpKind.CALL
+                    || !(op.payload() instanceof KindPayload.CallPayload call)) {
+                continue;
+            }
+            if (call.callee() instanceof KindPayload.CallCallee.Static staticCallee
+                    && staticCallee.binding()
+                        instanceof FunctionExecutionBinding.IntrinsicFunction intrinsic
+                    && intrinsic.kind() == IntrinsicKind.BYTES_NEW) {
+                intrinsicCalls++;
+                if (indirect == null) {
+                    indirect = op;
+                }
+            }
+        }
+        checkEq(2, intrinsicCalls, "both indirect calls record the seeded "
+            + "IntrinsicFunction binding");
+        check(indirect != null, "the indirect call of the bytes intrinsic records "
+            + "the seeded IntrinsicFunction binding");
+        if (indirect == null) {
+            return;
+        }
+        KindPayload.CallPayload payload =
+            (KindPayload.CallPayload) indirect.payload();
+        checkEq(CallMode.INDIRECT, payload.mode(), "the intrinsic-value call is "
+            + "the INDIRECT mode with the statically resolved binding");
+        SemanticOp parameter = payload.parameterBoundaryOpIds().isEmpty() ? null
+            : opById(unit, payload.parameterBoundaryOpIds().get(0));
+        check(parameter != null
+                && ((KindPayload.BoundaryPayload) parameter.payload()).kind()
+                    == BoundaryKind.DEAL_TO_HOST
+                && parameter.failurePolicy() == FailurePolicyId.HOST_PARAMETER
+                && RuntimeDescriptor.Int.INSTANCE.equals(
+                    ((KindPayload.BoundaryPayload) parameter.payload())
+                        .descriptor()),
+            "the declared int parameter is the DEAL_TO_HOST + HOST_PARAMETER "
+                + "cell");
+        SemanticOp returned = payload.returnBoundaryOpId() == null ? null
+            : opById(unit, payload.returnBoundaryOpId());
+        check(returned != null
+                && ((KindPayload.BoundaryPayload) returned.payload()).kind()
+                    == BoundaryKind.HOST_TO_DEAL
+                && returned.failurePolicy() == FailurePolicyId.HOST_SYNC_RETURN
+                && RuntimeDescriptor.Bytes.INSTANCE.equals(
+                    ((KindPayload.BoundaryPayload) returned.payload())
+                        .descriptor()),
+            "the bytes return is the HOST_TO_DEAL + HOST_SYNC_RETURN cell");
+        checkEq(3, indirect.origin().span().startLine(),
+            "the indirect call's origin is the call expression's line");
+        checkEq(18, indirect.origin().span().startColumn(),
+            "the indirect call's origin is the call expression's column");
     }
 
     /**
@@ -1620,55 +1633,28 @@ public class BytesCoverageTest {
      * agree event-for-event (a success terminal, or the pinned E8012 at
      * the call expression).
      */
-    private static void checkIndirectBytesDifferential() throws Exception {
-        List<DifferentialCase> cases = List.of(
-            new DifferentialCase("the indirect bytes allocation",
-                INDIRECT_BYTES_SOURCE, false, 0, 0),
-            new DifferentialCase("the indirect bytes failure",
-                INDIRECT_BYTES_NEGATIVE_SOURCE, true, 3, 20),
-            new DifferentialCase("the bytes intrinsic value positions",
-                INDIRECT_BYTES_VALUE_POSITIONS_SOURCE, false, 0, 0),
-            new DifferentialCase("the bytes adapter failure",
-                INDIRECT_BYTES_ADAPTER_NEGATIVE_SOURCE, true, 3, 20));
-        for (DifferentialCase differential : cases) {
-            Path root = Files.createTempDirectory("bytes-intrinsic-matrix-");
-            try {
-                BytesFixture spec = new BytesFixture(BYTES_DIR, differential.label(),
-                    "main", "null", List.of(), null, null, 0, 0);
-                Compiled compiled =
-                    compileFocused(root, differential.source(), null, null);
-                if (compiled == null) {
-                    continue;
-                }
-                Drive drive = lowerFocused(compiled, spec);
-                if (drive == null) {
-                    continue;
-                }
-                SemanticDifferentialHarness.Expectation expectation =
-                    differential.failure()
-                        ? SemanticDifferentialHarness.Expectation.failure(
-                            differential.label(), List.of(), "E8012",
-                            root.resolve("src").resolve("main.deal").toAbsolutePath()
-                                + ":" + differential.line() + ":"
-                                + differential.column())
-                        : SemanticDifferentialHarness.Expectation.success(
-                            differential.label(), List.of(), "null");
-                Path artifacts =
-                    Files.createTempDirectory("bytes-intrinsic-artifacts-");
-                try {
-                    SemanticDifferentialHarness.Verdict verdict =
-                        SemanticDifferentialHarness.runProject(drive.project(),
-                            drive.tables(), drive.registries(), expectation, artifacts);
-                    checkEq(3, verdict.runs().size(), spec.what() + ": the drive "
-                        + "produced the three consumers: " + verdict.failures());
-                    check(verdict.pass(), spec.what() + ": the three-consumer "
-                        + "differential verdict passes: " + verdict.failures());
-                } finally {
-                    deleteRecursively(artifacts);
-                }
-            } finally {
-                deleteRecursively(root);
-            }
+    private static void checkIndirectBytesDifferential(Drive drive,
+            DifferentialCase differential) throws Exception {
+        SemanticDifferentialHarness.Expectation expectation =
+            differential.failure()
+                ? SemanticDifferentialHarness.Expectation.failure(
+                    differential.label(), List.of(), "E8012",
+                    drive.compiled().root().resolve("src").resolve("main.deal")
+                        .toAbsolutePath() + ":" + differential.line() + ":"
+                        + differential.column())
+                : SemanticDifferentialHarness.Expectation.success(
+                    differential.label(), List.of(), "null");
+        Path artifacts = Files.createTempDirectory("bytes-intrinsic-artifacts-");
+        try {
+            SemanticDifferentialHarness.Verdict verdict =
+                SemanticDifferentialHarness.runProject(drive.project(),
+                    drive.tables(), drive.registries(), expectation, artifacts);
+            checkEq(3, verdict.runs().size(), differential.label() + ": the drive "
+                + "produced the three consumers: " + verdict.failures());
+            check(verdict.pass(), differential.label() + ": the three-consumer "
+                + "differential verdict passes: " + verdict.failures());
+        } finally {
+            deleteRecursively(artifacts);
         }
     }
 
