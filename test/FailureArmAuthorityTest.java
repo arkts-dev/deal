@@ -44,6 +44,9 @@ public class FailureArmAuthorityTest {
 
     private static int passed = 0;
     private static int failed = 0;
+    private static String armsChunk;
+    private static String walkChunk;
+    private static String walkHostChunk;
 
     private static void check(boolean condition, String message) {
         if (condition) {
@@ -83,6 +86,9 @@ public class FailureArmAuthorityTest {
     }
 
     public static void main(String[] args) throws Exception {
+        armsChunk = null;
+        walkChunk = null;
+        walkHostChunk = null;
         testClosedArmTable();
         testConsistencyInvariantNegatives();
         testCorrectedTemplates();
@@ -560,6 +566,13 @@ public class FailureArmAuthorityTest {
 
     /** The production chunk of the arm-only project (the emitted prelude). */
     private static String emittedArmsChunk() {
+        if (armsChunk == null) {
+            armsChunk = emitArmsChunk();
+        }
+        return armsChunk;
+    }
+
+    private static String emitArmsChunk() {
         deal.semantic.ir.ModuleId entry = new deal.semantic.ir.ModuleId("arms");
         deal.semantic.ir.LoweredModuleUnit unit = new deal.semantic.ir.LoweredModuleUnit(
             deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
@@ -2866,8 +2879,11 @@ public class FailureArmAuthorityTest {
 
     /** The production Lua chunk of the walk drive project. */
     private static String emittedWalkChunk() {
-        return LuaSemanticEmitter.emitProductionProject(walkProject(), walkTables(),
-            Map.of(), emptySurface());
+        if (walkChunk == null) {
+            walkChunk = LuaSemanticEmitter.emitProductionProject(walkProject(), walkTables(),
+                Map.of(), emptySurface());
+        }
+        return walkChunk;
     }
 
     /** The host-import module identity of the runtime-sentinel walk drive. */
@@ -2903,9 +2919,12 @@ public class FailureArmAuthorityTest {
 
     /** The production Lua chunk of the host-binding walk drive project. */
     private static String emittedWalkHostChunk() {
-        List<deal.semantic.ir.SemanticOp> extraOps = List.of(walkHostImportOp());
-        return LuaSemanticEmitter.emitProductionProject(walkProject(extraOps),
-            walkTables(extraOps), Map.of(), walkHostSurface());
+        if (walkHostChunk == null) {
+            List<deal.semantic.ir.SemanticOp> extraOps = List.of(walkHostImportOp());
+            walkHostChunk = LuaSemanticEmitter.emitProductionProject(walkProject(extraOps),
+                walkTables(extraOps), Map.of(), walkHostSurface());
+        }
+        return walkHostChunk;
     }
 
     /** The production JVM source of the walk drive project. */

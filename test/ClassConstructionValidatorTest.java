@@ -111,6 +111,10 @@ public class ClassConstructionValidatorTest {
                                  Map<ConstructKind, List<SemanticOpKind>> coverage) {
     }
 
+    private record LoweredSlice(SemanticLowerer.ClassDeclarationCoreResult result,
+                                ExternalModuleInterface ownInterface) {
+    }
+
     private static CheckedSlice checkSlice(String source) {
         Lexer lexer = new Lexer(source, SOURCE_ID);
         deal.lexer.LexResult lex = lexer.tokenize();
@@ -175,7 +179,7 @@ public class ClassConstructionValidatorTest {
     }
 
     /** The whole-pipeline driver: lexer/parser/checker → lowerModuleClassCore. */
-    private static SemanticLowerer.ClassDeclarationCoreResult lowerModule(String source) {
+    private static LoweredSlice lowerModule(String source) {
         CheckedSlice slice = checkSlice(source);
         if (slice == null) {
             return null;
@@ -184,10 +188,10 @@ public class ClassConstructionValidatorTest {
         if (pipeline == null) {
             return null;
         }
-        return SemanticLowerer.lowerModuleClassCore(moduleOf(slice),
+        return new LoweredSlice(SemanticLowerer.lowerModuleClassCore(moduleOf(slice),
             SemanticProfile.DEAL_V1_2_INT32, pipeline.coverage(), pipeline.interfaceHash(),
             REGISTRY_HASH, pipeline.ownInterface(),
-            SemanticIdAllocator.over(List.of(MODULE)));
+            SemanticIdAllocator.over(List.of(MODULE))), pipeline.ownInterface());
     }
 
     // =========================================================================
@@ -316,7 +320,9 @@ public class ClassConstructionValidatorTest {
             delete p.note
             let hasNote: boolean = has(p.note)
             """;
-        SemanticLowerer.ClassDeclarationCoreResult result = lowerModule(source);
+        LoweredSlice lowered = lowerModule(source);
+        SemanticLowerer.ClassDeclarationCoreResult result =
+            lowered == null ? null : lowered.result();
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null,
             "the representative slice lowers (the production seam runs the validator "
@@ -331,20 +337,13 @@ public class ClassConstructionValidatorTest {
         // facts) passes.
         Optional<CompilerDiagnostic> direct = ClassConstructionValidator.validate(
             result.lowering().unit(), result.lowering().table(), result.registry(),
-            result.jsonDefaults(), ownInterface(result, source), Map.of());
+            result.jsonDefaults(), lowered.ownInterface(), Map.of());
         check(direct.isEmpty(),
             "the produced records validate directly: " + direct);
 
         // The SHARED_FACTORY positive is the two-module seam's; the
         // single-module seam exercises LOCAL plus the shared shapes'
         // record invariants.
-    }
-
-    private static ExternalModuleInterface ownInterface(SemanticLowerer
-            .ClassDeclarationCoreResult result, String source) {
-        CheckedSlice slice = checkSlice(source);
-        PipelineSlice pipeline = pipeline(slice);
-        return pipeline.ownInterface();
     }
 
     // =========================================================================
@@ -362,7 +361,9 @@ public class ClassConstructionValidatorTest {
               note?: string;
             }
             """;
-        SemanticLowerer.ClassDeclarationCoreResult result = lowerModule(source);
+        LoweredSlice lowered = lowerModule(source);
+        SemanticLowerer.ClassDeclarationCoreResult result =
+            lowered == null ? null : lowered.result();
         check(result != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null, "the factory slice lowers");
         if (result == null || result.lowering().hasErrors()
@@ -375,7 +376,7 @@ public class ClassConstructionValidatorTest {
         // the unit still produces the factory op.
         expectE6005(ClassConstructionValidator.validate(unit, result.lowering().table(),
             new ClassFactoryRegistry(Map.of()), result.jsonDefaults(),
-            ownInterface(result, source), Map.of()), ClassConstructionValidator
+            lowered.ownInterface(), Map.of()), ClassConstructionValidator
                 .FACTORY_COHERENCE);
 
         // (b) A fabricated registry key: a registration under an entry no
@@ -387,7 +388,7 @@ public class ClassConstructionValidatorTest {
             .get(0).opId());
         expectE6005(ClassConstructionValidator.validate(unit, result.lowering().table(),
             new ClassFactoryRegistry(withFabricated),
-            result.jsonDefaults(), ownInterface(result, source), Map.of()),
+            result.jsonDefaults(), lowered.ownInterface(), Map.of()),
             ClassConstructionValidator.FACTORY_COHERENCE);
 
         // (c) Reordered factory classDefaultOpIds.
@@ -401,14 +402,14 @@ public class ClassConstructionValidatorTest {
                 factoryPayload.callerOpRef()));
         expectE6005(ClassConstructionValidator.validate(unitWithOps(unit, replaceOp(unit, tampered)),
             result.lowering().table(), result.registry(), result.jsonDefaults(),
-            ownInterface(result, source), Map.of()),
+            lowered.ownInterface(), Map.of()),
             ClassConstructionValidator.FACTORY_COHERENCE);
 
         // (d) A parented factory (the detached static shape broken).
         expectE6005(ClassConstructionValidator.validate(
             unitWithOps(unit, replaceOp(unit, withParent(factory, factory.opId()))),
             result.lowering().table(), result.registry(), result.jsonDefaults(),
-            ownInterface(result, source), Map.of()),
+            lowered.ownInterface(), Map.of()),
             ClassConstructionValidator.FACTORY_COHERENCE);
 
         // (e) A duplicate CLASS_DEFAULT op: clone one default op under a
@@ -431,7 +432,7 @@ public class ClassConstructionValidatorTest {
         withClone.add(clone);
         expectE6005(ClassConstructionValidator.validate(unitWithOps(unit, withClone),
             result.lowering().table(), result.registry(), result.jsonDefaults(),
-            ownInterface(result, source), Map.of()),
+            lowered.ownInterface(), Map.of()),
             ClassConstructionValidator.FACTORY_COHERENCE);
     }
 
@@ -462,7 +463,9 @@ public class ClassConstructionValidatorTest {
             }
             let p: Point = {x: 1}
             """;
-        SemanticLowerer.ClassDeclarationCoreResult result = lowerModule(source);
+        LoweredSlice lowered = lowerModule(source);
+        SemanticLowerer.ClassDeclarationCoreResult result =
+            lowered == null ? null : lowered.result();
         check(result != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null, "the construction slice lowers");
         if (result == null || result.lowering().hasErrors()
@@ -484,7 +487,7 @@ public class ClassConstructionValidatorTest {
                     payload.classDefaultOpIds(), payload.classFactoryRef(),
                     payload.fieldBoundaries())))),
             result.lowering().table(), result.registry(), result.jsonDefaults(),
-            ownInterface(result, source), Map.of()),
+            lowered.ownInterface(), Map.of()),
             ClassConstructionValidator.CONSTRUCTION_COHERENCE);
 
         // (b) An undeclared provided field.
@@ -497,7 +500,7 @@ public class ClassConstructionValidatorTest {
                     extraProvided, payload.defaultOwner(), payload.classDefaultOpIds(),
                     payload.classFactoryRef(), payload.fieldBoundaries())))),
             result.lowering().table(), result.registry(), result.jsonDefaults(),
-            ownInterface(result, source), Map.of()),
+            lowered.ownInterface(), Map.of()),
             ClassConstructionValidator.CONSTRUCTION_COHERENCE);
 
         // (c) A swapped field-boundary order (the parented children keep
@@ -515,7 +518,7 @@ public class ClassConstructionValidatorTest {
                         payload.classDefaultOpIds(), payload.classFactoryRef(),
                         swapped)))),
                 result.lowering().table(), result.registry(), result.jsonDefaults(),
-                ownInterface(result, source), Map.of()),
+                lowered.ownInterface(), Map.of()),
                 ClassConstructionValidator.CONSTRUCTION_COHERENCE);
         }
 
@@ -531,7 +534,7 @@ public class ClassConstructionValidatorTest {
                     boundaryPayload.realization()));
             expectE6005(ClassConstructionValidator.validate(unitWithOps(unit,
                 replaceOp(unit, tampered)), result.lowering().table(),
-                result.registry(), result.jsonDefaults(), ownInterface(result, source),
+                result.registry(), result.jsonDefaults(), lowered.ownInterface(),
                 Map.of()), ClassConstructionValidator.CONSTRUCTION_COHERENCE);
         }
 
@@ -562,7 +565,7 @@ public class ClassConstructionValidatorTest {
                     first.boundaryOpId()));
                 expectE6005(ClassConstructionValidator.validate(unitWithOps(unit,
                     replaceOp(unit, tampered)), result.lowering().table(),
-                    result.registry(), result.jsonDefaults(), ownInterface(result, source),
+                    result.registry(), result.jsonDefaults(), lowered.ownInterface(),
                     Map.of()), ClassConstructionValidator.CONSTRUCTION_COHERENCE);
                 // The payload kind and the child kind both tampered
                 // against the pinned expectation.
@@ -573,7 +576,7 @@ public class ClassConstructionValidatorTest {
                             payload.defaultOwner(), payload.classDefaultOpIds(),
                             payload.classFactoryRef(), wrongEntries)))),
                     result.lowering().table(), result.registry(), result.jsonDefaults(),
-                    ownInterface(result, source), Map.of()),
+                    lowered.ownInterface(), Map.of()),
                     ClassConstructionValidator.CONSTRUCTION_COHERENCE);
             }
         }
@@ -586,7 +589,7 @@ public class ClassConstructionValidatorTest {
                     payload.classDefaultOpIds(), new ClassFactoryId(77),
                     payload.fieldBoundaries())))),
             result.lowering().table(), result.registry(), result.jsonDefaults(),
-            ownInterface(result, source), Map.of()),
+            lowered.ownInterface(), Map.of()),
             ClassConstructionValidator.CONSTRUCTION_COHERENCE);
 
         // (g) A RETAINED_ABI owner (E10's shape, never produced here).
@@ -596,7 +599,7 @@ public class ClassConstructionValidatorTest {
                     payload.providedFields(), DefaultOwner.RETAINED_ABI, List.of(),
                     new ClassFactoryId(78), payload.fieldBoundaries())))),
             result.lowering().table(), result.registry(), result.jsonDefaults(),
-            ownInterface(result, source), Map.of()),
+            lowered.ownInterface(), Map.of()),
             ClassConstructionValidator.CONSTRUCTION_COHERENCE);
     }
 
@@ -618,7 +621,9 @@ public class ClassConstructionValidatorTest {
             p.x = 9
             delete p.y
             """;
-        SemanticLowerer.ClassDeclarationCoreResult result = lowerModule(source);
+        LoweredSlice lowered = lowerModule(source);
+        SemanticLowerer.ClassDeclarationCoreResult result =
+            lowered == null ? null : lowered.result();
         check(result != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null, "the field slice lowers");
         if (result == null || result.lowering().hasErrors()
@@ -634,7 +639,7 @@ public class ClassConstructionValidatorTest {
             expectE6005(ClassConstructionValidator.validate(unitWithOps(unit,
                 replaceOp(unit, withParent(readChildren.get(1), null))),
                 result.lowering().table(), result.registry(), result.jsonDefaults(),
-                ownInterface(result, source), Map.of()),
+                lowered.ownInterface(), Map.of()),
                 ClassConstructionValidator.FIELD_OPERATION_SHAPE);
         }
 
@@ -648,7 +653,7 @@ public class ClassConstructionValidatorTest {
                     boundaryPayload.input(), boundaryPayload.realization()));
             expectE6005(ClassConstructionValidator.validate(unitWithOps(unit,
                 replaceOp(unit, tampered)), result.lowering().table(),
-                result.registry(), result.jsonDefaults(), ownInterface(result, source),
+                result.registry(), result.jsonDefaults(), lowered.ownInterface(),
                 Map.of()), ClassConstructionValidator.FIELD_OPERATION_SHAPE);
         }
 
@@ -660,7 +665,7 @@ public class ClassConstructionValidatorTest {
                 expectE6005(ClassConstructionValidator.validate(unitWithOps(unit,
                     replaceOp(unit, withParent(deleteChildren.get(0), read.opId()))),
                     result.lowering().table(), result.registry(), result.jsonDefaults(),
-                    ownInterface(result, source), Map.of()),
+                    lowered.ownInterface(), Map.of()),
                     ClassConstructionValidator.FIELD_OPERATION_SHAPE);
             }
         }
@@ -675,7 +680,7 @@ public class ClassConstructionValidatorTest {
                     new KindPayload.FieldDeletePayload(deletePayload.classValue(),
                         deletePayload.classId(), "x")))),
                 result.lowering().table(), result.registry(), result.jsonDefaults(),
-                ownInterface(result, source), Map.of()),
+                lowered.ownInterface(), Map.of()),
                 ClassConstructionValidator.FIELD_OPERATION_SHAPE);
         }
     }
@@ -695,14 +700,16 @@ public class ClassConstructionValidatorTest {
               x: int = base;
             }
             """;
-        SemanticLowerer.ClassDeclarationCoreResult result = lowerModule(source);
+        LoweredSlice lowered = lowerModule(source);
+        SemanticLowerer.ClassDeclarationCoreResult result =
+            lowered == null ? null : lowered.result();
         check(result != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null, "the admission baseline lowers");
         if (result == null || result.lowering().hasErrors()
                 || result.lowering().unit() == null) {
             return;
         }
-        ExternalModuleInterface own = ownInterface(result, source);
+        ExternalModuleInterface own = lowered.ownInterface();
         LoweredModuleUnit unit = result.lowering().unit();
         SemanticOp defaultOp = firstOfKind(unit, SemanticOpKind.CLASS_DEFAULT);
         KindPayload.ClassDefaultPayload defaultPayload =
@@ -823,7 +830,9 @@ public class ClassConstructionValidatorTest {
             // @jsonable
             export class Holder { home: Point; opt?: Inner; }
             """;
-        SemanticLowerer.ClassDeclarationCoreResult result = lowerModule(source);
+        LoweredSlice lowered = lowerModule(source);
+        SemanticLowerer.ClassDeclarationCoreResult result =
+            lowered == null ? null : lowered.result();
         check(result != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null, "the json slice lowers");
         if (result == null || result.lowering().hasErrors()
@@ -846,7 +855,7 @@ public class ClassConstructionValidatorTest {
             entries.put(fromJson.opId(), dropped);
             expectE6005(ClassConstructionValidator.validate(unit, result.lowering().table(),
                 result.registry(), new JsonDefaultChildTable(entries),
-                ownInterface(result, source), Map.of()),
+                lowered.ownInterface(), Map.of()),
                 ClassConstructionValidator.JSON_LAYOUT_COHERENCE);
         }
 
@@ -856,7 +865,7 @@ public class ClassConstructionValidatorTest {
             expectE6005(ClassConstructionValidator.validate(unit, result.lowering().table(),
                 result.registry(),
                 new JsonDefaultChildTable(Map.of(someDefault.opId(), List.of())),
-                ownInterface(result, source), Map.of()),
+                lowered.ownInterface(), Map.of()),
                 ClassConstructionValidator.JSON_LAYOUT_COHERENCE);
         }
 
@@ -895,7 +904,7 @@ public class ClassConstructionValidatorTest {
             expectE6005(ClassConstructionValidator.validate(
                 unitWithLayouts(unitWithOps(unit, ops), layouts),
                 result.lowering().table(), result.registry(), result.jsonDefaults(),
-                ownInterface(result, source), Map.of()),
+                lowered.ownInterface(), Map.of()),
                 ClassConstructionValidator.JSON_LAYOUT_COHERENCE);
         }
 
@@ -932,7 +941,7 @@ public class ClassConstructionValidatorTest {
             expectE6005(ClassConstructionValidator.validate(
                 unitWithLayouts(unitWithOps(unit, ops), layouts),
                 result.lowering().table(), result.registry(), result.jsonDefaults(),
-                ownInterface(result, source), Map.of()),
+                lowered.ownInterface(), Map.of()),
                 ClassConstructionValidator.JSON_LAYOUT_COHERENCE);
         }
     }
@@ -956,7 +965,9 @@ public class ClassConstructionValidatorTest {
             let v: string | null = p.note
             let hasNote: boolean = has(p.note)
             """;
-        SemanticLowerer.ClassDeclarationCoreResult result = lowerModule(source);
+        LoweredSlice lowered = lowerModule(source);
+        SemanticLowerer.ClassDeclarationCoreResult result =
+            lowered == null ? null : lowered.result();
         check(result != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null, "the detail slice lowers");
         if (result == null || result.lowering().hasErrors()
@@ -964,7 +975,7 @@ public class ClassConstructionValidatorTest {
             return;
         }
         LoweredModuleUnit unit = result.lowering().unit();
-        ExternalModuleInterface own = ownInterface(result, source);
+        ExternalModuleInterface own = lowered.ownInterface();
 
         // The dump/snapshot wiring: the produced unit dumps through the
         // canonicalizer and re-validates from the dump text — the class

@@ -227,7 +227,7 @@ public class DynamicFunctionValueGateTest {
      * plus the session's pinned write facts.
      */
     private record RawLowering(LoweredModuleUnit unit, StructuredBodyTable table,
-                               SemanticLowerer.ModuleLowerer lowerer) {
+                               BindingsProductionValidator.PinnedWriteFacts pinnedWriteFacts) {
     }
 
     private static RawLowering rawLower(Fixture fixture, String what) {
@@ -253,7 +253,7 @@ public class DynamicFunctionValueGateTest {
             fixture.module().imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
             fixture.index().interfaceIndexDigest(), REGISTRY_HASH,
             ContainerClaimingSeam.E9_GATE_ACTIVATION);
-        return new RawLowering(unit, lowerer.bodyTable(), lowerer);
+        return new RawLowering(unit, lowerer.bodyTable(), lowerer.pinnedWriteFacts());
     }
 
     // =========================================================================
@@ -571,14 +571,8 @@ public class DynamicFunctionValueGateTest {
     // 1. REGISTRY_ONE_TO_ONE: the producing position of a dynamic key
     // =========================================================================
 
-    private static void testProducingPositionClause() {
+    private static void testProducingPositionClause(RawLowering raw) {
         System.out.println("-- REGISTRY_ONE_TO_ONE: the dynamic key's producing position --");
-
-        Fixture fixture = fixture(DYNAMIC_CALLEE_SOURCE, "dynamic callee");
-        if (fixture == null) {
-            return;
-        }
-        RawLowering raw = rawLower(fixture, "dynamic callee");
         if (raw == null) {
             return;
         }
@@ -605,7 +599,7 @@ public class DynamicFunctionValueGateTest {
         // The realized unit's own registrations pass both closed gates in
         // one pass (the producer rule's arms plus every gate clause).
         assertBindingsPass(BindingsProductionValidator.validate(unit, raw.table(),
-            raw.lowerer().pinnedWriteFacts()),
+            raw.pinnedWriteFacts()),
             "the produced unit's own DynamicFunctionValue registrations (the producer "
                 + "rule's typed-load arm) satisfy REGISTRY_ONE_TO_ONE");
         assertSchemaPass(SemanticIrValidator.validate(unit, facts(unit)),
@@ -621,7 +615,7 @@ public class DynamicFunctionValueGateTest {
             registerDynamicCallees(unit);
         LoweredModuleUnit registered = withRegistry(unit, registry);
         assertBindingsPass(BindingsProductionValidator.validate(registered, raw.table(),
-            raw.lowerer().pinnedWriteFacts()),
+            raw.pinnedWriteFacts()),
             "a unit whose DynamicFunctionValue keys name exactly the ops publishing them and "
                 + "carry no static producing position");
 
@@ -649,7 +643,7 @@ public class DynamicFunctionValueGateTest {
                     (RuntimeDescriptor.Func) closureLoad.resultType()));
             LoweredModuleUnit closureUnit = withRegistry(unit, closureRegistry);
             assertBindingsRule(BindingsProductionValidator.validate(closureUnit, raw.table(),
-                    raw.lowerer().pinnedWriteFacts()), "REGISTRY_ONE_TO_ONE",
+                    raw.pinnedWriteFacts()), "REGISTRY_ONE_TO_ONE",
                 "a dynamic registration keyed by a load republishing a CLOSURE_NEW identity",
                 "is produced by 1 static producing op(s)", "carries no static producing position");
         }
@@ -666,7 +660,7 @@ public class DynamicFunctionValueGateTest {
                 (RuntimeDescriptor.Func) loads.get(1).resultType()));
         LoweredModuleUnit swappedUnit = withRegistry(unit, swapped);
         assertBindingsRule(BindingsProductionValidator.validate(swappedUnit, raw.table(),
-            raw.lowerer().pinnedWriteFacts()), "REGISTRY_ONE_TO_ONE",
+            raw.pinnedWriteFacts()), "REGISTRY_ONE_TO_ONE",
             "a dynamic registration whose named op does not publish its key",
             "whose result identity is not that key");
 
@@ -678,7 +672,7 @@ public class DynamicFunctionValueGateTest {
                 (RuntimeDescriptor.Func) loads.get(0).resultType()));
         LoweredModuleUnit danglingUnit = withRegistry(unit, dangling);
         assertBindingsRule(BindingsProductionValidator.validate(danglingUnit, raw.table(),
-            raw.lowerer().pinnedWriteFacts()), "REGISTRY_ONE_TO_ONE",
+            raw.pinnedWriteFacts()), "REGISTRY_ONE_TO_ONE",
             "a dynamic registration naming no op of the unit",
             "which is no op of the unit");
     }
@@ -1016,15 +1010,9 @@ public class DynamicFunctionValueGateTest {
     // 4. The combined drive: the shape plus its dynamic registration
     // =========================================================================
 
-    private static void testCombinedGates() {
+    private static void testCombinedGates(RawLowering raw) {
         System.out.println("-- combined: the shape plus its dynamic registration through "
             + "both gates in one run --");
-
-        Fixture fixture = fixture(DYNAMIC_CALLEE_SOURCE, "combined dynamic callee");
-        if (fixture == null) {
-            return;
-        }
-        RawLowering raw = rawLower(fixture, "combined dynamic callee");
         if (raw == null) {
             return;
         }
@@ -1039,7 +1027,7 @@ public class DynamicFunctionValueGateTest {
                 SemanticIrValidator.toUnitText(registered), facts(registered)),
             "the dynamic registrations on the canonical text schema surface");
         assertBindingsPass(BindingsProductionValidator.validate(registered, raw.table(),
-            raw.lowerer().pinnedWriteFacts()),
+            raw.pinnedWriteFacts()),
             "the dynamic registrations through the production gates");
 
         // The drive is load-bearing: a registration whose producing-op position
@@ -1155,7 +1143,7 @@ public class DynamicFunctionValueGateTest {
         StructuredBodyTable loadedTable = withTableOp(raw.table(), preserved, seedBlock);
 
         assertBindingsPass(BindingsProductionValidator.validate(loaded, loadedTable,
-            raw.lowerer().pinnedWriteFacts()),
+            raw.pinnedWriteFacts()),
             "the unit carrying the function-typed load of the seeded intrinsic binding "
                 + "(REGISTRY_ONE_TO_ONE and the ADAPTER_SOURCE_SHAPE VALUE-over-intrinsic "
                 + "exemption)");
@@ -1187,7 +1175,7 @@ public class DynamicFunctionValueGateTest {
         LoweredModuleUnit foreignUnit = withOp(unit, foreignLoad);
         assertBindingsRule(BindingsProductionValidator.validate(foreignUnit,
             withTableOp(raw.table(), foreignLoad, seedBlock),
-            raw.lowerer().pinnedWriteFacts()), "ADAPTER_SOURCE_SHAPE",
+            raw.pinnedWriteFacts()), "ADAPTER_SOURCE_SHAPE",
             "a load naming another binding over the seeded identity",
             "carries a binding-load operand", "without its proof");
 
@@ -1213,7 +1201,7 @@ public class DynamicFunctionValueGateTest {
                     new BindingImmutabilityProof(otherSeedBinding, seedGeneration)),
                 adaptOp.resultType());
             assertBindingsRule(BindingsProductionValidator.validate(foreignProof, raw.table(),
-                raw.lowerer().pinnedWriteFacts()), "ADAPTER_SOURCE_SHAPE",
+                raw.pinnedWriteFacts()), "ADAPTER_SOURCE_SHAPE",
                 "a proof over the seeded intrinsic identity naming another binding",
                 "naming no seeded binding/generation");
             assertSchemaPass(SemanticIrValidator.validate(foreignProof,
@@ -1228,7 +1216,7 @@ public class DynamicFunctionValueGateTest {
                 new BindingImmutabilityProof(seedBinding, seedGeneration)),
             adaptOp.resultType());
         assertBindingsPass(BindingsProductionValidator.validate(seededProof, raw.table(),
-            raw.lowerer().pinnedWriteFacts()),
+            raw.pinnedWriteFacts()),
             "a proof naming the seeded binding/generation over the intrinsic operand");
         assertSchemaPass(SemanticIrValidator.validate(seededProof, facts(seededProof)),
             "the seeded-proof adapter unit on the schema surface");
@@ -1242,10 +1230,13 @@ public class DynamicFunctionValueGateTest {
         System.out.println("=== Dynamic Function Value Gate / Identity-Preserving "
             + "Intrinsic Load Tests (ISSUE-0674) ===\n");
 
-        testProducingPositionClause();
+        Fixture dynamicFixture = fixture(DYNAMIC_CALLEE_SOURCE, "dynamic callee");
+        RawLowering dynamic = dynamicFixture == null ? null
+            : rawLower(dynamicFixture, "dynamic callee");
+        testProducingPositionClause(dynamic);
         testProducingPositionFamilies();
         testCalleePositionAndCellFamily();
-        testCombinedGates();
+        testCombinedGates(dynamic);
         testAdapterValueOverIntrinsicExemption();
 
         System.out.println("\nDynamic function value gate: " + passed + " passed, " + failed

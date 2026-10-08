@@ -136,12 +136,12 @@ public class CanonicalRuntimeTypeDescriptorTest {
                 + " but got " + error.kind() + "@" + error.scalarOffset()
                 + " (" + error.message() + ")");
         } else {
-            check(true, label + ": " + kind + "@" + offset + " for " + quote(text));
+            check(true, label);
         }
         if (error.message() == null || error.message().isEmpty()) {
             fail(label, "empty message for " + quote(text));
         } else {
-            check(true, label + ": message present for " + quote(text));
+            check(true, label);
         }
     }
 
@@ -251,7 +251,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
             "@$builtin/Error", "@$external/pkg/Cls",
         };
         for (String text : valid) {
-            assertAtom(text, "valid shape " + quote(text));
+            assertAtom(text, "valid shape");
         }
     }
 
@@ -612,11 +612,10 @@ public class CanonicalRuntimeTypeDescriptorTest {
             } catch (Throwable t) {
                 thrown = t;
             }
-            check(thrown == null && result != null
-                    && (result instanceof DescriptorAst
-                        || result instanceof DescriptorSyntaxError),
-                "parse returns a value and never throws for " + quote(text)
-                    + (thrown != null ? " (threw " + thrown + ")" : ""));
+            boolean matches = thrown == null && result != null
+                && (result instanceof DescriptorAst || result instanceof DescriptorSyntaxError);
+            check(matches, matches ? "" : "parse returns a value and never throws for " + quote(text)
+                + (thrown != null ? " (threw " + thrown + ")" : ""));
         }
     }
 
@@ -908,23 +907,23 @@ public class CanonicalRuntimeTypeDescriptorTest {
         }
 
         // Explicit negative pins per corpus member: never a legacy spelling.
-        check(text.indexOf("[]") < 0,
-            label + ": no legacy T[] spelling in " + quote(text));
-        check(text.indexOf('|') < 0,
-            label + ": no legacy T|null spelling in " + quote(text));
-        check(text.indexOf("...") < 0,
-            label + ": no rest-parameter spelling in " + quote(text));
-        check(text.indexOf('.') < 0,
-            label + ": no dotted spelling in " + quote(text));
-        check(text.indexOf('@') < 0,
-            label + ": no class atom for a class-free type in " + quote(text));
+        boolean noArraySuffix = text.indexOf("[]") < 0;
+        check(noArraySuffix, noArraySuffix ? "" : label + ": no legacy T[] spelling in " + quote(text));
+        boolean noUnion = text.indexOf('|') < 0;
+        check(noUnion, noUnion ? "" : label + ": no legacy T|null spelling in " + quote(text));
+        boolean noRest = text.indexOf("...") < 0;
+        check(noRest, noRest ? "" : label + ": no rest-parameter spelling in " + quote(text));
+        boolean noDot = text.indexOf('.') < 0;
+        check(noDot, noDot ? "" : label + ": no dotted spelling in " + quote(text));
+        boolean noClass = text.indexOf('@') < 0;
+        check(noClass, noClass ? "" : label + ": no class atom for a class-free type in " + quote(text));
         boolean structural = text.indexOf('[') >= 0
             || text.indexOf('?') >= 0
             || text.indexOf('(') >= 0
             || text.indexOf(',') >= 0
             || text.indexOf('-') >= 0;
-        check(structural || PRIMITIVE_KEYWORDS_SET.contains(text),
-            label + ": no bare-name spelling in " + quote(text));
+        boolean noBareName = structural || PRIMITIVE_KEYWORDS_SET.contains(text);
+        check(noBareName, noBareName ? "" : label + ": no bare-name spelling in " + quote(text));
 
         // Pure: a repeated encode is byte-identical.
         check(text.equals(ENCODER.encode(type)),
@@ -1628,12 +1627,12 @@ public class CanonicalRuntimeTypeDescriptorTest {
         }
 
         // Legacy-spelling negative pins per corpus member.
-        check(text.indexOf("[]") < 0,
-            label + ": no legacy T[] spelling in " + quote(text));
-        check(text.indexOf('|') < 0,
-            label + ": no legacy T|null spelling in " + quote(text));
-        check(text.indexOf("...") < 0,
-            label + ": no rest-parameter spelling in " + quote(text));
+        boolean noArraySuffix = text.indexOf("[]") < 0;
+        check(noArraySuffix, noArraySuffix ? "" : label + ": no legacy T[] spelling in " + quote(text));
+        boolean noUnion = text.indexOf('|') < 0;
+        check(noUnion, noUnion ? "" : label + ": no legacy T|null spelling in " + quote(text));
+        boolean noRest = text.indexOf("...") < 0;
+        check(noRest, noRest ? "" : label + ": no rest-parameter spelling in " + quote(text));
 
         // Byte-identity with the index: class leaves are the index text
         // verbatim (multi-component roots stay text-opaque; never
@@ -1653,16 +1652,18 @@ public class CanonicalRuntimeTypeDescriptorTest {
             // or the bare builtin name).
             String dotted = buildDescriptorText(
                 type, CanonicalRuntimeTypeDescriptorTest::dottedModuleLeaf);
-            check(!text.equals(dotted),
+            boolean noDottedModule = !text.equals(dotted);
+            check(noDottedModule, noDottedModule ? "" :
                 label + ": never the dotted modulePath spelling " + quote(dotted));
             // Never the dotted class-name-position spelling.
             String dottedClassName = buildDescriptorText(
                 type, CanonicalRuntimeTypeDescriptorTest::dottedClassNameLeaf);
-            check(!text.equals(dottedClassName),
-                label + ": never the dotted class-name spelling "
-                    + quote(dottedClassName));
+            boolean noDottedClass = !text.equals(dottedClassName);
+            check(noDottedClass, noDottedClass ? "" :
+                label + ": never the dotted class-name spelling " + quote(dottedClassName));
         } else {
-            check(text.indexOf('@') < 0,
+            boolean noClass = text.indexOf('@') < 0;
+            check(noClass, noClass ? "" :
                 label + ": no class atom for a class-free member in " + quote(text));
         }
 
@@ -1672,8 +1673,8 @@ public class CanonicalRuntimeTypeDescriptorTest {
         for (String atom : CLASS_BEARING_TEXTS.values()) {
             remainder = remainder.replace(atom, "");
         }
-        check(!containsAnyClassName(remainder),
-            label + ": no bare class-name text remains in " + quote(text));
+        boolean noBareClass = !containsAnyClassName(remainder);
+        check(noBareClass, noBareClass ? "" : label + ": no bare class-name text remains in " + quote(text));
 
         // Pure: a repeated encode is byte-identical.
         check(text.equals(CLASS_BEARING_ENCODER.encode(type)),
@@ -1731,9 +1732,9 @@ public class CanonicalRuntimeTypeDescriptorTest {
                 continue;
             }
             CanonicalClassIdentity expected = textToIdentity.get(atomText);
-            check(expected != null && expected.equals(identity),
-                label + ": reverse lookup of " + quote(atomText)
-                    + " returns the tree's carried identity");
+            boolean matches = expected != null && expected.equals(identity);
+            check(matches, matches ? "" : label + ": reverse lookup of " + quote(atomText)
+                + " returns the tree's carried identity");
         }
         return ast;
     }
@@ -1865,7 +1866,8 @@ public class CanonicalRuntimeTypeDescriptorTest {
         // spelling.
         String hollowText = CLASS_BEARING_ENCODER.encode(
             new Type.Class("DeclaredName", ANTI_HOLLOW_IDENTITY));
-        check(ANTI_HOLLOW_TEXT.equals(hollowText),
+        boolean matches = ANTI_HOLLOW_TEXT.equals(hollowText);
+        check(matches, matches ? "" :
             "the anti-hollow entry is emitted byte-for-byte: " + quote(hollowText));
         check(hollowText.indexOf("DeclaredName") < 0,
             "no recomputation from the carried class name");

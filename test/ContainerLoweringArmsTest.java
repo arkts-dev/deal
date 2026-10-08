@@ -614,25 +614,38 @@ public class ContainerLoweringArmsTest {
     // 2. BINDING_LOAD arm — the loop-binding load-resolution rule
     // =========================================================================
 
-    static void testIdentifierLoopBindingLoad() {
-        System.out.println("-- BINDING_LOAD arm: the loop-binding load-resolution rule --");
+    private record NestedLoopLowering(CheckedSlice slice, ForOfStatement outer,
+                                      OpId outerOpId, List<SemanticOp> ops) {
+    }
 
+    private static NestedLoopLowering lowerNestedLoop() {
         CheckedSlice slice = checkSlice("""
             for (let x: string of "ab") {
               for (let y: string of x) {}
             }
             """);
         if (slice == null) {
-            return;
+            return null;
         }
         ForOfStatement outer = first(slice.program(), ForOfStatement.class);
         check(outer != null, "the slice carries the outer for-of");
         if (outer == null) {
-            return;
+            return null;
         }
         SemanticLowerer.ModuleLowerer lowerer = lowerer(slice.checks());
         OpId outerOpId = lowerer.lowerForOfStatement(outer);
-        List<SemanticOp> ops = lowerer.ops();
+        return new NestedLoopLowering(slice, outer, outerOpId, List.copyOf(lowerer.ops()));
+    }
+
+    static void testIdentifierLoopBindingLoad(NestedLoopLowering nested) {
+        System.out.println("-- BINDING_LOAD arm: the loop-binding load-resolution rule --");
+        if (nested == null) {
+            return;
+        }
+        CheckedSlice slice = nested.slice();
+        ForOfStatement outer = nested.outer();
+        OpId outerOpId = nested.outerOpId();
+        List<SemanticOp> ops = nested.ops();
 
         check(ops.size() == 4,
             "the nested-for-of corpus produces exactly four ops; got " + ops.size());
@@ -1274,21 +1287,14 @@ public class ContainerLoweringArmsTest {
     // 9. FOR_EACH arm — the exact shape, the nested body, the empty body
     // =========================================================================
 
-    static void testForEachArm() {
+    static void testForEachArm(NestedLoopLowering nested) {
         System.out.println("-- FOR_EACH arm: exact shape, nested body, empty body --");
 
         // (a) The nested corpus shape (also covered end-to-end above).
-        CheckedSlice nested = checkSlice("""
-            for (let x: string of "ab") {
-              for (let y: string of x) {}
-            }
-            """);
         if (nested != null) {
-            ForOfStatement outer = first(nested.program(), ForOfStatement.class);
+            ForOfStatement outer = nested.outer();
             if (outer != null) {
-                SemanticLowerer.ModuleLowerer lowerer = lowerer(nested.checks());
-                lowerer.lowerForOfStatement(outer);
-                List<SemanticOp> ops = lowerer.ops();
+                List<SemanticOp> ops = nested.ops();
                 check(ofKind(ops, SemanticOpKind.FOR_EACH).size() == 2,
                     "the nested corpus produces exactly two FOR_EACH ops");
                 check(ops.size() == 4, "the nested corpus produces exactly 4 ops; got "
@@ -1938,14 +1944,15 @@ public class ContainerLoweringArmsTest {
 
         testScalarLiteralConstArm();
         testConstIntLiteralRangeGate();
-        testIdentifierLoopBindingLoad();
+        NestedLoopLowering nested = lowerNestedLoop();
+        testIdentifierLoopBindingLoad(nested);
         testArrayLiteralArm();
         testTableLiteralArm();
         testStringPlusArm();
         testTemplateArms();
         testArrayLengthArm();
         testMemberReadArm();
-        testForEachArm();
+        testForEachArm(nested);
         testConstructUnloweredNegatives();
         testDescriptorNegatives();
         testCombinedDependencyStep();

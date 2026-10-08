@@ -194,7 +194,7 @@ public class RuntimeTypeMatcherTest {
             fail(label, "for " + quote(descriptor) + " expected " + code + " "
                 + quote(message) + " but got " + f.code() + " " + quote(f.message()));
         } else {
-            check(true, label + ": " + code + " " + quote(message));
+            check(true, label);
         }
     }
 
@@ -625,7 +625,8 @@ public class RuntimeTypeMatcherTest {
         for (String descriptor : hostile) {
             try {
                 Object r = MATCHER.check(descriptor, NULL_VALUE, null);
-                check(failure(r) != null, "hostile descriptor " + quote(descriptor)
+                boolean matches = failure(r) != null;
+                check(matches, matches ? "" : "hostile descriptor " + quote(descriptor)
                     + " returns a failure, never throws");
             } catch (Throwable t) {
                 fail("hostile descriptor " + quote(descriptor) + " threw", t.toString());

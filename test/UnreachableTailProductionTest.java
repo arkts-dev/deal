@@ -15,6 +15,7 @@ import deal.module.CompilationOrchestrator;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
 import deal.project.CliOverrides;
+import deal.project.ProjectContext;
 import deal.project.ProjectLocator;
 import deal.semantic.CapabilityRegistry;
 import deal.semantic.CheckedModuleInput;
@@ -463,11 +464,16 @@ public class UnreachableTailProductionTest {
         return "\"" + opId.module().path() + "#" + opId.id() + "\"";
     }
 
+    private record PreparedProduction(ProjectContext context,
+                                      CompilationOrchestrator orchestrator,
+                                      boolean compiled, Path out, Path artifact) {
+    }
+
     private record LoweredProject(ExecutableLoweredProject project,
                                   Map<ModuleId, StructuredBodyTable> tables,
                                   Map<ModuleId, ClassFactoryRegistry> registries,
                                   ModuleId entry, StructuredBodyTable entryTable,
-                                  Long asyncEntryId) {
+                                  Long asyncEntryId, PreparedProduction production) {
     }
 
     private static LoweredProject lowerFixture(String stem, Path entry,
@@ -482,7 +488,7 @@ public class UnreachableTailProductionTest {
             + "EXTERNAL_ENTRY");
         return new LoweredProject(lowered.project(), lowered.tables(),
             lowered.registries(), lowered.entry(), lowered.entryTable(),
-            asyncEntryId);
+            asyncEntryId, lowered.production());
     }
 
     /**
@@ -492,24 +498,23 @@ public class UnreachableTailProductionTest {
      */
     private static LoweredProject lowerProgram(String name, Path entry,
             CliOverrides overrides) throws Exception {
-        ProjectLocator.LocateResult located = ProjectLocator.locate(
-            entry.toString(), overrides);
-        check(located.context() != null, name + ": the generated deal.json "
-            + "locates strictly");
-        if (located.context() == null) {
+        PreparedProduction production = prepareProduction(name, entry, overrides);
+        if (production == null) {
             return null;
         }
-        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            located.context(), entry, false, false, false, false, null,
-            productionInvocation());
-        orchestrator.compile();
+        CompilationOrchestrator orchestrator = production.orchestrator();
+        List<String> errors = orchestrator.diagnostics().stream()
+            .filter(diagnostic -> "error".equals(diagnostic.severity()))
+            .map(CompilerDiagnostic::message).toList();
         CheckedProjectBuildResult built = orchestrator.checkedProject();
         RequirementManifestResult manifests = orchestrator.requirementManifests();
-        check(built != null && built.input() != null && built.index() != null
+        check(production.compiled() && errors.isEmpty()
+                && built != null && built.input() != null && built.index() != null
                 && !built.hasErrors() && manifests != null
                 && manifests.manifests() != null
                 && orchestrator.hostDeclarationSurface() != null,
             name + ": the oracle closure compiles: "
+                + errors + " "
                 + (built == null ? "no checked project" : built.diagnostics()));
         if (built == null || built.input() == null || built.index() == null
                 || built.hasErrors() || manifests == null
@@ -533,7 +538,27 @@ public class UnreachableTailProductionTest {
         ModuleId entryModule = result.project().entryModule();
         return new LoweredProject(result.project(), result.tables(),
             result.registries(), entryModule, result.tables().get(entryModule),
-            null);
+            null, production);
+    }
+
+    private static PreparedProduction prepareProduction(String name, Path entry,
+            CliOverrides overrides) throws Exception {
+        ProjectLocator.LocateResult located = ProjectLocator.locate(
+            entry.toString(), overrides);
+        check(located.context() != null, name + ": the generated deal.json "
+            + "locates strictly");
+        if (located.context() == null) {
+            return null;
+        }
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            located.context(), entry, false, false, false, false, null,
+            productionInvocation());
+        boolean compiled = orchestrator.compile();
+        Path out = Path.of(located.context().outputPath().absoluteNormalizedPath());
+        Path artifact = out.resolve(located.context().backend().equals("jvm")
+            ? JvmBackend.classNameFor("main") + ".java" : "main.lua");
+        return new PreparedProduction(located.context(), orchestrator, compiled,
+            out, artifact);
     }
 
     private static Long asyncEntryIdOf(LoweredModuleUnit unit, String export) {
@@ -632,19 +657,20 @@ public class UnreachableTailProductionTest {
             }
 
             for (String lane : List.of("luajit", "jvm")) {
-                String outName = "out-" + lane;
-                ProjectLocator.LocateResult located = ProjectLocator.locate(
-                    entry.toString(),
-                    new CliOverrides(lane, project.resolve(outName).toString()));
-                check(located.context() != null, stem + " [" + lane
-                    + "]: the generated deal.json locates strictly");
-                if (located.context() == null) {
+                PreparedProduction production;
+                if (lane.equals(lowered.production().context().backend())) {
+                    production = lowered.production();
+                    check(production.context().backend().equals(lane), stem + " ["
+                        + lane + "]: the generated deal.json locates strictly");
+                } else {
+                    production = prepareProduction(stem + " [" + lane + "]", entry,
+                        new CliOverrides(lane, project.resolve("out-" + lane).toString()));
+                }
+                if (production == null) {
                     continue;
                 }
-                CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-                    located.context(), entry, false, false, false, false, null,
-                    productionInvocation());
-                boolean compiled = orchestrator.compile();
+                CompilationOrchestrator orchestrator = production.orchestrator();
+                boolean compiled = production.compiled();
                 List<String> errors = orchestrator.diagnostics().stream()
                     .filter(diagnostic -> "error".equals(diagnostic.severity()))
                     .map(CompilerDiagnostic::message).toList();
@@ -659,9 +685,9 @@ public class UnreachableTailProductionTest {
                 }
                 SidecarExpectations.RuntimeExpectation.Executed pinned =
                     pinnedOutcome(stem, lane);
-                Path out = project.resolve(outName);
+                Path out = production.out();
                 if (lane.equals("luajit")) {
-                    Path chunk = out.resolve("main.lua");
+                    Path chunk = production.artifact();
                     check(Files.isRegularFile(chunk), stem + " [luajit]: the project "
                         + "artifact is staged: " + chunk);
                     if (!Files.isRegularFile(chunk)) {
@@ -678,8 +704,7 @@ public class UnreachableTailProductionTest {
                     }
                     driveLua(stem, out, chunk, export, pinned);
                 } else {
-                    Path artifact = out.resolve(
-                        JvmBackend.classNameFor("main") + ".java");
+                    Path artifact = production.artifact();
                     check(Files.isRegularFile(artifact), stem + " [jvm]: the project "
                         + "artifact is staged: " + artifact);
                     if (!Files.isRegularFile(artifact)) {
@@ -1025,7 +1050,7 @@ public class UnreachableTailProductionTest {
                     }
                 }
             }
-            compositeJvmDrive(composite, project, entry);
+            compositeJvmDrive(composite, lowered.production());
             compositeLuaDrive(composite, markers, project, entry);
         } finally {
             deleteRecursively(project);
@@ -1050,20 +1075,16 @@ public class UnreachableTailProductionTest {
      * {@code javac --release 25 -proc:none}, and executes with the pinned
      * outcome.
      */
-    private static void compositeJvmDrive(CompositeCase composite, Path project,
-                                          Path entry) throws Exception {
-        Path out = project.resolve("out-jvm");
-        ProjectLocator.LocateResult located = ProjectLocator.locate(entry.toString(),
-            new CliOverrides("jvm", out.toString()));
-        check(located.context() != null, composite.name() + " [jvm]: the "
-            + "generated deal.json locates strictly");
-        if (located.context() == null) {
+    private static void compositeJvmDrive(CompositeCase composite,
+                                          PreparedProduction production) throws Exception {
+        Path out = production.out();
+        check(production.context().backend().equals("jvm"), composite.name()
+            + " [jvm]: the generated deal.json locates strictly");
+        if (!production.context().backend().equals("jvm")) {
             return;
         }
-        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            located.context(), entry, false, false, false, false, null,
-            productionInvocation());
-        boolean compiled = orchestrator.compile();
+        CompilationOrchestrator orchestrator = production.orchestrator();
+        boolean compiled = production.compiled();
         List<String> errors = orchestrator.diagnostics().stream()
             .filter(diagnostic -> "error".equals(diagnostic.severity()))
             .map(CompilerDiagnostic::message).toList();
@@ -1075,7 +1096,7 @@ public class UnreachableTailProductionTest {
         if (!compiled) {
             return;
         }
-        Path artifact = out.resolve(JvmBackend.classNameFor("main") + ".java");
+        Path artifact = production.artifact();
         check(Files.isRegularFile(artifact), composite.name() + " [jvm]: the "
             + "project artifact is staged: " + artifact);
         if (!Files.isRegularFile(artifact)) {
@@ -1332,7 +1353,7 @@ public class UnreachableTailProductionTest {
                 loopCase.name() + ": the oracle emits no event for the skipped tail "
                 + "loop or its transfer");
 
-            loopTransferJvmDrive(loopCase, loopId, project, entry);
+            loopTransferJvmDrive(loopCase, loopId, lowered.production());
             loopTransferLuaDrive(loopCase, loopId, transfer.opId(), project, entry);
         } finally {
             deleteRecursively(project);
@@ -1346,21 +1367,17 @@ public class UnreachableTailProductionTest {
      * with the pinned outcome.
      */
     private static void loopTransferJvmDrive(LoopTransferCase loopCase, OpId loopId,
-                                             Path project, Path entry)
+                                             PreparedProduction production)
             throws Exception {
         String name = loopCase.name();
-        Path out = project.resolve("out-jvm");
-        ProjectLocator.LocateResult located = ProjectLocator.locate(entry.toString(),
-            new CliOverrides("jvm", out.toString()));
-        check(located.context() != null, name + " [jvm]: the generated deal.json "
-            + "locates strictly");
-        if (located.context() == null) {
+        Path out = production.out();
+        check(production.context().backend().equals("jvm"), name
+            + " [jvm]: the generated deal.json locates strictly");
+        if (!production.context().backend().equals("jvm")) {
             return;
         }
-        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            located.context(), entry, false, false, false, false, null,
-            productionInvocation());
-        boolean compiled = orchestrator.compile();
+        CompilationOrchestrator orchestrator = production.orchestrator();
+        boolean compiled = production.compiled();
         List<String> errors = orchestrator.diagnostics().stream()
             .filter(diagnostic -> "error".equals(diagnostic.severity()))
             .map(CompilerDiagnostic::message).toList();
@@ -1372,7 +1389,7 @@ public class UnreachableTailProductionTest {
         if (!compiled) {
             return;
         }
-        Path artifact = out.resolve(JvmBackend.classNameFor("main") + ".java");
+        Path artifact = production.artifact();
         check(Files.isRegularFile(artifact), name + " [jvm]: the project artifact "
             + "is staged: " + artifact);
         if (!Files.isRegularFile(artifact)) {
@@ -1692,7 +1709,7 @@ public class UnreachableTailProductionTest {
                 }
             }
 
-            inTryLoopJvmDrive(loopCase, loopId, marker, project, entry);
+            inTryLoopJvmDrive(loopCase, loopId, marker, lowered.production());
             inTryLoopLuaDrive(loopCase, loopId, marker.opId(), project, entry);
         } finally {
             deleteRecursively(project);
@@ -1708,21 +1725,17 @@ public class UnreachableTailProductionTest {
      * empty transcript.
      */
     private static void inTryLoopJvmDrive(InTryLoopCase loopCase, OpId loopId,
-                                          SemanticOp marker, Path project, Path entry)
+                                          SemanticOp marker, PreparedProduction production)
             throws Exception {
         String name = loopCase.name();
-        Path out = project.resolve("out-jvm");
-        ProjectLocator.LocateResult located = ProjectLocator.locate(entry.toString(),
-            new CliOverrides("jvm", out.toString()));
-        check(located.context() != null, name + " [jvm]: the generated deal.json "
-            + "locates strictly");
-        if (located.context() == null) {
+        Path out = production.out();
+        check(production.context().backend().equals("jvm"), name
+            + " [jvm]: the generated deal.json locates strictly");
+        if (!production.context().backend().equals("jvm")) {
             return;
         }
-        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            located.context(), entry, false, false, false, false, null,
-            productionInvocation());
-        boolean compiled = orchestrator.compile();
+        CompilationOrchestrator orchestrator = production.orchestrator();
+        boolean compiled = production.compiled();
         List<String> errors = orchestrator.diagnostics().stream()
             .filter(diagnostic -> "error".equals(diagnostic.severity()))
             .map(CompilerDiagnostic::message).toList();
@@ -1734,7 +1747,7 @@ public class UnreachableTailProductionTest {
         if (!compiled) {
             return;
         }
-        Path artifact = out.resolve(JvmBackend.classNameFor("main") + ".java");
+        Path artifact = production.artifact();
         check(Files.isRegularFile(artifact), name + " [jvm]: the project artifact "
             + "is staged: " + artifact);
         if (!Files.isRegularFile(artifact)) {
@@ -2262,7 +2275,7 @@ public class UnreachableTailProductionTest {
                 }
             }
 
-            forUpdateJvmDrive(forCase, loop, updateMembers, marker, project, entry);
+            forUpdateJvmDrive(forCase, loop, updateMembers, marker, lowered.production());
         } finally {
             deleteRecursively(project);
         }
@@ -2278,20 +2291,16 @@ public class UnreachableTailProductionTest {
      */
     private static void forUpdateJvmDrive(ForUpdateCase forCase, SemanticOp loop,
                                           List<OpId> updateMembers, SemanticOp marker,
-                                          Path project, Path entry) throws Exception {
+                                          PreparedProduction production) throws Exception {
         String name = forCase.name();
-        Path out = project.resolve("out-jvm");
-        ProjectLocator.LocateResult located = ProjectLocator.locate(entry.toString(),
-            new CliOverrides("jvm", out.toString()));
-        check(located.context() != null, name + " [jvm]: the generated deal.json "
-            + "locates strictly");
-        if (located.context() == null) {
+        Path out = production.out();
+        check(production.context().backend().equals("jvm"), name
+            + " [jvm]: the generated deal.json locates strictly");
+        if (!production.context().backend().equals("jvm")) {
             return;
         }
-        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            located.context(), entry, false, false, false, false, null,
-            productionInvocation());
-        boolean compiled = orchestrator.compile();
+        CompilationOrchestrator orchestrator = production.orchestrator();
+        boolean compiled = production.compiled();
         List<String> errors = orchestrator.diagnostics().stream()
             .filter(diagnostic -> "error".equals(diagnostic.severity()))
             .map(CompilerDiagnostic::message).toList();
@@ -2303,7 +2312,7 @@ public class UnreachableTailProductionTest {
         if (!compiled) {
             return;
         }
-        Path artifact = out.resolve(JvmBackend.classNameFor("main") + ".java");
+        Path artifact = production.artifact();
         check(Files.isRegularFile(artifact), name + " [jvm]: the project artifact "
             + "is staged: " + artifact);
         if (!Files.isRegularFile(artifact)) {

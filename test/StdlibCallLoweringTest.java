@@ -182,13 +182,22 @@ public class StdlibCallLoweringTest {
      */
     private static SemanticLowerer.LoweringResult lowerSubject(
             CheckedProjectBuildResult checked, String modulePath) {
+        if (moduleOf(checked.input(), modulePath) == null) {
+            fail("the checked project has no module " + modulePath);
+            return null;
+        }
+        return lowerSubject(checked, modulePath, LoweringSupport.computeManifests(
+            invocation(), checked.input(), checked.index()));
+    }
+
+    private static SemanticLowerer.LoweringResult lowerSubject(
+            CheckedProjectBuildResult checked, String modulePath,
+            RequirementManifestResult manifests) {
         CheckedModuleInput subject = moduleOf(checked.input(), modulePath);
         if (subject == null) {
             fail("the checked project has no module " + modulePath);
             return null;
         }
-        RequirementManifestResult manifests = LoweringSupport.computeManifests(invocation(),
-            checked.input(), checked.index());
         check(manifests != null && !manifests.hasErrors(),
             "the manifest computation is clean"
                 + (manifests == null ? " (null)" : ": " + manifests.diagnostics()));
@@ -212,14 +221,13 @@ public class StdlibCallLoweringTest {
     }
 
     private static SemanticLowerer.FullProgramE7Result lowerSubjectCallMachine(
-            CheckedProjectBuildResult checked, String modulePath) {
+            CheckedProjectBuildResult checked, String modulePath,
+            RequirementManifestResult manifests) {
         CheckedModuleInput subject = moduleOf(checked.input(), modulePath);
         if (subject == null) {
             fail("the checked project has no module " + modulePath);
             return null;
         }
-        RequirementManifestResult manifests = LoweringSupport.computeManifests(invocation(),
-            checked.input(), checked.index());
         check(manifests != null && !manifests.hasErrors(),
             "the manifest computation is clean"
                 + (manifests == null ? " (null)" : ": " + manifests.diagnostics()));
@@ -843,7 +851,7 @@ public class StdlibCallLoweringTest {
             // are installed by that drive). No "no unit" state is
             // asserted for the fixture.
             SemanticLowerer.FullProgramE7Result result =
-                lowerSubjectCallMachine(checked, "lib");
+                lowerSubjectCallMachine(checked, "lib", manifests);
             check(result != null && result.lowering() != null
                     && !result.lowering().hasErrors()
                     && result.lowering().unit() != null,
@@ -1305,7 +1313,7 @@ public class StdlibCallLoweringTest {
             // STDLIB_CALL(TIME_NOW_MILLIS) with zero parameter boundaries,
             // one STDLIB_RETURN on the declared int, and the INT32_RESULT
             // terminal at the call origin.
-            SemanticLowerer.LoweringResult lowering = lowerSubject(checked, "lib");
+            SemanticLowerer.LoweringResult lowering = lowerSubject(checked, "lib", manifests);
             check(lowering != null && !lowering.hasErrors() && lowering.unit() != null,
                 "the forced lowering of the time module produces a validated unit: "
                     + (lowering == null ? "null" : lowering.diagnostics()));

@@ -21,6 +21,7 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -490,6 +491,37 @@ module.exports = {
         new ThreadLocal<>();
     private static final Object CONSOLE_LOCK = new Object();
 
+    private record SourceSnapshot(String raw, String stripped, List<String> relativeImports) {
+        SourceSnapshot {
+            relativeImports = List.copyOf(relativeImports);
+        }
+    }
+
+    private static Map<Path, SourceSnapshot> sourceSnapshots = new ConcurrentHashMap<>();
+
+    private static SourceSnapshot sourceSnapshot(Path file) throws IOException {
+        Path normalized = file.toAbsolutePath().normalize();
+        try {
+            return sourceSnapshots.computeIfAbsent(normalized, path -> {
+                try {
+                    String raw = Files.readString(path);
+                    return new SourceSnapshot(raw,
+                        ConformanceHarnessMetadata.stripClassificationHeaders(raw),
+                        relativeImportsOf(raw));
+                } catch (IOException failure) {
+                    throw new UncheckedIOException(failure);
+                }
+            });
+        } catch (UncheckedIOException failure) {
+            throw failure.getCause();
+        }
+    }
+
+    private static String rawSource(Path file) throws IOException {
+        return file.toAbsolutePath().normalize().startsWith(conformanceRoot)
+            ? sourceSnapshot(file).raw() : Files.readString(file);
+    }
+
     private static Path conformanceRoot = Path.of("test/conformance/")
         .toAbsolutePath().normalize();
     private static Path hostFixturesRoot =
@@ -527,6 +559,7 @@ module.exports = {
     // =========================================================================
 
     public static void main(String[] args) throws Exception {
+        sourceSnapshots = new ConcurrentHashMap<>();
         if (args.length > 0) {
             conformanceRoot = Path.of(args[0]).toAbsolutePath().normalize();
             hostFixturesRoot = conformanceRoot.resolve("host-fixtures");
@@ -758,7 +791,7 @@ module.exports = {
 
     private static TestFile parseMetadata(Path file) {
         try {
-            List<String> lines = Files.readAllLines(file);
+            List<String> lines = sourceSnapshot(file).raw().lines().toList();
             String spec = "";
             String description = "";
             String expected = "";
@@ -839,7 +872,7 @@ module.exports = {
     /** True when the file declares an exported {@code main} function. */
     private static boolean exportsMain(Path file) {
         try {
-            String source = Files.readString(file);
+            String source = rawSource(file);
             return EXPORTED_MAIN.matcher(source).find();
         } catch (IOException e) {
             throw new UncheckedIOException("cannot read " + file, e);
@@ -1042,11 +1075,8 @@ module.exports = {
     private static List<CompilerDiagnostic> frontendDiagnostics(Path file) {
         List<CompilerDiagnostic> all = new ArrayList<>();
         try {
-            String source = Files.readString(file);
+            String source = sourceSnapshot(file).stripped();
             String filename = file.toString();
-
-            source = ConformanceHarnessMetadata
-                .stripClassificationHeaders(source);
 
             LexResult lex = new Lexer(source, filename).tokenize();
             all.addAll(lex.diagnostics());
@@ -1139,9 +1169,7 @@ module.exports = {
             if (resolved != null && Files.exists(resolved)) {
                 try {
 
-                    String source = ConformanceHarnessMetadata
-                        .stripClassificationHeaders(
-                            Files.readString(resolved));
+                    String source = sourceSnapshot(resolved).stripped();
                     boolean isDecl = resolved.toString().endsWith(".d.deal");
                     LexResult lex = new Lexer(source, resolved.toString())
                         .tokenize();
@@ -1187,9 +1215,7 @@ module.exports = {
             if (resolved == null || !Files.exists(resolved)) return null;
             try {
 
-                String source = ConformanceHarnessMetadata
-                    .stripClassificationHeaders(
-                        Files.readString(resolved));
+                String source = sourceSnapshot(resolved).stripped();
                 LexResult lex = new Lexer(source, resolved.toString())
                     .tokenize();
                 if (lex.hasErrors()) return null;
@@ -1211,8 +1237,7 @@ module.exports = {
             Map<String, Symbol.ClassSymbol> symbols = new LinkedHashMap<>();
             try {
 
-                String source = ConformanceHarnessMetadata
-                    .stripClassificationHeaders(Files.readString(file));
+                String source = sourceSnapshot(file).stripped();
                 LexResult lex = new Lexer(source, file.toString()).tokenize();
                 if (lex.hasErrors()) return symbols;
                 Parser parser = new Parser(lex.tokens(), file.toString(), lex.directiveEvents());
@@ -1307,11 +1332,8 @@ module.exports = {
     private static List<CompilerDiagnostic> compileCompanionStandalone(
             Path file) {
         try {
-            String source = Files.readString(file);
+            String source = sourceSnapshot(file).stripped();
             String filename = file.toString();
-
-            source = ConformanceHarnessMetadata
-                .stripClassificationHeaders(source);
 
             LexResult lex = new Lexer(source, filename).tokenize();
             if (lex.hasErrors()) {
@@ -1633,8 +1655,7 @@ module.exports = {
                 Files.createDirectories(declTarget.getParent());
             }
             Files.writeString(declTarget,
-                ConformanceHarnessMetadata.stripClassificationHeaders(
-                    Files.readString(declaration)));
+                sourceSnapshot(declaration).stripped());
             externals.put(raw,
                 declTarget.toAbsolutePath().normalize().toString());
             materializedCorpusFiles.add(
@@ -1660,8 +1681,7 @@ module.exports = {
                 Path declTarget = projectRoot.resolve(declRel);
 
                 Files.writeString(declTarget,
-                    ConformanceHarnessMetadata.stripClassificationHeaders(
-                        Files.readString(decl)));
+                    sourceSnapshot(decl).stripped());
                 dealJson.append("    \"host/").append(hostName)
                     .append("\": { \"declaration\": \"")
                     .append(declRel).append("\" }");
@@ -1748,8 +1768,7 @@ module.exports = {
             Files.createDirectories(target.getParent());
         }
 
-        Files.writeString(target, ConformanceHarnessMetadata
-            .stripClassificationHeaders(Files.readString(normalized)));
+        Files.writeString(target, sourceSnapshot(normalized).stripped());
         written.put(normalized.toString(), target);
         materializedCorpusFiles.add(corpusRelOf(normalized));
         for (String importPath : relativeImports(normalized)) {
@@ -1789,17 +1808,18 @@ module.exports = {
         Path aliasTarget = projectRoot.resolve(aliasBase + ".deal");
         if (Files.exists(aliasTarget)) return;
 
-        Files.writeString(aliasTarget, ConformanceHarnessMetadata
-            .stripClassificationHeaders(Files.readString(
-                resolved.toAbsolutePath().normalize())));
+        Files.writeString(aliasTarget, sourceSnapshot(resolved).stripped());
     }
 
     /** Relative import paths ({@code ./} / {@code ../}) appearing in the
      * file's source, in order. */
     private static List<String> relativeImports(Path file)
             throws IOException {
+        return sourceSnapshot(file).relativeImports();
+    }
+
+    private static List<String> relativeImportsOf(String source) {
         List<String> paths = new ArrayList<>();
-        String source = Files.readString(file);
         for (String line : source.split("\n")) {
             String trimmed = line.trim();
             if (!trimmed.startsWith("import ")) continue;
@@ -1822,7 +1842,7 @@ module.exports = {
             throws IOException {
         Set<String> hosts = new LinkedHashSet<>();
         for (Path file : files) {
-            String source = Files.readString(file);
+            String source = rawSource(file);
             for (String line : source.split("\n")) {
                 String trimmed = line.trim();
                 if (!trimmed.startsWith("import ")) continue;
@@ -1847,7 +1867,7 @@ module.exports = {
             throws IOException {
         Set<String> ffi = new LinkedHashSet<>();
         for (Path file : files) {
-            String source = Files.readString(file);
+            String source = rawSource(file);
             for (String line : source.split("\n")) {
                 String trimmed = line.trim();
                 if (!trimmed.startsWith("import ")) continue;

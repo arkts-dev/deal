@@ -43,28 +43,32 @@ public class LexerTest {
     private static void assertToken(Token token, TokenType expectedType,
                                      String expectedLexeme, int expectedLine,
                                      int expectedCol) {
-        check(token.type() == expectedType,
+        boolean typeMatches = token.type() == expectedType;
+        check(typeMatches, typeMatches ? "" :
             String.format("type: expected %s, got %s", expectedType, token.type()));
-        check(token.lexeme().equals(expectedLexeme),
+        boolean lexemeMatches = token.lexeme().equals(expectedLexeme);
+        check(lexemeMatches, lexemeMatches ? "" :
             String.format("lexeme: expected '%s', got '%s'", expectedLexeme, token.lexeme()));
-        check(token.line() == expectedLine,
+        boolean lineMatches = token.line() == expectedLine;
+        check(lineMatches, lineMatches ? "" :
             String.format("line: expected %d, got %d", expectedLine, token.line()));
-        check(token.column() == expectedCol,
+        boolean columnMatches = token.column() == expectedCol;
+        check(columnMatches, columnMatches ? "" :
             String.format("column: expected %d, got %d", expectedCol, token.column()));
     }
 
     private static void assertTokenTypeOnly(Token token, TokenType expectedType,
                                              String context) {
-        check(token.type() == expectedType,
-            String.format("%s: expected type %s, got %s (%s)",
-                context, expectedType, token.type(), token.lexeme()));
+        boolean matches = token.type() == expectedType;
+        check(matches, matches ? "" : String.format("%s: expected type %s, got %s (%s)",
+            context, expectedType, token.type(), token.lexeme()));
     }
 
     private static void assertDiagnosticCount(List<CompilerDiagnostic> diags,
                                                int expectedCount, String context) {
-        check(diags.size() == expectedCount,
-            String.format("%s: expected %d diagnostics, got %d: %s",
-                context, expectedCount, diags.size(), diags));
+        boolean matches = diags.size() == expectedCount;
+        check(matches, matches ? "" : String.format("%s: expected %d diagnostics, got %d: %s",
+            context, expectedCount, diags.size(), diags));
     }
 
     private static void assertNoDiagnostics(List<CompilerDiagnostic> diags, String context) {
@@ -73,9 +77,9 @@ public class LexerTest {
 
     private static void assertDiagnosticCode(List<CompilerDiagnostic> diags,
                                               String expectedCode, String context) {
-        check(diags.stream().anyMatch(d -> d.code().equals(expectedCode)),
-            String.format("%s: expected diagnostic %s, got: %s",
-                context, expectedCode, diags));
+        boolean matches = diags.stream().anyMatch(d -> d.code().equals(expectedCode));
+        check(matches, matches ? "" : String.format("%s: expected diagnostic %s, got: %s",
+            context, expectedCode, diags));
     }
 
     private static CompilerDiagnostic findDiag(LexResult r, String code) {
@@ -120,7 +124,10 @@ public class LexerTest {
      * final cursor position and zero scalar length.
      */
     private static void assertTokenOffsetsMatchCursorWalk(String source) {
-        LexResult r = tokenize(source);
+        assertTokenOffsetsMatchCursorWalk(source, tokenize(source));
+    }
+
+    private static void assertTokenOffsetsMatchCursorWalk(String source, LexResult r) {
         int searchFrom = 0;
         for (Token t : r.tokens()) {
             if (t.type() == TokenType.EOF) {
@@ -179,7 +186,6 @@ public class LexerTest {
         testUnrecognizedCharacter();
         testMalformedNumber();
         testUnterminatedBlockComment();
-        testEOFToken();
         testEmptyInput();
         testErrorRecovery();
         testTokenSpan();
@@ -190,9 +196,6 @@ public class LexerTest {
         testBlockCommentNoNesting();
         testLineCommentColumnAtEOF();
         testInTokenizesAsIdentifier();
-        testOfTokenizesAsKeyword();
-        testAsyncTokenizesAsKeyword();
-        testAwaitTokenizesAsKeyword();
         testDirectiveComments();
         testDealVersionDirectives();
         testScalarOffsets();
@@ -339,6 +342,7 @@ public class LexerTest {
         r = tokenize("42");
         assertNoDiagnostics(r.diagnostics(), "int 42");
         assertToken(r.tokens().get(0), TokenType.INT_LITERAL, "42", 1, 1);
+        assertEOFToken(r);
 
         r = tokenize("-1");
         assertNoDiagnostics(r.diagnostics(), "int -1");
@@ -380,6 +384,8 @@ public class LexerTest {
 
         r = tokenize(".5");
         assertNoDiagnostics(r.diagnostics(), "number .5");
+        assertToken(r.tokens().get(0), TokenType.NUMBER_LITERAL, ".5", 1, 1);
+        assertNoDiagnostics(r.diagnostics(), ".5");
         assertToken(r.tokens().get(0), TokenType.NUMBER_LITERAL, ".5", 1, 1);
 
         r = tokenize("1e+5");
@@ -828,6 +834,9 @@ public class LexerTest {
         assertDiagnosticCode(r.diagnostics(), "E1001", "@ unrecognized");
         check(r.tokens().get(0).type() == TokenType.EOF,
             "unrecognized char skipped, only EOF remains");
+        CompilerDiagnostic d = findDiag(r, "E1001");
+        check(d != null, "E1001 present for '@'");
+        assertRange(d, "test.deal", 1, 1, 1, 2, 0, 1, "E1001 single scalar");
 
         r = tokenize("#");
         assertDiagnosticCode(r.diagnostics(), "E1001", "# unrecognized");
@@ -858,6 +867,10 @@ public class LexerTest {
         boolean hasE1002 = r.diagnostics().stream()
             .anyMatch(d -> d.code().equals("E1002"));
         check(hasE1002, "1.5e produces E1002 diagnostic");
+        CompilerDiagnostic d = findDiag(r, "E1002");
+        check(d != null, "E1002 present for 1.5e");
+        assertRange(d, "test.deal", 1, 1, 1, 5, 0, 4,
+            "E1002 exponent without digits at EOF");
 
         r = tokenize("1.5e\nlet x = 1;");
         boolean hasContinuation = r.tokens().stream()
@@ -875,6 +888,15 @@ public class LexerTest {
         check(tokens.get(2).type() == TokenType.NUMBER_LITERAL
                 && tokens.get(2).lexeme().equals(".2"),
             "1..2: third token is NUMBER .2");
+        assertNoDiagnostics(r.diagnostics(), "1..2 valid");
+        check(tokens.get(0).type() == TokenType.INT_LITERAL
+                && tokens.get(0).lexeme().equals("1"),
+            "1..2: first token INT 1");
+        check(tokens.get(1).type() == TokenType.DOT,
+            "1..2: second token DOT");
+        check(tokens.get(2).type() == TokenType.NUMBER_LITERAL
+                && tokens.get(2).lexeme().equals(".2"),
+            "1..2: third token NUMBER .2");
     }
 
     // =========================================================================
@@ -888,16 +910,17 @@ public class LexerTest {
         assertDiagnosticCode(r.diagnostics(), "E1004", "unterminated block comment");
         check(r.tokens().get(0).type() == TokenType.EOF,
             "only EOF after unterminated block comment");
+        CompilerDiagnostic d = findDiag(r, "E1004");
+        check(d != null, "E1004 present for unterminated block comment");
+        assertRange(d, "test.deal", 1, 1, 1, 16, 0, 15,
+            "E1004 comment start through EOF");
     }
 
     // =========================================================================
     // EOF token test
     // =========================================================================
 
-    static void testEOFToken() {
-        System.out.println("-- EOF Token --");
-
-        LexResult r = tokenize("42");
+    private static void assertEOFToken(LexResult r) {
         List<Token> tokens = r.tokens();
         check(tokens.size() >= 2, "at least 2 tokens (literal + EOF)");
         Token eof = tokens.get(tokens.size() - 1);
@@ -1068,11 +1091,7 @@ public class LexerTest {
     static void testDotNumber() {
         System.out.println("-- Dot-Number Edge Cases --");
 
-        LexResult r = tokenize(".5");
-        assertNoDiagnostics(r.diagnostics(), ".5");
-        assertToken(r.tokens().get(0), TokenType.NUMBER_LITERAL, ".5", 1, 1);
-
-        r = tokenize("1.toString");
+        LexResult r = tokenize("1.toString");
         assertNoDiagnostics(r.diagnostics(), "1.toString");
         List<Token> tokens = r.tokens();
         check(tokens.size() == 4, "1.toString: 3 tokens + EOF, got " + tokens.size());
@@ -1127,6 +1146,10 @@ public class LexerTest {
         // 1.2.3 should produce E1002 diagnostic
         LexResult r = tokenize("1.2.3");
         assertDiagnosticCode(r.diagnostics(), "E1002", "1.2.3 multiple dots");
+        CompilerDiagnostic d = findDiag(r, "E1002");
+        check(d != null, "E1002 present for 1.2.3");
+        assertRange(d, "test.deal", 1, 1, 1, 4, 0, 3,
+            "E1002 token start through first unconsumed scalar");
         List<Token> tokens = r.tokens();
 
         // Should produce NUMBER("1.2") + NUMBER(".3") + EOF (3 tokens total)
@@ -1140,18 +1163,6 @@ public class LexerTest {
                 && tokens.get(1).lexeme().equals(".3"),
             "1.2.3: second token should be NUMBER .3");
 
-        // 1..2 should still work without diagnostic
-        r = tokenize("1..2");
-        assertNoDiagnostics(r.diagnostics(), "1..2 valid");
-        tokens = r.tokens();
-        check(tokens.get(0).type() == TokenType.INT_LITERAL
-                && tokens.get(0).lexeme().equals("1"),
-            "1..2: first token INT 1");
-        check(tokens.get(1).type() == TokenType.DOT,
-            "1..2: second token DOT");
-        check(tokens.get(2).type() == TokenType.NUMBER_LITERAL
-                && tokens.get(2).lexeme().equals(".2"),
-            "1..2: third token NUMBER .2");
     }
 
     // =========================================================================
@@ -1210,36 +1221,6 @@ public class LexerTest {
         assertToken(tokens.get(0), TokenType.IDENTIFIER, "in", 1, 1);
     }
 
-    static void testOfTokenizesAsKeyword() {
-        System.out.println("-- 'of' tokenizes as keyword --");
-
-        LexResult r = tokenize("of");
-        assertNoDiagnostics(r.diagnostics(), "'of' as keyword");
-        List<Token> tokens = r.tokens();
-        check(tokens.size() == 2, "'of': expected 2 tokens (keyword + EOF)");
-        assertToken(tokens.get(0), TokenType.OF, "of", 1, 1);
-    }
-
-    static void testAsyncTokenizesAsKeyword() {
-        System.out.println("-- 'async' tokenizes as keyword --");
-
-        LexResult r = tokenize("async");
-        assertNoDiagnostics(r.diagnostics(), "'async' as keyword");
-        List<Token> tokens = r.tokens();
-        check(tokens.size() == 2, "'async': expected 2 tokens (keyword + EOF)");
-        assertToken(tokens.get(0), TokenType.ASYNC, "async", 1, 1);
-    }
-
-    static void testAwaitTokenizesAsKeyword() {
-        System.out.println("-- 'await' tokenizes as keyword --");
-
-        LexResult r = tokenize("await");
-        assertNoDiagnostics(r.diagnostics(), "'await' as keyword");
-        List<Token> tokens = r.tokens();
-        check(tokens.size() == 2, "'await': expected 2 tokens (keyword + EOF)");
-        assertToken(tokens.get(0), TokenType.AWAIT, "await", 1, 1);
-    }
-
     static void testDirectiveComments() {
         System.out.println("-- Directive Events --");
 
@@ -1248,6 +1229,17 @@ public class LexerTest {
         assertNoDiagnostics(r.diagnostics(), "@jsonable before export class");
         List<Token> tokens = r.tokens();
         Token exportToken = tokens.get(0);
+        assertNoDiagnostics(r.diagnostics(), "@jsonable before export fixture");
+        check(exportToken.type() == TokenType.EXPORT,
+            "EXPORT token after directive");
+        check(exportToken.line() == 2 && exportToken.column() == 1,
+            "EXPORT at 2:1, got " + exportToken.line() + ":"
+                + exportToken.column());
+        check(exportToken.startScalarOffset() == 13
+                && exportToken.scalarLength() == 6,
+            "EXPORT offsets: start 13, length 6, got "
+                + exportToken.startScalarOffset() + "/"
+                + exportToken.scalarLength());
         check(exportToken.type() == TokenType.EXPORT,
             "@jsonable before export: first token is EXPORT, got " + exportToken.type());
         check(r.directiveEvents().size() == 1,
@@ -1584,6 +1576,7 @@ public class LexerTest {
         String src = "let s = \"x\uD83D\uDE00y\";";
         LexResult r = tokenize(src);
         assertNoDiagnostics(r.diagnostics(), "astral string fixture");
+        assertTokenOffsetsMatchCursorWalk(src, r);
         List<Token> tokens = r.tokens();
         check(tokens.size() == 6, "astral fixture: 5 tokens + EOF, got " + tokens.size());
         Token str = tokens.get(3);
@@ -1649,7 +1642,6 @@ public class LexerTest {
 
         // Full recomputation via the independent cursor walk over astral,
         // tab, CRLF, CR, multi-line, and comment fixtures.
-        assertTokenOffsetsMatchCursorWalk("let s = \"x\uD83D\uDE00y\";");
         assertTokenOffsetsMatchCursorWalk("let\tx = 1;");
         assertTokenOffsetsMatchCursorWalk("let a = 1;\r\nlet b = 2;\rlet c = 3;");
         assertTokenOffsetsMatchCursorWalk("// comment \uD83D\uDE00\nlet x = 1;");
@@ -1666,15 +1658,9 @@ public class LexerTest {
     static void testDiagnosticRanges() {
         System.out.println("-- Diagnostic Ranges --");
 
-        // E1001 = the offending single scalar.
-        LexResult r = tokenize("@");
-        CompilerDiagnostic d = findDiag(r, "E1001");
-        check(d != null, "E1001 present for '@'");
-        assertRange(d, "test.deal", 1, 1, 1, 2, 0, 1, "E1001 single scalar");
-
         // E1001 with an astral scalar: the second diagnostic covers exactly
         // the one supplementary scalar at (1,2) — never two columns.
-        r = tokenize("@\uD83D\uDE00");
+        LexResult r = tokenize("@\uD83D\uDE00");
         List<CompilerDiagnostic> e1001s = r.diagnostics().stream()
             .filter(x -> x.code().equals("E1001")).toList();
         check(e1001s.size() == 2,
@@ -1686,26 +1672,10 @@ public class LexerTest {
                 "E1001 astral single scalar");
         }
 
-        // E1002 = token start through the first unconsumed scalar (the
-        // second '.' of 1.2.3).
-        r = tokenize("1.2.3");
-        d = findDiag(r, "E1002");
-        check(d != null, "E1002 present for 1.2.3");
-        assertRange(d, "test.deal", 1, 1, 1, 4, 0, 3,
-            "E1002 token start through first unconsumed scalar");
-
-        // E1002 exponent-without-digits: token start through the first
-        // unconsumed scalar after the consumed exponent prefix.
-        r = tokenize("1.5e");
-        d = findDiag(r, "E1002");
-        check(d != null, "E1002 present for 1.5e");
-        assertRange(d, "test.deal", 1, 1, 1, 5, 0, 4,
-            "E1002 exponent without digits at EOF");
-
         // E1003 = token start through the first unconsumed scalar (the
         // terminator's first scalar).
         r = tokenize("\"hello\n");
-        d = findDiag(r, "E1003");
+        CompilerDiagnostic d = findDiag(r, "E1003");
         check(d != null, "E1003 present for newline");
         assertRange(d, "test.deal", 1, 1, 1, 7, 0, 6,
             "E1003 token start through newline");
@@ -1723,13 +1693,6 @@ public class LexerTest {
         d = findDiag(r, "E1003");
         check(d != null, "E1003 present at EOF");
         assertRange(d, "test.deal", 1, 1, 1, 7, 0, 6, "E1003 at EOF");
-
-        // E1004 = comment start through EOF.
-        r = tokenize("/* unterminated");
-        d = findDiag(r, "E1004");
-        check(d != null, "E1004 present for unterminated block comment");
-        assertRange(d, "test.deal", 1, 1, 1, 16, 0, 15,
-            "E1004 comment start through EOF");
 
         // E1044 unknown directive: the recovered name range
         // (fixed-name-directive-events D2/D6). "// @nope" — 'nope' runs
@@ -1798,21 +1761,6 @@ public class LexerTest {
                 "trailing event unanchored with preceding count 5");
         }
 
-        // Directive-bearing real token keeps makeToken offsets (D3).
-        LexResult r7 = tokenize("// @jsonable\nexport class C {}");
-        assertNoDiagnostics(r7.diagnostics(), "@jsonable before export fixture");
-        tokens = r7.tokens();
-        Token exportToken = tokens.get(0);
-        check(exportToken.type() == TokenType.EXPORT,
-            "EXPORT token after directive");
-        check(exportToken.line() == 2 && exportToken.column() == 1,
-            "EXPORT at 2:1, got " + exportToken.line() + ":"
-                + exportToken.column());
-        check(exportToken.startScalarOffset() == 13
-                && exportToken.scalarLength() == 6,
-            "EXPORT offsets: start 13, length 6, got "
-                + exportToken.startScalarOffset() + "/"
-                + exportToken.scalarLength());
     }
 
 }

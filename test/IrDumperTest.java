@@ -38,7 +38,6 @@ public class IrDumperTest {
         testNullSpanThrows();
         testNullSpanInNodeThrows();
         testMissingTypeMapEntryThrows();
-        testSyntheticSpan();
         testCallExpr();
         testTableReadBoundary();
         testStdlibBoundary();
@@ -183,6 +182,7 @@ public class IrDumperTest {
 
         assertContains(ir, "return", "return statement");
         assertNotContains(ir, "[boundary: return]", "no return boundary for null return");
+        assertContains(ir, "@test.deal:", "spans present");
         System.out.println("OK");
     }
 
@@ -489,16 +489,6 @@ public class IrDumperTest {
                 System.out.println("FAIL: message should identify missing typeMap entry, got: " + msg);
             }
         }
-    }
-
-    static void testSyntheticSpan() {
-        System.out.print("  testSyntheticSpan... ");
-        String source = "function f(): null { return; }";
-        CompileResult cr = compile(source);
-        String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
-
-        assertContains(ir, "@test.deal:", "spans present");
-        System.out.println("OK");
     }
 
     static void testCallExpr() {

@@ -203,6 +203,31 @@ public class HostModuleLoadEmissionTest {
         Map<String, String> externals) {
     }
 
+    private record Baseline(
+        SemanticLowerer.ProjectLoweringResult result,
+        HostDeclarationSurface surface,
+        String lua,
+        JvmSemanticEmitter.EmissionResult jvm) {
+    }
+
+    private static Baseline prepare(Fixture fixture, boolean emitJvm,
+            List<Path> roots) {
+        roots.add(fixture.root());
+        SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+        if (result.project() == null) {
+            return new Baseline(result, fixture.surface(), null, null);
+        }
+        ExecutableLoweredProject project = result.project();
+        String lua = LuaSemanticEmitter.emitProductionProject(project,
+            result.tables(), result.registries(), fixture.surface());
+        JvmSemanticEmitter.EmissionResult jvm = emitJvm
+            ? JvmSemanticEmitter.emitProductionProject(project, result.tables(),
+                result.registries(), JvmBackend.classNameFor(project.entryModule().path()),
+                fixture.surface())
+            : null;
+        return new Baseline(result, fixture.surface(), lua, jvm);
+    }
+
     private static CompilerInvocation harnessInvocation() {
         return CompilerProfileProvider.resolveCommonShadow(
             deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32,
@@ -360,20 +385,19 @@ public class HostModuleLoadEmissionTest {
     // 1. The LuaJIT load: the artifact text
     // =========================================================================
 
-    private static void testLuaArtifactText() throws Exception {
+    private static void testLuaArtifactText(Baseline fixture, Baseline aliases)
+            throws Exception {
         System.out.println("-- the LuaJIT load: the inline load with the declared map "
             + "and the import origin --");
-        Fixture fixture = abiFixture(ABI_APP_SOURCE);
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+        {
+            SemanticLowerer.ProjectLoweringResult result = fixture.result();
             check(result.project() != null,
                 "the host-importing fixture lowers: " + result.diagnostics());
             if (result.project() == null) {
                 return;
             }
             ExecutableLoweredProject project = result.project();
-            String lua = LuaSemanticEmitter.emitProductionProject(project,
-                result.tables(), result.registries(), fixture.surface());
+            String lua = fixture.lua();
 
             ModuleId probeModule = hostImportModule(project, PROBE_SPECIFIER);
             SemanticOp probeImport = hostImportOp(project, PROBE_SPECIFIER);
@@ -434,16 +458,14 @@ public class HostModuleLoadEmissionTest {
 
             // Exactly one load statement per import op; two aliases of one
             // module share the registry key and the `or` guard.
-            Fixture aliases = abiFixture(TWO_ALIAS_APP_SOURCE);
-            try {
-                SemanticLowerer.ProjectLoweringResult aliasResult = lower(aliases);
+            {
+                SemanticLowerer.ProjectLoweringResult aliasResult = aliases.result();
                 if (aliasResult.project() == null) {
                     fail("the two-alias fixture lowers: " + aliasResult.diagnostics());
                     return;
                 }
                 ExecutableLoweredProject aliasProject = aliasResult.project();
-                String aliasLua = LuaSemanticEmitter.emitProductionProject(aliasProject,
-                    aliasResult.tables(), aliasResult.registries(), aliases.surface());
+                String aliasLua = aliases.lua();
                 ModuleId aliasModule = hostImportModule(aliasProject, PROBE_SPECIFIER);
                 checkEq(2, countOccurrences(aliasLua,
                         "__rt.load_host(\"" + PROBE_SPECIFIER + "\""),
@@ -453,15 +475,11 @@ public class HostModuleLoadEmissionTest {
                             + "__exportSurfaces[\"" + aliasModule.path() + "\"] or"),
                     "both aliases write the one module-keyed registry entry through "
                         + "the identity guard");
-            } finally {
-                deleteRecursively(aliases.root());
             }
 
             checkEq(lua, LuaSemanticEmitter.emitProductionProject(project,
                     result.tables(), result.registries(), fixture.surface()),
                 "the repeated production emission is byte-identical");
-        } finally {
-            deleteRecursively(fixture.root());
         }
     }
 
@@ -469,13 +487,13 @@ public class HostModuleLoadEmissionTest {
     // 2. The LuaJIT load under real luajit
     // =========================================================================
 
-    private static void testLuaExecution() throws Exception {
+    private static void testLuaExecution(Baseline fixture, Baseline missing,
+            Baseline cfgFixture) throws Exception {
         System.out.println("-- the LuaJIT load under real luajit: one load per "
             + "module, one shared surface value, the pinned E8011 --");
-        Fixture fixture = abiFixture(TWO_ALIAS_APP_SOURCE);
         Path workspace = Files.createTempDirectory("host-load-lua");
         try {
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+            SemanticLowerer.ProjectLoweringResult result = fixture.result();
             if (result.project() == null) {
                 fail("the two-alias fixture lowers: " + result.diagnostics());
                 return;
@@ -484,9 +502,7 @@ public class HostModuleLoadEmissionTest {
             ModuleId probeModule = hostImportModule(project, PROBE_SPECIFIER);
             ModuleId cfgModule = hostImportModule(project, CFG_SPECIFIER);
             Path artifact = workspace.resolve("project.lua");
-            Files.writeString(artifact, LuaSemanticEmitter.emitProductionProject(
-                project, result.tables(), result.registries(), fixture.surface()),
-                StandardCharsets.UTF_8);
+            Files.writeString(artifact, fixture.lua(), StandardCharsets.UTF_8);
             deployRuntime(workspace);
             writeFileIn(workspace, "host/abi_probe.lua", PROBE_LUA);
             writeFileIn(workspace, "host/cfg.lua", CFG_LUA);
@@ -503,11 +519,9 @@ public class HostModuleLoadEmissionTest {
                     + escaped(run.stdout()) + " stderr=" + escaped(run.stderr()));
         } finally {
             deleteRecursively(workspace);
-            deleteRecursively(fixture.root());
         }
 
         // The pinned E8011 at the import origin (6:1, the corpus pin).
-        Fixture missing = missingFixture();
         checkLuaSeed(missing, "host/missing_export.lua", MISSING_LUA,
             "missing host export 'missing' in module 'host/missing_export'", 6, 1,
             "missing-export-at-6:1");
@@ -533,12 +547,10 @@ public class HostModuleLoadEmissionTest {
             "return { ping = function() return \"pong\" end, missing = 42 }\n",
             "host export 'missing' in module 'host/missing_export' is not a function",
             -1, -1, "non-function-export-shape");
-        deleteRecursively(missing.root());
 
         // The declared-class seeds: a class identity mismatch, a missing
         // <C>_defaults, and a present-but-non-table <C>_fields all fail the
         // init with their pinned E8011.
-        Fixture cfgFixture = cfgOnlyFixture();
         checkLuaSeed(cfgFixture, "host/cfg.lua",
             CFG_LUA.replace("@$external/host/cfg/ServerConfig",
                 "@$external/host/cfg/Other"),
@@ -571,7 +583,6 @@ public class HostModuleLoadEmissionTest {
             "host class 'Endpoint' in module 'host/cfg' supplies a non-table _fields "
                 + "value",
             -1, -1, "cfg-non-table-fields");
-        deleteRecursively(cfgFixture.root());
     }
 
     /**
@@ -580,20 +591,18 @@ public class HostModuleLoadEmissionTest {
      * must fail with the pinned E8011 (and, when the seed pins it, the
      * import origin).
      */
-    private static void checkLuaSeed(Fixture fixture, String hostFile,
+    private static void checkLuaSeed(Baseline fixture, String hostFile,
             String rawLua, String expectedMessage, int line, int column,
             String label) throws Exception {
         Path workspace = Files.createTempDirectory("host-load-lua-seed");
         try {
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+            SemanticLowerer.ProjectLoweringResult result = fixture.result();
             if (result.project() == null) {
                 fail("the seed fixture '" + label + "' lowers: " + result.diagnostics());
                 return;
             }
             Path artifact = workspace.resolve("project.lua");
-            Files.writeString(artifact, LuaSemanticEmitter.emitProductionProject(
-                result.project(), result.tables(), result.registries(),
-                fixture.surface()), StandardCharsets.UTF_8);
+            Files.writeString(artifact, fixture.lua(), StandardCharsets.UTF_8);
             deployRuntime(workspace);
             writeFileIn(workspace, hostFile, rawLua);
             Path probe = workspace.resolve("probe.lua");
@@ -718,22 +727,19 @@ public class HostModuleLoadEmissionTest {
     // 3. The JVM host ABI emission surface: the artifact text
     // =========================================================================
 
-    private static void testJvmArtifactText() throws Exception {
+    private static void testJvmArtifactText(Baseline fixture) throws Exception {
         System.out.println("-- the JVM artifact: the module-keyed load entry, the "
             + "declared parameter classes, the defaults capture, the wrapper cells, "
             + "and the $DealRt scope --");
-        Fixture fixture = abiFixture(ABI_APP_SOURCE);
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+        {
+            SemanticLowerer.ProjectLoweringResult result = fixture.result();
             if (result.project() == null) {
                 fail("the host-importing fixture lowers: " + result.diagnostics());
                 return;
             }
             ExecutableLoweredProject project = result.project();
             String className = JvmBackend.classNameFor(project.entryModule().path());
-            JvmSemanticEmitter.EmissionResult emission =
-                JvmSemanticEmitter.emitProductionProject(project, result.tables(),
-                    result.registries(), className, fixture.surface());
+            JvmSemanticEmitter.EmissionResult emission = fixture.jvm();
             String source = emission.source();
 
             ModuleId probeModule = hostImportModule(project, PROBE_SPECIFIER);
@@ -863,8 +869,6 @@ public class HostModuleLoadEmissionTest {
                     result.tables(), result.registries(), className,
                     fixture.surface()).source(),
                 "the repeated production emission is byte-identical");
-        } finally {
-            deleteRecursively(fixture.root());
         }
     }
 
@@ -873,22 +877,19 @@ public class HostModuleLoadEmissionTest {
     //    compile, the wrappers run the pinned cells
     // =========================================================================
 
-    private static void testJvmToolchain() throws Exception {
+    private static void testJvmToolchain(Baseline fixture) throws Exception {
         System.out.println("-- the JVM artifact under javac + java: the deployed host "
             + "fixtures compile and the wrapper cells run --");
-        Fixture fixture = abiFixture(ABI_APP_SOURCE);
         Path workspace = Files.createTempDirectory("host-load-jvm");
         try {
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+            SemanticLowerer.ProjectLoweringResult result = fixture.result();
             if (result.project() == null) {
                 fail("the host-importing fixture lowers: " + result.diagnostics());
                 return;
             }
             ExecutableLoweredProject project = result.project();
             String className = JvmBackend.classNameFor(project.entryModule().path());
-            JvmSemanticEmitter.EmissionResult emission =
-                JvmSemanticEmitter.emitProductionProject(project, result.tables(),
-                    result.registries(), className, fixture.surface());
+            JvmSemanticEmitter.EmissionResult emission = fixture.jvm();
             Path source = workspace.resolve(className + ".java");
             Files.writeString(source, emission.source(), StandardCharsets.UTF_8);
 
@@ -960,7 +961,6 @@ public class HostModuleLoadEmissionTest {
                     + " stderr=" + escaped(run.stderr()));
         } finally {
             deleteRecursively(workspace);
-            deleteRecursively(fixture.root());
         }
     }
 
@@ -1094,11 +1094,11 @@ public class HostModuleLoadEmissionTest {
     // 5. The JVM pinned E8011 at the import origin
     // =========================================================================
 
-    private static void testJvmMissingExport() throws Exception {
+    private static void testJvmMissingExport(Baseline fixture, Baseline cfgFixture)
+            throws Exception {
         System.out.println("-- the JVM load entry raises the pinned E8011 at the "
             + "import origin --");
-        Fixture fixture = missingFixture();
-        try {
+        {
             checkJvmLoadFailure(fixture, "HostMissing_export.java", """
                 final class HostMissing_export {
                   public static Object ping() { return "pong"; }
@@ -1106,14 +1106,11 @@ public class HostModuleLoadEmissionTest {
                 """, "E8011",
                 "missing host export 'missing' in module 'host/missing_export'",
                 ":6:1", "missing-export-at-6:1");
-        } finally {
-            deleteRecursively(fixture.root());
         }
 
         // The declared-class seed: a host class without its mandatory
         // <C>_defaults field fails the load entry with the pinned E8011.
-        Fixture cfgFixture = cfgOnlyFixture();
-        try {
+        {
             checkJvmLoadFailure(cfgFixture, "HostCfg.java", """
                 final class HostCfg {
                   public static final java.util.Map<String, Object> Endpoint_defaults =
@@ -1124,8 +1121,6 @@ public class HostModuleLoadEmissionTest {
                 "host class 'ServerConfig' in module 'host/cfg' is missing its "
                     + "defaults field (ServerConfig_defaults)",
                 null, "missing-defaults");
-        } finally {
-            deleteRecursively(cfgFixture.root());
         }
     }
 
@@ -1134,21 +1129,19 @@ public class HostModuleLoadEmissionTest {
      * given host implementation, and the module init must fail with the
      * pinned E8011 (and, when pinned, the origin suffix).
      */
-    private static void checkJvmLoadFailure(Fixture fixture, String hostFileName,
+    private static void checkJvmLoadFailure(Baseline fixture, String hostFileName,
             String hostSource, String expectedCode, String expectedMessage,
             String originSuffix, String label) throws Exception {
         Path workspace = Files.createTempDirectory("host-load-jvm-seed");
         try {
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+            SemanticLowerer.ProjectLoweringResult result = fixture.result();
             if (result.project() == null) {
                 fail("the seed fixture '" + label + "' lowers: " + result.diagnostics());
                 return;
             }
             ExecutableLoweredProject project = result.project();
             String className = JvmBackend.classNameFor(project.entryModule().path());
-            JvmSemanticEmitter.EmissionResult emission =
-                JvmSemanticEmitter.emitProductionProject(project, result.tables(),
-                    result.registries(), className, fixture.surface());
+            JvmSemanticEmitter.EmissionResult emission = fixture.jvm();
             Path source = workspace.resolve(className + ".java");
             Files.writeString(source, emission.source(), StandardCharsets.UTF_8);
             Files.writeString(workspace.resolve(hostFileName), hostSource,
@@ -1372,12 +1365,23 @@ public class HostModuleLoadEmissionTest {
     public static void main(String[] args) throws Exception {
         System.out.println("=== Host Module Load / JVM Host ABI Surface Tests "
             + "(ISSUE-0650) ===\n");
-        testLuaArtifactText();
-        testLuaExecution();
-        testJvmArtifactText();
-        testJvmToolchain();
-        testJvmMissingExport();
-        testSignatureExtension();
+        List<Path> roots = new ArrayList<>();
+        try {
+            Baseline abi = prepare(abiFixture(ABI_APP_SOURCE), true, roots);
+            Baseline aliases = prepare(abiFixture(TWO_ALIAS_APP_SOURCE), false, roots);
+            Baseline missing = prepare(missingFixture(), true, roots);
+            Baseline cfg = prepare(cfgOnlyFixture(), true, roots);
+            testLuaArtifactText(abi, aliases);
+            testLuaExecution(aliases, missing, cfg);
+            testJvmArtifactText(abi);
+            testJvmToolchain(abi);
+            testJvmMissingExport(missing, cfg);
+            testSignatureExtension();
+        } finally {
+            for (Path root : roots) {
+                deleteRecursively(root);
+            }
+        }
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

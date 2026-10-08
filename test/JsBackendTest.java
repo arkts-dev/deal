@@ -106,8 +106,14 @@ public class JsBackendTest {
             testJsonableEmissionPins();
             testJsonableRoundTripNode();
             testOrchestratorJsonableCrossModule();
-            testNestedClassEmissionPins();
-            testNestedClassNodeSemantics();
+            PreparedJs nestedExport = prepareJsUnshaped("""
+                export function test(): int {
+                  export class Outer { x: int = 1; }
+                  return 1;
+                }
+                """, "nestedclass-export");
+            testNestedClassEmissionPins(nestedExport);
+            testNestedClassNodeSemantics(nestedExport);
             testEntryShimAndE6004();
             testSourceLocationArguments();
             testOwnPropertySafeProtoEmission();
@@ -400,6 +406,32 @@ public class JsBackendTest {
             "jstest-" + name + ".deal", "Main", Map.of(), Map.of(), false);
     }
 
+    private record PreparedJs(Frontend frontend,
+                              JsBackend.JsCodegenResult emission) {}
+
+    private static PreparedJs prepareJs(String source, String name) {
+        return prepareJs(source, name, SemanticProfile.LEGACY_SAFE_INT);
+    }
+
+    private static PreparedJs prepareJs(String source, String name,
+                                         SemanticProfile profile) {
+        String filename = "jstest-" + name + ".deal";
+        Frontend f = compileFrontend(source, filename);
+        JsBackend.JsCodegenResult res = f.program() == null ? null
+            : JsBackend.generate(f.program(), f.checkResult(), filename,
+                "Main", Map.of(), Map.of(), false, profile);
+        return new PreparedJs(f, res);
+    }
+
+    private static PreparedJs prepareJsUnshaped(String source, String name) {
+        String filename = "jstest-" + name + ".deal";
+        Frontend f = compileFrontendUnshaped(source, filename);
+        JsBackend.JsCodegenResult res = f.program() == null ? null
+            : JsBackend.generate(f.program(), f.checkResult(), filename,
+                "Main", Map.of(), Map.of(), false);
+        return new PreparedJs(f, res);
+    }
+
     private record NodeResult(String output, int exitCode) {}
 
     /**
@@ -466,15 +498,31 @@ public class JsBackendTest {
         JsBackend.JsCodegenResult res = JsBackend.generate(f.program(),
             f.checkResult(), "jstest-" + name + ".deal", "Main",
             Map.of(), Map.of(), false, profile);
+        return runDealArtifact(new PreparedJs(f, res));
+    }
+
+    private static JsBackend.JsCodegenResult checkedEmission(PreparedJs prepared) {
+        if (!prepared.frontend().errors().isEmpty()) {
+            throw new RuntimeException("frontend errors: "
+                + prepared.frontend().errors());
+        }
+        JsBackend.JsCodegenResult res = prepared.emission();
         if (res.hasErrors()) {
             throw new RuntimeException("codegen errors: " + res.diagnostics());
         }
-        Path dir = deployArtifacts(res, "Main.js");
-        Files.writeString(dir.resolve("JsConformanceRunner.js"),
-            StubModuleResolver.buildJsRunner(f.program()));
-        NodeResult result = runNodeScript(dir, "JsConformanceRunner.js");
-        deleteDir(dir);
-        return result;
+        return res;
+    }
+
+    private static NodeResult runDealArtifact(PreparedJs prepared)
+            throws Exception {
+        Path dir = deployArtifacts(checkedEmission(prepared), "Main.js");
+        try {
+            Files.writeString(dir.resolve("JsConformanceRunner.js"),
+                StubModuleResolver.buildJsRunner(prepared.frontend().program()));
+            return runNodeScript(dir, "JsConformanceRunner.js");
+        } finally {
+            deleteDir(dir);
+        }
     }
 
     /**
@@ -1227,7 +1275,7 @@ public class JsBackendTest {
         }
     }
 
-    private static void testNestedClassEmissionPins() {
+    private static void testNestedClassEmissionPins(PreparedJs nestedExport) {
         System.out.println("-- Nested class declarations: scope-local artifacts (ISSUE-0318) --");
 
         // The former D6 rejection case now generates clean: a block-level
@@ -1297,12 +1345,7 @@ public class JsBackendTest {
         // inline at the declaration site (the scope-local artifacts are
         // not visible at the module-end section) through the ordinary
         // raw-key own-property-safe path.
-        JsBackend.JsCodegenResult exported = generateUnshaped("""
-            export function test(): int {
-              export class Outer { x: int = 1; }
-              return 1;
-            }
-            """, "nestedclass-export");
+        JsBackend.JsCodegenResult exported = nestedExport.emission();
         check(exported != null && !exported.hasErrors(),
             "exported nested class generates with no diagnostics: "
                 + (exported == null ? "<null>" : exported.diagnostics()));
@@ -1355,7 +1398,8 @@ public class JsBackendTest {
         }
     }
 
-    private static void testNestedClassNodeSemantics() throws Exception {
+    private static void testNestedClassNodeSemantics(PreparedJs nestedExport)
+            throws Exception {
         System.out.println("-- Node: nested-class defaults scope and per-construction evaluation --");
         if (!nodeAvailable) { skipNode("nested-class defaults scope"); return; }
 
@@ -1387,18 +1431,11 @@ public class JsBackendTest {
         // The exported nested class's module exports carry the scope-local
         // C$meta and the hidden <C>$new keys, and the META carries the
         // canonical identity text (js-v12-completion-architecture D3/D4).
-        Frontend f = compileFrontendUnshaped("""
-            export function test(): int {
-              export class Outer { x: int = 1; }
-              return 1;
-            }
-            """, "jstest-nestedclass-export.deal");
+        Frontend f = nestedExport.frontend();
         check(f.errors().isEmpty(),
             "exported nested class frontend clean: " + f.errors());
         if (!f.errors().isEmpty()) return;
-        JsBackend.JsCodegenResult res = JsBackend.generate(f.program(),
-            f.checkResult(), "jstest-nestedclass-export.deal", "Main",
-            Map.of(), Map.of(), false);
+        JsBackend.JsCodegenResult res = nestedExport.emission();
         check(res != null && !res.hasErrors(),
             "exported nested class codegen clean: "
                 + (res == null ? "<null>" : res.diagnostics()));
@@ -1689,16 +1726,8 @@ public class JsBackendTest {
         //     undefined, the nil-equivalent write/compare sites still
         //     spell $rt.undefined, and the program runs under node with
         //     the binding intact (the shadow cannot break them).
-        JsBackend.JsCodegenResult shadow = generate("""
-            export function test(): int {
-              let undefined: int = 7;
-              let xs: int[] = [1, 2, 3];
-              delete xs[1];
-              let n: int = 0;
-              for (let x: int of xs) { n = n + 1; }
-              return undefined + xs.length + n;
-            }
-            """, "hygiene-shadow");
+        PreparedJs shadowPrepared = prepareJs(shadowTestSource(), "hygiene-shadow");
+        JsBackend.JsCodegenResult shadow = shadowPrepared.emission();
         check(shadow != null && !shadow.hasErrors(),
             "shadow hygiene codegen clean: "
                 + (shadow == null ? "<null>" : shadow.diagnostics()));
@@ -1715,7 +1744,7 @@ public class JsBackendTest {
                 "no write/compare site spells the bare host-global");
             if (nodeAvailable) {
                 try {
-                    NodeResult run = runDealNode(shadowTestSource(), "hygiene-run");
+                    NodeResult run = runDealArtifact(shadowPrepared);
                     check(run.exitCode() == 0 && run.output().equals("11"),
                         "the shadowed program runs under node: 7 + 3 + 1 = 11, got "
                             + run.output() + " (exit " + run.exitCode() + ")");
@@ -1915,19 +1944,7 @@ public class JsBackendTest {
                         + "  return x + 1;\n"
                         + "} };\n");
                     Files.writeString(dir.resolve("JsConformanceRunner.js"),
-                        StubModuleResolver.buildJsRunner(
-                            compileFrontend("""
-                            import * as h from "./hostmod"
-                            export function test(): int {
-                              let holder: table = { item: "x" };
-                              return h.hostFn(holder.item);
-                            }
-                            """, "jstest-host-abi-defer-run.deal",
-                            new FixedModuleResolver(Map.of("./hostmod",
-                                Map.of("hostFn",
-                                    new Type.Func(List.of(Type.Int.INSTANCE),
-                                        Type.Int.INSTANCE)))))
-                            .program()));
+                        StubModuleResolver.buildJsRunner(deferFrontend.program()));
                     NodeResult run = runNodeScript(dir,
                         "JsConformanceRunner.js");
                     check(run.exitCode() == 1
@@ -2544,9 +2561,10 @@ public class JsBackendTest {
             "int(Infinity) → E8001 'expected int, got infinity', exit 1: "
                 + convInf.output());
 
-        NodeResult convFrac = runDealNodeProfile(
+        PreparedJs fractional = prepareJs(
             "export function test(): int { return int(3.5); }",
             "int32-conv-frac", SemanticProfile.DEAL_V1_2_INT32);
+        NodeResult convFrac = runDealArtifact(fractional);
         check(convFrac.exitCode() == 1
                 && convFrac.output().contains("DEAL_ERROR_CODE: E8001")
                 && convFrac.output().contains(
@@ -2585,17 +2603,12 @@ public class JsBackendTest {
         // The combined gate: the int32 artifacts carry the canonical
         // descriptor and check texts (T1's descriptor service and T3's
         // range gate) — the matrix fails if either breaks.
-        Frontend canonical = compileFrontend(
-            "export function test(): int { return int(3.5); }",
-            "jstest-int32-canonical.deal");
+        Frontend canonical = fractional.frontend();
         if (canonical.program() == null) {
             fail("int32 canonical frontend failed: " + canonical.errors());
             return;
         }
-        JsBackend.JsCodegenResult canonicalRes = JsBackend.generate(
-            canonical.program(), canonical.checkResult(),
-            "jstest-int32-canonical.deal", "Main",
-            Map.of(), Map.of(), false, SemanticProfile.DEAL_V1_2_INT32);
+        JsBackend.JsCodegenResult canonicalRes = fractional.emission();
         check(!canonicalRes.hasErrors(),
             "int32 canonical generation clean: " + canonicalRes.diagnostics());
         check(canonicalRes.source().contains("$rt.setInt32Mode(true);"),
@@ -2959,13 +2972,14 @@ public class JsBackendTest {
         // no E2002, the annotation resolves to the user ClassSymbol, and
         // the artifact omits the intrinsic header seed (the class binds
         // only bytes$new/bytes$meta).
-        JsBackend.JsCodegenResult clsRes = generate("""
+        PreparedJs clsPrepared = prepareJs("""
             class bytes { x: int }
             export function test(): int {
               let b: bytes = { x: 2 };
               return b.x;
             }
             """, "bytes-user-class");
+        JsBackend.JsCodegenResult clsRes = clsPrepared.emission();
         check(clsRes != null && !clsRes.hasErrors(),
             "module-level user class named bytes compiles clean: "
                 + (clsRes == null ? "<null>" : clsRes.diagnostics()));
@@ -2990,10 +3004,11 @@ public class JsBackendTest {
         // no E2002, calls resolve to the user function, and the
         // artifact's predeclared `let bytes;` assignment replaces the
         // skipped intrinsic header seed.
-        JsBackend.JsCodegenResult fnRes = generate("""
+        PreparedJs fnPrepared = prepareJs("""
             function bytes(x: int): int { return x + 1; }
             export function test(): int { return bytes(3); }
             """, "bytes-user-function");
+        JsBackend.JsCodegenResult fnRes = fnPrepared.emission();
         check(fnRes != null && !fnRes.hasErrors(),
             "module-level user function named bytes compiles clean: "
                 + (fnRes == null ? "<null>" : fnRes.diagnostics()));
@@ -3012,21 +3027,12 @@ public class JsBackendTest {
 
         if (!nodeAvailable) { skipNode("bytes user-name shadowing"); return; }
 
-        NodeResult clsRun = runDealNode("""
-            class bytes { x: int }
-            export function test(): int {
-              let b: bytes = { x: 2 };
-              return b.x;
-            }
-            """, "bytes-user-class-run");
+        NodeResult clsRun = runDealArtifact(clsPrepared);
         check(clsRun.exitCode() == 0 && clsRun.output().equals("2"),
             "module-level user class named bytes runs under node (b.x "
                 + "=== 2): " + clsRun.output());
 
-        NodeResult fnRun = runDealNode("""
-            function bytes(x: int): int { return x + 1; }
-            export function test(): int { return bytes(3); }
-            """, "bytes-user-function-run");
+        NodeResult fnRun = runDealArtifact(fnPrepared);
         check(fnRun.exitCode() == 0 && fnRun.output().equals("4"),
             "module-level user function named bytes runs under node "
                 + "(bytes(3) === 4): " + fnRun.output());
@@ -3499,9 +3505,11 @@ public class JsBackendTest {
             "closure-pin-async-container",
             "closure-pin-deep-composition",
         };
+        Map<String, JsBackend.JsCodegenResult> emissions = new LinkedHashMap<>();
         for (int i = 0; i < closurePrograms.length; i++) {
             JsBackend.JsCodegenResult res = generate(closurePrograms[i],
                 names[i]);
+            emissions.put(names[i], res);
             check(res != null && !res.hasErrors(),
                 "closure program '" + names[i] + "' generates with zero "
                     + "diagnostics: " + (res == null ? "<null>"
@@ -3518,8 +3526,7 @@ public class JsBackendTest {
         // Canonical descriptor texts byte-exact at the emitted boundary
         // sites (T1's descriptor service realized through the runtime
         // matcher).
-        JsBackend.JsCodegenResult fnArray = generate(
-            closurePrograms[0], names[0]);
+        JsBackend.JsCodegenResult fnArray = emissions.get(names[0]);
         if (fnArray != null && !fnArray.hasErrors()) {
             String js = fnArray.source();
             check(js.contains("$rt.checkArray(\"[(bytes)->bytes]\", "),
@@ -3529,8 +3536,7 @@ public class JsBackendTest {
                 "the arity adapter carries the canonical "
                     + "(bytes,int)->bytes target descriptor byte-exact");
         }
-        JsBackend.JsCodegenResult asyncContainer = generate(
-            closurePrograms[1], names[1]);
+        JsBackend.JsCodegenResult asyncContainer = emissions.get(names[1]);
         if (asyncContainer != null && !asyncContainer.hasErrors()) {
             String js = asyncContainer.source();
             check(js.contains("$rt.checkArray(\"[async(bytes)->bytes]\", "),
@@ -3541,8 +3547,7 @@ public class JsBackendTest {
                 "the async wrapper carries the canonical "
                     + "async(bytes)->bytes signature byte-for-byte");
         }
-        JsBackend.JsCodegenResult deep = generate(
-            closurePrograms[2], names[2]);
+        JsBackend.JsCodegenResult deep = emissions.get(names[2]);
         if (deep != null && !deep.hasErrors()) {
             String js = deep.source();
             check(js.contains("$rt.checkArray(\"[?[bytes]]\", "),
@@ -3553,7 +3558,7 @@ public class JsBackendTest {
                     + "[[bytes]] inner descriptor byte-exact");
         }
 
-        Frontend eq = compileFrontend("""
+        PreparedJs eqPrepared = prepareJs("""
             export function test(): int {
               let a: bytes = bytes(1);
               let b: bytes = a;
@@ -3563,23 +3568,13 @@ public class JsBackendTest {
               if (a !== c) { return 1; }
               return 0;
             }
-            """, "jstest-bytes-closure-eq.deal");
+            """, "bytes-closure-eq");
+        Frontend eq = eqPrepared.frontend();
         check(eq.errors().isEmpty(),
             "bytes identity equality is checker-admitted with zero "
                 + "diagnostics (frontend, ISSUE-0158 lift): " + eq.errors());
         if (eq.errors().isEmpty()) {
-            JsBackend.JsCodegenResult eqRes = generate(
-                """
-            export function test(): int {
-              let a: bytes = bytes(1);
-              let b: bytes = a;
-              let c: bytes = bytes(1);
-              if (!(a === b)) { return 0; }
-              if (a === c) { return 0; }
-              if (a !== c) { return 1; }
-              return 0;
-            }
-            """, "jstest-bytes-closure-eq.deal");
+            JsBackend.JsCodegenResult eqRes = eqPrepared.emission();
             check(eqRes != null && !eqRes.hasErrors(),
                 "the equality closure position generates with zero "
                     + "diagnostics: " + (eqRes == null ? "<null>"
@@ -3591,17 +3586,7 @@ public class JsBackendTest {
             }
         }
         if (nodeAvailable) {
-            NodeResult eqRun = runDealNode("""
-                export function test(): int {
-                  let a: bytes = bytes(1);
-                  let b: bytes = a;
-                  let c: bytes = bytes(1);
-                  if (!(a === b)) { return 0; }
-                  if (a === c) { return 0; }
-                  if (a !== c) { return 1; }
-                  return 0;
-                }
-                """, "bytes-closure-eq-node");
+            NodeResult eqRun = runDealArtifact(eqPrepared);
             check(eqRun.exitCode() == 0 && eqRun.output().equals("1"),
                 "bytes identity equality executes real reference identity "
                     + "on Node (alias true, distinct buffers false; "
@@ -4501,37 +4486,38 @@ public class JsBackendTest {
         // returnDescriptor, and a non-wrapper export value each yield
         // { $ok: false, $failure } with the pinned reason — never a DEAL
         // error, never a false runtime-error pass.
-        String negatives = """
+        PreparedJs negatives = prepareJs("""
             export class Payload { v: int; }
             export function main(): null { return null; }
             export async function oracle(): null { return null; }
             export async function takes(i: int): int { return i; }
-            """;
-        NodeResult wrongName = runInvokerNode(negatives, "invoker-wrong-name",
+            """, "invoker-wrong-name");
+        JsBackend.JsCodegenResult negativeEmission = checkedEmission(negatives);
+        NodeResult wrongName = runInvokerArtifact(negativeEmission,
             "nope", "null");
         check(wrongName.exitCode() == 0 && wrongName.output().equals(
                 "INVOKE_FAILURE: export not found: nope"),
             "a wrong export name yields the pinned missing-export host "
                 + "failure: " + wrongName.output());
-        NodeResult syncExport = runInvokerNode(negatives, "invoker-sync",
+        NodeResult syncExport = runInvokerArtifact(negativeEmission,
             "main", "null");
         check(syncExport.exitCode() == 0 && syncExport.output().equals(
                 "INVOKE_FAILURE: sync export: expected async()->null, got ()->null"),
             "a sync export yields the pinned sync host failure: "
                 + syncExport.output());
-        NodeResult paramExport = runInvokerNode(negatives, "invoker-param",
+        NodeResult paramExport = runInvokerArtifact(negativeEmission,
             "takes", "int");
         check(paramExport.exitCode() == 0 && paramExport.output().equals(
                 "INVOKE_FAILURE: parameterized export: expected async()->int, got async(int)->int"),
             "a parameterized export yields the pinned parameterized host "
                 + "failure: " + paramExport.output());
-        NodeResult mismatch = runInvokerNode(negatives, "invoker-mismatch",
+        NodeResult mismatch = runInvokerArtifact(negativeEmission,
             "oracle", "int");
         check(mismatch.exitCode() == 0 && mismatch.output().equals(
                 "INVOKE_FAILURE: descriptor mismatch: expected async()->int, got async()->null"),
             "a descriptor-mismatched returnDescriptor yields the pinned "
                 + "descriptor-mismatch host failure: " + mismatch.output());
-        NodeResult nonWrapper = runInvokerNode(negatives, "invoker-non-wrapper",
+        NodeResult nonWrapper = runInvokerArtifact(negativeEmission,
             "Payload", "null");
         check(nonWrapper.exitCode() == 0 && nonWrapper.output().equals(
                 "INVOKE_FAILURE: export is not a function: expected async()->null"),

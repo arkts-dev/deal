@@ -929,12 +929,13 @@ public class CheckedProjectBuilderTest {
             Path entry = writeCombinedFixture(tmp);
             ProjectContext context = locateCombinedFixture(entry);
 
+            CompilerInvocation explicitInvocation = CompilerProfileProvider.resolve(
+                ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                ReleaseConfiguration.releaseCapabilityRegistry());
             CompilationOrchestrator first = new CompilationOrchestrator(
-                context, entry, false, false, false, false, null,
-                CompilerProfileProvider.resolve(
-                    ReleaseConfiguration.CURRENT_RELEASE_STATE,
-                    ReleaseConfiguration.releaseCapabilityRegistry()));
-            check(first.compile(), "first build compiles: " + first.diagnostics());
+                context, entry, false, false, false, false, null, explicitInvocation);
+            boolean firstOk = first.compile();
+            check(firstOk, "first build compiles: " + first.diagnostics());
             CheckedProjectBuildResult firstResult = first.checkedProject();
             check(firstResult != null && !firstResult.hasErrors(),
                 "first build succeeds");
@@ -969,6 +970,7 @@ public class CheckedProjectBuilderTest {
             check(PINNED_INDEX_DIGEST.equals(firstResult.index().interfaceIndexDigest()),
                 "the interface index digest equals the stored golden; got "
                     + firstResult.index().interfaceIndexDigest());
+            testCombinedDependencies(tmp, first, explicitInvocation, firstOk);
         } finally {
             deleteRecursively(tmp);
         }
@@ -978,88 +980,73 @@ public class CheckedProjectBuilderTest {
     // 9. Combined dependencies (T1/T2/T3/T4/T5/T7)
     // =========================================================================
 
-    static void testCombinedDependencies() throws Exception {
+    static void testCombinedDependencies(Path tmp, CompilationOrchestrator orchestrator,
+                                         CompilerInvocation explicitInvocation, boolean ok)
+            throws Exception {
         System.out.println("-- Combined T1/T2/T3/T4/T5/T7 end-to-end flow --");
 
-        Path tmp = Files.createTempDirectory("deal-checked-project-combined");
-        try {
-            Path entry = writeCombinedFixture(tmp);
-            ProjectContext context = locateCombinedFixture(entry);
-
-            // T4: the release-owned invocation resolved through the provider;
-            // the orchestrator receives it explicitly.
-            CompilerInvocation explicitInvocation = CompilerProfileProvider.resolve(
-                ReleaseConfiguration.CURRENT_RELEASE_STATE,
-                ReleaseConfiguration.releaseCapabilityRegistry());
-            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-                context, entry, false, false, false, false, null,
-                explicitInvocation);
-            boolean ok = orchestrator.compile();
-            check(ok, "the combined fixture compiles end-to-end: "
-                + orchestrator.diagnostics());
-            CheckedProjectBuildResult result = orchestrator.checkedProject();
-            check(result != null && !result.hasErrors(), "the combined build succeeds");
-            if (result == null) {
-                return;
-            }
-
-            // The builder records the invocation's releaseStateHash verbatim
-            // (T4 dependency): asserted equal on the record.
-            check(result.input().invocation() == explicitInvocation,
-                "the input carries the exact resolved invocation record");
-            check(result.input().releaseStateHash().equals(
-                    explicitInvocation.releaseStateHash()),
-                "the input records the derived releaseStateHash verbatim (equal to T4's "
-                    + "recorded field)");
-            // A wrong recorded hash is a broken T4 dependency and fails at
-            // record construction (never silently accepted).
-            try {
-                new CheckedProjectInput(explicitInvocation, new ModuleId("main"), List.of(),
-                    "wrong-hash");
-                fail("a CheckedProjectInput with a wrong releaseStateHash must be rejected");
-            } catch (IllegalArgumentException expected) {
-                check(expected.getMessage().contains("verbatim"),
-                    "a wrong recorded release-state hash is rejected at construction");
-            }
-
-            // T3: the digest golden (canonical serialization of the index).
-            check(PINNED_INDEX_DIGEST.equals(result.index().interfaceIndexDigest()),
-                "the combined flow's interface index digest equals the stored golden");
-
-            // T2: ID types — ClassId text @modulePath/ClassName; the
-            // constructionEntry is a ClassFactoryId (asserted in the dedicated
-            // derivation test; re-assert the type here for the combined flow).
-            check(result.index().modules().get(new ModuleId("main")).imports().get(1)
-                    .resolvedModuleId() instanceof ModuleId,
-                "resolvedModuleId is the ModuleId ID type");
-
-            // T5/T1: a fault injected into the flow (an input entry whose
-            // CheckResult is missing — a broken checked-facts dependency)
-            // fails the suite through the registry-owned E6005 payload.
-            ModuleFact faulted = new ModuleFact("src/main.deal", new ModuleId("main"),
-                false, false, programOf(),
-                Map.of("main", Types.func(List.of(), Type.Null.INSTANCE)),
-                new SymbolTable(), null, List.of());
-            CheckedProjectBuildResult faultedResult = CheckedProjectBuilder.build(
-                explicitInvocation, new ModuleId("main"), List.of(faulted));
-            check(faultedResult.hasErrors() && faultedResult.input() == null,
-                "a faulted dependency fails the build");
-            CompilerDiagnostic e6005 = faultedResult.diagnostics().get(0);
-            check("E6005".equals(e6005.code())
-                    && e6005.message().contains("capability FOUNDATION_VALUES")
-                    && e6005.message().contains(
-                        "validatorRule INDEX_INTERNAL_ERROR_SENTINEL")
-                    && e6005.message().contains("irVersion deal.semantic-ir/1"),
-                "the faulted build's E6005 carries the pinned payload: " + e6005.message());
-
-            // T7: allocator ordering asserted through the constructionEntry
-            // derivation on a class fixture (wrong allocator order fails the
-            // dedicated derivation test).
-            check(allocatorOrderingWorks(tmp),
-                "T7's allocator ordering holds over the end-to-end flow");
-        } finally {
-            deleteRecursively(tmp);
+        check(ok, "the combined fixture compiles end-to-end: "
+            + orchestrator.diagnostics());
+        CheckedProjectBuildResult result = orchestrator.checkedProject();
+        check(result != null && !result.hasErrors(), "the combined build succeeds");
+        if (result == null) {
+            return;
         }
+
+        // The builder records the invocation's releaseStateHash verbatim
+        // (T4 dependency): asserted equal on the record.
+        check(result.input().invocation() == explicitInvocation,
+            "the input carries the exact resolved invocation record");
+        check(result.input().releaseStateHash().equals(
+                explicitInvocation.releaseStateHash()),
+            "the input records the derived releaseStateHash verbatim (equal to T4's "
+                + "recorded field)");
+        // A wrong recorded hash is a broken T4 dependency and fails at
+        // record construction (never silently accepted).
+        try {
+            new CheckedProjectInput(explicitInvocation, new ModuleId("main"), List.of(),
+                "wrong-hash");
+            fail("a CheckedProjectInput with a wrong releaseStateHash must be rejected");
+        } catch (IllegalArgumentException expected) {
+            check(expected.getMessage().contains("verbatim"),
+                "a wrong recorded release-state hash is rejected at construction");
+        }
+
+        // T3: the digest golden (canonical serialization of the index).
+        check(PINNED_INDEX_DIGEST.equals(result.index().interfaceIndexDigest()),
+            "the combined flow's interface index digest equals the stored golden");
+
+        // T2: ID types — ClassId text @modulePath/ClassName; the
+        // constructionEntry is a ClassFactoryId (asserted in the dedicated
+        // derivation test; re-assert the type here for the combined flow).
+        check(result.index().modules().get(new ModuleId("main")).imports().get(1)
+                .resolvedModuleId() instanceof ModuleId,
+            "resolvedModuleId is the ModuleId ID type");
+
+        // T5/T1: a fault injected into the flow (an input entry whose
+        // CheckResult is missing — a broken checked-facts dependency)
+        // fails the suite through the registry-owned E6005 payload.
+        ModuleFact faulted = new ModuleFact("src/main.deal", new ModuleId("main"),
+            false, false, programOf(),
+            Map.of("main", Types.func(List.of(), Type.Null.INSTANCE)),
+            new SymbolTable(), null, List.of());
+        CheckedProjectBuildResult faultedResult = CheckedProjectBuilder.build(
+            explicitInvocation, new ModuleId("main"), List.of(faulted));
+        check(faultedResult.hasErrors() && faultedResult.input() == null,
+            "a faulted dependency fails the build");
+        CompilerDiagnostic e6005 = faultedResult.diagnostics().get(0);
+        check("E6005".equals(e6005.code())
+                && e6005.message().contains("capability FOUNDATION_VALUES")
+                && e6005.message().contains(
+                    "validatorRule INDEX_INTERNAL_ERROR_SENTINEL")
+                && e6005.message().contains("irVersion deal.semantic-ir/1"),
+            "the faulted build's E6005 carries the pinned payload: " + e6005.message());
+
+        // T7: allocator ordering asserted through the constructionEntry
+        // derivation on a class fixture (wrong allocator order fails the
+        // dedicated derivation test).
+        check(allocatorOrderingWorks(tmp),
+            "T7's allocator ordering holds over the end-to-end flow");
     }
 
     private static boolean allocatorOrderingWorks(Path tmp) throws Exception {
@@ -1123,7 +1110,6 @@ public class CheckedProjectBuilderTest {
         testNoFrontendMutation();
         testConstructionEntryDerivation();
         testDeterminismAndDigestGolden();
-        testCombinedDependencies();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

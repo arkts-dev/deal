@@ -663,22 +663,9 @@ public final class SemanticDifferentialHarness {
                 JvmSemanticEmitter.emitModule(unit, table);
             Path source = workspace.resolve(emission.className() + ".java");
             Files.writeString(source, emission.source(), StandardCharsets.UTF_8);
-            Path classes = workspace.resolve("jvm-cb-classes");
+            Path classes = workspace.resolve("jvm-cb-classes").toAbsolutePath().normalize();
             Files.createDirectories(classes);
-            String classpath = System.getProperty("java.class.path", "");
-            ProcessBuilder javac = new ProcessBuilder("javac", "--release", "25",
-                "-proc:none", "-cp", classpath, "-d", classes.toString(),
-                source.toAbsolutePath().toString());
-            javac.redirectErrorStream(true);
-            Process compile = javac.start();
-            String compileOut = new String(compile.getInputStream().readAllBytes(),
-                StandardCharsets.UTF_8);
-            int compileExit = compile.waitFor();
-            if (compileExit != 0) {
-                failures.add("shared JVM callback artifact compilation failed ("
-                    + compileExit + "): " + compileOut);
-                return null;
-            }
+            String classpath = absoluteClasspath();
             KindPayload.CallbackInvokePayload payload =
                 (KindPayload.CallbackInvokePayload) callback.payload();
             String returnKind = staticKindOf(payload.descriptor().returnType());
@@ -709,17 +696,9 @@ public final class SemanticDifferentialHarness {
                     + "  }\n"
                     + "}\n",
                 StandardCharsets.UTF_8);
-            ProcessBuilder driverJavac = new ProcessBuilder("javac", "--release", "25",
-                "-proc:none", "-cp", classpath + java.io.File.pathSeparator + classes,
-                "-d", classes.toString(), driver.toAbsolutePath().toString());
-            driverJavac.redirectErrorStream(true);
-            Process driverCompile = driverJavac.start();
-            String driverOut = new String(driverCompile.getInputStream().readAllBytes(),
-                StandardCharsets.UTF_8);
-            int driverExit = driverCompile.waitFor();
-            if (driverExit != 0) {
-                failures.add("shared JVM callback driver compilation failed ("
-                    + driverExit + "): " + driverOut);
+            if (!compileJvmDrive(List.of(source.toAbsolutePath().toString(),
+                    driver.toAbsolutePath().toString()), classes, classpath,
+                    "shared JVM callback", failures)) {
                 return null;
             }
             Path stdout = workspace.resolve("jvm-cb-out.txt");
@@ -1033,9 +1012,9 @@ public final class SemanticDifferentialHarness {
         }
         try {
             Files.createDirectories(workspace);
-            Path classes = workspace.resolve("jvm-ae-classes");
+            Path classes = workspace.resolve("jvm-ae-classes").toAbsolutePath().normalize();
             Files.createDirectories(classes);
-            String classpath = System.getProperty("java.class.path", "");
+            String classpath = absoluteClasspath();
             JvmSemanticEmitter.EmissionResult entryEmission = null;
             List<String> sourceFiles = new ArrayList<>();
             for (LoweredModuleUnit unit : project.modules().values()) {
@@ -1047,20 +1026,6 @@ public final class SemanticDifferentialHarness {
                 if (unit.moduleId().equals(project.entryModule())) {
                     entryEmission = emission;
                 }
-            }
-            List<String> javacArgs = new ArrayList<>(List.of("javac", "--release", "25",
-                "-proc:none", "-cp", classpath, "-d", classes.toString()));
-            javacArgs.addAll(sourceFiles);
-            ProcessBuilder javac = new ProcessBuilder(javacArgs);
-            javac.redirectErrorStream(true);
-            Process compile = javac.start();
-            String compileOut = new String(compile.getInputStream().readAllBytes(),
-                StandardCharsets.UTF_8);
-            int compileExit = compile.waitFor();
-            if (compileExit != 0) {
-                failures.add("shared JVM async-entry artifact compilation failed ("
-                    + compileExit + "): " + compileOut);
-                return null;
             }
             KindPayload.ExternalEntryPayload payload =
                 (KindPayload.ExternalEntryPayload) entry.payload();
@@ -1134,17 +1099,9 @@ public final class SemanticDifferentialHarness {
                 .append("  }\n")
                 .append("}\n");
             Files.writeString(driver, driverSource.toString(), StandardCharsets.UTF_8);
-            ProcessBuilder driverJavac = new ProcessBuilder("javac", "--release", "25",
-                "-proc:none", "-cp", classpath + java.io.File.pathSeparator + classes,
-                "-d", classes.toString(), driver.toAbsolutePath().toString());
-            driverJavac.redirectErrorStream(true);
-            Process driverCompile = driverJavac.start();
-            String driverOut = new String(driverCompile.getInputStream().readAllBytes(),
-                StandardCharsets.UTF_8);
-            int driverExit = driverCompile.waitFor();
-            if (driverExit != 0) {
-                failures.add("shared JVM async-entry driver compilation failed ("
-                    + driverExit + "): " + driverOut);
+            sourceFiles.add(driver.toAbsolutePath().toString());
+            if (!compileJvmDrive(sourceFiles, classes, classpath,
+                    "shared JVM async-entry", failures)) {
                 return null;
             }
             Path stdout = workspace.resolve("jvm-ae-out.txt");
@@ -1172,6 +1129,33 @@ public final class SemanticDifferentialHarness {
                 + exception.getMessage());
             return null;
         }
+    }
+
+    private static String absoluteClasspath() {
+        List<String> entries = new ArrayList<>();
+        for (String entry : System.getProperty("java.class.path", "")
+                .split(java.util.regex.Pattern.quote(java.io.File.pathSeparator), -1)) {
+            entries.add(Path.of(entry).toAbsolutePath().normalize().toString());
+        }
+        return String.join(java.io.File.pathSeparator, entries);
+    }
+
+    private static boolean compileJvmDrive(List<String> sources, Path classes,
+            String classpath, String consumer, List<String> failures)
+            throws IOException, InterruptedException {
+        List<String> command = new ArrayList<>(List.of("javac", "--release", "25",
+            "-proc:none", "-cp", classpath, "-d", classes.toAbsolutePath().toString()));
+        command.addAll(sources);
+        Process compile = new ProcessBuilder(command).redirectErrorStream(true).start();
+        String output = new String(compile.getInputStream().readAllBytes(),
+            StandardCharsets.UTF_8);
+        int exit = compile.waitFor();
+        if (exit != 0) {
+            failures.add(consumer + " joint artifact/driver compilation failed (" + exit
+                + "), sources: " + String.join(", ", sources) + ": " + output);
+            return false;
+        }
+        return true;
     }
 
     /** One Java string literal. */

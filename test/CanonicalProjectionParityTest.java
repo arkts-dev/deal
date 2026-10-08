@@ -160,6 +160,27 @@ public class CanonicalProjectionParityTest {
 
     private static final Path CONFORMANCE = Path.of("test", "conformance");
     private static final String BACKEND_RUNTIME = "backend-runtime";
+    private static CorpusSnapshot corpusSnapshot;
+    private static String armChunk;
+
+    private record CorpusSnapshot(CorpusDiscovery.DiscoveryResult discovery,
+                                  Map<String, CorpusDiscovery.Fixture> byPath) {
+        CorpusSnapshot {
+            byPath = java.util.Collections.unmodifiableMap(new LinkedHashMap<>(byPath));
+        }
+    }
+
+    private static CorpusSnapshot corpusSnapshot() throws Exception {
+        if (corpusSnapshot == null) {
+            CorpusDiscovery.DiscoveryResult discovery = CorpusDiscovery.discover(CONFORMANCE);
+            Map<String, CorpusDiscovery.Fixture> byPath = new LinkedHashMap<>();
+            for (CorpusDiscovery.Fixture fixture : discovery.fixtures()) {
+                byPath.put(fixture.corpusPath(), fixture);
+            }
+            corpusSnapshot = new CorpusSnapshot(discovery, byPath);
+        }
+        return corpusSnapshot;
+    }
 
     /** One rendered failure tuple: the five compared fields. */
     private record Tuple(String code, String message, String file, Integer line,
@@ -341,12 +362,6 @@ public class CanonicalProjectionParityTest {
             ReleaseConfiguration.releaseCapabilityRegistry());
     }
 
-    private static String stripHeaders(String raw, int[] stripped) {
-        String source = ConformanceHarnessMetadata.stripClassificationHeaders(raw);
-        stripped[0] = raw.split("\n", -1).length - source.split("\n", -1).length;
-        return source;
-    }
-
     /**
      * Materializes one corpus case exactly as the lanes do: the corpus
      * mirror at the corpus-relative paths, the header-stripped sources,
@@ -359,12 +374,7 @@ public class CanonicalProjectionParityTest {
     private static Compiled compile(Case spec) throws Exception {
         Path root = Files.createTempDirectory("projection-parity");
         Path mirror = root.resolve("conformance");
-        CorpusDiscovery.DiscoveryResult discovery =
-            CorpusDiscovery.discover(CONFORMANCE);
-        Map<String, CorpusDiscovery.Fixture> byPath = new LinkedHashMap<>();
-        for (CorpusDiscovery.Fixture fixture : discovery.fixtures()) {
-            byPath.put(fixture.corpusPath(), fixture);
-        }
+        Map<String, CorpusDiscovery.Fixture> byPath = corpusSnapshot().byPath();
         CorpusDiscovery.Fixture entryFixture = byPath.get(spec.fixtureFile());
         if (entryFixture == null) {
             throw new IllegalStateException("the corpus carries no fixture "
@@ -374,21 +384,9 @@ public class CanonicalProjectionParityTest {
         Map<String, String> modules = new LinkedHashMap<>();
         for (SidecarSchemaValidator.CompilationModule module
                 : CorpusDiscovery.compilationSet(entryFixture, byPath, CONFORMANCE)) {
-            int[] count = new int[1];
-            modules.put(module.corpusPath(), module.source());
-            stripped.put(module.corpusPath(), count[0]);
-        }
-        // The gate core's compilation set is the header-stripped closure;
-        // the header-line delta of every module is re-measured from the
-        // file on disk (the lane's deployment map) so a captured line
-        // rebases onto raw corpus coordinates.
-        for (String corpusPath : new ArrayList<>(modules.keySet())) {
-            String raw = Files.readString(CONFORMANCE.resolve(corpusPath),
-                StandardCharsets.UTF_8);
-            int[] count = new int[1];
-            String source = stripHeaders(raw, count);
-            modules.put(corpusPath, source);
-            stripped.put(corpusPath, count[0]);
+            CorpusDiscovery.Fixture fixture = byPath.get(module.corpusPath());
+            modules.put(module.corpusPath(), fixture.source());
+            stripped.put(module.corpusPath(), fixture.headerLinesStripped());
         }
         Path entry = null;
         Map<String, String> modulePathToCorpus = new LinkedHashMap<>();
@@ -1742,6 +1740,13 @@ public class CanonicalProjectionParityTest {
 
     /** The arm-only production chunk (the serialized table and renderer). */
     private static String armOnlyChunk() {
+        if (armChunk == null) {
+            armChunk = emitArmOnlyChunk();
+        }
+        return armChunk;
+    }
+
+    private static String emitArmOnlyChunk() {
         ModuleId entry = new ModuleId("arms");
         deal.semantic.ir.LoweredModuleUnit unit =
             new deal.semantic.ir.LoweredModuleUnit(
@@ -2433,8 +2438,7 @@ public class CanonicalProjectionParityTest {
         System.out.println("-- the unchanged surfaces: the corpus membership/count, "
             + "the sidecar schema, the comparison contract, and the landed row "
             + "data --");
-        CorpusDiscovery.DiscoveryResult discovery =
-            CorpusDiscovery.discover(CONFORMANCE);
+        CorpusDiscovery.DiscoveryResult discovery = corpusSnapshot().discovery();
         checkEq(List.of(), discovery.failures(),
             "the corpus discovery reports no classification failure");
         int dispatched = 0;
@@ -2539,6 +2543,8 @@ public class CanonicalProjectionParityTest {
     // =========================================================================
 
     public static void main(String[] args) throws Exception {
+        corpusSnapshot = null;
+        armChunk = null;
         System.out.println("=== Canonical Projection Parity Tests (ISSUE-0705) ===");
         testNamedDivergences();
         testArmFamilies();

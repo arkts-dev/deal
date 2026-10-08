@@ -235,7 +235,6 @@ public class CheckerTest {
         testFunctionArgTypeMismatch();
         testFunctionReturnType();
         testArityExtension();
-        testReverseArityError();
         testFunctionExpr();
         testFunctionCallContextualTyping();
         testFunctionExprDuplicateParams();
@@ -282,7 +281,6 @@ public class CheckerTest {
         // F4: Table member writes (no E3003)
         testTableWrite();
         // F5: Table index writes (no E3007)
-        testTableIndexWrite();
         // A-D10 (assignment-delete-address-chains): table index
         // write/delete keys must have static type string (E3018)
         testTableIndexWriteStringKeyAccepted();
@@ -365,7 +363,6 @@ public class CheckerTest {
         testForOfScoping_iterableRefsOuterVar();
         testForOfScoping_breakInside();
         testForOfScoping_continueInside();
-        testForOfTypeCheck_arrayCorrect();
         testForOfTypeCheck_stringCorrect();
         testForOfTypeCheck_nonIterable();
         testV12StringTypeFacingChecks();
@@ -912,16 +909,6 @@ public class CheckerTest {
         assertNoErrors(out, "table member write allowed without E3003");
     }
 
-    // F5: Table index writes should NOT trigger E3007
-    static void testTableIndexWrite() {
-        System.out.println("-- Table Index Write (should not trigger E3007) --");
-        CheckerOutput out = checkProgram(
-            "let t: table = { data: 1 };\n" +
-            "t[\"key\"] = 42;"
-        );
-        assertNoErrors(out, "table index write allowed without E3007");
-    }
-
     // =========================================================================
     // A-D10: table index write/delete keys must have static type string
     // (E3018 — emitted before lowering, identical on every backend)
@@ -934,6 +921,7 @@ public class CheckerTest {
             "t[\"key\"] = 42;"
         );
         assertNoErrors(lit, "string literal table index write");
+        assertNoErrors(lit, "table index write allowed without E3007");
         CheckerOutput var = checkProgram(
             "let t: table = { data: 1 };\n" +
             "let k: string = \"key\";\n" +
@@ -1248,19 +1236,6 @@ public class CheckerTest {
             "let f: (x: int, y: int) => int = oneArg;"
         );
         assertNoErrors(out, "arity extension: fewer params OK");
-    }
-
-    static void testReverseArityError() {
-        System.out.println("-- Reverse Arity Error --");
-        CheckerOutput out = checkProgram(
-            "function twoArgs(a: int, b: int): int { return a + b; }\n" +
-            "let f: (x: int) => int = twoArgs;"
-        );
-        List<CompilerDiagnostic> diags = out.result.diagnostics();
-        boolean hasE5004 = diags.stream().anyMatch(d -> d.code().equals("E5004"));
-        boolean hasE3001 = diags.stream().anyMatch(d -> d.code().equals("E3001"));
-        check(hasE5004 || hasE3001,
-            "reverse arity error: expected E5004 or E3001, got " + diags);
     }
 
     // F5: Contextual typing for function call arguments
@@ -1817,6 +1792,7 @@ public class CheckerTest {
             "let f: (x: int) => int = twoArgs;"
         );
         assertError(out, "E5004", "reverse arity E5004");
+        assertError(out, "E5004", "reverse arity error");
     }
 
     // =========================================================================
@@ -2099,6 +2075,7 @@ public class CheckerTest {
             "}"
         );
         assertNoErrors(out, "loop variable visible in for-of body");
+        assertNoErrors(out, "for-of over int[] with int loop var");
     }
 
     static void testForOfScoping_iterableCannotRefLoopVar() {
@@ -2153,19 +2130,6 @@ public class CheckerTest {
             "}"
         );
         assertNoErrors(out, "continue inside for-of");
-    }
-
-    static void testForOfTypeCheck_arrayCorrect() {
-        System.out.println("-- For-of Type Check: array correct --");
-        CheckerOutput out = checkProgram(
-            "function f(xs: int[]): null {\n" +
-            "  for (let x: int of xs) {\n" +
-            "    let y: int = x;\n" +
-            "  }\n" +
-            "  return null;\n" +
-            "}"
-        );
-        assertNoErrors(out, "for-of over int[] with int loop var");
     }
 
     static void testForOfTypeCheck_stringCorrect() {

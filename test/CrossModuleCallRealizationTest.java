@@ -149,6 +149,10 @@ public class CrossModuleCallRealizationTest {
         String entryModule) {
     }
 
+    private record LoweredFixture(Fixture fixture,
+                                  SemanticLowerer.ProjectLoweringResult result) {
+    }
+
     private static CompilerInvocation productionInvocation() {
         return CompilerProfileProvider.resolve(ReleaseConfiguration.CURRENT_RELEASE_STATE,
             ReleaseConfiguration.releaseCapabilityRegistry());
@@ -361,13 +365,13 @@ public class CrossModuleCallRealizationTest {
     // 1. The lowering drive: the caller cells and the callee entry record
     // =========================================================================
 
-    private static void testLoweringCellShapes() throws Exception {
+    private static void testLoweringCellShapes(LoweredFixture baseline)
+            throws Exception {
         System.out.println("-- the caller-side EXTERNAL_PARAMETER cells, the absent "
             + "caller-side return boundary, and the callee's single "
             + "EXTERNAL_RETURN --");
-        Fixture fixture = probeProject();
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+        {
+            SemanticLowerer.ProjectLoweringResult result = baseline.result();
             check(result.project() != null && !result.hasErrors(),
                 "the probe lowers through the one project entry: "
                     + result.diagnostics());
@@ -484,8 +488,6 @@ public class CrossModuleCallRealizationTest {
                         && !p.name().equals("add") && !p.name().equals("fib"),
                     "the caller publishes no callee export: " + publish.payload());
             }
-        } finally {
-            deleteRecursively(fixture.root());
         }
     }
 
@@ -493,13 +495,13 @@ public class CrossModuleCallRealizationTest {
     // 2. The oracle: entry events, module attribution, and the restored context
     // =========================================================================
 
-    private static void testOracleEntryEvents() throws Exception {
+    private static void testOracleEntryEvents(LoweredFixture baseline)
+            throws Exception {
         System.out.println("-- the oracle's entry events parent to the caller's CALL "
             + "under the callee module; the caller's terminal keeps the caller's "
             + "module --");
-        Fixture fixture = probeProject();
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+        {
+            SemanticLowerer.ProjectLoweringResult result = baseline.result();
             if (result.project() == null) {
                 fail("the probe lowers: " + result.diagnostics());
                 return;
@@ -590,17 +592,15 @@ public class CrossModuleCallRealizationTest {
                     "app".equals(event.module()) && "int:8".equals(event.output())),
                 "the caller's CALL SUCCESS publishes the crossed fib value: "
                     + callSuccesses);
-        } finally {
-            deleteRecursively(fixture.root());
         }
     }
 
-    private static void testFailingCalleeRestoresContext() throws Exception {
+    private static void testFailingCalleeRestoresContext(LoweredFixture baseline)
+            throws Exception {
         System.out.println("-- a failing callee: the failure carries the callee "
             + "origin and the caller's CALL FAILURE keeps the caller's module --");
-        Fixture fixture = failingProbeProject();
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+        {
+            SemanticLowerer.ProjectLoweringResult result = baseline.result();
             if (result.project() == null) {
                 fail("the failing probe lowers: " + result.diagnostics());
                 return;
@@ -630,8 +630,6 @@ public class CrossModuleCallRealizationTest {
                             + event.text());
                 }
             }
-        } finally {
-            deleteRecursively(fixture.root());
         }
     }
 
@@ -639,33 +637,24 @@ public class CrossModuleCallRealizationTest {
     // 3. The three-consumer trace equality over the same projects
     // =========================================================================
 
-    private static void testThreeConsumerTraceEquality() throws Exception {
+    private static void testThreeConsumerTraceEquality(LoweredFixture probe,
+            LoweredFixture failing) throws Exception {
         System.out.println("-- the oracle and both conformance emitters agree "
             + "event-for-event over the probe and the failing probe --");
-        Fixture probe = probeProject();
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(probe);
-            if (result.project() == null) {
-                fail("the probe lowers: " + result.diagnostics());
-            } else {
-                runDifferential("cross-module probe", result.project(),
-                    result.tables(), result.registries());
-            }
-        } finally {
-            deleteRecursively(probe.root());
+        SemanticLowerer.ProjectLoweringResult result = probe.result();
+        if (result.project() == null) {
+            fail("the probe lowers: " + result.diagnostics());
+        } else {
+            runDifferential("cross-module probe", result.project(),
+                result.tables(), result.registries());
         }
 
-        Fixture failing = failingProbeProject();
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(failing);
-            if (result.project() == null) {
-                fail("the failing probe lowers: " + result.diagnostics());
-            } else {
-                runDifferential("failing cross-module probe", result.project(),
-                    result.tables(), result.registries());
-            }
-        } finally {
-            deleteRecursively(failing.root());
+        SemanticLowerer.ProjectLoweringResult failingResult = failing.result();
+        if (failingResult.project() == null) {
+            fail("the failing probe lowers: " + failingResult.diagnostics());
+        } else {
+            runDifferential("failing cross-module probe", failingResult.project(),
+                failingResult.tables(), failingResult.registries());
         }
     }
 
@@ -893,12 +882,13 @@ public class CrossModuleCallRealizationTest {
     // 5. The fail-closed seeds
     // =========================================================================
 
-    private static void testFailClosedSeeds() throws Exception {
+    private static void testFailClosedSeeds(LoweredFixture baseline)
+            throws Exception {
         System.out.println("-- the fail-closed seeds: a ref outside the closure, a "
             + "non-entry ref, and a RETAINED_ABI external --");
-        Fixture fixture = probeProject();
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+        Fixture fixture = baseline.fixture();
+        {
+            SemanticLowerer.ProjectLoweringResult result = baseline.result();
             if (result.project() == null) {
                 fail("the probe lowers: " + result.diagnostics());
                 return;
@@ -940,8 +930,6 @@ public class CrossModuleCallRealizationTest {
             assertRetainedOwnerRejected("the RETAINED_ABI external",
                 replaceCallPayload(result.project(), appUnit, call, retained),
                 result.tables(), result.registries(), fixture);
-        } finally {
-            deleteRecursively(fixture.root());
         }
     }
 
@@ -1159,12 +1147,23 @@ public class CrossModuleCallRealizationTest {
     public static void main(String[] args) throws Exception {
         System.out.println("=== Cross-Module Call Realization Tests "
             + "(ISSUE-0654) ===\n");
-        testLoweringCellShapes();
-        testOracleEntryEvents();
-        testFailingCalleeRestoresContext();
-        testThreeConsumerTraceEquality();
-        testProductionArtifactsAndSidecars();
-        testFailClosedSeeds();
+        Fixture probe = null;
+        Fixture failing = null;
+        try {
+            probe = probeProject();
+            LoweredFixture baseline = new LoweredFixture(probe, lower(probe));
+            testLoweringCellShapes(baseline);
+            testOracleEntryEvents(baseline);
+            failing = failingProbeProject();
+            LoweredFixture failingBaseline = new LoweredFixture(failing, lower(failing));
+            testFailingCalleeRestoresContext(failingBaseline);
+            testThreeConsumerTraceEquality(baseline, failingBaseline);
+            testProductionArtifactsAndSidecars();
+            testFailClosedSeeds(baseline);
+        } finally {
+            deleteRecursively(failing == null ? null : failing.root());
+            deleteRecursively(probe == null ? null : probe.root());
+        }
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

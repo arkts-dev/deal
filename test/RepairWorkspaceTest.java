@@ -8,11 +8,12 @@ public final class RepairWorkspaceTest {
     private static final String MODULE = "app.deal";
     private static final String BASE = "export function main(): int { return 0; }\n";
     public static void main(String[] args) {
-        missingTypeHasExactGrant();
-        missingFunctionHasArity();
-        unsupportedPreconditionDoesNotOfferPatch();
-        dependenciesUseSyntaxAndScopes();
-        dependentProviderCanBeReopened();
+        var baseline = AmendWorkspace.inspect(BASE, MODULE);
+        missingTypeHasExactGrant(baseline);
+        missingFunctionHasArity(baseline);
+        unsupportedPreconditionDoesNotOfferPatch(baseline);
+        dependenciesUseSyntaxAndScopes(baseline);
+        dependentProviderCanBeReopened(baseline);
         System.out.println("RepairWorkspaceTest: all tests passed");
     }
     private static RepairWorkspaceSnapshot stage(String source, List<AmendWorkspace.Operation> operations) {
@@ -26,8 +27,8 @@ public final class RepairWorkspaceTest {
         check(!result.accepted(), "fixture must require repair");
         return result.workspace();
     }
-    private static void missingTypeHasExactGrant() {
-        var module = AmendWorkspace.inspect(BASE, MODULE).moduleId();
+    private static void missingTypeHasExactGrant(Inspection baseline) {
+        var module = baseline.moduleId();
         var workspace = stage(BASE, List.of(
                 new AmendWorkspace.AddDeclaration(module, "export class Holder { value: Leaf = {value:1}; }"),
                 new AmendWorkspace.AddDeclaration(module, "export class Unrelated { value: int = 7; }")));
@@ -61,8 +62,8 @@ public final class RepairWorkspaceTest {
         catch (IllegalArgumentException expected) { old = true; }
         check(old, "grant expires on workspace revision");
     }
-    private static void unsupportedPreconditionDoesNotOfferPatch() {
-        var symbol = AmendWorkspace.inspect(BASE, MODULE).symbols().stream()
+    private static void unsupportedPreconditionDoesNotOfferPatch(Inspection baseline) {
+        var symbol = baseline.symbols().stream()
                 .filter(s -> s.name().equals("main")).findFirst().orElseThrow();
         var workspace = stage(BASE, List.of(new AmendWorkspace.ReplaceFunctionBody(symbol.id(), "return 1;")));
         var offer = RepairWorkspaceProtocol.inspectRepair(workspace);
@@ -70,8 +71,8 @@ public final class RepairWorkspaceTest {
                 "invalid handle must not masquerade as a locally repairable body");
         check(offer.slots().isEmpty() && !offer.reason().isBlank(), "unsupported carries reason, not writable slots");
     }
-    private static void dependenciesUseSyntaxAndScopes() {
-        var module = AmendWorkspace.inspect(BASE, MODULE).moduleId();
+    private static void dependenciesUseSyntaxAndScopes(Inspection baseline) {
+        var module = baseline.moduleId();
         var workspace = stage(BASE, List.of(
                 new AmendWorkspace.AddDeclaration(module, "export function helper(): int { return missing; }"),
                 new AmendWorkspace.AddDeclaration(module, "export function label(): string { return \"helper\"; /* helper */ }"),
@@ -87,8 +88,8 @@ public final class RepairWorkspaceTest {
         check(workspace.groups().stream().filter(g -> g.groupId().equals(consumer.dependencyGroupId()))
                 .anyMatch(g -> g.dependsOn().contains(provider)), "real callee creates dependency");
     }
-    private static void dependentProviderCanBeReopened() {
-        var module = AmendWorkspace.inspect(BASE, MODULE).moduleId();
+    private static void dependentProviderCanBeReopened(Inspection baseline) {
+        var module = baseline.moduleId();
         var workspace = stage(BASE, List.of(
                 new AmendWorkspace.AddDeclaration(module, "export function helper(): int { return 1; }"),
                 new AmendWorkspace.AddDeclaration(module, "export function label(): string { return helper(); }"),
@@ -108,8 +109,8 @@ public final class RepairWorkspaceTest {
         check(fixed.workspace().slots().get(2).payloadFingerprint().equals(workspace.slots().get(2).payloadFingerprint()),
                 "unrelated fingerprint survives scope expansion");
     }
-    private static void missingFunctionHasArity() {
-        var main = AmendWorkspace.inspect(BASE, MODULE).nodes().stream()
+    private static void missingFunctionHasArity(Inspection baseline) {
+        var main = baseline.nodes().stream()
                 .filter(s -> s.kind().equals("function-body")).findFirst().orElseThrow();
         var workspace = stage(BASE, List.of(new AmendWorkspace.ReplaceFunctionBody(main.id(), "return helper(2);")));
         var offer = RepairWorkspaceProtocol.inspectRepair(workspace);

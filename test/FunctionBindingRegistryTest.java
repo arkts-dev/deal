@@ -106,6 +106,16 @@ public class FunctionBindingRegistryTest {
     private record CheckedSlice(ProgramNode program, CheckResult checks) {
     }
 
+    private static final String GROUP_SOURCE = """
+        function f(): null {
+          let gRef = g;
+        }
+        function g(): null {
+          let fRef = f;
+        }
+        function h(): null {}
+        """;
+
     // =========================================================================
     // Checked-source slices and the entry-point drivers
     // =========================================================================
@@ -326,19 +336,10 @@ public class FunctionBindingRegistryTest {
      * pre-assigned allocation identity (B4/B5), in declaration order,
      * and the size-1 sibling closure registers through the same map.
      */
-    static void testGroupRegistrationOneLoweredBodyPerMember() {
+    static void testGroupRegistrationOneLoweredBodyPerMember(
+            SemanticLowerer.GroupCoreResult result) {
         System.out.println("-- group lowering: one LoweredBody per member keyed by each "
             + "pre-assigned identity --");
-
-        SemanticLowerer.GroupCoreResult result = lowerGroupSlice("""
-            function f(): null {
-              let gRef = g;
-            }
-            function g(): null {
-              let fRef = f;
-            }
-            function h(): null {}
-            """);
         if (result == null || result.lowering().hasErrors() || result.lowering().unit() == null) {
             if (result != null) {
                 fail("the slice lowers to a validated unit: " + result.lowering().diagnostics());
@@ -915,21 +916,11 @@ public class FunctionBindingRegistryTest {
      * allocators yields the same registry map with identical iteration
      * order and byte-identical validated unit dumps (B9/D10).
      */
-    static void testDeterminism() {
+    static void testDeterminism(SemanticLowerer.GroupCoreResult first) {
         System.out.println("-- determinism: same map, identical iteration order, "
             + "byte-identical dumps --");
 
-        String source = """
-            function f(): null {
-              let gRef = g;
-            }
-            function g(): null {
-              let fRef = f;
-            }
-            function h(): null {}
-            """;
-        SemanticLowerer.GroupCoreResult first = lowerGroupSlice(source);
-        SemanticLowerer.GroupCoreResult second = lowerGroupSlice(source);
+        SemanticLowerer.GroupCoreResult second = lowerGroupSlice(GROUP_SOURCE);
         if (first == null || second == null
                 || first.lowering().hasErrors() || second.lowering().hasErrors()
                 || first.lowering().unit() == null || second.lowering().unit() == null) {
@@ -962,7 +953,8 @@ public class FunctionBindingRegistryTest {
 
     public static void main(String[] args) {
         testClosureRegistrationKeysExactlyClosureNewResultIdentities();
-        testGroupRegistrationOneLoweredBodyPerMember();
+        SemanticLowerer.GroupCoreResult group = lowerGroupSlice(GROUP_SOURCE);
+        testGroupRegistrationOneLoweredBodyPerMember(group);
         testMemberReadHostFactsRegisterHostFunction();
         testExportReadHostFactsRegisterHostFunction();
         testCrossModuleSharedRouteRegistersExternalFunctionSharedBody();
@@ -974,7 +966,7 @@ public class FunctionBindingRegistryTest {
         testMissingOrMismatchedProducerFactsFailExplicitly();
         testRegistrySnapshotImmutabilityAndIterationOrder();
         testNoMemberReadOrExportReadProductionPath();
-        testDeterminism();
+        testDeterminism(group);
         System.out.println();
         System.out.println("FunctionBindingRegistryTest: " + passed + " passed, " + failed
             + " failed");

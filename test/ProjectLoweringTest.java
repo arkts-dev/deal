@@ -378,6 +378,10 @@ public class ProjectLoweringTest {
             identities);
     }
 
+    private record LoweredProject(RealProject project,
+                                  SemanticLowerer.ProjectLoweringResult result) {
+    }
+
     private static CompilerInvocation invocation() {
         return CompilerProfileProvider.resolveCommonShadow(
             SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
@@ -400,18 +404,19 @@ public class ProjectLoweringTest {
     // 1. The one project lowering and determinism
     // =========================================================================
 
-    private static void testOneProjectLoweringAndDeterminism() throws Exception {
+    private static void testOneProjectLoweringAndDeterminism(
+            LoweredProject baseline) throws Exception {
         System.out.println("-- the one project lowering: closure, entry, one "
             + "allocator, byte-identical repeats --");
-        RealProject project = compileProject(APP_SOURCE);
-        try {
+        RealProject project = baseline.project();
+        {
             checkEq(List.of(UTIL, APP),
                 project.checkedProject().modules().stream()
                     .map(CheckedModuleInput::moduleId).toList(),
                 "the checked closure carries the implementation modules in "
                     + "dependency order");
 
-            SemanticLowerer.ProjectLoweringResult first = lower(project, invocation());
+            SemanticLowerer.ProjectLoweringResult first = baseline.result();
             SemanticLowerer.ProjectLoweringResult second = lower(project, invocation());
             check(!first.hasErrors() && first.project() != null,
                 "the project lowers to exactly one project: " + first.diagnostics());
@@ -468,8 +473,6 @@ public class ProjectLoweringTest {
                     "the repeated dump of module "
                         + firstDump.modules().get(i).moduleId() + " is byte-identical");
             }
-        } finally {
-            deleteRecursively(project.root());
         }
     }
 
@@ -477,12 +480,13 @@ public class ProjectLoweringTest {
     // 2. The seeds, the intrinsic bindings, and the namespace registrations
     // =========================================================================
 
-    private static void testSeedsIntrinsicsAndNamespaces() throws Exception {
+    private static void testSeedsIntrinsicsAndNamespaces(LoweredProject baseline)
+            throws Exception {
         System.out.println("-- the seeds, the intrinsic bindings, and the "
             + "namespace registrations --");
-        RealProject project = compileProject(APP_SOURCE);
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(project, invocation());
+        RealProject project = baseline.project();
+        {
+            SemanticLowerer.ProjectLoweringResult result = baseline.result();
             if (result.project() == null) {
                 fail("the project lowers: " + result.diagnostics());
                 return;
@@ -652,8 +656,6 @@ public class ProjectLoweringTest {
             checkEq(cfg == null ? List.of("missing") : cfg.aliasCells(),
                 dumpedHostCells,
                 "the dumped MODULE_IMPORT payloads carry the registered cells");
-        } finally {
-            deleteRecursively(project.root());
         }
     }
 
@@ -661,12 +663,13 @@ public class ProjectLoweringTest {
     // 3. The composed chain over the unified units
     // =========================================================================
 
-    private static void testComposedChainOverUnifiedUnits() throws Exception {
+    private static void testComposedChainOverUnifiedUnits(LoweredProject baseline)
+            throws Exception {
         System.out.println("-- the composed chain accepts the E7-armed unified "
             + "units --");
-        RealProject project = compileProject(APP_SOURCE);
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(project, invocation());
+        RealProject project = baseline.project();
+        {
+            SemanticLowerer.ProjectLoweringResult result = baseline.result();
             if (result.project() == null) {
                 fail("the project lowers: " + result.diagnostics());
                 return;
@@ -737,8 +740,6 @@ public class ProjectLoweringTest {
                         "the unified session produced the adapter");
                 }
             }
-        } finally {
-            deleteRecursively(project.root());
         }
     }
 
@@ -914,13 +915,13 @@ public class ProjectLoweringTest {
         }
     }
 
-    private static void testImportedInProjectClassResolution() throws Exception {
+    private static void testImportedInProjectClassResolution(LoweredProject imported)
+            throws Exception {
         System.out.println("-- the in-project imported-class construction: "
             + "CLASS_NEW(SHARED_FACTORY) with the owner's factory reference --");
-        RealProject project = compileProject(IMPORTED_CLASS_APP_SOURCE,
-            Map.of("src/util.deal", IMPORTED_CLASS_UTIL_SOURCE), Map.of());
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(project, invocation());
+        RealProject project = imported.project();
+        {
+            SemanticLowerer.ProjectLoweringResult result = imported.result();
             check(!result.hasErrors() && result.project() != null,
                 "the imported in-project class literal lowers through the one "
                     + "project entry: " + result.diagnostics());
@@ -1122,17 +1123,15 @@ public class ProjectLoweringTest {
                     "the call's externalEntryRef names the owner's recorded "
                         + "EXTERNAL_ENTRY (the accumulated in-project record)");
             }
-        } finally {
-            deleteRecursively(project.root());
         }
     }
 
-    private static void testInconsistentFactSeed() throws Exception {
+    private static void testInconsistentFactSeed(LoweredProject imported)
+            throws Exception {
         System.out.println("-- the inconsistent-fact negative: an owner outside the "
             + "closure and outside the declaration set still defers --");
-        RealProject project = compileProject(IMPORTED_CLASS_APP_SOURCE,
-            Map.of("src/util.deal", IMPORTED_CLASS_UTIL_SOURCE), Map.of());
-        try {
+        RealProject project = imported.project();
+        {
             // The same real project with the owner module removed from the
             // closure and the index: the checker-resolved class identity
             // stays, but no lowered implementation module, no declaration
@@ -1186,8 +1185,6 @@ public class ProjectLoweringTest {
                     "the inconsistent-fact seed returns the first E6005 "
                         + "RETAINED_ABI_DEFERRED; got " + diagnostic.message());
             }
-        } finally {
-            deleteRecursively(project.root());
         }
     }
 
@@ -1525,12 +1522,13 @@ public class ProjectLoweringTest {
     // 6. The negative seeds
     // =========================================================================
 
-    private static void testCorruptedUnitSeed() throws Exception {
+    private static void testCorruptedUnitSeed(LoweredProject baseline)
+            throws Exception {
         System.out.println("-- the corrupted-unit negative: a wrong boundary "
             + "triple fails the unit chain --");
-        RealProject project = compileProject(APP_SOURCE);
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(project, invocation());
+        RealProject project = baseline.project();
+        {
+            SemanticLowerer.ProjectLoweringResult result = baseline.result();
             if (result.project() == null) {
                 fail("the project lowers: " + result.diagnostics());
                 return;
@@ -1564,8 +1562,6 @@ public class ProjectLoweringTest {
                         SemanticIrValidator.R_BOUNDARY_TRIPLE),
                 "the corrupted unit returns the first E6005 R-BOUNDARY-TRIPLE; got "
                     + failure.get().message());
-        } finally {
-            deleteRecursively(project.root());
         }
     }
 
@@ -1610,12 +1606,13 @@ public class ProjectLoweringTest {
             unit.exportPlan(), unit.functionBindings(), ops);
     }
 
-    private static void testMissingModuleSeed() throws Exception {
+    private static void testMissingModuleSeed(LoweredProject baseline)
+            throws Exception {
         System.out.println("-- the missing-module negative: a reference outside "
             + "the closure fails the project-form R-EXTERNAL-ENTRY arm --");
-        RealProject project = compileProject(APP_SOURCE);
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(project, invocation());
+        RealProject project = baseline.project();
+        {
+            SemanticLowerer.ProjectLoweringResult result = baseline.result();
             if (result.project() == null) {
                 fail("the project lowers: " + result.diagnostics());
                 return;
@@ -1647,16 +1644,15 @@ public class ProjectLoweringTest {
                         + "closure"),
                 "the missing module returns the first E6005 R-EXTERNAL-ENTRY naming "
                     + "the closure violation; got " + failure.get().message());
-        } finally {
-            deleteRecursively(project.root());
         }
     }
 
-    private static void testNonV12InvocationSeed() throws Exception {
+    private static void testNonV12InvocationSeed(LoweredProject baseline)
+            throws Exception {
         System.out.println("-- the non-v1.2 invocation negative: the profile "
             + "guard fires before any id is allocated --");
-        RealProject project = compileProject(APP_SOURCE);
-        try {
+        RealProject project = baseline.project();
+        {
             CompilerInvocation legacy = CompilerProfileProvider.resolveLegacyRegression(
                 SemanticProfile.LEGACY_SAFE_INT, ReleaseState.V1_2_ACTIVE,
                 CapabilityRegistry.releaseRegistry());
@@ -1689,16 +1685,15 @@ public class ProjectLoweringTest {
                     "the failure names the rejected profile; got "
                         + diagnostic.message());
             }
-        } finally {
-            deleteRecursively(project.root());
         }
     }
 
-    private static void testUnresolvedAliasSeed() throws Exception {
+    private static void testUnresolvedAliasSeed(LoweredProject baseline)
+            throws Exception {
         System.out.println("-- the unresolved-alias negative: an alias without a "
             + "resolved import fact fails the import arm --");
-        RealProject project = compileProject(APP_SOURCE);
-        try {
+        RealProject project = baseline.project();
+        {
             List<CheckedModuleInput> modules = new ArrayList<>();
             for (CheckedModuleInput module : project.checkedProject().modules()) {
                 modules.add(module.moduleId().equals(APP)
@@ -1735,8 +1730,6 @@ public class ProjectLoweringTest {
                     "the unresolved alias fails the import arm with "
                         + "CONSTRUCT_UNLOWERED; got " + diagnostic.message());
             }
-        } finally {
-            deleteRecursively(project.root());
         }
     }
 
@@ -1784,19 +1777,33 @@ public class ProjectLoweringTest {
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== Project Lowering Entry Tests (ISSUE-0634) ===\n");
-        testOneProjectLoweringAndDeterminism();
-        testSeedsIntrinsicsAndNamespaces();
-        testComposedChainOverUnifiedUnits();
-        testInProjectClassArm();
-        testImportedInProjectClassResolution();
-        testInconsistentFactSeed();
-        testDeclarationClassConstruction();
-        testBuiltinErrorConstruction();
-        testExternCDeclarationClassConstruction();
-        testCorruptedUnitSeed();
-        testMissingModuleSeed();
-        testNonV12InvocationSeed();
-        testUnresolvedAliasSeed();
+        RealProject project = null;
+        RealProject importedProject = null;
+        try {
+            project = compileProject(APP_SOURCE);
+            LoweredProject baseline = new LoweredProject(project,
+                lower(project, invocation()));
+            testOneProjectLoweringAndDeterminism(baseline);
+            testSeedsIntrinsicsAndNamespaces(baseline);
+            testComposedChainOverUnifiedUnits(baseline);
+            testInProjectClassArm();
+            importedProject = compileProject(IMPORTED_CLASS_APP_SOURCE,
+                Map.of("src/util.deal", IMPORTED_CLASS_UTIL_SOURCE), Map.of());
+            LoweredProject imported = new LoweredProject(importedProject,
+                lower(importedProject, invocation()));
+            testImportedInProjectClassResolution(imported);
+            testInconsistentFactSeed(imported);
+            testDeclarationClassConstruction();
+            testBuiltinErrorConstruction();
+            testExternCDeclarationClassConstruction();
+            testCorruptedUnitSeed(baseline);
+            testMissingModuleSeed(baseline);
+            testNonV12InvocationSeed(baseline);
+            testUnresolvedAliasSeed(baseline);
+        } finally {
+            deleteRecursively(importedProject == null ? null : importedProject.root());
+            deleteRecursively(project == null ? null : project.root());
+        }
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
             System.exit(1);

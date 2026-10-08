@@ -196,6 +196,12 @@ public class FieldOpsExecutorTest {
 
     private record BaseInstanceFixture(Value.Class instance, Map<ValueId, Value> heap,
                                        ClassLayout layout) {
+        BaseInstanceFixture copy() {
+            Value.Class fresh = new Value.Class(instance.classId(), instance.fields());
+            Map<ValueId, Value> freshHeap = new LinkedHashMap<>(heap);
+            freshHeap.put(BASE_REF, fresh);
+            return new BaseInstanceFixture(fresh, freshHeap, layout);
+        }
     }
 
     private static final ValueId BASE_REF = new ValueId(9001);
@@ -416,11 +422,11 @@ public class FieldOpsExecutorTest {
     // (a) the T2 tie and the read presence matrix
     // =========================================================================
 
-    private static void testT2InstanceFeedsFieldReads() {
+    private static void testT2InstanceFeedsFieldReads(BaseInstanceFixture seed) {
         System.out.println("-- T2 tie: the CLASS_NEW-produced instance feeds FIELD_READ --");
 
-        BaseInstanceFixture base = baseInstance(
-            Map.of("x", new Value.Int(1), "t", Value.string("v")), LAYOUT);
+        BaseInstanceFixture base = new BaseInstanceFixture(seed.instance(),
+            new LinkedHashMap<>(seed.heap()), seed.layout());
         Map<ClassId, ClassLayout> layouts = Map.of(CLS, LAYOUT);
         List<String> log = new ArrayList<>();
 
@@ -451,15 +457,13 @@ public class FieldOpsExecutorTest {
                 + "boundary passes; got " + yRead);
     }
 
-    private static void testReadPresenceMatrix() {
+    private static void testReadPresenceMatrix(BaseInstanceFixture nullSeed, BaseInstanceFixture valueSeed) {
         System.out.println("-- read presence matrix: missing / present null / present value --");
 
         Map<ClassId, ClassLayout> layouts = Map.of(CLS, LAYOUT);
 
         // y present-null through T2's CLASS_NEW (provided y = null).
-        BaseInstanceFixture nullY = baseInstance(
-            Map.of("x", new Value.Int(1), "y", Value.Null.INSTANCE, "t", Value.string("v")),
-            LAYOUT);
+        BaseInstanceFixture nullY = nullSeed.copy();
         FieldReadFixture yRead = fieldReadFixture(BASE_REF, CLS, "y", LAYOUT);
         Outcome<Value> presentNull = ClassOpsExecutor.executeFieldRead(yRead.op(),
             nullY.heap(), yRead.receiverBoundary(), yRead.fieldBoundary(), layouts,
@@ -470,9 +474,7 @@ public class FieldOpsExecutorTest {
                 + "nullable descriptor); got " + presentNull);
 
         // y present-value through T2's CLASS_NEW (provided y = 7).
-        BaseInstanceFixture valueY = baseInstance(
-            Map.of("x", new Value.Int(1), "y", new Value.Int(7), "t", Value.string("v")),
-            LAYOUT);
+        BaseInstanceFixture valueY = valueSeed.copy();
         Outcome<Value> presentValue = ClassOpsExecutor.executeFieldRead(yRead.op(),
             valueY.heap(), yRead.receiverBoundary(), yRead.fieldBoundary(), layouts,
             realDelegate(null));
@@ -588,13 +590,12 @@ public class FieldOpsExecutorTest {
     // (b) write commit ordering and the presence matrix through writes
     // =========================================================================
 
-    private static void testWriteCommitOrderingAndPresence() {
+    private static void testWriteCommitOrderingAndPresence(BaseInstanceFixture seed) {
         System.out.println("-- write commit ordering: both boundaries pass, then the "
             + "store; a failing field boundary commits nothing --");
 
         Map<ClassId, ClassLayout> layouts = Map.of(CLS, LAYOUT);
-        BaseInstanceFixture base = baseInstance(
-            Map.of("x", new Value.Int(1), "t", Value.string("v")), LAYOUT);
+        BaseInstanceFixture base = seed.copy();
 
         // A successful write of the required x: the updated instance
         // carries the committed value; the other fields are unchanged.
@@ -686,14 +687,12 @@ public class FieldOpsExecutorTest {
     // (c) delete idempotency and the presence matrix through deletes
     // =========================================================================
 
-    private static void testDeleteTurnsPresentIntoMissingAndIsIdempotent() {
+    private static void testDeleteTurnsPresentIntoMissingAndIsIdempotent(BaseInstanceFixture seed) {
         System.out.println("-- delete: present becomes missing; already-missing is a "
             + "no-op SUCCESS --");
 
         Map<ClassId, ClassLayout> layouts = Map.of(CLS, LAYOUT);
-        BaseInstanceFixture base = baseInstance(
-            Map.of("x", new Value.Int(1), "y", new Value.Int(7), "t", Value.string("v")),
-            LAYOUT);
+        BaseInstanceFixture base = seed.copy();
 
         FieldDeleteFixture delete = fieldDeleteFixture(BASE_REF, CLS, "y");
         Outcome<Value> deleted = ClassOpsExecutor.executeFieldDelete(delete.op(), base.heap(),
@@ -720,13 +719,13 @@ public class FieldOpsExecutorTest {
     // (d) has presence semantics
     // =========================================================================
 
-    private static void testHasPresenceMatrix() {
+    private static void testHasPresenceMatrix(BaseInstanceFixture missingSeed,
+            BaseInstanceFixture nullSeed, BaseInstanceFixture valueSeed) {
         System.out.println("-- has: present (present null included) -> true, missing -> "
             + "false --");
 
         Map<ClassId, ClassLayout> layouts = Map.of(CLS, LAYOUT);
-        BaseInstanceFixture missing = baseInstance(
-            Map.of("x", new Value.Int(1), "t", Value.string("v")), LAYOUT);
+        BaseInstanceFixture missing = missingSeed.copy();
         SemanticOp hasY = hasFieldOp(BASE_REF, "y");
         Outcome<Value> missingOutcome = ClassOpsExecutor.executeHasField(hasY, missing.heap(),
             layouts);
@@ -734,9 +733,7 @@ public class FieldOpsExecutorTest {
                 && missingSuccess.value().equals(new Value.Bool(false)),
             "has(y) on a missing field publishes false; got " + missingOutcome);
 
-        BaseInstanceFixture presentNull = baseInstance(
-            Map.of("x", new Value.Int(1), "y", Value.Null.INSTANCE, "t", Value.string("v")),
-            LAYOUT);
+        BaseInstanceFixture presentNull = nullSeed.copy();
         Outcome<Value> nullOutcome = ClassOpsExecutor.executeHasField(hasY, presentNull.heap(),
             layouts);
         check(nullOutcome instanceof Outcome.Success<Value> nullSuccess
@@ -744,9 +741,7 @@ public class FieldOpsExecutorTest {
             "has(y) on a present-null field publishes true (present null is present); got "
                 + nullOutcome);
 
-        BaseInstanceFixture presentValue = baseInstance(
-            Map.of("x", new Value.Int(1), "y", new Value.Int(7), "t", Value.string("v")),
-            LAYOUT);
+        BaseInstanceFixture presentValue = valueSeed.copy();
         Outcome<Value> valueOutcome = ClassOpsExecutor.executeHasField(hasY,
             presentValue.heap(), layouts);
         check(valueOutcome instanceof Outcome.Success<Value> valueSuccess
@@ -765,13 +760,12 @@ public class FieldOpsExecutorTest {
     // (e) the receiver is consumed exactly once
     // =========================================================================
 
-    private static void testReceiverConsumedExactlyOnce() {
+    private static void testReceiverConsumedExactlyOnce(BaseInstanceFixture seed) {
         System.out.println("-- single evaluation: the receiver and the stored value each "
             + "resolve exactly once --");
 
         Map<ClassId, ClassLayout> layouts = Map.of(CLS, LAYOUT);
-        BaseInstanceFixture base = baseInstance(
-            Map.of("x", new Value.Int(1), "t", Value.string("v")), LAYOUT);
+        BaseInstanceFixture base = seed.copy();
 
         CountingMap readHeap = new CountingMap(base.heap());
         FieldReadFixture read = fieldReadFixture(BASE_REF, CLS, "x", LAYOUT);
@@ -884,13 +878,12 @@ public class FieldOpsExecutorTest {
     // (f) fail-closed defects
     // =========================================================================
 
-    private static void testFailClosedDefects() {
+    private static void testFailClosedDefects(BaseInstanceFixture seed) {
         System.out.println("-- fail-closed defects: wrong shapes are Defects, never "
             + "DEAL projections --");
 
         Map<ClassId, ClassLayout> layouts = Map.of(CLS, LAYOUT);
-        BaseInstanceFixture base = baseInstance(
-            Map.of("x", new Value.Int(1), "t", Value.string("v")), LAYOUT);
+        BaseInstanceFixture base = seed.copy();
 
         FieldReadFixture read = fieldReadFixture(BASE_REF, CLS, "x", LAYOUT);
         FieldWriteFixture write = fieldWriteFixture(BASE_REF, CLS, "x", LAYOUT, nextValue());
@@ -1024,12 +1017,11 @@ public class FieldOpsExecutorTest {
     // (g) determinism
     // =========================================================================
 
-    private static void testDeterminism() {
+    private static void testDeterminism(BaseInstanceFixture seed) {
         System.out.println("-- determinism: equal inputs produce equal outcomes --");
 
         Map<ClassId, ClassLayout> layouts = Map.of(CLS, LAYOUT);
-        BaseInstanceFixture base = baseInstance(
-            Map.of("x", new Value.Int(1), "t", Value.string("v")), LAYOUT);
+        BaseInstanceFixture base = seed.copy();
         FieldReadFixture read = fieldReadFixture(BASE_REF, CLS, "x", LAYOUT);
         Outcome<Value> first = ClassOpsExecutor.executeFieldRead(read.op(), base.heap(),
             read.receiverBoundary(), read.fieldBoundary(), layouts, realDelegate(null));
@@ -1059,12 +1051,11 @@ public class FieldOpsExecutorTest {
     // (h) null arguments
     // =========================================================================
 
-    private static void testNullArgumentsFailClosed() {
+    private static void testNullArgumentsFailClosed(BaseInstanceFixture seed) {
         System.out.println("-- null arguments throw the documented NPEs --");
 
         Map<ClassId, ClassLayout> layouts = Map.of(CLS, LAYOUT);
-        BaseInstanceFixture base = baseInstance(
-            Map.of("x", new Value.Int(1), "t", Value.string("v")), LAYOUT);
+        BaseInstanceFixture base = seed.copy();
         FieldReadFixture read = fieldReadFixture(BASE_REF, CLS, "x", LAYOUT);
         FieldWriteFixture write = fieldWriteFixture(BASE_REF, CLS, "x", LAYOUT, nextValue());
         FieldDeleteFixture delete = fieldDeleteFixture(BASE_REF, CLS, "y");
@@ -1140,16 +1131,24 @@ public class FieldOpsExecutorTest {
     public static void main(String[] args) {
         System.out.println("=== Field Ops Executor Tests (ISSUE-0513 K-D6/K-D7) ===\n");
 
-        testT2InstanceFeedsFieldReads();
-        testReadPresenceMatrix();
+        BaseInstanceFixture missingSeed = baseInstance(
+            Map.of("x", new Value.Int(1), "t", Value.string("v")), LAYOUT);
+        BaseInstanceFixture nullSeed = baseInstance(
+            Map.of("x", new Value.Int(1), "y", Value.Null.INSTANCE, "t", Value.string("v")),
+            LAYOUT);
+        BaseInstanceFixture valueSeed = baseInstance(
+            Map.of("x", new Value.Int(1), "y", new Value.Int(7), "t", Value.string("v")),
+            LAYOUT);
+        testT2InstanceFeedsFieldReads(missingSeed);
+        testReadPresenceMatrix(nullSeed, valueSeed);
         testNominalReceiverFailures();
-        testWriteCommitOrderingAndPresence();
-        testDeleteTurnsPresentIntoMissingAndIsIdempotent();
-        testHasPresenceMatrix();
-        testReceiverConsumedExactlyOnce();
-        testFailClosedDefects();
-        testDeterminism();
-        testNullArgumentsFailClosed();
+        testWriteCommitOrderingAndPresence(missingSeed);
+        testDeleteTurnsPresentIntoMissingAndIsIdempotent(valueSeed);
+        testHasPresenceMatrix(missingSeed, nullSeed, valueSeed);
+        testReceiverConsumedExactlyOnce(missingSeed);
+        testFailClosedDefects(missingSeed);
+        testDeterminism(missingSeed);
+        testNullArgumentsFailClosed(missingSeed);
 
         System.out.println("\nFieldOpsExecutorTest: " + passed + " passed, "
             + failed + " failed");

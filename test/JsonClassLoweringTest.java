@@ -516,20 +516,12 @@ public class JsonClassLoweringTest {
     // (a) the generated bodies pinned (signatures, registrations, wiring)
     // =========================================================================
 
-    private static void testGeneratedBodiesPinned() {
+    private static void testGeneratedBodiesPinned(
+            SemanticLowerer.ClassDeclarationCoreResult result) {
         System.out.println("-- the generated C$fromJson/C$toJson bodies: exact "
             + "signatures, LoweredBody registrations, parameter load plus the JSON op "
             + "wiring, policies, result types --");
 
-        String source = """
-            // @jsonable
-            export class Point {
-              x: int = 40 + 2;
-              tag: string = "p" + "t";
-              note?: string;
-            }
-            """;
-        SemanticLowerer.ClassDeclarationCoreResult result = lowerModule(source);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null,
             "the @jsonable slice lowers to a validated unit: "
@@ -740,32 +732,11 @@ public class JsonClassLoweringTest {
     // (c) the combined T1..T5 scenario: the end-to-end two-module drive
     // =========================================================================
 
-    private static void testCombinedT1T5Scenario() {
+    private static void testCombinedT1T5Scenario(LoweredPair pair) {
         System.out.println("-- combined T1..T5: the generated bodies driven end-to-end "
             + "at the unit level (fromJson defaults/partial document, the nested "
             + "factory trigger, toJson, the K-D9 failure, the roundtrip) --");
 
-        LoweredPair pair = lowerPair("""
-            // @jsonable
-            export class Address {
-              city: string = "berlin";
-              zip: int = 10115;
-            }
-            """, """
-            import * as Owner from "owner"
-
-            // @jsonable
-            export class Person {
-              name: string = "anon";
-              age: int = 0;
-              home: Owner.Address = {city: "seed"};
-            }
-
-            // @jsonable
-            export class Strict {
-              tag: string;
-            }
-            """);
         check(pair != null && pair.caller() != null && pair.caller().lowering() != null
                 && !pair.caller().lowering().hasErrors()
                 && pair.caller().lowering().unit() != null,
@@ -1256,6 +1227,11 @@ public class JsonClassLoweringTest {
     private static void testDeterminism() {
         System.out.println("-- determinism: two repetitions byte-identical --");
 
+        testPairDeterminism();
+        testSingleModuleDeterminism();
+    }
+
+    private static void testPairDeterminism() {
         String ownerSource = """
             // @jsonable
             export class Address {
@@ -1279,6 +1255,7 @@ public class JsonClassLoweringTest {
             }
             """;
         LoweredPair first = lowerPair(ownerSource, callerSource);
+        testCombinedT1T5Scenario(first);
         LoweredPair second = lowerPair(ownerSource, callerSource);
         check(first != null && second != null, "both repetitions lower");
         if (first == null || second == null) {
@@ -1293,6 +1270,17 @@ public class JsonClassLoweringTest {
         check(Arrays.equals(firstCaller, secondCaller),
             "the caller unit dump is byte-identical across repetitions");
 
+        // The record surface: immutability of the JsonDefaultChildTable.
+        JsonDefaultChildTable table = first.caller().jsonDefaults();
+        Map<OpId, List<OpId>> source = new LinkedHashMap<>(table.defaultChildren());
+        OpId probeKey = source.keySet().iterator().next();
+        source.remove(probeKey);
+        check(table.defaultChildren().containsKey(probeKey),
+            "the produced JsonDefaultChildTable record is immutable (later mutation of "
+                + "the constructor argument cannot change it)");
+    }
+
+    private static void testSingleModuleDeterminism() {
         // The single-module slice repeats byte-identically too.
         SemanticLowerer.ClassDeclarationCoreResult a = lowerModule("""
             // @jsonable
@@ -1302,6 +1290,7 @@ public class JsonClassLoweringTest {
               note?: string;
             }
             """);
+        testGeneratedBodiesPinned(a);
         SemanticLowerer.ClassDeclarationCoreResult b = lowerModule("""
             // @jsonable
             export class Point {
@@ -1319,15 +1308,6 @@ public class JsonClassLoweringTest {
                     SemanticIrDumper.dumpModule(b.lowering().unit())),
                 "the single-module dump is byte-identical across repetitions");
         }
-
-        // The record surface: immutability of the JsonDefaultChildTable.
-        JsonDefaultChildTable table = first.caller().jsonDefaults();
-        Map<OpId, List<OpId>> source = new LinkedHashMap<>(table.defaultChildren());
-        OpId probeKey = source.keySet().iterator().next();
-        source.remove(probeKey);
-        check(table.defaultChildren().containsKey(probeKey),
-            "the produced JsonDefaultChildTable record is immutable (later mutation of "
-                + "the constructor argument cannot change it)");
     }
 
     // =========================================================================
@@ -1337,9 +1317,7 @@ public class JsonClassLoweringTest {
     public static void main(String[] args) {
         System.out.println("=== Json Class Lowering Tests (ISSUE-0515 K-D8/K-D10) ===\n");
 
-        testGeneratedBodiesPinned();
         testNonJsonableNegative();
-        testCombinedT1T5Scenario();
         testDeterminism();
 
         System.out.println("\nJsonClassLoweringTest: " + passed + " passed, "

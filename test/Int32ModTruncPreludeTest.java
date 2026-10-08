@@ -573,20 +573,14 @@ public final class Int32ModTruncPreludeTest {
             }
 
             // The emitted LuaJIT artifact, under real luajit.
-            Project luaProject = writeProject("cases-lua", PROBE_MODULE,
-                MOD_PROBE_SOURCE);
-            try {
-                CompilationOrchestrator lua = productionCompile(luaProject,
-                    Backend.LUAJIT);
-                assertProductionEmission(lua, "the five-case probe (LuaJIT)");
-                ProcessOutcome run = runLuaProbe(luaProject, "int32_mod_probe.lua",
+            {
+                assertProductionEmission(oracle, "the five-case probe (LuaJIT)");
+                ProcessOutcome run = runLuaProbe(project, "int32_mod_probe.lua",
                     luaCaseDriver(PROBE_MODULE + ".lua"), false);
                 checkEq(0, run.exitCode(), "the emitted LuaJIT artifact executes "
                     + "the five-case probe under luajit: " + run.output());
                 assertValues(parseValues(run.stdout(), "luajit"), reference,
                     "the emitted LuaJIT artifact");
-            } finally {
-                deleteRecursively(luaProject.root());
             }
 
             // The emitted JVM artifact, under javac plus java.
@@ -717,13 +711,9 @@ public final class Int32ModTruncPreludeTest {
 
             // The emitted LuaJIT artifact, under real luajit (the deferred entry
             // returns the failure table, so the projection's fields are readable).
-            Project luaProject = writeProject("zero-lua", PROBE_MODULE,
-                ZERO_PROBE_SOURCE);
-            try {
-                CompilationOrchestrator lua = productionCompile(luaProject,
-                    Backend.LUAJIT);
-                assertProductionEmission(lua, "the zero-divisor probe (LuaJIT)");
-                ProcessOutcome run = runLuaProbe(luaProject, "int32_mod_zero.lua",
+            {
+                assertProductionEmission(oracle, "the zero-divisor probe (LuaJIT)");
+                ProcessOutcome run = runLuaProbe(project, "int32_mod_zero.lua",
                     luaZeroDriver(PROBE_MODULE + ".lua"), true);
                 checkEq(0, run.exitCode(), "the zero-divisor LuaJIT probe runs: "
                     + run.output());
@@ -741,8 +731,6 @@ public final class Int32ModTruncPreludeTest {
                     checkEq(expectedOrigin, originTail(row[3]),
                         "the LuaJIT artifact's origin is the operation origin");
                 }
-            } finally {
-                deleteRecursively(luaProject.root());
             }
 
             // The emitted JVM artifact, under javac plus java.

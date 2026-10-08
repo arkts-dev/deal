@@ -756,8 +756,7 @@ public class FfiDeclarationValidatorTest {
     // Generator: names, cdefs, bindings
     // =========================================================================
 
-    private static FfiModuleDescriptor fullDescriptor(String rawKey,
-            String className) {
+    private static FfiModuleDescriptor fullDescriptor() {
         ValidatorHarness h = validate("""
             // @extern-c
 
@@ -770,14 +769,13 @@ public class FfiDeclarationValidatorTest {
 
             export function init(): null;
             export function add(a: int, b: int): int;
-            """, rawKey);
+            """, "native/math");
         check(!h.result.hasErrors(), "generator fixture valid: " + h.diagnostics);
         return h.result.descriptor();
     }
 
-    private static void testGeneratorBundleAndNames() {
+    private static void testGeneratorBundleAndNames(FfiModuleDescriptor d) {
         System.out.println("-- Generator: private names, deal_fN, cdef text --");
-        FfiModuleDescriptor d = fullDescriptor("native/math", "Vec2");
         LuaFfiBindingGenerator.GeneratedBindings gen =
             LuaFfiBindingGenerator.generate(d, List.of(), List.of());
         FfiCdefBundle bundle = gen.cdefBundle();
@@ -875,9 +873,8 @@ public class FfiDeclarationValidatorTest {
             "function typedef prefixed with digest (C-safe): " + fnText);
     }
 
-    private static void testForwardBindingStateMachine() {
+    private static void testForwardBindingStateMachine(FfiModuleDescriptor d) {
         System.out.println("-- Forward cells: state machine and guards --");
-        FfiModuleDescriptor d = fullDescriptor("native/math", "Vec2");
         LuaFfiBindingGenerator.GeneratedBindings gen =
             LuaFfiBindingGenerator.generate(d, List.of(), List.of());
         FfiForwardBindings bindings = gen.bindings();
@@ -1307,9 +1304,10 @@ public class FfiDeclarationValidatorTest {
         testStructFailureSkipsFunctionRowsCleanly();
         testDuplicateExportsAndPlanKeyCollision();
         testImportedReferencesFollowGraphOrder();
-        testGeneratorBundleAndNames();
+        FfiModuleDescriptor generatorDescriptor = fullDescriptor();
+        testGeneratorBundleAndNames(generatorDescriptor);
         testCKeywordSafeNames();
-        testForwardBindingStateMachine();
+        testForwardBindingStateMachine(generatorDescriptor);
         testNoEvaluatorRunsDuringGeneration();
         testOrchestratorJvmRejectsExternC();
         testOrchestratorLuaAcceptsDescriptor();

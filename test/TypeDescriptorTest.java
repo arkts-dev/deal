@@ -27,10 +27,10 @@ public class TypeDescriptorTest {
     public static void main(String[] args) throws Exception {
         System.out.println("=== Running TypeDescriptorTest (canonical service corpus) ===\n");
 
-        testCanonicalAcceptCorpus();
+        Map<String, DescriptorAst> opaqueAtoms = testCanonicalAcceptCorpus();
         testEncodeRoundTrips();
         testLegacyRejectionCorpus();
-        testOpaqueClassAtoms();
+        testOpaqueClassAtoms(opaqueAtoms);
         testIrSpecFormatNotLegacy();
         testIrArrayDescriptors();
         testIrNullableDescriptorsOnParams();
@@ -108,7 +108,7 @@ public class TypeDescriptorTest {
     // Test 1: canonical accept corpus — byte-identical parse/render round trips
     // =========================================================================
 
-    static void testCanonicalAcceptCorpus() {
+    static Map<String, DescriptorAst> testCanonicalAcceptCorpus() {
         System.out.println("  testCanonicalAcceptCorpus... ");
         List<String> accept = List.of(
             // primitives
@@ -128,6 +128,10 @@ public class TypeDescriptorTest {
             "(?@test/User)->@$builtin/Error",
             // delimited atoms end exactly at their enclosing delimiter
             "[@a/b/C]", "(?@a/b/C)->null", "(int,@a/b/C)->null");
+        Set<String> opaqueTexts = Set.of("@lib/utils/User", "@lib.utils/User",
+            "@$external/host.cfg/ServerConfig", "@$builtin/Error",
+            "[@a/b/C]", "(?@a/b/C)->null", "(int,@a/b/C)->null");
+        Map<String, DescriptorAst> opaqueAtoms = new LinkedHashMap<>();
         int ok = 0;
         for (String text : accept) {
             DescriptorParseResult parsed =
@@ -155,12 +159,16 @@ public class TypeDescriptorTest {
                     + "' does not round-trip through parse(render(ast))");
                 continue;
             }
+            if (opaqueTexts.contains(text)) {
+                opaqueAtoms.put(text, ast);
+            }
             ok++;
         }
         assertTrue(ok == accept.size(),
             "every canonical accept-corpus row parses and round-trips "
             + "byte-identically (" + ok + "/" + accept.size() + ")");
         System.out.println("OK (" + ok + " rows)");
+        return Map.copyOf(opaqueAtoms);
     }
 
     // =========================================================================
@@ -294,11 +302,11 @@ public class TypeDescriptorTest {
     // Test 4: opaque class atoms — byte-for-byte equality, delimiter ends
     // =========================================================================
 
-    static void testOpaqueClassAtoms() {
+    static void testOpaqueClassAtoms(Map<String, DescriptorAst> opaqueAtoms) {
         System.out.println("  testOpaqueClassAtoms... ");
-        DescriptorParseResult p1 = CanonicalRuntimeTypeDescriptor.parse(
+        DescriptorParseResult p1 = opaqueAtoms.get(
             "@lib/utils/User");
-        DescriptorParseResult p2 = CanonicalRuntimeTypeDescriptor.parse(
+        DescriptorParseResult p2 = opaqueAtoms.get(
             "@lib.utils/User");
         assertTrue(p1 instanceof DescriptorAst.ClassAtom a
                 && a.fullDescriptorText().equals("@lib/utils/User"),
@@ -311,14 +319,14 @@ public class TypeDescriptorTest {
                 && p2 instanceof DescriptorAst.ClassAtom b
                 && !a.fullDescriptorText().equals(b.fullDescriptorText()),
             "atom text equality never crosses '/' vs '.' spellings");
-        DescriptorParseResult pe = CanonicalRuntimeTypeDescriptor.parse(
+        DescriptorParseResult pe = opaqueAtoms.get(
             "@$external/host.cfg/ServerConfig");
         assertTrue(pe instanceof DescriptorAst.ClassAtom ea
                 && ea.fullDescriptorText()
                     .equals("@$external/host.cfg/ServerConfig"),
             "@$external/host.cfg/ServerConfig parses (dotted externals "
             + "specifier is a legal non-final component)");
-        DescriptorParseResult pb = CanonicalRuntimeTypeDescriptor.parse(
+        DescriptorParseResult pb = opaqueAtoms.get(
             "@$builtin/Error");
         assertTrue(pb instanceof DescriptorAst.ClassAtom ba
                 && ba.fullDescriptorText().equals("@$builtin/Error"),
@@ -326,8 +334,7 @@ public class TypeDescriptorTest {
         // Atoms end exactly at their enclosing delimiters.
         for (String delimited : List.of(
                 "[@a/b/C]", "(?@a/b/C)->null", "(int,@a/b/C)->null")) {
-            DescriptorParseResult parsed =
-                CanonicalRuntimeTypeDescriptor.parse(delimited);
+            DescriptorParseResult parsed = opaqueAtoms.get(delimited);
             assertTrue(parsed instanceof DescriptorAst,
                 "delimited class atom '" + delimited
                     + "' parses completely: " + parsed);

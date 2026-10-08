@@ -148,7 +148,11 @@ public class AdapterShapeMapPayloadTest {
     /** A lowered-and-validated result for the named test, or null when broken. */
     private static SemanticLowerer.ShapeMapCoreResult loweredResult(String source,
                                                                     String what) {
-        SemanticLowerer.ShapeMapCoreResult result = lowerSlice(source);
+        return loweredResult(lowerSlice(source), what);
+    }
+
+    private static SemanticLowerer.ShapeMapCoreResult loweredResult(
+            SemanticLowerer.ShapeMapCoreResult result, String what) {
         if (result == null) {
             return null;
         }
@@ -1131,11 +1135,11 @@ public class AdapterShapeMapPayloadTest {
      * {@code ADAPT}-classified position, no provisional or non-map
      * mode, and the emission facts agree with the recomputed map.
      */
-    static void testEmissionFromBirthAndWiring() {
+    static void testEmissionFromBirthAndWiring(SemanticLowerer.ShapeMapCoreResult prepared) {
         System.out.println("-- emission from birth + creation wiring (corpus "
             + "positions) --");
 
-        SemanticLowerer.ShapeMapCoreResult result = loweredResult(corpusSource(),
+        SemanticLowerer.ShapeMapCoreResult result = loweredResult(prepared,
             "the corpus slice");
         if (result == null) {
             return;
@@ -1237,11 +1241,12 @@ public class AdapterShapeMapPayloadTest {
      * identity), and the adapter identities are fresh per creation and
      * stable for the run (the FunctionAllocationIdentity contract).
      */
-    static void testAdapterIdentityFreshPerCreationStableAcrossLoads() {
+    static void testAdapterIdentityFreshPerCreationStableAcrossLoads(
+            SemanticLowerer.ShapeMapCoreResult prepared) {
         System.out.println("-- identity: fresh per creation, one AdapterBinding each, "
             + "loads preserve --");
 
-        SemanticLowerer.ShapeMapCoreResult result = loweredResult(corpusSource(),
+        SemanticLowerer.ShapeMapCoreResult result = loweredResult(prepared,
             "the identity corpus slice");
         if (result == null) {
             return;
@@ -1328,11 +1333,12 @@ public class AdapterShapeMapPayloadTest {
      * (pinned — even/odd), and the derivation never downgrades
      * (pinned special cases keep SHARED_CELL).
      */
-    static void testCellKindIffAcrossAllThreeCaptureArms() {
+    static void testCellKindIffAcrossAllThreeCaptureArms(
+            SemanticLowerer.ShapeMapCoreResult prepared) {
         System.out.println("-- cell-kind iff: closure + thunk + SharedCell arms, "
             + "pinned cases, no downgrade --");
 
-        SemanticLowerer.ShapeMapCoreResult result = loweredResult(corpusSource(),
+        SemanticLowerer.ShapeMapCoreResult result = loweredResult(prepared,
             "the cell-kind corpus slice");
         if (result == null) {
             return;
@@ -1499,6 +1505,9 @@ public class AdapterShapeMapPayloadTest {
         String source = corpusSource();
         SemanticLowerer.ShapeMapCoreResult first = loweredResult(source,
             "the corpus (first lowering)");
+        testEmissionFromBirthAndWiring(first);
+        testAdapterIdentityFreshPerCreationStableAcrossLoads(first);
+        testCellKindIffAcrossAllThreeCaptureArms(first);
         SemanticLowerer.ShapeMapCoreResult second = loweredResult(source,
             "the corpus (second lowering)");
         if (first == null || second == null) {
@@ -1615,9 +1624,6 @@ public class AdapterShapeMapPayloadTest {
         testReevaluateThunkPayloadConstruction();
         testHostExternalImportReadMapsToReevaluateThunk();
         testIrLevelThunkBuilderWrapsCallResultAndFailsClosed();
-        testEmissionFromBirthAndWiring();
-        testAdapterIdentityFreshPerCreationStableAcrossLoads();
-        testCellKindIffAcrossAllThreeCaptureArms();
         testNegativeProofLessBindingNeverValue();
         testModeSelectionSeamAcceptsCheckerFactsOnly();
         testCombinedCorpusAllModesAndRepeatedLowering();

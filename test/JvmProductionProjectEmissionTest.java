@@ -116,6 +116,22 @@ public class JvmProductionProjectEmissionTest {
         Map<ModuleId, CanonicalModuleIdentity> declarationIdentities) {
     }
 
+    private record Baseline(
+        SemanticLowerer.ProjectLoweringResult result,
+        HostDeclarationSurface surface,
+        JvmSemanticEmitter.EmissionResult emission) {
+    }
+
+    private static Baseline prepare(Fixture fixture) {
+        SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+        JvmSemanticEmitter.EmissionResult emission = result.project() == null ? null
+            : JvmSemanticEmitter.emitProductionProject(result.project(), result.tables(),
+                result.registries(),
+                JvmBackend.classNameFor(result.project().entryModule().path()),
+                fixture.surface());
+        return new Baseline(result, fixture.surface(), emission);
+    }
+
     private static CompilerInvocation invocation() {
         return CompilerProfileProvider.resolve(ReleaseConfiguration.CURRENT_RELEASE_STATE,
             ReleaseConfiguration.releaseCapabilityRegistry());
@@ -253,12 +269,11 @@ public class JvmProductionProjectEmissionTest {
     // 2. The emitted production artifact text
     // =========================================================================
 
-    private static void testEmittedTextShapes() throws Exception {
+    private static void testEmittedTextShapes(Baseline fixture) throws Exception {
         System.out.println("-- the production artifact: one class, trace suppressed, "
             + "the whole closure, the surface registry --");
-        Fixture fixture = compileProject();
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+        {
+            SemanticLowerer.ProjectLoweringResult result = fixture.result();
             if (result.project() == null) {
                 fail("the fixture project lowers: " + result.diagnostics());
                 return;
@@ -269,9 +284,7 @@ public class JvmProductionProjectEmissionTest {
             String className = JvmBackend.classNameFor(project.entryModule().path());
             checkEq("App", className, "the entry class name derives from the entry path");
 
-            JvmSemanticEmitter.EmissionResult emission =
-                JvmSemanticEmitter.emitProductionProject(project, result.tables(),
-                    result.registries(), className, fixture.surface());
+            JvmSemanticEmitter.EmissionResult emission = fixture.emission();
             String source = emission.source();
             checkEq(className, emission.className(), "the emission reports its class name");
 
@@ -408,13 +421,12 @@ public class JvmProductionProjectEmissionTest {
                     result.tables(), result.registries(), className,
                     fixture.surface()).source(),
                 "the repeated production emission is byte-identical");
-            checkEq("CustomApp",
+            JvmSemanticEmitter.EmissionResult custom =
                 JvmSemanticEmitter.emitProductionProject(project, result.tables(),
-                    result.registries(), "CustomApp", fixture.surface()).className(),
+                    result.registries(), "CustomApp", fixture.surface());
+            checkEq("CustomApp", custom.className(),
                 "the className argument is used verbatim");
-            checkEq(1, countOccurrences(JvmSemanticEmitter.emitProductionProject(project,
-                    result.tables(), result.registries(), "CustomApp",
-                    fixture.surface()).source(),
+            checkEq(1, countOccurrences(custom.source(),
                     "public final class CustomApp {"),
                 "a verbatim className lands in the class head");
 
@@ -429,8 +441,6 @@ public class JvmProductionProjectEmissionTest {
                 "emitProductionModule keeps using its className argument");
             check(module.source().contains("JvmRuntime.setTraceEnabled(false);"),
                 "emitProductionModule keeps the suppressed trace protocol");
-        } finally {
-            deleteRecursively(fixture.root());
         }
     }
 
@@ -452,22 +462,19 @@ public class JvmProductionProjectEmissionTest {
     // 3. The artifact under javac --release 25 -proc:none and java
     // =========================================================================
 
-    private static void testCompileAndRun() throws Exception {
+    private static void testCompileAndRun(Baseline fixture) throws Exception {
         System.out.println("-- the production artifact compiles and runs under the "
             + "real toolchain --");
-        Fixture fixture = compileProject();
         Path workspace = Files.createTempDirectory("jvm-production-project-run");
         try {
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+            SemanticLowerer.ProjectLoweringResult result = fixture.result();
             if (result.project() == null) {
                 fail("the fixture project lowers: " + result.diagnostics());
                 return;
             }
             ExecutableLoweredProject project = result.project();
             String className = JvmBackend.classNameFor(project.entryModule().path());
-            JvmSemanticEmitter.EmissionResult emission =
-                JvmSemanticEmitter.emitProductionProject(project, result.tables(),
-                    result.registries(), className, fixture.surface());
+            JvmSemanticEmitter.EmissionResult emission = fixture.emission();
             Path source = workspace.resolve(className + ".java");
             Files.writeString(source, emission.source(), StandardCharsets.UTF_8);
 
@@ -528,7 +535,6 @@ public class JvmProductionProjectEmissionTest {
                     + probe.exitCode() + " " + probe.output());
         } finally {
             deleteRecursively(workspace);
-            deleteRecursively(fixture.root());
         }
     }
 
@@ -817,9 +823,15 @@ public class JvmProductionProjectEmissionTest {
     public static void main(String[] args) throws Exception {
         System.out.println("=== JVM Production Project Emission Tests (ISSUE-0641) ===\n");
         testEntrySignature();
-        testEmittedTextShapes();
-        testCompileAndRun();
-        testOverflowTerminal();
+        Fixture fixture = compileProject();
+        try {
+            Baseline baseline = prepare(fixture);
+            testEmittedTextShapes(baseline);
+            testCompileAndRun(baseline);
+            testOverflowTerminal();
+        } finally {
+            deleteRecursively(fixture.root());
+        }
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

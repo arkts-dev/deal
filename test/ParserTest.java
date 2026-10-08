@@ -161,7 +161,6 @@ public class ParserTest {
         testForOfStatement();
         testForOfMissingIterable();
         testTemplateInvalidEscape();
-        testTemplateEmptyInterpolation();
         testTemplateUnterminatedInterpolation();
         testTemplateNestedBraces();
         testTemplateStringLiteralWithRBrace();
@@ -200,7 +199,6 @@ public class ParserTest {
         // Parser warn helpers
         testParserWarn();
 
-        testSpanPositions();
 
         // Edge cases
         testOnlyComments();
@@ -211,10 +209,7 @@ public class ParserTest {
         testJsonableExportFunction();
         testJsonableStandaloneClass();
         testJsonableStandaloneFunction();
-        testJsonableLet();
         testJsonableNotPresent();
-        testJsonableWarningSeverity();
-        testJsonableInvalidPlacementIsJsonableFalse();
         testJsonableEndToEndLexParse();
 
         testAsyncFunctionDeclaration();
@@ -507,6 +502,15 @@ public class ParserTest {
         ParseResult r = parse("let x: int = 42;");
         assertNoParseErrors(r, "let with type");
         assertStmtCount(r.program(), 1, "let with type");
+        assertNoParseErrors(r, "span test");
+        ProgramNode prog = r.program();
+        check(prog.span().startLine() == 1, "program start line");
+        check(prog.span().startColumn() == 1, "program start col");
+        VariableDeclaration spanned = (VariableDeclaration) prog.statements().get(0);
+        check(spanned.span().startLine() == 1, "stmt start line");
+        check(spanned.span().startColumn() == 1, "stmt start col");
+        check(spanned.span().endLine() == 1, "stmt end line");
+        check(spanned.span().endColumn() >= 15, "stmt end col >= 15, got " + spanned.span().endColumn());
         VariableDeclaration vd = assertInstance(r.program().statements().get(0),
                 VariableDeclaration.class, "let stmt type");
         if (vd != null) {
@@ -849,6 +853,9 @@ public class ParserTest {
                 ExpressionStatement.class, "expr stmt");
         if (es != null) {
             check(es.expr() instanceof CallExpr, "expr is call");
+            assertNoParseErrors(r, "call no args");
+            CallExpr call = assertExprInstance(es.expr(), CallExpr.class, "call no args");
+            if (call != null) check(call.args().isEmpty(), "0 args");
         }
     }
 
@@ -1142,12 +1149,6 @@ public class ParserTest {
             check(call.args().size() == 3, "3 args");
             check(call.callee() instanceof IdentifierExpr, "callee is ident");
         }
-
-        r = parse("f();");
-        assertNoParseErrors(r, "call no args");
-        es = (ExpressionStatement) r.program().statements().get(0);
-        call = assertExprInstance(es.expr(), CallExpr.class, "call no args");
-        if (call != null) check(call.args().isEmpty(), "0 args");
 
         // Trailing comma
         r = parse("f(1,);");
@@ -1699,13 +1700,6 @@ public class ParserTest {
         assertParseError(r, "E1042", "invalid escape -> E1042");
     }
 
-    static void testTemplateEmptyInterpolation() {
-        System.out.println("-- Template Literal: empty interpolation --");
-
-        ParseResult r = parse("let x = `${}`;");
-        assertParseError(r, "E1042", "empty interpolation -> E1042");
-    }
-
     static void testTemplateUnterminatedInterpolation() {
         System.out.println("-- Template Literal: unterminated interpolation --");
 
@@ -1894,6 +1888,7 @@ public class ParserTest {
         //    scalar length at the expression-start raw position.
         String src8 = "let x = `${}`;";
         ParseResult r8 = parse(src8);
+        assertParseError(r8, "E1042", "empty interpolation -> E1042");
         CompilerDiagnostic e1042d = findDiag(r8.diagnostics(), "E1042");
         check(e1042d != null, "T8: E1042 present for empty interpolation");
         if (e1042d != null) {
@@ -2083,23 +2078,6 @@ public class ParserTest {
             "clean parser should have no diagnostics");
     }
 
-    static void testSpanPositions() {
-        System.out.println("-- Span Positions --");
-
-        ParseResult r = parse("let x: int = 42;");
-        assertNoParseErrors(r, "span test");
-        ProgramNode prog = r.program();
-        check(prog.span().startLine() == 1, "program start line");
-        check(prog.span().startColumn() == 1, "program start col");
-
-        VariableDeclaration vd = (VariableDeclaration) prog.statements().get(0);
-        check(vd.span().startLine() == 1, "stmt start line");
-        check(vd.span().startColumn() == 1, "stmt start col");
-        // End position should be reasonable
-        check(vd.span().endLine() == 1, "stmt end line");
-        check(vd.span().endColumn() >= 15, "stmt end col >= 15, got " + vd.span().endColumn());
-    }
-
     // =========================================================================
     // Edge case tests
     // =========================================================================
@@ -2220,6 +2198,12 @@ public class ParserTest {
                 ClassDeclaration.class, "standalone class node");
         check(!cd.isJsonable(),
             "ClassDeclaration.isJsonable should be false - directive ignored");
+        assertJsonableWarningSeverity(r);
+        assertStmtCount(prog, 1, "one statement");
+        ClassDeclaration invalid = assertInstance(prog.statements().get(0),
+                ClassDeclaration.class, "class node");
+        check(!invalid.isJsonable(),
+            "isJsonable should be false after invalid placement warning");
     }
 
     static void testJsonableStandaloneFunction() {
@@ -2239,23 +2223,6 @@ public class ParserTest {
         }
     }
 
-    static void testJsonableLet() {
-        System.out.println("-- @jsonable let -> warning --");
-
-        ParseResult r = parse("// @jsonable\nlet x: int = 1;");
-        assertParseError(r, "E1043", "@jsonable let");
-
-        List<CompilerDiagnostic> diags = r.diagnostics();
-        CompilerDiagnostic warnDiag = diags.stream()
-                .filter(d -> d.code().equals("E1043"))
-                .findFirst().orElse(null);
-        check(warnDiag != null, "warning diagnostic present for let");
-        if (warnDiag != null) {
-            check(warnDiag.severity().equals("warning"),
-                "severity is warning, got: " + warnDiag.severity());
-        }
-    }
-
     static void testJsonableNotPresent() {
         System.out.println("-- no @jsonable -> isJsonable=false --");
 
@@ -2268,13 +2235,8 @@ public class ParserTest {
             "ClassDeclaration.isJsonable should be false without directive");
     }
 
-    static void testJsonableWarningSeverity() {
-        System.out.println("-- @jsonable warning severity is warning --");
-
-        ParseResult r = parse("// @jsonable\nclass C { x: int; }");
-        List<CompilerDiagnostic> diags = r.diagnostics();
-
-        for (CompilerDiagnostic d : diags) {
+    private static void assertJsonableWarningSeverity(ParseResult r) {
+        for (CompilerDiagnostic d : r.diagnostics()) {
             if (d.code().equals("E1043")) {
                 check(d.severity().equals("warning"),
                     "severity should be 'warning', got: '" + d.severity() + "'");
@@ -2282,23 +2244,8 @@ public class ParserTest {
                     "severity should NOT be 'error'");
             }
         }
-
-        // Warnings should not cause hasErrors() to return true
         check(!r.hasErrors(),
             "warnings should not cause hasErrors() to return true");
-    }
-
-    static void testJsonableInvalidPlacementIsJsonableFalse() {
-        System.out.println("-- @jsonable invalid placement -> isJsonable remains false --");
-
-        // After warning, the standalone class should have isJsonable=false
-        ParseResult r = parse("// @jsonable\nclass C { x: int; }");
-        ProgramNode prog = r.program();
-        assertStmtCount(prog, 1, "one statement");
-        ClassDeclaration cd = assertInstance(prog.statements().get(0),
-                ClassDeclaration.class, "class node");
-        check(!cd.isJsonable(),
-            "isJsonable should be false after invalid placement warning");
     }
 
     // =========================================================================
@@ -2485,6 +2432,13 @@ public class ParserTest {
         Parser parser = new Parser(lex.tokens(), "test.deal",
             lex.directiveEvents());
         ParseResult r = parser.parse();
+        assertParseError(r, "E1043", "@jsonable let");
+        CompilerDiagnostic warnDiag = diagOf(r, "E1043");
+        check(warnDiag != null, "warning diagnostic present for let");
+        if (warnDiag != null) {
+            check(warnDiag.severity().equals("warning"),
+                "severity is warning, got: " + warnDiag.severity());
+        }
 
         List<CompilerDiagnostic> diags = r.diagnostics();
         boolean foundWarn = diags.stream().anyMatch(

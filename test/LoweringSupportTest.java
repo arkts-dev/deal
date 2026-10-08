@@ -136,9 +136,14 @@ public class LoweringSupportTest {
         }
     }
 
-    private static void productionAccept(Path tmp, Map<String, String> sources,
-                                         String entryName, String what,
-                                         String expectedFailureCode)
+    private record ProductionObservation(boolean ok, List<CompilerDiagnostic> diagnostics,
+                                         int semanticEmissions, boolean staged,
+                                         int exitCode, String runOutput) {
+    }
+
+    private static ProductionObservation productionAccept(Path tmp, Map<String, String> sources,
+                                                           String entryName, String what,
+                                                           String expectedFailureCode)
             throws Exception {
         Path src = tmp.resolve("prod-src");
         Files.createDirectories(src);
@@ -153,16 +158,14 @@ public class LoweringSupportTest {
             Path.of("std").toAbsolutePath().normalize(), null,
             productionInvocation());
         boolean ok = orchestrator.compile();
-        check(ok, what + ": the release-owned production invocation accepts the "
-            + "fixture: " + orchestrator.diagnostics());
         if (!ok) {
-            return;
+            ProductionObservation observation = new ProductionObservation(false,
+                orchestrator.diagnostics(), orchestrator.semanticEmissionCount(),
+                false, -1, "");
+            verifyProduction(observation, what, expectedFailureCode);
+            return observation;
         }
-        check(orchestrator.semanticEmissionCount() == 1,
-            what + ": the production arm emits exactly one project artifact: "
-                + "semantic=" + orchestrator.semanticEmissionCount());
-        check(Files.exists(output.resolve("main.lua")),
-            what + ": the production artifact is staged");
+        boolean staged = Files.exists(output.resolve("main.lua"));
         ProcessBuilder builder = new ProcessBuilder("luajit", "main.lua");
         builder.directory(output.toFile());
         builder.redirectErrorStream(true);
@@ -170,6 +173,26 @@ public class LoweringSupportTest {
         String runOutput = new String(process.getInputStream().readAllBytes(),
             java.nio.charset.StandardCharsets.UTF_8);
         int exitCode = process.waitFor();
+        ProductionObservation observation = new ProductionObservation(true,
+            orchestrator.diagnostics(), orchestrator.semanticEmissionCount(),
+            staged, exitCode, runOutput);
+        verifyProduction(observation, what, expectedFailureCode);
+        return observation;
+    }
+
+    private static void verifyProduction(ProductionObservation observation, String what,
+                                         String expectedFailureCode) {
+        check(observation.ok(), what + ": the release-owned production invocation accepts the "
+            + "fixture: " + observation.diagnostics());
+        if (!observation.ok()) {
+            return;
+        }
+        check(observation.semanticEmissions() == 1,
+            what + ": the production arm emits exactly one project artifact: "
+                + "semantic=" + observation.semanticEmissions());
+        check(observation.staged(), what + ": the production artifact is staged");
+        int exitCode = observation.exitCode();
+        String runOutput = observation.runOutput();
         if (expectedFailureCode == null) {
             check(exitCode == 0 && runOutput.isEmpty(),
                 what + ": the production artifact runs under luajit: exit="
@@ -183,10 +206,21 @@ public class LoweringSupportTest {
         }
     }
 
+    private record CompiledFixture(CompilationOrchestrator orchestrator, boolean ok) {
+        RequirementManifestResult manifests() {
+            return orchestrator.requirementManifests();
+        }
+    }
+
     private static RequirementManifestResult compileAndCompute(Path tmp,
                                                                Map<String, String> sources,
                                                                String entryName)
             throws Exception {
+        return compileFixture(tmp, sources, entryName).manifests();
+    }
+
+    private static CompiledFixture compileFixture(Path tmp, Map<String, String> sources,
+                                                 String entryName) throws Exception {
         Path src = tmp.resolve("src");
         Files.createDirectories(src);
         for (Map.Entry<String, String> source : sources.entrySet()) {
@@ -197,10 +231,6 @@ public class LoweringSupportTest {
                 tmp.resolve("build"));
         boolean ok = orchestrator.compile();
         if (!ok) {
-            // The manifest phase (3.6) precedes the one production arm: a
-            // phase-4 lowering failure on a construct outside the landed
-            // coverage (the sibling lane work) does not invalidate the
-            // manifest facts, and only a phase-4 E6005 may fail here.
             check(orchestrator.diagnostics().stream()
                     .allMatch(d -> "E6005".equals(d.code())),
                 entryName + ": any compile failure is a phase-4 E6005: "
@@ -213,7 +243,7 @@ public class LoweringSupportTest {
         check(result != null && !result.hasErrors(),
             "the orchestrator computed exactly one manifest result: "
                 + (result == null ? "null" : result.diagnostics()));
-        return result;
+        return new CompiledFixture(orchestrator, ok);
     }
 
     private static SemanticRequirementManifest manifestOf(RequirementManifestResult result,
@@ -282,7 +312,7 @@ public class LoweringSupportTest {
 
         Path tmp = Files.createTempDirectory("deal-manifest-arm-a-call");
         try {
-            RequirementManifestResult result = compileAndCompute(tmp, Map.of(
+            CompiledFixture fixture = compileFixture(tmp, Map.of(
                 "main.deal", """
                     import * as time from "std/time"
 
@@ -291,6 +321,10 @@ public class LoweringSupportTest {
                       return null
                     }
                     """), "main.deal");
+            RequirementManifestResult result = fixture.manifests();
+            testSyntheticUnitCopy(result);
+            testNoFrontendMutationAndRecompute(fixture);
+            testAliasJoinExactness(result);
             if (result == null) {
                 return;
             }
@@ -492,7 +526,7 @@ public class LoweringSupportTest {
 
         Path tmp = Files.createTempDirectory("deal-manifest-arm-d-wrapper");
         try {
-            RequirementManifestResult result = compileAndCompute(tmp, Map.of(
+            CompiledFixture fixture = compileFixture(tmp, Map.of(
                 "a.deal", """
                     import * as time from "std/time"
 
@@ -509,6 +543,8 @@ public class LoweringSupportTest {
                       return null
                     }
                     """), "main.deal");
+            testCombinedDependencies(fixture);
+            RequirementManifestResult result = fixture.manifests();
             if (result == null) {
                 return;
             }
@@ -595,22 +631,12 @@ public class LoweringSupportTest {
         }
     }
 
-    static void testAliasJoinExactness() throws Exception {
+    static void testAliasJoinExactness(RequirementManifestResult triggers) throws Exception {
         System.out.println("-- Alias join exactness: the std/time alias claims "
             + "STDLIB_SEMANTICS, an identically-named other alias does not --");
 
         Path tmp = Files.createTempDirectory("deal-manifest-alias-join");
         try {
-            RequirementManifestResult triggers = compileAndCompute(tmp.resolve("triggers"),
-                Map.of(
-                    "main.deal", """
-                        import * as time from "std/time"
-
-                        export function main(): null {
-                          time.nowMillis()
-                          return null
-                        }
-                        """), "main.deal");
             RequirementManifestResult other = compileAndCompute(tmp.resolve("other"),
                 Map.of(
                     "other.deal", """
@@ -1100,55 +1126,41 @@ public class LoweringSupportTest {
         }
     }
 
-    static void testSyntheticUnitCopy() throws Exception {
+    static void testSyntheticUnitCopy(RequirementManifestResult result) {
         System.out.println("-- S1: the unit producer copies the manifest rows at lowering start --");
 
-        Path tmp = Files.createTempDirectory("deal-manifest-s1-copy");
-        try {
-            RequirementManifestResult result = compileAndCompute(tmp, Map.of(
-                "main.deal", """
-                    import * as time from "std/time"
-
-                    export function main(): null {
-                      time.nowMillis()
-                      return null
-                    }
-                    """), "main.deal");
-            if (result == null) {
-                return;
-            }
-            SemanticRequirementManifest manifest = manifestOf(result, "main");
-            check(manifest != null, "the S1 fixture produced a manifest");
-            if (manifest == null) {
-                return;
-            }
-            // The synthetic unit producer records the manifest's rows onto
-            // the unit's own enum-keyed constructCoverage at lowering
-            // start (S1) — the validator's pinned R-COVERAGE fact.
-            LoweredModuleUnit unit = new LoweredModuleUnit(
-                LoweredModuleUnit.FORMAT_VERSION,
-                SemanticProfile.DEAL_V1_2_INT32,
-                manifest.moduleId(),
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                LoweringContextHash.of(SemanticProfile.DEAL_V1_2_INT32,
-                    invocation().capabilityRegistryHash()),
-                manifest.capabilities(),
-                manifest.constructCoverage(),
-                Map.of(),
-                Map.of(),
-                new ModuleInitPlan(List.of(), new BlockId(0)),
-                ExportPlan.empty(),
-                Map.of());
-            check(unit.constructCoverage().equals(manifest.constructCoverage()),
-                "the synthetic unit's constructCoverage equals the manifest's rows — the "
-                    + "rows are the S1 coverage fact the unit producer records at "
-                    + "lowering start");
-            check(unit.constructCoverage().containsKey(ConstructKind.STDLIB_TIME_NOW_MILLIS),
-                "the std/time.nowMillis row is carried onto the unit's coverage (S1) like "
-                    + "every other recorded row");
-        } finally {
-            deleteRecursively(tmp);
+        if (result == null) {
+            return;
         }
+        SemanticRequirementManifest manifest = manifestOf(result, "main");
+        check(manifest != null, "the S1 fixture produced a manifest");
+        if (manifest == null) {
+            return;
+        }
+        // The synthetic unit producer records the manifest's rows onto
+        // the unit's own enum-keyed constructCoverage at lowering
+        // start (S1) — the validator's pinned R-COVERAGE fact.
+        LoweredModuleUnit unit = new LoweredModuleUnit(
+            LoweredModuleUnit.FORMAT_VERSION,
+            SemanticProfile.DEAL_V1_2_INT32,
+            manifest.moduleId(),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            LoweringContextHash.of(SemanticProfile.DEAL_V1_2_INT32,
+                invocation().capabilityRegistryHash()),
+            manifest.capabilities(),
+            manifest.constructCoverage(),
+            Map.of(),
+            Map.of(),
+            new ModuleInitPlan(List.of(), new BlockId(0)),
+            ExportPlan.empty(),
+            Map.of());
+        check(unit.constructCoverage().equals(manifest.constructCoverage()),
+            "the synthetic unit's constructCoverage equals the manifest's rows — the "
+                + "rows are the S1 coverage fact the unit producer records at "
+                + "lowering start");
+        check(unit.constructCoverage().containsKey(ConstructKind.STDLIB_TIME_NOW_MILLIS),
+            "the std/time.nowMillis row is carried onto the unit's coverage (S1) like "
+                + "every other recorded row");
     }
 
     // =========================================================================
@@ -1341,157 +1353,89 @@ public class LoweringSupportTest {
         }
     }
 
-    static void testNoFrontendMutationAndRecompute() throws Exception {
+    static void testNoFrontendMutationAndRecompute(CompiledFixture fixture) {
         System.out.println("-- Read-only: recomputation is identical and the frontend is untouched --");
 
-        Path tmp = Files.createTempDirectory("deal-manifest-readonly");
-        try {
-            Path src = tmp.resolve("src");
-            Files.createDirectories(src);
-            String source = """
-                import * as time from "std/time"
-
-                export function main(): null {
-                  time.nowMillis()
-                  return null
-                }
-                """;
-            Files.writeString(src.resolve("main.deal"), source);
-            CompilationOrchestrator orchestrator =
-                productionOrchestrator(src.resolve("main.deal").toAbsolutePath(),
-                    tmp.resolve("build"));
-            boolean ok = orchestrator.compile();
-            check(ok, "the fixture compiles: " + orchestrator.diagnostics());
-            CheckedProjectBuildResult checked = orchestrator.checkedProject();
-            if (!ok || checked == null || checked.hasErrors()) {
-                return;
-            }
-            CheckedProjectInput input = checked.input();
-            String dumpBefore = IrDumper.dump(
-                input.modules().get(0).ast(), input.modules().get(0).checks(),
-                input.modules().get(0).moduleId().path());
-
-            RequirementManifestResult recomputed = LoweringSupport.computeManifests(
-                orchestrator.invocation(), input, checked.index());
-            check(recomputed != null && !recomputed.hasErrors(),
-                "recomputation over the same checked project succeeds");
-            RequirementManifestResult original = orchestrator.requirementManifests();
-            check(original != null && recomputed.manifests().equals(original.manifests()),
-                "recomputation over the same checked project is identical (the "
-                    + "dependency-ordered pass is deterministic)");
-
-            String dumpAfter = IrDumper.dump(
-                input.modules().get(0).ast(), input.modules().get(0).checks(),
-                input.modules().get(0).moduleId().path());
-            check(dumpBefore.equals(dumpAfter),
-                "the AST/CheckResult facts are byte-unchanged after manifest computation "
-                    + "(no frontend mutation)");
-        } finally {
-            deleteRecursively(tmp);
+        CompilationOrchestrator orchestrator = fixture.orchestrator();
+        boolean ok = fixture.ok();
+        check(ok, "the fixture compiles: " + orchestrator.diagnostics());
+        CheckedProjectBuildResult checked = orchestrator.checkedProject();
+        if (!ok || checked == null || checked.hasErrors()) {
+            return;
         }
+        CheckedProjectInput input = checked.input();
+        String dumpBefore = IrDumper.dump(
+            input.modules().get(0).ast(), input.modules().get(0).checks(),
+            input.modules().get(0).moduleId().path());
+
+        RequirementManifestResult recomputed = LoweringSupport.computeManifests(
+            orchestrator.invocation(), input, checked.index());
+        check(recomputed != null && !recomputed.hasErrors(),
+            "recomputation over the same checked project succeeds");
+        RequirementManifestResult original = orchestrator.requirementManifests();
+        check(original != null && recomputed.manifests().equals(original.manifests()),
+            "recomputation over the same checked project is identical (the "
+                + "dependency-ordered pass is deterministic)");
+
+        String dumpAfter = IrDumper.dump(
+            input.modules().get(0).ast(), input.modules().get(0).checks(),
+            input.modules().get(0).moduleId().path());
+        check(dumpBefore.equals(dumpAfter),
+            "the AST/CheckResult facts are byte-unchanged after manifest computation "
+                + "(no frontend mutation)");
     }
 
     // =========================================================================
     // 10. Combined dependencies (T1/T2/T5/T8)
     // =========================================================================
 
-    static void testCombinedDependencies() throws Exception {
+    static void testCombinedDependencies(CompiledFixture fixture) {
         System.out.println("-- Combined T1/T2/T5/T8: full pipeline on the wrapper scenario --");
 
-        Path tmp = Files.createTempDirectory("deal-manifest-combined");
-        try {
-            Path src = tmp.resolve("src");
-            Files.createDirectories(src);
-            Files.writeString(src.resolve("a.deal"), """
-                import * as time from "std/time"
-
-                export function getNow(): () => int {
-                  return time.nowMillis
-                }
-                """);
-            Files.writeString(src.resolve("main.deal"), """
-                import * as a from "./a"
-
-                export function main(): null {
-                  let g: () => int = a.getNow()
-                  g()
-                  return null
-                }
-                """);
-            CompilationOrchestrator orchestrator =
-                productionOrchestrator(src.resolve("main.deal").toAbsolutePath(),
-                    tmp.resolve("build"));
-            boolean ok = orchestrator.compile();
-            check(ok, "the wrapper scenario compiles end to end: " + orchestrator.diagnostics());
-            CheckedProjectBuildResult checked = orchestrator.checkedProject();
-            check(checked != null && !checked.hasErrors(),
-                "T8 produced exactly one checked project + index with no diagnostics: "
-                    + (checked == null ? "null" : checked.diagnostics()));
-            RequirementManifestResult manifests = orchestrator.requirementManifests();
-            check(manifests != null && !manifests.hasErrors(),
-                "the manifest phase produced exactly one result with no diagnostics: "
-                    + (manifests == null ? "null" : manifests.diagnostics()));
-            if (!ok || checked == null || checked.hasErrors()
-                    || manifests == null || manifests.hasErrors()) {
-                return;
-            }
-            check(checked.input().releaseStateHash()
-                    .equals(orchestrator.invocation().releaseStateHash()),
-                "T8 recorded the invocation's releaseStateHash verbatim");
-            check(manifests.manifests().stream()
-                    .allMatch(m -> m.capabilities().contains(SemanticCapability.FOUNDATION_VALUES)
-                        && m.capabilities().stream()
-                            .allMatch(c -> EnumSet.allOf(SemanticCapability.class).contains(c))
-                        && m.constructCoverage().entrySet().stream()
-                            .allMatch(e -> e.getValue().equals(e.getKey().mappedOpKinds()))),
-                "every manifest carries only closed T1 capabilities (FOUNDATION_VALUES "
-                    + "included) and verbatim T2 coverage rows");
-            check(noConflictClaim(manifestOf(manifests, "a"))
-                    && noConflictClaim(manifestOf(manifests, "main")),
-                "the wrapper scenario carries no STDLIB_TIME_CONFLICT claim in either "
-                    + "module (the retired access/propagation arms never fire)");
-        } finally {
-            deleteRecursively(tmp);
+        CompilationOrchestrator orchestrator = fixture.orchestrator();
+        boolean ok = fixture.ok();
+        check(ok, "the wrapper scenario compiles end to end: " + orchestrator.diagnostics());
+        CheckedProjectBuildResult checked = orchestrator.checkedProject();
+        check(checked != null && !checked.hasErrors(),
+            "T8 produced exactly one checked project + index with no diagnostics: "
+                + (checked == null ? "null" : checked.diagnostics()));
+        RequirementManifestResult manifests = orchestrator.requirementManifests();
+        check(manifests != null && !manifests.hasErrors(),
+            "the manifest phase produced exactly one result with no diagnostics: "
+                + (manifests == null ? "null" : manifests.diagnostics()));
+        if (!ok || checked == null || checked.hasErrors()
+                || manifests == null || manifests.hasErrors()) {
+            return;
         }
+        check(checked.input().releaseStateHash()
+                .equals(orchestrator.invocation().releaseStateHash()),
+            "T8 recorded the invocation's releaseStateHash verbatim");
+        check(manifests.manifests().stream()
+                .allMatch(m -> m.capabilities().contains(SemanticCapability.FOUNDATION_VALUES)
+                    && m.capabilities().stream()
+                        .allMatch(c -> EnumSet.allOf(SemanticCapability.class).contains(c))
+                    && m.constructCoverage().entrySet().stream()
+                        .allMatch(e -> e.getValue().equals(e.getKey().mappedOpKinds()))),
+            "every manifest carries only closed T1 capabilities (FOUNDATION_VALUES "
+                + "included) and verbatim T2 coverage rows");
+        check(noConflictClaim(manifestOf(manifests, "a"))
+                && noConflictClaim(manifestOf(manifests, "main")),
+            "the wrapper scenario carries no STDLIB_TIME_CONFLICT claim in either "
+                + "module (the retired access/propagation arms never fire)");
     }
 
-    static void testE10BytesValueArm() throws Exception {
+    static void testE10BytesValueArm(RequirementManifestResult result) {
         System.out.println("-- ISSUE-0239 E10 arm: bytes-typed values claim "
             + "CONTAINERS_AND_STRINGS --");
 
-        Path tmp = Files.createTempDirectory("deal-manifest-e10-bytes");
-        try {
-            String bytesFixture = """
-                export function test_bytes_length(): null {
-                  let n: int = 3;
-                  let b: bytes = bytes(n);
-                  if (b.length !== 3) {
-                    throw { code: "TEST_FAIL", message: "bytes: length mismatch" };
-                  }
-                  return null;
-                }
-
-                export function main(): null {
-                  return null;
-                }
-                """;
-            RequirementManifestResult result = compileAndCompute(tmp,
-                Map.of("main.deal", bytesFixture), "main.deal");
-            if (result == null) {
-                return;
-            }
-            check(manifestOf(result, "main").capabilities().contains(
-                    SemanticCapability.CONTAINERS_AND_STRINGS),
-                "the bytes(...) call and the bytes .length read claim "
-                    + "CONTAINERS_AND_STRINGS (ISSUE-0158 boundary, never E6005): "
-                    + manifestOf(result, "main").capabilities());
-
-            productionAccept(tmp.resolve("production"),
-                Map.of("main.deal", bytesFixture), "main.deal",
-                "the bytes-bearing E10 arm", null);
-        } finally {
-            deleteRecursively(tmp);
+        if (result == null) {
+            return;
         }
+        check(manifestOf(result, "main").capabilities().contains(
+                SemanticCapability.CONTAINERS_AND_STRINGS),
+            "the bytes(...) call and the bytes .length read claim "
+                + "CONTAINERS_AND_STRINGS (ISSUE-0158 boundary, never E6005): "
+                + manifestOf(result, "main").capabilities());
     }
 
     static void testE10ClassLiteralArm() throws Exception {
@@ -1768,11 +1712,13 @@ public class LoweringSupportTest {
                 }
                 """;
 
-            productionAccept(tmp.resolve("production"),
+            ProductionObservation production = productionAccept(tmp.resolve("production"),
                 Map.of("main.deal", bytesSource), "main.deal",
                 "the bytes-bearing marker arm", null);
+            verifyProduction(production, "the bytes-bearing E10 arm", null);
             RequirementManifestResult first = compileAndCompute(tmp.resolve("first"),
                 Map.of("main.deal", bytesSource), "main.deal");
+            testE10BytesValueArm(first);
             RequirementManifestResult second = compileAndCompute(tmp.resolve("second"),
                 Map.of("main.deal", bytesSource), "main.deal");
             if (first == null || second == null) {
@@ -1861,7 +1807,6 @@ public class LoweringSupportTest {
         testRetiredTriggerWrapperEscape();
         testRetiredTriggerPropagationChain();
         testNoAccessImporterDoesNotClaim();
-        testAliasJoinExactness();
         testRetiredOverClaimDirectImporter();
         testRetiredOverClaimClosureMember();
         testRetiredOverClaimImporter();
@@ -1870,13 +1815,9 @@ public class LoweringSupportTest {
         testSignedInt32UnaryBinaryClaims();
         testIntrinsicConversionClaims();
         testConstructCoverageRows();
-        testSyntheticUnitCopy();
         testE6005InconsistentFacts();
         testRecordAndClosedSetInvariants();
         testDeterminismByteIdentical();
-        testNoFrontendMutationAndRecompute();
-        testCombinedDependencies();
-        testE10BytesValueArm();
         testE10ClassLiteralArm();
         testE10DynamicCallArm();
         testE10NestedFunctionArm();

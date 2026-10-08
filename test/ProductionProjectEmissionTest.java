@@ -416,7 +416,7 @@ public class ProductionProjectEmissionTest {
     // 1. The unit: one production source unit, one public static entry
     // =========================================================================
 
-    private static void testUnitShapeAndConstants() throws Exception {
+    private static void testUnitShapeAndConstants(Fixture fixture) throws Exception {
         System.out.println("-- the unit is one production source unit with one "
             + "public static entry --");
 
@@ -485,8 +485,7 @@ public class ProductionProjectEmissionTest {
             "the stable extern-C declaration-import guard token");
 
         // The JS target is not a production arm.
-        Fixture fixture = twoModuleFixture(APP_SOURCE);
-        try {
+        {
             PublicationStager stager =
                 PublicationStager.forRoot(fixture.root().resolve("js-out"));
             try {
@@ -502,8 +501,6 @@ public class ProductionProjectEmissionTest {
             } finally {
                 stager.discard();
             }
-        } finally {
-            deleteRecursively(fixture.root());
         }
     }
 
@@ -511,14 +508,13 @@ public class ProductionProjectEmissionTest {
     // 2. One lowering, one emission, one staged project artifact per target
     // =========================================================================
 
-    private static void testOneArtifactPerTarget() throws Exception {
+    private static void testOneArtifactPerTarget(Fixture fixture) throws Exception {
         System.out.println("-- one staged project artifact per target, the LuaJIT "
             + "deployment copies, no sidecar, byte-identical repeats --");
-        Fixture fixture = twoModuleFixture(APP_SOURCE);
         Path luaOut = fixture.root().resolve("lua-out");
         Path jvmOut = fixture.root().resolve("jvm-out");
         Path luaOutRepeat = fixture.root().resolve("lua-out-repeat");
-        try {
+        {
             // LuaJIT: the chunk named for the entry module plus the unchanged
             // runtime/stdlib deployment copies.
             PublicationStager luaStager = PublicationStager.forRoot(luaOut);
@@ -586,8 +582,6 @@ public class ProductionProjectEmissionTest {
             } finally {
                 repeatStager.discard();
             }
-        } finally {
-            deleteRecursively(fixture.root());
         }
     }
 
@@ -624,13 +618,12 @@ public class ProductionProjectEmissionTest {
     // 3. The real toolchains
     // =========================================================================
 
-    private static void testJvmToolchain() throws Exception {
+    private static void testJvmToolchain(Fixture fixture) throws Exception {
         System.out.println("-- the staged JVM artifact compiles with javac --release "
             + "25 -proc:none and runs under java --");
-        Fixture fixture = twoModuleFixture(APP_SOURCE);
         Path out = fixture.root().resolve("out-arm");
         Path classes = fixture.root().resolve("classes");
-        try {
+        {
             PublicationStager stager = PublicationStager.forRoot(out);
             try {
                 ProductionProjectEmission.Result result =
@@ -663,8 +656,6 @@ public class ProductionProjectEmissionTest {
                 "the successful JVM production run prints nothing on stdout");
             check(!run.stderr().contains("R|"),
                 "the executed JVM artifact emits no trace line");
-        } finally {
-            deleteRecursively(fixture.root());
         }
     }
 
@@ -896,14 +887,14 @@ public class ProductionProjectEmissionTest {
         }
     }
 
-    private static void testCrossModuleAsyncEmission() throws Exception {
+    private static void testCrossModuleAsyncEmission(Fixture cross, Fixture same)
+            throws Exception {
         System.out.println("-- the cross-module async call emits through the "
             + "entity-local async entry and executes; a same-module async call "
             + "emits --");
 
-        Fixture cross = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
-        Path crossOut = cross.root().resolve("out-arm");
-        try {
+        Path crossOut = cross.root().resolve("out-luajit");
+        {
             PublicationStager stager = PublicationStager.forRoot(crossOut);
             ProductionProjectEmission.Result result;
             try {
@@ -933,7 +924,7 @@ public class ProductionProjectEmissionTest {
                 "the chunk carries one async entry per async export of the "
                     + "callee closure module");
             writeFileIn(cross.root(), "probe.lua", """
-                local surfaces = dofile("out-arm/app.lua")
+                local surfaces = dofile("out-luajit/app.lua")
                 local worker = surfaces.worker
                 assert(type(worker) == "table" and worker.__kind == "function",
                   "the entry surface publishes the cross-module async export")
@@ -951,22 +942,19 @@ public class ProductionProjectEmissionTest {
             check(luaRun.stdout().contains("PROBE|ASYNC-RESULT|42"),
                 "the cross-module await completes with 42 under luajit: "
                     + luaRun.stdout());
-        } finally {
-            deleteRecursively(cross.root());
         }
 
         // The JVM target of the same closure: the class source compiles
         // with javac --release 25 -proc:none and the runner executes the
         // exported async function through the artifact's published
         // surface.
-        Fixture crossJvm = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
-        Path crossJvmOut = crossJvm.root().resolve("out-arm");
-        Path crossJvmClasses = crossJvm.root().resolve("cross-classes");
-        try {
+        Path crossJvmOut = cross.root().resolve("out-jvm");
+        Path crossJvmClasses = cross.root().resolve("cross-classes");
+        {
             PublicationStager stager = PublicationStager.forRoot(crossJvmOut);
             ProductionProjectEmission.Result result;
             try {
-                result = emit(crossJvm, Backend.JVM, stager, false);
+                result = emit(cross, Backend.JVM, stager, false);
                 check(result.emitted(),
                     "the cross-module async JVM closure emits: "
                         + result.diagnostics());
@@ -1000,14 +988,14 @@ public class ProductionProjectEmissionTest {
                 "-proc:none", "-cp", classpath, "-d", crossJvmClasses.toString(),
                 crossJvmOut.resolve("App.java").toAbsolutePath().toString(),
                 crossJvmOut.resolve("AsyncCrossRunner.java").toAbsolutePath().toString()),
-                crossJvm.root());
+                cross.root());
             checkEq(0, javacRun.exitCode(),
                 "the cross-module async JVM artifact compiles: "
                     + javacRun.output());
             if (javacRun.exitCode() == 0) {
                 ProcessOutcome jvmRun = runProcess(List.of("java", "-cp",
                     classpath + java.io.File.pathSeparator + crossJvmClasses,
-                    "AsyncCrossRunner"), crossJvm.root());
+                    "AsyncCrossRunner"), cross.root());
                 checkEq(0, jvmRun.exitCode(),
                     "the cross-module await path executes under java: "
                         + jvmRun.output());
@@ -1015,8 +1003,6 @@ public class ProductionProjectEmissionTest {
                     "the cross-module await completes with 42 under java: "
                         + jvmRun.stdout());
             }
-        } finally {
-            deleteRecursively(crossJvm.root());
         }
 
         // The same-module async call: accepted, emitted, and executed on
@@ -1024,9 +1010,8 @@ public class ProductionProjectEmissionTest {
         // exported zero-arity async function's published surface, so the
         // runner's invocation really runs the ASYNC_START(DEAL_BODY)/
         // AWAIT path (never merely compiling a never-invoked body).
-        Fixture same = asyncFixture(ASYNC_LIB_SOURCE, SAME_ASYNC_APP_SOURCE);
-        Path sameOut = same.root().resolve("out-arm");
-        try {
+        Path sameOut = same.root().resolve("out-luajit");
+        {
             PublicationStager stager = PublicationStager.forRoot(sameOut);
             ProductionProjectEmission.Result result;
             try {
@@ -1042,7 +1027,7 @@ public class ProductionProjectEmissionTest {
             check(Files.isRegularFile(sameOut.resolve("app.lua")),
                 "the published same-module async chunk exists");
             writeFileIn(same.root(), "probe.lua", """
-                local surfaces = dofile("out-arm/app.lua")
+                local surfaces = dofile("out-luajit/app.lua")
                 assert(type(surfaces) == "table",
                   "the chunk returns the entry surface")
                 local worker = surfaces.worker
@@ -1062,22 +1047,19 @@ public class ProductionProjectEmissionTest {
             check(luaRun.stdout().contains("PROBE|ASYNC-RESULT|1"),
                 "the awaiting call completes with 1 under luajit: "
                     + luaRun.stdout());
-        } finally {
-            deleteRecursively(same.root());
         }
 
         // The JVM target of the same fixture: the class source compiles
         // with javac --release 25 -proc:none and the runner executes the
         // exported async function through the artifact's published
         // surface.
-        Fixture sameJvm = asyncFixture(ASYNC_LIB_SOURCE, SAME_ASYNC_APP_SOURCE);
-        Path jvmOut = sameJvm.root().resolve("out-arm");
-        Path jvmClasses = sameJvm.root().resolve("same-classes");
-        try {
+        Path jvmOut = same.root().resolve("out-jvm");
+        Path jvmClasses = same.root().resolve("same-classes");
+        {
             PublicationStager stager = PublicationStager.forRoot(jvmOut);
             ProductionProjectEmission.Result result;
             try {
-                result = emit(sameJvm, Backend.JVM, stager, false);
+                result = emit(same, Backend.JVM, stager, false);
                 check(result.emitted(),
                     "the same-module async JVM closure emits: "
                         + result.diagnostics());
@@ -1107,14 +1089,14 @@ public class ProductionProjectEmissionTest {
                 "-proc:none", "-cp", classpath, "-d", jvmClasses.toString(),
                 jvmOut.resolve("App.java").toAbsolutePath().toString(),
                 jvmOut.resolve("AsyncWorkerRunner.java").toAbsolutePath().toString()),
-                sameJvm.root());
+                same.root());
             checkEq(0, javacRun.exitCode(),
                 "the same-module async JVM artifact compiles: "
                     + javacRun.output());
             if (javacRun.exitCode() == 0) {
                 ProcessOutcome jvmRun = runProcess(List.of("java", "-cp",
                     classpath + java.io.File.pathSeparator + jvmClasses,
-                    "AsyncWorkerRunner"), sameJvm.root());
+                    "AsyncWorkerRunner"), same.root());
                 checkEq(0, jvmRun.exitCode(),
                     "the same-module await path executes under java: "
                         + jvmRun.output());
@@ -1122,8 +1104,6 @@ public class ProductionProjectEmissionTest {
                     "the awaiting call completes with 1 under java: "
                         + jvmRun.stdout());
             }
-        } finally {
-            deleteRecursively(sameJvm.root());
         }
     }
 
@@ -1131,12 +1111,11 @@ public class ProductionProjectEmissionTest {
     // 6. The C9 source-map disposition
     // =========================================================================
 
-    private static void testSourceMapDisposition() throws Exception {
+    private static void testSourceMapDisposition(Fixture fixture) throws Exception {
         System.out.println("-- an explicit --source-map prints the pinned warning "
             + "once and stages no sidecar; a --dump-ir-derived flag prints none --");
-        Fixture fixture = twoModuleFixture(APP_SOURCE);
-        Path out = fixture.root().resolve("out-arm");
-        try {
+        Path out = fixture.root().resolve("source-map-out");
+        {
             PublicationStager explicitStager = PublicationStager.forRoot(out);
             String explicitStderr;
             try {
@@ -1176,8 +1155,6 @@ public class ProductionProjectEmissionTest {
             }
             checkEq(ProductionProjectEmission.WARNING_JVM + "\n", jvmStderr,
                 "the explicit JVM --source-map warning is the pinned text, once");
-        } finally {
-            deleteRecursively(fixture.root());
         }
     }
 
@@ -1284,14 +1261,26 @@ public class ProductionProjectEmissionTest {
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== Production Project Emission Tests (ISSUE-0642) ===\n");
-        testUnitShapeAndConstants();
-        testOneArtifactPerTarget();
-        testOneMainProbe();
-        testJvmToolchain();
-        testAtomicFailures();
-        testHostImportGuard();
-        testCrossModuleAsyncEmission();
-        testSourceMapDisposition();
+        Fixture fixture = null;
+        Fixture cross = null;
+        Fixture same = null;
+        try {
+            fixture = twoModuleFixture(APP_SOURCE);
+            testUnitShapeAndConstants(fixture);
+            testOneArtifactPerTarget(fixture);
+            testOneMainProbe();
+            testJvmToolchain(fixture);
+            testAtomicFailures();
+            testHostImportGuard();
+            cross = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
+            same = asyncFixture(ASYNC_LIB_SOURCE, SAME_ASYNC_APP_SOURCE);
+            testCrossModuleAsyncEmission(cross, same);
+            testSourceMapDisposition(fixture);
+        } finally {
+            deleteRecursively(same == null ? null : same.root());
+            deleteRecursively(cross == null ? null : cross.root());
+            deleteRecursively(fixture == null ? null : fixture.root());
+        }
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

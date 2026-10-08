@@ -78,6 +78,15 @@ public class ClosureLoweringTest {
     private record CheckedSlice(ProgramNode program, CheckResult checks) {
     }
 
+    private static final String HOISTED_CAPTURE_SOURCE = """
+        function first(): null {
+          let h: () => null = function(): null {
+            let copy: () => null = laterFn;
+          };
+        }
+        function laterFn(): null {}
+        """;
+
     // =========================================================================
     // Checked-source slices and the entry-point driver
     // =========================================================================
@@ -110,7 +119,10 @@ public class ClosureLoweringTest {
     }
 
     private static SemanticLowerer.ClosureCoreResult lowerSlice(String source) {
-        CheckedSlice slice = checkSlice(source);
+        return lowerSlice(checkSlice(source));
+    }
+
+    private static SemanticLowerer.ClosureCoreResult lowerSlice(CheckedSlice slice) {
         if (slice == null) {
             return null;
         }
@@ -611,18 +623,10 @@ public class ClosureLoweringTest {
      * declaration-position {@code CLOSURE_NEW} reuses (loads preserve
      * allocation identity — R-FUNCTION-BINDING holds by construction).
      */
-    static void testCaptureOfLaterDeclaredModuleFunctionResolvesToHoistedAlloc() {
+    static void testCaptureOfLaterDeclaredModuleFunctionResolvesToHoistedAlloc(
+            SemanticLowerer.ClosureCoreResult result) {
         System.out.println("-- later-declared module function: hoisted ALLOC resolution and "
             + "identity preservation --");
-
-        SemanticLowerer.ClosureCoreResult result = lowerSlice("""
-            function first(): null {
-              let h: () => null = function(): null {
-                let copy: () => null = laterFn;
-              };
-            }
-            function laterFn(): null {}
-            """);
         if (result == null || result.lowering().hasErrors() || result.lowering().unit() == null) {
             if (result != null) {
                 fail("the slice lowers to a validated unit: " + result.lowering().diagnostics());
@@ -1030,28 +1034,15 @@ public class ClosureLoweringTest {
      * identical capture lists, closure facts, binding facts, and
      * byte-identical unit dumps (ids and payload fields included).
      */
-    static void testDeterminism() {
+    static void testDeterminism(CheckedSlice slice,
+                                SemanticLowerer.ClosureCoreResult firstRun) {
         System.out.println("-- determinism: identical captures, FunctionId/BlockId "
             + "allocation, byte-identical dumps --");
 
-        String source = """
-            function first(): null {
-              let h: () => null = function(): null {
-                let copy: () => null = laterFn;
-              };
-            }
-            function laterFn(): null {}
-            """;
-        CheckedSlice slice = checkSlice(source);
         if (slice == null) {
             return;
         }
-        SemanticLowerer.ClosureCoreResult firstRun = SemanticLowerer.lowerModuleClosureCore(
-            moduleOf(slice), SemanticProfile.DEAL_V1_2_INT32, Map.of(), INTERFACE_HASH,
-            REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
-        SemanticLowerer.ClosureCoreResult secondRun = SemanticLowerer.lowerModuleClosureCore(
-            moduleOf(slice), SemanticProfile.DEAL_V1_2_INT32, Map.of(), INTERFACE_HASH,
-            REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
+        SemanticLowerer.ClosureCoreResult secondRun = lowerSlice(slice);
         check(firstRun != null && !firstRun.lowering().hasErrors()
                 && secondRun != null && !secondRun.lowering().hasErrors(),
             "both runs lower to validated units");
@@ -1174,11 +1165,13 @@ public class ClosureLoweringTest {
         testClosureCapturesEnclosingLocalsInFirstReferenceOrder();
         testDoublyNestedCaptureAlongDetachingChain();
         testTransitivelyNestedCapturePropagation();
-        testCaptureOfLaterDeclaredModuleFunctionResolvesToHoistedAlloc();
+        CheckedSlice hoistedSlice = checkSlice(HOISTED_CAPTURE_SOURCE);
+        SemanticLowerer.ClosureCoreResult hoisted = lowerSlice(hoistedSlice);
+        testCaptureOfLaterDeclaredModuleFunctionResolvesToHoistedAlloc(hoisted);
         testForBodyClosureCapturesPerIterationIncarnation();
         testNarrowedFlowTypesNeverCaptured();
         testCellKindClosureCaptureArm();
-        testDeterminism();
+        testDeterminism(hoistedSlice, hoisted);
         testFailClosedNegatives();
 
         System.out.println("\nClosure lowering: " + passed + " passed, " + failed + " failed");

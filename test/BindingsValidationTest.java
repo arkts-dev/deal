@@ -145,7 +145,11 @@ public class BindingsValidationTest {
     /** A lowered, schema/chain/control-flow/B9-validated unit for the named test. */
     private static SemanticLowerer.ValidationCoreResult validatedResult(String source,
                                                                         String what) {
-        SemanticLowerer.ValidationCoreResult result = lowerSlice(source);
+        return validatedResult(lowerSlice(source), what);
+    }
+
+    private static SemanticLowerer.ValidationCoreResult validatedResult(
+            SemanticLowerer.ValidationCoreResult result, String what) {
         if (result == null) {
             return null;
         }
@@ -601,13 +605,13 @@ public class BindingsValidationTest {
         // INIT_DOMINATES_LOAD — the store commits the assigned value and
         // the INIT then commits the initializer's result; no uninitialized
         // read occurs.
-        validatedResult("let x: int = (x = 1);",
-            "(a) the checker-admitted store-to-pre-init shape");
+        testCellKindInvariant(validatedResult("let x: int = (x = 1);",
+            "(a) the checker-admitted store-to-pre-init shape"));
 
         // (b) Size-1 self-recursion: the own-name arm (INIT is the
         // immediate commit after CLOSURE_NEW).
-        validatedResult("function f(): null { let g: () => null = f; }",
-            "(b) size-1 self-recursion");
+        testCellKindInvariant(validatedResult("function f(): null { let g: () => null = f; }",
+            "(b) size-1 self-recursion"));
 
         // (c) Forward module-function body references: the
         // module-init-completion arm.
@@ -619,11 +623,11 @@ public class BindingsValidationTest {
 
         // (d) Group-member body loads: the group-publication arm; member
         // cells are SHARED_CELL with no separate ALLOC/INIT.
-        validatedResult("""
+        testCellKindInvariant(validatedResult("""
             function even(): null { let oddRef: () => null = odd; }
             function odd(): null { let evenRef: () => null = even; }
             """,
-            "(d) group-member body loads");
+            "(d) group-member body loads"));
 
         // (e) The one-level parameter capture: the parameter-transfer
         // entry dominates the closure creation (arm 2 at the creation
@@ -648,14 +652,14 @@ public class BindingsValidationTest {
         // (g) The FOR_EACH iteration-binding capture: the FOR_EACH
         // per-iteration transfer dominates its body block through the
         // structured edge.
-        validatedResult("""
+        testCellKindInvariant(validatedResult("""
             function f(): null {
               for (let c: string of "ab") {
                 let g: () => null = function(): null { let read: string = c; };
               }
             }
             """,
-            "(g) the FOR_EACH iteration-binding capture");
+            "(g) the FOR_EACH iteration-binding capture"));
 
         // (h) Nested size-1 self-recursion: the own-name arm along the
         // detaching chain.
@@ -708,8 +712,9 @@ public class BindingsValidationTest {
             """,
             "(k) thunk-block captures of closures created inside thunks");
 
-        validatedResult("for (let i = 0; i < 3; i = i + 1) { let j = i; }",
-            "(l) the for-let counter's generation-0 references");
+        testCellKindInvariant(validatedResult(
+            "for (let i = 0; i < 3; i = i + 1) { let j = i; }",
+            "(l) the for-let counter's generation-0 references"));
 
         validatedResult("""
             function f(): null {
@@ -1530,69 +1535,50 @@ public class BindingsValidationTest {
     // 6. Cell-kind invariant (the complete B2 iff over the corpus)
     // =========================================================================
 
-    private static void testCellKindInvariant() {
+    private static void testCellKindInvariant(SemanticLowerer.ValidationCoreResult prepared) {
         System.out.println("-- cell-kind invariant: the closed B2 iff across the corpus --");
 
-        List<String> corpus = List.of(
-            "let x: int = (x = 1);",
-            "function f(): null { let g: () => null = f; }",
-            """
-            function even(): null { let oddRef: () => null = odd; }
-            function odd(): null { let evenRef: () => null = even; }
-            """,
-            "for (let i = 0; i < 3; i = i + 1) { let j = i; }",
-            """
-            function f(): null {
-              for (let c: string of "ab") {
-                let g: () => null = function(): null { let read: string = c; };
-              }
-            }
-            """,
-            combinedCorpusSource());
-        for (String source : corpus) {
-            SemanticLowerer.ValidationCoreResult result = validatedResult(source,
-                "the cell-kind invariant corpus slice [" + source.strip().split("\n")[0]
-                    + "...]");
-            if (result == null) {
-                continue;
-            }
-            LoweredModuleUnit unit = result.lowering().unit();
-            List<BindingsProductionValidator.DerivedCellKind> derived =
-                BindingsProductionValidator.deriveCellKinds(unit, result.lowering().table());
-            Map<String, BindingCellKind> byKey = new LinkedHashMap<>();
-            for (BindingsProductionValidator.DerivedCellKind row : derived) {
-                byKey.put(row.key().binding().id() + "|" + row.key().generation() + "|"
-                    + row.key().scope().id(), row.kind());
-            }
-            for (SemanticOp op : unit.ops()) {
-                if (op.payload() instanceof KindPayload.BindingAllocPayload alloc) {
-                    String key = alloc.binding().id() + "|" + alloc.generation() + "|"
-                        + alloc.scope().id();
-                    BindingCellKind expected = byKey.get(key);
-                    check(expected != null, "the derivation covers every emitted ALLOC "
-                        + key);
-                    if (expected != null) {
-                        check(expected == alloc.cellKind(), "the emitted cell kind of "
-                            + key + " equals the closed derivation ("
-                            + alloc.cellKind() + " == " + expected + ")");
-                    }
+        SemanticLowerer.ValidationCoreResult result = validatedResult(prepared,
+            "the cell-kind invariant corpus slice");
+        if (result == null) {
+            return;
+        }
+        LoweredModuleUnit unit = result.lowering().unit();
+        List<BindingsProductionValidator.DerivedCellKind> derived =
+            BindingsProductionValidator.deriveCellKinds(unit, result.lowering().table());
+        Map<String, BindingCellKind> byKey = new LinkedHashMap<>();
+        for (BindingsProductionValidator.DerivedCellKind row : derived) {
+            byKey.put(row.key().binding().id() + "|" + row.key().generation() + "|"
+                + row.key().scope().id(), row.kind());
+        }
+        for (SemanticOp op : unit.ops()) {
+            if (op.payload() instanceof KindPayload.BindingAllocPayload alloc) {
+                String key = alloc.binding().id() + "|" + alloc.generation() + "|"
+                    + alloc.scope().id();
+                BindingCellKind expected = byKey.get(key);
+                check(expected != null, "the derivation covers every emitted ALLOC "
+                    + key);
+                if (expected != null) {
+                    check(expected == alloc.cellKind(), "the emitted cell kind of "
+                        + key + " equals the closed derivation ("
+                        + alloc.cellKind() + " == " + expected + ")");
                 }
-                if (op.payload() instanceof KindPayload.ForEachPayload forEach) {
-                    boolean sharedDerived = derived.stream().anyMatch(row ->
-                        row.key().binding().equals(forEach.binding())
-                            && row.key().generation() == forEach.generation()
+            }
+            if (op.payload() instanceof KindPayload.ForEachPayload forEach) {
+                boolean sharedDerived = derived.stream().anyMatch(row ->
+                    row.key().binding().equals(forEach.binding())
+                        && row.key().generation() == forEach.generation()
+                        && row.kind() == BindingCellKind.SHARED_CELL);
+                check(sharedDerived, "the FOR_EACH iteration binding derives "
+                    + "SHARED_CELL (the pinned special case)");
+            }
+            if (op.payload() instanceof KindPayload.RecursiveGroupInitPayload group) {
+                for (BindingId member : group.bindings()) {
+                    boolean memberShared = derived.stream().anyMatch(row ->
+                        row.key().binding().equals(member) && row.key().generation() == 0
                             && row.kind() == BindingCellKind.SHARED_CELL);
-                    check(sharedDerived, "the FOR_EACH iteration binding derives "
-                        + "SHARED_CELL (the pinned special case)");
-                }
-                if (op.payload() instanceof KindPayload.RecursiveGroupInitPayload group) {
-                    for (BindingId member : group.bindings()) {
-                        boolean memberShared = derived.stream().anyMatch(row ->
-                            row.key().binding().equals(member) && row.key().generation() == 0
-                                && row.kind() == BindingCellKind.SHARED_CELL);
-                        check(memberShared, "the group member " + member + " derives "
-                            + "SHARED_CELL by construction (B2)");
-                    }
+                    check(memberShared, "the group member " + member + " derives "
+                        + "SHARED_CELL by construction (B2)");
                 }
             }
         }
@@ -1608,6 +1594,7 @@ public class BindingsValidationTest {
         String source = combinedCorpusSource();
         SemanticLowerer.ValidationCoreResult first = validatedResult(source,
             "the combined corpus (first lowering)");
+        testCellKindInvariant(first);
         SemanticLowerer.ValidationCoreResult second = validatedResult(source,
             "the combined corpus (second lowering)");
         if (first == null || second == null) {
@@ -1706,7 +1693,6 @@ public class BindingsValidationTest {
         testSourceLevelNegatives();
         testIrLevelNegatives();
         testIrLevelPositives();
-        testCellKindInvariant();
         testCombinedCorpusAndDeterminism();
 
         System.out.println("\nBindings production validation: " + passed + " passed, "

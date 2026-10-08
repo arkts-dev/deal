@@ -307,8 +307,8 @@ public class DirectiveTest {
 
         // Exported class + @jsonable: JSONABLE metadata, no diagnostics.
         ParseResult r = parse("// @jsonable\nexport class C { x: int = 0; }");
-        check(r.diagnostics().isEmpty(), "export class binding clean: "
-            + r.diagnostics());
+        boolean clean = r.diagnostics().isEmpty();
+        check(clean, clean ? "" : "export class binding clean: " + r.diagnostics());
         ExportDeclaration ed = (ExportDeclaration) r.program().statements().get(0);
         ClassDeclaration cd = (ClassDeclaration) ed.declaration();
         check(cd.isJsonable(), "JSONABLE metadata applied");
@@ -396,8 +396,8 @@ public class DirectiveTest {
             + "export function C$fromJson(s: string): C | null;\n"
             + "export function C$toJson(c: C): string;";
         ParseResult r = parseFile(decl, "lib.d.deal");
-        check(r.diagnostics().isEmpty(),
-            "declaration-file binding clean: " + r.diagnostics());
+        boolean clean = r.diagnostics().isEmpty();
+        check(clean, clean ? "" : "declaration-file binding clean: " + r.diagnostics());
         ExportDeclaration ed = (ExportDeclaration) r.program().statements().get(0);
         ClassDeclaration cd = (ClassDeclaration) ed.declaration();
         check(!cd.isJsonable(), "no JSONABLE metadata in a .d.deal file");
@@ -436,7 +436,8 @@ public class DirectiveTest {
         for (String value : new String[]{"1.2", "01.02", "1.02"}) {
             ParseResult r = parse("// @deal-version " + value
                 + "\nexport class C { x: int = 0; }");
-            check(r.diagnostics().isEmpty(),
+            boolean clean = r.diagnostics().isEmpty();
+            check(clean, clean ? "" :
                 "@deal-version " + value + " accepted: " + r.diagnostics());
             check(r.program().fileDirectives().declaredDealVersion() != null
                     && r.program().fileDirectives().declaredDealVersion()
@@ -511,7 +512,8 @@ public class DirectiveTest {
         ParseResult r = parse(src);
         long e1043 = r.diagnostics().stream()
             .filter(d -> d.code().equals("E1043")).count();
-        check(e1043 == 1,
+        boolean oneWarning = e1043 == 1;
+        check(oneWarning, oneWarning ? "" :
             "exactly one E1043, got " + e1043 + ": " + r.diagnostics());
         CompilerDiagnostic w = diagOf(r, "E1043");
         if (w != null) {
@@ -568,9 +570,9 @@ public class DirectiveTest {
         ParseResult r5 = parse("let s = `${ `${ // @jsonable\n x}` }`;");
         long nested1043 = r5.diagnostics().stream()
             .filter(d -> d.code().equals("E1043")).count();
-        check(nested1043 == 1,
-            "nested template bubbles exactly one E1043, got " + nested1043
-                + ": " + r5.diagnostics());
+        boolean oneNestedWarning = nested1043 == 1;
+        check(oneNestedWarning, oneNestedWarning ? "" :
+            "nested template bubbles exactly one E1043, got " + nested1043 + ": " + r5.diagnostics());
 
         // No sub-event ever binds to a declaration (no metadata).
         boolean jsonable = false;
@@ -725,13 +727,12 @@ public class DirectiveTest {
                 return;
             }
             boolean backedOk = backed.compile();
-            check(backedOk,
-                "the manifest-backed extern-C import compiles: "
-                    + backed.diagnostics());
-            check(backed.diagnostics().stream()
-                    .noneMatch(d -> "E2010".equals(d.code())),
-                "the manifest-backed extern-C import emits no E2010: "
-                    + backed.diagnostics());
+            check(backedOk, backedOk ? "" :
+                "the manifest-backed extern-C import compiles: " + backed.diagnostics());
+            boolean noE2010 = backed.diagnostics().stream()
+                .noneMatch(d -> "E2010".equals(d.code()));
+            check(noE2010, noE2010 ? "" :
+                "the manifest-backed extern-C import emits no E2010: " + backed.diagnostics());
 
             ByteArrayOutputStream prodErr = new ByteArrayOutputStream();
             PrintStream originalErr = System.err;
@@ -756,12 +757,13 @@ public class DirectiveTest {
                 "the admitted production compile stages the project artifact");
             if (Files.exists(prodArtifact)) {
                 String prodLua = Files.readString(prodArtifact);
-                check(prodLua.contains(
-                        "__rt.load_ffi(\"ffi:@$external/ffi\", "),
+                boolean hasPrelude = prodLua.contains("__rt.load_ffi(\"ffi:@$external/ffi\", ");
+                check(hasPrelude, hasPrelude ? "" :
                     "the production artifact emits the load_ffi prelude with "
                         + "the metadata-provided module key: " + prodLua);
-                check(prodLua.contains("nativeLibrary = { kind = \"BARE_NAME\", "
-                        + "loaderText = \"math\" }"),
+                boolean hasLoader = prodLua.contains("nativeLibrary = { kind = \"BARE_NAME\", "
+                    + "loaderText = \"math\" }");
+                check(hasLoader, hasLoader ? "" :
                     "the bundle carries the bare-name loader text: " + prodLua);
                 check(!prodLua.contains("ffi.C") && !prodLua.contains("cdef("),
                     "the production artifact carries no ffi.C/cdef text");

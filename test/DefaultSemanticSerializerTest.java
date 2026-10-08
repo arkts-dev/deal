@@ -103,6 +103,7 @@ public class DefaultSemanticSerializerTest {
         final CompilationOrchestrator orchestrator;
         final boolean success;
         final List<CompilerDiagnostic> diagnostics;
+        private DefaultSemanticSerializer.Result serializedSnapshot;
 
         Compile(Map<String, String> files, String entryRel)
                 throws Exception {
@@ -178,11 +179,22 @@ public class DefaultSemanticSerializerTest {
                 orchestrator.plannedDefaultClasses());
         }
 
+        synchronized DefaultSemanticSerializer.Result serializationSnapshot() {
+            if (serializedSnapshot == null) {
+                serializedSnapshot = serialize();
+            }
+            return serializedSnapshot;
+        }
+
+        synchronized void forgetSerializationSnapshot() {
+            serializedSnapshot = null;
+        }
+
         /** The serialized class with the given simple name in the
          * given module (path suffix), or null. */
         DefaultSemanticSerializer.SerializedDefaultClass serializedOf(
                 String sourceSuffix, String className) {
-            DefaultSemanticSerializer.Result result = serialize();
+            DefaultSemanticSerializer.Result result = serializationSnapshot();
             for (Map.Entry<String, List<DefaultSemanticSerializer
                     .SerializedDefaultClass>> entry
                     : result.serializedClasses().entrySet()) {
@@ -202,7 +214,7 @@ public class DefaultSemanticSerializerTest {
         /** The provider digest of the given declared name in the
          * module whose path ends with the given suffix, or null. */
         String providerDigestOf(String sourceSuffix, String declaredName) {
-            DefaultSemanticSerializer.Result result = serialize();
+            DefaultSemanticSerializer.Result result = serializationSnapshot();
             for (Map.Entry<SemanticResourceIdentity, String> entry
                     : result.providerDigests().entrySet()) {
                 if (entry.getKey().semanticModuleIdentity()
@@ -219,7 +231,7 @@ public class DefaultSemanticSerializerTest {
          * in the module whose path ends with the given suffix, or
          * null. */
         String providerContentOf(String sourceSuffix, String declaredName) {
-            DefaultSemanticSerializer.Result result = serialize();
+            DefaultSemanticSerializer.Result result = serializationSnapshot();
             for (Map.Entry<SemanticResourceIdentity, String> entry
                     : result.providerContents().entrySet()) {
                 if (entry.getKey().semanticModuleIdentity()
@@ -368,7 +380,7 @@ public class DefaultSemanticSerializerTest {
                 "the fourteen-kind fixture reaches the default-plan phases "
                     + "(the one production arm fails closed after them): "
                     + compile.diagnostics);
-            DefaultSemanticSerializer.Result result = compile.serialize();
+            DefaultSemanticSerializer.Result result = compile.serializationSnapshot();
             check(!result.hasErrors() && result.diagnostics().isEmpty(),
                 "the serializer accepts the planner output: "
                     + result.diagnostics());
@@ -1016,7 +1028,7 @@ public class DefaultSemanticSerializerTest {
                     + " (the checker accepts the body-local annotations; the"
                     + " one production arm fails closed after them): "
                     + compile.diagnostics);
-            DefaultSemanticSerializer.Result result = compile.serialize();
+            DefaultSemanticSerializer.Result result = compile.serializationSnapshot();
             check(!result.hasErrors(),
                 "the serializer resolves the body-local annotations at"
                     + " the class declaration scope, never the module"
@@ -1108,7 +1120,7 @@ public class DefaultSemanticSerializerTest {
                 "the same-named fixture reaches the default-plan phases "
                     + "(the one production arm fails closed after them): "
                     + first.diagnostics);
-            DefaultSemanticSerializer.Result result = first.serialize();
+            DefaultSemanticSerializer.Result result = first.serializationSnapshot();
             check(!result.hasErrors() && result.diagnostics().isEmpty(),
                 "the serializer accepts the same-named classes: "
                     + result.diagnostics());
@@ -1192,7 +1204,7 @@ public class DefaultSemanticSerializerTest {
                     + "(the one production arm fails closed after them): "
                     + second.diagnostics);
             List<DefaultSemanticSerializer.SerializedDefaultClass>
-                mutatedPlans = modulePlansOf(second.serialize(),
+                mutatedPlans = modulePlansOf(second.serializationSnapshot(),
                     "main.deal");
             check(mutatedPlans.size() == 4,
                 "the mutated variant serializes all four plans: got "
@@ -1289,7 +1301,7 @@ public class DefaultSemanticSerializerTest {
                 "the same-named nested/imported fixture reaches the "
                     + "default-plan phases (the one production arm fails "
                     + "closed after them): " + compile.diagnostics);
-            DefaultSemanticSerializer.Result result = compile.serialize();
+            DefaultSemanticSerializer.Result result = compile.serializationSnapshot();
             check(!result.hasErrors() && result.diagnostics().isEmpty(),
                 "the serializer accepts the plans: "
                     + result.diagnostics());
@@ -1473,15 +1485,52 @@ public class DefaultSemanticSerializerTest {
             check(pickDigest.equals(digestOf(pickContent)),
                 "the provider digest derives from the canonical"
                     + " function content");
-            String pickAgain = first.providerDigestOf("lib.deal",
-                "pick");
-            check(pickDigest.equals(pickAgain),
+            DefaultSemanticSerializer.Result snapshot =
+                first.serializationSnapshot();
+            check(first.serializationSnapshot() == snapshot,
+                "one compile reuses its lazy serialization snapshot");
+            DefaultSemanticSerializer.Result fresh = first.serialize();
+            check(fresh != snapshot && !fresh.hasErrors()
+                    && fresh.diagnostics().isEmpty(),
+                "explicit serialization produces a fresh result: "
+                    + fresh.diagnostics());
+            String pickAgain = fresh.providerDigests().entrySet()
+                .stream().filter(entry -> entry.getKey().semanticModuleIdentity()
+                    .canonicalResolvedSourceUri().endsWith("lib.deal")
+                    && entry.getKey().lexicalDeclarationIdentity()
+                        .declaredName().equals("pick"))
+                .map(Map.Entry::getValue).findFirst().orElse(null);
+            check(pickDigest.equals(pickAgain)
+                    && fresh.providerContents().equals(
+                        snapshot.providerContents())
+                    && modulePlansOf(fresh, "main.deal").get(0)
+                        .planDigest().equals(planDigest),
                 "re-serializing the same compile yields identical"
-                    + " digests");
+                    + " content and digests");
+            check(first.serializationSnapshot() == snapshot,
+                "explicit serialization does not replace the cached snapshot");
+            first.forgetSerializationSnapshot();
+            DefaultSemanticSerializer.Result refreshed =
+                first.serializationSnapshot();
+            check(refreshed != snapshot && refreshed != fresh
+                    && !refreshed.hasErrors()
+                    && refreshed.diagnostics().isEmpty()
+                    && refreshed.providerDigests().equals(
+                        snapshot.providerDigests())
+                    && refreshed.providerContents().equals(
+                        snapshot.providerContents())
+                    && first.serializationSnapshot() == refreshed,
+                "forgetting the snapshot lazily rebuilds identical facts: "
+                    + refreshed.diagnostics());
             // An identical recompile over the same root: identical
             // digests and content (unchanged providers stay stable
             // across runs).
             Compile second = first.recompile(files);
+            check(second.success, "the identical recompile compiles: "
+                + second.diagnostics);
+            check(second.serializationSnapshot() != refreshed
+                    && first.serializationSnapshot() == refreshed,
+                "a same-root recompile owns a separate serialization snapshot");
             check(second.providerDigestOf("lib.deal", "pick")
                     .equals(pickDigest)
                     && second.providerContentOf("lib.deal", "pick")
@@ -1549,7 +1598,7 @@ public class DefaultSemanticSerializerTest {
                 "the completion fixture reaches the default-plan phases "
                     + "(the one production arm fails closed after them): "
                     + compile.diagnostics);
-            DefaultSemanticSerializer.Result result = compile.serialize();
+            DefaultSemanticSerializer.Result result = compile.serializationSnapshot();
             check(!result.hasErrors(),
                 "the serializer completes the plans: "
                     + result.diagnostics());
@@ -2002,7 +2051,7 @@ public class DefaultSemanticSerializerTest {
                 "the synthetic-jsonable-export fixture reaches the "
                     + "default-plan phases (the one production arm fails "
                     + "closed after them): " + compile.diagnostics);
-            DefaultSemanticSerializer.Result result = compile.serialize();
+            DefaultSemanticSerializer.Result result = compile.serializationSnapshot();
             check(!result.hasErrors(),
                 "the serializer completes the synthetic-jsonable-export"
                     + " plans: " + result.diagnostics());
@@ -2146,7 +2195,7 @@ public class DefaultSemanticSerializerTest {
             check(compile.success,
                 "the C-struct declaration fixture compiles: "
                     + compile.diagnostics);
-            DefaultSemanticSerializer.Result result = compile.serialize();
+            DefaultSemanticSerializer.Result result = compile.serializationSnapshot();
             check(!result.hasErrors(),
                 "the serializer serializes the C-struct class plan"
                     + " through the declaration module's root scope: "
@@ -2215,7 +2264,7 @@ public class DefaultSemanticSerializerTest {
         try {
             check(compile.success,
                 "the out-of-root fixture compiles: " + compile.diagnostics);
-            DefaultSemanticSerializer.Result result = compile.serialize();
+            DefaultSemanticSerializer.Result result = compile.serializationSnapshot();
             check(!result.hasErrors(),
                 "the serializer accepts the out-of-root provider: "
                     + result.diagnostics());

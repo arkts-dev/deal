@@ -105,12 +105,11 @@ public class BodyInvocationIdentityTest {
         }
         """;
 
-    private static void testZeroCallSiteDeclaration() throws Exception {
+    private static void testZeroCallSiteDeclaration(LoweredProject baseline) {
         System.out.println("-- a non-exported declaration with zero call sites: the "
             + "CLOSURE_NEW materializes the identity --");
-        RealProject project = compileProject(ZERO_CALL_SITE_SOURCE);
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(project);
+        {
+            SemanticLowerer.ProjectLoweringResult result = baseline.result();
             check(result.project() != null && result.diagnostics().isEmpty(),
                 "the zero-call-site declaration lowers through the project entry with zero "
                     + "CONSTRUCT_UNLOWERED: " + result.diagnostics());
@@ -137,8 +136,6 @@ public class BodyInvocationIdentityTest {
             check(bodyLocal.size() != 1 || moduleFunctionCount(unit) == 2,
                 "the module lowers exactly the declaration and the entry body; got "
                     + moduleFunctionCount(unit));
-        } finally {
-            deleteRecursively(project.root());
         }
     }
 
@@ -155,12 +152,12 @@ public class BodyInvocationIdentityTest {
         }
         """;
 
-    private static void testNeverInvokedStoredFunctionExpression() throws Exception {
+    private static void testNeverInvokedStoredFunctionExpression(
+            LoweredProject baseline) throws Exception {
         System.out.println("-- a never-invoked stored function expression: the "
             + "CLOSURE_NEW materializes the identity --");
-        RealProject project = compileProject(STORED_EXPRESSION_SOURCE);
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(project);
+        {
+            SemanticLowerer.ProjectLoweringResult result = baseline.result();
             check(result.project() != null && result.diagnostics().isEmpty(),
                 "the never-invoked stored function expression lowers with zero "
                     + "CONSTRUCT_UNLOWERED: " + result.diagnostics());
@@ -187,8 +184,6 @@ public class BodyInvocationIdentityTest {
                         "the CLOSURE_NEW allocates the returning function");
                 }
             }
-        } finally {
-            deleteRecursively(project.root());
         }
     }
 
@@ -661,12 +656,12 @@ public class BodyInvocationIdentityTest {
     // The producer-defect negatives (R-BOUNDARY-TRIPLE)
     // =========================================================================
 
-    private static void testBodyLocalIdentityWithAssignedShape() throws Exception {
+    private static void testBodyLocalIdentityWithAssignedShape(LoweredProject baseline)
+            throws Exception {
         System.out.println("-- the negative: a body-local identity on a body with an "
             + "assigned invocation shape --");
-        RealProject project = compileProject(ZERO_CALL_SITE_SOURCE);
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(project);
+        {
+            SemanticLowerer.ProjectLoweringResult result = baseline.result();
             if (result.project() == null) {
                 fail("the fixture lowers: " + result.diagnostics());
                 return;
@@ -713,17 +708,15 @@ public class BodyInvocationIdentityTest {
                         + "naming the assigned invocation shape; got "
                         + failure.get().message());
             }
-        } finally {
-            deleteRecursively(project.root());
         }
     }
 
-    private static void testBodyLocalBoundaryOutsideReturn() throws Exception {
+    private static void testBodyLocalBoundaryOutsideReturn(LoweredProject baseline)
+            throws Exception {
         System.out.println("-- the negative: a body-local boundary outside its body's "
             + "RETURN --");
-        RealProject project = compileProject(STORED_EXPRESSION_SOURCE);
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(project);
+        {
+            SemanticLowerer.ProjectLoweringResult result = baseline.result();
             if (result.project() == null) {
                 fail("the fixture lowers: " + result.diagnostics());
                 return;
@@ -757,8 +750,6 @@ public class BodyInvocationIdentityTest {
                         + "R-BOUNDARY-TRIPLE naming the parent defect; got "
                         + failure.get().message());
             }
-        } finally {
-            deleteRecursively(project.root());
         }
     }
 
@@ -811,6 +802,10 @@ public class BodyInvocationIdentityTest {
         }
         return new RealProject(proj, built.input(), built.index(), manifests.manifests(),
             orchestrator.hostDeclarationSurface());
+    }
+
+    private record LoweredProject(RealProject project,
+                                  SemanticLowerer.ProjectLoweringResult result) {
     }
 
     private static CompilerInvocation invocation() {
@@ -992,14 +987,27 @@ public class BodyInvocationIdentityTest {
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== Body-Invocation Identity Tests (ISSUE-0635) ===\n");
-        testZeroCallSiteDeclaration();
-        testNeverInvokedStoredFunctionExpression();
-        testAssignedNeverInvokedFunctionExpression();
-        testSlotWrittenNeverInvokedFunctionExpression();
-        testNeverInvokedRecursiveGroupMember();
-        testCarrierSliceEntryAcceptsNeverCalledDeclaration();
-        testBodyLocalIdentityWithAssignedShape();
-        testBodyLocalBoundaryOutsideReturn();
+        RealProject zeroCallSite = null;
+        RealProject storedExpression = null;
+        try {
+            zeroCallSite = compileProject(ZERO_CALL_SITE_SOURCE);
+            LoweredProject zeroBaseline = new LoweredProject(zeroCallSite,
+                lower(zeroCallSite));
+            testZeroCallSiteDeclaration(zeroBaseline);
+            storedExpression = compileProject(STORED_EXPRESSION_SOURCE);
+            LoweredProject storedBaseline = new LoweredProject(storedExpression,
+                lower(storedExpression));
+            testNeverInvokedStoredFunctionExpression(storedBaseline);
+            testAssignedNeverInvokedFunctionExpression();
+            testSlotWrittenNeverInvokedFunctionExpression();
+            testNeverInvokedRecursiveGroupMember();
+            testCarrierSliceEntryAcceptsNeverCalledDeclaration();
+            testBodyLocalIdentityWithAssignedShape(zeroBaseline);
+            testBodyLocalBoundaryOutsideReturn(storedBaseline);
+        } finally {
+            deleteRecursively(storedExpression == null ? null : storedExpression.root());
+            deleteRecursively(zeroCallSite == null ? null : zeroCallSite.root());
+        }
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

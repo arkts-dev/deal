@@ -112,6 +112,10 @@ public class FfiPlanProjectionOracleTest {
         Path outputRoot) {
     }
 
+    private record LoweredFixture(Fixture fixture,
+                                  SemanticLowerer.ProjectLoweringResult result) {
+    }
+
     private static Fixture compileCorpus() throws Exception {
         String rawFixture = Files.readString(Path.of(CORPUS_FFI_DIR + "/"
             + CORPUS_CASE + ".deal"), StandardCharsets.UTF_8);
@@ -360,12 +364,13 @@ public class FfiPlanProjectionOracleTest {
         }
     }
 
-    private static void testProvidedOnlyParity() throws Exception {
+    private static void testProvidedOnlyParity(LoweredFixture baseline)
+            throws Exception {
         System.out.println("-- ffi/019: the oracle constructs native.Pair through"
             + " the plan projection; the artifact executes runtime-ok --");
-        Fixture fixture = compileCorpus();
-        try {
-            SemanticLowerer.ProjectLoweringResult lowered = lower(fixture);
+        Fixture fixture = baseline.fixture();
+        {
+            SemanticLowerer.ProjectLoweringResult lowered = baseline.result();
             if (lowered.project() == null) {
                 fail("the corpus fixture lowers: " + lowered.diagnostics());
                 return;
@@ -474,8 +479,6 @@ public class FfiPlanProjectionOracleTest {
             check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success
                     && artifactRun.exitCode() == 0,
                 "the oracle and the artifact agree on the fixture's outcome");
-        } finally {
-            deleteRecursively(fixture.root());
         }
     }
 
@@ -1260,12 +1263,13 @@ public class FfiPlanProjectionOracleTest {
     // 5. The doctored extra-key parity
     // =========================================================================
 
-    private static void testDoctoredExtraKeyParity() throws Exception {
+    private static void testDoctoredExtraKeyParity(LoweredFixture baseline)
+            throws Exception {
         System.out.println("-- a doctored CLASS_NEW(FFI_PLAN) payload yields the"
             + " identical E8007 through the oracle and the artifact --");
-        Fixture fixture = compileCorpus();
-        try {
-            SemanticLowerer.ProjectLoweringResult lowered = lower(fixture);
+        Fixture fixture = baseline.fixture();
+        {
+            SemanticLowerer.ProjectLoweringResult lowered = baseline.result();
             if (lowered.project() == null) {
                 fail("the corpus fixture lowers: " + lowered.diagnostics());
                 return;
@@ -1328,8 +1332,6 @@ public class FfiPlanProjectionOracleTest {
                         ? parts[3] + ":" + parts[4] + ":" + parts[5] : null,
                     "the artifact's E8007 origin is the literal origin");
             }
-        } finally {
-            deleteRecursively(fixture.root());
         }
     }
 
@@ -1391,13 +1393,14 @@ public class FfiPlanProjectionOracleTest {
     // 6. The surface's closed owner set
     // =========================================================================
 
-    private static void testSurfaceRejectsForeignOwners() throws Exception {
+    private static void testSurfaceRejectsForeignOwners(LoweredFixture baseline)
+            throws Exception {
         System.out.println("-- the FFI-plan executor surface accepts only FFI_PLAN;"
             + " every other owner, a factory ref, a default child list, and an"
             + " absent projection are producer defects --");
-        Fixture fixture = compileCorpus();
-        try {
-            SemanticLowerer.ProjectLoweringResult lowered = lower(fixture);
+        Fixture fixture = baseline.fixture();
+        {
+            SemanticLowerer.ProjectLoweringResult lowered = baseline.result();
             if (lowered.project() == null) {
                 fail("the corpus fixture lowers: " + lowered.diagnostics());
                 return;
@@ -1474,8 +1477,6 @@ public class FfiPlanProjectionOracleTest {
                     && instance.classId().equals(payload.classId())
                     && instance.fields().size() == 2,
                 "the surface accepts the realized FFI_PLAN construction: " + accepted);
-        } finally {
-            deleteRecursively(fixture.root());
         }
     }
 
@@ -1615,14 +1616,20 @@ public class FfiPlanProjectionOracleTest {
     public static void main(String[] args) throws Exception {
         System.out.println("=== FFI Plan Projection Oracle Tests (ISSUE-0667) ===");
         System.out.println();
-        testProvidedOnlyParity();
-        testOmittedFieldParity();
-        testDoctoredAttemptRecovery();
-        testProjectionAgreementNegatives();
-        testPhaseThreeProjections();
-        testEvaluatorFailurePropagation();
-        testDoctoredExtraKeyParity();
-        testSurfaceRejectsForeignOwners();
+        Fixture corpus = compileCorpus();
+        try {
+            LoweredFixture baseline = new LoweredFixture(corpus, lower(corpus));
+            testProvidedOnlyParity(baseline);
+            testOmittedFieldParity();
+            testDoctoredAttemptRecovery();
+            testProjectionAgreementNegatives();
+            testPhaseThreeProjections();
+            testEvaluatorFailurePropagation();
+            testDoctoredExtraKeyParity(baseline);
+            testSurfaceRejectsForeignOwners(baseline);
+        } finally {
+            deleteRecursively(corpus.root());
+        }
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

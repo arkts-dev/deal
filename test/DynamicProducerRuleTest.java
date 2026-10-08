@@ -352,7 +352,7 @@ public class DynamicProducerRuleTest {
 
     /** The direct per-module project walk (the produced, pre-gate unit). */
     private record RawLowering(LoweredModuleUnit unit, StructuredBodyTable table,
-                               SemanticLowerer.ModuleLowerer lowerer) {
+                               BindingsProductionValidator.PinnedWriteFacts pinnedWriteFacts) {
     }
 
     private static RawLowering rawLower(Fixture fixture, String what) {
@@ -378,7 +378,7 @@ public class DynamicProducerRuleTest {
             fixture.module().imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
             fixture.index().interfaceIndexDigest(), REGISTRY_HASH,
             ContainerClaimingSeam.E9_GATE_ACTIVATION);
-        return new RawLowering(unit, lowerer.bodyTable(), lowerer);
+        return new RawLowering(unit, lowerer.bodyTable(), lowerer.pinnedWriteFacts());
     }
 
     // =========================================================================
@@ -401,7 +401,7 @@ public class DynamicProducerRuleTest {
         check(text.isEmpty(), what + ": the canonical text surface admits the produced "
             + "unit: " + text.map(CompilerDiagnostic::message).orElse(""));
         Optional<CompilerDiagnostic> bindings = BindingsProductionValidator.validate(unit,
-            raw.table(), raw.lowerer().pinnedWriteFacts());
+            raw.table(), raw.pinnedWriteFacts());
         check(bindings.isEmpty(), what + ": the bindings production rules admit the "
             + "produced unit: "
             + bindings.map(CompilerDiagnostic::message).orElse(""));
@@ -577,13 +577,8 @@ public class DynamicProducerRuleTest {
     // 2. The read arms
     // =========================================================================
 
-    private static void testMemberReadArm() {
+    private static void testMemberReadArm(Fixture fixture, RawLowering raw) {
         System.out.println("-- the member-read arm: a function-typed table member read --");
-        Fixture fixture = fixture(MEMBER_READ_SOURCE, "member read");
-        if (fixture == null) {
-            return;
-        }
-        RawLowering raw = rawLower(fixture, "member read");
         if (raw == null) {
             return;
         }
@@ -1148,14 +1143,9 @@ public class DynamicProducerRuleTest {
             unit.functions(), unit.moduleInit(), unit.exportPlan(), bindings, unit.ops());
     }
 
-    private static void testNegativeSeeds() {
+    private static void testNegativeSeeds(RawLowering raw) {
         System.out.println("-- negative seeds: the dropped registration, the static "
             + "producing position, and the duplicate key --");
-        Fixture fixture = fixture(MEMBER_READ_SOURCE, "member read negative");
-        if (fixture == null) {
-            return;
-        }
-        RawLowering raw = rawLower(fixture, "member read negative");
         if (raw == null) {
             return;
         }
@@ -1189,7 +1179,7 @@ public class DynamicProducerRuleTest {
                     (RuntimeDescriptor.Func) read.resultType()));
             Optional<CompilerDiagnostic> staticPosition =
                 BindingsProductionValidator.validate(doctored, raw.table(),
-                    raw.lowerer().pinnedWriteFacts());
+                    raw.pinnedWriteFacts());
             check(staticPosition.isPresent()
                     && staticPosition.get().message().contains("REGISTRY_ONE_TO_ONE"),
                 "a dynamic record naming a foreign op fails the producing-position "
@@ -1228,7 +1218,9 @@ public class DynamicProducerRuleTest {
             + "(ISSUE-0675) ===\n");
 
         testParameterAliasAndCallResult();
-        testMemberReadArm();
+        Fixture memberFixture = fixture(MEMBER_READ_SOURCE, "member read");
+        RawLowering member = memberFixture == null ? null : rawLower(memberFixture, "member read");
+        testMemberReadArm(memberFixture, member);
         testIndexReadArm();
         testFieldReadArm();
         testOptionalReadEnvelope();
@@ -1239,7 +1231,7 @@ public class DynamicProducerRuleTest {
         testImportedReadAndCallResult();
         testStdlibReadPreservedClass();
         testNamespaceMemberReadArm();
-        testNegativeSeeds();
+        testNegativeSeeds(member);
 
         System.out.println("\nDynamic producer rule: " + passed + " passed, " + failed
             + " failed");

@@ -159,6 +159,21 @@ public class LuaProductionProjectEmissionTest {
         Map<ModuleId, CanonicalModuleIdentity> declarationIdentities) {
     }
 
+    private record Baseline(
+        SemanticLowerer.ProjectLoweringResult result,
+        HostDeclarationSurface surface,
+        String lua) {
+    }
+
+    private static Baseline prepare(Fixture fixture, List<Path> roots) {
+        roots.add(fixture.root());
+        SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+        String lua = result.project() == null ? null
+            : LuaSemanticEmitter.emitProductionProject(result.project(), result.tables(),
+                result.registries(), fixture.surface());
+        return new Baseline(result, fixture.surface(), lua);
+    }
+
     private static CompilerInvocation invocation() {
         return CompilerProfileProvider.resolve(ReleaseConfiguration.CURRENT_RELEASE_STATE,
             ReleaseConfiguration.releaseCapabilityRegistry());
@@ -358,12 +373,11 @@ public class LuaProductionProjectEmissionTest {
     // 2. The emitted chunk: one artifact, trace suppressed, the terminal
     // =========================================================================
 
-    private static void testEmittedChunkText() throws Exception {
+    private static void testEmittedChunkText(Baseline fixture) throws Exception {
         System.out.println("-- the emitted production chunk: one artifact, the trace "
             + "protocol suppressed, the DEAL_ERROR_CODE terminal --");
-        Fixture fixture = compileProject(CONSOLE_APP_SOURCE);
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+        {
+            SemanticLowerer.ProjectLoweringResult result = fixture.result();
             if (result.project() == null) {
                 fail("the fixture project lowers: " + result.diagnostics());
                 return;
@@ -373,8 +387,7 @@ public class LuaProductionProjectEmissionTest {
                 "the closure carries the two modules in dependency order");
             checkEq(APP, project.entryModule(), "the entry module is app");
 
-            String lua = LuaSemanticEmitter.emitProductionProject(project,
-                result.tables(), result.registries(), fixture.surface());
+            String lua = fixture.lua();
 
             // Exactly one chunk: one header, one prelude, one deferred main,
             // one entry-surface return.
@@ -545,8 +558,6 @@ public class LuaProductionProjectEmissionTest {
             } catch (NullPointerException expected) {
                 passed++;
             }
-        } finally {
-            deleteRecursively(fixture.root());
         }
     }
 
@@ -555,25 +566,22 @@ public class LuaProductionProjectEmissionTest {
     //    conversion-overflow terminal
     // =========================================================================
 
-    private static void testUnderLuaJit() throws Exception {
+    private static void testUnderLuaJit(Baseline fixture, Baseline quiet)
+            throws Exception {
         System.out.println("-- the production chunk under real luajit: the one-main "
             + "observable, the clean run, and the E8004 terminal --");
 
         // (a) The observable one-main probe: main's console.log effect appears
         //     exactly once, and the trace protocol publishes nothing on stderr.
-        Fixture fixture = compileProject(CONSOLE_APP_SOURCE);
         Path workspace = Files.createTempDirectory("lua-production-project-run");
         try {
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+            SemanticLowerer.ProjectLoweringResult result = fixture.result();
             if (result.project() == null) {
                 fail("the console fixture lowers: " + result.diagnostics());
                 return;
             }
             Path artifact = workspace.resolve("project.lua");
-            Files.writeString(artifact, LuaSemanticEmitter.emitProductionProject(
-                result.project(), result.tables(), result.registries(),
-                fixture.surface()),
-                StandardCharsets.UTF_8);
+            Files.writeString(artifact, fixture.lua(), StandardCharsets.UTF_8);
             deployRuntime(workspace);
             ProcessOutcome run = runProcess(List.of("luajit",
                 artifact.toAbsolutePath().toString()), workspace);
@@ -586,23 +594,18 @@ public class LuaProductionProjectEmissionTest {
                 "the production chunk publishes no trace protocol on stderr");
         } finally {
             deleteRecursively(workspace);
-            deleteRecursively(fixture.root());
         }
 
         // (b) The covered-construct fixture: exit 0 with empty output.
-        Fixture quiet = compileProject(QUIET_APP_SOURCE);
         Path quietWorkspace = Files.createTempDirectory("lua-production-project-quiet");
         try {
-            SemanticLowerer.ProjectLoweringResult result = lower(quiet);
+            SemanticLowerer.ProjectLoweringResult result = quiet.result();
             if (result.project() == null) {
                 fail("the quiet fixture lowers: " + result.diagnostics());
                 return;
             }
             Path artifact = quietWorkspace.resolve("project.lua");
-            Files.writeString(artifact, LuaSemanticEmitter.emitProductionProject(
-                result.project(), result.tables(), result.registries(),
-                quiet.surface()),
-                StandardCharsets.UTF_8);
+            Files.writeString(artifact, quiet.lua(), StandardCharsets.UTF_8);
             deployRuntime(quietWorkspace);
             ProcessOutcome run = runProcess(List.of("luajit",
                 artifact.toAbsolutePath().toString()), quietWorkspace);
@@ -613,7 +616,6 @@ public class LuaProductionProjectEmissionTest {
             checkEq("", run.stderr(), "the covered-construct fixture is silent on stderr");
         } finally {
             deleteRecursively(quietWorkspace);
-            deleteRecursively(quiet.root());
         }
 
         // (c) The conversion-overflow fixture: exit 1, DEAL_ERROR_CODE: E8004
@@ -653,22 +655,19 @@ public class LuaProductionProjectEmissionTest {
     //    each module's exports
     // =========================================================================
 
-    private static void testExecutedSurfaces() throws Exception {
+    private static void testExecutedSurfaces(Baseline fixture) throws Exception {
         System.out.println("-- the executed chunk's per-module surfaces hold each "
             + "module's exports (the T1 dependency) --");
-        Fixture fixture = compileProject(QUIET_APP_SOURCE);
         Path workspace = Files.createTempDirectory("lua-production-project-surface");
         try {
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+            SemanticLowerer.ProjectLoweringResult result = fixture.result();
             if (result.project() == null) {
                 fail("the fixture lowers: " + result.diagnostics());
                 return;
             }
             ExecutableLoweredProject project = result.project();
             Path artifact = workspace.resolve("project.lua");
-            Files.writeString(artifact, LuaSemanticEmitter.emitProductionProject(
-                project, result.tables(), result.registries(), fixture.surface()),
-                StandardCharsets.UTF_8);
+            Files.writeString(artifact, fixture.lua(), StandardCharsets.UTF_8);
 
             List<String> modules = new ArrayList<>();
             List<List<ExportEntry>> entries = new ArrayList<>();
@@ -690,7 +689,6 @@ public class LuaProductionProjectEmissionTest {
                     + " stderr=" + escaped(run.stderr()));
         } finally {
             deleteRecursively(workspace);
-            deleteRecursively(fixture.root());
         }
     }
 
@@ -933,10 +931,19 @@ public class LuaProductionProjectEmissionTest {
     public static void main(String[] args) throws Exception {
         System.out.println("=== Lua Production Project Emission Tests (ISSUE-0640) ===\n");
         testEntrySignatureAndInputs();
-        testEmittedChunkText();
-        testUnderLuaJit();
-        testExecutedSurfaces();
-        testNonEntryMainStaysSkipped();
+        List<Path> roots = new ArrayList<>();
+        try {
+            Baseline console = prepare(compileProject(CONSOLE_APP_SOURCE), roots);
+            Baseline quiet = prepare(compileProject(QUIET_APP_SOURCE), roots);
+            testEmittedChunkText(console);
+            testUnderLuaJit(console, quiet);
+            testExecutedSurfaces(quiet);
+            testNonEntryMainStaysSkipped();
+        } finally {
+            for (Path root : roots) {
+                deleteRecursively(root);
+            }
+        }
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

@@ -1581,8 +1581,6 @@ end)
 test("check_array on table with holes (sparse) still checks till #v", function()
   -- Lua's # operator gives the length of the array portion
   -- A sparse table may have unexpected # behavior, but that's Lua's semantics
-  local arr = {1, 2, 3}
-  arr[5] = 4  -- makes it sparse, #arr may be 3 or 5 depending on LuaJIT
   -- Just test that what IS in the contiguous portion passes
   -- We'll use a normal contiguous array
   local r = __rt.check_array("[int]", {1, 2, 3})
@@ -2238,34 +2236,16 @@ test("async deep nesting: 50-level chain completes correctly", function()
   -- level 1 awaits level 2, adds 1
   -- Result should be N (50)
 
-  -- Create coroutine functions: deepest first
-  local coro_fns = {}
-  coro_fns[N] = function()
-    return 1
-  end
-
-  for i = N - 1, 1, -1 do
-    local inner_handle = nil  -- will be set
-    coro_fns[i] = function()
-      local val = coroutine.yield(inner_handle)
-      return val + 1
-    end
-  end
-
-  -- Create handles from outermost to deepest
   local handles = {}
-  for i = N, 1, -1 do
-    handles[i] = __rt.async_create(coro_fns[i])
-    if i < N then
-      -- Patch the inner_handle reference for this level
-      -- We need to capture handles[i+1] in the closure
-      -- Re-create with proper capture
-      local inner_h = handles[i + 1]
-      handles[i] = __rt.async_create(function()
-        local val = coroutine.yield(inner_h)
-        return val + 1
-      end)
-    end
+  handles[N] = __rt.async_create(function()
+    return 1
+  end)
+  for i = N - 1, 1, -1 do
+    local inner_h = handles[i + 1]
+    handles[i] = __rt.async_create(function()
+      local val = coroutine.yield(inner_h)
+      return val + 1
+    end)
   end
 
   -- Now step from outermost: async_step will chain through all 50 levels

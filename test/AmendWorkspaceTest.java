@@ -12,31 +12,32 @@ public final class AmendWorkspaceTest {
     private AmendWorkspaceTest() {}
 
     public static void main(String[] args) {
+        var baseline = AmendWorkspace.inspect(source(), "app.deal");
         deterministicInspectionAndRelationships();
-        staleDigestRejectsWithoutMutation();
-        functionReplacementIsAtomic();
-        completeFunctionCannotMasqueradeAsBody();
-        blockReplacementUsesRevisionScopedIdentity();
-        schemaChangeRequiresStateReset();
-        capabilitiesChangeAtomicallyWithProgramState();
-        invalidCapabilitiesRemainRepairable();
+        staleDigestRejectsWithoutMutation(baseline);
+        functionReplacementIsAtomic(baseline);
+        completeFunctionCannotMasqueradeAsBody(baseline);
+        blockReplacementUsesRevisionScopedIdentity(baseline);
+        schemaChangeRequiresStateReset(baseline);
+        capabilitiesChangeAtomicallyWithProgramState(baseline);
+        invalidCapabilitiesRemainRepairable(baseline);
         declarationRepairUsesExactOperation();
         duplicateClassDoesNotRejectCapabilities();
-        protocolJsonIsDeterministicAndUnicodeSafe();
+        protocolJsonIsDeterministicAndUnicodeSafe(baseline);
         protocolJsonSupportsDesugaredRecordShape();
-        declarationsCanBeAddedAndRemovedAtomically();
-        addingMultipleDeclarationsIsRejectedAtomically();
-        annotatedHandlerCountsAsOneDeclaration();
+        declarationsCanBeAddedAndRemovedAtomically(baseline);
+        addingMultipleDeclarationsIsRejectedAtomically(baseline);
+        annotatedHandlerCountsAsOneDeclaration(baseline);
         declarationReplacementIsAtomicAndDoesNotConsumeItsNeighbor();
-        semanticQueriesExposeScopedOperations();
-        checkedChangesRequireQueriedTargetFingerprint();
-        inspectChangeBuildsCompilerOwnedDependencyCone();
-        repairWorkspacePreservesAndPatchesSlots();
+        semanticQueriesExposeScopedOperations(baseline);
+        checkedChangesRequireQueriedTargetFingerprint(baseline);
+        inspectChangeBuildsCompilerOwnedDependencyCone(baseline);
+        repairWorkspacePreservesAndPatchesSlots(baseline);
         repairWorkspaceRejectsCanonicalNoOpPatch();
         repairWorkspaceCanDropAnIndependentRejectedDeclaration();
-        dependentRepairSlotsCommitAsOneGroup();
-        dependentValidationRejectsOnlyTheFaultyHandler();
-        frameworkDiagnosticKeepsRelatedActionStaged();
+        dependentRepairSlotsCommitAsOneGroup(baseline);
+        dependentValidationRejectsOnlyTheFaultyHandler(baseline);
+        frameworkDiagnosticKeepsRelatedActionStaged(baseline);
         fullCandidateDiagnosticsOwnDependentRepairSlots();
         numericStringDiagnosticPublishesRepairContract();
         syntaxDiagnosticsCarryCandidateEvidence();
@@ -82,9 +83,9 @@ public final class AmendWorkspaceTest {
                 "numeric/string '+' must publish a machine-readable repair constraint: " + diagnostic);
     }
 
-    private static void capabilitiesChangeAtomicallyWithProgramState() {
+    private static void capabilitiesChangeAtomicallyWithProgramState(CompilerProtocol.Inspection baseline) {
         String source = source();
-        var inspection = AmendWorkspace.inspect(source, "app.deal");
+        var inspection = baseline;
         var moduleSlice = AmendWorkspace.queryModule(source, "app.deal");
         var descriptor = moduleSlice.allowedOperations().stream()
                 .filter(value -> value.operation().equals(AmendWorkspace.SET_CAPABILITIES))
@@ -132,16 +133,16 @@ public final class AmendWorkspaceTest {
     }
 
     private static void declarationRepairUsesExactOperation() {
+        String source = "export class State { paused: boolean = false; }\n";
+        var base = AmendWorkspace.inspect(source, "app.deal");
+        var inspected = AmendWorkspace.inspectChange(source, "app.deal", base.sourceDigest(),
+                List.of(base.moduleId()), List.of(AmendWorkspace.ADD_DECLARATION));
         for (boolean reverse : List.of(false, true)) {
             for (boolean syntaxFailure : List.of(false, true)) {
-                String source = "export class State { paused: boolean = false; }\n";
                 String action = "export class Input { delta: int = 0; }";
                 String valid = "export function read(state: State, action: Input): int { if (!state.paused) { return 1; } return 0; }";
                 String bad = syntaxFailure ? valid.replace("!state.paused", "state.paused == false")
                         : valid + "\nexport class Extra { value: int = 0; }";
-                var base = AmendWorkspace.inspect(source, "app.deal");
-                var inspected = AmendWorkspace.inspectChange(source, "app.deal", base.sourceDigest(),
-                        List.of(base.moduleId()), List.of(AmendWorkspace.ADD_DECLARATION));
                 var precondition = new CompilerProtocol.ChangeSetPrecondition(base.sourceDigest(),
                         Map.of(base.moduleId().value(), base.sourceDigest()));
                 var goodOp = new AmendWorkspace.AddDeclaration(base.moduleId(), action);
@@ -170,9 +171,9 @@ public final class AmendWorkspaceTest {
         }
     }
 
-    private static void invalidCapabilitiesRemainRepairable() {
+    private static void invalidCapabilitiesRemainRepairable(CompilerProtocol.Inspection baseline) {
         String source = source();
-        var inspection = AmendWorkspace.inspect(source, "app.deal");
+        var inspection = baseline;
         var change = AmendWorkspace.inspectChange(source, "app.deal", inspection.sourceDigest(),
                 List.of(inspection.moduleId()), List.of(AmendWorkspace.SET_CAPABILITIES));
         var precondition = new CompilerProtocol.ChangeSetPrecondition(inspection.sourceDigest(),
@@ -319,9 +320,9 @@ public final class AmendWorkspaceTest {
                 + repaired.diagnostics());
     }
 
-    private static void dependentRepairSlotsCommitAsOneGroup() {
+    private static void dependentRepairSlotsCommitAsOneGroup(CompilerProtocol.Inspection baseline) {
         String source = source();
-        var inspection = AmendWorkspace.inspect(source, "app.deal");
+        var inspection = baseline;
         var descriptor = AmendWorkspace.queryModule(source, "app.deal")
                 .allowedOperations().get(0);
         var precondition = new CompilerProtocol.ChangeSetPrecondition(
@@ -357,9 +358,9 @@ public final class AmendWorkspaceTest {
                 "the repaired group must retain both declarations");
     }
 
-    private static void dependentValidationRejectsOnlyTheFaultyHandler() {
+    private static void dependentValidationRejectsOnlyTheFaultyHandler(CompilerProtocol.Inspection baseline) {
         String source = source();
-        var inspection = AmendWorkspace.inspect(source, "app.deal");
+        var inspection = baseline;
         var descriptor = AmendWorkspace.queryModule(source, "app.deal")
                 .allowedOperations().get(0);
         var precondition = new CompilerProtocol.ChangeSetPrecondition(
@@ -391,9 +392,9 @@ public final class AmendWorkspaceTest {
                 "a valid handler must stay staged with its required action declaration");
     }
 
-    private static void frameworkDiagnosticKeepsRelatedActionStaged() {
+    private static void frameworkDiagnosticKeepsRelatedActionStaged(CompilerProtocol.Inspection baseline) {
         String source = source();
-        var inspection = AmendWorkspace.inspect(source, "app.deal");
+        var inspection = baseline;
         var descriptor = AmendWorkspace.queryModule(source, "app.deal")
                 .allowedOperations().get(0);
         var precondition = new CompilerProtocol.ChangeSetPrecondition(
@@ -427,9 +428,9 @@ public final class AmendWorkspaceTest {
                 "the related action declaration must stay staged");
     }
 
-    private static void inspectChangeBuildsCompilerOwnedDependencyCone() {
+    private static void inspectChangeBuildsCompilerOwnedDependencyCone(CompilerProtocol.Inspection baseline) {
         String source = source();
-        var inspection = AmendWorkspace.inspect(source, "app.deal");
+        var inspection = baseline;
         var update = inspection.symbols().stream()
                 .filter(value -> value.name().equals("update")).findFirst().orElseThrow();
         var increment = inspection.symbols().stream()
@@ -440,9 +441,9 @@ public final class AmendWorkspaceTest {
         check(change.diagnostics().isEmpty(), "change inspection must accept a current semantic anchor");
     }
 
-    private static void repairWorkspacePreservesAndPatchesSlots() {
+    private static void repairWorkspacePreservesAndPatchesSlots(CompilerProtocol.Inspection baseline) {
         String source = source();
-        var inspection = AmendWorkspace.inspect(source, "app.deal");
+        var inspection = baseline;
         var update = inspection.symbols().stream()
                 .filter(value -> value.name().equals("update")).findFirst().orElseThrow();
         var updateBody = inspection.nodes().stream()
@@ -548,9 +549,9 @@ public final class AmendWorkspaceTest {
         check(first.appInterface() != null, "generated app interface must be extracted upstream");
     }
 
-    private static void staleDigestRejectsWithoutMutation() {
+    private static void staleDigestRejectsWithoutMutation(CompilerProtocol.Inspection baseline) {
         String source = source();
-        var inspection = AmendWorkspace.inspect(source, "app.deal");
+        var inspection = baseline;
         var functionBody = inspection.nodes().stream()
                 .filter(value -> value.kind().equals("function-body"))
                 .findFirst().orElseThrow();
@@ -564,9 +565,9 @@ public final class AmendWorkspaceTest {
         check(result.diagnostics().get(0).code().equals("CP1001"), "stale edit must be structured");
     }
 
-    private static void functionReplacementIsAtomic() {
+    private static void functionReplacementIsAtomic(CompilerProtocol.Inspection baseline) {
         String source = source();
-        var inspection = AmendWorkspace.inspect(source, "app.deal");
+        var inspection = baseline;
         var update = inspection.symbols().stream().filter(value -> value.name().equals("update")).findFirst().orElseThrow();
         var body = inspection.nodes().stream()
                 .filter(value -> value.ownerId().equals(update.id()) && value.kind().equals("function-body"))
@@ -594,9 +595,9 @@ public final class AmendWorkspaceTest {
         check(!accepted.sourceDigest().equals(inspection.sourceDigest()), "accepted source gets a new revision");
     }
 
-    private static void completeFunctionCannotMasqueradeAsBody() {
+    private static void completeFunctionCannotMasqueradeAsBody(CompilerProtocol.Inspection baseline) {
         String source = source();
-        var inspection = AmendWorkspace.inspect(source, "app.deal");
+        var inspection = baseline;
         var update = inspection.symbols().stream().filter(value -> value.name().equals("update")).findFirst().orElseThrow();
         var body = inspection.nodes().stream()
                 .filter(value -> value.ownerId().equals(update.id()) && value.kind().equals("function-body"))
@@ -616,9 +617,9 @@ public final class AmendWorkspaceTest {
                 "repair must remain scoped to the requested body");
     }
 
-    private static void blockReplacementUsesRevisionScopedIdentity() {
+    private static void blockReplacementUsesRevisionScopedIdentity(CompilerProtocol.Inspection baseline) {
         String source = source();
-        var inspection = AmendWorkspace.inspect(source, "app.deal");
+        var inspection = baseline;
         var nested = inspection.nodes().stream().filter(value -> value.kind().equals("block")).findFirst().orElseThrow();
         var accepted = AmendWorkspace.apply(
                 source,
@@ -635,17 +636,17 @@ public final class AmendWorkspaceTest {
         check(staleNode.diagnostics().get(0).code().equals("CP1003"), "stale node has stable diagnostic");
     }
 
-    private static void schemaChangeRequiresStateReset() {
+    private static void schemaChangeRequiresStateReset(CompilerProtocol.Inspection baseline) {
         String before = source();
         String after = before.replace("count: int = 0;", "count: int = 0;\n  label: string = \"\";");
-        var beforeInspection = AmendWorkspace.inspect(before, "app.deal");
+        var beforeInspection = baseline;
         var afterInspection = AmendWorkspace.inspect(after, "app.deal");
         check(!beforeInspection.appInterface().fingerprint()
                 .equals(afterInspection.appInterface().fingerprint()), "interface fingerprint must change");
     }
 
-    private static void protocolJsonIsDeterministicAndUnicodeSafe() {
-        var inspection = AmendWorkspace.inspect(source(), "app.deal");
+    private static void protocolJsonIsDeterministicAndUnicodeSafe(CompilerProtocol.Inspection baseline) {
+        var inspection = baseline;
         String first = CompilerProtocolJson.encode(inspection);
         String second = CompilerProtocolJson.encode(inspection);
         check(first.equals(second), "protocol JSON must be byte deterministic");
@@ -674,9 +675,9 @@ public final class AmendWorkspaceTest {
         public int count() { return count; }
     }
 
-    private static void declarationsCanBeAddedAndRemovedAtomically() {
+    private static void declarationsCanBeAddedAndRemovedAtomically(CompilerProtocol.Inspection baseline) {
         String source = source();
-        var inspection = AmendWorkspace.inspect(source, "app.deal");
+        var inspection = baseline;
         var added = AmendWorkspace.apply(
                 source,
                 "app.deal",
@@ -707,9 +708,9 @@ public final class AmendWorkspaceTest {
                 "removed declaration must disappear from inspection");
     }
 
-    private static void addingMultipleDeclarationsIsRejectedAtomically() {
+    private static void addingMultipleDeclarationsIsRejectedAtomically(CompilerProtocol.Inspection baseline) {
         String source = source();
-        var inspection = AmendWorkspace.inspect(source, "app.deal");
+        var inspection = baseline;
         var result = AmendWorkspace.apply(
                 source,
                 "app.deal",
@@ -723,9 +724,9 @@ public final class AmendWorkspaceTest {
                 "multi-declaration add must expose stable CP1013");
     }
 
-    private static void annotatedHandlerCountsAsOneDeclaration() {
+    private static void annotatedHandlerCountsAsOneDeclaration(CompilerProtocol.Inspection baseline) {
         String source = source();
-        var inspection = AmendWorkspace.inspect(source, "app.deal");
+        var inspection = baseline;
         var result = AmendWorkspace.apply(
                 source,
                 "app.deal",
@@ -737,9 +738,9 @@ public final class AmendWorkspaceTest {
                 "a framework directive plus its declaration must pass declaration cardinality");
     }
 
-    private static void semanticQueriesExposeScopedOperations() {
+    private static void semanticQueriesExposeScopedOperations(CompilerProtocol.Inspection baseline) {
         String source = source();
-        var inspection = AmendWorkspace.inspect(source, "app.deal");
+        var inspection = baseline;
         var update = inspection.symbols().stream()
                 .filter(value -> value.name().equals("update"))
                 .findFirst().orElseThrow();
@@ -764,9 +765,9 @@ public final class AmendWorkspaceTest {
                 "module query must authorize declaration insertion and capability replacement");
     }
 
-    private static void checkedChangesRequireQueriedTargetFingerprint() {
+    private static void checkedChangesRequireQueriedTargetFingerprint(CompilerProtocol.Inspection baseline) {
         String source = source();
-        var inspection = AmendWorkspace.inspect(source, "app.deal");
+        var inspection = baseline;
         var update = inspection.symbols().stream()
                 .filter(value -> value.name().equals("update"))
                 .findFirst().orElseThrow();

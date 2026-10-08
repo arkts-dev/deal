@@ -821,14 +821,9 @@ public class ControlFlowLoweringTest {
         checkOrigin("LOOP(FOR)", loop, statement.span(), SourceOriginKind.USER, null);
     }
 
-    static void testTestlessForArm() {
+    static void testTestlessForArm(SemanticLowerer.LoweringResult result) {
         System.out.println("-- Test-less FOR: one CONST true in initBlock, update ops only --");
 
-        CheckedSlice slice = checkSlice("for (;;) { break; }");
-        if (slice == null) {
-            return;
-        }
-        SemanticLowerer.LoweringResult result = lowerDetected(slice);
         check(result != null && !result.hasErrors(),
             "the test-less for lowers: "
                 + (result == null ? "null" : result.diagnostics()));
@@ -1133,21 +1128,9 @@ public class ControlFlowLoweringTest {
     // 7. StructuredBodyTable + ControlFlowValidator (T6 combined)
     // =========================================================================
 
-    static void testBlockTableAndValidator() {
+    static void testBlockTableAndValidator(SemanticLowerer.LoweringResult result) {
         System.out.println("-- StructuredBodyTable production + ControlFlowValidator --");
 
-        CheckedSlice slice = checkSlice("""
-            while (({b: true}).b = false) {
-              if (({f: true}).f) { "a"; }
-              for (;;) { break; }
-            }
-            try {} catch (e) { throw e }
-            for (let x: int of [1, 2]) { continue; }
-            """);
-        if (slice == null) {
-            return;
-        }
-        SemanticLowerer.LoweringResult result = lowerDetected(slice);
         check(result != null && !result.hasErrors(),
             "the combined corpus lowers: "
                 + (result == null ? "null" : result.diagnostics()));
@@ -1234,6 +1217,7 @@ public class ControlFlowLoweringTest {
             return;
         }
         SemanticLowerer.LoweringResult result = lowerDetected(slice);
+        testTestlessForArm(result);
         if (result == null || result.hasErrors() || result.unit() == null) {
             return;
         }
@@ -1586,6 +1570,7 @@ public class ControlFlowLoweringTest {
         }
         Map<ConstructKind, List<SemanticOpKind>> coverage = detectedCoverage(slice);
         SemanticLowerer.LoweringResult first = lower(slice, coverage);
+        testBlockTableAndValidator(first);
         SemanticLowerer.LoweringResult second = lower(slice, coverage);
         check(first != null && !first.hasErrors() && second != null && !second.hasErrors(),
             "both lowerings validate: " + (first == null ? "null" : first.diagnostics())
@@ -1632,12 +1617,10 @@ public class ControlFlowLoweringTest {
         testLogicalChainedNesting();
         testWhileArm();
         testForArm();
-        testTestlessForArm();
         testForEachArrayValuesArm();
         testTryCatchThrowArm();
         testBreakContinueTargets();
         testDiscardArm();
-        testBlockTableAndValidator();
         testValidatorNegatives();
         testChainsInsideBlocksT2();
         testCoverageRows();
