@@ -325,6 +325,76 @@ public final class SemanticOracle {
     }
 
     /**
+     * Sync-export invocation (the fixture-level oracle agreement
+     * surface): the complete closure's module-init walks run in
+     * dependency (project insertion) order — the entry module's
+     * {@code main} delegation executes exactly as the emitted artifact's
+     * {@code __dealMain()} executes it — and then the named module's
+     * sync {@code EXTERNAL_ENTRY} for the export executes its lowered
+     * body once at top level (its START, the declared parameter cells,
+     * the body whose {@code RETURN} runs the single
+     * {@code EXTERNAL_RETURN} cell, and its SUCCESS/FAILURE terminal).
+     * The completed value or the propagated DEAL failure is the run
+     * terminal. An async export belongs to {@link #invokeAsyncEntry}; a
+     * missing module or a missing sync entry is a caller error (fail
+     * closed), never a fabricated pass.
+     */
+    public static SemanticRuntimeModel.ConsumerRun invokeSyncEntry(
+            ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
+            Map<ModuleId, ClassFactoryRegistry> registries, HostResponder responder,
+            ModuleId module, String exportName, List<Value> args) {
+        return invokeSyncEntry(project, tables, registries, responder, Map.of(), module,
+            exportName, args);
+    }
+
+    public static SemanticRuntimeModel.ConsumerRun invokeSyncEntry(
+            ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
+            Map<ModuleId, ClassFactoryRegistry> registries, HostResponder responder,
+            Map<ClassId, ClassLayout> declarationLayouts, ModuleId module,
+            String exportName, List<Value> args) {
+        Objects.requireNonNull(project, "project must not be null");
+        Objects.requireNonNull(tables, "tables must not be null");
+        Objects.requireNonNull(registries, "registries must not be null");
+        Objects.requireNonNull(declarationLayouts,
+            "declarationLayouts must not be null");
+        Objects.requireNonNull(module, "module must not be null");
+        Objects.requireNonNull(exportName, "exportName must not be null");
+        Objects.requireNonNull(args, "args must not be null");
+        LoweredModuleUnit unit = project.modules().get(module);
+        if (unit == null) {
+            throw new IllegalArgumentException("module " + module
+                + " is not in the closure");
+        }
+        SemanticOp entry = null;
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
+                    && op.payload() instanceof KindPayload.ExternalEntryPayload payload
+                    && !payload.async() && payload.exportName().equals(exportName)) {
+                entry = op;
+                break;
+            }
+        }
+        if (entry == null) {
+            throw new IllegalArgumentException("module " + module
+                + " records no sync EXTERNAL_ENTRY for export '" + exportName + "'");
+        }
+        Execution state = new Execution(project, tables, registries, responder,
+            declarationLayouts);
+        try {
+            for (Map.Entry<ModuleId, LoweredModuleUnit> moduleEntry
+                    : project.modules().entrySet()) {
+                state.runInit(moduleEntry.getKey(), moduleEntry.getValue());
+            }
+            Value returned = state.runSyncEntry(entry, List.copyOf(args));
+            return state.report(new SemanticRuntimeModel.Terminal.Success(
+                state.atomOf(returned)));
+        } catch (DealFailure failure) {
+            return state.report(new SemanticRuntimeModel.Terminal.DealFailure(
+                state.snapshot(failure)));
+        }
+    }
+
+    /**
      * The deterministic host seam of the E7 call machine: a closed
      * responder supplies every host terminal — sync returns/throws,
      * async starts (an operation label, or a bad handle), async
@@ -4874,6 +4944,60 @@ public final class SemanticOracle {
             } finally {
                 frames.remove(0);
                 popParamCells();
+            }
+        }
+
+        /**
+         * One sync {@code EXTERNAL_ENTRY} body invocation at top level
+         * (the fixture-export drive): the entry's START with no structural
+         * parent, the declared parameter cells, the body run under its
+         * owning unit exactly like the cross-unit external call (the
+         * callee unit's state is the active one for the whole entry, the
+         * body's {@code RETURN} runs the single {@code EXTERNAL_RETURN}
+         * cell), and the SUCCESS/FAILURE terminal.
+         */
+        private Value runSyncEntry(SemanticOp entry, List<Value> args) {
+            KindPayload.ExternalEntryPayload entryPayload =
+                (KindPayload.ExternalEntryPayload) entry.payload();
+            if (entryPayload.async()) {
+                throw new IllegalStateException("the sync entry invocation's entry "
+                    + entry.opId() + " is async (producer defect)");
+            }
+            UnitState state = stateOf(entry.opId());
+            LoweredFunction function = state.unit.functions().get(entryPayload.function());
+            if (function == null) {
+                throw new IllegalStateException("EXTERNAL_ENTRY resolves a missing "
+                    + "lowered function " + entryPayload.function());
+            }
+            if (args.size() != entryPayload.signature().paramTypes().size()) {
+                throw new IllegalStateException("the sync entry " + entry.opId()
+                    + " declares " + entryPayload.signature().paramTypes().size()
+                    + " parameter(s) but the invocation supplies " + args.size()
+                    + " (the entry runs no parameter boundaries — producer defect)");
+            }
+            emitStartParented(entry, null, List.of());
+            try {
+                bindParamCells(state, function.body(),
+                    entryPayload.signature().paramTypes().size(), args);
+                frames.add(0, entryPayload.function());
+                Value returned;
+                try {
+                    stateStack.push(state);
+                    try {
+                        returned = runBodyBlock(function.body(),
+                            entryPayload.signature().paramTypes().size(), state);
+                    } finally {
+                        stateStack.pop();
+                    }
+                } finally {
+                    frames.remove(0);
+                    popParamCells();
+                }
+                emitSuccessParented(entry, null, atomOf(returned));
+                return returned;
+            } catch (DealFailure failure) {
+                emitFailureParented(entry, null, failure);
+                throw failure;
             }
         }
 

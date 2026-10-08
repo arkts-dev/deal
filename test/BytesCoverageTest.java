@@ -8,6 +8,7 @@ import deal.codegen.jvm.JvmSemanticEmitter;
 import deal.codegen.lua.LuaSemanticEmitter;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.ffi.FfiGeneratedModule;
 import deal.identity.CanonicalModuleIdentity;
 import deal.module.CompilationOrchestrator;
 import deal.project.CliOverrides;
@@ -3221,6 +3222,8 @@ public class BytesCoverageTest {
     private static final String FFI_NATIVE_SOURCE = FFI_CORPUS + "/support/native.c";
     private static final String FFI_NATIVE_LIBRARY = "libcandidate_native.so";
     private static final String ACCEPT_TRANSPORT = "__accept_transport.txt";
+    /** The externals key of the corpus FFI wiring (the declaration identity). */
+    private static final String FFI_SPECIFIER = "candidate/native";
 
     /** The pinned phase-3.9 JVM extern-C rejection message. */
     private static final String JVM_FFI_REJECTION_MESSAGE =
@@ -3605,7 +3608,13 @@ public class BytesCoverageTest {
      * staged JVM class are executed with the artifact's own transport, and
      * every sidecar-pinned field (code, message, raw-coordinate rebased
      * line, column, expected, actual, source file, exit code, streams) is
-     * compared exactly.
+     * compared exactly. The fixture-level oracle agreement runs in the same
+     * order as the artifact probes — the closure's module-init walks (the
+     * fixture's own {@code main} delegation) first, then the JSON test
+     * export — and the oracle's terminal is compared against every pinned
+     * sidecar leg with the same raw-coordinate rebasing, so a disagreement
+     * in the nested traversal or the call-expression origin fails this
+     * drive even when both artifacts happen to agree.
      */
     private static void driveJsonBytesCompanion(String fixture, String export)
             throws Exception {
@@ -3638,6 +3647,22 @@ public class BytesCoverageTest {
                     assertPinnedRuntimeError(fixture + " (luajit staged artifact)",
                         sidecar, "luajit", readAcceptanceTuple(transport), run,
                         luaProject);
+                }
+                // The fixture-level oracle agreement: the materialized project
+                // lowers on the release-owned production inputs and its own
+                // export executes after the closure's init walks, exactly like
+                // the probe's __dealMain() then export order.
+                SemanticLowerer.ProjectLoweringResult lowering = lowerManifestOracle(
+                    lua.orchestrator(), Map.of(), Map.of());
+                if (lowering.project() != null) {
+                    SemanticRuntimeModel.ConsumerRun oracle =
+                        SemanticOracle.invokeSyncEntry(lowering.project(),
+                            lowering.tables(), lowering.registries(), null,
+                            lowering.project().entryModule(), export, List.of());
+                    for (String backend : List.of("luajit", "jvm")) {
+                        assertPinnedOracleError(fixture + " (oracle, " + backend
+                            + " pin)", sidecar, backend, oracle, luaProject);
+                    }
                 }
             }
         } finally {
@@ -3686,14 +3711,17 @@ public class BytesCoverageTest {
     /**
      * ffi/016 through the manifest-authored production invocation: the
      * LuaJIT staged artifact executes the native pointer-plus-length fold
-     * (width, sign, order, length) to its pinned runtime-ok outcome, and
-     * both JVM runs are rejected before publication with the sidecar-pinned
-     * E6006 — exactly one error, the pinned FFI_UNSUPPORTED_BACKEND message
-     * at the materialized declaration's {@code @extern-c} range, no FFI
-     * metadata, stages nothing — and the previous artifact set stays
-     * byte-identical. The native library is compiled into a private temp
-     * directory through the bounded subprocess contract and deleted after
-     * all artifact executions finish.
+     * (width, sign, order, length) to its pinned runtime-ok outcome, the
+     * materialized project's oracle leg computes the same fold from the
+     * actual bytes argument through the deterministic host responder seam
+     * and agrees with the native artifact and the sidecar, and both JVM
+     * runs are rejected before publication with the sidecar-pinned E6006 —
+     * exactly one error, the pinned FFI_UNSUPPORTED_BACKEND message at the
+     * materialized declaration's {@code @extern-c} range, no FFI metadata,
+     * stages nothing — and the previous artifact set stays byte-identical.
+     * The native library is compiled into a private temp directory through
+     * the bounded subprocess contract and deleted after all artifact
+     * executions finish.
      */
     private static void driveFfiBytesPointerLength() throws Exception {
         String corpusRel = FFI_CORPUS + "/" + FFI_BYTES_FIXTURE + ".deal";
@@ -3733,6 +3761,29 @@ public class BytesCoverageTest {
                             Map.of("DEAL_DEFER_MAIN", "1"));
                         assertPinnedRuntimeOk("ffi/016 (luajit staged artifact)",
                             sidecar, "luajit", run);
+                        // The fixture-level oracle agreement: the materialized
+                        // project lowers with the production extern-C metadata and
+                        // executes through the deterministic host responder seam,
+                        // whose ffi_bytes_sum folds the actual bytes argument.
+                        SemanticLowerer.ProjectLoweringResult lowering =
+                            lowerManifestOracle(lua.orchestrator(),
+                                ffiOracleDeclarationIdentities(lua.orchestrator()),
+                                ffiOracleGeneratedModules(lua.orchestrator()));
+                        if (lowering.project() != null) {
+                            int[] calls = {0};
+                            int[] fold = {-1};
+                            SemanticRuntimeModel.ConsumerRun oracle =
+                                SemanticOracle.executeProjectInits(lowering.project(),
+                                    lowering.tables(), lowering.registries(),
+                                    ffiBytesSumResponder(calls, fold));
+                            checkEq(1, calls[0], "ffi/016 (oracle): the host responder "
+                                + "serves the single declared ffi_bytes_sum call");
+                            checkEq(59443587, fold[0], "ffi/016 (oracle): the responder "
+                                + "folds the actual bytes argument (width, sign, "
+                                + "order, length) to the pinned native sum");
+                            assertPinnedRuntimeOkAgreement("ffi/016 (oracle)", sidecar,
+                                "luajit", run, oracle);
+                        }
                     }
                 }
             } finally {
@@ -3797,6 +3848,83 @@ public class BytesCoverageTest {
         check(Files.isRegularFile(library), "ffi/016: the private native library "
             + "exists: " + library);
         return library;
+    }
+
+    /**
+     * The oracle's declaration-module identities of the materialized ffi/016
+     * project: each declaration-surface extern-C module's identity is the
+     * externals key exactly as written — the same shape the production
+     * compile's declaration classification carries into the class
+     * registration seeds.
+     */
+    private static Map<ModuleId, CanonicalModuleIdentity> ffiOracleDeclarationIdentities(
+            CompilationOrchestrator orchestrator) {
+        HostDeclarationSurface surface = orchestrator.hostDeclarationSurface();
+        Map<ModuleId, CanonicalModuleIdentity> identities = new LinkedHashMap<>();
+        for (ModuleId declarationModule : surface.moduleIds()) {
+            if (surface.require(declarationModule).kind()
+                    == HostDeclarationSurface.DeclarationKind.EXTERN_C) {
+                identities.put(declarationModule,
+                    new CanonicalModuleIdentity.ExternalModule(FFI_SPECIFIER));
+            }
+        }
+        return identities;
+    }
+
+    /**
+     * The oracle's extern-C generated modules of the materialized ffi/016
+     * project: the manifest compile's own FFIGEN output keyed by module
+     * identity (the production emission's own lowering input), so the oracle
+     * lowers the metadata the production compile generates, never a second
+     * generation path.
+     */
+    private static Map<ModuleId, FfiGeneratedModule> ffiOracleGeneratedModules(
+            CompilationOrchestrator orchestrator) {
+        Map<ModuleId, FfiGeneratedModule> generated = new LinkedHashMap<>();
+        for (Map.Entry<String, FfiGeneratedModule> entry
+                : orchestrator.ffiGenerations().entrySet()) {
+            generated.put(new ModuleId(entry.getKey()), entry.getValue());
+        }
+        check(!generated.isEmpty(), "ffi/016: the manifest compile generated the "
+            + "extern-C module metadata");
+        return generated;
+    }
+
+    /**
+     * The deterministic host responder of the ffi/016 oracle leg: the single
+     * declared {@code ffi_bytes_sum(value: bytes): int} call computes the
+     * pointer-plus-length fold ({@code sum = length}, then
+     * {@code sum = sum * 257 + byte}) from the actual bytes argument the seam
+     * receives — never a canned result — so a wrong buffer, length, order, or
+     * signedness diverges from the native artifact's pinned sum.
+     */
+    private static SemanticOracle.HostResponder ffiBytesSumResponder(int[] calls,
+            int[] fold) {
+        return new SemanticOracle.HostResponder() {
+            @Override
+            public SyncOutcome call(ModuleId module, String export,
+                    RuntimeDescriptor.Func descriptor,
+                    List<SemanticOracle.Value> args) {
+                if (!FFI_SPECIFIER.replace('/', '.').equals(module.path())
+                        || !"ffi_bytes_sum".equals(export)) {
+                    return new SyncOutcome.Thrown("E9001", "unexpected host call "
+                        + module.path() + "#" + export);
+                }
+                calls[0]++;
+                SemanticOracle.Value argument = args.size() == 1 ? args.get(0) : null;
+                if (!(argument instanceof SemanticOracle.Value.BytesValue bytes)) {
+                    throw new IllegalStateException("ffi_bytes_sum received " + argument
+                        + " instead of its declared bytes argument");
+                }
+                int sum = bytes.length();
+                for (int i = 0; i < bytes.length(); i++) {
+                    sum = sum * 257 + bytes.read(i);
+                }
+                fold[0] = sum;
+                return new SyncOutcome.Returned(
+                    new SemanticOracle.Value.IntValue(sum));
+            }
+        };
     }
 
     /**
@@ -3962,6 +4090,106 @@ public class BytesCoverageTest {
             label + ": the pinned stderr");
     }
 
+    /**
+     * The fixture-level runtime-ok agreement of one staged native artifact
+     * run and one oracle run of the same materialized fixture: the native
+     * artifact's exact status and streams are compared to the sidecar's
+     * executed leg, and the oracle's terminal must be the same runtime-ok
+     * outcome at the pinned entry result ({@code null}), so an oracle
+     * disagreement in the argument fold fails the drive even when the native
+     * artifact alone passes its leg.
+     */
+    private static void assertPinnedRuntimeOkAgreement(String label,
+            SidecarExpectations.StructuredExpectationSidecar sidecar, String backend,
+            BoundedRun artifactRun, SemanticRuntimeModel.ConsumerRun oracle) {
+        assertPinnedRuntimeOk(label + " (native artifact)", sidecar, backend,
+            artifactRun);
+        SidecarExpectations.RuntimeExpectation leg = sidecar.expectationFor(backend);
+        check(leg instanceof SidecarExpectations.RuntimeExpectation.Executed executed
+                && executed.error() == null,
+            label + ": the sidecar pins an error-free executed leg");
+        if (!(leg instanceof SidecarExpectations.RuntimeExpectation.Executed executed)) {
+            return;
+        }
+        checkEq("runtime-ok", executed.mode(), label + ": the pinned mode");
+        boolean pinnedOutcome = oracle != null
+            && oracle.terminal() instanceof SemanticRuntimeModel.Terminal.Success success
+            && "null".equals(success.resultAtom());
+        check(pinnedOutcome, label + ": the oracle agrees with the native artifact "
+            + "and the sidecar on the runtime-ok outcome: "
+            + (oracle == null ? "no oracle run" : oracle.terminal()));
+    }
+
+    /**
+     * The pinned runtime-error leg of one oracle run of a materialized
+     * fixture: the oracle reports the fixture itself as the entry source, the
+     * raw coordinates rebase across the stripped classification headers, and
+     * every sidecar-pinned field (code, message, rebased raw line, column,
+     * expected, actual) compares exactly — so an oracle disagreement in the
+     * nested traversal or the call-expression origin fails the drive even
+     * when both published artifacts pass their own legs.
+     */
+    private static void assertPinnedOracleError(String label,
+            SidecarExpectations.StructuredExpectationSidecar sidecar, String backend,
+            SemanticRuntimeModel.ConsumerRun oracle, ManifestProject project) {
+        SidecarExpectations.RuntimeExpectation leg = sidecar.expectationFor(backend);
+        check(leg instanceof SidecarExpectations.RuntimeExpectation.Executed executed
+                && executed.isRuntimeError(),
+            label + ": the sidecar pins a runtime-error leg");
+        if (!(leg instanceof SidecarExpectations.RuntimeExpectation.Executed executed)
+                || !executed.isRuntimeError()) {
+            return;
+        }
+        check(oracle != null, label + ": the oracle produced a run");
+        if (oracle == null) {
+            return;
+        }
+        check(oracle.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure,
+            label + ": the oracle projects the pinned failure: " + oracle.terminal());
+        if (!(oracle.terminal()
+                instanceof SemanticRuntimeModel.Terminal.DealFailure failure)) {
+            return;
+        }
+        SemanticRuntimeModel.ErrorSnapshot error = failure.error();
+        SidecarExpectations.ErrorExpectation pinned = executed.error();
+        check(pinned != null, label + ": the sidecar pins the error snapshot");
+        if (pinned == null) {
+            return;
+        }
+        OriginAtom origin = OriginAtom.parse(error.origin());
+        Path reported = Path.of(origin.file()).toAbsolutePath().normalize();
+        String relative = project.root().relativize(reported).toString()
+            .replace(File.separatorChar, '/');
+        checkEq(project.corpusRel(), relative, label + ": the oracle reports the "
+            + "fixture itself as the entry source (fixture-as-entry materialization)");
+        checkEq(pinned.code(), error.code(), label + ": the pinned code");
+        checkEq(pinned.message(), error.message(), label + ": the pinned message");
+        checkEq(pinned.line(), origin.line() + project.strippedHeaderLines(),
+            label + ": the pinned raw line (rebased across the stripped headers)");
+        checkEq(pinned.column(), origin.column(), label + ": the pinned column");
+        checkEq(pinned.expected().orElse(null), error.expected(), label + ": the "
+            + "pinned expected token");
+        checkEq(pinned.actual().orElse(null), error.actual(), label + ": the "
+            + "pinned actual token");
+    }
+
+    /** One {@code file:line:column} origin atom of an oracle error snapshot. */
+    private record OriginAtom(String file, int line, int column) {
+
+        static OriginAtom parse(String atom) {
+            int lastColon = atom.lastIndexOf(':');
+            int previousColon = lastColon <= 0 ? -1
+                : atom.lastIndexOf(':', lastColon - 1);
+            if (previousColon < 0) {
+                throw new IllegalStateException("the oracle origin '" + atom
+                    + "' is not a file:line:column atom");
+            }
+            return new OriginAtom(atom.substring(0, previousColon),
+                Integer.parseInt(atom.substring(previousColon + 1, lastColon)),
+                Integer.parseInt(atom.substring(lastColon + 1)));
+        }
+    }
+
     private static Map<String, byte[]> snapshotTree(Path root) throws Exception {
         Map<String, byte[]> snapshot = new LinkedHashMap<>();
         if (!Files.isDirectory(root)) {
@@ -4118,20 +4346,38 @@ public class BytesCoverageTest {
             + "' is absent from the source");
     }
 
-    /** The oracle's run of one manifest-authored compile over the closure. */
-    private static SemanticRuntimeModel.ConsumerRun runManifestOracle(
-            CompilationOrchestrator orchestrator) {
+    /**
+     * The oracle's lowering of one manifest-authored compile: the release
+     * production invocation over the orchestrator's checked project,
+     * manifests, and declaration surface with the caller-supplied
+     * declaration-module identities and extern-C generated modules (empty
+     * for a compile without an extern-C import — the production emission's
+     * own lowering inputs). A lowering that produces no project is reported
+     * and the caller skips its oracle leg, never a silent pass.
+     */
+    private static SemanticLowerer.ProjectLoweringResult lowerManifestOracle(
+            CompilationOrchestrator orchestrator,
+            Map<ModuleId, CanonicalModuleIdentity> declarationIdentities,
+            Map<ModuleId, FfiGeneratedModule> externCModules) {
         CheckedProjectBuildResult checked = orchestrator.checkedProject();
         RequirementManifestResult manifests = orchestrator.requirementManifests();
         SemanticLowerer.ProjectLoweringResult result = SemanticLowerer.lowerProject(
             productionInvocation(), checked.input(), checked.index(),
-            manifests.manifests(), orchestrator.hostDeclarationSurface(), Map.of(),
-            Map.of(), BuiltinErrorDeclaration.synthesized(
+            manifests.manifests(), orchestrator.hostDeclarationSurface(),
+            declarationIdentities, externCModules, BuiltinErrorDeclaration.synthesized(
                 checked.input().modules().get(0).ast().span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW), Set.of());
         check(result.project() != null, "the manifest oracle lowering runs with zero "
             + "diagnostics: " + result.diagnostics());
+        return result;
+    }
+
+    /** The oracle's run of one manifest-authored compile over the closure. */
+    private static SemanticRuntimeModel.ConsumerRun runManifestOracle(
+            CompilationOrchestrator orchestrator) {
+        SemanticLowerer.ProjectLoweringResult result = lowerManifestOracle(orchestrator,
+            Map.of(), Map.of());
         if (result.project() == null) {
             return null;
         }
