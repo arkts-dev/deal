@@ -143,7 +143,16 @@ public final class JsonClassAlgorithmAdapter {
             return new ClassOpsExecutor.JsonStringify.Failure(
                 fieldPathPrefix + first.pinnedPath(), first.actual(), true);
         }
-        SharedStdlibSemantics.Value mapped = toStdlib(value);
+        // The mapping truncates a path-local re-entry (a container already on
+        // the traversal's own path maps to an empty container of its own kind)
+        // instead of descending into it again: a value whose first failure
+        // precedes a cycle still maps to a finite structure. The pre-walk's
+        // first failure precedes every re-entry in the walk order, so E8
+        // selects that same position before it can reach a truncation, and an
+        // outcome that made a truncation observable would diverge from the
+        // pre-walk and fail the guards below closed.
+        SharedStdlibSemantics.Value mapped = toStdlib(value,
+            Collections.newSetFromMap(new IdentityHashMap<>()));
         if (mapped instanceof SharedStdlibSemantics.Value.Table table) {
             return stringifyE8(table, fieldPathPrefix, false, first);
         }
@@ -241,11 +250,20 @@ public final class JsonClassAlgorithmAdapter {
      * projection's own classification), and an invalid-scalar string
      * maps with its classification preserved — E8's stringify walk then
      * projects each as the pinned {@code JSON_TO_ERROR} failure via the
-     * seam's {@code Failure(fieldPath, actual)} terminal. Only clean
-     * values reach this mapping (the pre-walk short-circuits every
-     * failing value, cyclic containers included, first).
+     * seam's {@code Failure(fieldPath, actual)} terminal.
+     *
+     * <p>The mapping truncates a path-local container re-entry (a container
+     * already on the traversal's own path maps to an empty container of its own
+     * kind, without descending into it again), so a value whose first failure
+     * precedes a cycle still maps to a finite structure. The truncation is
+     * never an observable product: the pre-walk's first failure precedes every
+     * re-entry in the walk order, so E8 selects that same position before it
+     * can reach a truncation, and a truncation that did become reachable would
+     * make E8's outcome diverge from the pre-walk, which the caller's guards
+     * reject as a producer defect.
      */
-    private static SharedStdlibSemantics.Value toStdlib(ClassOpsExecutor.Value value) {
+    private static SharedStdlibSemantics.Value toStdlib(ClassOpsExecutor.Value value,
+                                                        Set<Object> path) {
         return switch (value) {
             case ClassOpsExecutor.Value.Null ignored ->
                 SharedStdlibSemantics.Value.Null.INSTANCE;
@@ -262,24 +280,36 @@ public final class JsonClassAlgorithmAdapter {
                 SharedStdlibSemantics.Value.string(string.scalar());
             case ClassOpsExecutor.Value.Table table -> {
                 SemanticTable<SharedStdlibSemantics.Value> mapped = new SemanticTable<>();
-                for (String key : table.table().keys()) {
-                    SemanticTable.Lookup<ClassOpsExecutor.Value> lookup =
-                        table.table().get(key);
-                    if (!(lookup instanceof SemanticTable.Lookup.Present<
-                            ClassOpsExecutor.Value> present)) {
-                        throw new IllegalStateException("a table key is always present; got "
-                            + "Missing for '" + key + "' — a producer defect, never a "
-                            + "projection");
+                if (path.add(table.table())) {
+                    try {
+                        for (String key : table.table().keys()) {
+                            SemanticTable.Lookup<ClassOpsExecutor.Value> lookup =
+                                table.table().get(key);
+                            if (!(lookup instanceof SemanticTable.Lookup.Present<
+                                    ClassOpsExecutor.Value> present)) {
+                                throw new IllegalStateException("a table key is always "
+                                    + "present; got Missing for '" + key + "' — a "
+                                    + "producer defect, never a projection");
+                            }
+                            mapped.put(key, toStdlib(present.value(), path));
+                        }
+                    } finally {
+                        path.remove(table.table());
                     }
-                    mapped.put(key, toStdlib(present.value()));
                 }
                 yield new SharedStdlibSemantics.Value.Table(mapped);
             }
             case ClassOpsExecutor.Value.Array array -> {
                 java.util.List<SharedStdlibSemantics.Value> mapped =
                     new java.util.ArrayList<>(array.array().size());
-                for (ClassOpsExecutor.Value element : array.array().elements()) {
-                    mapped.add(toStdlib(element));
+                if (path.add(array.array())) {
+                    try {
+                        for (ClassOpsExecutor.Value element : array.array().elements()) {
+                            mapped.add(toStdlib(element, path));
+                        }
+                    } finally {
+                        path.remove(array.array());
+                    }
                 }
                 yield SharedStdlibSemantics.Value.array(mapped);
             }
