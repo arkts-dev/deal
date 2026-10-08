@@ -7982,8 +7982,9 @@ __ARM_TABLE__
 -- One arm renderer. The arm's own template is the message source; the
 -- named-parameter map supplies exactly the arm's declared parameters; the
 -- origin operand is the executing op's SourceOrigin. A missing arm, an
--- INNER_ONLY arm rendered at a failure site, a SIBLING_OWNED arm, an
--- absent origin operand, or an expected/actual field that does not match
+-- INNER_ONLY arm rendered at a failure site, a SIBLING_OWNED binding slot
+-- (the projection binding, the origin convention, or a parameter source),
+-- an absent origin operand, or an expected/actual field that does not match
 -- the arm's declared shape is a producer defect — never a fallback text,
 -- never a derived or substituted span, and never a composed suffix.
 -- One arm template's text instantiated with its named parameter values.
@@ -8013,11 +8014,37 @@ local function __parametersText(arm)
   end
   return table.concat(parts, ",")
 end
+-- The retained sibling-owned markers (W5): no declared arm may carry one
+-- in any binding slot, and no render publishes a tuple (or an inner text)
+-- of a marked arm. The chunk's arm table is the registry's canonical
+-- serialization, and this guard is the closed backstop for any hand-built
+-- arm injected into the chunk-level table: a SIBLING_OWNED projection
+-- binding, a SIBLING_OWNED origin convention, or a SIBLING_OWNED_ACTUAL
+-- parameter source fails closed instead of rendering.
+local function __checkMarkedBindingSlots(id, arm)
+  if arm.a == "SIBLING_OWNED" then
+    error("failure arm '"..id.."' has a SIBLING_OWNED projection binding "
+      .."(producer defect)", 0)
+  end
+  if arm.o == "SIBLING_OWNED" then
+    error("failure arm '"..id.."' has a SIBLING_OWNED origin convention "
+      .."(producer defect)", 0)
+  end
+  for entry in string.gmatch(arm.k or "", "[^,]+") do
+    local eq = string.find(entry, "=", 1, true)
+    if eq ~= nil and string.sub(entry, eq + 1) == "SIBLING_OWNED_ACTUAL" then
+      error("failure arm '"..id.."' declares the parameter source "
+        .."SIBLING_OWNED_ACTUAL for its parameter '"
+        ..string.sub(entry, 1, eq - 1).."' (producer defect)", 0)
+    end
+  end
+end
 local function __renderTemplate(id, values)
   local arm = __arms[id]
   if arm == nil then
     error("unknown failure arm '"..tostring(id).."' (producer defect)", 0)
   end
+  __checkMarkedBindingSlots(id, arm)
   local declared, count = __declaredParameterNames(arm)
   local supplied = 0
   if values ~= nil then
@@ -8273,10 +8300,7 @@ local function __arm(id, values, origin, expected, actual)
     error("failure arm '"..id.."' is INNER_ONLY: it renders only into another "
       .."arm's inner reason (producer defect)", 0)
   end
-  if arm.a == "SIBLING_OWNED" then
-    error("failure arm '"..id.."' has a SIBLING_OWNED projection binding "
-      .."(producer defect)", 0)
-  end
+  __checkMarkedBindingSlots(id, arm)
   if origin == nil then
     -- The origin is the render's one operand (the executing op's
     -- SourceOrigin): an absent operand would publish a DEAL-visible

@@ -2112,16 +2112,55 @@ public class FailureArmAuthorityTest {
             "a consumer-derived JVM origin is reported by field name span");
 
         // The emitted __arm guard (W5's artifact-surface subject): a marked
-        // entry injected into the chunk-level arm table is rejected.
+        // entry injected into the chunk-level arm table is rejected in every
+        // marked binding slot — the projection binding, the origin
+        // convention, and a parameter source — before it publishes a tuple.
+        // The valid walk and cycle arms stay the controls: the guard is not
+        // a blanket refusal of hand-supplied entries.
         List<String> markedRows = runPreludeProbe("""
             __arms["MARKED_PROBE"] = {c = "E8001", t = "marked", e = "NONE",
               a = "SIBLING_OWNED", s = "TOP_LEVEL", o = "CALL_EXPRESSION", k = ""}
             local ok = pcall(__arm, "MARKED_PROBE", nil, "-", nil, nil)
             print("marked-entry|" .. tostring(ok))
-            """, "marked-entry-probe", 1);
+            __arms["MARKED_ORIGIN"] = {c = "E8001",
+              t = "cyclic value cannot be encoded as JSON", e = "NONE", a = "NONE",
+              s = "TOP_LEVEL", o = "SIBLING_OWNED", k = ""}
+            ok = pcall(__arm, "MARKED_ORIGIN", nil, "-", nil, nil)
+            print("marked-origin|" .. tostring(ok))
+            __arms["MARKED_SOURCE"] = {c = "E8001",
+              t = "value at {fieldPath} is not JSON serializable: {actual}",
+              e = "NONE", a = "TYPED_BOUNDARY", s = "TOP_LEVEL",
+              o = "CALL_EXPRESSION",
+              k = "fieldPath=FIELD_PATH,actual=SIBLING_OWNED_ACTUAL"}
+            ok = pcall(__arm, "MARKED_SOURCE",
+              {fieldPath = "data.k", actual = "function"}, "-", nil, "function")
+            print("marked-source|" .. tostring(ok))
+            ok, value = pcall(__arm, "JSON_TO_WALK",
+              {fieldPath = "data.k", actual = "function"}, "-", nil, "function")
+            print("walk-control|" .. tostring(ok) .. "|"
+              .. (ok and value.m or tostring(value)))
+            ok, value = pcall(__arm, "JSON_TO_WALK_CYCLE", nil, "-", nil, nil)
+            print("cycle-control|" .. tostring(ok) .. "|"
+              .. (ok and value.m or tostring(value)))
+            """, "marked-entry-probe", 5);
         checkEq("marked-entry|false", markedRows.get(0),
-            "the emitted __arm rejects a marked entry injected into the chunk-level "
-                + "arm table");
+            "the emitted __arm rejects a marked projection binding injected into "
+                + "the chunk-level arm table");
+        checkEq("marked-origin|false", markedRows.get(1),
+            "the emitted __arm rejects a marked origin convention injected into "
+                + "the chunk-level arm table, even with a supplied origin operand");
+        checkEq("marked-source|false", markedRows.get(2),
+            "the emitted __arm rejects a marked parameter source injected into the "
+                + "chunk-level arm table, even with its declared parameters and "
+                + "fields supplied");
+        checkEq("walk-control|true|value at data.k is not JSON serializable: function",
+            markedRows.get(3),
+            "the emitted __arm keeps rendering the valid walk arm after the marked-slot "
+                + "guards");
+        checkEq("cycle-control|true|cyclic value cannot be encoded as JSON",
+            markedRows.get(4),
+            "the emitted __arm keeps rendering the valid cycle arm after the "
+                + "marked-slot guards");
 
         // The origin operand negative: a walk failure renders the operand its
         // consumer received, and a consumer-derived span is reported by field.
