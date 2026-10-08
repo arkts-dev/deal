@@ -587,6 +587,159 @@ public class CompositeTerminatorAnalysisTest {
     }
 
     /**
+     * The partial-transfer composition: an open-branch composite's
+     * reachable {@code break}/{@code continue} path is preserved while the
+     * statements of one block compose, so a following {@code return}/{@code
+     * throw} classifies the literal-true loop body {@code TRANSFER} instead
+     * of {@code RETURN_OR_THROW}. The loop can then exit normally through
+     * the transfer, does not terminate the enclosing body, and the pinned
+     * implicit null return is retained as the body block's trailing
+     * statement — for every literal-true loop form and every partial shape.
+     */
+    static void testPartialTransferKeepsImplicitReturn() throws Exception {
+        System.out.println("-- the partial transfers: an open-branch composite's "
+            + "break/continue path keeps the literal-true loop's implicit null "
+            + "return --");
+        record LoopForm(String name, String header) {
+        }
+        List<LoopForm> forms = List.of(
+            new LoopForm("while (true)", "while (true) {"),
+            new LoopForm("for (; true; )", "for (; true; ) {"),
+            new LoopForm("for (;;)", "for (;;) {"),
+            new LoopForm("for-let", "for (let i: int = 0; true; i = i + 1) {"));
+        record PartialShape(String name, String body) {
+        }
+        List<PartialShape> shapes = List.of(
+            new PartialShape("if without else then return", """
+                if (c) { break; }
+                return null;"""),
+            new PartialShape("if without else then throw", """
+                if (c) { break; }
+                throw { code: "PARTIAL", message: "partial" }"""),
+            new PartialShape("if/else with one open branch then return", """
+                if (c) { break; } else { }
+                return null;"""),
+            new PartialShape("try/catch with one open branch then return", """
+                try { if (c) { break; } } catch (e) { }
+                return null;"""),
+            new PartialShape("if/else with a transferring else then return", """
+                if (c) { } else { break; }
+                return null;"""),
+            new PartialShape("try/catch with a transferring catch then return", """
+                try { } catch (e) { if (c) { break; } }
+                return null;"""),
+            new PartialShape("if without else with continue then return", """
+                if (c) { continue; }
+                return null;"""),
+            new PartialShape("try/catch with continue then return", """
+                try { if (c) { continue; } } catch (e) { }
+                return null;"""),
+            new PartialShape("if without else with continue then throw", """
+                if (c) { continue; }
+                throw { code: "PARTIAL", message: "partial" }"""),
+            new PartialShape("try/catch with continue then throw", """
+                try { if (c) { continue; } } catch (e) { }
+                throw { code: "PARTIAL", message: "partial" }"""));
+        for (LoopForm form : forms) {
+            for (PartialShape shape : shapes) {
+                String name = form.name() + ", " + shape.name();
+                String source = probeProgram("export function probe(c: boolean): null {\n"
+                    + "  " + form.header() + "\n"
+                    + "    " + shape.body().replace("\n", "\n    ") + "\n"
+                    + "  }\n}\n");
+                Lowered lowered = lowerProbe(name, source);
+                if (lowered == null) {
+                    continue;
+                }
+                List<SemanticOp> implicit = lowered.implicitReturns();
+                checkEq(1, implicit.size(), name + ": the partial-transfer body "
+                    + "keeps the pinned implicit null return");
+                List<BlockId> bodies = lowered.declaredBodyBlocks();
+                if (bodies.isEmpty()) {
+                    continue;
+                }
+                BlockId probeBody = bodies.get(0);
+                List<SemanticOp> ops = lowered.blockOps(probeBody);
+                check(!ops.isEmpty() && ops.get(ops.size() - 1).kind()
+                        == SemanticOpKind.RETURN,
+                    name + ": the implicit return is the body block's trailing "
+                        + "statement (op kinds " + kindsOf(lowered, probeBody) + ")");
+                if (!implicit.isEmpty()) {
+                    check(ops.contains(implicit.get(0)), name + ": the implicit "
+                        + "RETURN is a member of the probe body block");
+                }
+            }
+        }
+    }
+
+    /**
+     * The monotone partial-transfer composition: an unreachable tail behind
+     * a terminator never flips a terminated body to {@code TRANSFER} (a
+     * fabricated transfer path would wrongly keep a literal-true loop's
+     * implicit return), and a nested body's partial transfer never reaches
+     * an enclosing body's state (the bodies' blocks are disjoint — the
+     * enclosing loop still terminates its body).
+     */
+    static void testPartialTransferMonotonicity() throws Exception {
+        System.out.println("-- the unreachable tails and nested bodies never modify "
+            + "the partial-transfer state --");
+        record Terminated(String name, String source, int implicitReturns) {
+        }
+        List<Terminated> terminated = List.of(
+            new Terminated("return then break tail", probeProgram("""
+                export function probe(c: boolean): null {
+                  while (true) {
+                    return null;
+                    if (c) { break; }
+                  }
+                }
+                """), 0),
+            new Terminated("both-branch return then partial break tail",
+                probeProgram("""
+                    export function probe(c: boolean): null {
+                      while (true) {
+                        if (c) { return null; } else { return null; }
+                        if (c) { break; }
+                      }
+                    }
+                    """), 0),
+            new Terminated("nested body's partial transfer", probeProgram("""
+                export function probe(c: boolean): null {
+                  while (true) {
+                    function inner(d: boolean): null {
+                      while (true) {
+                        if (d) { break; }
+                        return null;
+                      }
+                    }
+                    return null;
+                  }
+                }
+                """), 1));
+        for (Terminated shape : terminated) {
+            Lowered lowered = lowerProbe(shape.name(), shape.source());
+            if (lowered == null) {
+                continue;
+            }
+            checkEq(shape.implicitReturns(), lowered.implicitReturns().size(),
+                shape.name() + ": only the genuinely open bodies keep the pinned "
+                    + "implicit null return");
+            List<BlockId> bodies = lowered.declaredBodyBlocks();
+            if (bodies.isEmpty()) {
+                continue;
+            }
+            List<SemanticOp> probeOps = lowered.blockOps(bodies.get(0));
+            check(!probeOps.isEmpty() && probeOps.get(probeOps.size() - 1).kind()
+                    == SemanticOpKind.LOOP,
+                shape.name() + ": the probe body block ends with its literal-true "
+                    + "LOOP (op kinds " + kindsOf(lowered, bodies.get(0)) + ")");
+            check(probeOps.stream().noneMatch(op -> op.kind() == SemanticOpKind.RETURN),
+                shape.name() + ": the terminated probe body carries no RETURN op "
+                    + "(op kinds " + kindsOf(lowered, bodies.get(0)) + ")");
+        }
+    }
+
+    /**
      * The nested-body disjointness: a literal-true loop inside a nested
      * declared body marks the nested body, never the enclosing loop's body
      * — the enclosing body stays {@code OPEN} and keeps its implicit null
@@ -1091,6 +1244,293 @@ public class CompositeTerminatorAnalysisTest {
         driveDifferentialFixtures(NESTED_BODY_FIXTURES);
     }
 
+    /**
+     * The fourteen partial-transfer probes of the real-toolchain matrix:
+     * the six break/return shapes (the four literal-true loop forms —
+     * while, {@code for (; true; )}, test-less {@code for (;;)}, for-let —
+     * plus the open-branch {@code if}/{@code else} and {@code try}/{@code
+     * catch} shapes), four finite partial-continue probes (one per loop
+     * form) whose continue path executes exactly once before the probe's
+     * break exit, and four partial-transfer-then-throw probes (one per
+     * loop form) whose throw executes on the non-break path and is caught
+     * by the body's own catch (so the loop itself never fails and the
+     * three consumers stay event-for-event). Every probe keeps its pinned
+     * implicit null return; the driver entry executes every break exit
+     * (the retained implicit return), every continue (the finite loop's
+     * first iteration), and every throw (the caught error path).
+     */
+    private static final String PARTIAL_TRANSFER_PROBE_SOURCE = """
+        export function probeWhile(c: boolean): null {
+          while (true) {
+            if (c) { break; }
+            return null;
+          }
+        }
+
+        export function probeFor(c: boolean): null {
+          for (; true; ) {
+            if (c) { break; }
+            return null;
+          }
+        }
+
+        export function probeTestless(c: boolean): null {
+          for (;;) {
+            if (c) { break; }
+            return null;
+          }
+        }
+
+        export function probeForLet(c: boolean): null {
+          for (let i: int = 0; true; i = i + 1) {
+            if (c) { break; }
+            return null;
+          }
+        }
+
+        export function probeIfElse(c: boolean): null {
+          while (true) {
+            if (c) { break; } else { }
+            return null;
+          }
+        }
+
+        export function probeTryCatch(c: boolean): null {
+          while (true) {
+            try { if (c) { break; } } catch (e) { }
+            return null;
+          }
+        }
+
+        export function probeContinueWhile(c: boolean): null {
+          let i: int = 0;
+          while (true) {
+            if (i < 1) { i = i + 1; continue; }
+            if (c) { break; }
+            return null;
+          }
+        }
+
+        export function probeContinueFor(c: boolean): null {
+          let i: int = 0;
+          for (; true; ) {
+            if (i < 1) { i = i + 1; continue; }
+            if (c) { break; }
+            return null;
+          }
+        }
+
+        export function probeContinueTestless(c: boolean): null {
+          let i: int = 0;
+          for (;;) {
+            if (i < 1) { i = i + 1; continue; }
+            if (c) { break; }
+            return null;
+          }
+        }
+
+        export function probeContinueForLet(c: boolean): null {
+          for (let i: int = 0; true; i = i + 1) {
+            if (i < 1) { continue; }
+            if (c) { break; }
+            return null;
+          }
+        }
+
+        export function probeThrowWhile(c: boolean): null {
+          while (true) {
+            try {
+              if (c) { break; }
+              throw { code: "T_WHILE", message: "partial" }
+            } catch (e) {
+              return null;
+            }
+          }
+        }
+
+        export function probeThrowFor(c: boolean): null {
+          for (; true; ) {
+            try {
+              if (c) { break; }
+              throw { code: "T_FOR", message: "partial" }
+            } catch (e) {
+              return null;
+            }
+          }
+        }
+
+        export function probeThrowTestless(c: boolean): null {
+          for (;;) {
+            try {
+              if (c) { break; }
+              throw { code: "T_TESTLESS", message: "partial" }
+            } catch (e) {
+              return null;
+            }
+          }
+        }
+
+        export function probeThrowForLet(c: boolean): null {
+          for (let i: int = 0; true; i = i + 1) {
+            try {
+              if (c) { break; }
+              throw { code: "T_FORLET", message: "partial" }
+            } catch (e) {
+              return null;
+            }
+          }
+        }
+
+        export function main(): null {
+          probeWhile(true);
+          probeWhile(false);
+          probeFor(true);
+          probeFor(false);
+          probeTestless(true);
+          probeTestless(false);
+          probeForLet(true);
+          probeForLet(false);
+          probeIfElse(true);
+          probeIfElse(false);
+          probeTryCatch(true);
+          probeTryCatch(false);
+          probeContinueWhile(true);
+          probeContinueWhile(false);
+          probeContinueFor(true);
+          probeContinueFor(false);
+          probeContinueTestless(true);
+          probeContinueTestless(false);
+          probeContinueForLet(true);
+          probeContinueForLet(false);
+          probeThrowWhile(true);
+          probeThrowWhile(false);
+          probeThrowFor(true);
+          probeThrowFor(false);
+          probeThrowTestless(true);
+          probeThrowTestless(false);
+          probeThrowForLet(true);
+          probeThrowForLet(false);
+          return null;
+        }
+        """;
+
+    /**
+     * The partial-transfer probes on the real toolchains: the oracle and
+     * both shared artifacts agree event-for-event with the pinned null
+     * outcome (no trace mismatch is admitted), every retained implicit
+     * null return is a member of its declared body block and executes
+     * exactly once per consumer on its probe's break exit, and the
+     * affected transfer/error paths execute — the four finite
+     * partial-continue paths (each continue runs exactly once) and the
+     * four caught partial-transfer throw bodies (each throw runs exactly
+     * once) per consumer.
+     */
+    static void testPartialTransferProductionParity() throws Exception {
+        System.out.println("-- the partial-transfer probes through the oracle and "
+            + "both shared artifacts (the real toolchains) --");
+        Path root = Files.createTempDirectory("partial-transfer-parity-");
+        try {
+            write(root, "src/app.deal", PARTIAL_TRANSFER_PROBE_SOURCE);
+            Lowered lowered = lowerProjectRoot(root, "src/app.deal");
+            if (lowered == null) {
+                return;
+            }
+            List<SemanticOp> implicit = lowered.implicitReturns();
+            checkEq(14, implicit.size(), "the fourteen partial-transfer probes each "
+                + "retain their implicit null return");
+            List<OpId> implicitIds = implicit.stream().map(SemanticOp::opId).toList();
+            for (OpId id : implicitIds) {
+                boolean member = false;
+                for (BlockId body : lowered.declaredBodyBlocks()) {
+                    for (SemanticOp op : lowered.blockOps(body)) {
+                        if (op.opId().equals(id)) {
+                            member = true;
+                        }
+                    }
+                }
+                check(member, "the retained implicit null return " + id
+                    + " is a member of its declared body block");
+            }
+            Set<OpId> continueOps = new java.util.LinkedHashSet<>();
+            Set<OpId> throwOps = new java.util.LinkedHashSet<>();
+            for (SemanticOp op : lowered.unit().ops()) {
+                if (op.kind() == SemanticOpKind.CONTINUE) {
+                    continueOps.add(op.opId());
+                }
+                if (op.kind() == SemanticOpKind.THROW) {
+                    throwOps.add(op.opId());
+                }
+            }
+            checkEq(4, continueOps.size(), "the unit carries the four finite "
+                + "partial-continue probes' continue ops");
+            checkEq(4, throwOps.size(), "the unit carries the four partial-transfer"
+                + " throw bodies' throw ops");
+            Path workspace = Files.createTempDirectory("partial-transfer-parity-ws-");
+            try {
+                SemanticDifferentialHarness.Verdict verdict =
+                    SemanticDifferentialHarness.runProject(lowered.project(),
+                        lowered.tables(), lowered.registries(),
+                        SemanticDifferentialHarness.Expectation.success(
+                            "partial-transfer probes", List.of(), "null"), workspace);
+                check(verdict.pass(), "the oracle and both shared artifacts agree "
+                    + "event-for-event and the probes complete with null (no trace "
+                    + "mismatch is admitted): " + verdict.failures());
+                checkEq(3, verdict.runs().size(), "the drive produced the exact "
+                    + "three consumers: " + verdict.failures());
+                for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+                    check(run.terminal()
+                            instanceof SemanticRuntimeModel.Terminal.Success success
+                            && "null".equals(success.resultAtom()),
+                        run.consumer() + " completes with the pinned null outcome: "
+                            + run.terminal());
+                    for (OpId id : implicitIds) {
+                        int executed = 0;
+                        for (SemanticRuntimeModel.TraceEvent event : run.trace()) {
+                            if (event.phase() == SemanticRuntimeModel.Phase.SUCCESS
+                                    && event.op().equals(id)) {
+                                executed++;
+                            }
+                        }
+                        checkEq(1, executed, run.consumer() + " executed the retained "
+                            + "implicit null return " + id + " on its probe's break "
+                            + "exit");
+                    }
+                    int continues = 0;
+                    int throwsExecuted = 0;
+                    Set<OpId> executedContinues = new java.util.LinkedHashSet<>();
+                    Set<OpId> executedThrows = new java.util.LinkedHashSet<>();
+                    for (SemanticRuntimeModel.TraceEvent event : run.trace()) {
+                        if (event.kind() == SemanticOpKind.CONTINUE
+                                && event.phase() == SemanticRuntimeModel.Phase.SUCCESS) {
+                            continues++;
+                            executedContinues.add(event.op());
+                        }
+                        if (event.kind() == SemanticOpKind.THROW
+                                && event.phase() == SemanticRuntimeModel.Phase.FAILURE) {
+                            throwsExecuted++;
+                            executedThrows.add(event.op());
+                        }
+                    }
+                    checkEq(8, continues, run.consumer() + " executed the four "
+                        + "finite partial-continue probes' continue path once per "
+                        + "invocation (both the break and the return drive)");
+                    checkEq(4, throwsExecuted, run.consumer() + " executed the four "
+                        + "partial-transfer throw bodies exactly once each");
+                    checkEq(continueOps, executedContinues, run.consumer()
+                        + " executed the continue op of every finite "
+                        + "partial-continue probe");
+                    checkEq(throwOps, executedThrows, run.consumer()
+                        + " executed the throw op of every partial-transfer throw "
+                        + "body");
+                }
+            } finally {
+                deleteRecursively(workspace);
+            }
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
     private static void driveDifferentialFixtures(List<Fixture> fixtures) throws Exception {
         for (Fixture fixture : fixtures) {
             Path root = Files.createTempDirectory("composite-terminator-matrix-");
@@ -1275,12 +1715,15 @@ public class CompositeTerminatorAnalysisTest {
         testCompositeMarkingPositives();
         testNullBothReturnTailMonotonicity();
         testCompositeMarkingNegatives();
+        testPartialTransferKeepsImplicitReturn();
+        testPartialTransferMonotonicity();
         testNestedBodyDisjointness();
         testUnterminatedNonNullStillFailsClosed();
         testLiteralTrueLoopOnNonNullBodyAtUnitLevel();
         testProductionArtifacts();
         testDifferentialMatrix();
         testNestedBodyProductionParity();
+        testPartialTransferProductionParity();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
