@@ -77,6 +77,7 @@ import deal.types.Types;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -279,6 +280,27 @@ public final class JsBackend {
     private final List<Set<String>> localScopes = new ArrayList<>();
 
     /**
+     * Parallel per-scope emitted-name maps (one frame per
+     * {@link #localScopes} frame): a block-scoped {@code let} that
+     * shadows a binding visible from an enclosing frame is renamed
+     * ({@code x$1}, {@code x$2}, ...) so the emitted artifact never
+     * depends on the JavaScript temporal dead zone. The language's
+     * non-hoisting rule resolves a reference inside the shadowing
+     * declaration's initializer — and any reference textually before
+     * the declaration in the same block — against the enclosing
+     * binding, while the emitted {@code let} would shadow it for the
+     * whole block; the rename keeps the enclosing binding readable
+     * while leaving the shadowing binding distinct. User identifiers
+     * cannot contain {@code $} (E2008), so the generated names never
+     * collide with source names.
+     */
+    private final List<Map<String, String>> localEmittedNames =
+        new ArrayList<>();
+
+    /** Per-name shadow renames allocated so far (the {@code $N} suffix). */
+    private final Map<String, Integer> shadowOrdinals = new HashMap<>();
+
+    /**
      * Parallel stack of nested class names visible at the current walk
      * position (one frame per {@link #localScopes} frame): a class
      * declaration hoisted in a statement list registers its name here
@@ -349,6 +371,7 @@ public final class JsBackend {
         this.sourceMapGenerator = sourceMapGenerator;
         this.int32Mode = semanticProfile == SemanticProfile.DEAL_V1_2_INT32;
         localScopes.add(new HashSet<>());
+        localEmittedNames.add(new HashMap<>());
     }
 
     // =========================================================================
@@ -2083,11 +2106,6 @@ public final class JsBackend {
      * checker-inferred type at the declaration span.
      */
     private void visit(VariableDeclaration node) {
-        // NameResolver.walkVarDecl defines the name in the current scope
-        // BEFORE walking the initializer — the emitted JS `let` binding
-        // scopes identically, so the tracking mirrors it.
-        declareLocal(node.name());
-        String name = jsName(node.name());
         // A checker-accepted var-before-function pair in this statement
         // list shares the hoisted function's predeclared binding (the
         // checker's walkFuncDecl skips the second define — one symbol):
@@ -2108,15 +2126,21 @@ public final class JsBackend {
             ? node.typeAnnotation().get().span()
             : node.initializer().span();
 
+        // NameResolver.walkVarDecl resolves the initializer before the
+        // declaration defines the name (the non-hoisting rule: a self
+        // reference resolves against an enclosing binding). The
+        // initializer text emits before the binding registers, so a
+        // reference to a shadowed name inside it resolves against the
+        // enclosing binding's emitted name — the rename's whole point.
+        String initText;
         if (hasAnnotation && targetType != null
                 && !(targetType instanceof Type.Error)) {
             // The annotated target crosses the initializer's typed
             // boundary; boundaryValue emits the initializer itself, so
             // an arity-extension adapter can splice the value text at
             // its exact generated position (js-v12-source-maps D2).
-            line(keyword + name + " = "
-                + boundaryValue(node.initializer(), targetType,
-                    exprType, span) + ";");
+            initText = boundaryValue(node.initializer(), targetType,
+                exprType, span);
         } else if (!hasAnnotation && exprType != null
                 && node.initializer() instanceof LiteralExpr
                 && (exprType instanceof Type.Int
@@ -2124,20 +2148,21 @@ public final class JsBackend {
                     || exprType instanceof Type.String
                     || exprType instanceof Type.Number
                     || exprType instanceof Type.Null)) {
-            line(keyword + name + " = "
-                + emitExpression(node.initializer()) + ";");
+            initText = emitExpression(node.initializer());
         } else {
             String init = emitExpression(node.initializer());
             Type checkType = targetType != null ? targetType : exprType;
             if (checkType != null
                     && !(checkType instanceof Type.Error)
                     && !(checkType instanceof Type.Null)) {
-                line(keyword + name + " = "
-                    + emitCheckExpr(init, checkType, span) + ";");
+                initText = emitCheckExpr(init, checkType, span);
             } else {
-                line(keyword + name + " = " + init + ";");
+                initText = init;
             }
         }
+        String name = plainAssign ? jsName(node.name())
+            : declareBinding(node.name());
+        line(keyword + name + " = " + initText + ";");
     }
 
     /**
@@ -2236,19 +2261,22 @@ public final class JsBackend {
             switch (node.init().get()) {
                 case ForInit.VarDecl vd -> {
                     VariableDeclaration decl = vd.decl();
-                    declareLocal(decl.name());
                     Type varType = decl.typeAnnotation().isPresent()
                         ? resolveTypeNode(decl.typeAnnotation().get()) : null;
+                    // The head initializer emits before the binding
+                    // registers (non-hoisting: a self reference
+                    // resolves against an enclosing binding).
                     String initExpr = emitExpression(decl.initializer());
                     Span initSpan = decl.typeAnnotation().isPresent()
                         ? decl.typeAnnotation().get().span()
                         : decl.initializer().span();
+                    String emitted = declareBinding(decl.name());
                     if (varType != null
                             && !(varType instanceof Type.Error)) {
-                        initPart = "let " + jsName(decl.name()) + " = "
+                        initPart = "let " + emitted + " = "
                             + emitCheckExpr(initExpr, varType, initSpan);
                     } else {
-                        initPart = "let " + jsName(decl.name())
+                        initPart = "let " + emitted
                             + " = " + initExpr;
                     }
                 }
@@ -2305,12 +2333,14 @@ public final class JsBackend {
      */
     private void visit(ForOfStatement node) {
         Type iterableType = typeOf(node.iterable());
-        String varName = jsName(node.varName());
         line("{");
         indent++;
         pushLocalScope();
         line("const $iter = " + emitExpression(node.iterable()) + ";");
-        declareLocal(node.varName());
+        // The element binding registers after the iterable emitted
+        // (non-hoisting: an iterable reference to a shadowed name
+        // resolves against the enclosing binding).
+        String varName = declareBinding(node.varName());
         if (iterableType instanceof Type.Array) {
             line("for (let $i = 0; ; $i++) {");
             indent++;
@@ -2619,16 +2649,57 @@ public final class JsBackend {
 
     private void pushLocalScope() {
         localScopes.add(new HashSet<>());
+        localEmittedNames.add(new HashMap<>());
         localClassScopes.add(new HashSet<>());
     }
 
     private void popLocalScope() {
         localScopes.remove(localScopes.size() - 1);
+        localEmittedNames.remove(localEmittedNames.size() - 1);
         localClassScopes.remove(localClassScopes.size() - 1);
     }
 
     private void declareLocal(String name) {
         localScopes.get(localScopes.size() - 1).add(name);
+    }
+
+    /**
+     * Declares one block-scoped binding whose initializer has already
+     * emitted (the caller must emit the initializer first: the language
+     * resolves references inside it against the enclosing scopes, never
+     * against the declaration being initialized), returning the name
+     * the emitted {@code let} and every later reference must use. A
+     * name already visible from an enclosing frame is renamed so the
+     * emitted binding shadows without putting the enclosing binding in
+     * the temporal dead zone. The caller emits the declaration itself
+     * (the returned name is the binding position).
+     */
+    private String declareBinding(String name) {
+        String emitted = jsName(name);
+        if (isLocalName(name)) {
+            int ordinal = shadowOrdinals.merge(name, 1, Integer::sum);
+            emitted = name + "$" + ordinal;
+        }
+        declareLocal(name);
+        localEmittedNames.get(localEmittedNames.size() - 1).put(name, emitted);
+        return emitted;
+    }
+
+    /**
+     * The emitted name of a variable reference: the innermost scope
+     * frame binding the raw name decides (its own rename when one was
+     * allocated, the translated source name otherwise); frames that
+     * only declare parameters, catch bindings, or hoisted functions
+     * carry no rename and terminate the lookup at their own name.
+     */
+    private String emittedNameFor(String name) {
+        for (int i = localScopes.size() - 1; i >= 0; i--) {
+            if (localScopes.get(i).contains(name)) {
+                String mapped = localEmittedNames.get(i).get(name);
+                return mapped != null ? mapped : jsName(name);
+            }
+        }
+        return jsName(name);
     }
 
     /**
@@ -2781,7 +2852,7 @@ public final class JsBackend {
             return name + "$meta";
         }
         if (variableFrame >= 0) {
-            return jsName(name);
+            return emittedNameFor(name);
         }
         if (symbols.resolve(name) instanceof Symbol.ClassSymbol) {
             return name + "$meta";
@@ -3467,7 +3538,7 @@ public final class JsBackend {
                 + " = " + emitExpression(assign.value());
         }
         if (assign.target() instanceof IdentifierExpr id) {
-            return jsName(id.name()) + " = "
+            return emittedNameFor(id.name()) + " = "
                 + checkedAssignmentValue(assign.value(),
                     typeOf(assign.target()), typeOf(assign.value()), span);
         }

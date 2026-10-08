@@ -1,0 +1,62 @@
+// @spec: Variables — Declaration order
+// @description: A shadowing initializer and any earlier reference in the shadowing block resolve against the enclosing binding, never the declaration being initialized; the same precedence holds for loop and catch bindings (v1.2 defect snippet 65)
+// @expected: runtime-ok
+// @features: variables, declaration-order, shadowing, v1.2
+
+export function test_let_shadowing_initializer(): null {
+  let x: int = 3;
+  {
+    let x: int = x;
+    if (x !== 3) {
+      throw { code: "TEST_FAIL", message: "shadowing initializer read the declaration" };
+    }
+  }
+  let y: int = 4;
+  {
+    let before: int = y;
+    let y: int = 5;
+    if (before !== 4 || y !== 5) {
+      throw { code: "TEST_FAIL", message: "pre-declaration read missed the enclosing binding" };
+    }
+  }
+  let z: int = 6;
+  {
+    let read: () => int = function(): int { return z; };
+    let z: int = 7;
+    if (read() !== 6 || z !== 7) {
+      throw { code: "TEST_FAIL", message: "closure read missed the enclosing binding" };
+    }
+  }
+  let total: int = 0;
+  for (let i: int = 0; i < 2; i = i + 1) {
+    let before: int = i;
+    let i: int = 50;
+    total = total + before + i;
+  }
+  if (total !== 101) {
+    throw { code: "TEST_FAIL", message: "for-head shadow missed the loop binding" };
+  }
+  let sum: int = 0;
+  let values: int[] = [1, 2];
+  for (let v: int of values) {
+    let before: int = v;
+    let v: int = 10;
+    sum = sum + before + v;
+  }
+  if (sum !== 23) {
+    throw { code: "TEST_FAIL", message: "for-of shadow missed the element binding" };
+  }
+  try {
+    throw { code: "SHADOW_X", message: "catch shadow" };
+  } catch (e) {
+    let e: Error = e;
+    if (e.code !== "SHADOW_X") {
+      throw { code: "TEST_FAIL", message: "catch shadow missed the catch binding" };
+    }
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

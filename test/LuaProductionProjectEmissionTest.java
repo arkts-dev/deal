@@ -659,6 +659,61 @@ public class LuaProductionProjectEmissionTest {
             deleteRecursively(growth.root());
         }
 
+        // (b3) The shadowing-binding probe (ISSUE-0717, defect snippet
+        //      65): a shadowing declaration's initializer and every
+        //      reference before it resolve against the enclosing
+        //      binding — the loop/catch frame fast path never overrides
+        //      a nearer shadowing declaration. Real luajit must exit 0.
+        String shadowSource = """
+            export function main(): null {
+              let x: int = 3;
+              {
+                let x: int = x;
+                if (x !== 3) { throw { code: "SHADOW_FAIL", message: "shadowing initializer" }; }
+              }
+              let sum: int = 0;
+              let values: int[] = [1, 2];
+              for (let v: int of values) {
+                let before: int = v;
+                let v: int = 10;
+                sum = sum + before + v;
+              }
+              if (sum !== 23) { throw { code: "SHADOW_FAIL", message: "for-of shadow" }; }
+              try {
+                throw { code: "SHADOW_X", message: "catch shadow" };
+              } catch (e) {
+                let e: Error = e;
+                if (e.code !== "SHADOW_X") { throw { code: "SHADOW_FAIL", message: "catch shadow" }; }
+              }
+              return null;
+            }
+            """;
+        Fixture shadow = compileProject(shadowSource);
+        Path shadowWorkspace = Files.createTempDirectory("lua-production-project-shadow");
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(shadow);
+            if (result.project() == null) {
+                fail("the shadowing-binding fixture lowers: " + result.diagnostics());
+                return;
+            }
+            Path artifact = shadowWorkspace.resolve("project.lua");
+            Files.writeString(artifact, LuaSemanticEmitter.emitProductionProject(
+                result.project(), result.tables(), result.registries(),
+                shadow.surface()),
+                StandardCharsets.UTF_8);
+            deployRuntime(shadowWorkspace);
+            ProcessOutcome run = runProcess(List.of("luajit",
+                artifact.toAbsolutePath().toString()), shadowWorkspace);
+            checkEq(0, run.exitCode(),
+                "the shadowing-binding fixture exits 0 under luajit: stdout="
+                    + escaped(run.stdout()) + " stderr=" + escaped(run.stderr()));
+            checkEq("", run.stderr(),
+                "the shadowing-binding fixture publishes no trace protocol on stderr");
+        } finally {
+            deleteRecursively(shadowWorkspace);
+            deleteRecursively(shadow.root());
+        }
+
         // (c) The conversion-overflow fixture: exit 1, DEAL_ERROR_CODE: E8004
         //     on stdout (never a trace terminal).
         Fixture overflow = compileProject(OVERFLOW_APP_SOURCE);

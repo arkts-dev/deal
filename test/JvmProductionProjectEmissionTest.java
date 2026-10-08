@@ -593,6 +593,87 @@ public class JvmProductionProjectEmissionTest {
     }
 
     // =========================================================================
+    // 5. The shadowing-binding probe (ISSUE-0717, defect snippet 65)
+    // =========================================================================
+
+    /**
+     * The shadowing-binding shape: a shadowing declaration's
+     * initializer and every reference before it resolve against the
+     * enclosing binding, and the loop/catch frame fast path never
+     * overrides a nearer shadowing declaration. The production artifact
+     * must compile and exit 0 under the real toolchain.
+     */
+    private static void testShadowingBindings() throws Exception {
+        System.out.println("-- the shadowing-binding fixture compiles and runs "
+            + "under the real toolchain --");
+        String shadowSource = """
+            export function main(): null {
+              let x: int = 3;
+              {
+                let x: int = x;
+                if (x !== 3) { throw { code: "SHADOW_FAIL", message: "shadowing initializer" }; }
+              }
+              let sum: int = 0;
+              let values: int[] = [1, 2];
+              for (let v: int of values) {
+                let before: int = v;
+                let v: int = 10;
+                sum = sum + before + v;
+              }
+              if (sum !== 23) { throw { code: "SHADOW_FAIL", message: "for-of shadow" }; }
+              try {
+                throw { code: "SHADOW_X", message: "catch shadow" };
+              } catch (e) {
+                let e: Error = e;
+                if (e.code !== "SHADOW_X") { throw { code: "SHADOW_FAIL", message: "catch shadow" }; }
+              }
+              return null;
+            }
+            """;
+        Fixture fixture = compileProject(shadowSource, "src/main.deal");
+        Path workspace = Files.createTempDirectory("jvm-production-project-shadow");
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+            if (result.project() == null) {
+                fail("the shadowing-binding fixture project lowers: "
+                    + result.diagnostics());
+                return;
+            }
+            ExecutableLoweredProject project = result.project();
+            String className = JvmBackend.classNameFor(project.entryModule().path());
+            JvmSemanticEmitter.EmissionResult emission =
+                JvmSemanticEmitter.emitProductionProject(project, result.tables(),
+                    result.registries(), className, fixture.surface());
+
+            Path source = workspace.resolve(className + ".java");
+            Files.writeString(source, emission.source(), StandardCharsets.UTF_8);
+            Path classes = workspace.resolve("classes");
+            Files.createDirectories(classes);
+            String classpath = absoluteClasspath();
+            ProcessOutcome javacRun = runProcess(List.of("javac", "--release", "25",
+                "-proc:none", "-cp", classpath, "-d", classes.toString(),
+                source.toAbsolutePath().toString()), workspace);
+            check(javacRun.exitCode() == 0,
+                "the shadowing-binding artifact compiles with javac --release 25 "
+                    + "-proc:none: " + javacRun.output());
+            if (javacRun.exitCode() != 0) {
+                return;
+            }
+            ProcessOutcome run = runProcess(List.of("java", "-cp",
+                classpath + java.io.File.pathSeparator + classes, className), workspace);
+            checkEq(0, run.exitCode(),
+                "the shadowing-binding artifact exits 0: " + run.output());
+            checkEq("", run.stdout(),
+                "the shadowing-binding run prints nothing on stdout");
+            checkEq("", run.stderr(),
+                "the shadowing-binding run prints nothing on stderr");
+        } finally {
+            deleteRecursively(workspace);
+            deleteRecursively(fixture.root());
+        }
+    }
+
+    // =========================================================================
     // Driver sources
     // =========================================================================
 
@@ -830,6 +911,7 @@ public class JvmProductionProjectEmissionTest {
             testEmittedTextShapes(baseline);
             testCompileAndRun(baseline);
             testOverflowTerminal();
+            testShadowingBindings();
         } finally {
             deleteRecursively(fixture.root());
         }

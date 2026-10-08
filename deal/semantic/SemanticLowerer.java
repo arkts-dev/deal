@@ -10840,15 +10840,23 @@ public final class SemanticLowerer {
             Type type = checkedType(identifier);
             for (ForEachFrame frame : frames) {
                 if (frame.name().equals(identifier.name())) {
+                    FrameResolution loopResolution = resolveFrame(frame.name());
+                    if (loopResolution != null
+                            && !loopResolution.entry().cell().id.equals(
+                                frame.binding())) {
+                        // A nearer enclosing-block declaration binds the
+                        // name (the checker's non-hoisting rule gives a
+                        // shadowing declaration priority over the loop
+                        // binding it shadows): the regular resolution
+                        // below owns the load, never the frame fast path.
+                        break;
+                    }
                     if (closureCore) {
                         // The iteration binding is a free reference of every
                         // open detached-body walk whose scope chain excludes
                         // it: register the capture through the same frame
                         // resolution the environment serves (R4 item 5).
-                        FrameResolution loopResolution = resolveFrame(frame.name());
-                        if (loopResolution != null
-                                && loopResolution.entry().cell().id.equals(
-                                    frame.binding())) {
+                        if (loopResolution != null) {
                             maybeRegisterCapture(frame.name(), loopResolution);
                         }
                     }
@@ -10861,6 +10869,14 @@ public final class SemanticLowerer {
             }
             for (CatchFrame frame : catchFrames) {
                 if (frame.name().equals(identifier.name())) {
+                    FrameResolution catchResolution = resolveFrame(frame.name());
+                    if (catchResolution != null
+                            && !catchResolution.entry().cell().id.equals(
+                                frame.binding())) {
+                        // Same precedence rule as the loop frames: a
+                        // nearer shadowing declaration owns the load.
+                        break;
+                    }
                     return emitDynamicAwareLoad(
                         new KindPayload.BindingLoadPayload(frame.binding(),
                             INITIAL_LOOP_GENERATION),
