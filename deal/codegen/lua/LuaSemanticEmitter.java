@@ -6482,6 +6482,10 @@ public final class LuaSemanticEmitter {
                     + " closure (the one lowering resolves every COMPILED import to a"
                     + " closure module — a producer defect)");
             }
+            if (kind == ModuleImportKind.COMPILED
+                    && units.containsKey(payload.module())) {
+                requirePublishedExport(op.opId(), payload.module(), payload.name());
+            }
             emitStart(op);
             if (kind == ModuleImportKind.COMPILED) {
                 out.append(slot((ValueId) op.result())).append(" = __exportValue(")
@@ -6904,15 +6908,32 @@ local function __jsonToLanguage(v)
   return out
 end
 -- The final descriptor conformance check of the walk (K-D8 step 7).
+-- A numeric position admits the raw number and the read-side variant
+-- carrier (__readVar's __jn shape) alike, always judged by its own
+-- recorded variant: the oracle keeps the admitted Int/Double variant and
+-- the shared JVM runtime keeps its boxed variant, so an int-variant
+-- carrier is the int and a number-variant carrier the number — never a
+-- carrier rejected merely for its representation (the recursive
+-- nullable/array positions included).
 local function __jsonConforms(desc, v)
   local kind, inner = __jsonKindOf(desc)
   if kind == "null" then return v == nil end
   if kind == "boolean" then return type(v) == "boolean" end
   if kind == "int" then
+    if type(v) == "table" and v.__jn then
+      -- The int position admits the int variant only (the oracle's
+      -- Value.Int admission; a number-variant carrier fails exactly like
+      -- the oracle's Number-at-Int case).
+      if v.k ~= "int" then return false end
+      v = v.d
+    end
     return type(v) == "number" and v == math.floor(v)
       and v >= -2147483648 and v <= 2147483647
   end
-  if kind == "number" then return type(v) == "number" end
+  if kind == "number" then
+    if type(v) == "table" and v.__jn then return true end
+    return type(v) == "number"
+  end
   if kind == "string" then return type(v) == "string" and __jsonValidUtf8(v) end
   if kind == "table" then return type(v) == "table" and v.__t == true end
   if kind == "array" then

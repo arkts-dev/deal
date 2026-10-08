@@ -31,6 +31,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -159,6 +160,16 @@ public abstract class EmitterSessionBase {
      * session's own {@code MODULE_IMPORT} payloads (M6).
      */
     protected final Map<ModuleId, ModuleImportKind> importKinds = new LinkedHashMap<>();
+    /**
+     * The published export names of every closure module: the names the
+     * module's own {@code EXPORT_PUBLISH} ops write into its export
+     * surface during its module-init walk. A compiled export read whose
+     * name is absent here names a surface the module never publishes — a
+     * producer defect the session fails closed on, never a fabricated
+     * value (a missing helper export included).
+     */
+    protected final Map<ModuleId, LinkedHashSet<String>> publishedExports =
+        new LinkedHashMap<>();
     /** Ops the block walk skips (the entry delegation of a non-entry module). */
     protected final Set<OpId> skippedOps = new HashSet<>();
     protected final StringBuilder out = new StringBuilder();
@@ -215,6 +226,14 @@ public abstract class EmitterSessionBase {
                 KindPayload.ModuleImportPayload payload =
                     (KindPayload.ModuleImportPayload) op.payload();
                 importKinds.putIfAbsent(payload.resolvedModule(), payload.kind());
+            }
+            if (op.kind() == SemanticOpKind.EXPORT_PUBLISH) {
+                KindPayload.ExportPublishPayload payload =
+                    (KindPayload.ExportPublishPayload) op.payload();
+                publishedExports
+                    .computeIfAbsent(moduleUnit.moduleId(),
+                        key -> new LinkedHashSet<>())
+                    .add(payload.name());
             }
             if (op.kind() == SemanticOpKind.BINDING_ALLOC) {
                 KindPayload.BindingAllocPayload payload =
@@ -287,6 +306,28 @@ public abstract class EmitterSessionBase {
             }
         }
         return false;
+    }
+
+    /**
+     * The fail-closed publication completeness guard of one compiled
+     * export read: the named export must be one the callee unit publishes
+     * through an {@code EXPORT_PUBLISH} op of its own module-init walk.
+     * An unpublished name would read the module surface's missing-entry
+     * row at execution time (a fabricated absence) — the session fails
+     * closed instead, naming the read, the export, and the module (a
+     * missing helper export is exactly this inconsistent fact).
+     */
+    protected final void requirePublishedExport(OpId readOp, ModuleId module,
+            String name) {
+        Set<String> published = publishedExports.get(module);
+        if (published != null && published.contains(name)) {
+            return;
+        }
+        throw new IllegalStateException("the compiled EXPORT_READ " + readOp
+            + " of export '" + name + "' of module '" + module.path()
+            + "' names an export the module never publishes through an"
+            + " EXPORT_PUBLISH op of its module-init walk (a publisher-less"
+            + " surface entry is a producer defect, never a fabricated value)");
     }
 
     /** The STDLIB_PARAMETER children in one-based declared order. */

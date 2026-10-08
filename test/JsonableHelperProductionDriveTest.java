@@ -3,11 +3,18 @@ package deal.test;
 import deal.checker.BuiltinErrorDeclaration;
 import deal.codegen.Backend;
 import deal.codegen.jvm.JvmBackend;
+import deal.codegen.jvm.JvmSemanticEmitter;
+import deal.codegen.lua.LuaSemanticEmitter;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.distribution.DistributionHome;
 import deal.module.CompilationOrchestrator;
+import deal.module.ProductionProjectEmission;
 import deal.project.ProjectContext;
 import deal.project.ProjectLocator;
+import deal.publication.PublicationStager;
+import deal.semantic.CheckedModuleInput;
 import deal.semantic.CheckedProjectBuildResult;
+import deal.semantic.CheckedProjectInput;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
 import deal.semantic.HostDeclarationSurface;
@@ -16,8 +23,10 @@ import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticOracle;
 import deal.semantic.SemanticRuntimeModel;
+import deal.semantic.ir.BlockId;
 import deal.semantic.ir.CallMode;
 import deal.semantic.ir.ExecutableLoweredProject;
+import deal.semantic.ir.ExportInterface;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
@@ -96,9 +105,12 @@ import java.util.stream.Stream;
  * deletion (exact text for replacement and append, outcome parity for the
  * deleted missing slot); a null element in {@code (int | null)[]} must
  * roundtrip on all three consumers while the same document stays rejected
- * by {@code int[]}; and a read-derived numeric variant carrier must
+ * by {@code int[]}; a read-derived numeric variant carrier must
  * serialize at a declared {@code number} field and array element with its
- * own variant's spelling. The pinned-failure leg's comparison is itself
+ * own variant's spelling, and the same carrier produced by an omitted
+ * nested-class default must conform at its declared {@code number},
+ * {@code number | null}, and {@code number[]} positions (with its
+ * explicit-value control). The pinned-failure leg's comparison is itself
  * covered by negative controls: unexpected process stdout, an incorrect
  * process exit status, or wrong stderr is rejected.</p>
  *
@@ -108,7 +120,20 @@ import java.util.stream.Stream;
  * captures the cross-module helper call and the pinned helper JSON
  * failure from the lowered project through {@link SemanticOracle}, so the
  * comparison fails if the canonical failure projection authority is
- * broken.</p>
+ * broken. A fixture's {@code main} runs through the oracle's main leg (the
+ * fixture itself lowered as the entry, so its own entry delegation invokes
+ * {@code main} exactly once — the artifact probes' sequence) before the
+ * export leg's ordered non-main export loop, and a main-only control
+ * proves the leg captures a deliberate main failure. The inconsistent-fact
+ * negatives cover the missing generated helper export and the missing
+ * recorded callee entry: the hand-built checked-project fact fails the
+ * real production arm closed with one E6005 through the producer guard and
+ * stages nothing on both targets, a checker-valid cross-module call to an
+ * entry-delegation-owned export fails the arm closed the same way, and the
+ * same helper facts at the lowered-IR level (a removed
+ * {@code EXPORT_PUBLISH} publication and a removed recorded
+ * {@code EXTERNAL_ENTRY}) are rejected by both production emitters with
+ * the named producer defect and stage nothing.</p>
  */
 public class JsonableHelperProductionDriveTest {
 
@@ -1181,9 +1206,13 @@ public class JsonableHelperProductionDriveTest {
 
     /**
      * The oracle driver entry for the ordered zero-arity export loop: the
-     * fixture is a non-entry module here (its {@code main} is invoked by
-     * the driver's own entry delegation), so every test export runs
-     * exactly as the artifact probe's ordered loop runs it.
+     * fixture is a dependency here, and its non-{@code main} exports run
+     * exactly as the artifact probes' ordered loop runs them. The fixture's
+     * {@code main} is not called here (a cross-module {@code main} call is
+     * no valid invocation shape: the declaring module records no
+     * {@code EXTERNAL_ENTRY} for it — the entry delegation owns its single
+     * invocation); the main leg below lowers the fixture itself as the
+     * entry so the entry delegation runs it exactly once.
      */
     private static String oracleDriver(Project project, List<Export> exports) {
         String fixtureStem = moduleNameOf(
@@ -1201,13 +1230,39 @@ public class JsonableHelperProductionDriveTest {
         return source.append("  return null\n}\n").toString();
     }
 
+    /**
+     * The oracle's main leg: the fixture itself is the entry module of the
+     * one-lowering closure, so its own entry delegation invokes its declared
+     * {@code main} exactly once — the exact sequence the artifact probes run
+     * first. Returns the failure, or {@code null} on success.
+     */
+    private static SemanticRuntimeModel.ErrorSnapshot oracleMainFailure(
+            Project project, String label) throws Exception {
+        Lowered lowered = lower(project, label);
+        if (lowered == null) {
+            return null;
+        }
+        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.executeProjectInits(
+            lowered.project(), lowered.tables(), lowered.registries(),
+            new SemanticOracle.HostResponder() { });
+        if (run.terminal() instanceof SemanticRuntimeModel.Terminal.Success) {
+            return null;
+        }
+        return ((SemanticRuntimeModel.Terminal.DealFailure) run.terminal()).error();
+    }
+
     private static String oracleOutcome(Project project,
             SemanticRuntimeModel.ConsumerRun run) {
         if (run.terminal() instanceof SemanticRuntimeModel.Terminal.Success) {
             return "ok";
         }
-        SemanticRuntimeModel.ErrorSnapshot error =
-            ((SemanticRuntimeModel.Terminal.DealFailure) run.terminal()).error();
+        return oracleOutcomeOfFailure(project,
+            ((SemanticRuntimeModel.Terminal.DealFailure) run.terminal()).error());
+    }
+
+    /** The one outcome spelling of one oracle failure snapshot. */
+    private static String oracleOutcomeOfFailure(Project project,
+            SemanticRuntimeModel.ErrorSnapshot error) {
         String file = null;
         Integer line = null;
         Integer column = null;
@@ -1242,8 +1297,9 @@ public class JsonableHelperProductionDriveTest {
      */
     private static void testOracleAgreement() throws Exception {
         System.out.println("-- the combined dependency step: the oracle over every "
-            + "family fixture (the cross-module helper call and the pinned "
-            + "helper JSON failure included) --");
+            + "family fixture (each fixture's main through its own entry "
+            + "delegation, the cross-module helper call, and the pinned helper "
+            + "JSON failure included) --");
         List<String> driven = new ArrayList<>(FAMILY_FIXTURES);
         driven.add(NEAR_COLLISION);
         driven.add(EXPORT_KEYS);
@@ -1254,18 +1310,31 @@ public class JsonableHelperProductionDriveTest {
             try {
                 List<Export> exports = exportsOf(
                     Files.readString(project.entryFile(), StandardCharsets.UTF_8));
+                // The main leg: the fixture is the entry module of its own
+                // one-lowering closure, so the entry delegation invokes its
+                // declared main exactly once — the artifact probes' first
+                // step. A main-leg failure dominates (the probes never reach
+                // the export loop after a failing main).
+                SemanticRuntimeModel.ErrorSnapshot mainFailure =
+                    oracleMainFailure(project, fixtureRel + " (oracle main)");
+                String mainOutcome = mainFailure == null ? "ok"
+                    : oracleOutcomeOfFailure(project, mainFailure);
                 Path driver = project.srcRoot().resolve("__oracle_drive.deal");
                 Files.writeString(driver, oracleDriver(project, exports),
                     StandardCharsets.UTF_8);
-                Lowered lowered = lower(project, driver, fixtureRel + " (oracle)");
+                Lowered lowered = lower(project, driver,
+                    fixtureRel + " (oracle exports)");
                 if (lowered == null) {
                     continue;
                 }
-                String outcome = oracleOutcome(project,
+                String exportOutcome = oracleOutcome(project,
                     SemanticOracle.executeProjectInits(lowered.project(),
                         lowered.tables(), lowered.registries(),
                         new SemanticOracle.HostResponder() { }));
-                System.out.println("   oracle " + fixtureRel + ": " + outcome);
+                String outcome = "ok".equals(mainOutcome) ? exportOutcome
+                    : mainOutcome;
+                System.out.println("   oracle " + fixtureRel + ": main "
+                    + mainOutcome + "; exports " + exportOutcome);
                 Optional<SidecarExpectations.RuntimeExpectation.Executed> pinned =
                     pinnedOf(fixtureRel);
                 if (pinned.isPresent()) {
@@ -1527,7 +1596,8 @@ public class JsonableHelperProductionDriveTest {
 
     private static void testNegatives() throws Exception {
         System.out.println("-- the negatives: the near-collision identifier, the "
-            + "non-@jsonable class, and the missing helper export --");
+            + "non-@jsonable class, and the E2004 frontend missing-helper "
+            + "reference --");
         // The near-collision fixture: a local identifier `User_fromJson`
         // next to the helper `User$fromJson` changes no outcome (its leg
         // already reproduced the pinned runtime-ok sidecar byte-exact).
@@ -1603,6 +1673,299 @@ public class JsonableHelperProductionDriveTest {
                 "nothing stages for the missing-helper reference");
         } finally {
             deleteRecursively(missing);
+        }
+    }
+
+    /**
+     * The declaring module's checked export list without one export name:
+     * the hand-built inconsistent "missing helper export" fact (no
+     * checker-valid program produces it — the checker's synthetic export
+     * is the generated helper's authority).
+     */
+    private static CheckedProjectInput withoutExport(CheckedProjectInput project,
+            ModuleId module, String export) {
+        List<CheckedModuleInput> modules = new ArrayList<>();
+        for (CheckedModuleInput entry : project.modules()) {
+            if (!entry.moduleId().equals(module)) {
+                modules.add(entry);
+                continue;
+            }
+            List<ExportInterface> exports = new ArrayList<>();
+            for (ExportInterface candidate : entry.exports()) {
+                if (!candidate.name().equals(export)) {
+                    exports.add(candidate);
+                }
+            }
+            modules.add(new CheckedModuleInput(entry.moduleId(), entry.sourceId(),
+                entry.sourcePath(), entry.ast(), entry.checks(), entry.imports(),
+                exports, entry.kind()));
+        }
+        return new CheckedProjectInput(project.invocation(), project.entryModule(),
+            modules, project.releaseStateHash());
+    }
+
+    /**
+     * The lowered project with one module's matching ops removed from the
+     * produced-op list <em>and</em> from its block-membership table: the
+     * hand-built inconsistent fact an "otherwise valid generated helper"
+     * with a missing export or a missing recorded callee entry is (no
+     * checker-valid program produces it, and the removal is complete — the
+     * block walk never resolves a removed id).
+     */
+    private static Lowered withoutUnitOps(Lowered lowered, ModuleId module,
+            java.util.function.Predicate<SemanticOp> remove) {
+        LoweredModuleUnit unit = lowered.project().modules().get(module);
+        List<SemanticOp> ops = new ArrayList<>();
+        List<OpId> removed = new ArrayList<>();
+        for (SemanticOp op : unit.ops()) {
+            if (remove.test(op)) {
+                removed.add(op.opId());
+            } else {
+                ops.add(op);
+            }
+        }
+        LoweredModuleUnit replaced = new LoweredModuleUnit(unit.formatVersion(),
+            unit.semanticProfile(), unit.moduleId(), unit.interfaceHash(),
+            unit.loweringContextHash(), unit.requiredCapabilities(),
+            unit.constructCoverage(), unit.classLayouts(), unit.functions(),
+            unit.moduleInit(), unit.exportPlan(), unit.functionBindings(), ops);
+        Map<ModuleId, LoweredModuleUnit> modules = new LinkedHashMap<>();
+        for (Map.Entry<ModuleId, LoweredModuleUnit> entry
+                : lowered.project().modules().entrySet()) {
+            modules.put(entry.getKey(),
+                entry.getKey().equals(module) ? replaced : entry.getValue());
+        }
+        ExecutableLoweredProject project = new ExecutableLoweredProject(
+            lowered.project().semanticProfile(), lowered.project().interfaceIndex(),
+            modules, lowered.project().entryModule());
+        StructuredBodyTable table = lowered.tables().get(module);
+        Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
+        for (Map.Entry<BlockId, List<OpId>> entry : table.blockOps().entrySet()) {
+            List<OpId> kept = new ArrayList<>();
+            for (OpId id : entry.getValue()) {
+                if (!removed.contains(id)) {
+                    kept.add(id);
+                }
+            }
+            blockOps.put(entry.getKey(), kept);
+        }
+        Map<OpId, BlockId> opBlocks = new LinkedHashMap<>(table.opBlocks());
+        for (OpId id : removed) {
+            opBlocks.remove(id);
+        }
+        Map<ModuleId, StructuredBodyTable> tables = new LinkedHashMap<>(lowered.tables());
+        tables.put(module, new StructuredBodyTable(blockOps, opBlocks));
+        return new Lowered(project, tables, lowered.registries(),
+            lowered.entryModule());
+    }
+
+    /**
+     * Both production emitters fail closed on one hand-built inconsistent
+     * helper fact with a named producer defect: exactly the
+     * {@code IllegalStateException} the production arm maps to its
+     * registered {@code SHARED_EMITTER_COVERAGE} rule, leaving the staged
+     * set empty.
+     */
+    private static void assertEmitterRejectsMissingFact(String what,
+            Lowered lowered, HostDeclarationSurface surface,
+            String... requiredDetails) throws Exception {
+        for (Target target : Target.values()) {
+            Path out = Files.createTempDirectory("jsonable-missing-fact-");
+            PublicationStager stager = PublicationStager.forRoot(out);
+            String rejection = null;
+            try {
+                if (target == Target.LUAJIT) {
+                    LuaSemanticEmitter.emitProductionProject(lowered.project(),
+                        lowered.tables(), lowered.registries(), surface);
+                } else {
+                    JvmSemanticEmitter.emitProductionProject(lowered.project(),
+                        lowered.tables(), lowered.registries(), "Probe", surface);
+                }
+            } catch (IllegalStateException guard) {
+                rejection = guard.getMessage();
+            }
+            boolean names = rejection != null;
+            for (String detail : requiredDetails) {
+                names = names && rejection.contains(detail);
+            }
+            check(names, what + " [" + target.laneName() + "]: the emitter fails "
+                + "closed with the named producer defect (" + rejection + ")");
+            check(stager.stagedSet().relativePaths().isEmpty(),
+                what + " [" + target.laneName() + "]: the fail-closed emission "
+                    + "stages nothing");
+            deleteRecursively(out);
+        }
+    }
+
+    /**
+     * The inconsistent-fact negatives (the task criterion's "a missing
+     * helper export or a missing callee entry fails closed with the
+     * guard's rule identifier and stages nothing"): the otherwise valid
+     * cross-module project's generated {@code Widget$fromJson} with its
+     * export removed (a hand-built checked-project fact) fails the real
+     * production arm closed with one E6005 and an empty staged set on both
+     * targets; the missing recorded callee entry fails the real production
+     * arm closed the same way through a checker-valid cross-module call to
+     * an export the declaring module records no entry for (the entry
+     * delegation owns it); and at the lowered-IR mechanism level the same
+     * helper facts — a missing {@code EXPORT_PUBLISH} publication and a
+     * missing recorded {@code EXTERNAL_ENTRY} — are rejected by both
+     * production emitters with the named producer defect and stage nothing.
+     */
+    private static void testMissingHelperFactsFailClosed() throws Exception {
+        System.out.println("-- the inconsistent-fact negatives: a missing generated "
+            + "helper export and a missing recorded callee entry fail closed "
+            + "through the producer guard and stage nothing --");
+        checkEq("SHARED_EMITTER_COVERAGE",
+            ProductionProjectEmission.SHARED_EMITTER_COVERAGE,
+            "the registered emitter-coverage rule id an emitter rejection maps to");
+        Project project = materialize(FAMILY_DIR + "/jsonable-cross-module", Target.JVM);
+        try {
+            ProjectLocator.LocateResult located = ProjectLocator.locate(
+                project.entryFile().toString(), null);
+            check(located.context() != null,
+                "the cross-module fixture locates for the negatives");
+            if (located.context() == null) {
+                return;
+            }
+            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                located.context(), project.entryFile(), false, false, false, false,
+                null, productionInvocation());
+            boolean compiled = orchestrator.compile();
+            CheckedProjectBuildResult built = orchestrator.checkedProject();
+            RequirementManifestResult manifests = orchestrator.requirementManifests();
+            HostDeclarationSurface surface = orchestrator.hostDeclarationSurface();
+            check(compiled && built != null && built.input() != null
+                    && built.index() != null && manifests != null
+                    && manifests.manifests() != null && surface != null,
+                "the negatives' checked project builds: "
+                    + (built == null ? "no checked project" : built.diagnostics()));
+            if (!compiled || built == null || built.input() == null
+                    || built.index() == null || manifests == null
+                    || manifests.manifests() == null || surface == null) {
+                return;
+            }
+            // (a) The missing helper export through the real production arm:
+            // the declaring module's checked export list lacks
+            // Widget$fromJson while the cross-module caller still reads it.
+            ModuleId lib = new ModuleId("jsonable_lib");
+            CheckedProjectInput missingExport = withoutExport(built.input(), lib,
+                "Widget$fromJson");
+            for (Target target : Target.values()) {
+                Path out = project.root().resolve("out-missing-export-"
+                    + target.laneName());
+                PublicationStager stager = PublicationStager.forRoot(out);
+                ProductionProjectEmission.Result result;
+                List<String> staged;
+                try {
+                    result = ProductionProjectEmission.run(productionInvocation(),
+                        missingExport, built.index(), manifests.manifests(), surface,
+                        Map.of(), Map.of(), project.root().toString(),
+                        BuiltinErrorDeclaration.synthesized(
+                            built.input().modules().get(0).ast().span()),
+                        List.of(IntrinsicKind.INT_CONVERT,
+                            IntrinsicKind.NUMBER_CONVERT),
+                        Set.of(),
+                        target == Target.JVM ? Backend.JVM : Backend.LUAJIT, false,
+                        DistributionHome.forManifestDirectory(
+                            project.root().toString()), stager);
+                    staged = new ArrayList<>(stager.stagedSet().relativePaths());
+                } finally {
+                    stager.discard();
+                }
+                CompilerDiagnostic first = result.firstDiagnostic();
+                check(!result.emitted(), "the missing helper export fails the "
+                    + target.laneName() + " production arm closed");
+                checkEq("E6005", first == null ? null : first.code(),
+                    "the missing helper export merges exactly one E6005 ["
+                        + target.laneName() + "]");
+                check(first != null && first.message().contains("CONSTRUCT_UNLOWERED")
+                        && first.message().contains("Widget$fromJson")
+                        && first.message().contains("no recorded EXTERNAL_ENTRY"),
+                    "the missing helper export fails through the CONSTRUCT_UNLOWERED "
+                        + "guard naming the helper's absent entry ["
+                        + target.laneName() + "]: " + (first == null ? null
+                            : first.message()));
+                check(staged.isEmpty(), "the missing helper export stages nothing ["
+                    + target.laneName() + "] (staged " + staged + ")");
+            }
+            // (b) The missing recorded callee entry through the real
+            // production arm: the callee-side counterpart of (a). The
+            // declaring module publishes an export whose invocation the
+            // module records no EXTERNAL_ENTRY for — the generated
+            // helpers' own entry mechanism consumes exactly this relation
+            // (the reference's externalEntryRef and the emitter's
+            // resolveExternalEntry), and the entry function's
+            // entry-delegation-owned export is the checker-valid shape of
+            // the fact.
+            for (Target target : Target.values()) {
+                Path entryRoot = Files.createTempDirectory(
+                    "jsonable-missing-entry-");
+                try {
+                    Path src = entryRoot.resolve("src");
+                    Files.createDirectories(src);
+                    Files.writeString(src.resolve("lib.deal"),
+                        "export function main(): null {\n  return null;\n}\n",
+                        StandardCharsets.UTF_8);
+                    Files.writeString(src.resolve("app.deal"),
+                        "import * as Lib from \"./lib\"\n\n"
+                            + "export function test_cross_module_main(): null {\n"
+                            + "  Lib.main();\n"
+                            + "  return null;\n}\n\n"
+                            + "export function main(): null {\n  return null;\n}\n",
+                        StandardCharsets.UTF_8);
+                    Files.writeString(entryRoot.resolve("deal.json"),
+                        "{\n  \"languageVersion\": \"1.2\",\n"
+                            + "  \"moduleRoots\": [\"src\"],\n"
+                            + "  \"output\": \"out\",\n"
+                            + "  \"backend\": \""
+                            + (target == Target.JVM ? "jvm" : "luajit")
+                            + "\"\n}\n",
+                        StandardCharsets.UTF_8);
+                    Project entryProject = new Project(entryRoot, src,
+                        src.resolve("app.deal"), "app", Map.of(),
+                        entryRoot.resolve("out"));
+                    List<String> diagnostics = new ArrayList<>();
+                    boolean entryCompiled = compile(entryProject,
+                        "missing-callee-entry", target, diagnostics);
+                    check(!entryCompiled, "the missing recorded callee entry fails the "
+                        + target.laneName() + " production arm closed: "
+                        + diagnostics);
+                    check(diagnostics.stream().anyMatch(d -> d.startsWith("E6005 ")
+                            && d.contains("CONSTRUCT_UNLOWERED")
+                            && d.contains("no recorded EXTERNAL_ENTRY")),
+                        "the missing recorded callee entry fails through the "
+                            + "CONSTRUCT_UNLOWERED guard naming the absent entry ["
+                            + target.laneName() + "]: " + diagnostics);
+                    check(!Files.exists(artifactOf(entryProject, target)),
+                        "the missing recorded callee entry stages nothing ["
+                            + target.laneName() + "]");
+                } finally {
+                    deleteRecursively(entryRoot);
+                }
+            }
+            // (c) The same facts at the lowered-IR mechanism level: the
+            // otherwise valid project's generated helper loses its
+            // EXPORT_PUBLISH publication (a missing helper export), and,
+            // separately, its recorded EXTERNAL_ENTRY (a missing callee
+            // entry while the export stays published).
+            Lowered lowered = lower(project, "inconsistent-fact negatives");
+            if (lowered == null) {
+                return;
+            }
+            assertEmitterRejectsMissingFact("the missing helper export",
+                withoutUnitOps(lowered, lib,
+                    op -> op.kind() == SemanticOpKind.EXPORT_PUBLISH
+                        && op.payload().toString().contains("Widget$fromJson")),
+                surface, "Widget$fromJson", "never publishes");
+            assertEmitterRejectsMissingFact("the missing recorded callee entry",
+                withoutUnitOps(lowered, lib,
+                    op -> op.kind() == SemanticOpKind.EXTERNAL_ENTRY
+                        && op.payload().toString().contains("Widget$fromJson")),
+                surface, "externalEntryRef",
+                "does not resolve to a recorded EXTERNAL_ENTRY");
+        } finally {
+            deleteRecursively(project.root());
         }
     }
 
@@ -2406,6 +2769,124 @@ public class JsonableHelperProductionDriveTest {
     }
 
     /**
+     * The omitted nested-class numeric default (the three-consumer
+     * regression): the nested class's decode runs the declared CLASS_DEFAULT
+     * children, and a default that produces the read-side numeric variant
+     * carrier must conform at its declared {@code number} position (and at
+     * the recursive {@code number | null} and {@code number[]} positions)
+     * exactly as the oracle's and the JVM's own variants do — the document
+     * is admitted and the instance serializes with the carrier's own
+     * variant's spelling. The explicit-value control supplies the same
+     * values in the document, so the two legs prove the default path and the
+     * provided path independently; a LuaJIT rejection of the carrier is the
+     * reported defect.
+     */
+    private static void testNestedClassDefaultNumericCarrier() throws Exception {
+        System.out.println("-- the omitted nested-class numeric default: the "
+            + "read-derived carrier conforms at its declared positions on all "
+            + "three consumers, with the explicit-value control --");
+        String expected = "{\"child\":{\"n\":2.5,\"o\":2.5,\"xs\":[2.5]}}";
+        String source = "// @jsonable\nexport class Child {\n"
+            + "  n: number = getNum();\n"
+            + "  o: number | null = getNum();\n"
+            + "  xs: number[] = getNums();\n}\n\n"
+            + "// @jsonable\nexport class Box {\n"
+            + "  child: Child = {};\n}\n\n"
+            + "function getNum(): number {\n"
+            + "  let t: table = { n: 2.5 };\n"
+            + "  return t.n;\n}\n\n"
+            + "function getNums(): number[] {\n"
+            + "  let t: table = { n: 2.5 };\n"
+            + "  let n: number = t.n;\n"
+            + "  return [n];\n}\n\n"
+            + "export function test_omitted_default_carriers(): null {\n"
+            + "  let box: Box | null = Box$fromJson(\"{\\\"child\\\":{}}\");\n"
+            + "  if (box !== null) {\n"
+            + "    let json: string = Box$toJson(box);\n"
+            + "    let expected: string = " + dealStringLiteral(expected) + ";\n"
+            + "    if (json !== expected) {\n"
+            + "      throw { code: \"MISMATCH\", message: json };\n"
+            + "    }\n"
+            + "    return null;\n"
+            + "  }\n"
+            + "  throw { code: \"MISMATCH\", message: \"the omitted valid "
+            + "nested default was rejected\" };\n}\n\n"
+            + "export function test_explicit_value_control(): null {\n"
+            + "  let box: Box | null = Box$fromJson("
+            + dealStringLiteral(expected) + ");\n"
+            + "  if (box !== null) {\n"
+            + "    let json: string = Box$toJson(box);\n"
+            + "    let expected: string = " + dealStringLiteral(expected) + ";\n"
+            + "    if (json !== expected) {\n"
+            + "      throw { code: \"MISMATCH\", message: json };\n"
+            + "    }\n"
+            + "    return null;\n"
+            + "  }\n"
+            + "  throw { code: \"MISMATCH\", message: \"the explicit valid "
+            + "document was rejected\" };\n}\n\n"
+            + "export function main(): null {\n  return null;\n}\n";
+        driveExactHelperText("nested-default-numeric-carrier", source);
+    }
+
+    /**
+     * The oracle main coverage (the family drive's two legs): the main leg
+     * lowers the fixture itself as the entry module, so its own entry
+     * delegation invokes the declared {@code main} exactly once — a
+     * main-only fixture's deliberate failure is captured, never skipped;
+     * the export leg's driver invokes only the non-main exports (a
+     * cross-module {@code main} call is no valid shape: the declaring
+     * module records no {@code EXTERNAL_ENTRY} for it).
+     */
+    private static void testOracleDriverMainCoverage() throws Exception {
+        System.out.println("-- the oracle's main coverage: a main-only fixture's "
+            + "deliberate failure is captured by the main leg exactly once --");
+        String source = "export function main(): null {\n"
+            + "  throw { code: \"MAIN_REACHED\", message: \"ran\" };\n"
+            + "}\n";
+        List<Export> exports = exportsOf(source);
+        checkEq(List.of("main"),
+            exports.stream().map(Export::name).toList(),
+            "the main-only control fixture carries exactly its main export");
+        Project project = syntheticProject("app", source, Target.JVM);
+        try {
+            // The main leg: the fixture is the entry of its own closure and
+            // its entry delegation carries the single ENTRY_INVOKE op (main's
+            // one call site), so main runs exactly once.
+            Lowered mainLeg = lower(project, "main-only control");
+            if (mainLeg == null) {
+                return;
+            }
+            int entryInvokes = 0;
+            for (SemanticOp op : mainLeg.project().modules()
+                    .get(mainLeg.entryModule()).ops()) {
+                if (op.kind() == SemanticOpKind.ENTRY_INVOKE) {
+                    entryInvokes++;
+                }
+            }
+            checkEq(1, entryInvokes, "the main leg's entry delegation is the "
+                + "fixture main's single invocation (one ENTRY_INVOKE op)");
+            SemanticRuntimeModel.ErrorSnapshot mainFailure = oracleMainFailure(
+                project, "main-only control (capture)");
+            check(mainFailure != null, "the main-only fixture's deliberate failure "
+                + "is captured by the oracle's main leg");
+            if (mainFailure != null) {
+                checkEq("MAIN_REACHED", mainFailure.code(), "the captured main "
+                    + "failure's code");
+                checkEq("ran", mainFailure.message(), "the captured main failure's "
+                    + "message");
+            }
+            // The export leg: the driver never invokes the fixture's main.
+            String driver = oracleDriver(project, exports);
+            int driverMainCalls = driver.split(java.util.regex.Pattern
+                .quote("fx.main()"), -1).length - 1;
+            checkEq(0, driverMainCalls, "the export leg's driver invokes no "
+                + "fixture main (" + driver + ")");
+        } finally {
+            deleteRecursively(project.root());
+        }
+    }
+
+    /**
      * The pinned-failure leg's negative controls: the sidecar comparison
      * accepts the sidecar's own pin (the control) and rejects unexpected
      * process stdout, an incorrect process exit status, incorrect process
@@ -2537,6 +3018,7 @@ public class JsonableHelperProductionDriveTest {
         testOracleAgreement();
         testHelperSurface();
         testNegatives();
+        testMissingHelperFactsFailClosed();
         testDynamicHelperOrigin();
         testTableClassInstanceRejection();
         testNestedTableInsertionOrder();
@@ -2546,6 +3028,8 @@ public class JsonableHelperProductionDriveTest {
         testArrayExecutorViewDeleteParity();
         testNullableArrayElements();
         testReadDerivedNumericCarriers();
+        testNestedClassDefaultNumericCarrier();
+        testOracleDriverMainCoverage();
         testRuntimeErrorSidecarNegativeControls();
         testDeterminismAndExportKey();
         System.out.println("");

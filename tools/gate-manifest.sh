@@ -106,10 +106,12 @@ WARNING: node not found, skipping standard library JS tests'
   # dependency step runs the oracle over every fixture of the family through
   # the same one-lowering closure (the runtime-ok success or the pinned
   # error tuple at the raw
-  # corpus coordinates): the cross-module helper call succeeds and the
-  # pinned helper JSON failure renders the cycle tuple at the invoking call
-  # expression, so the drive fails if the canonical failure projection
-  # authority is broken. The three-consumer regressions close the walk's
+  # corpus coordinates): each fixture's main runs through its own entry
+  # delegation (the fixture lowered as the entry) exactly once before the
+  # ordered non-main export loop's driver leg, the cross-module helper call
+  # succeeds and the pinned helper JSON failure renders the cycle tuple at
+  # the invoking call expression, so the drive fails if the canonical
+  # failure projection authority is broken. The three-consumer regressions close the walk's
   # remaining arms: a helper invoked through a function-typed parameter
   # (f(w) inside the callee body) renders its pinned JSON failure at the
   # f(w) call expression in the oracle, the LuaJIT artifact, and the JVM
@@ -124,11 +126,22 @@ WARNING: node not found, skipping standard library JS tests'
   # deletion (exact text for replacement and append, outcome parity for
   # the deleted missing slot); a null element in (int | null)[] roundtrips
   # on all three consumers while the same document stays rejected by
-  # int[]; and a read-derived numeric variant carrier serializes at a
+  # int[]; a read-derived numeric variant carrier serializes at a
   # declared number field and array element with its own variant's
-  # spelling. The pinned-failure sidecar comparison is covered by negative
-  # controls for unexpected process stdout, an incorrect process exit
-  # status, or wrong stderr.
+  # spelling, and the carrier produced by an omitted nested-class default
+  # conforms at its declared number, number | null, and number[] positions
+  # (with its explicit-value control). The pinned-failure sidecar
+  # comparison is covered by negative controls for unexpected process
+  # stdout, an incorrect process exit status, or wrong stderr; a main-only
+  # control proves the oracle's main leg captures a deliberate main
+  # failure exactly once; and the inconsistent-fact negatives prove that a
+  # missing generated helper export fails the production arm closed with
+  # one E6005 through the producer guard staging nothing (both targets), a
+  # missing recorded callee entry fails the arm closed the same way through
+  # a checker-valid cross-module call to an entry-delegation-owned export,
+  # and a removed EXPORT_PUBLISH publication and a removed recorded
+  # EXTERNAL_ENTRY are each rejected by both production emitters with the
+  # named producer defect.
   'fg|=== Running the @jsonable Helper Production Drive (ISSUE-0698) ===|java -ea -cp build deal.test.JsonableHelperProductionDriveTest'
   'fg|=== Running Closed Composite Terminator Analysis Tests (ISSUE-0712) ===|java -ea -cp build deal.test.CompositeTerminatorAnalysisTest'
   'fg|=== Running the Truncating Int32 Remainder Prelude Tests (ISSUE-0714) ===|java -ea -cp build deal.test.Int32ModTruncPreludeTest'

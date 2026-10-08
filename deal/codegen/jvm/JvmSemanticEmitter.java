@@ -6842,6 +6842,10 @@ public final class JvmSemanticEmitter {
                     + " closure (the one lowering resolves every COMPILED import to a"
                     + " closure module — a producer defect)");
             }
+            if (kind == ModuleImportKind.COMPILED
+                    && units.containsKey(payload.module())) {
+                requirePublishedExport(op.opId(), payload.module(), payload.name());
+            }
             emitStart(op, indent);
             out.append(indent(indent)).append(slot((ValueId) op.result()));
             if (kind == ModuleImportKind.COMPILED || kind == ModuleImportKind.HOST) {
