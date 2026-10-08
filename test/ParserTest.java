@@ -154,6 +154,11 @@ public class ParserTest {
         testHasExpression();
         testAssignmentExpression();
 
+        // v1.2 grammar boundaries (ISSUE-0717 defect snippets 48, 59, 60)
+        testSemicolonWhitelist();
+        testTrailingParameterComma();
+        testComparisonChaining();
+
         // v1.1: Template literals and for-of
         testTemplateLiteralPlain();
         testTemplateLiteralWithExpr();
@@ -1160,6 +1165,84 @@ public class ParserTest {
             call = assertExprInstance(es.expr(), CallExpr.class, "call trailing comma");
             if (call != null) check(call.args().size() == 1, "1 arg with trailing comma");
         }
+    }
+
+    /**
+     * The semicolon-boundary whitelist (spec §Syntactic grammar): a
+     * statement may omit its {@code ;} only before a whitelisted follower
+     * token (ISSUE-0717 defect snippet 48).
+     */
+    static void testSemicolonWhitelist() {
+        System.out.println("-- Semicolon boundary whitelist --");
+
+        ParseResult ok = parse("export function main(): null {\n"
+            + "  let n: int = 1\n"
+            + "  return null\n"
+            + "}\n");
+        assertNoParseErrors(ok, "let before return and return before }");
+
+        ParseResult beforeExpression = parse("export function main(): null {\n"
+            + "  let n: int = 1\n"
+            + "  one(n);\n"
+            + "  return null;\n"
+            + "}\n");
+        assertParseError(beforeExpression, "E1053",
+            "let before an expression statement");
+
+        ParseResult beforeTry = parse("export function main(): null {\n"
+            + "  let n: int = 1\n"
+            + "  try {} catch (e) {}\n"
+            + "  return null;\n"
+            + "}\n");
+        assertParseError(beforeTry, "E1053", "let before try");
+    }
+
+    /**
+     * ParameterList carries no trailing comma (spec §Syntactic grammar);
+     * the array and object literal lists keep the permitted commas
+     * (ISSUE-0717 defect snippet 60).
+     */
+    static void testTrailingParameterComma() {
+        System.out.println("-- Trailing parameter comma --");
+
+        ParseResult r = parse("function one(x: int,): int { return x; }\n");
+        assertParseError(r, "E1054", "declaration parameter trailing comma");
+        if (!r.program().statements().isEmpty()
+                && r.program().statements().get(0)
+                    instanceof FunctionDeclaration fd) {
+            check(fd.params().size() == 1,
+                "the single parameter still parses (recovery keeps the shape)");
+        }
+
+        ParseResult functionType = parse(
+            "let f: (x: int,) => int = function(x: int): int { return x; };\n");
+        assertParseError(functionType, "E1054",
+            "function-type parameter trailing comma");
+
+        ParseResult literals = parse(
+            "let a: int[] = [1, 2,];\nlet o: table = { x: 1, };\n");
+        assertNoParseErrors(literals, "array and object literal trailing commas");
+    }
+
+    /**
+     * The relational and equality comparison groups are non-associative
+     * (spec §Operator precedence): an unparenthesized chain is E1056
+     * (ISSUE-0717 defect snippet 59).
+     */
+    static void testComparisonChaining() {
+        System.out.println("-- Comparison non-associativity --");
+
+        ParseResult equality = parse(
+            "let b: boolean = true === true === true;\n");
+        assertParseError(equality, "E1056", "equality chaining");
+
+        ParseResult relational = parse("let b: boolean = 1 < 2 < 3;\n");
+        assertParseError(relational, "E1056", "relational chaining");
+
+        ParseResult parenthesized = parse(
+            "let b: boolean = (true === true) === true;\n"
+                + "let c: boolean = (1 < 2) === (3 < 4);\n");
+        assertNoParseErrors(parenthesized, "parenthesized comparisons");
     }
 
     static void testMemberAccessExpression() {

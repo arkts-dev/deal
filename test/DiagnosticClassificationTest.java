@@ -264,18 +264,15 @@ public class DiagnosticClassificationTest {
         coverage.put("E1050", "ModuleSystemTest (nested import/export)");
         coverage.put("E1051", "ModuleSystemTest (bodyless declaration in .deal)");
         coverage.put("E1052",
-            "ConformanceTest frontend/lexer/unsupported-string-escape-rejected "
-            + "(the five-entry escape table)");
+            "LexerTest (the five-entry escape table; unsupported escapes)");
         coverage.put("E1053",
-            "ConformanceTest frontend/parser/semicolon-whitelist-omission-rejected "
-            + "(the v1.2 semicolon-boundary whitelist)");
+            "ParserTest (the v1.2 semicolon-boundary whitelist)");
         coverage.put("E1054",
-            "ConformanceTest frontend/parser/trailing-parameter-comma-rejected");
+            "ParserTest (trailing parameter comma; declaration and function type)");
         coverage.put("E1055",
-            "ConformanceTest frontend/parser/trailing-argument-comma-rejected");
+            "ParserTest (trailing argument comma)");
         coverage.put("E1056",
-            "ConformanceTest frontend/parser/equality-chaining-rejected "
-            + "(non-associative comparison groups)");
+            "ParserTest (non-associative comparison groups)");
 
         coverage.put("E2000", "CheckerTest (break/continue)");
         coverage.put("E2001", "CheckerTest (undeclared identifier)");
@@ -316,9 +313,8 @@ public class DiagnosticClassificationTest {
         coverage.put("E3018",
             "CheckerTest (table index write/delete key static string gate)");
         coverage.put("E3019",
-            "CheckerTest / ConformanceTest "
-            + "frontend/classes/nested-class-shadowing-rejected "
-            + "(cross-declaration class assignment)");
+            "CheckerTest (nested-class shadowing stays legal; the "
+            + "cross-declaration class assignment is E3019)");
         coverage.put("E3020",
             "DefaultSemanticPlannerTest (evaluator-scope await in a class"
             + " default — the planner's sync gate)");

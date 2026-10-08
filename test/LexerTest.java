@@ -200,6 +200,7 @@ public class LexerTest {
         testDealVersionDirectives();
         testScalarOffsets();
         testDiagnosticRanges();
+        testUnsupportedStringEscapes();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -431,6 +432,32 @@ public class LexerTest {
         r = tokenize("'a\\'b'");
         assertNoDiagnostics(r.diagnostics(), "string \\'");
         assertToken(r.tokens().get(0), TokenType.STRING_LITERAL, "'a\\'b'", 1, 1);
+    }
+
+    /**
+     * The normative five-entry escape table (spec §String escapes and
+     * Unicode): {@code \n}, {@code \t}, {@code \\}, {@code \"},
+     * {@code \'} are the only escapes — no octal, hexadecimal, or
+     * Unicode sequences (ISSUE-0717 defect snippet 57).
+     */
+    static void testUnsupportedStringEscapes() {
+        System.out.println("-- String escapes outside the normative table --");
+
+        String[] unsupported = {
+            "\"a\\u0041b\"", "\"a\\x41b\"", "\"a\\101b\"", "\"a\\rb\"",
+        };
+        String[] names = {"\\u0041", "\\x41", "\\101", "\\r"};
+        for (int i = 0; i < unsupported.length; i++) {
+            LexResult r = tokenize(unsupported[i]);
+            assertDiagnosticCode(r.diagnostics(), "E1052",
+                names[i] + " is outside the escape table");
+            check(!r.tokens().isEmpty()
+                    && r.tokens().get(0).type() == TokenType.STRING_LITERAL,
+                names[i] + ": the literal still lexes as one string token");
+        }
+
+        LexResult ok = tokenize("\"\\n\\t\\\\\\\"\\'\"");
+        assertNoDiagnostics(ok.diagnostics(), "the five normative escapes");
     }
 
     // =========================================================================
