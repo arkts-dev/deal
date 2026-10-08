@@ -7867,11 +7867,12 @@ __ARM_TABLE__
      */
     private static final String PRELUDE_ARM_RENDERER = """
 -- One arm renderer. The arm's own template is the message source; the
--- named-parameter map supplies exactly the arm's declared parameters. A
--- missing arm, an INNER_ONLY arm rendered at a failure site, a
--- SIBLING_OWNED arm, or an expected/actual field that does not match the
--- arm's declared shape is a producer defect — never a fallback text and
--- never a composed suffix.
+-- named-parameter map supplies exactly the arm's declared parameters; the
+-- origin operand is the executing op's SourceOrigin. A missing arm, an
+-- INNER_ONLY arm rendered at a failure site, a SIBLING_OWNED arm, an
+-- absent origin operand, or an expected/actual field that does not match
+-- the arm's declared shape is a producer defect — never a fallback text,
+-- never a derived or substituted span, and never a composed suffix.
 -- One arm template's text instantiated with its named parameter values.
 -- The render must supply exactly the arm's declared parameters (its
 -- serialized parameter sources): a missing or extra parameter is a
@@ -8162,6 +8163,15 @@ local function __arm(id, values, origin, expected, actual)
   if arm.a == "SIBLING_OWNED" then
     error("failure arm '"..id.."' has a SIBLING_OWNED projection binding "
       .."(producer defect)", 0)
+  end
+  if origin == nil then
+    -- The origin is the render's one operand (the executing op's
+    -- SourceOrigin): an absent operand would publish a DEAL-visible
+    -- failure tuple without its span, so it is a fail-closed producer
+    -- defect and never a derived or substituted origin.
+    error("failure arm '"..id.."' is rendered with no origin operand: the "
+      .."render must carry the executing op's SourceOrigin (a producer "
+      .."defect, never a derived or substituted span)", 0)
   end
   __checkExpectedField(id, arm, values, expected)
   __checkActualField(id, arm, actual)

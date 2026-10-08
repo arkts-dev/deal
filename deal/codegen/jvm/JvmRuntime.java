@@ -719,14 +719,27 @@ public final class JvmRuntime {
      * One closed failure arm rendered on the JVM target (canonical
      * failure-projection authority P4 item 3): the arm's own template with
      * its named parameters and the arm's declared expected/actual fields —
-     * the same authority the oracle and the emitted Lua prelude render. A
-     * production render of a marked (INNER_ONLY / SIBLING_OWNED) arm or a
-     * field that does not match the arm's declaration fails closed as a
-     * producer defect.
+     * the same authority the oracle and the emitted Lua prelude render —
+     * plus the executing op's {@code SourceOrigin}, the render's one origin
+     * operand. A production render of a marked (INNER_ONLY / SIBLING_OWNED)
+     * arm, a field that does not match the arm's declaration, or a render
+     * with no origin operand (the walk arms included) fails closed as a
+     * producer defect — the render never derives and never substitutes a
+     * span.
      */
     public static DealError arm(deal.semantic.ir.FailureArmId id,
                                 java.util.Map<String, String> parameters, String origin,
                                 String expected, String actual) {
+        if (origin == null) {
+            // The origin is the consumer's one operand (the op's own
+            // SourceOrigin): an absent operand would publish a DEAL-visible
+            // failure tuple without its span, so it is a fail-closed
+            // producer defect and never a fabricated origin.
+            throw new deal.semantic.ir.BoundaryExecutor.Defect("the failure arm '"
+                + id + "' is rendered with no origin operand: the render must carry"
+                + " the executing op's SourceOrigin (a producer defect, never a"
+                + " derived or substituted span)");
+        }
         deal.semantic.ir.BoundaryFailure failure =
             deal.semantic.ir.FailureContractRegistry.render(id, parameters, expected, actual,
                 null);
