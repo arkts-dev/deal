@@ -2232,20 +2232,18 @@ public final class SemanticLowerer {
         private final java.util.LinkedHashMap<BlockId, Boolean> blockTerminated =
             new java.util.LinkedHashMap<>();
         /**
-         * The closed per-block exit states of the terminator analysis
-         * ({@code residual-carrier-shapes-production-realization} D3):
-         * the state the three implicit-return sites consume and the
-         * composite arms mark from their sub-blocks. A block is
-         * {@code OPEN} while it can complete normally,
-         * {@code RETURN_OR_THROW} when it cannot and every non-completing
-         * path exits by {@code return}/{@code throw}, and
-         * {@code TRANSFER} when it cannot and at least one path exits by
-         * {@code break}/{@code continue}. Absent = {@code OPEN}. One
-         * body's blocks are disjoint from a nested declared/closure
-         * body's blocks, so a nested transfer never contributes to an
-         * enclosing loop's state.
+         * The closed per-block exit summaries of the terminator analysis
+         * ({@code residual-carrier-shapes-production-realization} D3): the
+         * two-facet summary the three implicit-return sites consume and the
+         * composite arms compose from their sub-blocks. A block can
+         * complete normally, and/or a reachable break/continue path may
+         * escape into it; the closed three-member classification
+         * ({@code OPEN}/{@code RETURN_OR_THROW}/{@code TRANSFER}) derives
+         * from both facets. Absent = {@code OPEN}. One body's blocks are
+         * disjoint from a nested declared/closure body's blocks, so a
+         * nested transfer never contributes to an enclosing loop's state.
          */
-        private final java.util.LinkedHashMap<BlockId, BlockExitState> blockExitStates =
+        private final java.util.LinkedHashMap<BlockId, BlockExit> blockExits =
             new java.util.LinkedHashMap<>();
         /**
          * The enclosing address-chain parents (A-D2): the innermost chain
@@ -3017,13 +3015,16 @@ public final class SemanticLowerer {
         }
 
         /**
-         * The closed three-member per-block exit state of the terminator
-         * analysis ({@code residual-carrier-shapes-production-realization}
-         * D3): {@code OPEN} (the block can complete normally),
+         * The closed three-member exit classification of one block
+         * ({@code residual-carrier-shapes-production-realization} D3):
+         * {@code OPEN} (the block can complete normally),
          * {@code RETURN_OR_THROW} (it cannot; every non-completing path
          * exits by {@code return}/{@code throw}), and {@code TRANSFER} (it
          * cannot; at least one path exits by {@code break}/{@code
-         * continue}).
+         * continue}). The classification is derived from the two-facet
+         * {@link BlockExit} summary; the two facets are tracked separately
+         * so a partial transfer survives a later terminator in the same
+         * block (see {@link #markStatementExit}).
          */
         private enum BlockExitState {
             OPEN,
@@ -3032,14 +3033,42 @@ public final class SemanticLowerer {
         }
 
         /**
+         * One block's composed exit summary (D3): whether the block can
+         * complete normally, and whether a reachable {@code break}/{@code
+         * continue} path escapes into it. The two facets are composed
+         * separately because a composite may carry a transfer path while
+         * it still has a normal exit (an {@code if} without an
+         * {@code else}, an {@code if}/{@code else} or a {@code try}/{@code
+         * catch} with one open branch): dropping that transfer path when a
+         * later statement terminates the block would misclassify a
+         * {@code break}/{@code continue} exit as {@code
+         * RETURN_OR_THROW} and make a literal-true loop look
+         * non-completing.
+         */
+        private record BlockExit(boolean canCompleteNormally, boolean transfers) {
+
+            /** An unmarked (or absent) block: open, no transfer path. */
+            static final BlockExit OPEN = new BlockExit(true, false);
+
+            /** The block's closed three-member classification (D3). */
+            BlockExitState state() {
+                if (canCompleteNormally) {
+                    return BlockExitState.OPEN;
+                }
+                return transfers ? BlockExitState.TRANSFER
+                    : BlockExitState.RETURN_OR_THROW;
+            }
+        }
+
+        /**
          * Marks the current emission block terminated after a
          * {@code RETURN}/{@code THROW} emission and records the leaf
-         * transfer's closed exit state
-         * ({@link BlockExitState#RETURN_OR_THROW}). The state is monotone:
-         * a source statement after the terminator in the same block lowers
-         * normally into ops that are members of the same block behind the
-         * terminator, is never executed, and neither clears nor changes
-         * this state.
+         * transfer's exit facet. The state is monotone: a source statement
+         * after the terminator in the same block lowers normally into ops
+         * that are members of the same block behind the terminator, is
+         * never executed, and neither clears nor changes this state. A
+         * reachable partial transfer recorded earlier in the same block
+         * stays recorded, so the block classifies {@code TRANSFER}.
          */
         private void terminateBlock() {
             blockTerminated.put(blockStack.peek(), true);
@@ -3059,45 +3088,77 @@ public final class SemanticLowerer {
         }
 
         /**
-         * The closed exit state of one block; an unmarked (or absent)
-         * block is {@code OPEN}.
+         * The composed exit summary of one block; an unmarked (or absent)
+         * block is {@link BlockExit#OPEN}.
+         */
+        private BlockExit exitOf(BlockId block) {
+            return blockExits.getOrDefault(block, BlockExit.OPEN);
+        }
+
+        /**
+         * The closed exit classification of one block; an unmarked (or
+         * absent) block is {@code OPEN}.
          */
         private BlockExitState exitStateOf(BlockId block) {
-            return blockExitStates.getOrDefault(block, BlockExitState.OPEN);
+            return exitOf(block).state();
         }
 
         /**
-         * Marks one block non-{@code OPEN} from a leaf transfer or a
-         * composite's sub-block states. The marking is monotone: a block
-         * leaves {@code OPEN} exactly once, a second marking is a no-op,
-         * and a later unreachable statement neither clears nor changes
-         * the state.
+         * Applies one leaf transfer's closed exit state to a block: a
+         * {@code RETURN}/{@code THROW} leaves the block unable to complete
+         * normally with no transfer facet of its own, a {@code BREAK}/
+         * {@code CONTINUE} leaves it unable to complete normally and
+         * carries the transfer facet.
          */
         private void markExit(BlockId block, BlockExitState state) {
-            if (state == BlockExitState.OPEN
-                    || exitStateOf(block) != BlockExitState.OPEN) {
-                return;
+            switch (state) {
+                case OPEN -> {
+                }
+                case RETURN_OR_THROW -> markStatementExit(block, false, false);
+                case TRANSFER -> markStatementExit(block, false, true);
             }
-            blockExitStates.put(block, state);
         }
 
         /**
-         * The branch-state combination of one composite (the AND on the
-         * return/throw facet): {@code OPEN} when either sub-block can
-         * complete normally (the composite has a normal-exit path);
-         * {@code RETURN_OR_THROW} only when both sub-blocks cannot and
-         * neither carries a break/continue path; {@code TRANSFER}
-         * otherwise (a break/continue path of either sub-block).
+         * Composes one statement's two-facet exit summary into a block:
+         * the block can complete normally exactly when it could before and
+         * the statement can, and a break/continue path of the statement
+         * stays recorded until (and past) the point a later statement
+         * terminates the block. The composition is monotone: once the
+         * block cannot complete normally every later marking is a no-op,
+         * so a represented unreachable tail neither clears nor changes the
+         * state, and a nested body's transfers never reach an enclosing
+         * block (its blocks are disjoint).
          */
-        private static BlockExitState combineExits(BlockExitState left,
-                                                   BlockExitState right) {
-            if (left == BlockExitState.OPEN || right == BlockExitState.OPEN) {
-                return BlockExitState.OPEN;
+        private void markStatementExit(BlockId block, boolean canCompleteNormally,
+                                       boolean transfers) {
+            BlockExit current = exitOf(block);
+            if (!current.canCompleteNormally()) {
+                return;
             }
-            return left == BlockExitState.RETURN_OR_THROW
-                    && right == BlockExitState.RETURN_OR_THROW
-                ? BlockExitState.RETURN_OR_THROW
-                : BlockExitState.TRANSFER;
+            blockExits.put(block, new BlockExit(canCompleteNormally,
+                current.transfers() || transfers));
+        }
+
+        /**
+         * Composes one two-branch composite's (an {@code if}/{@code else},
+         * an {@code else if} chain's enclosing {@code if}, or a {@code
+         * try}/{@code catch}) exit summary from its sub-blocks and applies
+         * it to the enclosing block: the composite can complete normally
+         * exactly when one of its sub-blocks can, and a break/continue
+         * path of either sub-block escapes into the enclosing block (the
+         * composite consumes no transfer). A partially transferring
+         * composite therefore records its transfer path even while it can
+         * still complete normally, and a later terminator in the same
+         * block classifies the block {@code TRANSFER} instead of {@code
+         * RETURN_OR_THROW}.
+         */
+        private void markCompositeExit(BlockId block, BlockId first, BlockId second) {
+            BlockExit left = exitOf(first);
+            BlockExit right = exitOf(second);
+            markStatementExit(block,
+                left.canCompleteNormally() || right.canCompleteNormally(),
+                left.transfers() || right.transfers());
         }
 
         /**
@@ -9854,11 +9915,14 @@ public final class SemanticLowerer {
          * absent {@code else} produces {@code alternateBlock = null};
          * SUCCESS publishes no result. Block ops record the
          * {@code BRANCH} as {@code parentOpId}. The closed terminator
-         * analysis marks the enclosing block after both sub-block walks:
-         * an {@code if}/{@code else} whose both branches cannot complete
-         * normally terminates it (the branches combine by AND on the
-         * return/throw facet, so a break/continue path of either branch
-         * yields {@code TRANSFER}); an {@code else if} chain composes
+         * analysis composes the enclosing block after both sub-block
+         * walks: an {@code if}/{@code else} whose both branches cannot
+         * complete normally terminates it, while a break/continue path of
+         * either branch stays recorded as the composite's transfer facet
+         * (so a later terminator in the same block classifies it
+         * {@code TRANSFER}); an absent {@code else} can always complete
+         * normally (the fall-through path) but still records the selected
+         * branch's transfer facet. An {@code else if} chain composes
          * through the nested {@code BRANCH}'s marking of
          * {@code alternateBlock}.
          */
@@ -9894,10 +9958,19 @@ public final class SemanticLowerer {
                 } finally {
                     popBlock();
                 }
-                // The composite marking (D3): both branches cannot
-                // complete normally, so neither can the enclosing block.
-                markExit(currentBlock(), combineExits(exitStateOf(selectedBlock),
-                    exitStateOf(alternateBlock)));
+                // The composite composition (D3): the enclosing block can
+                // complete normally exactly when one branch can, and a
+                // break/continue path of either branch escapes into it —
+                // preserved even when one branch is open, so a following
+                // terminator renders TRANSFER, never RETURN_OR_THROW.
+                markCompositeExit(currentBlock(), selectedBlock, alternateBlock);
+            } else {
+                // The absent-else composition (D3): the fall-through path
+                // completes normally, but the selected branch's
+                // break/continue path still escapes into the enclosing
+                // block.
+                markStatementExit(currentBlock(), true,
+                    exitOf(selectedBlock).transfers());
             }
             popBlockParent();
         }
@@ -10084,11 +10157,13 @@ public final class SemanticLowerer {
                 popBlock();
                 catchFrames.remove(0);
             }
-            // The composite marking (D3): both the protected block and
-            // the catch block cannot complete normally, so neither can
-            // the enclosing block.
-            markExit(currentBlock(), combineExits(exitStateOf(tryBlock),
-                exitStateOf(catchBlock)));
+            // The composite composition (D3): the enclosing block can
+            // complete normally exactly when the protected block or the
+            // catch block can, and a break/continue path of either escapes
+            // into it (the TRY_CATCH consumes no transfer — the landed
+            // transfer protocol re-raises the marker through the protected
+            // boundary).
+            markCompositeExit(currentBlock(), tryBlock, catchBlock);
             popBlockParent();
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(statement.span()),
                 SourceOriginKind.USER, anchor, currentParent());

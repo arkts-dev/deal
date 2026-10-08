@@ -587,6 +587,153 @@ public class CompositeTerminatorAnalysisTest {
     }
 
     /**
+     * The partial-transfer composition: an open-branch composite's
+     * reachable {@code break}/{@code continue} path is preserved while the
+     * statements of one block compose, so a following {@code return}/{@code
+     * throw} classifies the literal-true loop body {@code TRANSFER} instead
+     * of {@code RETURN_OR_THROW}. The loop can then exit normally through
+     * the transfer, does not terminate the enclosing body, and the pinned
+     * implicit null return is retained as the body block's trailing
+     * statement — for every literal-true loop form and every partial shape.
+     */
+    static void testPartialTransferKeepsImplicitReturn() throws Exception {
+        System.out.println("-- the partial transfers: an open-branch composite's "
+            + "break/continue path keeps the literal-true loop's implicit null "
+            + "return --");
+        record LoopForm(String name, String header) {
+        }
+        List<LoopForm> forms = List.of(
+            new LoopForm("while (true)", "while (true) {"),
+            new LoopForm("for (; true; )", "for (; true; ) {"),
+            new LoopForm("for (;;)", "for (;;) {"),
+            new LoopForm("for-let", "for (let i: int = 0; true; i = i + 1) {"));
+        record PartialShape(String name, String body) {
+        }
+        List<PartialShape> shapes = List.of(
+            new PartialShape("if without else then return", """
+                if (c) { break; }
+                return null;"""),
+            new PartialShape("if without else then throw", """
+                if (c) { break; }
+                throw { code: "PARTIAL", message: "partial" }"""),
+            new PartialShape("if/else with one open branch then return", """
+                if (c) { break; } else { }
+                return null;"""),
+            new PartialShape("try/catch with one open branch then return", """
+                try { if (c) { break; } } catch (e) { }
+                return null;"""),
+            new PartialShape("if/else with a transferring else then return", """
+                if (c) { } else { break; }
+                return null;"""),
+            new PartialShape("try/catch with a transferring catch then return", """
+                try { } catch (e) { if (c) { break; } }
+                return null;"""),
+            new PartialShape("if without else with continue then return", """
+                if (c) { continue; }
+                return null;"""),
+            new PartialShape("try/catch with continue then return", """
+                try { if (c) { continue; } } catch (e) { }
+                return null;"""));
+        for (LoopForm form : forms) {
+            for (PartialShape shape : shapes) {
+                String name = form.name() + ", " + shape.name();
+                String source = probeProgram("export function probe(c: boolean): null {\n"
+                    + "  " + form.header() + "\n"
+                    + "    " + shape.body().replace("\n", "\n    ") + "\n"
+                    + "  }\n}\n");
+                Lowered lowered = lowerProbe(name, source);
+                if (lowered == null) {
+                    continue;
+                }
+                List<SemanticOp> implicit = lowered.implicitReturns();
+                checkEq(1, implicit.size(), name + ": the partial-transfer body "
+                    + "keeps the pinned implicit null return");
+                List<BlockId> bodies = lowered.declaredBodyBlocks();
+                if (bodies.isEmpty()) {
+                    continue;
+                }
+                BlockId probeBody = bodies.get(0);
+                List<SemanticOp> ops = lowered.blockOps(probeBody);
+                check(!ops.isEmpty() && ops.get(ops.size() - 1).kind()
+                        == SemanticOpKind.RETURN,
+                    name + ": the implicit return is the body block's trailing "
+                        + "statement (op kinds " + kindsOf(lowered, probeBody) + ")");
+                if (!implicit.isEmpty()) {
+                    check(ops.contains(implicit.get(0)), name + ": the implicit "
+                        + "RETURN is a member of the probe body block");
+                }
+            }
+        }
+    }
+
+    /**
+     * The monotone partial-transfer composition: an unreachable tail behind
+     * a terminator never flips a terminated body to {@code TRANSFER} (a
+     * fabricated transfer path would wrongly keep a literal-true loop's
+     * implicit return), and a nested body's partial transfer never reaches
+     * an enclosing body's state (the bodies' blocks are disjoint — the
+     * enclosing loop still terminates its body).
+     */
+    static void testPartialTransferMonotonicity() throws Exception {
+        System.out.println("-- the unreachable tails and nested bodies never modify "
+            + "the partial-transfer state --");
+        record Terminated(String name, String source, int implicitReturns) {
+        }
+        List<Terminated> terminated = List.of(
+            new Terminated("return then break tail", probeProgram("""
+                export function probe(c: boolean): null {
+                  while (true) {
+                    return null;
+                    if (c) { break; }
+                  }
+                }
+                """), 0),
+            new Terminated("both-branch return then partial break tail",
+                probeProgram("""
+                    export function probe(c: boolean): null {
+                      while (true) {
+                        if (c) { return null; } else { return null; }
+                        if (c) { break; }
+                      }
+                    }
+                    """), 0),
+            new Terminated("nested body's partial transfer", probeProgram("""
+                export function probe(c: boolean): null {
+                  while (true) {
+                    function inner(d: boolean): null {
+                      while (true) {
+                        if (d) { break; }
+                        return null;
+                      }
+                    }
+                    return null;
+                  }
+                }
+                """), 1));
+        for (Terminated shape : terminated) {
+            Lowered lowered = lowerProbe(shape.name(), shape.source());
+            if (lowered == null) {
+                continue;
+            }
+            checkEq(shape.implicitReturns(), lowered.implicitReturns().size(),
+                shape.name() + ": only the genuinely open bodies keep the pinned "
+                    + "implicit null return");
+            List<BlockId> bodies = lowered.declaredBodyBlocks();
+            if (bodies.isEmpty()) {
+                continue;
+            }
+            List<SemanticOp> probeOps = lowered.blockOps(bodies.get(0));
+            check(!probeOps.isEmpty() && probeOps.get(probeOps.size() - 1).kind()
+                    == SemanticOpKind.LOOP,
+                shape.name() + ": the probe body block ends with its literal-true "
+                    + "LOOP (op kinds " + kindsOf(lowered, bodies.get(0)) + ")");
+            check(probeOps.stream().noneMatch(op -> op.kind() == SemanticOpKind.RETURN),
+                shape.name() + ": the terminated probe body carries no RETURN op "
+                    + "(op kinds " + kindsOf(lowered, bodies.get(0)) + ")");
+        }
+    }
+
+    /**
      * The nested-body disjointness: a literal-true loop inside a nested
      * declared body marks the nested body, never the enclosing loop's body
      * — the enclosing body stays {@code OPEN} and keeps its implicit null
@@ -1091,6 +1238,142 @@ public class CompositeTerminatorAnalysisTest {
         driveDifferentialFixtures(NESTED_BODY_FIXTURES);
     }
 
+    /**
+     * The seven partial-transfer probes of the real-toolchain matrix: one
+     * per literal-true loop form (while, {@code for (; true; )}, test-less
+     * {@code for (;;)}, for-let) plus the open-branch {@code if}/{@code
+     * else}, {@code try}/{@code catch}, and continue-then-break shapes,
+     * each followed by its explicit {@code return null}; the driver entry
+     * invokes every probe on both its break exit and its return path (the
+     * continue-only infinite path is never entered), so the loop-exit path
+     * executes exactly the pinned implicit null return.
+     */
+    private static final String PARTIAL_TRANSFER_PROBE_SOURCE = """
+        export function probeWhile(c: boolean): null {
+          while (true) {
+            if (c) { break; }
+            return null;
+          }
+        }
+
+        export function probeFor(c: boolean): null {
+          for (; true; ) {
+            if (c) { break; }
+            return null;
+          }
+        }
+
+        export function probeTestless(c: boolean): null {
+          for (;;) {
+            if (c) { break; }
+            return null;
+          }
+        }
+
+        export function probeForLet(c: boolean): null {
+          for (let i: int = 0; true; i = i + 1) {
+            if (c) { break; }
+            return null;
+          }
+        }
+
+        export function probeIfElse(c: boolean): null {
+          while (true) {
+            if (c) { break; } else { }
+            return null;
+          }
+        }
+
+        export function probeTryCatch(c: boolean): null {
+          while (true) {
+            try { if (c) { break; } } catch (e) { }
+            return null;
+          }
+        }
+
+        export function probeContinue(c: boolean, d: boolean): null {
+          while (true) {
+            if (c) { continue; }
+            if (d) { break; }
+            return null;
+          }
+        }
+
+        export function main(): null {
+          probeWhile(true);
+          probeWhile(false);
+          probeFor(true);
+          probeFor(false);
+          probeTestless(true);
+          probeTestless(false);
+          probeForLet(true);
+          probeForLet(false);
+          probeIfElse(true);
+          probeIfElse(false);
+          probeTryCatch(true);
+          probeTryCatch(false);
+          probeContinue(false, true);
+          probeContinue(false, false);
+          return null;
+        }
+        """;
+
+    /**
+     * The partial-transfer probes on the real toolchains: the oracle and
+     * both shared artifacts agree event-for-event with the pinned null
+     * outcome, and every consumer executes each probe's retained implicit
+     * null return on the loop-exit path — the trace's own SUCCESS event for
+     * the implicit RETURN, never a fall-through tail.
+     */
+    static void testPartialTransferProductionParity() throws Exception {
+        System.out.println("-- the partial-transfer probes through the oracle and "
+            + "both shared artifacts (the real toolchains) --");
+        Path root = Files.createTempDirectory("partial-transfer-parity-");
+        try {
+            write(root, "src/app.deal", PARTIAL_TRANSFER_PROBE_SOURCE);
+            Lowered lowered = lowerProjectRoot(root, "src/app.deal");
+            if (lowered == null) {
+                return;
+            }
+            List<SemanticOp> implicit = lowered.implicitReturns();
+            checkEq(7, implicit.size(), "the seven partial-transfer probes each retain "
+                + "their implicit null return");
+            List<OpId> implicitIds = implicit.stream().map(SemanticOp::opId).toList();
+            Path workspace = Files.createTempDirectory("partial-transfer-parity-ws-");
+            try {
+                SemanticDifferentialHarness.Verdict verdict =
+                    SemanticDifferentialHarness.runProject(lowered.project(),
+                        lowered.tables(), lowered.registries(),
+                        SemanticDifferentialHarness.Expectation.success(
+                            "partial-transfer probes", List.of(), "null"), workspace);
+                check(verdict.pass(), "the oracle and both shared artifacts agree "
+                    + "event-for-event and the probes complete with null: "
+                    + verdict.failures());
+                for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+                    check(run.terminal()
+                            instanceof SemanticRuntimeModel.Terminal.Success success
+                            && "null".equals(success.resultAtom()),
+                        run.consumer() + " completes with the pinned null outcome: "
+                            + run.terminal());
+                    int executed = 0;
+                    for (SemanticRuntimeModel.TraceEvent event : run.trace()) {
+                        if (event.phase() == SemanticRuntimeModel.Phase.SUCCESS
+                                && implicitIds.contains(event.op())) {
+                            executed++;
+                        }
+                    }
+                    checkEq(7, executed, run.consumer() + " executed the retained "
+                        + "implicit null return of every partial-transfer probe on "
+                        + "the loop-exit path");
+                }
+            } finally {
+                deleteRecursively(workspace);
+            }
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
     private static void driveDifferentialFixtures(List<Fixture> fixtures) throws Exception {
         for (Fixture fixture : fixtures) {
             Path root = Files.createTempDirectory("composite-terminator-matrix-");
@@ -1275,12 +1558,15 @@ public class CompositeTerminatorAnalysisTest {
         testCompositeMarkingPositives();
         testNullBothReturnTailMonotonicity();
         testCompositeMarkingNegatives();
+        testPartialTransferKeepsImplicitReturn();
+        testPartialTransferMonotonicity();
         testNestedBodyDisjointness();
         testUnterminatedNonNullStillFailsClosed();
         testLiteralTrueLoopOnNonNullBodyAtUnitLevel();
         testProductionArtifacts();
         testDifferentialMatrix();
         testNestedBodyProductionParity();
+        testPartialTransferProductionParity();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
