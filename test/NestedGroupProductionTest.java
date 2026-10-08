@@ -146,6 +146,16 @@ import java.util.stream.Stream;
  *       orders are covered: the alias target's capture list is still pending
  *       when the awaiting member walks first, and already final when the
  *       target walks first.</li>
+ *
+ *   <li><b>The captured member cells.</b> A closure inside a member makes
+ *       the member's parameter and local shared cells; the resumed
+ *       invocation reads their own module-level cell references after the
+ *       awaited recursion (declared sibling name and typed alias alike).
+ *       The async state save/restore covers the shared-cell references the
+ *       member body itself allocates — saving and restoring the reference,
+ *       never the cell's contents — so the two creations keep their own
+ *       incarnations while in-place commits through a shared cell stay
+ *       visible.</li>
  * </ol>
  */
 public class NestedGroupProductionTest {
@@ -964,6 +974,128 @@ public class NestedGroupProductionTest {
         true, List.of(true, true), false, false, null, new AsyncDrive("drive"),
         "int:36");
 
+    /**
+     * The post-await read of a <em>captured</em> member parameter and local
+     * (the review's cycle-2 seed) through the declared sibling name: the
+     * closure {@code get} makes both {@code n} and {@code m} shared cells,
+     * and {@code f} reads their module-level cell slots directly after the
+     * awaited recursion. The async invocation's state save/restore must
+     * cover the shared-cell references the member itself allocates — not
+     * only its {@code DIRECT} cells and value slots — because every
+     * recursive re-entry replaces those module-level references with its
+     * own incarnation. Without the reference restore the resumed invocation
+     * reads the deepest re-entry's cells (the pre-fix artifacts published
+     * 11/21, total 32, where the oracle pins 16/26, total 42), and merely
+     * adding the closure changes the enclosing member's result. Restoring a
+     * cell <em>reference</em> (never its contents) keeps in-place commits
+     * through the shared cell visible.
+     */
+    private static final Case ASYNC_ESCAPED_TWO_GROUPS_CAPTURED = new Case(
+        "async-escaped-two-groups-captured",
+        """
+        import * as console from "std/console"
+
+        export async function drive(): int {
+          let a: async (n: int) => int = make(10);
+          let b: async (n: int) => int = make(20);
+          let av: int = await a(3);
+          if (av === 16) {
+            console.log("async-escaped-group-captured-a-ok");
+          } else {
+            console.log("async-escaped-group-captured-a-bad");
+          }
+          let bv: int = await b(3);
+          if (bv === 26) {
+            console.log("async-escaped-group-captured-b-ok");
+          } else {
+            console.log("async-escaped-group-captured-b-bad");
+          }
+          return av + bv;
+        }
+
+        function make(base: int): async (n: int) => int {
+          async function f(n: int): int {
+            if (n <= 0) {
+              return base;
+            }
+            let m: int = n;
+            let get: () => int = function(): int { return n + m; };
+            await g(n - 1);
+            return base + n + m;
+          }
+          async function g(n: int): int {
+            return await f(n);
+          }
+          return f;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """,
+        List.of("async-escaped-group-captured-a-ok",
+            "async-escaped-group-captured-b-ok"),
+        true, List.of(true, true), false, false, null, new AsyncDrive("drive"),
+        "int:42");
+
+    /**
+     * The same post-await read of the captured parameter and local through
+     * an ordinary typed sibling alias: the value-carried async arm resolves
+     * the alias to the member's {@code LoweredBody} and must keep the
+     * published capture carrier while it saves and restores the member's
+     * own shared-cell references around the re-entrant body execution. The
+     * target {@code g} is declared after the awaiting member, so its capture
+     * list is still pending when {@code f} walks.
+     */
+    private static final Case ASYNC_ESCAPED_TWO_GROUPS_ALIAS_CAPTURED = new Case(
+        "async-escaped-two-groups-alias-captured",
+        """
+        import * as console from "std/console"
+
+        export async function drive(): int {
+          let a: async (n: int) => int = make(10);
+          let b: async (n: int) => int = make(20);
+          let av: int = await a(3);
+          if (av === 16) {
+            console.log("async-escaped-group-alias-captured-a-ok");
+          } else {
+            console.log("async-escaped-group-alias-captured-a-bad");
+          }
+          let bv: int = await b(3);
+          if (bv === 26) {
+            console.log("async-escaped-group-alias-captured-b-ok");
+          } else {
+            console.log("async-escaped-group-alias-captured-b-bad");
+          }
+          return av + bv;
+        }
+
+        function make(base: int): async (n: int) => int {
+          async function f(n: int): int {
+            if (n <= 0) {
+              return base;
+            }
+            let m: int = n;
+            let get: () => int = function(): int { return n + m; };
+            let sibling: async (n: int) => int = g;
+            await sibling(n - 1);
+            return base + n + m;
+          }
+          async function g(n: int): int {
+            return await f(n);
+          }
+          return f;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """,
+        List.of("async-escaped-group-alias-captured-a-ok",
+            "async-escaped-group-alias-captured-b-ok"),
+        true, List.of(true, true), false, false, null, new AsyncDrive("drive"),
+        "int:42");
+
     private static final List<Case> CASES = List.of(
         CALLED_EXPLICIT, CALLED_IMPLICIT, CALLED_VALUE_REFERENCE,
         CALLED_ALIAS, CALLED_ALIAS_CAPTURED, CALLED_ALIAS_LATER, MODULE_GROUP_ALIAS,
@@ -971,7 +1103,9 @@ public class NestedGroupProductionTest {
         CAPTURED_CALLED, NESTED_INSIDE_FUNCTION, ESCAPED_TWO_GROUPS,
         PARAM_ORIGIN_CONTEXTUAL, ASYNC_ESCAPED_TWO_GROUPS, ASYNC_PARAM_ORIGIN,
         ASYNC_ESCAPED_TWO_GROUPS_ALIAS, ASYNC_ESCAPED_TWO_GROUPS_ALIAS_LATER,
-        ASYNC_ESCAPED_TWO_GROUPS_PARAM, ASYNC_ESCAPED_TWO_GROUPS_ALIAS_PARAM);
+        ASYNC_ESCAPED_TWO_GROUPS_PARAM, ASYNC_ESCAPED_TWO_GROUPS_ALIAS_PARAM,
+        ASYNC_ESCAPED_TWO_GROUPS_CAPTURED,
+        ASYNC_ESCAPED_TWO_GROUPS_ALIAS_CAPTURED);
 
     // =========================================================================
     // The case driver
