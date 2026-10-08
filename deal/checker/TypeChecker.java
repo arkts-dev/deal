@@ -160,9 +160,15 @@ public final class TypeChecker {
 
     private void walkStatement(StatementNode stmt) {
         // A block introduces a lexical scope: narrowing entries removed by
-        // block-local declarations are restored when the block exits.
+        // block-local declarations are restored when the block exits. A
+        // C-style for head is a block-local scope too (docs/spec-v1.2.md
+        // §Statement/expression separation: the loop desugars to a
+        // block-local scope plus a while loop), so its loop-head let
+        // shadows and restores like a block-local declaration.
         boolean blockScope = stmt instanceof Block;
-        if (blockScope) narrowing.pushShadowFrame();
+        boolean shadowScope = blockScope
+            || (stmt instanceof ForStatement && scopeMap.get(stmt) != null);
+        if (shadowScope) narrowing.pushShadowFrame();
 
         // Check for scope change
         SymbolTable savedScope = currentScope;
@@ -198,10 +204,8 @@ public final class TypeChecker {
         currentScope = savedScope;
         nameResolver.setCurrentScope(savedScope);
 
-        if (blockScope) {
-            narrowing.popShadowFrame();
-            pendingScopes.pop();
-        }
+        if (shadowScope) narrowing.popShadowFrame();
+        if (blockScope) pendingScopes.pop();
     }
 
     /** Pushes one block scope's not-yet-declared let names. */
@@ -492,6 +496,11 @@ public final class TypeChecker {
         Type exprType = checkExpression(vd.initializer());
         expectedType = savedExpected;
 
+        // The initializer's class provenance is resolved while the
+        // declaration is still pending, so a self reference names the
+        // enclosing binding exactly like the type check above.
+        Symbol.ClassSymbol initDeclaredClass = declaredClassOf(vd.initializer());
+
         // The declaration is complete: the name is now visible to the
         // following statements of its block. Only the declaration's own
         // scope stops treating it as pending — an inner block's
@@ -542,6 +551,16 @@ public final class TypeChecker {
             }
             if (targetType != null) {
                 checkAssignment(targetType, exprType, vd.initializer().span());
+                // Initialization assigns a value to the new binding: a
+                // value that names a different declaration of the same
+                // canonical class identity crosses the two runtime
+                // layouts here exactly like an assignment expression.
+                Symbol targetSym = currentScope.resolveLocal(vd.name());
+                Symbol.ClassSymbol targetDecl =
+                    targetSym instanceof Symbol.VariableSymbol vs
+                        ? vs.declaredClass() : null;
+                checkClassProvenance(targetDecl, targetType,
+                    initDeclaredClass, exprType, vd.initializer().span());
             }
         }
 
@@ -728,13 +747,17 @@ public final class TypeChecker {
         elseNarrowing = narrowing;
 
         if (is.elseBranch().isEmpty()) {
-            // No else branch: the then arm's narrowing stays inside its
-            // block and is not adopted for the statements after the if
-            // (the spec's narrowing is block-scoped: `!== null` narrows in
-            // its block, `=== null` in the else block, and there is no
-            // post-if persistence). A nullable binding is therefore
-            // dereferenced only inside its narrowing block or after an
-            // explicit re-narrowing.
+            // No else branch: the then arm's condition-derived positive
+            // refinements stay inside its block and are not adopted for
+            // the statements after the if (the spec's narrowing is
+            // block-scoped: `!== null` narrows in its block, `=== null`
+            // in the else block, and there is no post-if persistence).
+            // An invalidation inside the then arm (an assignment clearing
+            // an entry or an await's invalidateAll) must still survive the
+            // join: the incoming entries are retained only for the names
+            // neither path invalidated, and a snapshot only when the
+            // then path still holds it.
+            savedNarrowing.merge(thenNarrowing);
             narrowing = savedNarrowing;
         } else {
             thenNarrowing.merge(elseNarrowing);
@@ -776,12 +799,36 @@ public final class TypeChecker {
     // =======================================================================
 
     private void checkForStatement(ForStatement fs) {
-        fs.init().ifPresent(init -> {
-            switch (init) {
-                case ForInit.VarDecl vd -> checkVariableDeclaration(vd.decl());
-                case ForInit.AssignExpr ae -> checkExpression(ae.expr());
+        // The loop-head let declaration is not visible to its own
+        // initializer (docs/spec-v1.2.md §Declaration order): while the
+        // initializer is checked, the loop-head scope keeps the name
+        // pending, so a self reference resolves to the enclosing scopes
+        // (an unresolved self reference is E2001) and a same-named
+        // enclosing binding is read through. The name is exposed to the
+        // condition, the update, and the body.
+        boolean loopHeadPending = false;
+        if (fs.init().isPresent()
+                && fs.init().get() instanceof ForInit.VarDecl vd) {
+            SymbolTable loopScope = scopeMap.get(fs);
+            if (loopScope != null) {
+                Set<String> names = new LinkedHashSet<>();
+                names.add(vd.decl().name());
+                pendingScopes.push(new PendingScope(loopScope, names));
+                loopHeadPending = true;
             }
-        });
+        }
+        try {
+            fs.init().ifPresent(init -> {
+                switch (init) {
+                    case ForInit.VarDecl vd -> checkVariableDeclaration(vd.decl());
+                    case ForInit.AssignExpr ae -> checkExpression(ae.expr());
+                }
+            });
+        } finally {
+            if (loopHeadPending) {
+                pendingScopes.pop();
+            }
+        }
 
         // F6: Set expectedType = boolean for for conditions
         fs.condition().ifPresent(cond -> {
@@ -868,8 +915,15 @@ public final class TypeChecker {
         NullNarrowing savedNarrowing = narrowing;
         narrowing = new NullNarrowing();
         loopDepth++;
+        loopAssignments.push(newLoopAssignmentSet());
         walkStatement(fos.body()); // Enters Block scope via scopeMap
+        Set<Symbol> assigned = loopAssignments.pop();
         loopDepth--;
+        // The for-of back-edge invalidates every binding assigned in the
+        // body exactly like while and C-style for (v1.2 narrowing does
+        // not cross loop back-edges): the recorded bindings propagate to
+        // an enclosing loop and the still-visible ones lose their entry.
+        closeLoopAssignments(assigned, savedNarrowing);
         narrowing = savedNarrowing;
     }
 
@@ -1884,21 +1938,11 @@ public final class TypeChecker {
         // in one module share the canonical identity (module + name) yet own
         // distinct declarations and runtime layouts. An assignment that
         // crosses the two declarations is rejected at the frontend — never
-        // left to the backends' duplicate-layout failure.
-        if (declaredTarget instanceof Type.Class targetClass
-                && valueType instanceof Type.Class valueClass
-                && Types.equals(targetClass, valueClass)) {
-            Symbol.ClassSymbol targetDecl = declaredClassOf(assign.target());
-            Symbol.ClassSymbol valueDecl = declaredClassOf(assign.value());
-            if (targetDecl != null && valueDecl != null
-                    && targetDecl != valueDecl) {
-                error(DiagnosticCode.E3019,
-                    "Cannot assign class '" + targetClass.name()
-                        + "' across its distinct declarations of the same "
-                        + "canonical identity (module + name)",
-                    assign.span());
-            }
-        }
+        // left to the backends' duplicate-layout failure. Nullable class
+        // boundaries are the same crossing (the canonical identity is
+        // unchanged by the nullability wrapper).
+        checkClassProvenance(declaredClassOf(assign.target()), declaredTarget,
+            declaredClassOf(assign.value()), valueType, assign.span());
 
         if (assign.target() instanceof IdentifierExpr id) {
             recordAssignment(id.name());
@@ -1923,6 +1967,42 @@ public final class TypeChecker {
         if (!isAssignable(targetType, exprType)) {
             reportAssignabilityError(targetType, exprType, span);
         }
+    }
+
+    /**
+     * The E3019 cross-declaration gate: the value's class provenance and
+     * the target's class provenance are two distinct declarations of a
+     * same-named class, which share one canonical identity (module +
+     * name) yet own distinct runtime layouts. Applied at assignment
+     * expressions, declaration initialization, and nullable class
+     * boundaries alike (ISSUE-0717 defect snippet 47).
+     */
+    private void checkClassProvenance(Symbol.ClassSymbol targetDecl,
+            Type targetType, Symbol.ClassSymbol valueDecl, Type valueType,
+            Span span) {
+        Type targetClass = nonNullClassType(targetType);
+        Type valueClass = nonNullClassType(valueType);
+        if (!(targetClass instanceof Type.Class tc)
+                || !(valueClass instanceof Type.Class vc)
+                || !Types.equals(tc, vc)) {
+            return;
+        }
+        if (targetDecl != null && valueDecl != null && targetDecl != valueDecl) {
+            error(DiagnosticCode.E3019,
+                "Cannot assign class '" + tc.name()
+                    + "' across its distinct declarations of the same "
+                    + "canonical identity (module + name)",
+                span);
+        }
+    }
+
+    /** The innermost type under any nullable wrapper. */
+    private static Type nonNullClassType(Type type) {
+        Type current = type;
+        while (current instanceof Type.Nullable n) {
+            current = n.inner();
+        }
+        return current;
     }
 
     /**

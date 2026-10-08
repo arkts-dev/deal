@@ -261,6 +261,11 @@ public class CheckerTest {
         testShadowingInitializerAssignmentTargetsEnclosingBinding();
         testAwaitInsideShadowingBlockInvalidatesSnapshot();
         testLoopLocalShadowDoesNotInvalidateEnclosingNarrowing();
+        testIfJoinPropagatesInvalidation();
+        testShadowStateSurvivesBranch();
+        testForOfAssignmentInvalidatesEnclosingNarrowing();
+        testForHeadDeclarationOrder();
+        testClassProvenanceAtInitializationAndNullableTarget();
         testNestedClass();
         // ISSUE-0717 (defect snippet 47): a nested class that shadows an
         // enclosing class of the same name stays a distinct declaration;
@@ -1736,6 +1741,279 @@ public class CheckerTest {
         assertError(assigned, "E3001",
             "an assignment to the enclosing binding inside the loop still "
                 + "invalidates it");
+    }
+
+    /**
+     * ISSUE-0717 review cycle 3: an if without else propagates the
+     * invalidation an assignment or an await inside its then arm applied
+     * (docs/spec-v1.2.md §Nullable semantics: an assignment invalidates
+     * the refinement and an await invalidates every refinement of the
+     * enclosing async function), while a harmless arm leaves the incoming
+     * refinement intact. Both the with-else and the without-else joins
+     * drop the invalidated entry.
+     */
+    static void testIfJoinPropagatesInvalidation() {
+        System.out.println("-- the if join propagates assignment and await "
+            + "invalidations --");
+        CheckerOutput assigned = checkProgram(
+            "export function main(): null {\n" +
+            "  let x: string | null = \"a\";\n" +
+            "  if (x !== null) {\n" +
+            "    if (true) { x = null; }\n" +
+            "    let y: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(assigned, "E3001",
+            "an assignment inside an if without else invalidates the refinement "
+                + "at the join");
+
+        CheckerOutput awaited = checkProgram(
+            "async function tick(): null { return null; }\n" +
+            "export async function run(): null {\n" +
+            "  let x: string | null = \"ok\";\n" +
+            "  if (x !== null) {\n" +
+            "    if (true) { await tick(); }\n" +
+            "    let s: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(awaited, "E3001",
+            "an await inside an if without else invalidates every refinement "
+                + "at the join");
+
+        CheckerOutput elseAssigned = checkProgram(
+            "export function main(): null {\n" +
+            "  let x: string | null = \"a\";\n" +
+            "  if (x !== null) {\n" +
+            "    if (false) { } else { x = null; }\n" +
+            "    let y: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(elseAssigned, "E3001",
+            "an assignment in the else arm invalidates the refinement at the "
+                + "join");
+
+        CheckerOutput elseAwaited = checkProgram(
+            "async function tick(): null { return null; }\n" +
+            "export async function run(): null {\n" +
+            "  let x: string | null = \"ok\";\n" +
+            "  if (x !== null) {\n" +
+            "    if (false) { } else { await tick(); }\n" +
+            "    let s: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(elseAwaited, "E3001",
+            "an await in the else arm invalidates every refinement at the "
+                + "join");
+
+        CheckerOutput harmless = checkProgram(
+            "export function main(): null {\n" +
+            "  let x: string | null = \"a\";\n" +
+            "  if (x !== null) {\n" +
+            "    if (true) { let z: int = 1; }\n" +
+            "    let y: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(harmless,
+            "a harmless if without else keeps the incoming refinement");
+    }
+
+    /**
+     * ISSUE-0717 review cycle 3: a shadowing declaration's saved
+     * refinement survives an if/else join inside the shadowing block but
+     * is never restored when a path invalidated it with an await
+     * (docs/spec-v1.2.md §Nullable semantics).
+     */
+    static void testShadowStateSurvivesBranch() {
+        System.out.println("-- the shadow snapshot survives a branch join "
+            + "unless a path invalidated it --");
+        CheckerOutput ifElse = checkProgram(
+            "export function main(): null {\n" +
+            "  let x: string | null = \"a\";\n" +
+            "  if (x !== null) {\n" +
+            "    { let x: int = 0; if (true) {} else {} }\n" +
+            "    let y: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(ifElse,
+            "the shadow snapshot survives the harmless if/else");
+
+        CheckerOutput awaitThen = checkProgram(
+            "async function tick(): null { return null; }\n" +
+            "export async function run(): null {\n" +
+            "  let x: string | null = \"ok\";\n" +
+            "  if (x !== null) {\n" +
+            "    { let x: int = 0; if (true) { await tick(); } else {} }\n" +
+            "    let s: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(awaitThen, "E3001",
+            "an await on one branch prevents the snapshot's restoration");
+
+        CheckerOutput awaitElse = checkProgram(
+            "async function tick(): null { return null; }\n" +
+            "export async function run(): null {\n" +
+            "  let x: string | null = \"ok\";\n" +
+            "  if (x !== null) {\n" +
+            "    { let x: int = 0; if (false) {} else { await tick(); } }\n" +
+            "    let s: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(awaitElse, "E3001",
+            "an await on either branch prevents the snapshot's restoration");
+    }
+
+    /**
+     * ISSUE-0717 review cycle 3: the for-of back-edge invalidates every
+     * binding assigned in the body exactly like while and C-style for
+     * (docs/spec-v1.2.md §Nullable semantics), and a same-named
+     * iteration binding is a distinct binding that leaves the enclosing
+     * refinement intact.
+     */
+    static void testForOfAssignmentInvalidatesEnclosingNarrowing() {
+        System.out.println("-- the for-of back-edge invalidates the bindings "
+            + "assigned in the body --");
+        CheckerOutput assigned = checkProgram(
+            "export function main(): null {\n" +
+            "  let x: string | null = \"a\";\n" +
+            "  if (x !== null) {\n" +
+            "    for (let n: int of [1]) { x = null; }\n" +
+            "    let y: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(assigned, "E3001",
+            "an assignment to the enclosing binding inside a for-of body "
+                + "invalidates it after the loop");
+
+        CheckerOutput control = checkProgram(
+            "export function main(): null {\n" +
+            "  let x: string | null = \"a\";\n" +
+            "  if (x !== null) {\n" +
+            "    for (let x: string of [\"z\"]) { x = \"b\"; }\n" +
+            "    let y: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(control,
+            "a same-named iteration binding is distinct; the enclosing "
+                + "refinement survives the for-of");
+    }
+
+    /**
+     * ISSUE-0717 review cycle 3: a C-style for's loop-head let is visible
+     * only after its declaration (docs/spec-v1.2.md §Declaration order;
+     * the loop desugars to block-local scope plus a while loop): its
+     * initializer resolves to an enclosing binding, a self reference is
+     * E2001, and the loop-head shadow ends with the loop.
+     */
+    static void testForHeadDeclarationOrder() {
+        System.out.println("-- the C-style for loop-head let is not visible "
+            + "to its own initializer --");
+        CheckerOutput self = checkProgram(
+            "export function main(): null {\n" +
+            "  for (let x: int = x; false;) {}\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(self, "E2001",
+            "a loop-head self reference has no enclosing declaration");
+
+        CheckerOutput shadow = checkProgram(
+            "export function main(): null {\n" +
+            "  let x: int = 1;\n" +
+            "  for (let x: number = number(x); false;) {}\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(shadow,
+            "the initializer reads the enclosing int binding");
+
+        CheckerOutput restored = checkProgram(
+            "export function main(): null {\n" +
+            "  let x: string | null = \"a\";\n" +
+            "  if (x !== null) {\n" +
+            "    for (let x: int = 0; false;) {}\n" +
+            "    let y: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(restored,
+            "the loop-head shadow ends with the loop and restores the "
+                + "enclosing refinement");
+    }
+
+    /**
+     * ISSUE-0717 review cycle 3: the E3019 cross-declaration gate covers
+     * declaration initialization and nullable class targets as well as
+     * plain assignment expressions (the two declarations share the
+     * canonical identity but own distinct runtime layouts).
+     */
+    static void testClassProvenanceAtInitializationAndNullableTarget() {
+        System.out.println("-- class provenance is checked at initialization "
+            + "and nullable targets --");
+        CheckerOutput init = checkProgram(
+            "class A { n: int = 0; }\n" +
+            "export function f(): null {\n" +
+            "  let a: A = {};\n" +
+            "  {\n" +
+            "    class A { n: string = \"ok\"; }\n" +
+            "    let b: A = a;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(init, "E3019",
+            "a declaration initializer that crosses the two declarations "
+                + "is E3019");
+
+        CheckerOutput nullable = checkProgram(
+            "class A { n: int = 0; }\n" +
+            "export function f(): null {\n" +
+            "  let a: A | null = {};\n" +
+            "  {\n" +
+            "    class A { n: string = \"ok\"; }\n" +
+            "    let b: A = {};\n" +
+            "    a = b;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(nullable, "E3019",
+            "an assignment to a nullable class target that crosses the two "
+                + "declarations is E3019");
+
+        CheckerOutput control = checkProgram(
+            "class A { n: int = 0; }\n" +
+            "export function f(): null {\n" +
+            "  let a: A = {};\n" +
+            "  let b: A = a;\n" +
+            "  let c: A | null = a;\n" +
+            "  c = b;\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(control,
+            "initialization and nullable assignment within one declaration "
+                + "stay legal");
     }
 
     /**

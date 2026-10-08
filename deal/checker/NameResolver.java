@@ -802,10 +802,15 @@ public final class NameResolver {
                 Type type = decl.typeAnnotation().map(this::resolveTypeNode).orElse(null);
                 Symbol.ClassSymbol declaredClass = decl.typeAnnotation()
                     .map(this::declaredClassSymbolOf).orElse(null);
+                // The loop-head let is visible only after its declaration
+                // (docs/spec-v1.2.md §Declaration order): its initializer
+                // is walked before the loop variable is defined, so the
+                // initializer resolves to an enclosing binding of the
+                // same name (the C-style for desugars to block-local
+                // scope plus a while loop).
+                walkExpression(decl.initializer());
                 currentScope.define(name,
                     new Symbol.VariableSymbol(name, type, false, declaredClass));
-                // F1: Walk init expression
-                walkExpression(decl.initializer());
             } else if (init instanceof ForInit.AssignExpr ae) {
                 walkExpression(ae.expr());
             }

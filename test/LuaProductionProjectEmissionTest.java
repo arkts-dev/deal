@@ -690,6 +690,23 @@ public class LuaProductionProjectEmissionTest {
                 sum = sum + before + v;
               }
               if (sum !== 23) { throw { code: "SHADOW_FAIL", message: "for-of shadow" }; }
+              let h: int = 3;
+              let hsum: int = 0;
+              for (let h: int = h + 1; hsum < 9;) { hsum = hsum + h; }
+              if (hsum !== 12) { throw { code: "SHADOW_FAIL", message: "for-head initializer" }; }
+              if (h !== 3) { throw { code: "SHADOW_FAIL", message: "for-head outer restored" }; }
+              let nl: string | null = "ab";
+              if (nl !== null) {
+                for (let nl: int = 0; false;) {}
+                let nlText: string = nl;
+                if (nlText !== "ab") { throw { code: "SHADOW_FAIL", message: "for-head shadow restored" }; }
+              }
+              let nb: string | null = "cd";
+              if (nb !== null) {
+                { let nb: int = 0; if (true) {} else {} }
+                let nbText: string = nb;
+                if (nbText !== "cd") { throw { code: "SHADOW_FAIL", message: "branch shadow restored" }; }
+              }
               try {
                 throw { code: "SHADOW_X", message: "catch shadow" };
               } catch (e) {

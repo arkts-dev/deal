@@ -47,6 +47,13 @@ public final class NullNarrowing {
     /** Copy constructor for branching. */
     private NullNarrowing(NullNarrowing other) {
         this.narrowed.putAll(other.narrowed);
+        // The branch owns its own shadow state: a declaration or an
+        // invalidation inside one path must not corrupt the sibling, and
+        // the merged state reconciles the copies (a snapshot survives
+        // only when both paths still hold it).
+        for (List<Map.Entry<String, Type>> frame : other.shadowFrames) {
+            this.shadowFrames.add(new ArrayList<>(frame));
+        }
     }
 
     /**
@@ -202,7 +209,8 @@ public final class NullNarrowing {
 
     /**
      * Merges narrowings from two branches (intersection: only keep if both
-     * branches agree).
+     * branches agree). An entry one branch invalidated is dropped, so an
+     * assignment or an await on either path survives the join.
      */
     public void merge(NullNarrowing other) {
         Set<String> toRemove = new HashSet<>();
@@ -214,6 +222,42 @@ public final class NullNarrowing {
         }
         for (String name : toRemove) {
             narrowed.remove(name);
+        }
+        mergeShadowFrames(other);
+    }
+
+    /**
+     * Reconciles the shadow frames of two branch states: a saved snapshot
+     * survives the join only when both paths still hold it, so an
+     * invalidation on either path (an assignment snapshot removal or an
+     * await's {@link #invalidateAll()}) wins over a harmless path — a
+     * snapshot never resurrects a refinement the language invalidated.
+     * The frames pair by block nesting: both branches are balanced over
+     * the same enclosing blocks, so frame depth is the block depth.
+     */
+    private void mergeShadowFrames(NullNarrowing other) {
+        List<List<Map.Entry<String, Type>>> mine =
+            new ArrayList<>(shadowFrames);
+        List<List<Map.Entry<String, Type>>> theirs =
+            new ArrayList<>(other.shadowFrames);
+        int depth = Math.min(mine.size(), theirs.size());
+        for (int i = 0; i < depth; i++) {
+            List<Map.Entry<String, Type>> merged = new ArrayList<>();
+            for (Map.Entry<String, Type> entry : mine.get(i)) {
+                for (Map.Entry<String, Type> candidate : theirs.get(i)) {
+                    if (entry.getKey().equals(candidate.getKey())
+                            && Types.equals(entry.getValue(),
+                                candidate.getValue())) {
+                        merged.add(entry);
+                        break;
+                    }
+                }
+            }
+            mine.set(i, merged);
+        }
+        shadowFrames.clear();
+        for (int i = mine.size() - 1; i >= 0; i--) {
+            shadowFrames.push(mine.get(i));
         }
     }
 

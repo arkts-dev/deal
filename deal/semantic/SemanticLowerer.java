@@ -5572,15 +5572,19 @@ public final class SemanticLowerer {
             BindingCoreIncarnation counterIncarnation = new BindingCoreIncarnation(
                 INITIAL_LOOP_GENERATION, initBlock, BindingCellKind.DIRECT,
                 true, BindingProducer.BINDING_ALLOC, false);
-            registerBinding(decl.name(), counter, counterIncarnation);
             // Init block: the counter ALLOC, the initializer value ops,
             // the counter INIT, then the first condition production
-            // (init-block members — C-D4).
+            // (init-block members — C-D4). The loop-head let is not
+            // visible to its own initializer (docs/spec-v1.2.md
+            // §Declaration order): the counter registers after the
+            // initializer, so a same-named enclosing binding is read
+            // through exactly as the checker resolved it.
             emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
                 new KindPayload.BindingAllocPayload(counter, initBlock, true,
                     cellKinds.cellKindOf(counterIncarnation), INITIAL_LOOP_GENERATION),
                 decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
             ValueId initializer = lowerExpression(decl.initializer());
+            registerBinding(decl.name(), counter, counterIncarnation);
             emitUserNullOp(SemanticOpKind.BINDING_INIT,
                 new KindPayload.BindingInitPayload(counter, INITIAL_LOOP_GENERATION,
                     initializer),
@@ -5932,25 +5936,26 @@ public final class SemanticLowerer {
                     walkReferenceBlock(whileStatement.body(), bound, references);
                 }
                 case ForStatement forStatement -> {
-                    Set<String> loopBound = bound;
-                    if (forStatement.init().isPresent()
-                            && forStatement.init().get() instanceof ForInit.VarDecl varDecl) {
-                        // The checker defines the loop variable in the
-                        // loop's own child scope before walking the
-                        // initializer — it binds throughout the loop,
-                        // never in the enclosing block.
-                        loopBound = new HashSet<>(bound);
-                        loopBound.add(varDecl.decl().name());
-                    }
+                    // The loop-head let is visible only after its
+                    // declaration: the initializer is a free reference
+                    // resolved in the enclosing scope (the checker's
+                    // declaration-order rule), and the loop variable
+                    // binds for the condition, the update, and the body.
                     if (forStatement.init().isPresent()) {
                         ForInit init = forStatement.init().get();
                         switch (init) {
                             case ForInit.VarDecl varDecl ->
-                                walkReferenceExpr(varDecl.decl().initializer(), loopBound,
+                                walkReferenceExpr(varDecl.decl().initializer(), bound,
                                     references);
                             case ForInit.AssignExpr assignExpr ->
-                                walkReferenceExpr(assignExpr.expr(), loopBound, references);
+                                walkReferenceExpr(assignExpr.expr(), bound, references);
                         }
+                    }
+                    Set<String> loopBound = bound;
+                    if (forStatement.init().isPresent()
+                            && forStatement.init().get() instanceof ForInit.VarDecl varDecl) {
+                        loopBound = new HashSet<>(bound);
+                        loopBound.add(varDecl.decl().name());
                     }
                     if (forStatement.condition().isPresent()) {
                         walkReferenceExpr(forStatement.condition().get(), loopBound,
