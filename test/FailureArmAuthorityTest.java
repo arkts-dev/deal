@@ -108,6 +108,7 @@ public class FailureArmAuthorityTest {
         testEmittedParameterContract();
         testNegativeSingleSourceControl();
         testWalkArmThreeConsumerDrive();
+        testAbsentOriginFailsClosed();
         testWalkArmOracleDispatchLeg();
         testLandedPresentNullRead();
         testWalkOracleNumericPositions();
@@ -2185,6 +2186,103 @@ public class FailureArmAuthorityTest {
                 declaredKeyed.actual())),
             "a projection caller keying the numeric token on the declared int text is "
                 + "reported by field name actual");
+    }
+
+    // =========================================================================
+    // 14b. The absent origin operand fails closed on both target renderers
+    // =========================================================================
+
+    /**
+     * The origin contract's fail-closed subject (jsonable-tojson-walk-arm-binding
+     * W2/W6): the render's origin operand is the executing op's
+     * {@code SourceOrigin}, and an absent operand is a producer defect at
+     * both target rendering boundaries — the emitted Lua prelude's
+     * {@code __arm} and the JVM runtime's {@code arm} — for the walk arm and
+     * the cycle arm alike. No render derives or substitutes a span, so the
+     * guard rejects the render instead of publishing an origin-less
+     * DEAL-visible tuple. A supplied operand stays green on both renderers
+     * and reaches the tuple's origin field, and the oracle's class walk
+     * keeps its landed rejection of an absent call origin, so the three
+     * consumers agree on the origin contract.
+     */
+    static void testAbsentOriginFailsClosed() throws Exception {
+        System.out.println("-- the absent origin operand fails closed on both "
+            + "target renderers --");
+        // The JVM target's rendering boundary (the emitted catch site's own
+        // call), on both walk arms.
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
+            Map.of("fieldPath", "data.k", "actual", "function"), null, null,
+            "function"),
+            "the JVM walk-arm render rejects an absent origin operand");
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(
+            FailureArmId.JSON_TO_WALK_CYCLE, Map.of(), null, null, null),
+            "the JVM cycle-arm render rejects an absent origin operand");
+        // The supplied operand stays green on both arms (the controls), and
+        // the rendered tuple carries it.
+        deal.codegen.jvm.JvmRuntime.DealError jvmWalk =
+            deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
+                Map.of("fieldPath", "data.k", "actual", "function"), WALK_SPAN, null,
+                "function");
+        checkEq(WALK_SPAN, jvmWalk.origin,
+            "the JVM walk-arm render carries the supplied origin operand");
+        checkEq("value at data.k is not JSON serializable: function", jvmWalk.msg,
+            "the JVM walk-arm render keeps the arm's own message with its origin");
+        deal.codegen.jvm.JvmRuntime.DealError jvmCycle =
+            deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK_CYCLE, Map.of(),
+                WALK_SPAN, null, null);
+        checkEq(WALK_SPAN, jvmCycle.origin,
+            "the JVM cycle-arm render carries the supplied origin operand");
+        checkEq("cyclic value cannot be encoded as JSON", jvmCycle.msg,
+            "the JVM cycle-arm render keeps the arm's own message with its origin");
+
+        // The emitted Lua target's rendering boundary, under real luajit.
+        List<String> rows = runPreludeProbe("""
+            local ok = pcall(__arm, "JSON_TO_WALK",
+              {fieldPath = "data.k", actual = "function"}, nil, nil, "function")
+            print("walk-absent-origin|" .. tostring(ok))
+            ok = pcall(__arm, "JSON_TO_WALK_CYCLE", nil, nil, nil, nil)
+            print("cycle-absent-origin|" .. tostring(ok))
+            ok, value = pcall(__arm, "JSON_TO_WALK",
+              {fieldPath = "data.k", actual = "function"}, %s, nil, "function")
+            print("walk-origin-control|" .. tostring(ok) .. "|"
+              .. (ok and (value.o .. "|" .. value.m) or tostring(value)))
+            ok, value = pcall(__arm, "JSON_TO_WALK_CYCLE", nil, %s, nil, nil)
+            print("cycle-origin-control|" .. tostring(ok) .. "|"
+              .. (ok and (value.o .. "|" .. value.m) or tostring(value)))
+            """.formatted(quote(WALK_SPAN), quote(WALK_SPAN)),
+            "absent-origin-probe", 4);
+        checkEq("walk-absent-origin|false", rows.get(0),
+            "the emitted prelude's walk-arm render fails closed when the render "
+                + "carries no origin operand");
+        checkEq("cycle-absent-origin|false", rows.get(1),
+            "the emitted prelude's cycle-arm render fails closed when the render "
+                + "carries no origin operand");
+        checkEq("walk-origin-control|true|" + WALK_SPAN
+                + "|value at data.k is not JSON serializable: function", rows.get(2),
+            "the emitted prelude's walk-arm render carries the supplied origin "
+                + "operand");
+        checkEq("cycle-origin-control|true|" + WALK_SPAN
+                + "|cyclic value cannot be encoded as JSON", rows.get(3),
+            "the emitted prelude's cycle-arm render carries the supplied origin "
+                + "operand");
+
+        // The oracle's class walk keeps its landed rejection of an absent
+        // call origin (the third consumer of the same contract).
+        deal.semantic.ir.SemanticOp op = walkJsonOp();
+        Map<deal.semantic.ir.ValueId, ClassOpsExecutor.Value> values =
+            new LinkedHashMap<>();
+        values.put(((KindPayload.JsonToClassPayload) op.payload()).classValue(),
+            new ClassOpsExecutor.Value.Class(WALK_ID, List.of()));
+        boolean oracleRejected = false;
+        try {
+            ClassOpsExecutor.executeJsonToClass(op, values, Map.of(WALK_ID, walkLayout()),
+                deal.semantic.JsonClassAlgorithmAdapter.stringifier(), null);
+        } catch (NullPointerException expected) {
+            oracleRejected = true;
+        }
+        check(oracleRejected,
+            "the oracle's class walk rejects an absent call origin (the landed "
+                + "supplied-callOrigin contract)");
     }
 
     /**
