@@ -2424,6 +2424,19 @@ public final class SemanticLowerer {
          */
         private final Map<FunctionId, LoweredFunction> functions = new LinkedHashMap<>();
         /**
+         * The recursive-group members whose {@code LoweredBody} execution
+         * binding is registered before their own body walk (the member
+         * preallocation guarantee) but whose capture list is not yet
+         * known: the member's {@code LoweredFunction} record is finalized
+         * only after its body walk completes, so an invocation of the
+         * member through an ordinary function value resolved while that
+         * walk is still open is value-carried — the closure carrier holds
+         * the creation-site captures, never a call-site re-resolution of
+         * an unresolved incarnation.
+         */
+        private final Set<FunctionId> groupMemberBodiesPendingCaptures =
+            new LinkedHashSet<>();
+        /**
          * The produced function-execution-bindings registry (the unit's
          * {@code functionBindings} map; the registry child's production
          * class, B5 — closure-core mode): exactly one registration per
@@ -5022,15 +5035,25 @@ public final class SemanticLowerer {
                 memberIdentities.add(identity);
                 memberEntries.add(entry);
             }
-            // The member body contexts, all created and registered before
-            // any member body walks (C10/K12: every lowered body owns
-            // exactly one invocation identity and one return cell). A
+            // The member body contexts and their execution bindings, all
+            // created and registered before any member body walk (C10/K12:
+            // every lowered body owns exactly one invocation identity, one
+            // return cell, and one resolvable execution binding). A
             // module-level member reuses the context the hoist reserved
             // (B1); a nested member's context is created here and
             // registered under its group binding, so a sibling direct call
             // resolves through contextsByBindingId and an explicit return
             // names the member's own FunctionId — never the enclosing
-            // function's.
+            // function's. Registering the member's LoweredBody here makes
+            // the member's pre-assigned allocation identity resolvable from
+            // inside every sibling body: a sibling reference through an
+            // ordinary function value (a `let` alias) lowers its call
+            // through the registry lookup, exactly like any other
+            // declared-function value, with exactly one registration per
+            // member identity. The member's capture list is finalized only
+            // after its body walk, so a pending member's value-carried
+            // classification is recorded until then
+            // ({@link #groupMemberBodiesPendingCaptures}).
             List<FunctionContext> memberContexts = new ArrayList<>();
             for (int i = 0; i < members.size(); i++) {
                 FunctionDeclaration member = members.get(i);
@@ -5055,6 +5078,12 @@ public final class SemanticLowerer {
                         parameterTypeSpans(member.params()));
                     contextsByFunctionId.put(memberFunctionId, context);
                     contextsByBindingId.put(memberBindings.get(i), context);
+                }
+                if (context != null) {
+                    registry.registerGroupMember(new FunctionAllocationIdentity(
+                        memberIdentities.get(i).id()), context.functionId,
+                        context.bodyBlock);
+                    groupMemberBodiesPendingCaptures.add(context.functionId);
                 }
                 memberContexts.add(context);
             }
@@ -5133,6 +5162,15 @@ public final class SemanticLowerer {
                 bodyBlocks.add(bodyBlock);
                 signatures.add(signature);
                 capturedLists.add(captured);
+                if (reservedContext != null) {
+                    // The member's capture list is fixed the moment its own
+                    // walk ends: the LoweredFunction record is final from
+                    // here, so every later reference classifies the
+                    // value-carried invocation from the recorded captures.
+                    functions.put(functionId, new LoweredFunction(functionId, signature,
+                        captureIds, bodyBlock));
+                    groupMemberBodiesPendingCaptures.remove(functionId);
+                }
             }
             // Phase 2: exactly one RECURSIVE_GROUP_INIT op — the payload
             // pins the two-phase execution contract (identities allocated
@@ -5156,10 +5194,16 @@ public final class SemanticLowerer {
                 BlockId bodyBlock = bodyBlocks.get(i);
                 RuntimeDescriptor.Func signature = signatures.get(i);
                 ValueId identity = memberIdentities.get(i);
-                functions.put(functionId, new LoweredFunction(functionId, signature,
-                    captureIds, bodyBlock));
-                registry.registerGroupMember(new FunctionAllocationIdentity(identity.id()),
-                    functionId, bodyBlock);
+                if (memberContexts.get(i) == null) {
+                    // The slice arms (outside the full-program entry) keep
+                    // registering the member's execution binding after the
+                    // walk; the preallocation arm registered it before the
+                    // first member body walk (exactly once per identity).
+                    functions.put(functionId, new LoweredFunction(functionId, signature,
+                        captureIds, bodyBlock));
+                    registry.registerGroupMember(new FunctionAllocationIdentity(identity.id()),
+                        functionId, bodyBlock);
+                }
                 List<ClosureCapture> captureFacts = new ArrayList<>();
                 for (CapturedCell capture : capturedLists.get(i)) {
                     captureFacts.add(new ClosureCapture(capture.cell().name,
@@ -7779,7 +7823,16 @@ public final class SemanticLowerer {
                 return false;
             }
             LoweredFunction function = functions.get(body.functionId());
-            return function != null && !function.captures().isEmpty();
+            if (function == null) {
+                // A pre-registered group member whose own body walk is
+                // still open: its capture list is not final yet, and the
+                // value the binding holds is the member's published
+                // closure, so the invocation is value-carried — the
+                // creation-site captures travel with the carrier, never
+                // a call-site re-resolution of an unresolved incarnation.
+                return groupMemberBodiesPendingCaptures.contains(body.functionId());
+            }
+            return !function.captures().isEmpty();
         }
 
         /**

@@ -16,6 +16,7 @@ import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticRuntimeModel;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ExecutableLoweredProject;
+import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.IntrinsicKind;
@@ -53,15 +54,30 @@ import java.util.stream.Stream;
  *
  * <p>A recursive group declared inside a function body is a nested group:
  * every member owns its body block, its {@code FunctionId}, its single return
- * boundary, and its reserved invocation identity, all materialized before any
- * member body walks. The reported defect was that {@code lowerGroup} reserved
- * and pushed a {@code FunctionContext} only for module-level members, so an
- * explicit {@code return} in a nested member lowered against the
- * <em>enclosing</em> function's context: the RETURN op named the enclosing
- * function while its block belonged to the member, and
+ * boundary, its reserved invocation identity, and its resolvable execution
+ * binding, all materialized before any member body walks. The reported defect
+ * was that {@code lowerGroup} reserved and pushed a {@code FunctionContext}
+ * only for module-level members, so an explicit {@code return} in a nested
+ * member lowered against the <em>enclosing</em> function's context: the RETURN
+ * op named the enclosing function while its block belonged to the member, and
  * {@code ControlFlowValidator.checkReturnTarget} rejected it with E6005
  * {@code CONTROL_EXIT}. A sibling direct call also failed closed because the
  * member had no registered context.</p>
+ *
+ * <p>The review's follow-up defect was that each member's
+ * {@code LoweredBody} execution binding was registered only after every member
+ * body walk, so a sibling reference through an ordinary function value (a
+ * {@code let} alias, then a call of that alias) still failed closed with E6005
+ * {@code CONSTRUCT_UNLOWERED} inside the member walk. The member's execution
+ * binding is now registered in the preallocation phase — exactly once per
+ * pre-assigned member identity, before the first member body walk — and the
+ * member's {@code LoweredFunction} record is finalized the moment its own walk
+ * ends, so an alias invocation resolved while the target's capture list is
+ * still open is classified value-carried (the alias holds the member's
+ * published closure, whose creation-site captures travel with the carrier).
+ * Every member of a size&gt;=2 reference SCC references a sibling, so a
+ * member's final capture list is never empty and the pending classification
+ * is the exact one.</p>
  *
  * <p>Three measured surfaces per case:</p>
  *
@@ -87,6 +103,11 @@ import java.util.stream.Stream;
  *       the harness's two known re-entry pairing notices on each consumer (the
  *       accepted recursion shape of the direct-recursion fixtures); every
  *       other failure fails the case.</li>
+ *   <li><b>The called sibling alias.</b> A member invoked through an ordinary
+ *       function-value alias (nested, capture-carrying, later-declared target,
+ *       and module-level variants) compiles on both production lanes, its
+ *       invocation identity is materialized by the alias's value-carried call,
+ *       and the three consumers agree with the pinned terminal and effects.</li>
  * </ol>
  */
 public class NestedGroupProductionTest {
@@ -122,12 +143,14 @@ public class NestedGroupProductionTest {
     /**
      * One nested-group program: its name, its source, the pinned console
      * effect texts, whether its execution recursively re-enters a call op,
-     * whether the group is called from the enclosing body, and whether the
-     * member returns are the implicit trailing null returns (rather than
-     * explicit source returns).
+     * whether each member (in declaration order) is invoked by a call site,
+     * whether the member returns are the implicit trailing null returns
+     * (rather than explicit source returns), and whether the source invokes
+     * a member through an ordinary function-value alias.
      */
     private record Case(String name, String source, List<String> effects,
-                        boolean recursive, boolean called, boolean implicitReturns) {
+                        boolean recursive, List<Boolean> memberCalled,
+                        boolean implicitReturns, boolean aliasInvocation) {
     }
 
     /** The called, mutually recursive, explicit-return group (a computed value). */
@@ -157,7 +180,8 @@ public class NestedGroupProductionTest {
           return null;
         }
         """,
-        List.of("nested-group-called-explicit-ok"), true, true, false);
+        List.of("nested-group-called-explicit-ok"), true, List.of(true, true), false,
+        false);
 
     /** The called, mutually recursive, implicit-null-return group. */
     private static final Case CALLED_IMPLICIT = new Case(
@@ -181,7 +205,8 @@ public class NestedGroupProductionTest {
           return null;
         }
         """,
-        List.of("nested-group-called-implicit-ok"), true, true, true);
+        List.of("nested-group-called-implicit-ok"), true, List.of(true, true), true,
+        false);
 
     /** The called group whose SCC edge is a value reference, not a call. */
     private static final Case CALLED_VALUE_REFERENCE = new Case(
@@ -208,7 +233,145 @@ public class NestedGroupProductionTest {
           return null;
         }
         """,
-        List.of("nested-group-called-value-reference-ok"), false, true, false);
+        List.of("nested-group-called-value-reference-ok"), false, List.of(true, true),
+        false, false);
+
+    /**
+     * The review's called sibling-alias seed: {@code g} invokes {@code f}
+     * through an ordinary function-value alias ({@code let fRef = f}), so
+     * {@code f}'s reserved invocation identity is materialized by the
+     * alias's value-carried call inside {@code g}'s body. Before the fix,
+     * the member's execution binding was registered only after every
+     * member body walk, so this checker-valid shape failed closed with
+     * E6005 {@code CONSTRUCT_UNLOWERED}.
+     */
+    private static final Case CALLED_ALIAS = new Case(
+        "called-alias",
+        """
+        import * as console from "std/console"
+
+        export function main(): null {
+          function f(n: int): int {
+            if (n <= 0) {
+              return 0;
+            }
+            return n + g(n - 1);
+          }
+          function g(n: int): int {
+            let fRef: (n: int) => int = f;
+            return fRef(n);
+          }
+          if (f(4) === 10) {
+            console.log("nested-group-alias-ok");
+          } else {
+            console.log("nested-group-alias-bad");
+          }
+          return null;
+        }
+        """,
+        List.of("nested-group-alias-ok"), true, List.of(true, true), false, true);
+
+    /**
+     * The capture-carrying sibling alias: the aliased member reads an
+     * enclosing local, so the alias invocation must stay value-carried —
+     * the closure carrier holds the creation-site captured cell (the
+     * invocation itself proves the value the alias holds reaches the
+     * member body; the captured-ok terminal is only produced when the
+     * captured {@code base} is observed).
+     */
+    private static final Case CALLED_ALIAS_CAPTURED = new Case(
+        "called-alias-captured",
+        """
+        import * as console from "std/console"
+
+        export function main(): null {
+          let base: int = 10;
+          function f(n: int): int {
+            if (n <= 0) {
+              return base;
+            }
+            return g(n - 1);
+          }
+          function g(n: int): int {
+            let fRef: (n: int) => int = f;
+            return fRef(n);
+          }
+          if (f(3) === 10) {
+            console.log("nested-group-alias-captured-ok");
+          } else {
+            console.log("nested-group-alias-captured-bad");
+          }
+          return null;
+        }
+        """,
+        List.of("nested-group-alias-captured-ok"), true, List.of(true, true), false,
+        true);
+
+    /**
+     * The sibling alias whose target is declared <em>after</em> the
+     * calling member: the target's capture list is not final while the
+     * caller's body walk is open, so the pending classification must
+     * already be value-carried (the alias holds the member's published
+     * closure).
+     */
+    private static final Case CALLED_ALIAS_LATER = new Case(
+        "called-alias-later",
+        """
+        import * as console from "std/console"
+
+        export function main(): null {
+          function g(n: int): int {
+            let fRef: (n: int) => int = f;
+            return fRef(n);
+          }
+          function f(n: int): int {
+            if (n <= 0) {
+              return 0;
+            }
+            return n + g(n - 1);
+          }
+          if (f(4) === 10) {
+            console.log("nested-group-alias-later-ok");
+          } else {
+            console.log("nested-group-alias-later-bad");
+          }
+          return null;
+        }
+        """,
+        List.of("nested-group-alias-later-ok"), true, List.of(true, true), false, true);
+
+    /**
+     * The module-level sibling alias: the same SCC-through-a-value shape at
+     * module scope, where the group lowers at module-init top before the
+     * member bodies walk. The module-level member had the identical
+     * missing-registration defect before the fix.
+     */
+    private static final Case MODULE_GROUP_ALIAS = new Case(
+        "module-group-alias",
+        """
+        import * as console from "std/console"
+
+        function f(n: int): int {
+          if (n <= 0) {
+            return 0;
+          }
+          return n + g(n - 1);
+        }
+        function g(n: int): int {
+          let fRef: (n: int) => int = f;
+          return fRef(n);
+        }
+
+        export function main(): null {
+          if (f(4) === 10) {
+            console.log("module-group-alias-ok");
+          } else {
+            console.log("module-group-alias-bad");
+          }
+          return null;
+        }
+        """,
+        List.of("module-group-alias-ok"), true, List.of(true, true), false, true);
 
     /** The review's seed: a never-called nested group with explicit null returns. */
     private static final Case NEVER_CALLED_EXPLICIT_NULL = new Case(
@@ -226,7 +389,7 @@ public class NestedGroupProductionTest {
           return null;
         }
         """,
-        List.of(), false, false, false);
+        List.of(), false, List.of(false, false), false, false);
 
     /** A never-called nested group with explicit non-null returns. */
     private static final Case NEVER_CALLED_EXPLICIT_INT = new Case(
@@ -244,7 +407,7 @@ public class NestedGroupProductionTest {
           return null;
         }
         """,
-        List.of(), false, false, false);
+        List.of(), false, List.of(false, false), false, false);
 
     /** A never-called nested group with implicit trailing null returns. */
     private static final Case NEVER_CALLED_IMPLICIT = new Case(
@@ -260,7 +423,7 @@ public class NestedGroupProductionTest {
           return null;
         }
         """,
-        List.of(), false, false, true);
+        List.of(), false, List.of(false, false), true, false);
 
     /** A called nested group whose members capture an enclosing local. */
     private static final Case CAPTURED_CALLED = new Case(
@@ -287,7 +450,8 @@ public class NestedGroupProductionTest {
           return null;
         }
         """,
-        List.of("nested-group-captured-ok"), true, true, false);
+        List.of("nested-group-captured-ok"), true, List.of(true, true), false,
+        false);
 
     /** A called nested group declared inside a nested function declaration. */
     private static final Case NESTED_INSIDE_FUNCTION = new Case(
@@ -316,10 +480,12 @@ public class NestedGroupProductionTest {
           return null;
         }
         """,
-        List.of("nested-group-inside-function-ok"), true, true, false);
+        List.of("nested-group-inside-function-ok"), true, List.of(true, true), false,
+        false);
 
     private static final List<Case> CASES = List.of(
         CALLED_EXPLICIT, CALLED_IMPLICIT, CALLED_VALUE_REFERENCE,
+        CALLED_ALIAS, CALLED_ALIAS_CAPTURED, CALLED_ALIAS_LATER, MODULE_GROUP_ALIAS,
         NEVER_CALLED_EXPLICIT_NULL, NEVER_CALLED_EXPLICIT_INT, NEVER_CALLED_IMPLICIT,
         CAPTURED_CALLED, NESTED_INSIDE_FUNCTION);
 
@@ -550,7 +716,11 @@ public class NestedGroupProductionTest {
                     + " owns a RETURN op");
         }
 
-        for (FunctionId member : group.functions()) {
+        for (int memberIndex = 0; memberIndex < group.functions().size();
+                memberIndex++) {
+            FunctionId member = group.functions().get(memberIndex);
+            boolean memberCalled = memberIndex < testCase.memberCalled().size()
+                && Boolean.TRUE.equals(testCase.memberCalled().get(memberIndex));
             LoweredFunction lowered = unit.functions().get(member);
             check(lowered != null, testCase.name() + ": member " + member
                 + " is a lowered function of the unit");
@@ -581,11 +751,11 @@ public class NestedGroupProductionTest {
                         + ": member " + member
                         + "'s explicit return carries the source origin");
                 }
-                if (testCase.called()) {
+                if (memberCalled) {
                     SemanticOp invocation = byId.get(returned.enclosingInvocationOpId());
                     check(invocation != null
                             && invocation.kind() == SemanticOpKind.CALL
-                            && isCallOf(invocation, member),
+                            && isCallOf(invocation, member, unit),
                         testCase.name() + ": member " + member
                             + "'s invocation identity is its own CALL op; got "
                             + returned.enclosingInvocationOpId());
@@ -600,17 +770,59 @@ public class NestedGroupProductionTest {
             check(boundaries.size() == 1, testCase.name() + ": member " + member
                 + " owns exactly one return boundary; got " + boundaries);
         }
+        if (testCase.aliasInvocation()) {
+            checkAliasInvocation(testCase, unit, group);
+        }
     }
 
-    /** Whether one CALL op statically binds the given body. */
-    private static boolean isCallOf(SemanticOp callOp, FunctionId member) {
+    /**
+     * The sibling-alias battery: a call op resolves a member through an
+     * ordinary function value (the {@code Indirect} callee shape — the
+     * value-carried invocation), and the target member carries creation-site
+     * captures (the group's sibling cells), which is exactly why the
+     * invocation is value-carried rather than re-resolved at the call site.
+     */
+    private static void checkAliasInvocation(Case testCase, LoweredModuleUnit unit,
+                                             KindPayload.RecursiveGroupInitPayload group) {
+        int aliasCalls = 0;
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() != SemanticOpKind.CALL
+                    || !(op.payload() instanceof KindPayload.CallPayload payload)
+                    || !(payload.callee()
+                        instanceof KindPayload.CallCallee.Indirect indirect)) {
+                continue;
+            }
+            FunctionExecutionBinding binding = unit.functionBindings().get(
+                new FunctionAllocationIdentity(indirect.callee().id()));
+            if (!(binding instanceof FunctionExecutionBinding.LoweredBody body)
+                    || !group.functions().contains(body.functionId())) {
+                continue;
+            }
+            aliasCalls++;
+            LoweredFunction target = unit.functions().get(body.functionId());
+            check(target != null && !target.captures().isEmpty(), testCase.name()
+                + ": the sibling alias to member " + body.functionId()
+                + " is value-carried with the target's creation-site captures; got "
+                + (target == null ? "no lowered function" : target.captures()));
+        }
+        check(aliasCalls >= 1, testCase.name() + ": the sibling alias materializes a "
+            + "member invocation through the value-carried callee shape; got "
+            + aliasCalls);
+    }
+
+    /** Whether one CALL op resolves to a call of the given body. */
+    private static boolean isCallOf(SemanticOp callOp, FunctionId member,
+                                    LoweredModuleUnit unit) {
         if (!(callOp.payload() instanceof KindPayload.CallPayload payload)) {
             return false;
         }
-        if (!(payload.callee() instanceof KindPayload.CallCallee.Static stat)) {
-            return false;
-        }
-        return stat.binding() instanceof FunctionExecutionBinding.LoweredBody body
+        FunctionExecutionBinding binding = switch (payload.callee()) {
+            case KindPayload.CallCallee.Static stat -> stat.binding();
+            case KindPayload.CallCallee.Indirect indirect -> unit.functionBindings().get(
+                new FunctionAllocationIdentity(indirect.callee().id()));
+            case KindPayload.CallCallee.Dynamic ignored -> null;
+        };
+        return binding instanceof FunctionExecutionBinding.LoweredBody body
             && body.functionId().equals(member);
     }
 
