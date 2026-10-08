@@ -48,6 +48,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -228,6 +229,15 @@ public class ProductionCorpusAudit {
 
     /** The bounded wait for the containment helper of the tree kill. */
     private static final long CONTAINMENT_HELPER_TIMEOUT_SECONDS = 5;
+
+    /**
+     * The bounded wait for the audit's own worker pool to terminate after
+     * its cancellation: the teardown cancels every pending task, interrupts
+     * every active worker and waits this long for the pool to end, so a
+     * cleanup of shared audit-owned artifacts never races a surviving
+     * worker (or an owned subprocess it started).
+     */
+    private static final long POOL_TERMINATION_TIMEOUT_SECONDS = 120;
 
     private static final AtomicInteger passed = new AtomicInteger();
     private static final AtomicInteger fatalCount = new AtomicInteger();
@@ -1149,6 +1159,15 @@ public class ProductionCorpusAudit {
      */
     private static volatile Path auditNativeDirectory;
 
+    /**
+     * True while the shared audit-owned temporary artifacts (the native
+     * directory above all) may be removed. Set before the dispatched-corpus
+     * pool starts and re-set by the owned-pool teardown: it stays true only
+     * when no audit worker is alive, so the cleanup can never race a worker
+     * or an owned subprocess it started.
+     */
+    private static volatile boolean auditPoolStopped = true;
+
     /** The lazily bootstrapped audit-owned library path (once per run). */
     private static volatile String auditNativeLibraryPath;
 
@@ -1381,9 +1400,38 @@ public class ProductionCorpusAudit {
 
     /** True iff the diagnostic is one of the three fail-closed producer guards. */
     static boolean isGuardDiagnostic(CompilerDiagnostic diagnostic) {
+        String rule = e6005ValidatorRule(diagnostic);
+        return rule != null && GUARD_RULES.contains(rule);
+    }
+
+    /**
+     * The exact E6005 {@code validatorRule} field of one diagnostic, or null
+     * when the diagnostic is not an E6005 or does not carry the canonical
+     * E6005 message shape. The message is single-sourced by
+     * {@link FailureContractRegistry#instantiateMessage(LoweringFailureDetail)}
+     * as {@code ... validatorRule <rule>, semanticProfile ...}, so the rule
+     * is extracted between its exact delimiters. A module path, an origin
+     * string, or another code's text that merely contains a guard token
+     * never classifies as that guard: only a real E6005 whose own rule field
+     * equals the token does.
+     */
+    static String e6005ValidatorRule(CompilerDiagnostic diagnostic) {
+        if (!"E6005".equals(diagnostic.code())) {
+            return null;
+        }
         String message = diagnostic.message() == null ? ""
             : diagnostic.message();
-        return GUARD_RULES.stream().anyMatch(message::contains);
+        int start = message.indexOf("validatorRule ");
+        if (start < 0) {
+            return null;
+        }
+        start += "validatorRule ".length();
+        int end = message.indexOf(", semanticProfile ", start);
+        if (end < 0) {
+            return null;
+        }
+        String rule = message.substring(start, end);
+        return rule.isEmpty() ? null : rule;
     }
 
     private static CompileOutcome compile(Project project) throws Exception {
@@ -2188,6 +2236,105 @@ public class ProductionCorpusAudit {
         }
     }
 
+    // =========================================================================
+    // The audit's bounded worker pool
+    // =========================================================================
+
+    /**
+     * Drives one batch of audit cells on the audit's own bounded pool and
+     * owns the pool's whole lifetime. Every exit path — the normal
+     * completion, a worker's unexpected failure, and a cancellation of the
+     * calling thread — runs the owned-pool teardown: every unfinished
+     * future is cancelled (a pending task never starts), every active
+     * worker is interrupted, the queue is drained and the pool's termination
+     * is awaited inside the bounded window. The call returns only when no
+     * audit worker is alive, or fails closed when the window expires
+     * (leaving the shared audit-owned artifacts in place for the surviving
+     * workers); a calling-thread interruption is rethrown after the
+     * teardown, so a cancelled run can never delete shared audit-owned files
+     * while an owned worker still runs. The worker tasks record their own
+     * cell failures; an exception that escapes one is an unexpected harness
+     * defect and fails the run closed.
+     */
+    static void runOwnedPool(int jobs, List<? extends Runnable> tasks)
+            throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(jobs);
+        List<Future<?>> futures = new ArrayList<>();
+        Exception pending = null;
+        try {
+            for (Runnable task : tasks) {
+                futures.add(pool.submit(task));
+            }
+            for (Future<?> future : futures) {
+                try {
+                    future.get();
+                } catch (ExecutionException e) {
+                    fatal("an audit worker failed unexpectedly: "
+                        + e.getCause());
+                }
+            }
+        } catch (Exception e) {
+            pending = e;
+        }
+        boolean stopped = closeOwnedPool(pool, futures);
+        auditPoolStopped = stopped;
+        if (!stopped) {
+            throw new IllegalStateException("the audit's owned worker pool "
+                + "did not terminate inside the bounded window ("
+                + POOL_TERMINATION_TIMEOUT_SECONDS + "s); the shared "
+                + "audit-owned artifacts are retained for the surviving "
+                + "workers");
+        }
+        if (pending != null) {
+            throw pending;
+        }
+        if (Thread.currentThread().isInterrupted()) {
+            throw new InterruptedException(
+                "the audit pool drive was cancelled");
+        }
+    }
+
+    /**
+     * The owned-pool teardown: cancels every unfinished future, interrupts
+     * every active worker, drains the queue and awaits the pool's
+     * termination inside the bounded window. An interruption of the
+     * tearing-down thread is recorded and the wait retried, so the teardown
+     * completes before the interruption propagates; the interruption status
+     * is restored before returning.
+     *
+     * @return true iff every worker terminated inside the window
+     */
+    static boolean closeOwnedPool(ExecutorService pool,
+            List<Future<?>> futures) {
+        boolean[] interrupted = {Thread.interrupted()};
+        try {
+            for (Future<?> future : futures) {
+                future.cancel(true);
+            }
+            pool.shutdownNow();
+            long deadline = System.nanoTime()
+                + TimeUnit.SECONDS.toNanos(POOL_TERMINATION_TIMEOUT_SECONDS);
+            while (!pool.isTerminated()) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    break;
+                }
+                try {
+                    pool.awaitTermination(Math.max(1L,
+                        TimeUnit.NANOSECONDS.toMillis(remaining)),
+                        TimeUnit.MILLISECONDS);
+                } catch (InterruptedException e) {
+                    interrupted[0] = true;
+                }
+            }
+            return pool.isTerminated();
+        } finally {
+            if (interrupted[0]) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
     /**
      * The bounded transcript read: up to {@code outputLimitBytes} bytes are
      * retained ({@code 0} keeps everything) while the rest of the stream is
@@ -2433,19 +2580,17 @@ public class ProductionCorpusAudit {
     /** True iff the outcome carries a RETAINED_ABI_DEFERRED/SHARED_EMITTER_COVERAGE error. */
     static boolean architecturalGuardFired(CompileOutcome outcome) {
         return outcome.errors().stream().anyMatch(diagnostic -> {
-            String message = diagnostic.message() == null ? ""
-                : diagnostic.message();
-            return message.contains(SemanticLowerer.RETAINED_ABI_DEFERRED)
-                || message.contains(
-                    ProductionProjectEmission.SHARED_EMITTER_COVERAGE);
+            String rule = e6005ValidatorRule(diagnostic);
+            return SemanticLowerer.RETAINED_ABI_DEFERRED.equals(rule)
+                || ProductionProjectEmission.SHARED_EMITTER_COVERAGE
+                    .equals(rule);
         });
     }
 
-    /** True iff the diagnostic carries the CONSTRUCT_UNLOWERED guard rule. */
+    /** True iff the diagnostic carries the exact CONSTRUCT_UNLOWERED guard rule. */
     static boolean isConstructGuard(CompilerDiagnostic diagnostic) {
-        String message = diagnostic.message() == null ? ""
-            : diagnostic.message();
-        return message.contains(SemanticLowerer.CONSTRUCT_UNLOWERED);
+        return SemanticLowerer.CONSTRUCT_UNLOWERED
+            .equals(e6005ValidatorRule(diagnostic));
     }
 
     /** True iff the capture is a genuine DEAL error (never a probe or non-DEAL outcome). */
@@ -2754,6 +2899,10 @@ public class ProductionCorpusAudit {
             List<SidecarSchemaValidator.CompilationModule> compilationSet,
             String label, Target target, List<Export> exports,
             List<String> report) throws Exception {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new InterruptedException(
+                "the audit worker was cancelled before the cell " + label);
+        }
         Project project = materialize(label, compilationSet, target, true);
         try {
             CompileOutcome outcome = compile(project);
@@ -2782,7 +2931,24 @@ public class ProductionCorpusAudit {
                 // never a construct gap; it is fatal in every mode.
                 fatal(label + " [" + target.laneName() + "] audit input: " + e);
                 return;
+            } catch (InterruptedException e) {
+                // A cancelled audit stops the cell instead of continuing to
+                // its next target: the interruption propagates (with the
+                // status restored) to the owned-pool teardown, which
+                // contains every worker and owned subprocess before the
+                // shared audit-owned artifacts are removed.
+                Thread.currentThread().interrupt();
+                throw e;
             } catch (Exception e) {
+                if (Thread.currentThread().isInterrupted()) {
+                    // The cancellation aborted this cell's work and the
+                    // worker stops here instead of continuing to its next
+                    // target; the interruption propagates to the owned-pool
+                    // teardown.
+                    throw new InterruptedException(
+                        "the audit worker was cancelled while the cell "
+                            + label + " failed: " + e);
+                }
                 // A broken tool invocation, a corrupted artifact, a failed
                 // artifact load, an unreadable or incomplete transcript, and
                 // a subprocess deadline expiry are infrastructure, never a
@@ -2987,12 +3153,244 @@ public class ProductionCorpusAudit {
         }
         runtimeErrorComparisonControls();
         rejectionControls();
+        guardDetectionControls();
         projectionInventoryControls();
         unclassifiedBehaviorControls();
         subprocessCancellationControl();
+        auditPoolCancellationControl();
         ownedTreeTeardownControls();
         subprocessDrainControls();
         nativeBootstrapControls();
+    }
+
+    /**
+     * The guard-detection controls: a producer guard is the exact
+     * {@code E6005} {@code validatorRule} field, never a substring of the
+     * whole diagnostic message. A non-{@code E6005} diagnostic whose text
+     * merely contains the token (an unresolved declaration whose module path
+     * names the guard) and an {@code E6005} whose different rule carries the
+     * token only in its module and origin fields are unclassified compile
+     * failures, fatal in both modes; they can never disengage strict
+     * acceptance as an interim construct deficit. The exact guard rules
+     * still classify: the canonical {@code CONSTRUCT_UNLOWERED} leg stays
+     * the reported construct deficit and the two architectural rules stay
+     * the fatal architectural guards.
+     */
+    private static void guardDetectionControls() {
+        System.out.println("-- the guard-detection controls: a producer guard "
+            + "is the exact E6005 validatorRule field --");
+        SidecarExpectations.RuntimeExpectation.Executed executed =
+            new SidecarExpectations.RuntimeExpectation.Executed("runtime-ok",
+                new byte[0], new byte[0], 0, null);
+
+        // (a) A non-E6005 diagnostic whose message carries the token: an
+        // unresolved declaration whose module path names the construct
+        // guard. This is the shape the materialization probe's E2003 gap
+        // carries; it must stay a fatal unclassified compile failure.
+        CompilerDiagnostic nonE6005 = CompilerDiagnostic.error("E2003",
+            "Module not found: ./CONSTRUCT_UNLOWERED.d.deal",
+            deal.diagnostics.DiagnosticRange.synthetic("guard-control.deal"));
+        check(!isGuardDiagnostic(nonE6005),
+            "a non-E6005 diagnostic carrying the token is not a producer "
+                + "guard");
+        check(!isConstructGuard(nonE6005),
+            "a non-E6005 diagnostic carrying the token is not the construct "
+                + "guard");
+        check(!architecturalGuardFired(new CompileOutcome(false, true,
+                List.of(nonE6005), List.of(nonE6005), "control")),
+            "a non-E6005 diagnostic carrying the token is not an "
+                + "architectural guard");
+        assertFatalBothModes(compileVerdict("guard-control", Target.JVM,
+            new CompileOutcome(false, true, List.of(nonE6005),
+                List.of(nonE6005), "control"),
+            executed, List.of()),
+            "a non-E6005 compile failure whose message carries the token");
+
+        // (b) A canonical E6005 whose different validatorRule carries the
+        // token only in its module and origin fields.
+        CompilerDiagnostic wrongRule = FailureContractRegistry.e6005(
+            new LoweringFailureDetail("CONSTRUCT_UNLOWERED.deal",
+                SemanticCapability.CONTAINERS_AND_STRINGS, "CAPTURE_RESOLUTION",
+                SemanticProfile.DEAL_V1_2_INT32, "deal.semantic-ir/1",
+                "SemanticLowerer CONSTRUCT_UNLOWERED (the module and origin "
+                    + "merely carry the token)"));
+        check(!isGuardDiagnostic(wrongRule),
+            "an E6005 with another validatorRule whose module and origin "
+                + "carry the token is not a producer guard");
+        check(!isConstructGuard(wrongRule),
+            "an E6005 with another validatorRule whose module and origin "
+                + "carry the token is not the construct guard");
+        assertFatalBothModes(compileVerdict("guard-control", Target.JVM,
+            new CompileOutcome(false, true, List.of(wrongRule),
+                List.of(wrongRule), "control"),
+            executed, List.of()),
+            "an E6005 with a different validatorRule whose module and origin "
+                + "carry the token");
+
+        // (c) The architectural guards obey the same exact-rule rule.
+        CompilerDiagnostic architecturalCarrier = CompilerDiagnostic.error(
+            "E2003", "Module not found: ./RETAINED_ABI_DEFERRED.d.deal",
+            deal.diagnostics.DiagnosticRange.synthetic("guard-control.deal"));
+        check(!architecturalGuardFired(new CompileOutcome(false, true,
+                List.of(architecturalCarrier), List.of(architecturalCarrier),
+                "control")),
+            "a non-E6005 diagnostic carrying an architectural token is not "
+                + "an architectural guard");
+        CompilerDiagnostic wrongArchitecturalRule = FailureContractRegistry.e6005(
+            new LoweringFailureDetail("RETAINED_ABI_DEFERRED.deal",
+                SemanticCapability.MODULES, "CAPTURE_RESOLUTION",
+                SemanticProfile.DEAL_V1_2_INT32, "deal.semantic-ir/1",
+                "ProductionProjectEmission RETAINED_ABI_DEFERRED (the module "
+                    + "and origin merely carry the token)"));
+        check(!architecturalGuardFired(new CompileOutcome(false, true,
+                List.of(wrongArchitecturalRule),
+                List.of(wrongArchitecturalRule), "control")),
+            "an E6005 with another validatorRule whose module and origin "
+                + "carry an architectural token is not an architectural "
+                + "guard");
+        assertFatalBothModes(compileVerdict("guard-control", Target.JVM,
+            new CompileOutcome(false, true, List.of(wrongArchitecturalRule),
+                List.of(wrongArchitecturalRule), "control"),
+            executed, List.of()),
+            "an E6005 with a different validatorRule whose module and origin "
+                + "carry an architectural token");
+
+        // (d) The exact rules still classify: the canonical construct guard
+        // stays the reported interim deficit, and each architectural rule
+        // stays the fatal architectural guard.
+        List<CompilerDiagnostic> exactConstruct = List.of(guardDiagnostic(
+            SemanticLowerer.CONSTRUCT_UNLOWERED));
+        check(isConstructGuard(exactConstruct.get(0)),
+            "the exact canonical CONSTRUCT_UNLOWERED E6005 is the construct "
+                + "guard");
+        CellVerdict constructLeg = compileVerdict("guard-control", Target.JVM,
+            new CompileOutcome(false, true, exactConstruct, exactConstruct,
+                "control"),
+            executed, List.of());
+        check(constructLeg.clazz() == LegClass.CONSTRUCT_DEFICIT
+                && !isFatal(constructLeg.clazz(), false)
+                && isFatal(constructLeg.clazz(), true),
+            "the exact construct guard stays the reported interim deficit: "
+                + constructLeg.line());
+        for (String rule : List.of(SemanticLowerer.RETAINED_ABI_DEFERRED,
+                ProductionProjectEmission.SHARED_EMITTER_COVERAGE)) {
+            List<CompilerDiagnostic> exactGuard = List.of(guardDiagnostic(rule));
+            check(architecturalGuardFired(new CompileOutcome(false, true,
+                    exactGuard, exactGuard, "control")),
+                "the exact canonical " + rule + " E6005 is the "
+                    + "architectural guard");
+            assertFatalBothModes(compileVerdict("guard-control", Target.JVM,
+                new CompileOutcome(false, true, exactGuard, exactGuard,
+                    "control"),
+                executed, List.of()),
+                "the exact " + rule + " architectural guard");
+        }
+    }
+
+    /**
+     * The audit-pool cancellation control: the audit's own dispatched-corpus
+     * pool helper is cancelled while one of its workers runs an owned child.
+     * The owned-pool teardown cancels the pending task, interrupts the
+     * active worker, awaits the pool's termination and reports it stopped
+     * before the shared audit-owned artifacts may be removed: at the moment
+     * the helper returns no worker thread, no owned child and no
+     * audit-owned reader is alive, the pending task never ran, and the
+     * caller observed the interruption (the caller's probe of the actual
+     * pool, not only of an isolated subprocess helper).
+     */
+    private static void auditPoolCancellationControl() throws Exception {
+        System.out.println("-- the audit-pool cancellation control: "
+            + "cancelling the audit's own worker pool stops every worker "
+            + "and owned child before the shared audit-owned artifacts may "
+            + "be removed --");
+        Path root = Files.createTempDirectory("production-corpus-audit-pool-");
+        try {
+            Path pidFile = root.resolve("child.pid");
+            java.util.concurrent.atomic.AtomicReference<Thread> worker =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            java.util.concurrent.atomic.AtomicBoolean interruptObserved =
+                new java.util.concurrent.atomic.AtomicBoolean();
+            java.util.concurrent.atomic.AtomicBoolean pendingRan =
+                new java.util.concurrent.atomic.AtomicBoolean();
+            java.util.concurrent.atomic.AtomicReference<String> failure =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            List<Runnable> tasks = List.of(
+                () -> {
+                    worker.set(Thread.currentThread());
+                    try {
+                        runProcess(new ProcessBuilder("sh", "-c",
+                            "echo $$ > " + pidFile + "; exec sleep 30"));
+                        failure.compareAndSet(null, "the cancelled pool "
+                            + "task returned normally");
+                    } catch (InterruptedException e) {
+                        interruptObserved.set(true);
+                        Thread.currentThread().interrupt();
+                    } catch (Exception e) {
+                        failure.compareAndSet(null, "the cancelled pool "
+                            + "task raised " + e);
+                    }
+                },
+                () -> pendingRan.set(true));
+            java.util.concurrent.atomic.AtomicBoolean callerInterrupted =
+                new java.util.concurrent.atomic.AtomicBoolean();
+            Thread caller = new Thread(() -> {
+                try {
+                    runOwnedPool(1, tasks);
+                    failure.compareAndSet(null, "the cancelled pool drive "
+                        + "returned normally");
+                } catch (InterruptedException e) {
+                    callerInterrupted.set(true);
+                } catch (Exception e) {
+                    failure.compareAndSet(null, "the cancelled pool drive "
+                        + "raised " + e);
+                }
+            }, "audit-pool-cancel-control");
+            caller.setDaemon(true);
+            // The control probes the pool state through the helper itself:
+            // the flag is cleared before the drive so the teardown's report
+            // is the only thing that can set it.
+            auditPoolStopped = false;
+            caller.start();
+            long startDeadline = System.nanoTime()
+                + TimeUnit.SECONDS.toNanos(10);
+            while (!Files.isRegularFile(pidFile)
+                    && System.nanoTime() < startDeadline) {
+                Thread.sleep(20);
+            }
+            check(Files.isRegularFile(pidFile),
+                "the audit-pool control's owned child started");
+            if (!Files.isRegularFile(pidFile)) {
+                return;
+            }
+            caller.interrupt();
+            caller.join(TimeUnit.SECONDS.toMillis(60));
+            check(!caller.isAlive(),
+                "the cancelled pool drive returns within the bound");
+            check(callerInterrupted.get(),
+                "the pool-drive caller observed the interruption: "
+                    + failure.get());
+            check(interruptObserved.get(),
+                "the active worker was interrupted and stopped its cell: "
+                    + failure.get());
+            check(!pendingRan.get(),
+                "the pending pool task was cancelled and never ran");
+            check(auditPoolStopped,
+                "the owned-pool teardown reports the pool stopped before "
+                    + "the shared audit-owned artifacts are removed");
+            Thread workerThread = worker.get();
+            check(workerThread != null, "the active pool worker started");
+            if (workerThread != null) {
+                workerThread.join(TimeUnit.SECONDS.toMillis(10));
+                check(!workerThread.isAlive(),
+                    "no audit worker survives the pool teardown");
+            }
+            check(!pidAlive(pidFile),
+                "the owned child is gone after the pool teardown");
+            checkEq(0L, auditReaderThreads(),
+                "no audit-owned reader thread survives the pool teardown");
+        } finally {
+            deleteRecursively(root);
+        }
     }
 
     /**
@@ -3600,10 +3998,8 @@ public class ProductionCorpusAudit {
         // rejection is required is a rejection mismatch, never a construct
         // deficit — with or without staged output beside it. These controls
         // go through the same compileVerdict the corpus driver applies.
-        List<CompilerDiagnostic> constructGuard = List.of(controlDiagnostic(
-            deal.diagnostics.DiagnosticCode.E6005,
-            "SemanticLowerer " + SemanticLowerer.CONSTRUCT_UNLOWERED
-                + " (control)"));
+        List<CompilerDiagnostic> constructGuard = List.of(guardDiagnostic(
+            SemanticLowerer.CONSTRUCT_UNLOWERED));
         CellVerdict constructRejected = compileVerdict("sample", Target.JVM,
             new CompileOutcome(false, true, constructGuard, constructGuard,
                 "control"),
@@ -3860,6 +4256,17 @@ public class ProductionCorpusAudit {
             deal.diagnostics.DiagnosticRange.synthetic("sample.deal"));
     }
 
+    /**
+     * A canonical E6005 producer-guard diagnostic for the control surfaces
+     * (the single-sourced message shape the corpus diagnostics carry).
+     */
+    private static CompilerDiagnostic guardDiagnostic(String rule) {
+        return FailureContractRegistry.e6005(new LoweringFailureDetail(
+            "guard-control", SemanticCapability.CONTAINERS_AND_STRINGS, rule,
+            SemanticProfile.DEAL_V1_2_INT32, "deal.semantic-ir/1",
+            "SemanticLowerer " + rule + " (control)"));
+    }
+
     private static CorpusDiscovery.Fixture fixtureOf(String corpusPath)
             throws Exception {
         CorpusDiscovery.DiscoveryResult discovery = CorpusDiscovery.discover(CONFORMANCE);
@@ -4106,6 +4513,10 @@ public class ProductionCorpusAudit {
         // it.
         auditNativeDirectory =
             Files.createTempDirectory("production-corpus-audit-native-");
+        // No audit worker exists yet, so the shared audit-owned artifacts are
+        // removable until the dispatched-corpus pool starts (and again once
+        // the owned-pool teardown confirms its termination).
+        auditPoolStopped = true;
         Map<String, String> buildBefore = snapshotBuildDirectory();
         System.out.println("Repository build snapshot: " + buildBefore.size()
             + " file(s) before the run"
@@ -4121,36 +4532,49 @@ public class ProductionCorpusAudit {
                 + "with zero producer guards, and every producible fixture's "
                 + "capture reproduces its sidecar through the landed "
                 + "comparison --");
-            ExecutorService pool = Executors.newFixedThreadPool(auditJobs);
-            try {
-                List<Future<?>> futures = new ArrayList<>();
-                for (CorpusDiscovery.Fixture fixture : dispatched) {
-                    futures.add(pool.submit(() -> {
-                        try {
-                            testFixture(fixture, report, declarationImports,
-                                discovery.corpusByPath());
-                        } catch (Exception e) {
-                            // An audit-input defect (an unresolvable
-                            // declaration wiring, a missing sidecar, a
-                            // missing host implementation): fatal, never a
-                            // construct gap.
-                            fatal(fixture.corpusPath() + ": audit input: " + e);
+            List<Runnable> cells = new ArrayList<>();
+            for (CorpusDiscovery.Fixture fixture : dispatched) {
+                cells.add(() -> {
+                    try {
+                        testFixture(fixture, report, declarationImports,
+                            discovery.corpusByPath());
+                    } catch (InterruptedException e) {
+                        // The audit was cancelled: the worker stops the cell
+                        // (it never continues to its next target) and leaves
+                        // the interruption for the owned-pool teardown.
+                        Thread.currentThread().interrupt();
+                    } catch (Exception e) {
+                        if (Thread.currentThread().isInterrupted()) {
+                            // The cancellation aborted this fixture's work;
+                            // the escape is not a corpus defect.
+                            return;
                         }
-                    }));
-                }
-                for (Future<?> future : futures) {
-                    future.get();
-                }
-            } finally {
-                pool.shutdown();
+                        // An audit-input defect (an unresolvable
+                        // declaration wiring, a missing sidecar, a
+                        // missing host implementation): fatal, never a
+                        // construct gap.
+                        fatal(fixture.corpusPath() + ": audit input: " + e);
+                    }
+                });
             }
+            runOwnedPool(auditJobs, cells);
             System.out.println("  declaration-importing group measured: "
                 + declarationImports.size() + " fixtures");
 
             testNegativeControl();
             testMaterializationFidelity();
         } finally {
-            deleteRecursively(auditNativeDirectory);
+            if (auditPoolStopped) {
+                deleteRecursively(auditNativeDirectory);
+            } else {
+                // The owned worker pool did not confirm termination: its
+                // workers may still run owned subprocesses and bootstrap the
+                // native library, so the shared audit-owned directory is
+                // retained rather than deleted under them.
+                System.err.println("the audit-owned native directory is "
+                    + "retained for the surviving audit workers: "
+                    + auditNativeDirectory);
+            }
         }
 
         checkEq(buildBefore, snapshotBuildDirectory(),
