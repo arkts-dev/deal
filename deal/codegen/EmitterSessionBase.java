@@ -479,7 +479,12 @@ public abstract class EmitterSessionBase {
         }
         java.util.LinkedHashSet<String> keys = new java.util.LinkedHashSet<>();
         if (function != null) {
-            collectBodyStateKeys(function.body(), keys, new java.util.HashSet<>());
+            java.util.Set<BindingId> captures = new java.util.HashSet<>();
+            for (BindingGeneration capture : function.captures()) {
+                captures.add(capture.binding());
+            }
+            collectBodyStateKeys(function.body(), keys, new java.util.HashSet<>(),
+                captures);
         }
         List<String> result = List.copyOf(keys);
         bodyStateKeyCache.put(functionId, result);
@@ -534,8 +539,18 @@ public abstract class EmitterSessionBase {
         return null;
     }
 
+    /**
+     * Collects one body's private-state keys: every value slot its ops
+     * read or write, every {@code DIRECT} cell it reads or writes, and
+     * every {@code SHARED_CELL} incarnation it <em>allocates</em> (a
+     * captured parameter or local). A {@code SHARED_CELL} the body merely
+     * captures from its enclosing scope is excluded: its storage belongs
+     * to a still-live enclosing invocation and arrives as the factory's
+     * own capture parameter, never as the module-level cell slot.
+     */
     protected final void collectBodyStateKeys(BlockId block, java.util.Set<String> keys,
-                                      java.util.Set<BlockId> seen) {
+                                      java.util.Set<BlockId> seen,
+                                      java.util.Set<BindingId> captures) {
         if (block == null || !seen.add(block)) {
             return;
         }
@@ -557,46 +572,53 @@ public abstract class EmitterSessionBase {
             }
             switch (op.payload()) {
                 case KindPayload.BindingAllocPayload payload ->
-                    addCellStateKey(keys, payload.binding(), payload.generation());
+                    addCellStateKey(keys, payload.binding(), payload.generation(),
+                        captures);
                 case KindPayload.BindingInitPayload payload ->
-                    addCellStateKey(keys, payload.binding(), payload.generation());
+                    addCellStateKey(keys, payload.binding(), payload.generation(),
+                        captures);
                 case KindPayload.BindingLoadPayload payload ->
-                    addCellStateKey(keys, payload.binding(), payload.generation());
+                    addCellStateKey(keys, payload.binding(), payload.generation(),
+                        captures);
                 case KindPayload.BindingStorePayload payload ->
-                    addCellStateKey(keys, payload.binding(), payload.generation());
+                    addCellStateKey(keys, payload.binding(), payload.generation(),
+                        captures);
                 case KindPayload.RecursiveGroupInitPayload payload -> {
                     for (BindingId binding : payload.bindings()) {
-                        addCellStateKey(keys, binding, 0);
+                        addCellStateKey(keys, binding, 0, captures);
                     }
                 }
                 case KindPayload.ClosureNewPayload payload -> {
                     for (BindingGeneration capture : payload.captures()) {
                         addCellStateKey(keys, capture.binding(),
-                            capture.generation());
+                            capture.generation(), captures);
                     }
                 }
                 case KindPayload.ModuleImportPayload payload -> {
                     for (BindingId binding : payload.aliasCells()) {
-                        addCellStateKey(keys, binding, 0);
+                        addCellStateKey(keys, binding, 0, captures);
                     }
                 }
                 case KindPayload.ForEachPayload payload -> {
-                    addCellStateKey(keys, payload.binding(), payload.generation());
-                    collectBodyStateKeys(payload.body(), keys, seen);
+                    addCellStateKey(keys, payload.binding(), payload.generation(),
+                        captures);
+                    collectBodyStateKeys(payload.body(), keys, seen, captures);
                 }
                 case KindPayload.TryCatchPayload payload -> {
-                    addCellStateKey(keys, payload.catchBinding(), 0);
-                    collectBodyStateKeys(payload.tryBlock(), keys, seen);
-                    collectBodyStateKeys(payload.catchBlock(), keys, seen);
+                    addCellStateKey(keys, payload.catchBinding(), 0, captures);
+                    collectBodyStateKeys(payload.tryBlock(), keys, seen, captures);
+                    collectBodyStateKeys(payload.catchBlock(), keys, seen, captures);
                 }
                 case KindPayload.BranchPayload payload -> {
-                    collectBodyStateKeys(payload.selectedBlock(), keys, seen);
-                    collectBodyStateKeys(payload.alternateBlock(), keys, seen);
+                    collectBodyStateKeys(payload.selectedBlock(), keys, seen,
+                        captures);
+                    collectBodyStateKeys(payload.alternateBlock(), keys, seen,
+                        captures);
                 }
                 case KindPayload.LoopPayload payload -> {
-                    collectBodyStateKeys(payload.initBlock(), keys, seen);
-                    collectBodyStateKeys(payload.bodyBlock(), keys, seen);
-                    collectBodyStateKeys(payload.updateBlock(), keys, seen);
+                    collectBodyStateKeys(payload.initBlock(), keys, seen, captures);
+                    collectBodyStateKeys(payload.bodyBlock(), keys, seen, captures);
+                    collectBodyStateKeys(payload.updateBlock(), keys, seen, captures);
                 }
                 default -> {
                 }
@@ -794,10 +816,25 @@ public abstract class EmitterSessionBase {
         return false;
     }
 
-    /** A body-private cell key: {@code DIRECT} cells only (shared state stays shared). */
+    /**
+     * A body-state cell key: a {@code DIRECT} cell holds the invocation's
+     * value in the module-level slot, so the slot is private state like a
+     * value slot. A {@code SHARED_CELL} incarnation the body itself
+     * allocates (a captured parameter or local) publishes the cell
+     * reference through the same module-level slot, so a re-entrant or
+     * interleaved execution of the body replaces the enclosing
+     * invocation's reference exactly like a value slot; saving and
+     * restoring the reference — never the cell's contents — keeps the
+     * enclosing invocation's captured bindings and leaves in-place commits
+     * through the shared cell visible. A binding the body only captures
+     * from its enclosing scope is excluded: its factory capture parameter
+     * already carries the correct cell and the module-level slot belongs
+     * to the still-live enclosing invocation.
+     */
     protected final void addCellStateKey(java.util.Set<String> keys, BindingId binding,
-                                 long generation) {
-        if (cellKindOf(binding, generation) == BindingCellKind.SHARED_CELL) {
+                                 long generation, java.util.Set<BindingId> captures) {
+        if (cellKindOf(binding, generation) == BindingCellKind.SHARED_CELL
+                && captures.contains(binding)) {
             return;
         }
         keys.add(cell(binding, generation));

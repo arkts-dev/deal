@@ -2424,6 +2424,38 @@ public final class SemanticLowerer {
          */
         private final Map<FunctionId, LoweredFunction> functions = new LinkedHashMap<>();
         /**
+         * The recursive-group members whose {@code LoweredBody} execution
+         * binding is registered before their own body walk (the member
+         * preallocation guarantee) but whose capture list is not yet
+         * known: the member's {@code LoweredFunction} record is finalized
+         * only after its body walk completes, so an invocation of the
+         * member through an ordinary function value resolved while that
+         * walk is still open is value-carried — the closure carrier holds
+         * the creation-site captures, never a call-site re-resolution of
+         * an unresolved incarnation.
+         */
+        private final Set<FunctionId> groupMemberBodiesPendingCaptures =
+            new LinkedHashSet<>();
+        /**
+         * The member binding cells of every nested (non-module-level)
+         * recursive group of this lowering. A member binding's cell is
+         * published by the group's {@code RECURSIVE_GROUP_INIT} and holds
+         * the member's closure carrier; an identifier call of such a
+         * binding must invoke that carrier instead of reconstructing the
+         * member's factory at the call site, because a call-site
+         * reconstruction resolves the target's captures from the calling
+         * function's own frame and cannot name the group instance's cells
+         * for a target that is not one of the caller's own captures (an
+         * enclosing-function-returned group observed through a second
+         * creation would re-resolve the first creation's sibling cells to
+         * the latest creation's global cells). The module-level member
+         * bindings are not in this set: their captures are module-level
+         * cells with a single incarnation, so the landed static
+         * direct-call shape is exact there.
+         */
+        private final Set<BindingId> nestedGroupMemberBindings =
+            new LinkedHashSet<>();
+        /**
          * The produced function-execution-bindings registry (the unit's
          * {@code functionBindings} map; the registry child's production
          * class, B5 — closure-core mode): exactly one registration per
@@ -5022,21 +5054,75 @@ public final class SemanticLowerer {
                 memberIdentities.add(identity);
                 memberEntries.add(entry);
             }
+            // The member body contexts and their execution bindings, all
+            // created and registered before any member body walk (C10/K12:
+            // every lowered body owns exactly one invocation identity, one
+            // return cell, and one resolvable execution binding). A
+            // module-level member reuses the context the hoist reserved
+            // (B1); a nested member's context is created here and
+            // registered under its group binding, so a sibling direct call
+            // resolves through contextsByBindingId and an explicit return
+            // names the member's own FunctionId — never the enclosing
+            // function's. Registering the member's LoweredBody here makes
+            // the member's pre-assigned allocation identity resolvable from
+            // inside every sibling body: a sibling reference through an
+            // ordinary function value (a `let` alias) lowers its call
+            // through the registry lookup, exactly like any other
+            // declared-function value, with exactly one registration per
+            // member identity. The member's capture list is finalized only
+            // after its body walk, so a pending member's value-carried
+            // classification is recorded until then
+            // ({@link #groupMemberBodiesPendingCaptures}).
+            List<FunctionContext> memberContexts = new ArrayList<>();
+            for (int i = 0; i < members.size(); i++) {
+                FunctionDeclaration member = members.get(i);
+                FunctionContext context = null;
+                if (moduleLevel) {
+                    if (fullProgram) {
+                        context = functionContexts.get(memberEntries.get(i).incarnation());
+                        if (context == null) {
+                            throw new IllegalStateException("hoisted module-level "
+                                + "member context missing for '" + member.name()
+                                + "' (producer defect)");
+                        }
+                    }
+                } else if (fullProgram) {
+                    FunctionId memberFunctionId =
+                        ids.nextFunctionId(module, nextOrdinal++, 0);
+                    BlockId memberBodyBlock = allocateBlock();
+                    context = new FunctionContext(memberFunctionId, memberBodyBlock,
+                        functionSignatureOf(member),
+                        ids.nextOpId(module, nextOrdinal++, 0),
+                        ids.nextOpId(module, nextOrdinal++, 0),
+                        parameterTypeSpans(member.params()));
+                    contextsByFunctionId.put(memberFunctionId, context);
+                    contextsByBindingId.put(memberBindings.get(i), context);
+                    // The nested member's published carrier is the only
+                    // invocation source whose creation-site captures name
+                    // this group instance ({@link
+                    // #nestedGroupMemberBindings}).
+                    nestedGroupMemberBindings.add(memberBindings.get(i));
+                }
+                if (context != null) {
+                    registry.registerGroupMember(new FunctionAllocationIdentity(
+                        memberIdentities.get(i).id()), context.functionId,
+                        context.bodyBlock);
+                    groupMemberBodiesPendingCaptures.add(context.functionId);
+                }
+                memberContexts.add(context);
+            }
             // Phase 1 walk: every member body lowers through the buffered
             // detached-body walk with capture collection (B3) — siblings
-            // resolve because every member binding registered before any
-            // body walk.
+            // resolve because every member binding and its body context
+            // registered before any body walk.
             List<List<SemanticOp>> bodyOpLists = new ArrayList<>();
             List<List<BindingGeneration>> captureIdLists = new ArrayList<>();
             List<BlockId> bodyBlocks = new ArrayList<>();
             List<RuntimeDescriptor.Func> signatures = new ArrayList<>();
             List<List<CapturedCell>> capturedLists = new ArrayList<>();
-            for (FunctionDeclaration member : members) {
-
-                FrameEntry hoistedEntry = moduleLevel ? frameEntryOf(member.name()) : null;
-                FunctionContext reservedContext = fullProgram && moduleLevel
-                        && hoistedEntry != null
-                    ? functionContexts.get(hoistedEntry.incarnation()) : null;
+            for (int memberIndex = 0; memberIndex < members.size(); memberIndex++) {
+                FunctionDeclaration member = members.get(memberIndex);
+                FunctionContext reservedContext = memberContexts.get(memberIndex);
                 BlockId bodyBlock = reservedContext != null
                     ? reservedContext.bodyBlock : allocateBlock();
                 FunctionId functionId = reservedContext != null
@@ -5100,6 +5186,15 @@ public final class SemanticLowerer {
                 bodyBlocks.add(bodyBlock);
                 signatures.add(signature);
                 capturedLists.add(captured);
+                if (reservedContext != null) {
+                    // The member's capture list is fixed the moment its own
+                    // walk ends: the LoweredFunction record is final from
+                    // here, so every later reference classifies the
+                    // value-carried invocation from the recorded captures.
+                    functions.put(functionId, new LoweredFunction(functionId, signature,
+                        captureIds, bodyBlock));
+                    groupMemberBodiesPendingCaptures.remove(functionId);
+                }
             }
             // Phase 2: exactly one RECURSIVE_GROUP_INIT op — the payload
             // pins the two-phase execution contract (identities allocated
@@ -5123,10 +5218,16 @@ public final class SemanticLowerer {
                 BlockId bodyBlock = bodyBlocks.get(i);
                 RuntimeDescriptor.Func signature = signatures.get(i);
                 ValueId identity = memberIdentities.get(i);
-                functions.put(functionId, new LoweredFunction(functionId, signature,
-                    captureIds, bodyBlock));
-                registry.registerGroupMember(new FunctionAllocationIdentity(identity.id()),
-                    functionId, bodyBlock);
+                if (memberContexts.get(i) == null) {
+                    // The slice arms (outside the full-program entry) keep
+                    // registering the member's execution binding after the
+                    // walk; the preallocation arm registered it before the
+                    // first member body walk (exactly once per identity).
+                    functions.put(functionId, new LoweredFunction(functionId, signature,
+                        captureIds, bodyBlock));
+                    registry.registerGroupMember(new FunctionAllocationIdentity(identity.id()),
+                        functionId, bodyBlock);
+                }
                 List<ClosureCapture> captureFacts = new ArrayList<>();
                 for (CapturedCell capture : capturedLists.get(i)) {
                     captureFacts.add(new ClosureCapture(capture.cell().name,
@@ -7579,6 +7680,24 @@ public final class SemanticLowerer {
                     }
                     return lowerUserCallBinding(call, slot, identifier);
                 }
+                if (nestedGroupMemberBindings.contains(site.binding())) {
+                    // A nested group member call: the group publication
+                    // wrote the member's closure carrier into the member
+                    // cell, and that carrier holds the creation-site
+                    // captures of its own group instance. The static
+                    // direct-call arm would rebuild the member's factory
+                    // at the call site and re-resolve the target's
+                    // captures from the calling function's frame — exact
+                    // only for module-level (single-incarnation) captures
+                    // and for targets that are the caller's own captures.
+                    // A sibling, self, or enclosing-body call of a nested
+                    // member goes through the same value-carried
+                    // resolution every ordinary function-value call uses,
+                    // preserving the member-owned invocation identity and
+                    // return boundary ({@link #lowerIndirectCall}'s
+                    // LoweredBody arm).
+                    return lowerUserCallBinding(call, slot, identifier);
+                }
                 return lowerDirectCall(call, slot, identifier, context);
             }
             if (!e7Calls) {
@@ -7746,7 +7865,16 @@ public final class SemanticLowerer {
                 return false;
             }
             LoweredFunction function = functions.get(body.functionId());
-            return function != null && !function.captures().isEmpty();
+            if (function == null) {
+                // A pre-registered group member whose own body walk is
+                // still open: its capture list is not final yet, and the
+                // value the binding holds is the member's published
+                // closure, so the invocation is value-carried — the
+                // creation-site captures travel with the carrier, never
+                // a call-site re-resolution of an unresolved incarnation.
+                return groupMemberBodiesPendingCaptures.contains(body.functionId());
+            }
+            return !function.captures().isEmpty();
         }
 
         /**
@@ -8055,8 +8183,19 @@ public final class SemanticLowerer {
             }
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
+            boolean declaredBodyCallee =
+                binding instanceof FunctionExecutionBinding.LoweredBody;
             for (ExpressionNode argument : call.args()) {
-                args.add(lowerExpression(argument));
+                // A resolved declared body keeps the declared-callee
+                // contextual-argument handling: the argument walk defers a
+                // contextual table member read's kind check to the callee's
+                // own parameter cell (whose origin is the declared
+                // parameter annotation), exactly like {@link
+                // #lowerDirectCall}. Every other binding kind resolves its
+                // own parameter boundaries at the call site and keeps the
+                // read's own check.
+                args.add(declaredBodyCallee
+                    ? lowerCallArgument(argument) : lowerExpression(argument));
                 argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
                     checkedType(argument)));
             }
@@ -8641,6 +8780,21 @@ public final class SemanticLowerer {
                 FunctionContext context = site == null
                     ? null : contextsByBindingId.get(site.binding());
                 if (context != null) {
+                    if (nestedGroupMemberBindings.contains(site.binding())) {
+                        // A nested-group member await: the group publication
+                        // wrote the member's closure carrier into the member
+                        // cell, and that carrier holds the creation-site
+                        // captures of its own group instance. The static
+                        // DEAL body arm would rebuild the member's factory at
+                        // the await site and re-resolve the target's captures
+                        // from the calling function's frame — exact only for
+                        // module-level (single-incarnation) captures — so the
+                        // awaited sibling/self/enclosing-body call goes
+                        // through the value-carried `Indirect` shape, exactly
+                        // like the synchronous nested-member call arm.
+                        return lowerAwaitMemberCarrier(call, slot, awaitSpan,
+                            identifier);
+                    }
                     return lowerAwaitDeclared(call, slot, awaitSpan, identifier, context);
                 }
                 FrameResolution resolution = resolveFrame(identifier.name());
@@ -8671,6 +8825,26 @@ public final class SemanticLowerer {
                 if (binding instanceof FunctionExecutionBinding.AdapterBinding adapter) {
                     return lowerAdapterOverAsync(call, slot, awaitSpan, adapter,
                         identifier.name());
+                }
+                if (binding instanceof FunctionExecutionBinding.LoweredBody
+                        && valueCarriedClosure(binding)) {
+                    // An ordinary function-value alias of a capture-carrying
+                    // declared body (a nested group member awaited through a
+                    // `let`, the async twin of
+                    // {@link #lowerUserCallBinding}'s value-carried call):
+                    // the alias holds the published closure whose
+                    // creation-site captured cells name its own group
+                    // instance, so the await invokes that carrier instead of
+                    // rebuilding the member's factory at the await site —
+                    // the reconstruction re-resolves the target's captures
+                    // from the calling member's frame and cannot name a
+                    // sibling creation's cells. The pending-capture
+                    // classification covers an alias of a member whose own
+                    // body walk is still open. A capture-free body keeps the
+                    // static shape: the await site's reconstruction is the
+                    // same closure.
+                    return lowerAsyncStart(call, slot, awaitSpan, binding, false,
+                        calleeValue);
                 }
                 return lowerAsyncStart(call, slot, awaitSpan, binding, false);
             }
@@ -8794,6 +8968,43 @@ public final class SemanticLowerer {
         }
 
         /**
+         * The awaited nested-group member arm: the member cell's published
+         * closure carrier is the only invocation source whose creation-site
+         * captures name this group instance (the async twin of
+         * {@link #lowerUserCallBinding}'s value-carried nested-member call).
+         * The member context's reserved call-site identity and single return
+         * boundary stay the invocation's own ({@link #lowerAsyncStart}'s
+         * {@code LoweredBody} arm), and the carrier supplies the captured
+         * cells to the member body.
+         */
+        private ValueId lowerAwaitMemberCarrier(CallExpr call, ValueId slot,
+                                                Span awaitSpan,
+                                                IdentifierExpr identifier) {
+            ValueId calleeValue = lowerExpression(identifier);
+            FunctionExecutionBinding binding = registry.bindings().get(
+                new FunctionAllocationIdentity(calleeValue.id()));
+            if (binding == null) {
+                throw new ConstructUnlowered("await callee '" + identifier.name()
+                    + "' identity " + calleeValue
+                    + " has no registered FunctionExecutionBinding (producer defect)");
+            }
+            if (!(binding instanceof FunctionExecutionBinding.LoweredBody)) {
+                throw new ConstructUnlowered("await callee '" + identifier.name()
+                    + "' identity " + calleeValue + " resolves the static class "
+                    + binding.getClass().getSimpleName()
+                    + " instead of the member's published body carrier "
+                    + "(producer defect)");
+            }
+            return lowerAsyncStart(call, slot, awaitSpan, binding, false, calleeValue);
+        }
+
+        /** The statically resolved async start (no value-carried callee). */
+        private ValueId lowerAsyncStart(CallExpr call, ValueId slot, Span awaitSpan,
+                                        FunctionExecutionBinding binding, boolean nested) {
+            return lowerAsyncStart(call, slot, awaitSpan, binding, nested, null);
+        }
+
+        /**
          * The shared {@code ASYNC_START}+{@code AWAIT} emission over the
          * resolved binding: the parameter-boundary cells per the closed
          * table, one token per call, and exactly one
@@ -8801,10 +9012,25 @@ public final class SemanticLowerer {
          * arguments lower through {@link #lowerCallArgument}: a declared
          * callee's parameter cell performs the contextual member read's
          * kind check at its own origin, exactly as the synchronous
-         * declared-callee arms do.
+         * declared-callee arms do. A non-null carrier callee emits the
+         * value-carried {@code CallCallee.Indirect} shape over the
+         * published closure value (the awaited nested-group member arm and
+         * the awaited alias of a capture-carrying body), so the task invokes
+         * the carrier's own captured cells instead of reconstructing the
+         * member's factory at the await site; the callee's reserved
+         * call-site identity and single return boundary stay the invocation's
+         * own either way.
          */
         private ValueId lowerAsyncStart(CallExpr call, ValueId slot, Span awaitSpan,
-                                        FunctionExecutionBinding binding, boolean nested) {
+                                        FunctionExecutionBinding binding, boolean nested,
+                                        ValueId carrierCallee) {
+            if (carrierCallee != null
+                    && !(binding instanceof FunctionExecutionBinding.LoweredBody)) {
+                throw new ConstructUnlowered("the value-carried async start of '"
+                    + describeDynamicCallee(call.callee()) + "' resolves the static class "
+                    + binding.getClass().getSimpleName()
+                    + " instead of a declared body carrier (producer defect)");
+            }
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
             for (ExpressionNode argument : call.args()) {
@@ -8962,7 +9188,9 @@ public final class SemanticLowerer {
                 SourceOriginKind.USER, anchor, currentParent());
             emit(buildOp(startOpId, SemanticOpKind.ASYNC_START,
                 new KindPayload.AsyncStartPayload(
-                    new KindPayload.CallCallee.Static(binding), source,
+                    carrierCallee == null
+                        ? new KindPayload.CallCallee.Static(binding)
+                        : new KindPayload.CallCallee.Indirect(carrierCallee), source,
                     nested ? ParameterBoundaryMode.ELIDED_BY_ADAPTER : ParameterBoundaryMode.RUN,
                     parameterBoundaryIds, completion, returnBoundaryOpId,
                     hostOperationLabel, externalAsyncLink),

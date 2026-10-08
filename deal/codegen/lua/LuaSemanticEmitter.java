@@ -3028,13 +3028,17 @@ public final class LuaSemanticEmitter {
         }
 
         /**
-         * The re-entrant invocation's private-state save, or {@code null}
-         * when the callee body has no private state or is not already
-         * active. The frame it pushes carries the previous active marker
-         * and the saved state: only a nested invocation of the same body
-         * (recursion) can overwrite the enclosing invocation's own state,
-         * so only it saves and restores — a plain call keeps the flat
-         * observable state the artifact's slots always had.
+         * The synchronous invocation's private-state save, or {@code null}
+         * when the callee body has no private state. The frame it pushes
+         * carries the previous active marker and the saved state; the
+         * matching restore is <em>unconditional</em> (like the async body
+         * task's): the enclosing invocation may have been started by a
+         * route this call site cannot name at compile time (a dynamic
+         * dispatch of an escaped carrier, an entry of another unit), so
+         * the active marker cannot gate the restore — the copied values
+         * are the enclosing invocation's private state whatever started
+         * it. The marker itself is still maintained so a re-entrant
+         * invocation leaves it in place and only the outermost clears it.
          */
         private String emitInvocationStateSave(FunctionId callee, OpId invocation) {
             List<String> keys = bodyStateKeys(callee);
@@ -3068,13 +3072,16 @@ public final class LuaSemanticEmitter {
             return "__svStack[#__svStack]";
         }
 
-        /** The matching re-entrant restore and pop, on every path. */
+        /**
+         * The matching unconditional restore and pop, on every success and
+         * failure path: the body's own slots and cell references return to
+         * the enclosing invocation's state whichever route started it.
+         */
         private void emitInvocationStateRestore(FunctionId callee, String frame) {
             if (frame == null) {
                 return;
             }
             List<String> keys = bodyStateKeys(callee);
-            out.append("if ").append(frame).append("[1] then\n");
             for (int start = 0; start < keys.size(); start += STATE_CHUNK) {
                 int end = Math.min(start + STATE_CHUNK, keys.size());
                 StringBuilder targets = new StringBuilder();
@@ -3087,13 +3094,89 @@ public final class LuaSemanticEmitter {
                     targets.append(keys.get(i));
                     values.append(frame).append("[").append(i + 2).append("]");
                 }
-                out.append("  ").append(targets).append(" = ").append(values)
-                    .append("\n");
+                out.append(targets).append(" = ").append(values).append("\n");
             }
-            out.append("end\n");
             out.append("__bodyActive[").append(callee.id()).append("] = ")
                 .append(frame).append("[1]\n");
             out.append("__svStack[#__svStack] = nil\n");
+        }
+
+        /**
+         * The async body-task invocation's private-state save. The frame it
+         * pushes is restored <em>unconditionally</em> by {@link
+         * #emitAsyncInvocationStateRestore}, exactly like the synchronous
+         * arm's: the task's body executes at the enclosing invocation's
+         * drain, and that enclosing invocation may have been started by a
+         * callee this arm cannot name at compile time (a dynamic-dispatch
+         * body task) or by an entry of another unit, so the active marker
+         * cannot gate the restore — the copied values are the enclosing
+         * invocation's private state whatever started it. The marker itself
+         * is still maintained, so a re-entrant invocation leaves it in place
+         * and only the outermost clears it.
+         */
+        private String emitAsyncInvocationStateSave(FunctionId callee, OpId invocation,
+                                                    String pad) {
+            List<String> keys = bodyStateKeys(callee);
+            if (keys.isEmpty()) {
+                return null;
+            }
+            long functionId = callee.id();
+            out.append(pad).append("__svStack[#__svStack + 1] = {__bodyActive[")
+                .append(functionId).append("]}\n");
+            // The frame's slots are filled in bounded chunks: one
+            // multi-assignment carrying every key of a large body would
+            // exceed LuaJIT's per-statement variable-name and
+            // expression-complexity limits (the bytes corpus' allocation
+            // and closure fixtures carry hundreds of slots per body).
+            for (int start = 0; start < keys.size(); start += STATE_CHUNK) {
+                int end = Math.min(start + STATE_CHUNK, keys.size());
+                StringBuilder targets = new StringBuilder();
+                StringBuilder values = new StringBuilder();
+                for (int i = start; i < end; i++) {
+                    if (i > start) {
+                        targets.append(", ");
+                        values.append(", ");
+                    }
+                    targets.append("__svStack[#__svStack][").append(i + 2)
+                        .append("]");
+                    values.append(keys.get(i));
+                }
+                out.append(pad).append(targets).append(" = ").append(values)
+                    .append("\n");
+            }
+            out.append(pad).append("__bodyActive[").append(functionId)
+                .append("] = true\n");
+            return "__svStack[#__svStack]";
+        }
+
+        /**
+         * The matching unconditional restore and pop, on every success and
+         * failure path of the async body task.
+         */
+        private void emitAsyncInvocationStateRestore(FunctionId callee, String frame,
+                                                     String pad) {
+            if (frame == null) {
+                return;
+            }
+            List<String> keys = bodyStateKeys(callee);
+            for (int start = 0; start < keys.size(); start += STATE_CHUNK) {
+                int end = Math.min(start + STATE_CHUNK, keys.size());
+                StringBuilder targets = new StringBuilder();
+                StringBuilder values = new StringBuilder();
+                for (int i = start; i < end; i++) {
+                    if (i > start) {
+                        targets.append(", ");
+                        values.append(", ");
+                    }
+                    targets.append(keys.get(i));
+                    values.append(frame).append("[").append(i + 2).append("]");
+                }
+                out.append(pad).append(targets).append(" = ").append(values)
+                    .append("\n");
+            }
+            out.append(pad).append("__bodyActive[").append(callee.id()).append("] = ")
+                .append(frame).append("[1]\n");
+            out.append(pad).append("__svStack[#__svStack] = nil\n");
         }
 
         /**
@@ -5391,6 +5474,15 @@ public final class LuaSemanticEmitter {
             }
             FunctionExecutionBinding binding = switch (payload.callee()) {
                 case KindPayload.CallCallee.Static staticCallee -> staticCallee.binding();
+                case KindPayload.CallCallee.Indirect indirect -> {
+                    FunctionExecutionBinding resolved = bindingOfIdentity(indirect.callee());
+                    if (resolved == null) {
+                        throw new IllegalStateException("ASYNC_START " + op.opId()
+                            + " resolves the indirect callee identity " + indirect.callee()
+                            + " to no registered FunctionExecutionBinding (producer defect)");
+                    }
+                    yield resolved;
+                }
                 default -> throw new IllegalStateException("ASYNC_START " + op.opId()
                     + " resolves a callee outside the statically-resolved slice: "
                     + payload.callee());
@@ -5412,11 +5504,32 @@ public final class LuaSemanticEmitter {
                     out.append("  table.insert(__frames, 1, ")
                         .append(luaString(String.valueOf(body.functionId().id())))
                         .append(")\n");
-                    out.append("  local __okA, __resA = pcall(")
-                        .append(fnFactory(body.functionId())).append("(").append(caps)
-                        .append("), unpack(S.__sa").append(op.opId().id())
+                    // The task's body execution is the async counterpart of
+                    // the synchronous invocation: a recursive await of the
+                    // same body runs the nested task inline (the FIFO drain)
+                    // while the enclosing invocation is still live, so the
+                    // callee body's private slots are saved before the body
+                    // runs and restored on the success and failure paths.
+                    String savedState = emitAsyncInvocationStateSave(body.functionId(),
+                        op.opId(), "  ");
+                    out.append("  local __okA, __resA = pcall(");
+                    if (payload.callee()
+                            instanceof KindPayload.CallCallee.Indirect indirect) {
+                        // The value-carried async invocation (a nested group
+                        // member with creation-site captures): the closure
+                        // value the binding holds runs its own invoker, whose
+                        // captured cells are the ones its creation published —
+                        // never a call-site re-resolution of a per-creation
+                        // incarnation.
+                        out.append("__unfn(").append(slot(indirect.callee())).append(")");
+                    } else {
+                        out.append(fnFactory(body.functionId())).append("(")
+                            .append(caps).append(")");
+                    }
+                    out.append(", unpack(S.__sa").append(op.opId().id())
                         .append(", 1, #S.__sa").append(op.opId().id()).append("))\n");
                     out.append("  table.remove(__frames, 1)\n");
+                    emitAsyncInvocationStateRestore(body.functionId(), savedState, "  ");
                     out.append("  if not __okA then error(__resA, 0) end\n");
                     out.append("  return __resA\n");
                     out.append("end), S.__sa").append(op.opId().id()).append(")\n");
