@@ -13,9 +13,11 @@ import deal.ast.NamedType;
 import deal.ast.ObjectLiteralExpr;
 import deal.ast.Parameter;
 import deal.ast.ProgramNode;
+import deal.ast.ReturnStatement;
 import deal.ast.Span;
 import deal.ast.StatementNode;
 import deal.ast.TypeNode;
+import deal.ast.VariableDeclaration;
 import deal.types.Types;
 import deal.checker.SymbolTable;
 import deal.diagnostics.CompilerDiagnostic;
@@ -223,6 +225,7 @@ public final class DefaultIrRecorderTest {
         testSiblingProvidersResolveTheDeclaringModule();
         testSameNameSiblingCollision();
         testContextualCallSiblingCollision();
+        testDeclaredContextSiblingCollision();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -577,6 +580,103 @@ public final class DefaultIrRecorderTest {
     private record LocalFunction(String name, String qualifiedParamType) {
     }
 
+    /**
+     * One body-walk probe (review cycle 3): the given top-level function
+     * declaration's body carries a class literal whose provider only the
+     * declared signature or annotation names. Every object literal of
+     * the body is pinned to the demanded class; the body walk records
+     * the occurrences. Returns the recorded occurrences.
+     */
+    private static List<DefaultResourceOccurrence> siblingBodyRun(
+            List<SiblingProvider> providers, String declarationSource,
+            Type literalType) {
+        StringBuilder source = new StringBuilder();
+        for (SiblingProvider provider : providers) {
+            source.append("import * as ").append(provider.alias())
+                .append(" from \"./").append(provider.alias())
+                .append("\"\n");
+        }
+        source.append(declarationSource).append('\n');
+        LexResult lex = new Lexer(source.toString(), "main.deal")
+            .tokenize();
+        check(!lex.hasErrors(), "sibling body fixture lexes: "
+            + lex.diagnostics());
+        ParseResult parse = new Parser(lex.tokens(), "main.deal",
+            lex.directiveEvents()).parse();
+        check(!parse.hasErrors(), "sibling body fixture parses: "
+            + parse.diagnostics());
+        ProgramNode program = parse.program();
+        FunctionDeclaration make = null;
+        for (StatementNode stmt : program.statements()) {
+            if (stmt instanceof FunctionDeclaration fd
+                    && fd.body() != null) {
+                make = fd;
+            }
+        }
+        check(make != null, "the sibling body fixture declares a function");
+        if (make == null) {
+            return List.of();
+        }
+        Map<ExpressionNode, Type> typeMap = new HashMap<>();
+        pinBodyLiterals(make.body().statements(), literalType, typeMap);
+        Map<String, DefaultPlanImport> imports = new LinkedHashMap<>();
+        Map<String, CanonicalModuleIdentity> classification =
+            new LinkedHashMap<>();
+        SymbolTable scope = new SymbolTable();
+        for (SiblingProvider provider : providers) {
+            DefaultPlanImport planImport = provider.planImport();
+            imports.put(provider.alias(), planImport);
+            classification.put(provider.modulePath(), provider.identity());
+            scope.define(provider.alias(), new deal.checker.Symbol
+                .ModuleSymbol(provider.alias(), planImport.exports(),
+                    new Span("main.deal", 1, 1, 1, 5)));
+        }
+        DefaultIrRecorder recorder = new DefaultIrRecorder(
+            typeMap, Map.of(), imports, classification,
+            CONSUMER_LOCATION, "src.main", program,
+            (typeNode, resolutionScope) -> Type.Error.INSTANCE,
+            Map.of());
+        recorder.recordFunctionBody(make, scope);
+        return recorder.occurrences();
+    }
+
+    /** Pins every object literal of the given body statements. */
+    private static void pinBodyLiterals(List<StatementNode> statements,
+            Type literalType, Map<ExpressionNode, Type> typeMap) {
+        for (StatementNode stmt : statements) {
+            switch (stmt) {
+                case ReturnStatement rs -> rs.expr().ifPresent(expr ->
+                    pinLiterals(expr, literalType, typeMap));
+                case VariableDeclaration vd -> {
+                    if (vd.initializer() != null) {
+                        pinLiterals(vd.initializer(), literalType, typeMap);
+                    }
+                }
+                case deal.ast.ExpressionStatement es ->
+                    pinLiterals(es.expr(), literalType, typeMap);
+                case Block block -> pinBodyLiterals(block.statements(),
+                    literalType, typeMap);
+                case FunctionDeclaration fd -> {
+                    if (fd.body() != null) {
+                        pinBodyLiterals(fd.body().statements(),
+                            literalType, typeMap);
+                    }
+                }
+                default -> { }
+            }
+        }
+    }
+
+    /** Pins every object literal under one expression. */
+    private static void pinLiterals(ExpressionNode root, Type literalType,
+            Map<ExpressionNode, Type> typeMap) {
+        for (ExpressionNode node : collectAll(root)) {
+            if (node instanceof ObjectLiteralExpr) {
+                typeMap.put(node, literalType);
+            }
+        }
+    }
+
     private static Type callableType(SiblingProvider provider) {
         return Types.func(List.of(provider.classType()),
             Type.Int.INSTANCE);
@@ -862,6 +962,49 @@ public final class DefaultIrRecorderTest {
             checkSiblingClassOccurrence(
                 siblingContextualRun(order, ir, true), ir,
                 "the local-callee collision probe f(x: ir.Ir)");
+        }
+    }
+
+    /**
+     * The declared-context collisions (review cycle 3): the class
+     * context arrives through a declared signature or annotation other
+     * than a parameter, so the same ambiguity applies. A local
+     * function's declared return type, an array element's annotation,
+     * and a member-assignment target's declared type must each own the
+     * literal through their exact provider, in both import orders — a
+     * sibling's own serialization is never recorded.
+     */
+    private static void testDeclaredContextSiblingCollision() {
+        System.out.println("-- declared return types and array annotations name"
+            + " the class-literal provider (both import orders) --");
+        CanonicalModuleIdentity sibling =
+            new CanonicalModuleIdentity.ProjectModule(SIBLING_IDENTITY);
+        SiblingProvider ir = siblingProvider("ir", "/proj/src/m/ir.deal",
+            "src.m.ir", sibling, "Ir");
+        SiblingProvider codec = siblingProvider("codec",
+            "/proj/src/m/codec.deal", "src.m.codec", sibling, "Ir");
+
+        for (List<SiblingProvider> order : List.of(
+                List.of(ir, codec), List.of(codec, ir))) {
+            checkSiblingClassOccurrence(
+                siblingBodyRun(order, "function make(): ir.Ir"
+                    + " { return { v: 7 }; }", ir.classType()), ir,
+                "the return-type collision probe make(): ir.Ir");
+            checkSiblingClassOccurrence(
+                siblingBodyRun(order, "function make(): codec.Ir"
+                    + " { return { v: 7 }; }", codec.classType()), codec,
+                "the return-type collision probe make(): codec.Ir");
+            checkSiblingClassOccurrence(
+                siblingBodyRun(order, "function make(): int { let xs:"
+                    + " ir.Ir[] = [{ v: 7 }]; return xs[0].v; }",
+                    ir.classType()), ir,
+                "the array-annotation collision probe ir.Ir[]");
+            checkSiblingClassOccurrence(
+                siblingBodyRun(order, "function outer(): ir.Ir { function"
+                    + " inner(): codec.Ir { return { v: 7 }; } return"
+                    + " inner(); }", codec.classType()), codec,
+                "the nested-declaration collision probe inner():"
+                    + " codec.Ir");
         }
     }
 

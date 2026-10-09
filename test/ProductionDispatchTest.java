@@ -278,6 +278,58 @@ public class ProductionDispatchTest {
         }
         """;
 
+    /**
+     * The declared-context collision (review cycle 3): the demand
+     * arrives through a declared return type, an array element
+     * annotation, and a member-assignment target type — never through
+     * an enclosing field annotation or a callee parameter. Every one of
+     * the literals must bind the provider its declaration names, in
+     * both import orders, and the published artifact must construct the
+     * demanded default (7), never the sibling's (93).
+     */
+    private static final String RETURN_IR_SOURCE = """
+        export class Ir { a: int = 7; }
+        """;
+
+    private static final String RETURN_CODEC_SOURCE = """
+        export class Ir { a: int = 93; }
+        export class Codec { b: int = 9; }
+        """;
+
+    private static final String RETURN_MAIN_CODEC_FIRST = """
+        import * as console from "std/console";
+        import * as codec from "./m/codec";
+        import * as ir from "./m/ir";
+        function make(): ir.Ir { return {}; }
+        export class Outer { r: ir.Ir = {}; c: codec.Codec = {}; }
+        export function main(): null {
+          let o: Outer = {};
+          o.r = {};
+          let xs: ir.Ir[] = [{}];
+          let m: ir.Ir = make();
+          if (o.r.a === 7 && xs[0].a === 7 && m.a === 7 && o.c.b === 9)
+            { console.log("ok"); }
+          return null;
+        }
+        """;
+
+    private static final String RETURN_MAIN_IR_FIRST = """
+        import * as console from "std/console";
+        import * as ir from "./m/ir";
+        import * as codec from "./m/codec";
+        function make(): ir.Ir { return {}; }
+        export class Outer { r: ir.Ir = {}; c: codec.Codec = {}; }
+        export function main(): null {
+          let o: Outer = {};
+          o.r = {};
+          let xs: ir.Ir[] = [{}];
+          let m: ir.Ir = make();
+          if (o.r.a === 7 && xs[0].a === 7 && m.a === 7 && o.c.b === 9)
+            { console.log("ok"); }
+          return null;
+        }
+        """;
+
     private static final String HOST_DEAL_JSON_LUA = """
         {
           "languageVersion": "1.2",
@@ -1508,6 +1560,139 @@ public class ProductionDispatchTest {
                 // observable outcome, never the sibling's (93).
                 checkSiblingJsRun("the nested collision",
                     root.resolve("out"));
+            }
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * The declared-context collision (review cycle 3): the demand
+     * arrives through a declared return type, an array element
+     * annotation, and a member-assignment target type. The completed
+     * plan occurrence and deferred edge must name the provider the
+     * declaration names — one import-order-independent digest — and the
+     * published artifact must print the demanded default (7).
+     */
+    private static void testProductionDeclaredContextSiblingCollision()
+            throws Exception {
+        System.out.println("-- production invocation: declared return types,"
+            + " array annotations, and assignment targets keep their"
+            + " provider (both import orders; exact resource and digest)"
+            + " --");
+
+        Path root = Files.createTempDirectory(
+            "production-declared-context-");
+        try {
+            write(root, "deal.json", """
+                {
+                  "languageVersion": "1.2",
+                  "stdlib": "1.2",
+                  "moduleRoots": ["src"],
+                  "dependencies": {},
+                  "externals": {},
+                  "backend": "js",
+                  "output": "out"
+                }
+                """);
+            write(root, "src/m/ir.deal", RETURN_IR_SOURCE);
+            write(root, "src/m/codec.deal", RETURN_CODEC_SOURCE);
+            write(root, "src/main.deal", RETURN_MAIN_CODEC_FIRST);
+            write(root, "src/main_ir_first.deal", RETURN_MAIN_IR_FIRST);
+
+            String codecFirstDigest = null;
+            String codecFirstCodecDigest = null;
+            for (String entry : List.of("src/main.deal",
+                    "src/main_ir_first.deal")) {
+                String label = entry.contains("ir_first") ? "ir-first"
+                    : "codec-first";
+                boolean irFirst = label.equals("ir-first");
+                ArmCompile compile = compileWithInvocation(root, entry,
+                    productionInvocation());
+                check(compile.success(), "the " + label + " declared-"
+                    + "context collision compile succeeds through the"
+                    + " production invocation: " + compile.orchestrator()
+                        .diagnostics());
+                if (!compile.success()) {
+                    continue;
+                }
+                CompilationOrchestrator orchestrator =
+                    compile.orchestrator();
+                String mainUri = serializerModuleUri(orchestrator,
+                    "/" + entry);
+                String irUri = serializerModuleUri(orchestrator,
+                    "/src/m/ir.deal");
+                String codecUri = serializerModuleUri(orchestrator,
+                    "/src/m/codec.deal");
+                DiagnosticRange irDeclaration = classDeclarationRange(
+                    RETURN_IR_SOURCE, irUri.substring("file://".length()),
+                    "Ir");
+                DiagnosticRange codecIrDeclaration = classDeclarationRange(
+                    RETURN_CODEC_SOURCE, codecUri.substring("file://"
+                        .length()), "Ir");
+                check(mainUri != null && irUri != null && codecUri != null
+                        && irDeclaration != null
+                        && codecIrDeclaration != null,
+                    "the " + label + " declared-context collision resolves"
+                        + " every module identity and declaration range");
+                if (mainUri == null || irUri == null || codecUri == null
+                        || irDeclaration == null
+                        || codecIrDeclaration == null) {
+                    continue;
+                }
+                String irDigest = checkClassDefaultResource(orchestrator,
+                    label, mainUri, irUri, "ir", "Ir", irDeclaration,
+                    codecIrDeclaration);
+                String codecDigest = checkClassDefaultResource(
+                    orchestrator, label, mainUri, codecUri, "codec",
+                    "Codec", classDeclarationRange(RETURN_CODEC_SOURCE,
+                        codecUri.substring("file://".length()),
+                        "Codec"), codecIrDeclaration);
+                // The body literals (the returned literal, the
+                // assignment value, and the array element) are the
+                // ordinary walk's runtime demands: exactly one edge, on
+                // the declared provider, with the exact defining range
+                // and the same provider digest as the plan route.
+                List<RuntimeImportDependency> bodyEdges = classEdges(
+                    orchestrator, mainUri, "Ir",
+                    RuntimeImportDependency.Reason.RUNTIME_USE);
+                checkEq(1, bodyEdges.size(), "the " + label + " body"
+                    + " walk holds exactly one ordinary Ir edge");
+                if (bodyEdges.size() == 1) {
+                    RuntimeImportDependency edge = bodyEdges.get(0);
+                    checkEq(irUri, edge.toSemanticModuleIdentity()
+                        .canonicalResolvedSourceUri(), "the " + label
+                        + " ordinary Ir edge targets the declaring"
+                        + " module");
+                    checkEq("ir", edge.importAlias(), "the " + label
+                        + " ordinary Ir edge keeps the spelled alias");
+                    checkEq(irDeclaration, edge.semanticResourceIdentity()
+                        .lexicalDeclarationIdentity()
+                        .sourceScalarRange(), "the " + label
+                        + " ordinary Ir edge carries the exact defining"
+                        + " declaration range");
+                    checkEq(irDigest, edge.providerContractDigest(),
+                        "the " + label + " body-walk Ir provider digest"
+                            + " equals the plan-default digest of the"
+                            + " same provider");
+                }
+                if (irFirst) {
+                    checkEq(codecFirstDigest, irDigest, "the declared-"
+                        + "context Ir provider digest is import-order"
+                        + " independent");
+                    checkEq(codecFirstCodecDigest, codecDigest, "the"
+                        + " declared-context Codec provider digest is"
+                        + " import-order independent");
+                } else {
+                    codecFirstDigest = irDigest;
+                    codecFirstCodecDigest = codecDigest;
+                }
+
+                // The published artifact constructs only the named
+                // provider's class: the demanded default (7) is the
+                // observable outcome of every literal shape.
+                checkJsArtifactRun(label, root.resolve("out"),
+                    irFirst ? "main_ir_first.js" : "main.js");
             }
         } finally {
             deleteRecursively(root);
@@ -3937,6 +4122,7 @@ public class ProductionDispatchTest {
         testProductionSameNameSiblingCollision();
         testProductionContextualCallSiblingCollision();
         testProductionNestedSiblingCollision();
+        testProductionDeclaredContextSiblingCollision();
         testConversionOverflowTerminal();
         testAtomicFailureThroughDispatch();
         testFailClosedFamilies();

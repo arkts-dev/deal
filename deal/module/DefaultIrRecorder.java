@@ -112,6 +112,17 @@ final class DefaultIrRecorder {
     private final LinkedHashMap<DiagnosticRange, String>
         classLiteralProviders = new LinkedHashMap<>();
 
+    /**
+     * The provider the enclosing declared function's return type node
+     * names (the return-provider provenance of a returned class
+     * literal), pushed around every walked function body and function
+     * expression of this module and restored on exit: a class context
+     * arriving through a declared signature is exact even when the
+     * demanded name is exported by identity-equal siblings. Null
+     * outside a function body or when the annotation names no import.
+     */
+    private DefaultPlanImport enclosingReturnProvider = null;
+
     private final List<CompilerDiagnostic> awaitDiagnostics =
         new ArrayList<>();
 
@@ -245,8 +256,12 @@ final class DefaultIrRecorder {
             case ArrayLiteralExpr arr -> {
                 List<DefaultIrNode> elements = new ArrayList<>();
                 for (ExpressionNode element : arr.elements()) {
+                    // The elements share the array's expected type: a
+                    // class-typed element keeps the array's provider
+                    // provenance (an identity-equal sibling must never
+                    // capture the construction).
                     elements.add(recordExpression(element, scope,
-                        List.of(), evaluatorScope));
+                        List.of(), contextProvider, evaluatorScope));
                 }
                 return node(DefaultIrNode.NodeKind.ARRAY_LITERAL, null,
                     typeMap.get(arr), contexts, elements, null, null,
@@ -276,6 +291,7 @@ final class DefaultIrRecorder {
                         recordExpression(assign.value(), scope,
                             targetType == null ? List.of()
                                 : List.of(targetType),
+                            assignmentContextProvider(assign, scope),
                             evaluatorScope)),
                     null, null, null, assign, assign.span());
             }
@@ -462,9 +478,15 @@ final class DefaultIrRecorder {
                     && AstDeclarations.findClassDeclaration(owner.program(),
                         named.name()) != null
                 ? owner : null;
-            case ArrayType ignored -> null;
-            case NullableType ignored -> null;
-            case FunctionType ignored -> null;
+            // A compound annotation contributes the provider of its
+            // class component: an array, nullable, or function type of
+            // one imported class has that provider's demands.
+            case ArrayType array -> providerForTypeNode(array.elementType(),
+                owner);
+            case NullableType nullable -> providerForTypeNode(
+                nullable.innerType(), owner);
+            case FunctionType function -> providerForTypeNode(
+                function.returnType(), owner);
         };
     }
 
@@ -609,8 +631,15 @@ final class DefaultIrRecorder {
             }
         }
         List<DefaultIrNode> statements = new ArrayList<>();
-        for (StatementNode stmt : fd.body().statements()) {
-            statements.add(walkStatement(stmt, bodyScope, false));
+        DefaultPlanImport savedReturnProvider = enclosingReturnProvider;
+        enclosingReturnProvider = providerForTypeNode(fd.returnType(),
+            null);
+        try {
+            for (StatementNode stmt : fd.body().statements()) {
+                statements.add(walkStatement(stmt, bodyScope, false));
+            }
+        } finally {
+            enclosingReturnProvider = savedReturnProvider;
         }
         return List.copyOf(statements);
     }
@@ -634,8 +663,15 @@ final class DefaultIrRecorder {
         }
         // Await inside a nested function-expression body is not at
         // evaluator scope (D2).
-        for (StatementNode stmt : fe.body().statements()) {
-            bodyChildren.add(walkStatement(stmt, bodyScope, false));
+        DefaultPlanImport savedReturnProvider = enclosingReturnProvider;
+        enclosingReturnProvider = providerForTypeNode(fe.returnType(),
+            null);
+        try {
+            for (StatementNode stmt : fe.body().statements()) {
+                bodyChildren.add(walkStatement(stmt, bodyScope, false));
+            }
+        } finally {
+            enclosingReturnProvider = savedReturnProvider;
         }
         return node(DefaultIrNode.NodeKind.FUNCTION_EXPRESSION, null,
             typeMap.get(fe), contexts, bodyChildren, null, null, null,
@@ -690,9 +726,12 @@ final class DefaultIrRecorder {
             }
             case ReturnStatement rs -> {
                 List<DefaultIrNode> children = new ArrayList<>();
+                // The enclosing function's declared return type is the
+                // returned expression's checked context: its provider
+                // provenance disambiguates identity-equal siblings.
                 rs.expr().ifPresent(expr -> children.add(
                     recordExpression(expr, effectiveScope, List.of(),
-                        evaluatorScope)));
+                        enclosingReturnProvider, evaluatorScope)));
                 return node(DefaultIrNode.NodeKind.RETURN, null, null,
                     List.of(), children, null, null, null, rs,
                     rs.span().range());
@@ -804,8 +843,19 @@ final class DefaultIrRecorder {
                 // separately).
                 List<DefaultIrNode> children = new ArrayList<>();
                 if (fd.body() != null) {
-                    children.add(walkStatement(fd.body(), effectiveScope,
-                        false));
+                    // The nested declaration's own return type names its
+                    // body's return-context provider (the enclosing
+                    // function's annotation never applies).
+                    DefaultPlanImport savedReturnProvider =
+                        enclosingReturnProvider;
+                    enclosingReturnProvider = providerForTypeNode(
+                        fd.returnType(), null);
+                    try {
+                        children.add(walkStatement(fd.body(),
+                            effectiveScope, false));
+                    } finally {
+                        enclosingReturnProvider = savedReturnProvider;
+                    }
                 }
                 DefaultIrNode.Target target = null;
                 if (fd.body() != null) {
@@ -973,6 +1023,32 @@ final class DefaultIrRecorder {
                 cls.name()) != null
             && classIdentity.equals(
                 classification.get(provider.modulePath()));
+    }
+
+    /**
+     * The contextual provider of an assignment value: the assigned
+     * member's declared type node, read from the owning class's exact
+     * declaration (the same-module program, or the checked provider of
+     * the owner's identity), names the value's provider. A target form
+     * the checked symbol surface does not tie to one declaration (a
+     * bare identifier, an index) yields null and the class literal
+     * keeps the checked export-surface selection.
+     */
+    private DefaultPlanImport assignmentContextProvider(
+            AssignmentExpr assign, SymbolTable scope) {
+        if (!(assign.target() instanceof MemberAccessExpr mae)
+                || !(typeMap.get(mae.object()) instanceof Type.Class owner)) {
+            return null;
+        }
+        Symbol sym = scope.resolve(owner.name());
+        if (sym instanceof Symbol.ClassSymbol cs
+                && cs.identity().equals(owner.identity())) {
+            return providerForDeclaredField(program, null, owner,
+                mae.field());
+        }
+        DefaultPlanImport provider = providerForClass(owner, null);
+        return provider == null ? null : providerForDeclaredField(
+            provider.program(), provider, owner, mae.field());
     }
 
     /**
