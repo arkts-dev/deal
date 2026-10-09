@@ -7253,8 +7253,19 @@ local function __jsonToClassOp(planName, root)
         -- declared element descriptor (the oracle's per-element rule):
         -- an int element spells its integer text, a nested array
         -- recurses the element descriptor, and a class element walks
-        -- its class plan.
-        local encoded = encodeField(edesc, element, elementPath, visited,
+        -- its class plan. A raw number carries its own recorded variant
+        -- into the walk as the read-side __jn carrier — an int-variant
+        -- slot keeps the integer spelling, a number-variant slot the
+        -- closed decimal spelling — exactly the oracle's and the shared
+        -- JVM runtime's Long/Double split, never the declared
+        -- descriptor's text.
+        local declared = element
+        if type(element) == "number" then
+          declared = {__jn = true,
+            k = (marks ~= nil and marks[i] == true) and "number" or "int",
+            d = element}
+        end
+        local encoded = encodeField(edesc, declared, elementPath, visited,
           depth + 1)
         if encoded == nil then return nil end
         out[#out + 1] = encoded

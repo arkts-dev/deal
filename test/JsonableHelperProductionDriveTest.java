@@ -3139,6 +3139,108 @@ public class JsonableHelperProductionDriveTest {
     }
 
     /**
+     * The declared-array numeric variant (the three-consumer regression): an
+     * array admitted through a dynamic table read keeps each slot's own
+     * recorded numeric variant — the array carrier's {@code __nK} mark — and
+     * the declared {@code number[]} walk spells an int-variant slot with its
+     * integer text and a number-variant slot with the closed decimal
+     * spelling, exactly the oracle's and the shared JVM runtime's Long/Double
+     * split, never the declared descriptor's text. The nullable element
+     * position and the nested array position keep the same rule through
+     * their recursion. The controls pin both variants in one comparison: the
+     * all-number array keeps the decimal spelling ([1.0, 1.5]) and the mixed
+     * array built through an index write spells each slot by its own variant
+     * ([2.5, 2]); the int-variant slot is the reported LuaJIT defect.
+     */
+    private static void testDeclaredArrayNumericVariants() throws Exception {
+        System.out.println("-- the declared-array numeric variant: the slot's "
+            + "own recorded variant spells the number[] elements on all three "
+            + "consumers --");
+        // The reported defect: an int-variant array admitted through a
+        // dynamic table read spells its int slots with the integer text at
+        // the declared number[] walk (and through the nullable and nested
+        // array positions), never the closed decimal spelling.
+        String deficient = "// @jsonable\nexport class Box {\n"
+            + "  xs: number[] = [];\n"
+            + "  ns: (number | null)[] = [];\n"
+            + "  grid: number[][] = [];\n}\n\n"
+            + "export function test_int_variant_elements(): null {\n"
+            + "  let t: table = { xs: [1, 2] };\n"
+            + "  let xs: number[] = t.xs;\n"
+            + "  let b: Box = { xs: xs };\n"
+            + "  let json: string = Box$toJson(b);\n"
+            + "  let expected: string = "
+            + dealStringLiteral("{\"xs\":[1,2],\"ns\":[],\"grid\":[]}") + ";\n"
+            + "  if (json !== expected) {\n"
+            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "  }\n"
+            + "  return null;\n"
+            + "}\n\n"
+            + "export function test_nullable_position_elements(): null {\n"
+            + "  let t: table = { ns: [1, 2] };\n"
+            + "  let ns: (number | null)[] = t.ns;\n"
+            + "  ns[1] = null;\n"
+            + "  let b: Box = { ns: ns };\n"
+            + "  let json: string = Box$toJson(b);\n"
+            + "  let expected: string = "
+            + dealStringLiteral("{\"xs\":[],\"ns\":[1,null],\"grid\":[]}") + ";\n"
+            + "  if (json !== expected) {\n"
+            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "  }\n"
+            + "  return null;\n"
+            + "}\n\n"
+            + "export function test_nested_array_position_elements(): null {\n"
+            + "  let t: table = { grid: [[1], [2]] };\n"
+            + "  let grid: number[][] = t.grid;\n"
+            + "  grid[1] = [2.5];\n"
+            + "  let b: Box = { grid: grid };\n"
+            + "  let json: string = Box$toJson(b);\n"
+            + "  let expected: string = "
+            + dealStringLiteral("{\"xs\":[],\"ns\":[],\"grid\":[[1],[2.5]]}")
+            + ";\n"
+            + "  if (json !== expected) {\n"
+            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "  }\n"
+            + "  return null;\n"
+            + "}\n\n"
+            + "export function main(): null {\n  return null;\n}\n";
+        driveExactHelperText("declared-array-numeric-variants", deficient);
+        // The controls: a marked number slot keeps the closed decimal
+        // spelling (the all-number literal), and one mixed array built
+        // through an index write that marks only the number slot spells the
+        // marked slot decimally and the int slot as its integer text.
+        String controls = "// @jsonable\nexport class Box {\n"
+            + "  xs: number[] = [];\n}\n\n"
+            + "export function test_number_variant_elements(): null {\n"
+            + "  let t: table = { xs: [1.0, 1.5] };\n"
+            + "  let xs: number[] = t.xs;\n"
+            + "  let b: Box = { xs: xs };\n"
+            + "  let json: string = Box$toJson(b);\n"
+            + "  let expected: string = "
+            + dealStringLiteral("{\"xs\":[1.0,1.5]}") + ";\n"
+            + "  if (json !== expected) {\n"
+            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "  }\n"
+            + "  return null;\n"
+            + "}\n\n"
+            + "export function test_mixed_variant_elements(): null {\n"
+            + "  let t: table = { xs: [1, 2] };\n"
+            + "  let xs: number[] = t.xs;\n"
+            + "  xs[0] = 2.5;\n"
+            + "  let b: Box = { xs: xs };\n"
+            + "  let json: string = Box$toJson(b);\n"
+            + "  let expected: string = "
+            + dealStringLiteral("{\"xs\":[2.5,2]}") + ";\n"
+            + "  if (json !== expected) {\n"
+            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "  }\n"
+            + "  return null;\n"
+            + "}\n\n"
+            + "export function main(): null {\n  return null;\n}\n";
+        driveExactHelperText("declared-array-numeric-controls", controls);
+    }
+
+    /**
      * The omitted nested-class numeric default (the three-consumer
      * regression): the nested class's decode runs the declared CLASS_DEFAULT
      * children, and a default that produces the read-side numeric variant
@@ -3402,6 +3504,7 @@ public class JsonableHelperProductionDriveTest {
         testArrayHeldClassViewSync();
         testNullableArrayElements();
         testReadDerivedNumericCarriers();
+        testDeclaredArrayNumericVariants();
         testNestedClassDefaultNumericCarrier();
         testOracleDriverMainCoverage();
         testRuntimeErrorSidecarNegativeControls();
