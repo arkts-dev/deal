@@ -221,6 +221,7 @@ public final class DefaultIrRecorderTest {
         testSameModuleBindingsRecorded();
         testAwaitGate();
         testSiblingProvidersResolveTheDeclaringModule();
+        testSameNameSiblingCollision();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -415,11 +416,14 @@ public final class DefaultIrRecorderTest {
     /**
      * One synthetic provider snapshot of the sibling probes: a program
      * declaring exactly one exported class (with one int field, at a real
-     * scalar range) and one exported function whose signature names it.
+     * scalar range) and one exported function whose signature names it,
+     * plus (for the same-name collision probes) one non-exported class
+     * that is never on the export surface.
      */
     private record SiblingProvider(String alias, String sourcePath,
             String modulePath, CanonicalModuleIdentity identity,
-            ProgramNode program, ClassDeclaration declaration) {
+            ProgramNode program, ClassDeclaration declaration,
+            ClassDeclaration privateDeclaration) {
 
         String functionName() {
             return "use" + declaration.name();
@@ -430,21 +434,28 @@ public final class DefaultIrRecorderTest {
                 declaration.name());
         }
 
+        CanonicalClassIdentity privateIdentity() {
+            return privateDeclaration == null ? null
+                : new CanonicalClassIdentity(identity,
+                    privateDeclaration.name());
+        }
+
         Type classType() {
             return Types.classType(declaration.name(), classIdentity());
         }
 
         DefaultPlanImport planImport() {
             Type classType = classType();
+            Map<String, Type> exports = new LinkedHashMap<>();
+            exports.put(declaration.name(), classType);
+            exports.put(functionName(), Types.func(List.of(classType),
+                Type.Int.INSTANCE));
             return new DefaultPlanImport(sourcePath, modulePath, program,
                 new SourceModuleLocation(sourcePath,
                     new SemanticModuleIdentity(DEPLOYMENT,
                         "file://" + sourcePath),
                     "m" + alias, projectIdentity(), identity),
-                Map.of(declaration.name(), classType,
-                    functionName(), Types.func(List.of(classType),
-                        Type.Int.INSTANCE)),
-                new SymbolTable(), false, false);
+                exports, new SymbolTable(), false, false);
         }
 
         private deal.identity.ProjectModuleIdentity projectIdentity() {
@@ -457,12 +468,8 @@ public final class DefaultIrRecorderTest {
             String sourcePath, String modulePath,
             CanonicalModuleIdentity identity, String className) {
         Span classSpan = new Span(sourcePath, 1, 1, 1, 40, 0, 39);
-        List<ClassField> fields = List.of(new ClassField(classSpan, "v",
-            false, false, new NamedType(classSpan, "int"),
-            java.util.Optional.of(new LiteralExpr(classSpan,
-                new LiteralValue.IntLiteral(0)))));
         ClassDeclaration declaration = new ClassDeclaration(classSpan,
-            className, fields);
+            className, siblingFields(classSpan));
         Span functionSpan = new Span(sourcePath, 2, 1, 2, 30, 40, 69);
         FunctionDeclaration use = new FunctionDeclaration(functionSpan,
             "use" + className,
@@ -474,17 +481,70 @@ public final class DefaultIrRecorderTest {
             new ExportDeclaration(classSpan, declaration),
             new ExportDeclaration(functionSpan, use)));
         return new SiblingProvider(alias, sourcePath, modulePath, identity,
-            program, declaration);
+            program, declaration, null);
+    }
+
+    /**
+     * The same-name collision provider: an exported class
+     * ({@code className}) plus, before it in source order, a
+     * non-exported top-level class named {@code privateName} (the
+     * demanded class of an identity-equal sibling). The private
+     * declaration never appears on the export surface.
+     */
+    private static SiblingProvider siblingProviderWithPrivateClass(
+            String alias, String sourcePath, String modulePath,
+            CanonicalModuleIdentity identity, String className,
+            String privateName) {
+        Span privateSpan = new Span(sourcePath, 1, 1, 1, 30, 0, 29);
+        ClassDeclaration privateDeclaration = new ClassDeclaration(
+            privateSpan, privateName, siblingFields(privateSpan));
+        Span classSpan = new Span(sourcePath, 2, 1, 2, 40, 30, 69);
+        ClassDeclaration declaration = new ClassDeclaration(classSpan,
+            className, siblingFields(classSpan));
+        Span functionSpan = new Span(sourcePath, 3, 1, 3, 30, 70, 99);
+        FunctionDeclaration use = new FunctionDeclaration(functionSpan,
+            "use" + className,
+            List.of(new Parameter(functionSpan, "x",
+                new NamedType(functionSpan, className))),
+            new NamedType(functionSpan, "int"),
+            new Block(functionSpan, List.of()), false, false);
+        ProgramNode program = new ProgramNode(functionSpan, List.of(
+            privateDeclaration,
+            new ExportDeclaration(classSpan, declaration),
+            new ExportDeclaration(functionSpan, use)));
+        return new SiblingProvider(alias, sourcePath, modulePath, identity,
+            program, declaration, privateDeclaration);
+    }
+
+    /** One int field {@code v} at the given span. */
+    private static List<ClassField> siblingFields(Span span) {
+        return List.of(new ClassField(span, "v", false, false,
+            new NamedType(span, "int"), java.util.Optional.of(
+                new LiteralExpr(span, new LiteralValue.IntLiteral(0)))));
     }
 
     /**
      * One consumer over the given providers, in the given source
-     * import-declaration order: a class default holding one contextual
-     * class literal of the given field type. Returns the recorded
-     * occurrences.
+     * import-declaration order, with no checked qualified alias: a
+     * class default holding one contextual class literal of the given
+     * field type. Returns the recorded occurrences.
      */
     private static List<DefaultResourceOccurrence> siblingRun(
             List<SiblingProvider> providers, String fieldDecl,
+            String literalSource, Type fieldType) {
+        return siblingRun(providers, Map.of(), fieldDecl, literalSource,
+            fieldType);
+    }
+
+    /**
+     * One consumer over the given providers, in the given source
+     * import-declaration order, with the given checked qualified
+     * aliases: a class default holding one contextual class literal of
+     * the given field type. Returns the recorded occurrences.
+     */
+    private static List<DefaultResourceOccurrence> siblingRun(
+            List<SiblingProvider> providers,
+            Map<String, String> qualifiedAliases, String fieldDecl,
             String literalSource, Type fieldType) {
         StringBuilder source = new StringBuilder();
         for (SiblingProvider provider : providers) {
@@ -552,7 +612,7 @@ public final class DefaultIrRecorderTest {
                 }
                 return Type.Error.INSTANCE;
             },
-            Map.of());
+            qualifiedAliases);
         recorder.record(defaultExpr, scope, fieldType);
         return recorder.occurrences();
     }
@@ -603,8 +663,9 @@ public final class DefaultIrRecorderTest {
         SiblingProvider codec = siblingProvider("b", "/proj/src/b.deal",
             "src.b", sibling, "Codec");
 
-        // Both import orders: the declaring provider is selected by the
-        // demanded class declaration, never by the identity-equal sibling.
+        // Both import orders: the provider is selected by the checked
+        // export surface that carries the demanded class, never by the
+        // identity-equal sibling.
         for (List<SiblingProvider> order : List.of(
                 List.of(ir, codec), List.of(codec, ir))) {
             checkSiblingOccurrence(siblingRun(order, "x: Ir", "{ v: 1 }",
@@ -624,6 +685,61 @@ public final class DefaultIrRecorderTest {
         checkSiblingOccurrence(siblingRun(List.of(ir, loneCodec), "y: Codec",
             "{ v: 1 }", loneCodec.classType()), loneCodec,
             "the different-directory control");
+    }
+
+    /**
+     * The same-name sibling collision (review cycle 1): an identity-equal
+     * sibling whose program carries a non-exported class of the same
+     * name is never the provider. The checked qualified spelling of the
+     * declaring annotation wins when present, and the checked export
+     * surface resolves the provider otherwise — in both import orders,
+     * with the exact defining declaration range.
+     */
+    private static void testSameNameSiblingCollision() {
+        System.out.println("-- same-name sibling collision: a non-exported"
+            + " same-name class is never the provider --");
+        CanonicalModuleIdentity sibling =
+            new CanonicalModuleIdentity.ProjectModule(SIBLING_IDENTITY);
+        SiblingProvider ir = siblingProvider("ir", "/proj/src/m/ir.deal",
+            "src.m.ir", sibling, "Ir");
+        SiblingProvider codec = siblingProviderWithPrivateClass("codec",
+            "/proj/src/m/codec.deal", "src.m.codec", sibling, "Codec",
+            "Ir");
+        check(codec.privateIdentity().equals(ir.classIdentity()),
+            "the fixture's private same-name class is identity-equal to"
+                + " the demanded class (the directory-keyed model)");
+
+        for (List<SiblingProvider> order : List.of(
+                List.of(ir, codec), List.of(codec, ir))) {
+            // The field annotation's resolved alias names the provider.
+            checkSiblingOccurrence(siblingRun(order, Map.of("Ir", "ir"),
+                "r: ir.Ir", "{ v: 7 }", ir.classType()), ir,
+                "the aliased collision probe");
+            // Without an annotation alias (a body literal): the checked
+            // export surface resolves, never the name-bearing sibling
+            // program.
+            checkSiblingOccurrence(siblingRun(order, "r: Ir", "{ v: 7 }",
+                ir.classType()), ir, "the export-surface collision probe");
+        }
+
+        // Two identity-equal siblings that both export the demanded
+        // class name: the checked spelling decides, so neither import
+        // order changes the exact provider.
+        SiblingProvider irExported = siblingProvider("ir",
+            "/proj/src/m/ir.deal", "src.m.ir", sibling, "Ir");
+        SiblingProvider codecExported = siblingProvider("codec",
+            "/proj/src/m/codec.deal", "src.m.codec", sibling, "Ir");
+        for (List<SiblingProvider> order : List.of(
+                List.of(irExported, codecExported),
+                List.of(codecExported, irExported))) {
+            checkSiblingOccurrence(siblingRun(order, Map.of("Ir", "ir"),
+                "r: ir.Ir", "{ v: 7 }", irExported.classType()),
+                irExported, "the exported-collision ir spelling");
+            checkSiblingOccurrence(siblingRun(order,
+                Map.of("Ir", "codec"), "r: codec.Ir", "{ v: 7 }",
+                codecExported.classType()), codecExported,
+                "the exported-collision codec spelling");
+        }
     }
 
     // =========================================================================

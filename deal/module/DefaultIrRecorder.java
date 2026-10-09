@@ -738,34 +738,42 @@ final class DefaultIrRecorder {
     }
 
     /**
-     * The provider that declares the class type's canonical class
-     * identity, or null (an unknown or builtin module).
+     * The provider that owns the class type's canonical class identity:
+     * the import whose checked surface carries the demanded class, or
+     * null (an unknown or builtin module).
      *
      * <p>The public module identity is directory-keyed (the relative
      * module components exclude the file stem), so sibling modules in
-     * one directory share one classification identity and an
-     * identity-equality match alone is ambiguous: the first
-     * identity-equal import may be a sibling that declares no such
-     * class, and the demanded plan then fails closed at a declaration
-     * that provider never declared. The provider is therefore resolved
-     * by the declaring module's program: among the imports whose
-     * classification identity equals the class's module identity, the
-     * provider is the one whose program declares the demanded class
-     * name, in the consumer's import-declaration order (the exact
-     * defining declaration, never another sibling's serialization;
-     * when two imported siblings declare the same class name their
-     * canonical identities and descriptor texts are equal by the
-     * directory-keyed model, and the first in import-declaration order
-     * is deterministic). A demanded class none of the imports declares
-     * keeps the prior identity-match selection (still fail-closed at the
-     * serializer's exact-declaration check — never a silent fallback).</p>
+     * one directory share one classification identity: an
+     * identity-equality match alone is ambiguous, and a name-bearing
+     * sibling program is not proof of ownership (a sibling's
+     * non-exported class can carry the demanded name without being
+     * reachable under it). The provider is therefore resolved from the
+     * checked import provenance, over the consumer's import
+     * declarations:</p>
+     * <ol>
+     *   <li>the import the occurrence's resolved qualified alias names
+     *       (the checked spelling of the declaring annotation), when its
+     *       export surface carries the class identity;</li>
+     *   <li>otherwise the first import, in import-declaration order,
+     *       whose export surface carries the class identity — the only
+     *       route by which the checker resolves a foreign class for an
+     *       importer;</li>
+     *   <li>otherwise the first identity-equal import (the prior
+     *       selection), which the serializer's exact-declaration check
+     *       still fails closed at when the selected module declares no
+     *       such class (never a silent fallback, never another class's
+     *       serialization).</li>
+     * </ol>
      */
     private DefaultPlanImport providerForClass(Type.Class cls) {
         CanonicalModuleIdentity target = cls.identity().moduleIdentity();
         if (target instanceof CanonicalModuleIdentity.BuiltinModule) {
             return null;
         }
+        String qualified = qualifiedClassAliases.get(cls.name());
         DefaultPlanImport identityMatch = null;
+        DefaultPlanImport exportedMatch = null;
         for (StatementNode stmt : program.statements()) {
             if (!(stmt instanceof ImportDeclaration imp)) {
                 continue;
@@ -782,12 +790,34 @@ final class DefaultIrRecorder {
             if (identityMatch == null) {
                 identityMatch = provider;
             }
-            if (AstDeclarations.findClassDeclaration(provider.program(),
-                    cls.name()) != null) {
-                return provider; // the declared class's exact provider
+            if (!exportsClass(provider, cls)) {
+                continue;
+            }
+            if (imp.alias().equals(qualified)) {
+                // The checked qualified spelling names this import's
+                // class: the exact defining provider.
+                return provider;
+            }
+            if (exportedMatch == null) {
+                exportedMatch = provider;
             }
         }
-        return identityMatch;
+        return exportedMatch != null ? exportedMatch : identityMatch;
+    }
+
+    /**
+     * True when the import's checked export surface carries the demanded
+     * class identity under its declared name: the importer's only route
+     * to a foreign class type (the checker's qualified type resolution
+     * reads the module's export map, and an exported signature's class
+     * types flow through the same surface). A non-exported sibling
+     * declaration of the same name is never a match.
+     */
+    private static boolean exportsClass(DefaultPlanImport provider,
+            Type.Class cls) {
+        Type exported = provider.exports().get(cls.name());
+        return exported instanceof Type.Class exportedClass
+            && exportedClass.identity().equals(cls.identity());
     }
 
     /**

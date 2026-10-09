@@ -1,5 +1,8 @@
 package deal.test;
 
+import deal.ast.ClassDeclaration;
+import deal.ast.ExportDeclaration;
+import deal.ast.StatementNode;
 import deal.checker.CheckResult;
 import deal.checker.NameResolver;
 import deal.checker.SymbolTable;
@@ -9,10 +12,16 @@ import deal.codegen.SourceMapGenerator;
 import deal.codegen.jvm.JvmBackend;
 import deal.codegen.jvm.JvmNames;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticRange;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
 import deal.module.CompilationOrchestrator;
+import deal.module.DefaultResourceOccurrence;
+import deal.module.DefaultSerializerModuleInput;
+import deal.module.PlannedDefaultClass;
 import deal.module.ProductionProjectEmission;
+import deal.module.RuntimeImportDependency;
+import deal.module.RuntimeResourceReference;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
 import deal.project.CliOverrides;
@@ -124,6 +133,52 @@ public class ProductionDispatchTest {
     private static final String SIBLING_CODEC_SOURCE = """
         export class Codec { b: int = 0; }
         export function useCodec(y: Codec): int { return y.b; }
+        """;
+
+    /**
+     * The GitHub #6 same-name collision control (review cycle 1): the
+     * second sibling declares a non-exported class of the first
+     * sibling's name, so a name-bearing sibling program must never
+     * become the provider and the sibling's own plan
+     * ({@code a = 93}) must never serialize as the demanded class.
+     */
+    private static final String COLLISION_IR_SOURCE = """
+        export class Ir { a: int = 7; }
+        export function useIr(x: Ir): int { return x.a; }
+        """;
+
+    private static final String COLLISION_CODEC_SOURCE = """
+        class Ir { a: int = 93; }
+        export class Codec { b: int = 9; }
+        export function useCodec(y: Codec): int { return y.b; }
+        """;
+
+    /** The collision consumer: the qualified field annotation names
+     * {@code ir.Ir} while the codec sibling declares a same-name
+     * non-exported class. */
+    private static final String COLLISION_MAIN_CODEC_FIRST = """
+        import * as console from "std/console";
+        import * as codec from "./m/codec";
+        import * as ir from "./m/ir";
+        export class Outer { r: ir.Ir = {}; c: codec.Codec = {}; }
+        export function main(): null {
+          let o: Outer = {};
+          if (o.r.a === 7 && o.c.b === 9) { console.log("ok"); }
+          return null;
+        }
+        """;
+
+    /** The collision consumer with the two provider imports reversed. */
+    private static final String COLLISION_MAIN_IR_FIRST = """
+        import * as console from "std/console";
+        import * as ir from "./m/ir";
+        import * as codec from "./m/codec";
+        export class Outer { r: ir.Ir = {}; c: codec.Codec = {}; }
+        export function main(): null {
+          let o: Outer = {};
+          if (o.r.a === 7 && o.c.b === 9) { console.log("ok"); }
+          return null;
+        }
         """;
 
     private static final String HOST_DEAL_JSON_LUA = """
@@ -987,6 +1042,263 @@ public class ProductionDispatchTest {
         check("ok".equals(run.output().trim()),
             "the " + label + " artifact prints 'ok' under " + tool
                 + ", got '" + run.output() + "'");
+    }
+
+    /**
+     * The GitHub #6 same-name sibling collision (review cycle 1): an
+     * identity-equal sibling that declares a non-exported class of the
+     * demanded name must never become the provider. Both import orders
+     * compile through the release-owned production invocation in one
+     * project (one deployment identity, so the provider digests are
+     * comparable), and the completed plan occurrence and deferred
+     * dependency edge must carry the declaring module, its exact
+     * declaration range, and one import-order-independent provider
+     * digest — never the private sibling's plan.
+     */
+    private static void testProductionSameNameSiblingCollision()
+            throws Exception {
+        System.out.println("-- production invocation: a non-exported"
+            + " same-name sibling class never becomes the provider (both"
+            + " import orders; exact resource and digest) --");
+
+        Path root = Files.createTempDirectory("production-collision-");
+        try {
+            write(root, "deal.json", """
+                {
+                  "languageVersion": "1.2",
+                  "stdlib": "1.2",
+                  "moduleRoots": ["src"],
+                  "dependencies": {},
+                  "externals": {},
+                  "backend": "js",
+                  "output": "out"
+                }
+                """);
+            write(root, "src/m/ir.deal", COLLISION_IR_SOURCE);
+            write(root, "src/m/codec.deal", COLLISION_CODEC_SOURCE);
+            write(root, "src/main.deal", COLLISION_MAIN_CODEC_FIRST);
+            write(root, "src/main_ir_first.deal",
+                COLLISION_MAIN_IR_FIRST);
+
+            String codecFirstDigest = null;
+            String codecFirstCodecDigest = null;
+            for (String entry : List.of("src/main.deal",
+                    "src/main_ir_first.deal")) {
+                String label = entry.contains("ir_first") ? "ir-first"
+                    : "codec-first";
+                boolean irFirst = label.equals("ir-first");
+                ArmCompile compile = compileWithInvocation(root, entry,
+                    productionInvocation());
+                check(compile.success(), "the " + label + " collision"
+                    + " compile succeeds through the production"
+                    + " invocation: " + compile.orchestrator()
+                        .diagnostics());
+                if (!compile.success()) {
+                    continue;
+                }
+                CompilationOrchestrator orchestrator =
+                    compile.orchestrator();
+                String mainUri = serializerModuleUri(orchestrator,
+                    "/" + entry);
+                String irUri = serializerModuleUri(orchestrator,
+                    "/src/m/ir.deal");
+                String codecUri = serializerModuleUri(orchestrator,
+                    "/src/m/codec.deal");
+                check(mainUri != null && irUri != null
+                        && codecUri != null, "the " + label + " collision"
+                    + " compile exposes every module identity");
+                if (mainUri == null || irUri == null || codecUri == null) {
+                    continue;
+                }
+                DiagnosticRange irDeclaration = classDeclarationRange(
+                    COLLISION_IR_SOURCE, irUri.substring("file://"
+                        .length()), "Ir");
+                DiagnosticRange privateIrDeclaration =
+                    classDeclarationRange(COLLISION_CODEC_SOURCE,
+                        codecUri.substring("file://".length()), "Ir");
+                check(irDeclaration != null
+                        && privateIrDeclaration != null,
+                    "the collision control resolves both sibling Ir"
+                        + " declaration ranges");
+                if (irDeclaration == null
+                        || privateIrDeclaration == null) {
+                    continue;
+                }
+
+                String irDigest = checkClassDefaultResource(orchestrator,
+                    label, mainUri, irUri, "ir", "Ir", irDeclaration,
+                    privateIrDeclaration);
+                String codecDigest = checkClassDefaultResource(
+                    orchestrator, label, mainUri, codecUri, "codec",
+                    "Codec", classDeclarationRange(COLLISION_CODEC_SOURCE,
+                        codecUri.substring("file://".length()), "Codec"),
+                    privateIrDeclaration);
+                if (irFirst) {
+                    checkEq(codecFirstDigest, irDigest, "the Ir provider"
+                        + " digest is import-order independent");
+                    checkEq(codecFirstCodecDigest, codecDigest, "the Codec"
+                        + " provider digest is import-order independent");
+                } else {
+                    codecFirstDigest = irDigest;
+                    codecFirstCodecDigest = codecDigest;
+                }
+            }
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * Asserts the completed graph facts of one demanded imported class:
+     * exactly one class-default-plan occurrence and exactly one deferred
+     * dependency edge, both on the declaring module's URI, the spelled
+     * import alias, and the exact defining declaration range; the
+     * forbidden (private same-name sibling) declaration is never bound.
+     * Returns the edge's provider digest, or null when the shape is
+     * wrong.
+     */
+    private static String checkClassDefaultResource(
+            CompilationOrchestrator orchestrator, String label,
+            String mainUri, String providerUri, String alias,
+            String className, DiagnosticRange declaration,
+            DiagnosticRange forbiddenDeclaration) {
+        List<DefaultResourceOccurrence> occurrences =
+            classPlanOccurrences(orchestrator, mainUri, className);
+        checkEq(1, occurrences.size(), "the " + label + " completed"
+            + " plan holds exactly one " + className
+            + " class-default occurrence");
+        if (occurrences.size() == 1) {
+            DefaultResourceOccurrence occurrence = occurrences.get(0);
+            checkEq(providerUri, occurrence.toSemanticModuleIdentity()
+                    .canonicalResolvedSourceUri(), "the " + label + " "
+                + className + " occurrence targets the declaring module");
+            checkEq(alias, occurrence.importAlias(), "the " + label + " "
+                + className + " occurrence keeps the spelled alias");
+            checkEq(declaration, occurrence.semanticResourceIdentity()
+                    .lexicalDeclarationIdentity().sourceScalarRange(),
+                "the " + label + " " + className + " occurrence carries"
+                    + " the exact defining declaration range");
+        }
+
+        List<RuntimeImportDependency> edges = classPlanEdges(orchestrator,
+            mainUri, className);
+        checkEq(1, edges.size(), "the " + label + " completed graph"
+            + " holds exactly one deferred " + className + " edge");
+        if (edges.size() != 1) {
+            return null;
+        }
+        RuntimeImportDependency edge = edges.get(0);
+        checkEq(providerUri, edge.toSemanticModuleIdentity()
+                .canonicalResolvedSourceUri(), "the " + label + " "
+            + className + " edge targets the declaring module");
+        checkEq(alias, edge.importAlias(), "the " + label + " "
+            + className + " edge keeps the spelled alias");
+        checkEq(declaration, edge.semanticResourceIdentity()
+                .lexicalDeclarationIdentity().sourceScalarRange(),
+            "the " + label + " " + className + " edge carries the exact"
+                + " defining declaration range");
+        check(edge.providerContractDigest() != null
+                && !edge.providerContractDigest().isEmpty(), "the "
+            + label + " " + className + " edge carries its provider"
+            + " digest");
+        check(edges.stream().noneMatch(e -> e.semanticResourceIdentity()
+                .lexicalDeclarationIdentity().sourceScalarRange()
+                .equals(forbiddenDeclaration)), "the " + label + " "
+            + className + " edge never binds the private same-name"
+            + " sibling declaration");
+        return edge.providerContractDigest();
+    }
+
+    /** The class-default-plan occurrences of the given class name whose
+     * consuming module is {@code fromUri}, in plan order. */
+    private static List<DefaultResourceOccurrence> classPlanOccurrences(
+            CompilationOrchestrator orchestrator, String fromUri,
+            String className) {
+        List<DefaultResourceOccurrence> matches = new ArrayList<>();
+        for (List<PlannedDefaultClass> plans
+                : orchestrator.completedDefaultPlans().values()) {
+            for (PlannedDefaultClass planned : plans) {
+                for (DefaultResourceOccurrence occurrence
+                        : planned.occurrences()) {
+                    if (occurrence.kind()
+                            == RuntimeResourceReference.Kind
+                                .IMPORTED_CLASS_DEFAULT_PLAN
+                            && occurrence.fromSemanticModuleIdentity()
+                                .canonicalResolvedSourceUri()
+                                .equals(fromUri)
+                            && occurrence.semanticResourceIdentity()
+                                .lexicalDeclarationIdentity()
+                                .declaredName().equals(className)) {
+                        matches.add(occurrence);
+                    }
+                }
+            }
+        }
+        return matches;
+    }
+
+    /** The completed deferred-default dependency edges of the given
+     * class name whose consuming module is {@code fromUri}. */
+    private static List<RuntimeImportDependency> classPlanEdges(
+            CompilationOrchestrator orchestrator, String fromUri,
+            String className) {
+        List<RuntimeImportDependency> matches = new ArrayList<>();
+        for (RuntimeImportDependency edge
+                : orchestrator.runtimeDependencies()) {
+            if (edge.reason()
+                        == RuntimeImportDependency.Reason
+                            .DEFERRED_DEFAULT_BINDING
+                    && edge.fromSemanticModuleIdentity()
+                        .canonicalResolvedSourceUri().equals(fromUri)
+                    && edge.semanticResourceIdentity()
+                        .lexicalDeclarationIdentity().declaredName()
+                        .equals(className)) {
+                matches.add(edge);
+            }
+        }
+        return matches;
+    }
+
+    /** The semantic module URI of the compiled input whose source path
+     * ends with the given suffix, or null. */
+    private static String serializerModuleUri(
+            CompilationOrchestrator orchestrator, String suffix) {
+        for (DefaultSerializerModuleInput input
+                : orchestrator.defaultSerializerModuleInputs().values()) {
+            if (input.sourcePath().endsWith(suffix)) {
+                return input.location().semanticModuleIdentity()
+                    .canonicalResolvedSourceUri();
+            }
+        }
+        return null;
+    }
+
+    /** The complete source range of one top-level class declaration of
+     * the given source text, in the file string the compiler uses. */
+    private static DiagnosticRange classDeclarationRange(String source,
+            String fileName, String className) {
+        LexResult lex = new Lexer(source, fileName).tokenize();
+        if (lex.hasErrors()) {
+            return null;
+        }
+        ParseResult parse = new Parser(lex.tokens(), fileName,
+            lex.directiveEvents()).parse();
+        if (parse.hasErrors()) {
+            return null;
+        }
+        for (StatementNode stmt : parse.program().statements()) {
+            ClassDeclaration cd = null;
+            if (stmt instanceof ClassDeclaration c) {
+                cd = c;
+            } else if (stmt instanceof ExportDeclaration ed
+                    && ed.declaration() instanceof ClassDeclaration c) {
+                cd = c;
+            }
+            if (cd != null && cd.name().equals(className)) {
+                return cd.span().range();
+            }
+        }
+        return null;
     }
 
     private static void testConversionOverflowTerminal() throws Exception {
@@ -3248,6 +3560,7 @@ public class ProductionDispatchTest {
         testProductionJvmTwoModule();
         testProductionLuaJitTwoModuleSurfaces();
         testProductionSiblingModuleProviderIdentity();
+        testProductionSameNameSiblingCollision();
         testConversionOverflowTerminal();
         testAtomicFailureThroughDispatch();
         testFailClosedFamilies();
