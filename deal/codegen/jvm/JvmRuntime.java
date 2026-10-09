@@ -1147,11 +1147,14 @@ public final class JvmRuntime {
                     innerCanonical = canonicalDesc(inner);
                 }
                 for (int i = 0; i < array.length; i++) {
+                    // A present null element stays the language-null carrier
+                    // (the explicit null the JSON reader stores unchanged),
+                    // distinct from the absent/deleted slot's MISSING marker:
+                    // the element descriptor decides the null (array(null)
+                    // and nullable elements admit it) and only the absent
+                    // slot projects the typed-boundary nil token.
                     Object elem = i < array.elements.size() ? array.elements.get(i)
                         : MISSING;
-                    if (elem == null) {
-                        elem = MISSING;
-                    }
                     try {
                         bcheck(inner, elem == MISSING ? "missing" : inner, elem,
                             innerCanonical);

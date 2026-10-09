@@ -94,6 +94,10 @@ public class BoundaryExecutorTest {
         DescriptorService.describe(new Type.Array(Type.Number.INSTANCE));
     private static final RuntimeDescriptor INT_ARRAY =
         DescriptorService.describe(new Type.Array(Type.Int.INSTANCE));
+    private static final RuntimeDescriptor NULL_ARRAY =
+        DescriptorService.describe(new Type.Array(Type.Null.INSTANCE));
+    private static final RuntimeDescriptor NULLABLE_INT_ARRAY =
+        DescriptorService.describe(new Type.Array(new Type.Nullable(Type.Int.INSTANCE)));
     private static final RuntimeDescriptor NESTED_INT_ARRAY =
         DescriptorService.describe(new Type.Array(new Type.Array(Type.Int.INSTANCE)));
     private static final RuntimeDescriptor NULLABLE_STRING =
@@ -536,6 +540,63 @@ public class BoundaryExecutorTest {
             NUMBER_ARRAY, empty);
         expectPass(emptyOutcome, "[number] vs empty array");
         check(((BoundaryOutcome.Pass) emptyOutcome).value() == empty, "empty array unchanged");
+    }
+
+    // =========================================================================
+    // 5b. The array element cells' present-null vs deleted-slot distinction
+    // =========================================================================
+
+    /**
+     * The array element cells' null distinction (ISSUE-0753): an explicit
+     * language null projects the typed-boundary {@code null} token while
+     * only an absent/deleted slot projects {@code nil}; an {@code array(null)}
+     * descriptor admits the present null. These are the complete tuples the
+     * JVM array check and the emitted Lua prelude's {@code __bcheck} render
+     * for the same values.
+     */
+    static void testArrayPresentNullAndDeletedSlot() {
+        System.out.println("-- array elements: present null vs deleted slot, and the "
+            + "array(null) admission --");
+
+        BoundaryValueView presentNull = BoundaryValueView.ofArray(
+            BoundaryValueView.nullView());
+        BoundaryValueView deletedSlot = BoundaryValueView.ofArray(
+            BoundaryValueView.of(ActualKind.MISSING));
+
+        // The present language null: E8003 with the null token.
+        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT_ARRAY, presentNull),
+            FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
+            "array element 1 type mismatch", "int", "null",
+            Map.of("oneBasedIndex", "1"), expectedKindMismatch("int", "null"),
+            "[int] vs [null]");
+
+        // The absent/deleted slot: E8003 with the nil token.
+        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT_ARRAY, deletedSlot),
+            FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
+            "array element 1 type mismatch", "int", "nil",
+            Map.of("oneBasedIndex", "1"), expectedKindMismatch("int", "nil"),
+            "[int] vs a deleted slot");
+
+        // The array(null) admission control: the present null passes
+        // unchanged.
+        BoundaryOutcome admitted = checkCell(FailurePolicyId.TYPE_DESCRIPTOR,
+            NULL_ARRAY, presentNull);
+        expectPass(admitted, "[null] vs present null");
+        check(((BoundaryOutcome.Pass) admitted).value() == presentNull,
+            "the array(null) admission keeps the value unchanged");
+
+        // The nullable element admits the present null too (the landed
+        // missing->null mapping is not weakened by the null distinction).
+        expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NULLABLE_INT_ARRAY,
+            presentNull), "[?int] vs present null");
+
+        // A deleted slot at the array(null) descriptor stays the absent
+        // marker's nil token (the present null distinction is exact).
+        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NULL_ARRAY, deletedSlot),
+            FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
+            "array element 1 type mismatch", "null", "nil",
+            Map.of("oneBasedIndex", "1"), expectedKindMismatch("null", "nil"),
+            "[null] vs a deleted slot");
     }
 
     // =========================================================================
@@ -1309,6 +1370,7 @@ public class BoundaryExecutorTest {
         testIntPathNormativeOrder();
         testClassAtom();
         testArrayE8003();
+        testArrayPresentNullAndDeletedSlot();
         testFunctionSignature();
         testHostParameter();
         testHostSyncReturn();

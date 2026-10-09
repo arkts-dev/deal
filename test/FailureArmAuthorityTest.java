@@ -116,6 +116,7 @@ public class FailureArmAuthorityTest {
         testWalkOracleNumericPositions();
         testWalkOracleKindPositions();
         testMovedElementCell();
+        testDecodedArrayPresentNullCell();
         testRuntimeCarrierProjection();
         testRuntimeNullSentinelAtWalk();
         testRuntimeMissingSentinelAtWalk();
@@ -3476,6 +3477,110 @@ public class FailureArmAuthorityTest {
         checkEq("actual", firstDifferingField(oracle, new Tuple(oracle.code(),
                 oracle.message(), oracle.span(), oracle.expected(), "int")),
             "a declared-text-keyed element arm is reported by field name actual");
+    }
+
+    /**
+     * The std/json producer's present null versus the deleted slot
+     * (ISSUE-0753): the JSON reader stores the null element unchanged, so
+     * the array descriptor check projects the language-null carrier's own
+     * {@code null} token on the oracle, the JVM runtime, and the emitted
+     * Lua prelude alike, while only an absent/deleted slot projects
+     * {@code nil}; the {@code array(null)} descriptor admits the present
+     * null. The runtime-level renders keep the arm's own origin operand
+     * (the emitting boundary site attaches the op origin), unchanged by
+     * the projection.
+     */
+    static void testDecodedArrayPresentNullCell() throws Exception {
+        System.out.println("-- the decoded-array present-null and deleted-slot "
+            + "cells --");
+        String origin = "decoded-null.deal:5:11";
+        RuntimeDescriptor intArray =
+            new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE);
+        RuntimeDescriptor nullArray =
+            new RuntimeDescriptor.Array(RuntimeDescriptor.Null.INSTANCE);
+
+        // The oracle legs: the closed boundary views of the same carriers.
+        Tuple oraclePresent = tupleOf(oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.TYPE_DESCRIPTOR, intArray,
+            BoundaryValueView.ofArray(BoundaryValueView.nullView()),
+            BoundaryContext.none()), "the oracle present-null cell"), origin);
+        checkEq(new Tuple("E8003", "array element 1 type mismatch", origin, "int",
+                "null"), oraclePresent,
+            "the oracle projects the present null element as the null token");
+        Tuple oracleDeleted = tupleOf(oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.TYPE_DESCRIPTOR, intArray,
+            BoundaryValueView.ofArray(BoundaryValueView.of(ActualKind.MISSING)),
+            BoundaryContext.none()), "the oracle deleted-slot cell"), origin);
+        checkEq(new Tuple("E8003", "array element 1 type mismatch", origin, "int",
+                "nil"), oracleDeleted,
+            "the oracle projects the deleted slot as the nil token");
+        BoundaryOutcome oracleAdmitted = BoundaryExecutor.check(
+            FailurePolicyId.TYPE_DESCRIPTOR, nullArray,
+            BoundaryValueView.ofArray(BoundaryValueView.nullView()),
+            BoundaryContext.none());
+        check(oracleAdmitted instanceof BoundaryOutcome.Pass,
+            "the oracle admits the present null at the array(null) descriptor: "
+                + oracleAdmitted);
+
+        // The JVM leg over the std/json producer's own decoded array
+        // ({"values":[null]} checked as int[]).
+        deal.codegen.jvm.JvmRuntime.Table decoded =
+            (deal.codegen.jvm.JvmRuntime.Table) deal.codegen.jvm.JvmRuntime.stdlib(
+                "STDLIB_CALL", "JSON_PARSE", "op", "digest", "parent", origin,
+                new Object[] {"{\"values\":[null]}"});
+        deal.codegen.jvm.JvmRuntime.Array values =
+            (deal.codegen.jvm.JvmRuntime.Array) decoded.read("values");
+        deal.codegen.jvm.JvmRuntime.DealError jvmPresent = jvmFailure(
+            () -> deal.codegen.jvm.JvmRuntime.bcheck("array(int)", "array", values));
+        check(jvmPresent != null,
+            "the JVM array check rejects the decoded present null");
+        if (jvmPresent != null) {
+            checkEq(null, firstDifferingField(oraclePresent, new Tuple(jvmPresent.code,
+                jvmPresent.msg, origin, jvmPresent.expected, jvmPresent.actual)),
+                "the JVM array check renders the oracle's complete present-null tuple");
+            checkEq("-", jvmPresent.origin,
+                "the JVM runtime check keeps the arm render's own origin operand "
+                    + "(unchanged)");
+        }
+        checkEq(values, deal.codegen.jvm.JvmRuntime.bcheck("array(null)", "array",
+                values),
+            "the JVM array(null) check admits the decoded present null unchanged");
+        deal.codegen.jvm.JvmRuntime.DealError jvmDeleted = jvmFailure(
+            () -> deal.codegen.jvm.JvmRuntime.bcheck("array(int)", "array",
+                new deal.codegen.jvm.JvmRuntime.Array(values.length)));
+        check(jvmDeleted != null, "the JVM array check rejects the deleted slot");
+        if (jvmDeleted != null) {
+            checkEq(null, firstDifferingField(oracleDeleted, new Tuple(jvmDeleted.code,
+                jvmDeleted.msg, origin, jvmDeleted.expected, jvmDeleted.actual)),
+                "the JVM array check renders the oracle's complete deleted-slot tuple");
+        }
+
+        // The emitted prelude leg, under real luajit (the decoded array
+        // carrier; the mark is inert at the element projection).
+        List<String> rows = runPreludeProbe("""
+            local ok, value = pcall(__bcheck, "array(int)", "array",
+              {__a = true, __da = true, __n = 1, [1] = __NULL})
+            row("present-null", ok, value)
+            ok, value = pcall(__bcheck, "array(int)", "array",
+              {__a = true, __da = true, __n = 1})
+            row("deleted-slot", ok, value)
+            ok, value = pcall(__bcheck, "array(null)", "array",
+              {__a = true, __da = true, __n = 1, [1] = __NULL})
+            row("null-admission", ok, value)
+            """, "decoded-null-probe", 3);
+        checkEq("present-null|E8003|int|null|array element 1 type mismatch",
+            rows.get(0), "the emitted prelude projects the present null element as "
+                + "the null token");
+        checkEq("deleted-slot|E8003|int|nil|array element 1 type mismatch",
+            rows.get(1), "the emitted prelude projects the deleted slot as the "
+                + "nil token");
+        checkEq("null-admission|OK|", rows.get(2),
+            "the emitted prelude admits the present null at the array(null) "
+                + "descriptor");
+        checkEq(null, firstDifferingField(oraclePresent, luaTuple(rows.get(0), origin)),
+            "the emitted prelude renders the oracle's complete present-null tuple");
+        checkEq(null, firstDifferingField(oracleDeleted, luaTuple(rows.get(1), origin)),
+            "the emitted prelude renders the oracle's complete deleted-slot tuple");
     }
 
     // =========================================================================
