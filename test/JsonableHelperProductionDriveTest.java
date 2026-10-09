@@ -1269,7 +1269,7 @@ public class JsonableHelperProductionDriveTest {
             if ("main".equals(export.name())) {
                 continue;
             }
-            source.append("  fx.").append(export.name()).append("()\n");
+            source.append("  fx.").append(export.name()).append("();\n");
         }
         return source.append("  return null\n}\n").toString();
     }

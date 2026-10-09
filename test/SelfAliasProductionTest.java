@@ -259,7 +259,7 @@ public class SelfAliasProductionTest {
     private static final Case MODULE_ASYNC = new Case(
         "module-async",
         """
-        import * as console from "std/console"
+        import * as console from "std/console";
 
         async function f(n: int): int {
           if (n <= 0) {
