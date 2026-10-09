@@ -266,6 +266,8 @@ public class CheckerTest {
         testForOfAssignmentInvalidatesEnclosingNarrowing();
         testForHeadDeclarationOrder();
         testClassProvenanceAtInitializationAndNullableTarget();
+        testClassProvenanceThroughAssignmentExpressions();
+        testClassProvenanceAssignmentExprPublicCompile();
         testNestedClass();
         // ISSUE-0717 (defect snippet 47): a nested class that shadows an
         // enclosing class of the same name stays a distinct declaration;
@@ -2168,6 +2170,229 @@ public class CheckerTest {
         assertNoErrors(aliasControl,
             "an inferred alias of one declaration stays legal at its own "
                 + "initialization and nullable assignment boundaries");
+    }
+
+    /**
+     * ISSUE-0717 review: an assignment expression evaluates to the assigned
+     * value, so the E3019 cross-declaration gate must consume the value's
+     * exact declaration provenance through assignment expressions — the
+     * initialization, nullable-initialization, assignment-statement, and
+     * nested-assignment spellings. Dropping that provenance published a JS
+     * artifact whose statically string-typed field held an int, and reached
+     * E6005 on LuaJIT/JVM instead of the frontend rejection.
+     */
+    static void testClassProvenanceThroughAssignmentExpressions() {
+        System.out.println("-- class provenance is preserved through "
+            + "assignment expressions --");
+        CheckerOutput init = checkProgram(
+            "class A { n: int = 7; }\n" +
+            "export function f(): null {\n" +
+            "  let a: A = {};\n" +
+            "  {\n" +
+            "    class A { n: string = \"ok\"; }\n" +
+            "    let b: A = (a = a);\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(init, "E3019",
+            "an assignment-expression value at an initialization boundary "
+                + "keeps its declaration provenance -> E3019");
+
+        CheckerOutput nullable = checkProgram(
+            "class A { n: int = 7; }\n" +
+            "export function f(): null {\n" +
+            "  let a: A = {};\n" +
+            "  {\n" +
+            "    class A { n: string = \"ok\"; }\n" +
+            "    let b: A | null = (a = a);\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(nullable, "E3019",
+            "an assignment-expression value at a nullable initialization "
+                + "boundary keeps its declaration provenance -> E3019");
+
+        CheckerOutput assignment = checkProgram(
+            "class A { n: int = 7; }\n" +
+            "export function f(): null {\n" +
+            "  let a: A = {};\n" +
+            "  {\n" +
+            "    class A { n: string = \"ok\"; }\n" +
+            "    let b: A = {};\n" +
+            "    b = (a = a);\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(assignment, "E3019",
+            "an assignment-expression value at an assignment boundary keeps "
+                + "its declaration provenance -> E3019");
+
+        CheckerOutput nested = checkProgram(
+            "class A { n: int = 7; }\n" +
+            "export function f(): null {\n" +
+            "  let a: A = {};\n" +
+            "  let c: A = {};\n" +
+            "  {\n" +
+            "    class A { n: string = \"ok\"; }\n" +
+            "    let b: A = (c = (a = a));\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(nested, "E3019",
+            "nested assignment expressions keep their value provenance "
+                + "-> E3019");
+
+        CheckerOutput control = checkProgram(
+            "class A { n: int = 7; }\n" +
+            "export function f(): null {\n" +
+            "  let a: A = {};\n" +
+            "  let b: A = (a = a);\n" +
+            "  let c: A | null = (a = a);\n" +
+            "  c = (b = b);\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(control,
+            "assignment-expression values within one declaration stay "
+                + "legal (class shadowing is not rejected globally)");
+    }
+
+    /**
+     * ISSUE-0717 review: the same probes through the release-owned public
+     * CLI. The cross-declaration assignment-expression forms are rejected
+     * with E3019 on all three backends before any artifact is published,
+     * and the same-declaration control compiles on all three and its JS
+     * artifact executes (node) with the expected field value.
+     */
+    static void testClassProvenanceAssignmentExprPublicCompile() {
+        System.out.println("-- public deal compile: the assignment-expression "
+            + "provenance crossing on js/jvm/luajit --");
+        Path root;
+        try {
+            root = Files.createTempDirectory("deal_provenance_assign_");
+        } catch (IOException e) {
+            fail("public provenance: cannot create temp directory: "
+                + e.getMessage());
+            return;
+        }
+        try {
+            Path probeSrc = root.resolve("probe/src");
+            Files.createDirectories(probeSrc);
+            Files.writeString(root.resolve("probe/deal.json"),
+                "{\"languageVersion\":\"1.2\",\"backend\":\"js\","
+                    + "\"moduleRoots\":[\"src\"]}\n");
+            Path probeEntry = probeSrc.resolve("main.deal");
+            Files.writeString(probeEntry,
+                "class A { n: int = 7; }\n"
+                    + "export function main(): null {\n"
+                    + "  let a: A = {};\n"
+                    + "  {\n"
+                    + "    class A { n: string = \"ok\"; }\n"
+                    + "    let b: A = (a = a);\n"
+                    + "    let s: string = b.n;\n"
+                    + "  }\n"
+                    + "  return null;\n"
+                    + "}\n");
+            for (String backend : List.of("js", "jvm", "luajit")) {
+                Path out = root.resolve("probe_out_" + backend);
+                ByteArrayOutputStream err = new ByteArrayOutputStream();
+                PrintStream originalErr = System.err;
+                int exitCode;
+                try {
+                    System.setErr(new PrintStream(err, true,
+                        StandardCharsets.UTF_8));
+                    exitCode = Main.run(new String[]{"compile",
+                        probeEntry.toString(), "--backend", backend,
+                        "--output", out.toString()});
+                    System.err.flush();
+                } finally {
+                    System.setErr(originalErr);
+                }
+                String stderr = err.toString(StandardCharsets.UTF_8);
+                check(exitCode == 1,
+                    "the assignment-expression provenance crossing is "
+                        + "rejected on " + backend + ": " + stderr);
+                check(stderr.contains("E3019"),
+                    "the " + backend + " rejection is E3019: " + stderr);
+                check(!Files.exists(out),
+                    "the rejected " + backend + " compile publishes no "
+                        + "artifact directory");
+            }
+
+            Path controlSrc = root.resolve("control/src");
+            Files.createDirectories(controlSrc);
+            Files.writeString(root.resolve("control/deal.json"),
+                "{\"languageVersion\":\"1.2\",\"backend\":\"js\","
+                    + "\"moduleRoots\":[\"src\"]}\n");
+            Path controlEntry = controlSrc.resolve("main.deal");
+            Files.writeString(controlEntry,
+                "import * as console from \"std/console\"\n"
+                    + "class A { n: int = 7; }\n"
+                    + "export function main(): null {\n"
+                    + "  let a: A = {};\n"
+                    + "  let b: A = (a = a);\n"
+                    + "  let c: A | null = (a = a);\n"
+                    + "  c = (b = b);\n"
+                    + "  if (c !== null) {\n"
+                    + "    if (c.n !== 7) {\n"
+                    + "      throw { code: \"PROVENANCE_FAIL\", message: "
+                    + "\"same-declaration value\" };\n"
+                    + "    }\n"
+                    + "  }\n"
+                    + "  console.log(\"PROVENANCE_OK\");\n"
+                    + "  return null;\n"
+                    + "}\n");
+            Path controlOutJs = root.resolve("control_out_js");
+            for (String backend : List.of("js", "jvm", "luajit")) {
+                Path out = backend.equals("js")
+                    ? controlOutJs : root.resolve("control_out_" + backend);
+                ByteArrayOutputStream err = new ByteArrayOutputStream();
+                PrintStream originalErr = System.err;
+                int exitCode;
+                try {
+                    System.setErr(new PrintStream(err, true,
+                        StandardCharsets.UTF_8));
+                    exitCode = Main.run(new String[]{"compile",
+                        controlEntry.toString(), "--backend", backend,
+                        "--output", out.toString()});
+                    System.err.flush();
+                } finally {
+                    System.setErr(originalErr);
+                }
+                String stderr = err.toString(StandardCharsets.UTF_8);
+                check(exitCode == 0,
+                    "the same-declaration assignment-expression control "
+                        + "compiles on " + backend + ": " + stderr);
+            }
+
+            Path artifact = controlOutJs.resolve("main.js");
+            check(Files.isRegularFile(artifact),
+                "the control's JS artifact exists: " + artifact);
+            if (Files.isRegularFile(artifact)) {
+                ProcessBuilder pb = new ProcessBuilder("node", "main.js");
+                pb.directory(controlOutJs.toFile());
+                pb.redirectErrorStream(true);
+                Process node = pb.start();
+                String output = new String(node.getInputStream().readAllBytes(),
+                    StandardCharsets.UTF_8);
+                int nodeExit = node.waitFor();
+                check(nodeExit == 0 && output.contains("PROVENANCE_OK"),
+                    "the control artifact executes the same-declaration "
+                        + "value assertion (exit " + nodeExit + "): "
+                        + output);
+            }
+        } catch (IOException e) {
+            fail("public provenance: I/O failure: " + e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            fail("public provenance: interrupted: " + e.getMessage());
+        } finally {
+            deleteRecursively(root);
+        }
     }
 
     /**

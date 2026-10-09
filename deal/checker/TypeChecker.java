@@ -2058,8 +2058,9 @@ public final class TypeChecker {
 
     /**
      * The class declaration a value expression was declared with, when the
-     * expression names a class-typed binding: the provenance the E3019
-     * cross-declaration gate compares (ISSUE-0717 defect snippet 47).
+     * expression names a class-typed binding or evaluates to one: the
+     * provenance the E3019 cross-declaration gate compares (ISSUE-0717
+     * defect snippet 47).
      */
     private Symbol.ClassSymbol declaredClassOf(ExpressionNode expr) {
         if (expr instanceof IdentifierExpr id) {
@@ -2067,6 +2068,17 @@ public final class TypeChecker {
             if (sym instanceof Symbol.VariableSymbol vs) {
                 return vs.declaredClass();
             }
+        }
+        // An assignment expression evaluates to the assigned value, so its
+        // declaration provenance is the value's own provenance — preserved
+        // through nested assignments as well. Without this arm the value's
+        // exact declaration is dropped at `let b: A = (a = a)` (and at the
+        // assignment-expression and nullable-initialization spellings), so
+        // the E3019 gate cannot see the crossing and a JS artifact whose
+        // statically string-typed field holds an int is published
+        // (ISSUE-0717 review).
+        if (expr instanceof AssignmentExpr assign) {
+            return declaredClassOf(assign.value());
         }
         return null;
     }
