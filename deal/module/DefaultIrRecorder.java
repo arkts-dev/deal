@@ -738,24 +738,56 @@ final class DefaultIrRecorder {
     }
 
     /**
-     * The provider whose classification equals the class type's
-     * declaring module identity, or null (an unknown or builtin
-     * module).
+     * The provider that declares the class type's canonical class
+     * identity, or null (an unknown or builtin module).
+     *
+     * <p>The public module identity is directory-keyed (the relative
+     * module components exclude the file stem), so sibling modules in
+     * one directory share one classification identity and an
+     * identity-equality match alone is ambiguous: the first
+     * identity-equal import may be a sibling that declares no such
+     * class, and the demanded plan then fails closed at a declaration
+     * that provider never declared. The provider is therefore resolved
+     * by the declaring module's program: among the imports whose
+     * classification identity equals the class's module identity, the
+     * provider is the one whose program declares the demanded class
+     * name, in the consumer's import-declaration order (the exact
+     * defining declaration, never another sibling's serialization;
+     * when two imported siblings declare the same class name their
+     * canonical identities and descriptor texts are equal by the
+     * directory-keyed model, and the first in import-declaration order
+     * is deterministic). A demanded class none of the imports declares
+     * keeps the prior identity-match selection (still fail-closed at the
+     * serializer's exact-declaration check — never a silent fallback).</p>
      */
     private DefaultPlanImport providerForClass(Type.Class cls) {
-        deal.identity.CanonicalModuleIdentity target =
-            cls.identity().moduleIdentity();
+        CanonicalModuleIdentity target = cls.identity().moduleIdentity();
         if (target instanceof CanonicalModuleIdentity.BuiltinModule) {
             return null;
         }
-        for (DefaultPlanImport provider : imports.values()) {
-            deal.identity.CanonicalModuleIdentity providerIdentity =
+        DefaultPlanImport identityMatch = null;
+        for (StatementNode stmt : program.statements()) {
+            if (!(stmt instanceof ImportDeclaration imp)) {
+                continue;
+            }
+            DefaultPlanImport provider = imports.get(imp.alias());
+            if (provider == null) {
+                continue;
+            }
+            CanonicalModuleIdentity providerIdentity =
                 classification.get(provider.modulePath());
-            if (target.equals(providerIdentity)) {
-                return provider;
+            if (!target.equals(providerIdentity)) {
+                continue;
+            }
+            if (identityMatch == null) {
+                identityMatch = provider;
+            }
+            if (AstDeclarations.findClassDeclaration(provider.program(),
+                    cls.name()) != null) {
+                return provider; // the declared class's exact provider
             }
         }
-        return null;
+        return identityMatch;
     }
 
     /**

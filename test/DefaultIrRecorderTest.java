@@ -1,14 +1,17 @@
 package deal.module;
 
 import deal.ast.ArrayLiteralExpr;
+import deal.ast.Block;
 import deal.ast.ClassDeclaration;
 import deal.ast.ClassField;
 import deal.ast.ExpressionNode;
 import deal.ast.ExportDeclaration;
+import deal.ast.FunctionDeclaration;
 import deal.ast.LiteralExpr;
 import deal.ast.LiteralValue;
 import deal.ast.NamedType;
 import deal.ast.ObjectLiteralExpr;
+import deal.ast.Parameter;
 import deal.ast.ProgramNode;
 import deal.ast.Span;
 import deal.ast.StatementNode;
@@ -217,6 +220,7 @@ public final class DefaultIrRecorderTest {
         testCallSiteRangeAndDeduplication();
         testSameModuleBindingsRecorded();
         testAwaitGate();
+        testSiblingProvidersResolveTheDeclaringModule();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -390,6 +394,236 @@ public final class DefaultIrRecorderTest {
                 && !nested.root.children().isEmpty(),
             "the function-expression body statements are part of the"
                 + " complete IR walk");
+    }
+
+    // =========================================================================
+    // Sibling providers sharing one directory (GitHub #6)
+    // =========================================================================
+
+    /**
+     * The canonical module identity shared by two sibling modules in one
+     * directory: the relative module components exclude the file stem, so
+     * two provider modules in {@code src/} are identity-equal.
+     */
+    private static final ProjectModuleIdentity SIBLING_IDENTITY =
+        new ProjectModuleIdentity("src", "/proj/src", List.of());
+
+    /** The distinct identity of a provider moved to another directory. */
+    private static final ProjectModuleIdentity OTHER_DIR_IDENTITY =
+        new ProjectModuleIdentity("src", "/proj/src", List.of("n"));
+
+    /**
+     * One synthetic provider snapshot of the sibling probes: a program
+     * declaring exactly one exported class (with one int field, at a real
+     * scalar range) and one exported function whose signature names it.
+     */
+    private record SiblingProvider(String alias, String sourcePath,
+            String modulePath, CanonicalModuleIdentity identity,
+            ProgramNode program, ClassDeclaration declaration) {
+
+        String functionName() {
+            return "use" + declaration.name();
+        }
+
+        CanonicalClassIdentity classIdentity() {
+            return new CanonicalClassIdentity(identity,
+                declaration.name());
+        }
+
+        Type classType() {
+            return Types.classType(declaration.name(), classIdentity());
+        }
+
+        DefaultPlanImport planImport() {
+            Type classType = classType();
+            return new DefaultPlanImport(sourcePath, modulePath, program,
+                new SourceModuleLocation(sourcePath,
+                    new SemanticModuleIdentity(DEPLOYMENT,
+                        "file://" + sourcePath),
+                    "m" + alias, projectIdentity(), identity),
+                Map.of(declaration.name(), classType,
+                    functionName(), Types.func(List.of(classType),
+                        Type.Int.INSTANCE)),
+                new SymbolTable(), false, false);
+        }
+
+        private deal.identity.ProjectModuleIdentity projectIdentity() {
+            return ((CanonicalModuleIdentity.ProjectModule) identity)
+                .projectIdentity();
+        }
+    }
+
+    private static SiblingProvider siblingProvider(String alias,
+            String sourcePath, String modulePath,
+            CanonicalModuleIdentity identity, String className) {
+        Span classSpan = new Span(sourcePath, 1, 1, 1, 40, 0, 39);
+        List<ClassField> fields = List.of(new ClassField(classSpan, "v",
+            false, false, new NamedType(classSpan, "int"),
+            java.util.Optional.of(new LiteralExpr(classSpan,
+                new LiteralValue.IntLiteral(0)))));
+        ClassDeclaration declaration = new ClassDeclaration(classSpan,
+            className, fields);
+        Span functionSpan = new Span(sourcePath, 2, 1, 2, 30, 40, 69);
+        FunctionDeclaration use = new FunctionDeclaration(functionSpan,
+            "use" + className,
+            List.of(new Parameter(functionSpan, "x",
+                new NamedType(functionSpan, className))),
+            new NamedType(functionSpan, "int"),
+            new Block(functionSpan, List.of()), false, false);
+        ProgramNode program = new ProgramNode(functionSpan, List.of(
+            new ExportDeclaration(classSpan, declaration),
+            new ExportDeclaration(functionSpan, use)));
+        return new SiblingProvider(alias, sourcePath, modulePath, identity,
+            program, declaration);
+    }
+
+    /**
+     * One consumer over the given providers, in the given source
+     * import-declaration order: a class default holding one contextual
+     * class literal of the given field type. Returns the recorded
+     * occurrences.
+     */
+    private static List<DefaultResourceOccurrence> siblingRun(
+            List<SiblingProvider> providers, String fieldDecl,
+            String literalSource, Type fieldType) {
+        StringBuilder source = new StringBuilder();
+        for (SiblingProvider provider : providers) {
+            source.append("import * as ").append(provider.alias())
+                .append(" from \"./").append(provider.alias())
+                .append("\"\n");
+        }
+        source.append("class Outer {\n")
+            .append("  ").append(fieldDecl).append(" = ")
+            .append(literalSource).append(";\n")
+            .append("}\n");
+        LexResult lex = new Lexer(source.toString(), "main.deal").tokenize();
+        check(!lex.hasErrors(), "sibling fixture lexes: "
+            + lex.diagnostics());
+        ParseResult parse = new Parser(lex.tokens(), "main.deal",
+            lex.directiveEvents()).parse();
+        check(!parse.hasErrors(), "sibling fixture parses: "
+            + parse.diagnostics());
+        ProgramNode program = parse.program();
+        ClassDeclaration outer = null;
+        for (StatementNode stmt : program.statements()) {
+            if (stmt instanceof ClassDeclaration cd
+                    && cd.name().equals("Outer")) {
+                outer = cd;
+            }
+        }
+        check(outer != null && outer.fields().size() == 1,
+            "the sibling fixture declares exactly one Outer field");
+        if (outer == null || outer.fields().size() != 1) {
+            return List.of();
+        }
+        ExpressionNode defaultExpr = outer.fields().get(0).defaultExpr()
+            .orElse(null);
+        Map<ExpressionNode, Type> typeMap = new HashMap<>();
+        if (defaultExpr != null) {
+            for (ExpressionNode node : collectAll(defaultExpr)) {
+                if (node instanceof ObjectLiteralExpr) {
+                    typeMap.put(node, fieldType);
+                }
+            }
+        }
+        Map<String, DefaultPlanImport> imports = new LinkedHashMap<>();
+        Map<String, CanonicalModuleIdentity> classification =
+            new LinkedHashMap<>();
+        SymbolTable scope = new SymbolTable();
+        for (SiblingProvider provider : providers) {
+            DefaultPlanImport planImport = provider.planImport();
+            imports.put(provider.alias(), planImport);
+            classification.put(provider.modulePath(), provider.identity());
+            scope.define(provider.alias(), new deal.checker.Symbol
+                .ModuleSymbol(provider.alias(), planImport.exports(),
+                    new Span("main.deal", 1, 1, 1, 5)));
+        }
+        DefaultIrRecorder recorder = new DefaultIrRecorder(
+            typeMap, Map.of(), imports, classification,
+            CONSUMER_LOCATION, "src.main", program,
+            (typeNode, resolutionScope) -> {
+                if (typeNode instanceof NamedType nt) {
+                    for (SiblingProvider provider : providers) {
+                        if (provider.declaration().name()
+                                .equals(nt.name())) {
+                            return provider.classType();
+                        }
+                    }
+                }
+                return Type.Error.INSTANCE;
+            },
+            Map.of());
+        recorder.record(defaultExpr, scope, fieldType);
+        return recorder.occurrences();
+    }
+
+    /** One occurrence naming the provider's exact defining declaration. */
+    private static void checkSiblingOccurrence(
+            List<DefaultResourceOccurrence> occurrences,
+            SiblingProvider provider, String context) {
+        check(occurrences.size() == 1, context + ": exactly one occurrence,"
+            + " got " + occurrences);
+        if (occurrences.size() != 1) {
+            return;
+        }
+        DefaultResourceOccurrence occurrence = occurrences.get(0);
+        check(occurrence.kind().name().equals("IMPORTED_CLASS_DEFAULT_PLAN"),
+            context + ": the occurrence is the imported class default"
+                + " plan, got " + occurrence.kind());
+        check(occurrence.toSemanticModuleIdentity()
+                .canonicalResolvedSourceUri()
+                .equals("file://" + provider.sourcePath()),
+            context + ": the occurrence targets the declaring provider '"
+                + provider.sourcePath() + "', got "
+                + occurrence.toSemanticModuleIdentity()
+                    .canonicalResolvedSourceUri());
+        LexicalDeclarationIdentity declaration = occurrence
+            .semanticResourceIdentity().lexicalDeclarationIdentity();
+        check(declaration.declaredName()
+                .equals(provider.declaration().name()),
+            context + ": the resource identity names the demanded class, "
+                + "got " + declaration.declaredName());
+        check(declaration.sourceScalarRange().equals(
+                provider.declaration().span().range()),
+            context + ": the resource identity carries the exact defining"
+                + " declaration range "
+                + provider.declaration().span().range() + ", got "
+                + declaration.sourceScalarRange());
+    }
+
+    private static void testSiblingProvidersResolveTheDeclaringModule() {
+        System.out.println("-- sibling providers in one directory: the"
+            + " declaring module owns the class literal --");
+        CanonicalModuleIdentity sibling =
+            new CanonicalModuleIdentity.ProjectModule(SIBLING_IDENTITY);
+        CanonicalModuleIdentity otherDir =
+            new CanonicalModuleIdentity.ProjectModule(OTHER_DIR_IDENTITY);
+        SiblingProvider ir = siblingProvider("a", "/proj/src/a.deal",
+            "src.a", sibling, "Ir");
+        SiblingProvider codec = siblingProvider("b", "/proj/src/b.deal",
+            "src.b", sibling, "Codec");
+
+        // Both import orders: the declaring provider is selected by the
+        // demanded class declaration, never by the identity-equal sibling.
+        for (List<SiblingProvider> order : List.of(
+                List.of(ir, codec), List.of(codec, ir))) {
+            checkSiblingOccurrence(siblingRun(order, "x: Ir", "{ v: 1 }",
+                ir.classType()), ir, "the Ir probe");
+            checkSiblingOccurrence(siblingRun(order, "y: Codec",
+                "{ v: 1 }", codec.classType()), codec,
+                "the Codec probe");
+        }
+
+        // Single import: the declaring provider alone resolves.
+        checkSiblingOccurrence(siblingRun(List.of(ir), "x: Ir", "{ v: 1 }",
+            ir.classType()), ir, "the single-import control");
+
+        // Different directory: the distinct identity resolves directly.
+        SiblingProvider loneCodec = siblingProvider("b",
+            "/proj/src/n/b.deal", "src.n.b", otherDir, "Codec");
+        checkSiblingOccurrence(siblingRun(List.of(ir, loneCodec), "y: Codec",
+            "{ v: 1 }", loneCodec.classType()), loneCodec,
+            "the different-directory control");
     }
 
     // =========================================================================

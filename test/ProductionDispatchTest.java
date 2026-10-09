@@ -90,6 +90,42 @@ public class ProductionDispatchTest {
         }
         """;
 
+    /**
+     * The GitHub #6 sibling-provider reproducer (the exact reported
+     * program): two class-declaring modules in one directory, imported
+     * and constructed in {@code main}.
+     */
+    private static final String SIBLING_MAIN_SOURCE = """
+        import * as console from "std/console";
+        import * as ir from "./m/ir";
+        import * as codec from "./m/codec";
+        export function main(): null {
+          if (ir.useIr({}) === 0 && codec.useCodec({}) === 0) { console.log("ok"); }
+          return null;
+        }
+        """;
+
+    /** The same program with the two provider imports reversed. */
+    private static final String SIBLING_MAIN_SOURCE_REVERSED = """
+        import * as console from "std/console";
+        import * as codec from "./m/codec";
+        import * as ir from "./m/ir";
+        export function main(): null {
+          if (ir.useIr({}) === 0 && codec.useCodec({}) === 0) { console.log("ok"); }
+          return null;
+        }
+        """;
+
+    private static final String SIBLING_IR_SOURCE = """
+        export class Ir { a: int = 0; }
+        export function useIr(x: Ir): int { return x.a; }
+        """;
+
+    private static final String SIBLING_CODEC_SOURCE = """
+        export class Codec { b: int = 0; }
+        export function useCodec(y: Codec): int { return y.b; }
+        """;
+
     private static final String HOST_DEAL_JSON_LUA = """
         {
           "languageVersion": "1.2",
@@ -556,6 +592,34 @@ public class ProductionDispatchTest {
             CapabilityRegistry.releaseRegistry());
     }
 
+    /** The test-only bounded node probe (a skip, never a failure, when
+     * node is unavailable — the JsBackendTest toolchain rule). */
+    private static Boolean nodeAvailable;
+
+    private static boolean probeNode() {
+        if (nodeAvailable == null) {
+            try {
+                Process node = new ProcessBuilder("node", "--version")
+                    .redirectErrorStream(true).start();
+                nodeAvailable = node.waitFor() == 0;
+            } catch (IOException | InterruptedException e) {
+                nodeAvailable = false;
+            }
+        }
+        return nodeAvailable;
+    }
+
+    /** The {@link #runProcess} outcome for a command whose absence is a
+     * probe failure, not a test abort. */
+    private static ProcessOutcome runProcessUnchecked(Path directory,
+            String... command) {
+        try {
+            return runProcess(directory, command);
+        } catch (Exception e) {
+            return new ProcessOutcome(-1, "process failure: " + e);
+        }
+    }
+
     private static List<String> artifactFiles(Path root) throws Exception {
         if (!Files.isDirectory(root)) {
             return List.of();
@@ -821,6 +885,108 @@ public class ProductionDispatchTest {
         } finally {
             deleteRecursively(project);
         }
+    }
+
+    private static void testProductionSiblingModuleProviderIdentity()
+            throws Exception {
+        System.out.println("-- public compilation: sibling class-declaring"
+            + " modules in one directory keep their own provider identity"
+            + " and run on every target --");
+
+        for (boolean reversed : new boolean[] { false, true }) {
+            for (String backend : List.of("js", "luajit", "jvm")) {
+                String label = backend + (reversed ? " (reversed imports)"
+                    : "");
+                Path project = Files.createTempDirectory(
+                    "production-sibling-");
+                try {
+                    write(project, "deal.json", """
+                        {
+                          "languageVersion": "1.2",
+                          "stdlib": "1.2",
+                          "moduleRoots": ["src"],
+                          "dependencies": {},
+                          "externals": {},
+                          "backend": "%s",
+                          "output": "out"
+                        }
+                        """.formatted(backend));
+                    write(project, "src/m/ir.deal", SIBLING_IR_SOURCE);
+                    write(project, "src/m/codec.deal", SIBLING_CODEC_SOURCE);
+                    write(project, "src/main.deal", reversed
+                        ? SIBLING_MAIN_SOURCE_REVERSED
+                        : SIBLING_MAIN_SOURCE);
+
+                    ProjectOutcome compile = productionCompile(project,
+                        "src/main.deal", "out");
+                    check(compile.exitCode() == 0,
+                        "the " + label + " public compile succeeds: "
+                            + compile.stderr());
+                    check(compile.stderr().isEmpty(),
+                        "the " + label + " public compile emits no"
+                            + " diagnostic: " + compile.stderr());
+                    if (compile.exitCode() != 0) {
+                        continue;
+                    }
+                    Path out = project.resolve("out");
+                    switch (backend) {
+                        case "js" -> checkSiblingJsRun(label, out);
+                        case "luajit" -> checkSiblingLuaRun(label, out);
+                        default -> checkSiblingJvmRun(label, project, out);
+                    }
+                } finally {
+                    deleteRecursively(project);
+                }
+            }
+        }
+    }
+
+    /** The JS artifact of the sibling project under the real node. */
+    private static void checkSiblingJsRun(String label, Path out) {
+        if (!probeNode()) {
+            System.out.println("  SKIP (node unavailable): the " + label
+                + " artifact execution");
+            return;
+        }
+        checkSiblingStdout(label, "node",
+            runProcessUnchecked(out, "node", "main.js"));
+    }
+
+    /** The LuaJIT artifact of the sibling project under the real luajit. */
+    private static void checkSiblingLuaRun(String label, Path out) {
+        checkSiblingStdout(label, "luajit",
+            runProcessUnchecked(out, "luajit", "main.lua"));
+    }
+
+    /**
+     * The JVM artifact of the sibling project: javac --release 25 then
+     * java, the pinned two-step of this suite.
+     */
+    private static void checkSiblingJvmRun(String label, Path project,
+            Path out) throws Exception {
+        String buildCp = Path.of("build").toAbsolutePath().normalize()
+            .toString();
+        ProcessOutcome javac = runProcess(project, "javac", "--release",
+            "25", "-proc:none", "-cp", buildCp, "-d", out.toString(),
+            out.resolve("Main.java").toString());
+        check(javac.exitCode() == 0, "the " + label + " JVM artifact"
+            + " compiles: " + javac.output());
+        if (javac.exitCode() != 0) {
+            return;
+        }
+        checkSiblingStdout(label, "java", runProcess(out, "java", "-cp",
+            buildCp + File.pathSeparator + out, "Main"));
+    }
+
+    /** The sibling project's pinned observable: stdout "ok", exit 0. */
+    private static void checkSiblingStdout(String label, String tool,
+            ProcessOutcome run) {
+        check(run.exitCode() == 0, "the " + label + " artifact runs clean"
+            + " under " + tool + ": exit=" + run.exitCode() + " output="
+            + run.output());
+        check("ok".equals(run.output().trim()),
+            "the " + label + " artifact prints 'ok' under " + tool
+                + ", got '" + run.output() + "'");
     }
 
     private static void testConversionOverflowTerminal() throws Exception {
@@ -3081,6 +3247,7 @@ public class ProductionDispatchTest {
         testProductionLuaJitSingleModule();
         testProductionJvmTwoModule();
         testProductionLuaJitTwoModuleSurfaces();
+        testProductionSiblingModuleProviderIdentity();
         testConversionOverflowTerminal();
         testAtomicFailureThroughDispatch();
         testFailClosedFamilies();
