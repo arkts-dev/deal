@@ -2502,6 +2502,186 @@ public class JsonClassExecutorTest {
                 + "behind it (never a mapping crash)");
     }
 
+    // =========================================================================
+    // (h3) JSON_TO_CLASS: the selected failure before an over-depth tail
+    //      (the acceptance remediation of the depth preflight)
+    // =========================================================================
+
+    /**
+     * The acceptance remediation of the depth-only preflight: the selected
+     * first failing position decides the walk arm and its literal fieldPath,
+     * so an over-depth tail behind an unsupported value or a path-local
+     * re-entry never overrides it, while the 512 bound and its admission stay
+     * unchanged. Every case drives the integrated class walk with the
+     * production adapter (never the seam alone).
+     */
+    private static void testToJsonSelectedFailureBeforeOverDepthTail() {
+        System.out.println("-- toJson: a selected failure before an over-depth tail "
+            + "(the integrated class walk) --");
+
+        ClassLayout tableLayout = layoutOf(POINT, field("data", TABLE, true));
+        Map<ClassId, ClassLayout> layouts = Map.of(POINT, tableLayout);
+        ValueId classId = nextValue();
+        SemanticOp op = jsonToOp(tableLayout, classId);
+
+        // An unsupported value under the first inserted key, a table chain
+        // beyond JSON_MAX_DEPTH under the later key: the selected first
+        // failing position is data.bad (the walk arm's function token), never
+        // the later over-depth container.
+        SemanticTable<Value> badThenDeep = new SemanticTable<>();
+        Value.Table badThenDeepValue = new Value.Table(badThenDeep);
+        badThenDeep.put("bad", functionValue());
+        badThenDeep.put("later", nestedTableChain(ClassOpsExecutor.JSON_MAX_DEPTH + 1));
+        checkIntegratedWalkFailure(op, layouts, classId,
+            instanceOf(tableLayout, Map.of("data", badThenDeepValue)), nextOrigin(null),
+            "value at data.bad is not JSON serializable: function", "function",
+            "data.bad",
+            "an unsupported value before an over-depth table tail renders the walk arm "
+                + "at data.bad");
+
+        // The same shape with the over-depth tail closed through a mixed
+        // table/array chain.
+        SemanticTable<Value> badThenMixed = new SemanticTable<>();
+        Value.Table badThenMixedValue = new Value.Table(badThenMixed);
+        badThenMixed.put("bad", functionValue());
+        badThenMixed.put("later",
+            nestedMixedChain(ClassOpsExecutor.JSON_MAX_DEPTH + 2));
+        checkIntegratedWalkFailure(op, layouts, classId,
+            instanceOf(tableLayout, Map.of("data", badThenMixedValue)),
+            nextOrigin(null),
+            "value at data.bad is not JSON serializable: function", "function",
+            "data.bad",
+            "an unsupported value before an over-depth mixed table/array tail renders "
+                + "the walk arm at data.bad");
+
+        // Cycle-first: the table field's own path-local re-entry under the
+        // first inserted key, the over-depth chain under the later key. The
+        // needle's own closed marker selects the cycle arm with no
+        // parameters, expected, actual or metadata — the later depth position
+        // never overrides it.
+        SemanticTable<Value> cycleThenDeep = new SemanticTable<>();
+        Value.Table cycleThenDeepValue = new Value.Table(cycleThenDeep);
+        cycleThenDeep.put("self", cycleThenDeepValue);
+        cycleThenDeep.put("later", nestedTableChain(ClassOpsExecutor.JSON_MAX_DEPTH + 1));
+        checkIntegratedCycleFailure(op, layouts, classId,
+            instanceOf(tableLayout, Map.of("data", cycleThenDeepValue)),
+            nextOrigin(null),
+            "a path-local table re-entry before an over-depth table tail keeps the "
+                + "cycle arm's parameterless tuple");
+
+        SemanticTable<Value> cycleThenMixed = new SemanticTable<>();
+        Value.Table cycleThenMixedValue = new Value.Table(cycleThenMixed);
+        cycleThenMixed.put("self", cycleThenMixedValue);
+        cycleThenMixed.put("later",
+            nestedMixedChain(ClassOpsExecutor.JSON_MAX_DEPTH + 2));
+        checkIntegratedCycleFailure(op, layouts, classId,
+            instanceOf(tableLayout, Map.of("data", cycleThenMixedValue)),
+            nextOrigin(null),
+            "a path-local table re-entry before an over-depth mixed table/array tail "
+                + "keeps the cycle arm's parameterless tuple");
+
+        // The acceptance reproducer through the integrated class walk (not
+        // only the seam): the 50,000-container chain that ends in a
+        // self-referential table behind the selected data.bad failure is never
+        // traversed, so the class walk returns the already-selected failure
+        // instead of exhausting the stack.
+        Value.Table deepTail = selfReferentialTable();
+        for (int i = 0; i < 50000; i++) {
+            SemanticTable<Value> level = new SemanticTable<>();
+            Value.Table levelValue = new Value.Table(level);
+            level.put("k", deepTail);
+            deepTail = levelValue;
+        }
+        SemanticTable<Value> deepTailRoot = new SemanticTable<>();
+        Value.Table deepTailRootValue = new Value.Table(deepTailRoot);
+        deepTailRoot.put("bad", functionValue());
+        deepTailRoot.put("later", deepTail);
+        checkIntegratedWalkFailure(op, layouts, classId,
+            instanceOf(tableLayout, Map.of("data", deepTailRootValue)),
+            nextOrigin(null),
+            "value at data.bad is not JSON serializable: function", "function",
+            "data.bad",
+            "the integrated class walk returns the selected data.bad failure without "
+                + "traversing the 50,000-container cyclic tail behind it");
+
+        // The control: with no earlier failure, the same bounded walk selects
+        // the depth arm at the exceeding container's own position and token
+        // (the 512 limit and its admission are unchanged). The mixed chain's
+        // container at relative index 513 is the first beyond the bound; a
+        // table key appends ".k" and an array element "[0]".
+        StringBuilder mixedOverPath = new StringBuilder("data");
+        for (int i = 1; i <= ClassOpsExecutor.JSON_MAX_DEPTH + 1; i++) {
+            mixedOverPath.append(i % 2 == 1 ? ".k" : "[0]");
+        }
+        checkIntegratedWalkFailure(op, layouts, classId,
+            instanceOf(tableLayout,
+                Map.of("data", nestedMixedChain(ClassOpsExecutor.JSON_MAX_DEPTH + 2))),
+            nextOrigin(null),
+            "value at " + mixedOverPath + " is not JSON serializable: array",
+            "array", mixedOverPath.toString(),
+            "a clean over-depth mixed tail still fails the walk arm at the exceeding "
+                + "container (the 512 bound is unchanged)");
+    }
+
+    /**
+     * One integrated class-walk failure's complete tuple: E8001, the exact
+     * message, the absent expected field, the walk token, the literal single
+     * {@code fieldPath} metadata entry, and the supplied call origin (never
+     * the op's synthetic anchor).
+     */
+    private static void checkIntegratedWalkFailure(
+            SemanticOp op, Map<ClassId, ClassLayout> layouts, ValueId classValue,
+            Value.Class instance, SourceOrigin callOrigin, String expectedMessage,
+            String expectedActual, String expectedFieldPath, String label) {
+        Outcome<Value> outcome = ClassOpsExecutor.executeJsonToClass(op,
+            Map.of(classValue, instance), layouts,
+            JsonClassAlgorithmAdapter.stringifier(), callOrigin);
+        check(outcome instanceof Outcome.Failure<Value> failure,
+            label + " (the class walk fails the value)");
+        if (!(outcome instanceof Outcome.Failure<Value> failure)) {
+            return;
+        }
+        check(failure.failure().failure().code() == DiagnosticCode.E8001
+                && failure.failure().failure().message().equals(expectedMessage)
+                && failure.failure().failure().expected() == null
+                && failure.failure().failure().actual().equals(expectedActual)
+                && failure.failure().failure().metadata().equals(
+                    Map.of("fieldPath", expectedFieldPath))
+                && failure.failure().origin().equals(callOrigin)
+                && !failure.failure().origin().equals(op.origin()),
+            label + " (E8001, the exact message, the absent expected field, the "
+                + expectedActual + " token, the literal fieldPath metadata, and the "
+                + "supplied call origin)");
+    }
+
+    /**
+     * One integrated class-walk cycle-arm failure's complete tuple: E8001,
+     * the pinned cycle text, no expected/actual/metadata, and the supplied
+     * call origin (never the op's synthetic anchor).
+     */
+    private static void checkIntegratedCycleFailure(
+            SemanticOp op, Map<ClassId, ClassLayout> layouts, ValueId classValue,
+            Value.Class instance, SourceOrigin callOrigin, String label) {
+        Outcome<Value> outcome = ClassOpsExecutor.executeJsonToClass(op,
+            Map.of(classValue, instance), layouts,
+            JsonClassAlgorithmAdapter.stringifier(), callOrigin);
+        check(outcome instanceof Outcome.Failure<Value> failure,
+            label + " (the class walk fails the value)");
+        if (!(outcome instanceof Outcome.Failure<Value> failure)) {
+            return;
+        }
+        check(failure.failure().failure().code() == DiagnosticCode.E8001
+                && failure.failure().failure().message().equals(
+                    "cyclic value cannot be encoded as JSON")
+                && failure.failure().failure().expected() == null
+                && failure.failure().failure().actual() == null
+                && failure.failure().failure().metadata().equals(Map.of())
+                && failure.failure().origin().equals(callOrigin)
+                && !failure.failure().origin().equals(op.origin()),
+            label + " (E8001, the pinned cycle text, no expected/actual/metadata, "
+                + "and the supplied call origin)");
+    }
+
     /** A table holding itself under the key {@code self}. */
     private static Value.Table selfReferentialTable() {
         SemanticTable<Value> table = new SemanticTable<>();
@@ -2681,9 +2861,54 @@ public class JsonClassExecutorTest {
     // Runner
     // =========================================================================
 
+    /**
+     * The 512/513 walk-depth checks descend the production encoder and the
+     * production adapter's seam walk to their full supported depth (about
+     * one thousand nested frames for a 513-deep class chain). The frame
+     * sizes depend on the JIT's compilation state; C1 frames alone need
+     * over 1 MiB, so the JVM's default main-thread stack (1 MiB) can
+     * overflow nondeterministically before the pinned depth failure is
+     * rendered. The suite therefore runs on a dedicated thread with a
+     * fixed, generous stack: the depth-bound assertions then measure the
+     * implemented bound instead of the default stack size, and the pinned
+     * tuple is asserted on every run.
+     */
+    private static final long WALK_DEPTH_TEST_STACK_BYTES = 32L * 1024 * 1024;
+
     public static void main(String[] args) {
         System.out.println("=== Json Class Executor Tests (ISSUE-0515 K-D8/K-D9/K-D10/K-D11) ===\n");
 
+        // A StackOverflowError escaping the depth checks would kill the
+        // runner before it reports, so the worker's failure is rethrown on
+        // the main thread (the counters are read after join).
+        Throwable[] unexpected = { null };
+        Thread runner = new Thread(null, () -> {
+            try {
+                runAll();
+            } catch (Throwable failure) {
+                unexpected[0] = failure;
+            }
+        }, "json-class-executor-tests", WALK_DEPTH_TEST_STACK_BYTES);
+        runner.start();
+        try {
+            runner.join();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            unexpected[0] = interrupted;
+        }
+        if (unexpected[0] != null) {
+            unexpected[0].printStackTrace();
+            System.exit(1);
+        }
+
+        System.out.println("\nJsonClassExecutorTest: " + passed + " passed, "
+            + failed + " failed");
+        if (failed > 0) {
+            System.exit(1);
+        }
+    }
+
+    private static void runAll() {
         testFixtureRowsAndAdapterParity();
         testFromJsonTopLevelGate();
         testFromJsonFailures();
@@ -2693,12 +2918,7 @@ public class JsonClassExecutorTest {
         testToJsonFailureTemplateAndOrigin();
         testToJsonCyclesAndDepth();
         testToJsonNoncycleFailureBeforeCycle();
+        testToJsonSelectedFailureBeforeOverDepthTail();
         testRoundtripAndDefects();
-
-        System.out.println("\nJsonClassExecutorTest: " + passed + " passed, "
-            + failed + " failed");
-        if (failed > 0) {
-            System.exit(1);
-        }
     }
 }
