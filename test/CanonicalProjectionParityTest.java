@@ -3089,6 +3089,8 @@ public class CanonicalProjectionParityTest {
         Map<String, String> rejected = new LinkedHashMap<>();
         rejected.put("legacy profile on line 41",
             padding(40) + "// @profile: legacy-safe-int\n" + pristine);
+        rejected.put("legacy profile on line 40",
+            padding(39) + "// @profile: legacy-safe-int\n" + pristine);
         rejected.put("empty profile",
             padding(40) + "// @profile:\n" + pristine);
         rejected.put("unknown profile",

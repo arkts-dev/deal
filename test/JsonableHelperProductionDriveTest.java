@@ -3111,6 +3111,8 @@ public class JsonableHelperProductionDriveTest {
         // compile as a production cell with the declaration silently gone.
         injections.put("legacy profile on line 41",
             profilePadding(40) + "// @profile: legacy-safe-int\n" + raw);
+        injections.put("legacy profile on line 40",
+            profilePadding(39) + "// @profile: legacy-safe-int\n" + raw);
         injections.put("unknown profile on line 41",
             profilePadding(40) + "// @profile: no-such-profile\n" + raw);
         injections.put("empty profile on line 41",
