@@ -1668,6 +1668,97 @@ public class CheckerTest {
         );
         assertNoErrors(nested,
             "an await inside a nested function body is scoped to that function");
+
+        CheckerOutput loopAwait = checkProgram(
+            "async function tick(): null { return null; }\n" +
+            "export async function run(): null {\n" +
+            "  let x: string | null = \"ok\";\n" +
+            "  if (x !== null) {\n" +
+            "    {\n" +
+            "      let x: int = 0;\n" +
+            "      for (let n: int of [1]) { await tick(); }\n" +
+            "    }\n" +
+            "    let s: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(loopAwait, "E3001",
+            "an await inside a for-of body invalidates the enclosing "
+                + "refinements; the loop exit must not restore them");
+
+        CheckerOutput whileAwait = checkProgram(
+            "async function tick(): null { return null; }\n" +
+            "export async function run(): null {\n" +
+            "  let x: string | null = \"ok\";\n" +
+            "  if (x !== null) {\n" +
+            "    {\n" +
+            "      let x: int = 0;\n" +
+            "      while (false) { await tick(); }\n" +
+            "    }\n" +
+            "    let s: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(whileAwait, "E3001",
+            "an await inside a while body invalidates the enclosing "
+                + "refinements; the loop exit must not restore them");
+
+        CheckerOutput forAwait = checkProgram(
+            "async function tick(): null { return null; }\n" +
+            "export async function run(): null {\n" +
+            "  let x: string | null = \"ok\";\n" +
+            "  if (x !== null) {\n" +
+            "    {\n" +
+            "      let x: int = 0;\n" +
+            "      for (let n: int = 0; false; n = n + 1) { await tick(); }\n" +
+            "    }\n" +
+            "    let s: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(forAwait, "E3001",
+            "an await inside a C-style for body invalidates the enclosing "
+                + "refinements; the loop exit must not restore them");
+
+        CheckerOutput loopRestored = checkProgram(
+            "export function run(): null {\n" +
+            "  let x: string | null = \"ok\";\n" +
+            "  if (x !== null) {\n" +
+            "    {\n" +
+            "      let x: int = 0;\n" +
+            "      for (let n: int of [1]) { let z: int = n; }\n" +
+            "    }\n" +
+            "    let s: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(loopRestored,
+            "without an await the loop exit keeps the shadow snapshot "
+                + "restorable");
+
+        CheckerOutput nestedLoop = checkProgram(
+            "async function tick(): null { return null; }\n" +
+            "export async function run(): null {\n" +
+            "  let x: string | null = \"ok\";\n" +
+            "  if (x !== null) {\n" +
+            "    {\n" +
+            "      let x: int = 0;\n" +
+            "      for (let n: int of [1]) {\n" +
+            "        let f = async function(): null { await tick(); return null; };\n" +
+            "      }\n" +
+            "    }\n" +
+            "    let s: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(nestedLoop,
+            "an await inside a nested function body stays scoped to that "
+                + "function even when the body sits inside a loop");
     }
 
     /**
@@ -2014,6 +2105,69 @@ public class CheckerTest {
         assertNoErrors(control,
             "initialization and nullable assignment within one declaration "
                 + "stay legal");
+
+        CheckerOutput inferredAlias = checkProgram(
+            "class A { n: int = 7; }\n" +
+            "export function f(): null {\n" +
+            "  let a: A = {};\n" +
+            "  let alias = a;\n" +
+            "  {\n" +
+            "    class A { n: string = \"ok\"; }\n" +
+            "    let b: A = alias;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(inferredAlias, "E3019",
+            "an inferred alias carries the initializer's declaration "
+                + "provenance across the initialization boundary");
+
+        CheckerOutput inferredNullable = checkProgram(
+            "class A { n: int = 7; }\n" +
+            "export function f(): null {\n" +
+            "  let a: A | null = {};\n" +
+            "  let alias = a;\n" +
+            "  {\n" +
+            "    class A { n: string = \"ok\"; }\n" +
+            "    let b: A | null = alias;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(inferredNullable, "E3019",
+            "an inferred nullable-class alias keeps its provenance at a "
+                + "nullable initialization boundary");
+
+        CheckerOutput inferredAssignment = checkProgram(
+            "class A { n: int = 7; }\n" +
+            "export function f(): null {\n" +
+            "  let a: A = {};\n" +
+            "  let alias = a;\n" +
+            "  {\n" +
+            "    class A { n: string = \"ok\"; }\n" +
+            "    let b: A = {};\n" +
+            "    b = alias;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(inferredAssignment, "E3019",
+            "an inferred alias keeps its provenance at an assignment "
+                + "expression boundary");
+
+        CheckerOutput aliasControl = checkProgram(
+            "class A { n: int = 0; }\n" +
+            "export function f(): null {\n" +
+            "  let a: A = {};\n" +
+            "  let alias = a;\n" +
+            "  let b: A = alias;\n" +
+            "  let c: A | null = alias;\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(aliasControl,
+            "an inferred alias of one declaration stays legal at its own "
+                + "initialization and nullable assignment boundaries");
     }
 
     /**

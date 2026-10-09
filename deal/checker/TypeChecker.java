@@ -61,6 +61,18 @@ public final class TypeChecker {
     //    same-named declarations are distinct bindings). --
     private Deque<Set<Symbol>> loopAssignments = new ArrayDeque<>();
 
+    // -- Saved pre-loop narrowing states of the open loops: a loop body
+    //    is checked under a fresh narrowing state, so an await inside a
+    //    body must invalidate the enclosing function's saved states too
+    //    (docs/spec-v1.2.md §Nullable semantics: after an await every
+    //    narrowed variable of the enclosing async function reverts to
+    //    its declared type, and a loop exit must not restore an entry
+    //    the suspension invalidated). The stack is swapped at function
+    //    boundaries exactly like the narrowing object itself, so a
+    //    nested function's suspension never invalidates the enclosing
+    //    function's refinements. --
+    private Deque<NullNarrowing> loopSavedNarrowing = new ArrayDeque<>();
+
     // -- Non-hoisting let visibility (v1.2 declaration order): one frame
     //    per open block scope, holding the block's own let-declared names
     //    that have not been reached yet. A reference to such a name
@@ -540,12 +552,22 @@ public final class TypeChecker {
             if (targetType == null) {
                 targetType = inferTypeFromExpression(vd.initializer(), exprType);
                 if (targetType != null) {
-                    // Update the symbol table with the inferred type
+                    // Update the symbol table with the inferred type. An
+                    // inferred class-typed binding keeps the initializer's
+                    // exact declaration provenance (never a dropped
+                    // provenance): the value carried into the new binding
+                    // was laid out by that declaration, so a later
+                    // boundary crossing to a distinct same-named
+                    // declaration must still be E3019
+                    // (docs/spec-v1.2.md §Classes: one canonical identity,
+                    // distinct declarations).
                     Symbol sym = currentScope.resolve(vd.name());
                     if (sym instanceof Symbol.VariableSymbol vs && vs.type() == null) {
+                        Symbol.ClassSymbol provenance = vs.declaredClass() != null
+                            ? vs.declaredClass() : initDeclaredClass;
                         currentScope.defineReplace(vd.name(),
                             new Symbol.VariableSymbol(vd.name(), targetType, false,
-                                vs.declaredClass()));
+                                provenance));
                     }
                 }
             }
@@ -643,11 +665,14 @@ public final class TypeChecker {
         narrowing = new NullNarrowing();
         Deque<Set<Symbol>> savedLoopAssignments = loopAssignments;
         loopAssignments = new ArrayDeque<>();
+        Deque<NullNarrowing> savedLoopSavedNarrowing = loopSavedNarrowing;
+        loopSavedNarrowing = new ArrayDeque<>();
         int savedLoopDepth = loopDepth;
         loopDepth = 0;
         walkStatement(fd.body());
         narrowing = savedNarrowing;
         loopAssignments = savedLoopAssignments;
+        loopSavedNarrowing = savedLoopSavedNarrowing;
         loopDepth = savedLoopDepth;
 
         if (funcType != null && !fd.isExternal()) {
@@ -782,6 +807,7 @@ public final class TypeChecker {
         }
 
         NullNarrowing savedNarrowing = narrowing;
+        loopSavedNarrowing.push(savedNarrowing);
         narrowing = new NullNarrowing();
         loopDepth++;
         loopAssignments.push(newLoopAssignmentSet());
@@ -790,6 +816,7 @@ public final class TypeChecker {
         // body (v1.2 narrowing does not cross loop back-edges).
         Set<Symbol> assigned = loopAssignments.pop();
         loopDepth--;
+        loopSavedNarrowing.pop();
         closeLoopAssignments(assigned, savedNarrowing);
         narrowing = savedNarrowing;
     }
@@ -846,12 +873,14 @@ public final class TypeChecker {
         fs.update().ifPresent(this::checkExpression);
 
         NullNarrowing savedNarrowing = narrowing;
+        loopSavedNarrowing.push(savedNarrowing);
         narrowing = new NullNarrowing();
         loopDepth++;
         loopAssignments.push(newLoopAssignmentSet());
         walkStatement(fs.body());
         Set<Symbol> assigned = loopAssignments.pop();
         loopDepth--;
+        loopSavedNarrowing.pop();
         closeLoopAssignments(assigned, savedNarrowing);
         narrowing = savedNarrowing;
     }
@@ -913,12 +942,14 @@ public final class TypeChecker {
         }
 
         NullNarrowing savedNarrowing = narrowing;
+        loopSavedNarrowing.push(savedNarrowing);
         narrowing = new NullNarrowing();
         loopDepth++;
         loopAssignments.push(newLoopAssignmentSet());
         walkStatement(fos.body()); // Enters Block scope via scopeMap
         Set<Symbol> assigned = loopAssignments.pop();
         loopDepth--;
+        loopSavedNarrowing.pop();
         // The for-of back-edge invalidates every binding assigned in the
         // body exactly like while and C-style for (v1.2 narrowing does
         // not cross loop back-edges): the recorded bindings propagate to
@@ -1122,7 +1153,7 @@ public final class TypeChecker {
         // recovery (e.g., `await 42`). A bare cast would throw ClassCastException.
         if (!(await.callee() instanceof CallExpr call)) {
             // Parser already reported E1042; avoid cascading errors.
-            narrowing.invalidateAll();
+            invalidateAllNarrowing();
             return Type.Error.INSTANCE;
         }
 
@@ -1131,7 +1162,7 @@ public final class TypeChecker {
         if (calleeFuncType instanceof Type.Func f && f.isAsync()) {
             // Valid await: resultType is the return type R of the async function.
             // Invalidate narrowing after await.
-            narrowing.invalidateAll();
+            invalidateAllNarrowing();
             return resultType;
         }
 
@@ -1140,8 +1171,25 @@ public final class TypeChecker {
                 "'await' must be applied to an async function call",
                 await.callee().span());
         }
-        narrowing.invalidateAll();
+        invalidateAllNarrowing();
         return Type.Error.INSTANCE;
+    }
+
+    /**
+     * Invalidates every flow-sensitive refinement of the enclosing async
+     * function: the active narrowing together with the saved pre-loop
+     * states of this function's open loops. A loop body is checked under
+     * a fresh narrowing state, so invalidating only the active state
+     * would let the loop exit restore an entry (and a saved shadow
+     * snapshot) the suspension cleared. Nested function bodies swap the
+     * stack at their boundary, so their suspensions stay scoped to
+     * themselves.
+     */
+    private void invalidateAllNarrowing() {
+        narrowing.invalidateAll();
+        for (NullNarrowing saved : loopSavedNarrowing) {
+            saved.invalidateAll();
+        }
     }
 
     // =======================================================================
@@ -1787,11 +1835,14 @@ public final class TypeChecker {
         narrowing = new NullNarrowing();
         Deque<Set<Symbol>> savedLoopAssignments = loopAssignments;
         loopAssignments = new ArrayDeque<>();
+        Deque<NullNarrowing> savedLoopSavedNarrowing = loopSavedNarrowing;
+        loopSavedNarrowing = new ArrayDeque<>();
         int savedLoopDepth = loopDepth;
         loopDepth = 0;
         walkStatement(fe.body());
         narrowing = savedNarrowing;
         loopAssignments = savedLoopAssignments;
+        loopSavedNarrowing = savedLoopSavedNarrowing;
         loopDepth = savedLoopDepth;
 
         // ISSUE-0717: the reachability-ordered walk (the null-returning
