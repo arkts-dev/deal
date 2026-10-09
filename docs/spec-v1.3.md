@@ -403,7 +403,7 @@ ArrayType ::= PrimaryType ('[' ']')*
 PrimaryType ::= BuiltinType
  | Identifier
  | Identifier '.' Identifier
- | '(' FunctionType ')'
+ | '(' Type ')'
 
 BuiltinType ::= 'null' | 'boolean' | 'int' | 'number' | 'string' | 'bytes' | 'table' | 'Error'
 
@@ -1859,7 +1859,7 @@ export function substring(s: string, start: int, end: int): string;
 export function contains(s: string, part: string): boolean;
 export function startsWith(s: string, part: string): boolean;
 export function endsWith(s: string, part: string): boolean;
-export function replace(s: string, from: string, to: string): string;
+export function replace(s: string, search: string, replacement: string): string;
 export function split(s: string, sep: string): string[];
 export function trim(s: string): string;
 ```
@@ -2005,25 +2005,10 @@ cause (if applicable)
 
 ### Source maps and debugging
 
-Generated code debugging:
-
 - The backend emits source comments before generated statement groups.
-- Compiler emits a source map sidecar file `<module>.deal.map.json`.
+- Compiler emits source map sidecars mapping generated positions to original `.deal` files, lines and columns across modules.
 - Runtime errors use generated check metadata to report original `.deal` location.
 - Stack traces include both generated function names and original source function names.
-
-Source map format:
-
-```json
-{
- "version": 1,
- "source": "src/main.deal",
- "generated": "build/lua/main.lua",
- "mappings": [
- { "generatedLine": 10, "generatedColumn": 1, "sourceLine": 4, "sourceColumn": 1 }
- ]
-}
-```
 
 ---
 
