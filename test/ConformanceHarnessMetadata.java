@@ -101,10 +101,13 @@ public final class ConformanceHarnessMetadata {
      *
      * <p>The validation observes <em>every</em> {@code // @profile:}
      * declaration of the whole source, not the 40-line metadata window
-     * of {@link #profileFromMetadata}: the classification stripper drops
-     * profile lines throughout the input, so a declaration after line 40
-     * or a second declaration before it would otherwise be silently
-     * removed and the input could compile as a production cell.</p>
+     * of {@link #profileFromMetadata}, and it segments the source with
+     * that reader's own {@code \R} line terminators (LF, CRLF, CR, VT,
+     * FF, NEL, LS and PS). A declaration after line 40, a second
+     * declaration before it, or a declaration separated by a
+     * non-CR/LF terminator would otherwise reach the metadata readers
+     * while the production materialization compiled the cell without the
+     * declaration.</p>
      *
      * @param rawSource the fixture file's raw text, classification headers
      *                  included
@@ -152,44 +155,24 @@ public final class ConformanceHarnessMetadata {
 
     /**
      * Every {@code // @profile:} declaration of {@code source}, in source
-     * order, scanned over the whole input with the same line-terminator
-     * handling as {@link #stripClassificationHeaders} — so the result is
-     * exactly the set of profile declarations the stripper removes.
+     * order, scanned over the whole input with the canonical metadata
+     * reader's line segmentation: {@link #profileFromMetadata} splits on
+     * {@code \R} (LF, CRLF, CR, VT, FF, NEL, LS and PS), and this scan
+     * uses the identical segmentation, so the result is a superset of the
+     * declarations that reader can recognize (within its 40-line window,
+     * or anywhere in the input). A declaration separated by any of those
+     * terminators is observable by the metadata readers and therefore
+     * must be observable by the production-profile validation.
      */
     public static List<String> profileDeclarations(String source) {
         List<String> values = new ArrayList<>();
-        int lineStart = 0;
-        int i = 0;
-        while (i < source.length()) {
-            char c = source.charAt(i);
-            if (c == '\n') {
-                collectProfileDeclaration(source, lineStart, i, values);
-                lineStart = i + 1;
-                i++;
-            } else if (c == '\r') {
-                int contentEnd = i;
-                i++;
-                if (i < source.length() && source.charAt(i) == '\n') {
-                    i++;
-                }
-                collectProfileDeclaration(source, lineStart, contentEnd, values);
-                lineStart = i;
-            } else {
-                i++;
+        for (String line : source.split("\\R", -1)) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("// @profile:")) {
+                values.add(trimmed.substring("// @profile:".length()).trim());
             }
         }
-        if (lineStart < source.length()) {
-            collectProfileDeclaration(source, lineStart, source.length(), values);
-        }
         return values;
-    }
-
-    private static void collectProfileDeclaration(String source, int start,
-            int end, List<String> values) {
-        String trimmed = source.substring(start, end).trim();
-        if (trimmed.startsWith("// @profile:")) {
-            values.add(trimmed.substring("// @profile:".length()).trim());
-        }
     }
 
     public static CompilerInvocation invocation(SemanticProfile profile) {

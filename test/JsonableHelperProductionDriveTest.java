@@ -583,6 +583,16 @@ public class JsonableHelperProductionDriveTest {
     private static final String KILL_BINARY =
         firstExecutable("/bin/kill", "/usr/bin/kill");
 
+    /**
+     * The descendant pid file of the bounded-process controls. It is
+     * written and read as a name relative to the child's own working
+     * directory (the audit-owned scratch root), so a temporary root that
+     * contains spaces is never split by the shell — an interpolated
+     * absolute path would redirect to a truncated path outside the
+     * allocated scratch root.
+     */
+    private static final String DESCENDANT_PID_FILE = "descendant.pid";
+
     private static String firstExecutable(String... candidates) {
         for (String candidate : candidates) {
             if (Files.isExecutable(Path.of(candidate))) {
@@ -3120,6 +3130,38 @@ public class JsonableHelperProductionDriveTest {
         injections.put("cross-boundary duplicate",
             "// @profile: deal-v1.2-int32\n" + profilePadding(39)
                 + "// @profile: legacy-safe-int\n" + raw);
+        // The canonical metadata reader (profileFromMetadata) segments
+        // source lines on \R, not only on CR/LF: a declaration after VT,
+        // FF, NEL, LS or PS is recognized by that reader, so the
+        // whole-source validation must recognize it too — otherwise the
+        // declared nonproduction profile is visible to discovery while
+        // the production materialization compiles the cell as if no
+        // metadata existed.
+        String[][] separators = {
+            {"VT (U+000B)", "\u000B"}, {"FF (U+000C)", "\u000C"},
+            {"NEL (U+0085)", "\u0085"}, {"LS (U+2028)", "\u2028"},
+            {"PS (U+2029)", "\u2029"},
+        };
+        for (String[] separator : separators) {
+            String name = separator[0];
+            String terminator = separator[1];
+            injections.put("legacy profile after " + name,
+                "// padding" + terminator + "// @profile: legacy-safe-int\n"
+                    + raw);
+            injections.put("unknown profile after " + name,
+                "// padding" + terminator + "// @profile: no-such-profile\n"
+                    + raw);
+            injections.put("duplicate metadata after " + name,
+                "// @profile: deal-v1.2-int32\n// padding" + terminator
+                    + "// @profile: deal-v1.2-int32\n" + raw);
+            checkEq(deal.semantic.ir.SemanticProfile.LEGACY_SAFE_INT,
+                ConformanceHarnessMetadata.profileFromMetadata(
+                    "// padding" + terminator
+                        + "// @profile: legacy-safe-int\n" + raw, fixturePath),
+                "the canonical metadata reader recognizes the legacy "
+                    + "declaration after " + name + " (the premise of the "
+                    + "separator control)");
+        }
         Path tmp = Path.of(System.getProperty("java.io.tmpdir"));
         Set<Path> before = new LinkedHashSet<>();
         try (var listing = Files.list(tmp)) {
@@ -3184,10 +3226,10 @@ public class JsonableHelperProductionDriveTest {
             + "cancellation paths own the whole child tree --");
         Path deadlineScratch = Files.createTempDirectory("jsonable-bounded-deadline-");
         try {
-            Path pidFile = deadlineScratch.resolve("descendant.pid");
+            Path pidFile = deadlineScratch.resolve(DESCENDANT_PID_FILE);
             try {
                 runProcess(deadlineScratch, Map.of(), 1_000L, "sh", "-c",
-                    "sleep 30 & echo $! > " + pidFile + "; wait");
+                    "sleep 30 & echo $! > " + DESCENDANT_PID_FILE + "; wait");
                 check(false, "the persistent descendant exceeds the one-second "
                     + "deadline");
             } catch (BoundedProcessTimeoutException expected) {
@@ -3214,13 +3256,13 @@ public class JsonableHelperProductionDriveTest {
             for (int i = 0; i < workerCount; i++) {
                 cancelScratches[i] = Files.createTempDirectory(
                     "jsonable-bounded-cancel-" + i + "-");
-                cancelPids[i] = cancelScratches[i].resolve("descendant.pid");
+                cancelPids[i] = cancelScratches[i].resolve(DESCENDANT_PID_FILE);
                 final int index = i;
                 cancelWorkers[i] = new Thread(() -> {
                     try {
                         runProcess(cancelScratches[index], Map.of(), 60_000L,
                             "sh", "-c", "sleep 30 & echo $! > "
-                                + cancelPids[index] + "; wait");
+                                + DESCENDANT_PID_FILE + "; wait");
                     } catch (Throwable failure) {
                         cancelObserved[index] = failure;
                     }
