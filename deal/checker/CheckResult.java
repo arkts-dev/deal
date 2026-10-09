@@ -14,7 +14,8 @@ public record CheckResult(
     SymbolTable symbolTable,
     Map<StatementNode, SymbolTable> scopeMap,
     List<CompilerDiagnostic> diagnostics,
-    Map<ClassDeclaration, SymbolTable> classScopes
+    Map<ClassDeclaration, SymbolTable> classScopes,
+    Map<ExpressionNode, ClassDeclaration> constructedClassDecls
 ) {
 
     /**
@@ -25,7 +26,20 @@ public record CheckResult(
      */
     public CheckResult(Map<ExpressionNode, Type> typeMap, SymbolTable symbolTable,
                        List<CompilerDiagnostic> diagnostics) {
-        this(typeMap, symbolTable, Map.of(), diagnostics, Map.of());
+        this(typeMap, symbolTable, Map.of(), diagnostics, Map.of(), Map.of());
+    }
+
+    /**
+     * Convenience constructor for callers that carry the scope maps but
+     * no construction-provenance facts (synthetic checked facts, retained
+     * test harnesses): the {@link #constructedClassDecls()} map is empty,
+     * so consumers fall back to the name-based construction resolution.
+     */
+    public CheckResult(Map<ExpressionNode, Type> typeMap, SymbolTable symbolTable,
+                       Map<StatementNode, SymbolTable> scopeMap,
+                       List<CompilerDiagnostic> diagnostics,
+                       Map<ClassDeclaration, SymbolTable> classScopes) {
+        this(typeMap, symbolTable, scopeMap, diagnostics, classScopes, Map.of());
     }
 
     public CheckResult {
@@ -34,6 +48,9 @@ public record CheckResult(
         if (scopeMap == null) throw new IllegalArgumentException("scopeMap must not be null");
         if (diagnostics == null) throw new IllegalArgumentException("diagnostics must not be null");
         if (classScopes == null) throw new IllegalArgumentException("classScopes must not be null");
+        if (constructedClassDecls == null) {
+            throw new IllegalArgumentException("constructedClassDecls must not be null");
+        }
     }
 
     public boolean hasErrors() {

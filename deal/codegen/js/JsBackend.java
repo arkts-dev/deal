@@ -79,6 +79,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.function.Function;
@@ -189,6 +190,17 @@ public final class JsBackend {
     // classification maps supplied by the orchestrator.
     private final Map<ExpressionNode, Type> typeMap;
     private final SymbolTable symbols;
+    /**
+     * The checker's construction-provenance fact
+     * ({@code CheckResult.constructedClassDecls()}): the exact class
+     * declaration each class-typed object literal was laid out by.
+     * Consumed by {@link #constructionRef} so a target-context
+     * construction under a same-named shadowing declaration selects that
+     * declaration's own factory instead of the shadowing block's lexical
+     * binding. Empty at the synthetic-checked-fact entry points (the
+     * name-based fallback applies there).
+     */
+    private final Map<ExpressionNode, ClassDeclaration> constructedClassDecls;
     private final String sourcePath;
     private final String modulePath;
     /**
@@ -302,16 +314,42 @@ public final class JsBackend {
 
     /**
      * Parallel stack of nested class names visible at the current walk
-     * position (one frame per {@link #localScopes} frame): a class
-     * declaration hoisted in a statement list registers its name here
-     * (js-v12-completion-architecture D4), so a class-META reference
-     * inside the declaring scope lowers to the scope-local
-     * {@code <C>$meta} artifact even though the nested ClassSymbol is
-     * invisible to the module-level symbol table. The frame-index
-     * comparison against {@link #localScopes} mirrors the checker's
-     * lexical resolution: the innermost binding wins.
+     * position (one frame per {@link #localScopes} frame), each name
+     * mapped to the emitted artifact base of the declaration that
+     * registered it — a class declaration hoisted in a statement list
+     * registers its name here (js-v12-completion-architecture D4), so a
+     * class-META reference inside the declaring scope lowers to the
+     * scope-local {@code <base>$meta} artifact even though the nested
+     * ClassSymbol is invisible to the module-level symbol table. The
+     * frame-index comparison against {@link #localScopes} mirrors the
+     * checker's lexical resolution: the innermost binding wins. The base
+     * is the class name itself unless the declaration shadows a
+     * same-named class declaration visible from an enclosing scope, in
+     * which case it is renamed ({@code A$1}, ...) exactly like a
+     * shadowed block-scoped binding ({@code declareBinding}) so the
+     * shadowed declaration's artifacts stay referenceable.
      */
-    private final List<Set<String>> localClassScopes = new ArrayList<>();
+    private final List<Map<String, String>> localClassScopes = new ArrayList<>();
+
+    /**
+     * Module-level class declaration names (the header predeclare loop's
+     * registry): a nested class declaration shadowing one of these takes
+     * a renamed artifact base, so constructions contextually laid out by
+     * the module-level declaration keep naming its {@code <C>$new}
+     * binding (ISSUE-0717 review 0007).
+     */
+    private final Set<String> moduleLevelClassNames = new HashSet<>();
+
+    /**
+     * The emitted artifact base of every hoisted class declaration
+     * ({@code <base>$new}, {@code <base>$meta}, {@code <base>$plan}),
+     * keyed by the declaration node identity. A declaration that shadows
+     * a visible same-named one is renamed (see
+     * {@link #localClassScopes}); every other declaration keeps its class
+     * name, so the pre-existing output is byte-identical.
+     */
+    private final Map<ClassDeclaration, String> classArtifactBases =
+        new IdentityHashMap<>();
 
     /**
      * Statement-list nesting depth: 0 while the module statement list
@@ -348,6 +386,7 @@ public final class JsBackend {
     private Span awaitedCallSpanOverride;
 
     private JsBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols,
+                      Map<ExpressionNode, ClassDeclaration> constructedClassDecls,
                       String sourcePath, String modulePath,
                       Map<String, String> importResolutions,
                       Map<String, HostModuleDeclarations> hostModules,
@@ -359,6 +398,7 @@ public final class JsBackend {
                       SemanticProfile semanticProfile) {
         this.typeMap = typeMap;
         this.symbols = symbols;
+        this.constructedClassDecls = constructedClassDecls;
         this.sourcePath = sourcePath;
         this.modulePath = modulePath;
         this.importResolutions = importResolutions;
@@ -520,6 +560,7 @@ public final class JsBackend {
         java.util.Objects.requireNonNull(plansByModulePath,
             "plansByModulePath must not be null");
         JsBackend backend = new JsBackend(result.typeMap(), result.symbolTable(),
+            result.constructedClassDecls(),
             sourcePath, modulePath, importResolutions, hostModules,
             externCImports, isEntry,
             identityIndex, moduleIdentities, sourceMap, semanticProfile);
@@ -544,19 +585,11 @@ public final class JsBackend {
         for (StatementNode stmt : program.statements()) {
             switch (stmt) {
                 case ClassDeclaration cd -> predeclares.add(
-                    "let " + cd.name() + "$new; let " + cd.name() + "$meta;"
-                        + " let " + cd.name() + "$plan;");
+                    classPredeclare(cd, false));
                 case ExportDeclaration ed -> {
                     switch (ed.declaration()) {
                         case ClassDeclaration cd -> predeclares.add(
-                            "let " + cd.name() + "$new; let "
-                                + cd.name() + "$meta;"
-                                + " let " + cd.name() + "$plan;"
-                                + (cd.isJsonable()
-                                    ? " let " + cd.name() + "$fromJson; let "
-                                        + cd.name() + "$toJson; let "
-                                        + cd.name() + "$fields;"
-                                    : ""));
+                            classPredeclare(cd, cd.isJsonable()));
                         case FunctionDeclaration fd -> predeclares.add(
                             "let " + jsName(fd.name()) + ";");
                         default -> {
@@ -1096,7 +1129,7 @@ public final class JsBackend {
                     if (sym instanceof Symbol.ClassSymbol cs) {
                         yield Types.classType(nt.name(), cs.identity());
                     }
-                    if (innermostFrame(localClassScopes, nt.name()) >= 0) {
+                    if (innermostClassFrame(localClassScopes, nt.name()) >= 0) {
                         yield localClassType(nt.name());
                     }
                     yield Type.Bytes.INSTANCE;
@@ -1196,31 +1229,36 @@ public final class JsBackend {
                         // are invisible at the module-end section
                         // (js-v12-completion-architecture D4).
                         visit(cd);
+                        // The exported values are the declaration's own
+                        // artifacts (the base may be renamed for a nested
+                        // shadowing declaration); the export keys stay the
+                        // ordinary raw class-name keys.
+                        String base = classArtifactBase(cd);
                         if (statementDepth == 0) {
                             exportAssignments.add("$rt.setProp($exports, "
                                 + jsStringLiteral(cd.name()) + ", "
-                                + cd.name() + "$meta);");
+                                + base + "$meta);");
                             exportAssignments.add("$rt.setProp($exports, "
                                 + jsStringLiteral(cd.name() + "$new") + ", "
-                                + cd.name() + "$new);");
+                                + base + "$new);");
                         } else {
                             line("$rt.setProp($exports, "
                                 + jsStringLiteral(cd.name()) + ", "
-                                + cd.name() + "$meta);");
+                                + base + "$meta);");
                             line("$rt.setProp($exports, "
                                 + jsStringLiteral(cd.name() + "$new") + ", "
-                                + cd.name() + "$new);");
+                                + base + "$new);");
                         }
                         if (cd.isJsonable() && statementDepth == 0) {
                             exportAssignments.add("$rt.setProp($exports, "
                                 + jsStringLiteral(cd.name() + "$fromJson")
-                                + ", " + cd.name() + "$fromJson);");
+                                + ", " + base + "$fromJson);");
                             exportAssignments.add("$rt.setProp($exports, "
                                 + jsStringLiteral(cd.name() + "$toJson")
-                                + ", " + cd.name() + "$toJson);");
+                                + ", " + base + "$toJson);");
                             exportAssignments.add("$rt.setProp($exports, "
                                 + jsStringLiteral(cd.name() + "$fields")
-                                + ", " + cd.name() + "$fields);");
+                                + ", " + base + "$fields);");
                         }
                     }
                     case FunctionDeclaration fd -> {
@@ -1464,26 +1502,27 @@ public final class JsBackend {
         out.append("// Class: ").append(cd.name())
             .append(" — construction closure, defaults plan, and metadata.\n");
         String identity = qualifiedClassName(cd.name());
+        String base = classArtifactBase(cd);
         CompilerClassDefaultPlan plan = publishedPlanFor(cd);
         if (plan != null) {
 
             String planList = publishedPlanList(plan);
-            line(cd.name() + "$plan = " + planList + ";");
-            line(cd.name() + "$new = (provided, $file, $line, $column) => "
+            line(base + "$plan = " + planList + ";");
+            line(base + "$new = (provided, $file, $line, $column) => "
                 + "$rt.classPlan(" + jsStringLiteral(identity) + ", "
-                + cd.name() + "$plan, provided, $file, $line, $column);");
-            line(cd.name() + "$meta = { $kind: \"class\", $classname: "
+                + base + "$plan, provided, $file, $line, $column);");
+            line(base + "$meta = { $kind: \"class\", $classname: "
                 + jsStringLiteral(identity) + " };");
             if (cd.isJsonable() && statementDepth == 0) {
                 emitJsonableArtifacts(cd, plan);
             }
         } else {
 
-            line(cd.name() + "$plan = " + synthesizedPlanList(cd) + ";");
-            line(cd.name() + "$new = (provided, $file, $line, $column) => "
+            line(base + "$plan = " + synthesizedPlanList(cd) + ";");
+            line(base + "$new = (provided, $file, $line, $column) => "
                 + "$rt.classPlan(" + jsStringLiteral(identity) + ", "
-                + cd.name() + "$plan, provided, $file, $line, $column);");
-            line(cd.name() + "$meta = { $kind: \"class\", $classname: "
+                + base + "$plan, provided, $file, $line, $column);");
+            line(base + "$meta = { $kind: \"class\", $classname: "
                 + jsStringLiteral(identity) + " };");
             if (cd.isJsonable() && statementDepth == 0) {
                 emitJsonableArtifacts(cd, classDefaultsThunk(cd));
@@ -2564,7 +2603,7 @@ public final class JsBackend {
         Set<String> hoisted = new LinkedHashSet<>();
         Set<String> hoistedClasses = new LinkedHashSet<>();
         Map<String, String> firstKind = new LinkedHashMap<>();
-        Map<String, ClassDeclaration> classDeclarations =
+        Map<String, List<ClassDeclaration>> classDeclarations =
             new LinkedHashMap<>();
         for (StatementNode stmt : statements) {
             switch (stmt) {
@@ -2575,7 +2614,9 @@ public final class JsBackend {
                 case ClassDeclaration cd -> {
                     hoistedClasses.add(cd.name());
                     firstKind.putIfAbsent(cd.name(), "class");
-                    classDeclarations.putIfAbsent(cd.name(), cd);
+                    classDeclarations
+                        .computeIfAbsent(cd.name(), k -> new ArrayList<>())
+                        .add(cd);
                 }
                 case ExportDeclaration ed -> {
                     switch (ed.declaration()) {
@@ -2586,7 +2627,10 @@ public final class JsBackend {
                         case ClassDeclaration cd -> {
                             hoistedClasses.add(cd.name());
                             firstKind.putIfAbsent(cd.name(), "class");
-                            classDeclarations.putIfAbsent(cd.name(), cd);
+                            classDeclarations
+                                .computeIfAbsent(cd.name(),
+                                    k -> new ArrayList<>())
+                                .add(cd);
                         }
                         default -> {
                             // Unreachable: ExportDeclaration wraps only
@@ -2606,11 +2650,24 @@ public final class JsBackend {
             }
         }
         for (String name : hoistedClasses) {
-
-            line("let " + name + "$new; let " + name + "$meta;"
-                + " let " + name + "$plan;");
+            List<ClassDeclaration> declarations = classDeclarations.get(name);
+            ClassDeclaration first = declarations == null
+                || declarations.isEmpty() ? null : declarations.get(0);
+            // One emitted base per name in this list (same-name
+            // declarations of one list share the emitted binding, the
+            // checker's first-declaration resolution); the base is
+            // renamed only when an enclosing declaration's artifacts
+            // would be shadowed.
+            String base = first != null ? hoistedClassBase(first) : name;
+            if (declarations != null) {
+                for (ClassDeclaration cd : declarations) {
+                    classArtifactBases.put(cd, base);
+                }
+            }
+            line("let " + base + "$new; let " + base + "$meta;"
+                + " let " + base + "$plan;");
             if ("class".equals(firstKind.get(name))) {
-                declareLocalClass(name);
+                declareLocalClass(name, base);
             }
         }
         hoistedFunctionNames.push(hoisted);
@@ -2650,7 +2707,7 @@ public final class JsBackend {
     private void pushLocalScope() {
         localScopes.add(new HashSet<>());
         localEmittedNames.add(new HashMap<>());
-        localClassScopes.add(new HashSet<>());
+        localClassScopes.add(new LinkedHashMap<>());
     }
 
     private void popLocalScope() {
@@ -2705,13 +2762,81 @@ public final class JsBackend {
     /**
      * Registers a nested class name in the current scope frame
      * (js-v12-completion-architecture D4): a class-META reference in
-     * expression position lowers to the scope-local {@code <C>$meta}
+     * expression position lowers to the scope-local {@code <base>$meta}
      * artifact. Only the checker-resolved first declaration of the name
      * in a statement list registers ({@link #walkStatements} gates the
      * call on the first-declaration kind).
      */
-    private void declareLocalClass(String name) {
-        localClassScopes.get(localClassScopes.size() - 1).add(name);
+    private void declareLocalClass(String name, String base) {
+        localClassScopes.get(localClassScopes.size() - 1).put(name, base);
+    }
+
+    /**
+     * Allocates the artifact base of a class declaration hoisted in a
+     * nested statement list ({@link #walkStatements}). The base is the
+     * class name unless a same-named class declaration is already
+     * visible from an enclosing emitted scope (an enclosing class frame
+     * or a module-level declaration): the shadowing declaration's
+     * artifacts are then renamed ({@code A$1}, ...) exactly like a
+     * shadowed block-scoped binding, so the shadowed declaration's
+     * factory stays referenceable — the checker's
+     * construction-provenance fact may select it from inside this scope
+     * (ISSUE-0717 review 0007). An already-allocated declaration keeps
+     * its base (a re-walk never renumbers).
+     */
+    private String hoistedClassBase(ClassDeclaration cd) {
+        String existing = classArtifactBases.get(cd);
+        if (existing != null) {
+            return existing;
+        }
+        String base = cd.name();
+        if (innermostClassFrame(localClassScopes, base) >= 0
+                || moduleLevelClassNames.contains(base)) {
+            int ordinal = shadowOrdinals.merge(base, 1, Integer::sum);
+            base = base + "$" + ordinal;
+        }
+        classArtifactBases.put(cd, base);
+        return base;
+    }
+
+    /**
+     * The emitted artifact base of a class declaration, or its plain
+     * name when the declaration was never hoisted (the defensive
+     * fallback: every reached declaration is hoisted by
+     * {@link #generateProgram} or {@link #walkStatements} first).
+     */
+    private String classArtifactBase(ClassDeclaration cd) {
+        String base = classArtifactBases.get(cd);
+        return base != null ? base : cd.name();
+    }
+
+    /**
+     * The module-level artifact predeclare line (shape step 6): the
+     * declaration's base plus the construction closure, META, and plan
+     * bindings, and the @jsonable wrapper bindings for an exported
+     * @jsonable class.
+     */
+    private String classPredeclare(ClassDeclaration cd, boolean jsonable) {
+        String base = moduleClassBase(cd);
+        return "let " + base + "$new; let " + base + "$meta;"
+            + " let " + base + "$plan;"
+            + (jsonable
+                ? " let " + base + "$fromJson; let " + base + "$toJson;"
+                    + " let " + base + "$fields;"
+                : "");
+    }
+
+    /**
+     * Registers a module-level class declaration's artifact base: the
+     * plain class name — the header predeclare loop runs before any
+     * nested scope exists and a duplicate module-level name is
+     * E2002-rejected. The name is recorded for the nested shadow-rename
+     * decision ({@link #hoistedClassBase}).
+     */
+    private String moduleClassBase(ClassDeclaration cd) {
+        classArtifactBases.put(cd, cd.name());
+        moduleLevelClassNames.add(cd.name());
+        return cd.name();
     }
 
     /**
@@ -2723,6 +2848,20 @@ public final class JsBackend {
                                       String name) {
         for (int i = scopes.size() - 1; i >= 0; i--) {
             if (scopes.get(i).contains(name)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * The innermost class-scope frame index that binds {@code name}, or
+     * -1 when no frame binds it (innermost frames are last).
+     */
+    private static int innermostClassFrame(List<Map<String, String>> scopes,
+                                           String name) {
+        for (int i = scopes.size() - 1; i >= 0; i--) {
+            if (scopes.get(i).containsKey(name)) {
                 return i;
             }
         }
@@ -2846,10 +2985,10 @@ public final class JsBackend {
     private String emitIdentifier(IdentifierExpr id) {
         String name = id.name();
         int variableFrame = innermostFrame(localScopes, name);
-        int classFrame = innermostFrame(localClassScopes, name);
+        int classFrame = innermostClassFrame(localClassScopes, name);
         if (classFrame >= 0
                 && (variableFrame < 0 || classFrame >= variableFrame)) {
-            return name + "$meta";
+            return localClassScopes.get(classFrame).get(name) + "$meta";
         }
         if (variableFrame >= 0) {
             return emittedNameFor(name);
@@ -3275,18 +3414,32 @@ public final class JsBackend {
      * expression-site boundary checks (js-backend-runtime D5).
      */
     private String emitClassConstruction(Type.Class cls, ObjectLiteralExpr obj) {
-        return constructionRef(cls) + "(" + providedObject(obj) + ", "
+        return constructionRef(cls, obj) + "(" + providedObject(obj) + ", "
             + spanArgs(obj.span()) + ")";
     }
 
     /**
-     * The construction closure reference for a class type: the header
-     * {@code Error$new} for the builtin Error (module path empty), the
-     * module-private {@code <C>$new} binding for a local class, and the
-     * declaring module's exported {@code <alias>.<C>$new} for an
-     * imported class (T4 materializes the alias binding).
+     * The construction closure reference for a class-typed literal: the
+     * checker's construction-provenance fact names the exact declaration
+     * the literal was laid out by, and its own artifact base is the
+     * unambiguous reference — a same-named declaration the literal's
+     * lexical scope happens to resolve (a nested shadowing declaration)
+     * must never capture the construction. When the fact names no local
+     * declaration (an imported or synthetic class symbol, or a synthetic
+     * checked-facts entry point) the name-based resolution below applies:
+     * the header {@code Error$new} for the builtin Error (module path
+     * empty), the module-private {@code <C>$new} binding for a local
+     * class, and the declaring module's exported {@code <alias>.<C>$new}
+     * for an imported class (T4 materializes the alias binding).
      */
-    private String constructionRef(Type.Class cls) {
+    private String constructionRef(Type.Class cls, ObjectLiteralExpr obj) {
+        ClassDeclaration declaration = constructedClassDecls.get(obj);
+        if (declaration != null) {
+            String base = classArtifactBases.get(declaration);
+            if (base != null) {
+                return base + "$new";
+            }
+        }
         // The import alias whose export carries this exact identity wins
         // first (two files in one directory share the module identity).
         String alias = findImportAliasForClass(cls.name(), cls.identity());

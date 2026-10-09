@@ -269,6 +269,7 @@ public class CheckerTest {
         testClassProvenanceThroughAssignmentExpressions();
         testClassProvenanceThroughConstructedLiterals();
         testClassProvenanceConstructedLiteralPublicCompile();
+        testClassProvenanceContextualConstructionUnderShadowing();
         testClassProvenanceAssignmentExprPublicCompile();
         testNestedClass();
         // ISSUE-0717 (defect snippet 47): a nested class that shadows an
@@ -2508,6 +2509,203 @@ public class CheckerTest {
             Thread.currentThread().interrupt();
             fail("public constructed-literal provenance: interrupted: "
                 + e.getMessage());
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * ISSUE-0717 review 0007: a class-typed object literal under a
+     * same-named shadowing declaration is laid out by the declaration the
+     * checker selected (the target/context declaration), so the emitted
+     * JS must call that declaration's own factory — never the shadowing
+     * block's lexical binding. The reviewer reproduction (explicit
+     * provided field) and its nullable-target spelling compile through
+     * the public CLI on JS, publish an artifact whose construction calls
+     * the outer closure while the shadowing declaration's artifacts are
+     * renamed, and execute under node with the outer layout's value
+     * assertions. The nearest legal controls (a same-declaration
+     * construction of the shadowing declaration and a module-level
+     * construction after the shadowing block) execute with their own
+     * layouts. LuaJIT/JVM stay outside this correction (the duplicate
+     * layout still fails closed before emission).
+     */
+    static void testClassProvenanceContextualConstructionUnderShadowing() {
+        System.out.println("-- public deal compile: target-context construction "
+            + "under a same-named shadowing declaration --");
+        Path root;
+        try {
+            root = Files.createTempDirectory("deal_shadow_construction_");
+        } catch (IOException e) {
+            fail("shadow construction: cannot create temp directory: "
+                + e.getMessage());
+            return;
+        }
+        try {
+            // The reviewer reproduction: the assignment target's exact
+            // declaration is the module-level A, and the literal must be
+            // constructed by it although the block declares a same-named
+            // A whose factory would be the lexical binding.
+            String[] probes = {
+                // explicit provided field, plain class target
+                "import * as console from \"std/console\"\n"
+                    + "class A { n: int = 7; }\n"
+                    + "export function main(): null {\n"
+                    + "  let a: A = {};\n"
+                    + "  {\n"
+                    + "    class A { n: string = \"ok\"; }\n"
+                    + "    a = { n: 8 };\n"
+                    + "  }\n"
+                    + "  if (a.n !== 8) { throw { code: \"OUTER_LAYOUT\", "
+                    + "message: \"outer\" }; }\n"
+                    + "  console.log(\"SHADOW_CONSTRUCTION_OK\");\n"
+                    + "  return null;\n"
+                    + "}\n",
+                // nullable class target
+                "import * as console from \"std/console\"\n"
+                    + "class A { n: int = 7; }\n"
+                    + "export function main(): null {\n"
+                    + "  let a: A | null = {};\n"
+                    + "  {\n"
+                    + "    class A { n: string = \"ok\"; }\n"
+                    + "    a = { n: 8 };\n"
+                    + "  }\n"
+                    + "  if (a !== null) {\n"
+                    + "    if (a.n !== 8) { throw { code: \"NULLABLE_LAYOUT\", "
+                    + "message: \"nullable\" }; }\n"
+                    + "  }\n"
+                    + "  console.log(\"SHADOW_NULLABLE_OK\");\n"
+                    + "  return null;\n"
+                    + "}\n"
+            };
+            String[] names = {"explicit", "nullable"};
+            String[] tokens = {"SHADOW_CONSTRUCTION_OK", "SHADOW_NULLABLE_OK"};
+            for (int p = 0; p < probes.length; p++) {
+                Path srcDir = root.resolve("probe_" + names[p] + "/src");
+                Files.createDirectories(srcDir);
+                Files.writeString(root.resolve("probe_" + names[p]
+                    + "/deal.json"),
+                    "{\"languageVersion\":\"1.2\",\"backend\":\"js\","
+                        + "\"moduleRoots\":[\"src\"]}\n");
+                Path entry = srcDir.resolve("main.deal");
+                Files.writeString(entry, probes[p]);
+                Path out = root.resolve("out_" + names[p]);
+                ByteArrayOutputStream err = new ByteArrayOutputStream();
+                PrintStream originalErr = System.err;
+                int exitCode;
+                try {
+                    System.setErr(new PrintStream(err, true,
+                        StandardCharsets.UTF_8));
+                    exitCode = Main.run(new String[]{"compile",
+                        entry.toString(), "--backend", "js",
+                        "--output", out.toString()});
+                    System.err.flush();
+                } finally {
+                    System.setErr(originalErr);
+                }
+                String stderr = err.toString(StandardCharsets.UTF_8);
+                check(exitCode == 0,
+                    "the shadowed-declaration construction (" + names[p]
+                        + ") compiles on js: " + stderr);
+                Path artifact = out.resolve("main.js");
+                check(Files.isRegularFile(artifact),
+                    "the shadowed-declaration construction (" + names[p]
+                        + ") publishes its JS artifact: " + artifact);
+                if (!Files.isRegularFile(artifact)) continue;
+
+                // The emitted artifact selects the outer declaration's own
+                // factory and keeps the shadowing declaration's artifacts
+                // distinct under a renamed base.
+                String js = Files.readString(artifact, StandardCharsets.UTF_8);
+                check(js.contains("let A$1$new; let A$1$meta;"),
+                    "the shadowing declaration's artifacts are renamed "
+                        + "under an unambiguous base (" + names[p] + ")");
+                check(js.contains("A$1$new = (provided"),
+                    "the shadowing declaration's construction closure binds "
+                        + "the renamed base (" + names[p] + ")");
+                check(js.contains("A$new({ [\"n\"]: 8 }"),
+                    "the target-context literal constructs through the outer "
+                        + "declaration's factory (" + names[p] + ")");
+
+                ProcessBuilder pb = new ProcessBuilder("node", "main.js");
+                pb.directory(out.toFile());
+                pb.redirectErrorStream(true);
+                Process node = pb.start();
+                String output = new String(node.getInputStream().readAllBytes(),
+                    StandardCharsets.UTF_8);
+                int nodeExit = node.waitFor();
+                check(nodeExit == 0 && output.contains(tokens[p]),
+                    "the " + names[p] + " shadowed-declaration construction "
+                        + "executes with the outer declaration's layout "
+                        + "(exit " + nodeExit + "): " + output);
+            }
+
+            // Nearest legal controls: the shadowing declaration's own
+            // construction (its field stays string) and a module-level
+            // construction after the shadowing block (the declared
+            // default stays int).
+            Path controlSrc = root.resolve("control/src");
+            Files.createDirectories(controlSrc);
+            Files.writeString(root.resolve("control/deal.json"),
+                "{\"languageVersion\":\"1.2\",\"backend\":\"js\","
+                    + "\"moduleRoots\":[\"src\"]}\n");
+            Path controlEntry = controlSrc.resolve("main.deal");
+            Files.writeString(controlEntry,
+                "import * as console from \"std/console\"\n"
+                    + "class A { n: int = 7; }\n"
+                    + "export function main(): null {\n"
+                    + "  let a: A = {};\n"
+                    + "  {\n"
+                    + "    class A { n: string = \"ok\"; }\n"
+                    + "    let b: A = {};\n"
+                    + "    if (b.n !== \"ok\") { throw { code: \"INNER_LAYOUT\", "
+                    + "message: \"inner\" }; }\n"
+                    + "  }\n"
+                    + "  let c: A = {};\n"
+                    + "  if (c.n !== 7) { throw { code: \"DEFAULT_LAYOUT\", "
+                    + "message: \"default\" }; }\n"
+                    + "  console.log(\"SHADOW_CONTROL_OK\");\n"
+                    + "  return null;\n"
+                    + "}\n");
+            Path controlOut = root.resolve("control_out");
+            ByteArrayOutputStream err = new ByteArrayOutputStream();
+            PrintStream originalErr = System.err;
+            int exitCode;
+            try {
+                System.setErr(new PrintStream(err, true,
+                    StandardCharsets.UTF_8));
+                exitCode = Main.run(new String[]{"compile",
+                    controlEntry.toString(), "--backend", "js",
+                    "--output", controlOut.toString()});
+                System.err.flush();
+            } finally {
+                System.setErr(originalErr);
+            }
+            String stderr = err.toString(StandardCharsets.UTF_8);
+            check(exitCode == 0,
+                "the legal shadowing control compiles on js: " + stderr);
+            Path controlArtifact = controlOut.resolve("main.js");
+            check(Files.isRegularFile(controlArtifact),
+                "the legal shadowing control publishes its JS artifact: "
+                    + controlArtifact);
+            if (Files.isRegularFile(controlArtifact)) {
+                ProcessBuilder pb = new ProcessBuilder("node", "main.js");
+                pb.directory(controlOut.toFile());
+                pb.redirectErrorStream(true);
+                Process node = pb.start();
+                String output = new String(node.getInputStream().readAllBytes(),
+                    StandardCharsets.UTF_8);
+                int nodeExit = node.waitFor();
+                check(nodeExit == 0 && output.contains("SHADOW_CONTROL_OK"),
+                    "the legal shadowing control executes the inner and "
+                        + "module-level layouts (exit " + nodeExit + "): "
+                        + output);
+            }
+        } catch (IOException e) {
+            fail("shadow construction: I/O failure: " + e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            fail("shadow construction: interrupted: " + e.getMessage());
         } finally {
             deleteRecursively(root);
         }

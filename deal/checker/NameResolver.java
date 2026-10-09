@@ -57,6 +57,19 @@ public final class NameResolver {
     /** Maps scoped AST nodes to their symbol table scope. */
     private final Map<StatementNode, SymbolTable> scopeMap = new HashMap<>();
 
+    /**
+     * The exact AST declaration behind every class symbol this resolver
+     * defined (module-level hoists and nested block declarations), keyed
+     * by symbol identity. Imported classes and synthetic symbols have no
+     * entry — their declarations live in another module or in declaration
+     * metadata. The checker publishes the entry for an object literal's
+     * construction declaration, so consumers select that declaration's
+     * own artifact instead of re-resolving the (possibly shadowed)
+     * lexical class name (ISSUE-0717 review 0007).
+     */
+    private final Map<Symbol.ClassSymbol, ClassDeclaration> classDeclarationNodes =
+        new IdentityHashMap<>();
+
     /** Loop nesting depth — used to validate break/continue (F8). */
     private int loopDepth = 0;
 
@@ -385,8 +398,10 @@ public final class NameResolver {
                 return;
             }
         }
-        root.define(name, new Symbol.ClassSymbol(name, cd.fields(), modulePath,
-            classIdentityFor(modulePath, name)));
+        Symbol.ClassSymbol classSymbol = new Symbol.ClassSymbol(name, cd.fields(),
+            modulePath, classIdentityFor(modulePath, name));
+        classDeclarationNodes.put(classSymbol, cd);
+        root.define(name, classSymbol);
 
         for (ClassField cf : cd.fields()) {
             checkNoDollar(cf.name(), cf.span());
@@ -652,6 +667,17 @@ public final class NameResolver {
     }
 
     /**
+     * The exact AST declaration a class symbol this resolver defined was
+     * built from, or {@code null} for imported and synthetic class
+     * symbols (whose declarations are not in this module's AST). Keyed by
+     * symbol identity: two same-named declarations of one module stay
+     * distinct symbols and distinct nodes.
+     */
+    public ClassDeclaration classDeclarationNode(Symbol.ClassSymbol cs) {
+        return classDeclarationNodes.get(cs);
+    }
+
+    /**
      * Walk a class declaration in statement context.
      * At module scope, classes are already hoisted.
      * Inside a function or block, we must add them to the current scope.
@@ -681,9 +707,10 @@ public final class NameResolver {
             // on it); the two declarations stay distinct symbols. The
             // cross-declaration value assignment is rejected at the
             // assignment gate (E3019), never the declaration.
-            currentScope.define(name,
-                new Symbol.ClassSymbol(name, cd.fields(), modulePath,
-                    classIdentityFor(modulePath, name)));
+            Symbol.ClassSymbol classSymbol = new Symbol.ClassSymbol(name,
+                cd.fields(), modulePath, classIdentityFor(modulePath, name));
+            classDeclarationNodes.put(classSymbol, cd);
+            currentScope.define(name, classSymbol);
         }
     }
 

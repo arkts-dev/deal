@@ -1400,6 +1400,46 @@ public class JsBackendTest {
                 "no jsonable wrapper export assignment references a nested "
                     + "site's scope-local bindings");
         }
+
+        // ISSUE-0717 review 0007: a nested class shadowing a module-level
+        // class of the same name takes a renamed artifact base
+        // ({@code Outer$1}), so the shadowed declaration's factory stays
+        // referenceable: a target-context literal the checker laid out by
+        // the module-level declaration constructs through the plain
+        // {@code Outer$new}, while the shadowing declaration's own
+        // construction names {@code Outer$1$new}.
+        JsBackend.JsCodegenResult shadowBase = generate("""
+            class Outer { v: int = 1; }
+            export function test(): int {
+              let a: Outer = {};
+              {
+                class Outer { w: string = "s"; }
+                a = { v: 9 };
+                let b: Outer = {};
+                if (b.w !== "s") { return 0; }
+              }
+              if (a.v !== 9) { return 0; }
+              return 1;
+            }
+            """, "nestedclass-shadow-base");
+        check(shadowBase != null && !shadowBase.hasErrors(),
+            "a shadowing nested class generates with no diagnostics: "
+                + (shadowBase == null ? "<null>" : shadowBase.diagnostics()));
+        if (shadowBase != null && !shadowBase.hasErrors()) {
+            String sjs = shadowBase.source();
+            check(sjs.contains("let Outer$1$new; let Outer$1$meta;"),
+                "the shadowing declaration's artifacts are renamed to an "
+                    + "unambiguous base");
+            check(sjs.contains("Outer$new({ [\"v\"]: 9 }"),
+                "the target-context literal constructs through the shadowed "
+                    + "declaration's factory");
+            check(sjs.contains("Outer$1$new({ },"),
+                "the shadowing declaration's own construction names the "
+                    + "renamed factory");
+            check(!sjs.contains("Outer$1$new({ [\"v\"]: 9 }"),
+                "the target-context construction never names the "
+                    + "shadowing declaration's factory");
+        }
     }
 
     private static void testNestedClassNodeSemantics(PreparedJs nestedExport)
@@ -1483,6 +1523,33 @@ public class JsBackendTest {
             "a function-local class shadows the module-level class of "
                 + "the same name (nested construction): " + shadow.output()
                 + " (exit " + shadow.exitCode() + ")");
+
+        // The shadowing declaration's renamed base keeps the outer
+        // declaration's factory referenceable inside the shadowing scope:
+        // the reviewed target-context construction (the assignment
+        // target's exact declaration is the module-level class) runs
+        // through the outer closure, and the shadowing class's own
+        // construction keeps its own layout.
+        NodeResult shadowConstruct = runDealNode("""
+            class ShadowTarget { v: int = 1; }
+            export function test(): int {
+              let a: ShadowTarget = {};
+              {
+                class ShadowTarget { w: string = "inner"; }
+                a = { v: 9 };
+                let b: ShadowTarget = {};
+                if (b.w !== "inner") { return 0; }
+              }
+              if (a.v !== 9) { return 0; }
+              return 1;
+            }
+            """, "nestedclass-shadow-construction");
+        check(shadowConstruct.exitCode() == 0
+                && shadowConstruct.output().equals("1"),
+            "a target-context construction under a shadowing declaration "
+                + "runs the shadowed declaration's factory: "
+                + shadowConstruct.output() + " (exit "
+                + shadowConstruct.exitCode() + ")");
     }
 
     private static void testEntryShimAndE6004() {

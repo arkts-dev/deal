@@ -55,6 +55,16 @@ public final class TypeChecker {
     private final Map<ExpressionNode, Symbol.ClassSymbol> constructedClassDecls =
         new IdentityHashMap<>();
 
+    // -- Checked expression facts: the AST declaration node behind the
+    //    symbol above (never the symbol alone: two same-named declarations
+    //    with identical fields are equal records yet distinct
+    //    declarations). Published through CheckResult so the JS emitter
+    //    selects that declaration's own factory binding instead of
+    //    re-resolving the lexical class name, whose innermost binding may
+    //    be the shadowing declaration (ISSUE-0717 review 0007). --
+    private final Map<ExpressionNode, ClassDeclaration> constructedDeclNodes =
+        new IdentityHashMap<>();
+
     // -- Tracking variables assigned in try blocks --
     private final Set<String> varsAssignedInTry = new HashSet<>();
     private boolean insideTry = false;
@@ -152,7 +162,8 @@ public final class TypeChecker {
             checker.rootTable,
             Map.copyOf(scopeMap),
             List.copyOf(checker.diagnostics),
-            Map.copyOf(checker.classDeclarationScopes)
+            Map.copyOf(checker.classDeclarationScopes),
+            Map.copyOf(checker.constructedDeclNodes)
         );
     }
 
@@ -1786,6 +1797,17 @@ public final class TypeChecker {
         // laid out by, consumed by the E3019 cross-declaration gate at
         // initialization and assignment-expression boundaries.
         constructedClassDecls.put(obj, cs);
+        // The declaration's AST node, when the symbol is this module's own
+        // (a hoisted module-level or nested block declaration): published
+        // through CheckResult so the emitters select that exact
+        // declaration's artifact (the same-named shadowing declaration's
+        // lexical binding must not capture the construction). Imported and
+        // synthetic symbols carry no node; their constructions stay on the
+        // name/alias paths.
+        ClassDeclaration constructedDecl = nameResolver.classDeclarationNode(cs);
+        if (constructedDecl != null) {
+            constructedDeclNodes.put(obj, constructedDecl);
+        }
 
         List<ClassField> classFields = cs.fields();
         Map<String, Property> provided = new HashMap<>();
