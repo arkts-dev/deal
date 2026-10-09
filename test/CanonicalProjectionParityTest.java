@@ -2550,6 +2550,142 @@ public class CanonicalProjectionParityTest {
     }
 
     // =========================================================================
+    // 4c. The present-null and deleted-slot element cells of the dynamic
+    //     array boundary (ISSUE-0753)
+    // =========================================================================
+
+    /**
+     * The present-null seed: the array literal's {@code (null)[]} admission
+     * and the dynamic array boundary's element check over the present null.
+     */
+    private static final String PRESENT_NULL_ELEMENT_SOURCE = """
+        function main(): null {
+          let inner: (null)[] = [null];
+          let holder: table = { xs: inner };
+          let ys: int[] = holder.xs;
+          return null;
+        }
+        """;
+
+    /** The deleted-slot seed: the same boundary cell over an absent slot. */
+    private static final String DELETED_SLOT_ELEMENT_SOURCE = """
+        function main(): null {
+          let inner: int[] = [1];
+          delete inner[0];
+          let holder: table = { xs: inner };
+          let ys: int[] = holder.xs;
+          return null;
+        }
+        """;
+
+    /** The array(null) admission seed: the present null passes the cell. */
+    private static final String NULL_ARRAY_ELEMENT_SOURCE = """
+        function main(): null {
+          let inner: (null)[] = [null];
+          let holder: table = { xs: inner };
+          let ys: (null)[] = holder.xs;
+          return null;
+        }
+        """;
+
+    /**
+     * The present-null and deleted-slot element cells of the dynamic array
+     * boundary (ISSUE-0753): the explicit language null projects the
+     * typed-boundary {@code null} token on all three consumers while only
+     * the absent/deleted slot projects {@code nil}, and an
+     * {@code array(null)} descriptor admits the present null. Every consumer
+     * renders the complete tuple at the declared binding's own annotation
+     * origin — the JVM array check never converts the present null to the
+     * absent marker.
+     */
+    private static void testArrayNullAndDeletedSlotCells() throws Exception {
+        System.out.println("-- the dynamic array boundary's present-null vs "
+            + "deleted-slot element cells on the three consumers --");
+        Path workspace = Files.createTempDirectory("projection-array-null");
+        try {
+            driveArrayElementFailure("the present-null element",
+                PRESENT_NULL_ELEMENT_SOURCE, workspace.resolve("present-null"),
+                "test.deal:4:11", "int", "null");
+            driveArrayElementFailure("the deleted-slot element",
+                DELETED_SLOT_ELEMENT_SOURCE, workspace.resolve("deleted-slot"),
+                "test.deal:5:11", "int", "nil");
+            driveArrayAdmission("the array(null) admission",
+                NULL_ARRAY_ELEMENT_SOURCE, workspace.resolve("null-array"));
+        } finally {
+            deleteRecursively(workspace);
+        }
+    }
+
+    /**
+     * One element-cell seed through the three-consumer matrix: the failing
+     * consumers render the identical complete tuple — the E8003 element
+     * arm's message, the expected/actual tokens, and the boundary's own
+     * origin.
+     */
+    private static void driveArrayElementFailure(String what, String source,
+            Path workspace, String originText, String expected, String actual)
+            throws Exception {
+        Seed seed = lowerSeed(source, what);
+        if (seed == null) {
+            return;
+        }
+        SemanticDifferentialHarness.Verdict verdict = SemanticDifferentialHarness.run(
+            seed.unit(), seed.table(), SemanticDifferentialHarness.Expectation.failure(
+                what, List.of(), "E8003", originText), workspace);
+        checkEq(3, verdict.runs().size(), what + ": the drive produced the three "
+            + "consumers: " + verdict.failures());
+        check(verdict.pass(), what + ": the three-consumer verdict passes: "
+            + verdict.failures() + "\n" + verdict.report());
+        for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+            check(run.terminal()
+                    instanceof SemanticRuntimeModel.Terminal.DealFailure,
+                run.consumer() + " (" + what + "): the cell fails: "
+                    + run.terminal());
+            if (!(run.terminal()
+                    instanceof SemanticRuntimeModel.Terminal.DealFailure failure)) {
+                continue;
+            }
+            SemanticRuntimeModel.ErrorSnapshot error = failure.error();
+            System.out.println("   " + run.consumer() + ": " + error.code() + " | "
+                + error.message() + " | " + error.origin() + " | " + error.expected()
+                + " | " + error.actual());
+            checkEq("E8003", error.code(), run.consumer()
+                + ": the element cell's code");
+            checkEq("array element 1 type mismatch", error.message(), run.consumer()
+                + ": the array element arm's own message");
+            checkEq(originText, error.origin(), run.consumer() + ": the declared "
+                + "binding annotation origin (unchanged by the projection)");
+            checkEq(expected, error.expected(), run.consumer()
+                + ": the expected token");
+            checkEq(actual, error.actual(), run.consumer() + ": the actual token");
+        }
+    }
+
+    /**
+     * The {@code array(null)} admission control through the same matrix:
+     * every consumer admits the present null, so the seed runs to success.
+     */
+    private static void driveArrayAdmission(String what, String source, Path workspace)
+            throws Exception {
+        Seed seed = lowerSeed(source, what);
+        if (seed == null) {
+            return;
+        }
+        SemanticDifferentialHarness.Verdict verdict = SemanticDifferentialHarness.run(
+            seed.unit(), seed.table(), SemanticDifferentialHarness.Expectation.success(
+                what, List.of(), "null"), workspace);
+        checkEq(3, verdict.runs().size(), what + ": the drive produced the three "
+            + "consumers: " + verdict.failures());
+        check(verdict.pass(), what + ": the three-consumer verdict passes: "
+            + verdict.failures() + "\n" + verdict.report());
+        for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                run.consumer() + " (" + what + "): the present null is admitted: "
+                    + run.terminal());
+        }
+    }
+
+    // =========================================================================
     // 5. The row/arm completeness negatives and the single-source control
     // =========================================================================
 
@@ -2733,6 +2869,7 @@ public class CanonicalProjectionParityTest {
         testHostInnerReasonPassThroughs();
         testForEachDeletedSlot();
         testDynamicTableRead();
+        testArrayNullAndDeletedSlotCells();
         testCompletenessAndSingleSourceNegatives();
         testUnchangedSurfaces();
         System.out.println();
