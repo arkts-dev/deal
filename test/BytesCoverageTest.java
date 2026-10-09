@@ -394,6 +394,7 @@ public class BytesCoverageTest {
 
     private record Compiled(
         Path root,
+        CompilationOrchestrator orchestrator,
         CheckedProjectInput checkedProject,
         ProjectInterfaceIndex index,
         List<SemanticRequirementManifest> manifests,
@@ -508,8 +509,9 @@ public class BytesCoverageTest {
         String modulePath = built.input().entryModule().path();
         String luaSource = Files.readString(root.resolve("out").resolve(
             modulePath.replace('.', '/') + ".lua"), StandardCharsets.UTF_8);
-        return new Compiled(root, built.input(), built.index(), manifests.manifests(),
-            orchestrator.hostDeclarationSurface(), identities, strippedLines, luaSource);
+        return new Compiled(root, orchestrator, built.input(), built.index(),
+            manifests.manifests(), orchestrator.hostDeclarationSurface(), identities,
+            strippedLines, luaSource);
     }
 
     /** The drive's own entry: it imports the fixture and calls its test export. */
@@ -782,6 +784,286 @@ public class BytesCoverageTest {
                 deleteRecursively(compiled.root());
             }
         }
+    }
+
+    // =========================================================================
+    // 3b. The joint bytes fixtures' staged production legs
+    // =========================================================================
+
+    /**
+     * One joint BYTES acceptance fixture of the staged production drive: its
+     * corpus-relative path and the async export driven after the entry walk
+     * ({@code null} when the fixture's own {@code main} carries the probes).
+     */
+    private record JointBytesFixture(String relativePath, String asyncExport) {
+
+        BytesFixture spec() {
+            return ok(relativePath, "main", "null");
+        }
+
+        String fixtureFile() {
+            return BYTES_DIR + "/" + relativePath + ".deal";
+        }
+
+        String sidecarFile() {
+            return BYTES_DIR + "/" + relativePath + ".expect.json";
+        }
+    }
+
+    /**
+     * The two joint BYTES fixtures of {@code
+     * residual-carrier-shapes-production-realization}: the
+     * {@code bytes-boundary-order} buffer probes and the
+     * {@code bytes-async-closure} async bytes value family.
+     */
+    private static final List<JointBytesFixture> JOINT_BYTES_FIXTURES = List.of(
+        new JointBytesFixture("bytes-boundary-order", null),
+        new JointBytesFixture("bytes-async-closure", "test_bytes_async_closure"));
+
+    /**
+     * The two joint BYTES fixtures through the release-owned production
+     * invocation on both targets: zero diagnostics, exactly one staged
+     * project artifact per target, the staged LuaJIT chunk and the staged
+     * JVM class executed under the real toolchains with the sidecar-pinned
+     * streams and status, and the one-lowering closure's oracle agreement
+     * (the oracle and both shared artifacts event-for-event).
+     */
+    private static void testJointBytesStagedProduction() throws Exception {
+        System.out.println("-- the joint bytes fixtures through the release-owned "
+            + "invocation and the staged production artifacts --");
+        for (JointBytesFixture joint : JOINT_BYTES_FIXTURES) {
+            BytesFixture fixture = joint.spec();
+            Compiled compiled = compileFixture(fixture);
+            if (compiled == null) {
+                continue;
+            }
+            try {
+                Drive drive = lower(compiled, fixture);
+                if (drive == null) {
+                    continue;
+                }
+                checkJointBytesOracleAgreement(joint, drive);
+
+                // The release-owned LuaJIT leg: the corpus materialization
+                // compiled by the drive harness.
+                CompilationOrchestrator lua = compiled.orchestrator();
+                check(lua.diagnostics().isEmpty(), fixture.what() + " [luajit]: the "
+                    + "release-owned invocation compiles with zero diagnostics: "
+                    + lua.diagnostics());
+                check(lua.semanticEmissionCount() == 1, fixture.what() + " [luajit]: "
+                    + "the release-owned invocation stages exactly one project "
+                    + "artifact: semantic=" + lua.semanticEmissionCount());
+                String modulePath = compiled.checkedProject().entryModule().path();
+                Path luaOut = compiled.root().resolve("out");
+                Path luaArtifact = luaOut.resolve(
+                    modulePath.replace('.', '/') + ".lua");
+                check(Files.isRegularFile(luaArtifact), fixture.what() + " [luajit]: "
+                    + "the one project artifact stages at " + luaArtifact);
+
+                // The release-owned JVM leg: the same materialized project on
+                // the second target (its own staged artifact root).
+                Path entry = compiled.root().resolve("corpus")
+                    .resolve(fixture.fixtureFile());
+                Path jvmOut = compiled.root().resolve("out-jvm");
+                CompilationOrchestrator jvm = new CompilationOrchestrator(
+                    entry.toAbsolutePath(), jvmOut, false, false, false, false,
+                    Backend.JVM, null, List.of(compiled.root().toAbsolutePath()),
+                    Path.of("std").toAbsolutePath().normalize(), null,
+                    productionInvocation());
+                boolean jvmCompiled = jvm.compile();
+                check(jvmCompiled && jvm.diagnostics().isEmpty(), fixture.what()
+                    + " [jvm]: the release-owned invocation compiles with zero "
+                    + "diagnostics: " + jvm.diagnostics());
+                check(jvm.semanticEmissionCount() == 1, fixture.what() + " [jvm]: "
+                    + "the release-owned invocation stages exactly one project "
+                    + "artifact: semantic=" + jvm.semanticEmissionCount());
+                String className = JvmBackend.classNameFor(modulePath);
+                Path jvmArtifact = jvmOut.resolve(className + ".java");
+                check(Files.isRegularFile(jvmArtifact), fixture.what() + " [jvm]: the "
+                    + "one project artifact stages at " + jvmArtifact);
+
+                // The sidecar-authoritative transcript of the staged runs.
+                SidecarExpectations.StructuredExpectationSidecar parsed =
+                    SidecarExpectations.StructuredExpectationSidecar.parse(
+                        Files.readString(CORPUS.resolve(joint.sidecarFile()),
+                            StandardCharsets.UTF_8));
+                SidecarExpectations.RuntimeExpectation expectation =
+                    parsed.expectationFor("luajit");
+                check(expectation
+                        instanceof SidecarExpectations.RuntimeExpectation.Executed,
+                    fixture.what() + ": the sidecar pins an executed expectation");
+                if (!(expectation
+                        instanceof SidecarExpectations.RuntimeExpectation.Executed pinned)) {
+                    continue;
+                }
+                checkEq("runtime-ok", pinned.mode(), fixture.what()
+                    + ": the sidecar pins the runtime-ok mode");
+                check(pinned.error() == null, fixture.what()
+                    + ": a runtime-ok sidecar pins no error snapshot");
+
+                if (Files.isRegularFile(luaArtifact)) {
+                    driveStagedJointLua(joint, luaArtifact, luaOut, pinned);
+                }
+                if (jvmCompiled && Files.isRegularFile(jvmArtifact)) {
+                    driveStagedJointJvm(joint, drive, jvmOut, jvmArtifact, className,
+                        pinned);
+                }
+            } finally {
+                deleteRecursively(compiled.root());
+            }
+        }
+    }
+
+    /**
+     * The oracle agreement of one joint fixture: the one-lowering closure
+     * driven through the differential matrix (the semantic oracle and both
+     * shared artifacts agree event-for-event with the sidecar-pinned
+     * outcome).
+     */
+    private static void checkJointBytesOracleAgreement(JointBytesFixture joint,
+            Drive drive) throws Exception {
+        Path workspace = Files.createTempDirectory("bytes-joint-differential-");
+        SemanticDifferentialHarness.Verdict verdict;
+        try {
+            verdict = joint.asyncExport() == null
+                ? SemanticDifferentialHarness.runProject(drive.project(), drive.tables(),
+                    drive.registries(), SemanticDifferentialHarness.Expectation.success(
+                        joint.relativePath(), List.of(), "null"), workspace)
+                : SemanticDifferentialHarness.runAsyncEntry(drive.project(),
+                    drive.tables(), joint.asyncExport(), List.of(),
+                    SemanticDifferentialHarness.Expectation.success(joint.relativePath(),
+                        List.of(), "int:0"), workspace, null);
+        } finally {
+            deleteRecursively(workspace);
+        }
+        checkEq(3, verdict.runs().size(), joint.relativePath() + ": the oracle "
+            + "agreement produced the three consumers: " + verdict.failures());
+        check(verdict.pass(), joint.relativePath() + ": the oracle and both shared "
+            + "artifacts agree event-for-event with the sidecar-pinned outcome: "
+            + verdict.failures());
+    }
+
+    /**
+     * The staged LuaJIT project artifact: the deferred module walk and, for
+     * the async fixture, the artifact's own recorded async entry driven to
+     * completion with the pinned completion value; the complete transcript
+     * and status equal the sidecar pins.
+     */
+    private static void driveStagedJointLua(JointBytesFixture joint, Path artifact,
+            Path out, SidecarExpectations.RuntimeExpectation.Executed pinned)
+            throws Exception {
+        Path probe = out.resolve("__joint_staged_probe.lua");
+        Files.writeString(probe, jointLuaProbe(joint, artifact), StandardCharsets.UTF_8);
+        BoundedRun run = runBounded(List.of("luajit", probe.toAbsolutePath().toString()),
+            out, Map.of("DEAL_DEFER_MAIN", "1"));
+        assertSidecarTranscript(joint, "staged luajit artifact", run, pinned);
+    }
+
+    /** The Lua probe of one joint fixture's staged production artifact. */
+    private static String jointLuaProbe(JointBytesFixture joint, Path artifact) {
+        StringBuilder probe = new StringBuilder();
+        probe.append("local chunk = dofile(\"")
+            .append(artifact.toAbsolutePath().toString()).append("\")\n");
+        probe.append("local ok, err = __dealMain()\n");
+        probe.append("if not ok then error(err, 0) end\n");
+        if (joint.asyncExport() != null) {
+            probe.append("local entry = nil\n");
+            probe.append("for key, candidate in pairs(__asyncEntries) do\n");
+            probe.append("  if string.sub(key, -")
+                .append(joint.asyncExport().length() + 1).append(") == \"#")
+                .append(joint.asyncExport()).append("\" then entry = candidate end\n");
+            probe.append("end\n");
+            probe.append("assert(entry ~= nil, \"the artifact publishes the async "
+                + "entry\")\n");
+            probe.append("local okA, res = pcall(entry, \"-\", true)\n");
+            probe.append("if not okA then error(res, 0) end\n");
+            probe.append("if tostring(res) ~= \"0\" then\n");
+            probe.append("  error(\"the async probe result \" .. tostring(res), 0)\n");
+            probe.append("end\n");
+        }
+        return probe.toString();
+    }
+
+    /**
+     * The staged JVM project artifact: {@code javac --release 25 -proc:none}
+     * over the staged class and the probe, then the real java execution —
+     * the module walk and, for the async fixture, the artifact's own driven
+     * async entry {@code ae<id>} (resolved through the one-lowering
+     * closure's recorded EXTERNAL_ENTRY) with the pinned completion value;
+     * the complete transcript and status equal the sidecar pins.
+     */
+    private static void driveStagedJointJvm(JointBytesFixture joint, Drive drive,
+            Path jvmOut, Path artifact, String className,
+            SidecarExpectations.RuntimeExpectation.Executed pinned) throws Exception {
+        long entryId = -1;
+        if (joint.asyncExport() != null) {
+            for (SemanticOp op : drive.unit().ops()) {
+                if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
+                        && op.payload() instanceof KindPayload.ExternalEntryPayload payload
+                        && payload.async()
+                        && joint.asyncExport().equals(payload.exportName())) {
+                    entryId = op.opId().id();
+                }
+            }
+            check(entryId >= 0, joint.relativePath() + ": the fixture module records "
+                + "its async EXTERNAL_ENTRY");
+        }
+        String probeName = "JointBytesProbe_"
+            + java.util.UUID.randomUUID().toString().replace("-", "");
+        Path probe = jvmOut.resolve(probeName + ".java");
+        Files.writeString(probe, jointJvmProbe(joint, className, probeName, entryId),
+            StandardCharsets.UTF_8);
+        Path classes = jvmOut.resolve("classes");
+        Files.createDirectories(classes);
+        BoundedRun compile = runJavac(jvmOut, classes, List.of(
+            artifact.getFileName().toString(), probeName + ".java"));
+        check(compile.captureClean() && compile.exitCode() == 0, joint.relativePath()
+            + " [jvm]: the staged artifact and probe compile under javac --release "
+            + "25 -proc:none: " + compile.stdout() + compile.stderr());
+        if (compile.exitCode() != 0) {
+            return;
+        }
+        BoundedRun run = runJava(absoluteClasspath(), classes, probeName);
+        assertSidecarTranscript(joint, "staged jvm artifact", run, pinned);
+    }
+
+    /** The JVM probe of one joint fixture's staged production artifact. */
+    private static String jointJvmProbe(JointBytesFixture joint, String className,
+            String probeName, long entryId) {
+        StringBuilder probe = new StringBuilder();
+        probe.append("final class ").append(probeName).append(" {\n");
+        probe.append("  public static void main(String[] args) {\n");
+        probe.append("    ").append(className).append(".main(new String[0]);\n");
+        if (joint.asyncExport() != null) {
+            probe.append("    Object result = ").append(className).append(".ae")
+                .append(entryId).append("(\"-\", true, new Object[]{});\n");
+            probe.append("    if (!String.valueOf(result).equals(\"0\")) {\n");
+            probe.append("      throw new IllegalStateException(\n");
+            probe.append("          \"the async probe result \" + result);\n");
+            probe.append("    }\n");
+        }
+        probe.append("  }\n");
+        probe.append("}\n");
+        return probe.toString();
+    }
+
+    /**
+     * The sidecar-authoritative transcript comparison of one staged
+     * artifact run: the capture health, then the pinned exit code and the
+     * complete pinned stdout/stderr byte-exact.
+     */
+    private static void assertSidecarTranscript(JointBytesFixture joint, String target,
+            BoundedRun run, SidecarExpectations.RuntimeExpectation.Executed pinned) {
+        check(run.captureClean(), joint.relativePath() + " [" + target + "]: the "
+            + "staged artifact capture is healthy");
+        checkEq(pinned.exitCode(), run.exitCode(), joint.relativePath() + " ["
+            + target + "]: the staged artifact exits with the sidecar-pinned status");
+        checkEq(new String(pinned.stdout(), StandardCharsets.UTF_8), run.stdout(),
+            joint.relativePath() + " [" + target + "]: the staged artifact stdout "
+                + "equals the sidecar pin");
+        checkEq(new String(pinned.stderr(), StandardCharsets.UTF_8), run.stderr(),
+            joint.relativePath() + " [" + target + "]: the staged artifact stderr "
+                + "equals the sidecar pin");
     }
 
     // =========================================================================
@@ -1777,8 +2059,9 @@ public class BytesCoverageTest {
         String modulePath = built.input().entryModule().path();
         String luaSource = Files.readString(root.resolve("out").resolve(
             modulePath.replace('.', '/') + ".lua"), StandardCharsets.UTF_8);
-        return new Compiled(root, built.input(), built.index(), manifests.manifests(),
-            orchestrator.hostDeclarationSurface(), identities, 0, luaSource);
+        return new Compiled(root, orchestrator, built.input(), built.index(),
+            manifests.manifests(), orchestrator.hostDeclarationSurface(), identities, 0,
+            luaSource);
     }
 
     /** The production project lowering entry over one focused program. */
@@ -4514,6 +4797,7 @@ public class BytesCoverageTest {
     public static void main(String[] args) throws Exception {
         testCorpusPins();
         testCorpusDrive();
+        testJointBytesStagedProduction();
         testReadShapeAndWriteChain();
         testBytesBoundaryContext();
         testDecodedArrayMark();

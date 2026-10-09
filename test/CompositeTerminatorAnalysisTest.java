@@ -125,6 +125,16 @@ public class CompositeTerminatorAnalysisTest {
             "0", false),
         new Fixture("control-flow/return-in-try", "test_return_in_try_loop", "5", false));
 
+    /**
+     * The async-await-statement acceptance subject: the asynchronous export
+     * {@code f} whose body discards the {@code await g()} completion — the
+     * discarded-await probe. The staged drive executes the artifact's own
+     * driven async entry, so the discarded await's completion check and the
+     * fixture's guards run to completion on both targets.
+     */
+    private static final Fixture ASYNC_AWAIT_STATEMENT_FIXTURE = new Fixture(
+        "async-await/async-await-statement", "f", "0", true);
+
     private static final Set<String> RECURSIVE_FIXTURES = Set.of(
         "functions/direct-recursion", "functions/nested-scope-recursion");
 
@@ -1104,11 +1114,13 @@ public class CompositeTerminatorAnalysisTest {
     }
 
     static void testProductionArtifacts() throws Exception {
-        System.out.println("-- the four composite fixtures and the direct-recursion "
-            + "acceptance subject through the release-owned production "
-            + "invocation on LuaJIT and JVM --");
+        System.out.println("-- the named residual fixtures (the four composite "
+            + "fixtures, the nested-body acceptance subjects, and the "
+            + "async-await-statement discarded-await subject) through the "
+            + "release-owned production invocation on LuaJIT and JVM --");
         List<Fixture> stagedFixtures = new ArrayList<>(FIXTURES);
-        stagedFixtures.add(DIRECT_RECURSION_FIXTURE);
+        stagedFixtures.addAll(NESTED_BODY_FIXTURES);
+        stagedFixtures.add(ASYNC_AWAIT_STATEMENT_FIXTURE);
         for (Fixture fixture : stagedFixtures) {
             Path root = Files.createTempDirectory("composite-terminator-fixture-");
             try {
@@ -1158,7 +1170,8 @@ public class CompositeTerminatorAnalysisTest {
                 if (Files.exists(jvmArtifact)) {
                     Path classes = root.resolve("classes");
                     Files.createDirectories(classes);
-                    write(out, "FixtureProbe.java", jvmDriver(fixture, className));
+                    write(out, "FixtureProbe.java", jvmDriver(fixture, className,
+                        Files.readString(jvmArtifact, StandardCharsets.UTF_8)));
                     ProcessOutcome javac = runProcess(out, Map.of(), "javac",
                         "--release", "25", "-proc:none", "-cp", absoluteClasspath(),
                         "-d", classes.toString(),
@@ -1212,23 +1225,59 @@ public class CompositeTerminatorAnalysisTest {
     /**
      * The LuaJIT fixture driver: the deferred module walk, the published
      * entry surface, and the fixture's exported probe invoked once through
-     * the surface's callable (an async export's invocation drives the
-     * operation to completion through the runtime's synchronous async
-     * chain — the lane's invocation contract). Nothing is printed: the
-     * pinned outcome is the fixture's own guard and the empty sidecar
-     * transcript.
+     * the surface's callable. Nothing is printed: the pinned outcome is the
+     * fixture's own guard and the empty sidecar transcript.
      */
     private static String luaDriver(Fixture fixture) {
+        if (fixture.async()) {
+            return luaAsyncDriver(fixture);
+        }
         return """
             local surface = dofile("%s.lua")
             local ok, err = __dealMain()
             if not ok then error(err, 0) end
+            %s
+            probe.f()
+            """.formatted(fixture.relativePath(), luaSurfaceProbeCheck(fixture));
+    }
+
+    /**
+     * The LuaJIT driver of an async export: the deferred module walk, the
+     * published surface, then the artifact's own recorded async entry
+     * driven to completion ({@code __asyncEntries} with the drive enabled) —
+     * a discarded await inside the body executes exactly once and the
+     * completion value is compared to the pinned probe value. Nothing is
+     * printed: the pinned outcome is the fixture's own guard and the empty
+     * sidecar transcript.
+     */
+    private static String luaAsyncDriver(Fixture fixture) {
+        return """
+            local surface = dofile("%s.lua")
+            local ok, err = __dealMain()
+            if not ok then error(err, 0) end
+            %s
+            local entry = nil
+            for key, candidate in pairs(__asyncEntries) do
+              if string.sub(key, -%d) == "#%s" then entry = candidate end
+            end
+            assert(entry ~= nil, "the artifact publishes the async entry")
+            local okA, res = pcall(entry, "-", true)
+            if not okA then error(res, 0) end
+            if tostring(res) ~= "%s" then
+              error("the async probe result " .. tostring(res), 0)
+            end
+            """.formatted(fixture.relativePath(), luaSurfaceProbeCheck(fixture),
+                fixture.probe().length() + 1, fixture.probe(), fixture.pinnedValue());
+    }
+
+    /** The published-surface probe publication check of one fixture driver. */
+    private static String luaSurfaceProbeCheck(Fixture fixture) {
+        return """
             local probe = surface["%s"]
             assert(type(probe) == "table" and probe.__kind == "function"
               and type(probe.f) == "function",
               "the entry surface publishes the fixture probe")
-            probe.f()
-            """.formatted(fixture.relativePath(), fixture.probe());
+            """.formatted(fixture.probe());
     }
 
     /**
@@ -1236,7 +1285,11 @@ public class CompositeTerminatorAnalysisTest {
      * surface, and the fixture's exported probe invoked once; silent on
      * success so the sidecar transcript comparison is the pin.
      */
-    private static String jvmDriver(Fixture fixture, String className) {
+    private static String jvmDriver(Fixture fixture, String className,
+            String jvmSource) {
+        if (fixture.async()) {
+            return jvmAsyncDriver(fixture, className, jvmSource);
+        }
         return """
             public final class FixtureProbe {
               public static void main(String[] args) {
@@ -1258,6 +1311,49 @@ public class CompositeTerminatorAnalysisTest {
                 fixture.probe());
     }
 
+    /**
+     * The JVM driver of an async export: the module walk, then the
+     * artifact's own driven async entry ({@code ae<id>}, resolved from the
+     * staged source), whose completion value must equal the pinned probe
+     * value. The drive executes the discarded-await statement and the
+     * fixture's guards to completion; nothing is printed.
+     */
+    private static String jvmAsyncDriver(Fixture fixture, String className,
+            String jvmSource) {
+        String entry = asyncEntryMethod(jvmSource);
+        return """
+            public final class FixtureProbe {
+              public static void main(String[] args) {
+                %s.main(new String[0]);
+                Object result = %s.%s("-", true, new Object[]{});
+                if (!String.valueOf(result).equals("%s")) {
+                  throw new IllegalStateException(
+                      "the async probe result " + result);
+                }
+              }
+            }
+            """.formatted(className, className, entry, fixture.pinnedValue());
+    }
+
+    /**
+     * The single driven async-entry method of one staged project source
+     * ({@code public static Object ae<id>(String, boolean, Object[])}).
+     * These fixtures stage exactly one async export, so zero or several
+     * entry methods is a fixture/driver defect, never a silent pick.
+     */
+    private static String asyncEntryMethod(String jvmSource) {
+        Matcher matcher = Pattern.compile("public static Object (ae\\d+)"
+            + "\\(String __parent, boolean __drive, Object\\[\\] __args\\)")
+            .matcher(jvmSource);
+        List<String> entries = new ArrayList<>();
+        while (matcher.find()) {
+            entries.add(matcher.group(1));
+        }
+        checkEq(1, entries.size(), "the staged JVM artifact publishes exactly one "
+            + "driven async entry: " + entries);
+        return entries.isEmpty() ? "aeMissing" : entries.get(0);
+    }
+
     /** The internal module identity of one fixture's source location. */
     private static String jvmModuleKey(Fixture fixture) {
         return fixture.relativePath().replace('/', '.');
@@ -1270,7 +1366,9 @@ public class CompositeTerminatorAnalysisTest {
     static void testDifferentialMatrix() throws Exception {
         System.out.println("-- the pinned probe values through the oracle and both "
             + "shared artifacts (the differential matrix) --");
-        driveDifferentialFixtures(FIXTURES);
+        List<Fixture> differentialFixtures = new ArrayList<>(FIXTURES);
+        differentialFixtures.add(ASYNC_AWAIT_STATEMENT_FIXTURE);
+        driveDifferentialFixtures(differentialFixtures);
     }
 
     static void testNestedBodyProductionParity() throws Exception {
