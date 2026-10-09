@@ -163,8 +163,7 @@ TopLevelDeclaration ::= FunctionDeclaration
                       | ClassDeclaration
                       | ExportDeclaration
 
-Statement       ::= ClassDeclaration
-                   | FunctionDeclaration
+Statement       ::= FunctionDeclaration
                    | VariableDeclaration
                    | ReturnStatement
                    | IfStatement
@@ -333,7 +332,7 @@ Every statement ends with a semicolon `;`.
 
 - A module consists of zero or more `ImportDeclaration`s followed by zero or more `TopLevelDeclaration`s. `ImportDeclaration` is not allowed after any non-import top-level declaration.
 - At module top level, only `ImportDeclaration`, `FunctionDeclaration`, `ClassDeclaration`, and `ExportDeclaration` are allowed. Everything else is a compile-time error.
-- `Statement` remains the grammar for block/function bodies; imports and exports are not statements.
+- `Statement` remains the grammar for block/function bodies; imports, exports, and class declarations are not statements.
 - `if`, `while`, `for` bodies must be blocks `{ ... }`. No statement-without-brace forms.
 - `ExpressionStatement` is a bare expression (including function calls) followed by a required semicolon.
 - `Block` is a statement-list and is not an expression. Blocks do not produce values.
@@ -624,7 +623,7 @@ let x: T_target = expr;
 
 ### Class declaration
 
-`class` declares a **nominal record type** — a sealed data shape with no inheritance, no methods, no constructors.
+`class` declares a module-level **nominal record type**: a sealed shape without inheritance, methods or constructors. Local class declarations are compile-time errors.
 
 ```ts
 class User {
@@ -645,7 +644,7 @@ f?: T | null optional, may be missing, present as T, or present as null
 f: T | null = expr required-present, nullable, defaulted
 ```
 
-The field `f: T` without a default is **not valid**. A required-present field must provide a default value expression.
+Required-present fields must have default expressions; `f: T` without one is invalid.
 
 ### JSON serialization (`@jsonable`)
 
@@ -834,7 +833,7 @@ if (has(p.nick)) {
 }
 ```
 
-### Nested classes and `class[]`
+### Class-valued fields and `class[]`
 
 ```ts
 class Address {
