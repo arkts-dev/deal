@@ -955,6 +955,71 @@ public class CompositeTerminatorAnalysisTest {
             + "closure body carries no implicit return");
     }
 
+    /**
+     * The nested mutual-reference group (the B4 partition the lowering
+     * applies, ISSUE-0731) keeps the landed implicit-null-return contract
+     * on the public build, while a standalone nested declaration, a
+     * module-level mutual group, and a nested function expression stay
+     * rejected (the spec's no-fall-off rule; ISSUE-0717 defect snippets
+     * 25/26).
+     */
+    static void testNestedGroupFallOffExemption() throws Exception {
+        System.out.println("-- the nested mutual-reference group keeps its "
+            + "implicit null returns on the public build --");
+        String group = """
+            export function main(): null {
+              function f(n: int): null {
+                if (n > 0) { g(n - 1); }
+              }
+              function g(n: int): null {
+                if (n > 1) { f(n - 1); }
+              }
+              f(4);
+              return null;
+            }
+            """;
+        List<CompilerDiagnostic> groupDiagnostics = publicBuildDiagnostics(group);
+        check(groupDiagnostics.stream().noneMatch(
+                diagnostic -> "E5002".equals(diagnostic.code())),
+            "the nested mutual-reference group's implicit null returns compile "
+                + "on the public build: " + groupDiagnostics);
+
+        String standalone = """
+            export function main(): null {
+              while (true) {
+                function inner(d: boolean): null {
+                  while (true) {
+                    if (d) { break; }
+                    return null;
+                  }
+                }
+                return null;
+              }
+            }
+            """;
+        checkPublicFallOff("the standalone nested declaration", standalone);
+
+        String moduleLevel = """
+            function f(n: int): null {
+              if (n > 0) { g(n - 1); }
+            }
+            function g(n: int): null {
+              if (n > 1) { f(n - 1); }
+            }
+            export function main(): null { return null; }
+            """;
+        checkPublicFallOffCount("the module-level mutual group", moduleLevel, 2);
+
+        String expression = """
+            export function main(): null {
+              let f: () => null = function(): null {};
+              f();
+              return null;
+            }
+            """;
+        checkPublicFallOff("the nested function expression", expression);
+    }
+
     static void testUnterminatedNonNullStillFailsClosed() throws Exception {
         System.out.println("-- a genuinely unterminated non-null body still fails "
             + "closed --");
@@ -2040,6 +2105,7 @@ public class CompositeTerminatorAnalysisTest {
         testPartialTransferKeepsImplicitReturn();
         testPartialTransferMonotonicity();
         testNestedBodyDisjointness();
+        testNestedGroupFallOffExemption();
         testUnterminatedNonNullStillFailsClosed();
         testLiteralTrueLoopOnNonNullBodyAtUnitLevel();
         testProductionArtifacts();
