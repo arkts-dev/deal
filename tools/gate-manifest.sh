@@ -133,9 +133,14 @@ WARNING: node not found, skipping standard library JS tests'
   # on all three consumers while the same document stays rejected by
   # int[]; a read-derived numeric variant carrier serializes at a
   # declared number field and array element with its own variant's
-  # spelling, and the carrier produced by an omitted nested-class default
+  # spelling, the carrier produced by an omitted nested-class default
   # conforms at its declared number, number | null, and number[] positions
-  # (with its explicit-value control). The exact-text artifact leg is only
+  # (with its explicit-value control), and an array admitted through a
+  # dynamic table read spells each declared number[] slot by its own
+  # recorded variant - the integer text for an int slot (the reported
+  # LuaJIT defect), the closed decimal spelling for a number slot and for
+  # the mixed array - at the nullable and nested array positions included
+  # (exact text on all three consumers). The exact-text artifact leg is only
   # credited when the process completes its tested body (exit 0, empty
   # transcripts, no probe defect, no failure transport), and the
   # pinned-failure sidecar comparison is covered by negative controls for
