@@ -189,9 +189,10 @@ public final class Int32ModTruncPreludeTest {
 
     /** The fixture source with its classification headers stripped, verbatim. */
     private static String fixtureSource(String relativePath) throws Exception {
-        return ConformanceHarnessMetadata.stripClassificationHeaders(
-            Files.readString(CORPUS.resolve(relativePath + ".deal"),
-                StandardCharsets.UTF_8));
+        String corpusPath = relativePath + ".deal";
+        return ConformanceHarnessMetadata.productionCorpusSource(
+            Files.readString(CORPUS.resolve(corpusPath), StandardCharsets.UTF_8),
+            corpusPath);
     }
 
     /** One materialized single-module project. */

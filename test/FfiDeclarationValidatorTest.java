@@ -1025,6 +1025,17 @@ public class FfiDeclarationValidatorTest {
                     + (e6006 == null ? "none" : e6006.range().startLine()));
             check(orchestrator.ffiGenerations().isEmpty(),
                 "no FFI metadata published on an incapable backend");
+            // The full sanctioned rejection code set: the corpus disposition
+            // pins E6006 as the only rejection, so an additional error of any
+            // other code (a declaration-resolution defect included) can never
+            // hide behind the first diagnostic.
+            List<String> errorCodes = orchestrator.diagnostics().stream()
+                .filter(d -> "error".equals(d.severity()))
+                .map(CompilerDiagnostic::code)
+                .toList();
+            check(List.of("E6006").equals(errorCodes),
+                "the JVM extern-C rejection carries exactly the sanctioned "
+                    + "E6006 error set: " + errorCodes);
             check(!Files.exists(output),
                 "no artifact directory written (output stays absent)");
         } finally {

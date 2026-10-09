@@ -201,9 +201,11 @@ public class CompositeTerminatorAnalysisTest {
         """;
 
     private static String fixtureSource(String relativePath) throws Exception {
-        return ConformanceHarnessMetadata.stripClassificationHeaders(
-            Files.readString(FIXTURE_ROOT.resolve(relativePath + ".deal"),
-                StandardCharsets.UTF_8));
+        String corpusPath = relativePath + ".deal";
+        return ConformanceHarnessMetadata.productionCorpusSource(
+            Files.readString(FIXTURE_ROOT.resolve(corpusPath),
+                StandardCharsets.UTF_8),
+            corpusPath);
     }
 
     /**

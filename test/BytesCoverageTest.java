@@ -440,7 +440,8 @@ public class BytesCoverageTest {
         Files.createDirectories(fixtureFile.getParent());
         String raw = Files.readString(CORPUS.resolve(fixture.fixtureFile()),
             StandardCharsets.UTF_8);
-        String stripped = ConformanceHarnessMetadata.stripClassificationHeaders(raw);
+        String stripped = ConformanceHarnessMetadata.productionCorpusSource(
+            raw, fixture.fixtureFile());
         int strippedLines = raw.split("\n", -1).length
             - stripped.split("\n", -1).length;
         Files.writeString(fixtureFile, stripped, StandardCharsets.UTF_8);
@@ -448,10 +449,12 @@ public class BytesCoverageTest {
             Path companionFile = corpusRoot.resolve(BYTES_DIR)
                 .resolve(companion + ".deal");
             Files.createDirectories(companionFile.getParent());
+            String companionCorpusPath = BYTES_DIR + "/" + companion + ".deal";
             Files.writeString(companionFile,
-                ConformanceHarnessMetadata.stripClassificationHeaders(
-                    Files.readString(CORPUS.resolve(BYTES_DIR)
-                        .resolve(companion + ".deal"), StandardCharsets.UTF_8)),
+                ConformanceHarnessMetadata.productionCorpusSource(
+                    Files.readString(CORPUS.resolve(companionCorpusPath),
+                        StandardCharsets.UTF_8),
+                    companionCorpusPath),
                 StandardCharsets.UTF_8);
         }
         Path entry = "main".equals(fixture.export())
@@ -3604,8 +3607,10 @@ public class BytesCoverageTest {
     private record CorpusSource(String stripped, int strippedHeaderLines) {
     }
 
-    private static CorpusSource prepareCorpusSource(String raw) {
-        String stripped = ConformanceHarnessMetadata.stripClassificationHeaders(raw);
+    private static CorpusSource prepareCorpusSource(String raw,
+            String corpusRel) {
+        String stripped = ConformanceHarnessMetadata.productionCorpusSource(
+            raw, corpusRel);
         return new CorpusSource(stripped, raw.split("\n", -1).length
             - stripped.split("\n", -1).length);
     }
@@ -3927,7 +3932,7 @@ public class BytesCoverageTest {
                     .resolve(fixture + ".expect.json"), StandardCharsets.UTF_8));
 
         CorpusSource source = prepareCorpusSource(Files.readString(
-            CORPUS.resolve(corpusRel), StandardCharsets.UTF_8));
+            CORPUS.resolve(corpusRel), StandardCharsets.UTF_8), corpusRel);
         ManifestProject luaProject = materializeCorpusProject(corpusRel, source,
             "luajit", null, null);
         try {
@@ -4041,7 +4046,7 @@ public class BytesCoverageTest {
                 CORPUS.resolve(FFI_CORPUS).resolve(FFI_BYTES_FIXTURE
                     + ".expect.json"), StandardCharsets.UTF_8));
 
-        CorpusSource source = prepareCorpusSource(raw);
+        CorpusSource source = prepareCorpusSource(raw, corpusRel);
         CorpusFfi.Wiring wiring = CorpusFfi.wiring(CORPUS).get(FFI_SPECIFIER);
         if (wiring == null) {
             throw new IllegalStateException("the corpus FFI wiring carries no "

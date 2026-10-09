@@ -136,7 +136,8 @@ public class FfiPlanProjectionOracleTest {
                 "the corpus declaration of '" + NATIVE + "' does not validate: "
                     + module.validationDiagnostics());
         }
-        String app = ConformanceHarnessMetadata.stripClassificationHeaders(rawFixture);
+        String app = ConformanceHarnessMetadata.productionCorpusSource(
+            rawFixture, CorpusFfi.FFI_DIR + "/" + CORPUS_CASE + ".deal");
         Path root = Files.createTempDirectory("ffi-plan-corpus");
         Path src = root.resolve("src");
         Files.createDirectories(src);

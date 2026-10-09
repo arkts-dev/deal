@@ -321,7 +321,31 @@ public class JsonableHelperProductionDriveTest {
      */
     private static Project materialize(String fixtureRel, Target target)
             throws Exception {
+        return materialize(fixtureRel, target, Map.of());
+    }
+
+    /**
+     * The overridable materialization core: {@code rawOverrides} replaces
+     * one corpus path's raw bytes (the raw-profile control's injection
+     * point) while the disk layout and metadata handling stay the
+     * production ones. The raw classification metadata of every module is
+     * validated before that module's bytes are written, parsed or
+     * compiled, and a rejected input removes the partially created scratch
+     * root before the defect propagates.
+     */
+    private static Project materialize(String fixtureRel, Target target,
+            Map<String, String> rawOverrides) throws Exception {
         Path root = Files.createTempDirectory("jsonable-prod-drive-");
+        try {
+            return materializeInto(root, fixtureRel, target, rawOverrides);
+        } catch (Exception failure) {
+            deleteRecursively(root);
+            throw failure;
+        }
+    }
+
+    private static Project materializeInto(Path root, String fixtureRel,
+            Target target, Map<String, String> rawOverrides) throws Exception {
         Path srcRoot = root.resolve("src");
         Files.createDirectories(srcRoot);
         String corpusDir = fixtureRel.substring(0,
@@ -332,15 +356,15 @@ public class JsonableHelperProductionDriveTest {
         Map<String, Materialized> modules = new LinkedHashMap<>();
         for (String corpusPath : relativeClosureOf(corpusDir, fixtureRel)) {
             Path corpusFile = CONFORMANCE.resolve(corpusPath);
-            String raw = Files.readString(corpusFile, StandardCharsets.UTF_8);
-            String stripped = ConformanceHarnessMetadata
-                .stripClassificationHeaders(raw);
-            int headers = raw.split("\n", -1).length - stripped.split("\n", -1).length;
+            String raw = rawOverrides.getOrDefault(corpusPath,
+                Files.readString(corpusFile, StandardCharsets.UTF_8));
+            Materialized materialized = materializedModule(corpusPath, raw);
+            String stripped = materialized.source();
             String fileName = corpusFile.getFileName().toString();
             Path targetPath = srcRoot.resolve(fileName);
             Files.writeString(targetPath, stripped, StandardCharsets.UTF_8);
             modules.put(targetPath.toAbsolutePath().normalize().toString(),
-                new Materialized(corpusPath, stripped, headers));
+                materialized);
         }
         String entryStem = moduleNameOf(entryCorpus.getFileName().toString());
         String dealJson = "{\n  \"languageVersion\": \"1.2\",\n"
@@ -351,6 +375,22 @@ public class JsonableHelperProductionDriveTest {
         Files.writeString(root.resolve("deal.json"), dealJson);
         return new Project(root, srcRoot, srcRoot.resolve(entryStem + ".deal"),
             entryStem, modules, root.resolve("out"));
+    }
+
+    /**
+     * One corpus module's materialization: the original classification
+     * metadata is validated against the production profile (CD3) before
+     * the headers are stripped, so a non-production or malformed
+     * declaration is a named gate-input defect raised before any export
+     * parsing, materialization or compilation — never a compile, pass or
+     * skip under a metadata-selected invocation.
+     */
+    private static Materialized materializedModule(String corpusPath,
+            String raw) {
+        String stripped = ConformanceHarnessMetadata
+            .productionCorpusSource(raw, corpusPath);
+        int headers = raw.split("\n", -1).length - stripped.split("\n", -1).length;
+        return new Materialized(corpusPath, stripped, headers);
     }
 
     /**
@@ -370,8 +410,9 @@ public class JsonableHelperProductionDriveTest {
         if (!seen.add(corpusPath)) {
             return;
         }
-        String stripped = ConformanceHarnessMetadata.stripClassificationHeaders(
-            Files.readString(CONFORMANCE.resolve(corpusPath), StandardCharsets.UTF_8));
+        String stripped = ConformanceHarnessMetadata.productionCorpusSource(
+            Files.readString(CONFORMANCE.resolve(corpusPath), StandardCharsets.UTF_8),
+            corpusPath);
         for (String importPath : relativeImportPaths(stripped)) {
             String candidate = corpusDir + importPath + ".deal";
             if (Files.isRegularFile(CONFORMANCE.resolve(candidate))) {
@@ -489,13 +530,16 @@ public class JsonableHelperProductionDriveTest {
 
     /** One stream's capped, concurrent drain: the first
      * {@link #STREAM_CAP_BYTES} bytes are retained and the read continues to
-     * EOF, so a child that saturates a pipe can never deadlock the harness. */
+     * EOF, so a child that saturates a pipe can never deadlock the harness.
+     * A reader failure is recorded — never swallowed and never replaced by
+     * an empty transcript — and fails the invocation after teardown. */
     private static final class CappedDrain implements Runnable {
 
         private final java.io.InputStream stream;
         private final java.io.ByteArrayOutputStream retained =
             new java.io.ByteArrayOutputStream();
         private volatile boolean truncated;
+        private volatile java.io.IOException failure;
 
         CappedDrain(java.io.InputStream stream) {
             this.stream = stream;
@@ -515,9 +559,14 @@ public class JsonableHelperProductionDriveTest {
                         truncated = true;
                     }
                 }
-            } catch (java.io.IOException ignored) {
-                // The stream ends when the child and its descendants are gone.
+            } catch (java.io.IOException failed) {
+                failure = failed;
             }
+        }
+
+        /** The recorded reader failure, or {@code null} for a clean EOF. */
+        java.io.IOException failure() {
+            return failure;
         }
 
         String text() {
@@ -610,6 +659,13 @@ public class JsonableHelperProductionDriveTest {
         }
         if (timeout != null) {
             throw new BoundedProcessTimeoutException(timeout);
+        }
+        // A completed child whose transcript could not be read cleanly is a
+        // failed invocation, never a partially empty observation.
+        if (stdout.failure() != null || stderr.failure() != null) {
+            throw new AssertionError("BOUNDED_PROCESS_DRAIN_FAILURE " + command[0]
+                + " (stdout " + stdout.failure() + "; stderr "
+                + stderr.failure() + ")");
         }
         return new ProcessOutcome(process.exitValue(), stdout.text(), stderr.text());
     }
@@ -1073,19 +1129,13 @@ public class JsonableHelperProductionDriveTest {
         }
         SidecarExpectations.RuntimeExpectation.Executed expectation = pinned.get();
         if (!expectation.isRuntimeError()) {
-            checkEq(0, execution.exitCode(), fixtureRel + " [" + target.laneName()
-                + "]: the runtime-ok artifact run exits 0");
-            check(capture == null, fixtureRel + " [" + target.laneName()
-                + "]: the runtime-ok artifact raises nothing (capture " + capture + ")");
-            checkEq(new String(expectation.stdout(), StandardCharsets.UTF_8),
-                execution.stdout(), fixtureRel + " [" + target.laneName()
-                    + "]: the pinned stdout reproduces byte-exact");
-            checkEq(new String(expectation.stderr(), StandardCharsets.UTF_8),
-                execution.stderr(), fixtureRel + " [" + target.laneName()
-                    + "]: the pinned stderr reproduces byte-exact");
-            checkEq(expectation.exitCode(), execution.exitCode(), fixtureRel + " ["
-                + target.laneName() + "]: the pinned exit code reproduces");
-            return "ok";
+            List<String> mismatches = runtimeOkMismatches(expectation, execution,
+                capture);
+            for (String mismatch : mismatches) {
+                check(false, fixtureRel + " [" + target.laneName()
+                    + "]: " + mismatch);
+            }
+            return mismatches.isEmpty() ? "ok" : "runtime-ok-mismatch";
         }
         SidecarExpectations.ErrorExpectation row = expectation.error();
         List<String> mismatches = runtimeErrorSidecarMismatches(expectation, row,
@@ -1094,6 +1144,40 @@ public class JsonableHelperProductionDriveTest {
             check(false, fixtureRel + " [" + target.laneName() + "]: " + mismatch);
         }
         return mismatches.isEmpty() ? "pin-exact" : "pin-mismatch";
+    }
+
+    /**
+     * The runtime-ok acceptance's ordered mismatch descriptions: empty
+     * exactly when the observation reproduces the sidecar's pinned
+     * runtime-ok leg — the exact exit status, the complete stdout and
+     * stderr transcripts, and no raised failure or missed export. Every
+     * mismatch is a fatal verdict of this leg (the caller reports each
+     * one); the verdict is a pure function of the observation, so a
+     * failure in any other fixture/target cell never suppresses this
+     * cell's enforcement (there is no deficit inventory and no
+     * load-bearing construct state here).
+     */
+    private static List<String> runtimeOkMismatches(
+            SidecarExpectations.RuntimeExpectation.Executed expectation,
+            Execution execution, Capture capture) {
+        List<String> mismatches = new ArrayList<>();
+        if (execution.probeDefect()) {
+            mismatches.add("the runtime-ok artifact drive misses an export "
+                + "(the probe defect: " + (capture == null ? ""
+                    : capture.message()) + ")");
+        } else if (capture != null) {
+            mismatches.add("the runtime-ok artifact raises a failure (capture "
+                + capture + ")");
+        }
+        addMismatch(mismatches, "exit code", expectation.exitCode(),
+            execution.exitCode());
+        addMismatch(mismatches, "stdout",
+            new String(expectation.stdout(), StandardCharsets.UTF_8),
+            execution.stdout());
+        addMismatch(mismatches, "stderr",
+            new String(expectation.stderr(), StandardCharsets.UTF_8),
+            execution.stderr());
+        return mismatches;
     }
 
     /**
@@ -2938,6 +3022,266 @@ public class JsonableHelperProductionDriveTest {
     }
 
     /**
+     * The runtime-ok acceptance's negative controls (the wrong-observation
+     * policy): the comparator accepts the pin-exact observation (the
+     * control) and rejects an incorrect exit status, an unexpected stdout
+     * or stderr transcript, a raised failure capture, and a missed export —
+     * each a fatal mismatch of the cell that produced the observation. The
+     * verdict is a pure function of the observation (there is no deficit
+     * inventory and no other cell's construct state in it), so a construct
+     * deficit in another fixture or target can never excuse an unrelated
+     * runtime-ok divergence.
+     */
+    private static void testRuntimeOkNegativeControls() {
+        System.out.println("-- the runtime-ok acceptance's negative controls: a "
+            + "wrong observation is fatal independently of any other cell --");
+        SidecarExpectations.RuntimeExpectation.Executed pin =
+            new SidecarExpectations.RuntimeExpectation.Executed("runtime-ok",
+                "pinned\n".getBytes(StandardCharsets.UTF_8),
+                "".getBytes(StandardCharsets.UTF_8), 0, null);
+        Execution exact = new Execution(0, "pinned\n", "", null, false);
+        check(runtimeOkMismatches(pin, exact, null).isEmpty(),
+            "the comparator accepts the pin-exact runtime-ok observation "
+                + "(the control)");
+        for (int exit : new int[] { 1, 2 }) {
+            Execution wrongExit = new Execution(exit, "pinned\n", "", null, false);
+            check(runtimeOkMismatches(pin, wrongExit, null).stream()
+                    .anyMatch(m -> m.contains("exit code")),
+                "the comparator rejects exit " + exit + ": "
+                    + runtimeOkMismatches(pin, wrongExit, null));
+        }
+        Execution extraStdout = new Execution(0, "pinned\nnoise\n", "", null, false);
+        check(runtimeOkMismatches(pin, extraStdout, null).stream()
+                .anyMatch(m -> m.contains("stdout")),
+            "the comparator rejects unexpected stdout: "
+                + runtimeOkMismatches(pin, extraStdout, null));
+        Execution extraStderr = new Execution(0, "pinned\n", "boom\n", null, false);
+        check(runtimeOkMismatches(pin, extraStderr, null).stream()
+                .anyMatch(m -> m.contains("stderr")),
+            "the comparator rejects unexpected stderr: "
+                + runtimeOkMismatches(pin, extraStderr, null));
+        Capture raised = new Capture("E8001", "boom", null, null, null, null, null);
+        Execution captured = new Execution(1, "pinned\n", "", raised, false);
+        check(runtimeOkMismatches(pin, captured, raised).stream()
+                .anyMatch(m -> m.contains("raises a failure")),
+            "the comparator rejects a raised failure capture: "
+                + runtimeOkMismatches(pin, captured, raised));
+        Capture defect = new Capture("PROBE_DEFECT", "no export", null, null,
+            null, null, null);
+        Execution missed = new Execution(1, "pinned\n", "", defect, true);
+        check(runtimeOkMismatches(pin, missed, defect).stream()
+                .anyMatch(m -> m.contains("misses an export")),
+            "the comparator rejects a missed export: "
+                + runtimeOkMismatches(pin, missed, defect));
+    }
+
+    /**
+     * The raw-profile negative control (the CD3 gate-input contract):
+     * the drive's materialization validates the original fixture metadata
+     * before any export parsing, materialization or compilation. A real
+     * discovered fixture's raw source carrying a prepended legacy
+     * {@code // @profile: legacy-safe-int} declaration, an unknown profile
+     * value, and duplicate metadata are each rejected as a named
+     * HARNESS_DEFECT naming the fixture and the profile for both
+     * production targets; the rejected module's bytes are never written,
+     * parsed or compiled (the validation precedes each write, the scratch
+     * root is removed before the defect propagates), while the pristine
+     * corpus source materializes as the acceptance control.
+     */
+    private static void testRawProfileNegativeControl() throws Exception {
+        System.out.println("-- the raw-profile negative control: a nonproduction "
+            + "or malformed corpus declaration is rejected before compilation --");
+        String fixtureRel = FAMILY_DIR + "/jsonable-roundtrip";
+        String fixturePath = fixtureRel + ".deal";
+        String raw = Files.readString(CONFORMANCE.resolve(fixturePath),
+            StandardCharsets.UTF_8);
+        Materialized accepted = materializedModule(fixturePath, raw);
+        check(accepted.source() != null
+                && !accepted.source().contains("@profile:"),
+            "the pristine corpus declaration materializes (the control)");
+        Map<String, String> injections = new LinkedHashMap<>();
+        injections.put("legacy profile", "// @profile: legacy-safe-int\n" + raw);
+        injections.put("unknown profile", "// @profile: no-such-profile\n" + raw);
+        injections.put("duplicate metadata",
+            "// @profile: deal-v1.2-int32\n// @profile: deal-v1.2-int32\n" + raw);
+        Path tmp = Path.of(System.getProperty("java.io.tmpdir"));
+        Set<Path> before = new LinkedHashSet<>();
+        try (var listing = Files.list(tmp)) {
+            listing.filter(p -> p.getFileName().toString()
+                    .startsWith("jsonable-prod-drive-"))
+                .forEach(before::add);
+        }
+        for (Map.Entry<String, String> injection : injections.entrySet()) {
+            for (Target target : Target.values()) {
+                try {
+                    Project rejected = materialize(fixtureRel, target,
+                        Map.of(fixturePath, injection.getValue()));
+                    deleteRecursively(rejected.root());
+                    check(false, "the " + injection.getKey()
+                        + " declaration is rejected before any compile ["
+                        + target.laneName() + "]");
+                } catch (ConformanceHarnessMetadata.HarnessInputDefectException
+                        defect) {
+                    check(defect.getMessage().contains(
+                            ConformanceHarnessMetadata.HARNESS_DEFECT)
+                            && defect.getMessage().contains(fixturePath),
+                        "the " + injection.getKey() + " declaration is a named "
+                            + ConformanceHarnessMetadata.HARNESS_DEFECT
+                            + " naming the fixture [" + target.laneName() + "]: "
+                            + defect.getMessage());
+                }
+            }
+        }
+        Set<Path> leftovers = new LinkedHashSet<>();
+        try (var listing = Files.list(tmp)) {
+            listing.filter(p -> p.getFileName().toString()
+                    .startsWith("jsonable-prod-drive-"))
+                .filter(p -> !before.contains(p))
+                .forEach(leftovers::add);
+        }
+        check(leftovers.isEmpty(), "the rejected materializations remove every "
+            + "scratch root before the defect propagates: " + leftovers);
+    }
+
+    /**
+     * The bounded-subprocess controls (the release-pipeline contract kept
+     * in this retained drive): the runner owns the whole child tree on
+     * every exit path. A shell that starts a persistent descendant and
+     * waits on it exceeds a one-second deadline; the call returns with the
+     * named timeout, the recorded descendant is gone and no owned reader
+     * thread survives. The cancellation path interrupts the waiting thread,
+     * preserves the interruption, and leaves no descendant or reader
+     * behind before it returns. A stream reader that fails is recorded and
+     * fails the invocation instead of manufacturing an empty transcript.
+     */
+    private static void testBoundedProcessControls() throws Exception {
+        System.out.println("-- the bounded-subprocess controls: the deadline and "
+            + "cancellation paths own the whole child tree --");
+        Path deadlineScratch = Files.createTempDirectory("jsonable-bounded-deadline-");
+        try {
+            Path pidFile = deadlineScratch.resolve("descendant.pid");
+            try {
+                runProcess(deadlineScratch, Map.of(), 1_000L, "sh", "-c",
+                    "sleep 30 & echo $! > " + pidFile + "; wait");
+                check(false, "the persistent descendant exceeds the one-second "
+                    + "deadline");
+            } catch (BoundedProcessTimeoutException expected) {
+                check(expected.getMessage() != null
+                        && expected.getMessage().startsWith("BOUNDED_PROCESS_TIMEOUT"),
+                    "the deadline path reports the named timeout: "
+                        + expected.getMessage());
+            }
+            checkOwnedDescendantGone(pidFile, "the deadline path");
+            checkNoOwnedReaders("the deadline path");
+        } finally {
+            deleteRecursively(deadlineScratch);
+        }
+        // The cancellation path, with several concurrent owned workers:
+        // every waiting thread is interrupted, every interruption is
+        // preserved, and no owned descendant or reader survives any call
+        // before the workers return.
+        int workerCount = 2;
+        Path[] cancelScratches = new Path[workerCount];
+        Path[] cancelPids = new Path[workerCount];
+        Throwable[] cancelObserved = new Throwable[workerCount];
+        Thread[] cancelWorkers = new Thread[workerCount];
+        try {
+            for (int i = 0; i < workerCount; i++) {
+                cancelScratches[i] = Files.createTempDirectory(
+                    "jsonable-bounded-cancel-" + i + "-");
+                cancelPids[i] = cancelScratches[i].resolve("descendant.pid");
+                final int index = i;
+                cancelWorkers[i] = new Thread(() -> {
+                    try {
+                        runProcess(cancelScratches[index], Map.of(), 60_000L,
+                            "sh", "-c", "sleep 30 & echo $! > "
+                                + cancelPids[index] + "; wait");
+                    } catch (Throwable failure) {
+                        cancelObserved[index] = failure;
+                    }
+                }, "jsonable-bounded-cancel-worker-" + i);
+                cancelWorkers[i].start();
+            }
+            long waitDeadline = System.nanoTime()
+                + java.util.concurrent.TimeUnit.SECONDS.toNanos(20);
+            for (int i = 0; i < workerCount; i++) {
+                while (!Files.isRegularFile(cancelPids[i])
+                        && System.nanoTime() < waitDeadline) {
+                    Thread.sleep(20);
+                }
+                check(Files.isRegularFile(cancelPids[i]), "the cancelled "
+                    + "worker " + i + " records its persistent descendant");
+            }
+            for (int i = 0; i < workerCount; i++) {
+                cancelWorkers[i].interrupt();
+            }
+            for (int i = 0; i < workerCount; i++) {
+                cancelWorkers[i].join(
+                    java.util.concurrent.TimeUnit.SECONDS.toMillis(30));
+                check(!cancelWorkers[i].isAlive(), "the cancelled worker " + i
+                    + " returns after teardown");
+                check(cancelObserved[i] instanceof InterruptedException,
+                    "the cancellation path preserves the interruption of "
+                        + "worker " + i + ": " + cancelObserved[i]);
+                checkOwnedDescendantGone(cancelPids[i],
+                    "the cancellation path of worker " + i);
+            }
+            checkNoOwnedReaders("the concurrent cancellation path");
+        } finally {
+            for (int i = 0; i < workerCount; i++) {
+                if (cancelScratches[i] != null) {
+                    deleteRecursively(cancelScratches[i]);
+                }
+            }
+        }
+        CappedDrain failing = new CappedDrain(new java.io.InputStream() {
+            @Override
+            public int read() throws java.io.IOException {
+                throw new java.io.IOException("review-read-failure");
+            }
+        });
+        failing.run();
+        check(failing.failure() != null
+                && "review-read-failure".equals(failing.failure().getMessage()),
+            "the capped drain records a reader failure instead of returning an "
+                + "empty transcript: " + failing.failure());
+        CappedDrain clean = new CappedDrain(new java.io.ByteArrayInputStream(
+            "ok".getBytes(StandardCharsets.UTF_8)));
+        clean.run();
+        check(clean.failure() == null && "ok".equals(clean.text()),
+            "the capped drain returns a clean EOF transcript (the control)");
+    }
+
+    /** The recorded persistent descendant is gone after the call returns. */
+    private static void checkOwnedDescendantGone(Path pidFile, String label)
+            throws Exception {
+        check(Files.isRegularFile(pidFile), label + ": the child recorded its "
+            + "descendant pid");
+        if (!Files.isRegularFile(pidFile)) {
+            return;
+        }
+        long pid = Long.parseLong(Files.readString(pidFile,
+            StandardCharsets.UTF_8).trim());
+        check(ProcessHandle.of(pid).isEmpty()
+                || !ProcessHandle.of(pid).get().isAlive(),
+            label + ": the owned descendant " + pid + " is gone after the call");
+    }
+
+    /** No owned transcript-reader thread survives the call. */
+    private static void checkNoOwnedReaders(String label) {
+        List<String> alive = new ArrayList<>();
+        for (Thread thread : Thread.getAllStackTraces().keySet()) {
+            String name = thread.getName();
+            if (thread.isAlive() && (name.startsWith("jsonable-stdout-")
+                    || name.startsWith("jsonable-stderr-"))) {
+                alive.add(name);
+            }
+        }
+        check(alive.isEmpty(), label + ": no owned reader thread survives: "
+            + alive);
+    }
+
+    /**
      * The valid-depth artifact leg's negative control: the credit the
      * 511-link accepted-depth leg consumes (the same method the leg calls)
      * accepts only a completed zero-status, empty-transcript encode and
@@ -3527,6 +3871,9 @@ public class JsonableHelperProductionDriveTest {
         testOracleDriverMainCoverage();
         testRuntimeErrorSidecarNegativeControls(cyclicPin);
         testExactHelperArtifactNegativeControls();
+        testRuntimeOkNegativeControls();
+        testRawProfileNegativeControl();
+        testBoundedProcessControls();
         testDeterminismAndExportKey();
         System.out.println("");
         System.out.println("Jsonable helper production drive: " + passed

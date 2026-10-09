@@ -180,8 +180,9 @@ public class CheckedProjectBuilderTest {
                     "declaration_only_lib.d.deal")) {
                 Path corpus = modulesDir.resolve(name);
                 Files.writeString(strippedDir.resolve(name),
-                    ConformanceHarnessMetadata.stripClassificationHeaders(
-                        Files.readString(corpus)));
+                    ConformanceHarnessMetadata.productionCorpusSource(
+                        Files.readString(corpus),
+                        "backend-runtime/modules/" + name));
             }
             Path entry = strippedDir.resolve("declaration-only-import-compile.deal");
             Path output = tmp.resolve("build");
@@ -697,8 +698,9 @@ public class CheckedProjectBuilderTest {
         Path entryPath = modulesDir.resolve("declaration-only-import-compile.deal");
         Path declPath = modulesDir.resolve("declaration_only_lib.d.deal");
 
-        String entrySource = ConformanceHarnessMetadata
-            .stripClassificationHeaders(Files.readString(entryPath));
+        String entrySource = ConformanceHarnessMetadata.productionCorpusSource(
+            Files.readString(entryPath),
+            "backend-runtime/modules/declaration-only-import-compile.deal");
         LexResult entryLex = new Lexer(entrySource, entryPath.toString()).tokenize();
         check(!entryLex.hasErrors(), "fixture lexes without errors");
         ParseResult entryParsed = new Parser(entryLex.tokens(), entryPath.toString(),
@@ -729,8 +731,9 @@ public class CheckedProjectBuilderTest {
         }
 
         // The declaration file's own AST.
-        String declSource = ConformanceHarnessMetadata
-            .stripClassificationHeaders(Files.readString(declPath));
+        String declSource = ConformanceHarnessMetadata.productionCorpusSource(
+            Files.readString(declPath),
+            "backend-runtime/modules/declaration_only_lib.d.deal");
         LexResult declLex = new Lexer(declSource, declPath.toString()).tokenize();
         ParseResult declParsed = new Parser(declLex.tokens(), declPath.toString(),
             declLex.directiveEvents()).parse();

@@ -60,6 +60,75 @@ public final class ConformanceHarnessMetadata {
         }
     }
 
+    /**
+     * The gate-input defect name of a corpus source the production
+     * materialization must never compile (CD3): a declared non-production
+     * profile or malformed classification metadata. The name is part of
+     * the reported outcome so the defect is identifiable without reading
+     * the message body.
+     */
+    public static final String HARNESS_DEFECT = "HARNESS_DEFECT";
+
+    /**
+     * A named gate-input defect: the corpus input is rejected before any
+     * export parsing, materialization or compilation, so the fixture can
+     * never compile, pass or skip under a metadata-selected invocation.
+     */
+    public static final class HarnessInputDefectException
+            extends IllegalArgumentException {
+
+        private static final long serialVersionUID = 1L;
+
+        HarnessInputDefectException(String message) {
+            super(message);
+        }
+
+        HarnessInputDefectException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
+    /**
+     * The LuaJIT/JVM corpus materialization of one raw fixture source
+     * (CD3): the original classification metadata is validated against
+     * the production profile before anything is stripped, parsed or
+     * compiled. Metadata absent or the production profile permits the
+     * compile; any other declared profile, an unknown profile value, or
+     * duplicate metadata is a named fatal gate-input defect naming the
+     * fixture and the profile — the production targets take no
+     * metadata-selected invocation, so no compile, pass or skip happens.
+     *
+     * @param rawSource the fixture file's raw text, classification headers
+     *                  included
+     * @param locator   the corpus-relative fixture path used in the defect
+     *                  message
+     * @return the header-stripped source of a production-profile corpus
+     *         input
+     * @throws HarnessInputDefectException for a non-production declaration
+     *         or malformed metadata
+     */
+    public static String productionCorpusSource(String rawSource,
+            String locator) {
+        SemanticProfile profile;
+        try {
+            profile = profileFromMetadata(rawSource, locator);
+        } catch (IllegalArgumentException malformed) {
+            throw new HarnessInputDefectException(locator + ": "
+                + HARNESS_DEFECT + " — malformed corpus classification "
+                + "metadata: " + malformed.getMessage(), malformed);
+        }
+        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
+            throw new HarnessInputDefectException(locator + ": "
+                + HARNESS_DEFECT + " — the corpus input declares the "
+                + profile.name() + " profile; the LuaJIT/JVM production "
+                + "materialization accepts only "
+                + SemanticProfile.DEAL_V1_2_INT32.name()
+                + " (no metadata-selected invocation; no compile, no pass, "
+                + "no skip)");
+        }
+        return stripClassificationHeaders(rawSource);
+    }
+
     public static CompilerInvocation invocation(SemanticProfile profile) {
         if (profile == SemanticProfile.LEGACY_SAFE_INT) {
             return CompilerProfileProvider.resolveLegacyRegression(profile,

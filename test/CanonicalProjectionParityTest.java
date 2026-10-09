@@ -177,6 +177,15 @@ public class CanonicalProjectionParityTest {
             for (CorpusDiscovery.Fixture fixture : discovery.fixtures()) {
                 byPath.put(fixture.corpusPath(), fixture);
             }
+            // The raw classification metadata is validated before any
+            // materialization or compile (CD3): a non-production or
+            // malformed declaration is a named gate-input defect naming
+            // the fixture and profile, never a compile, pass or skip
+            // under a metadata-selected invocation.
+            for (CorpusDiscovery.Fixture fixture : discovery.fixtures()) {
+                ConformanceHarnessMetadata.productionCorpusSource(
+                    fixture.rawSource(), fixture.corpusPath());
+            }
             corpusSnapshot = new CorpusSnapshot(discovery, byPath);
         }
         return corpusSnapshot;

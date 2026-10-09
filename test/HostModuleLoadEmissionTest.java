@@ -1044,6 +1044,22 @@ public class HostModuleLoadEmissionTest {
                     new $DealRt.__StringArray(new String[] {"a", "b"}),
                     "probe.deal", 4, 1);
                 check("a-b".equals(joined), "the array carrier roundtrip: " + joined);
+                // The production-carrier bytes admission (K6 item 13 / H7):
+                // the DEAL-side call passes the production
+                // JvmRuntime.BytesValue before the host-facing projection, so
+                // the emitted parameter cell admits it, the host-facing
+                // crossing projects it onto the deployed $DealRt.Bytes view,
+                // and the out-and-back buffer stays one buffer.
+                deal.codegen.jvm.JvmRuntime.BytesValue buffer =
+                    new deal.codegen.jvm.JvmRuntime.BytesValue(
+                        new byte[] {1, 2, 3});
+                Object bytesEcho = App.__host$$PROBE$$echoBytes(buffer,
+                    "probe.deal", 6, 1);
+                check(bytesEcho == buffer,
+                    "the production bytes carrier roundtrips as one buffer: "
+                        + bytesEcho);
+                check(java.util.Arrays.equals(buffer.data, new byte[] {1, 2, 3}),
+                    "the bytes roundtrip leaves the buffer contents intact");
                 Object applied = App.__host$$PROBE$$apply(new $DealRt.Fn1_I_R_I() {
                     int invoke(int p0) { return p0 + 1; }
                   }, Integer.valueOf(7), "probe.deal", 5, 1);

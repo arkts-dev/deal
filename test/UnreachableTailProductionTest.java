@@ -579,9 +579,10 @@ public class UnreachableTailProductionTest {
             Path src = project.resolve("src");
             Files.createDirectories(src);
             Files.writeString(src.resolve("main.deal"),
-                ConformanceHarnessMetadata.stripClassificationHeaders(
+                ConformanceHarnessMetadata.productionCorpusSource(
                     Files.readString(CONFORMANCE.resolve(ASYNC_DIR)
-                        .resolve(stem + ".deal"), StandardCharsets.UTF_8)),
+                        .resolve(stem + ".deal"), StandardCharsets.UTF_8),
+                    ASYNC_DIR + "/" + stem + ".deal"),
                 StandardCharsets.UTF_8);
             Files.writeString(project.resolve("deal.json"), DEAL_JSON,
                 StandardCharsets.UTF_8);
