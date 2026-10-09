@@ -42,6 +42,7 @@ import deal.semantic.ModuleFact;
 import deal.semantic.ReleaseConfiguration;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.CheckedModuleInput;
+import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.ModuleId;
 import deal.types.Type;
@@ -160,6 +161,8 @@ public final class CompilationOrchestrator {
     private RequirementManifestResult requirementManifests;
 
     private int semanticEmissionCount = 0;
+
+    private ExecutableLoweredProject producedProject;
 
     private final Map<String, ModuleInfo> modules = new LinkedHashMap<>();
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
@@ -595,6 +598,26 @@ public final class CompilationOrchestrator {
 
     public int semanticEmissionCount() {
         return semanticEmissionCount;
+    }
+
+    /**
+     * The read-only reference to the project this compile's production arm
+     * lowered and emitted (ISSUE-0694; design source
+     * {@code conformance-cutover-guards-pins-and-production-source-removal}
+     * HR4(b) and the lane project identity audit contract). The reference
+     * is set exactly once, by the one production-arm run of phase 4 (the
+     * release-owned production invocation); it is never set by the JS arm
+     * or a harness arm, and it is {@code null} before phase 4 and for a
+     * production arm that failed — a failed run produced no project, so it
+     * staged none. The lane-level dangling-identity guard observes this
+     * project, never a re-lowering; no emission, staging, or comparison
+     * step reads it.
+     *
+     * @return the produced project, or {@code null} when this compile
+     *         produced none
+     */
+    public ExecutableLoweredProject producedProject() {
+        return producedProject;
     }
 
     // =========================================================================
@@ -1988,7 +2011,9 @@ public final class CompilationOrchestrator {
      * pre-emission closure guard, the one production emission, and the
      * one staged project artifact plus the unchanged LuaJIT deployment
      * copies — then the one project emission record
-     * ({@link #semanticEmissionCount}). A lowering, guard, or emission
+     * ({@link #semanticEmissionCount}) and the one read-only
+     * produced-project reference this compile exposes
+     * ({@link #producedProject()}). A lowering, guard, or emission
      * failure merges its first E6005 diagnostic and stages nothing: the
      * unchanged publication transaction then preserves the previous
      * artifact set byte-for-byte.
@@ -2020,6 +2045,7 @@ public final class CompilationOrchestrator {
             Set.of(), backend, sourceMapExplicit, distributionHome, stager);
         if (result.emitted()) {
             semanticEmissionCount++;
+            recordProducedProject(result.producedProject());
             log("  Generated (production project emission): "
                 + outputRoot.resolve(result.artifactRelativePath()));
         } else {
@@ -2028,6 +2054,29 @@ public final class CompilationOrchestrator {
             log("  Production project emission failed: "
                 + result.diagnostics());
         }
+    }
+
+    /**
+     * Records the production arm's produced project once (ISSUE-0694;
+     * design source
+     * {@code conformance-cutover-guards-pins-and-production-source-removal}
+     * HR4(b) and the lane project identity audit contract): phase 4 runs
+     * the production arm exactly once per compile, so a second record is a
+     * producer defect and fails closed before the reference could be
+     * observed stale. The reference is a read-only result fact: this
+     * method is its only writer, the compile path never reads it, and the
+     * lane-level dangling-identity guard is its reader.
+     *
+     * @param project the project the one production-arm run produced;
+     *                non-null
+     */
+    private void recordProducedProject(ExecutableLoweredProject project) {
+        if (producedProject != null) {
+            throw new IllegalStateException("the production arm produced a"
+                + " project twice in one compile (producer defect)");
+        }
+        producedProject = Objects.requireNonNull(project,
+            "an emitted production run carries its produced project");
     }
 
     /**

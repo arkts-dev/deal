@@ -16,6 +16,7 @@ import deal.project.ProjectContext;
 import deal.project.ProjectLocator;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.ir.CanonicalJson;
+import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.SemanticIrTextDecodeException;
 import deal.test.ConformanceHarnessMetadata;
 
@@ -736,6 +737,23 @@ public class JvmLane implements Lane {
                                 + run.capturedOutput()));
                 }
 
+                // 4b. The lane-level dangling-identity guard (ISSUE-0694;
+                // conformance-cutover-guards-pins-and-production-source-
+                // removal HR4(b) and the lane project identity audit
+                // contract): the guard audits the very project this lane's
+                // own compile produced — the orchestrator's read-only
+                // producedProject() reference, never a re-lowering — and a
+                // violation is a lane compile failure naming the fixture,
+                // the module path, the function, the unresolved op id, and
+                // the rule. A lane that ran no production arm (the harness
+                // invocation) produced no project and has nothing to audit.
+                Optional<String> identityFailure = laneIdentityFailure(
+                    run.producedProject(), laneCase.fixturePath());
+                if (identityFailure.isPresent()) {
+                    deleteProjectRoot();
+                    return CompilationOutcome.failure(identityFailure.get());
+                }
+
                 // 5. Codegen was real: the entry artifact must exist
                 // before javac runs.
                 Path entryJava = outputRoot.resolve(entryClass + ".java");
@@ -810,7 +828,33 @@ public class JvmLane implements Lane {
 
     private record OrchestratorRun(boolean success,
                                    List<CompilerDiagnostic> diagnostics,
-                                   String capturedOutput) { }
+                                   String capturedOutput,
+                                   ExecutableLoweredProject producedProject) { }
+
+    /**
+     * The lane's post-compile dangling-identity audit (ISSUE-0694;
+     * {@code conformance-cutover-guards-pins-and-production-source-removal}
+     * HR4(b) and the lane project identity audit contract): audits the very
+     * project this lane's own compile produced — the orchestrator's
+     * read-only {@code producedProject()} reference, never a re-lowering —
+     * and returns the nameable lane-failure text of the first violation.
+     * The lane propagates a present text as a compile failure
+     * ({@link CompilationOutcome#failure}), so an identity regression fails
+     * the lane by name and can never pass, never skip, and never be masked
+     * by a re-lowering. A lane compile that ran no production arm produced
+     * no project and has nothing to audit.
+     *
+     * @param project     the project the lane's own compile produced, or
+     *                    {@code null} when it ran no production arm
+     * @param fixturePath the dispatched fixture's corpus path (the named
+     *                    failure's subject); non-null
+     * @return the named lane failure text, or empty when the audit passes
+     *         or there is nothing to audit
+     */
+    public static Optional<String> laneIdentityFailure(
+            ExecutableLoweredProject project, String fixturePath) {
+        return ProducedProjectIdentityAudit.laneFailure(project, fixturePath);
+    }
 
     private static OrchestratorRun runOrchestrator(Path entryFile,
             ProjectContext context, CompilerInvocation invocation) {
@@ -830,11 +874,12 @@ public class JvmLane implements Lane {
                 boolean success = orchestrator.compile();
                 return new OrchestratorRun(success,
                     orchestrator.diagnostics(),
-                    captured.toString(StandardCharsets.UTF_8));
+                    captured.toString(StandardCharsets.UTF_8),
+                    orchestrator.producedProject());
             } catch (IOException e) {
                 return new OrchestratorRun(false, List.of(),
                     "orchestrator I/O failure: " + e + "\n"
-                        + captured.toString(StandardCharsets.UTF_8));
+                        + captured.toString(StandardCharsets.UTF_8), null);
             } finally {
                 System.out.flush();
                 System.err.flush();

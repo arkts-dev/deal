@@ -31,6 +31,8 @@ import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticRequirementManifest;
 import deal.semantic.ir.AssignTargetKind;
 import deal.semantic.ir.BoundaryKind;
+import deal.semantic.ir.CallMode;
+import deal.semantic.ir.ClosedSelector;
 import deal.semantic.ir.ContractSnapshotCanonicalizer;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.FailurePolicyId;
@@ -46,11 +48,16 @@ import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.SemanticIdAllocator;
+import deal.semantic.ir.SemanticIrDumper;
 import deal.semantic.ir.SemanticIrValidator;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.SourceOrigin;
+import deal.semantic.ir.ValueId;
+import deal.test.conformance.JvmLane;
+import deal.test.conformance.LuaLane;
+import deal.test.conformance.ProducedProjectIdentityAudit;
 import deal.types.Type;
 
 import java.nio.charset.StandardCharsets;
@@ -58,6 +65,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -756,6 +764,423 @@ public class BodyInvocationIdentityTest {
         }
     }
 
+    // =========================================================================
+    // The produced-project dangling-identity guard (ISSUE-0694 HR4(b))
+    // =========================================================================
+
+    /** One body-local identity cell of a produced project. */
+    private record BodyLocalCell(LoweredModuleUnit unit, FunctionId function,
+                                 OpId identity, OpId boundary) {
+    }
+
+    /**
+     * The lane-level dangling-identity guard over the very project the
+     * production arm produced (never a re-lowered copy;
+     * {@code conformance-cutover-guards-pins-and-production-source-removal}
+     * HR4(b) and the lane project identity audit contract): every
+     * {@code RETURN}'s enclosing invocation identity and named return
+     * boundary resolve to emitted ops of the project closure, the body-local
+     * K12 cell satisfies the closed validator rules, the guard is read-only,
+     * both settled lanes' audit faces consume the reference, and each seeded
+     * regression fails by module/function/op under its named rule.
+     */
+    private static void testProducedProjectDanglingIdentityGuard(
+            RealProject fixture) {
+        System.out.println("-- the produced-project dangling-identity guard: "
+            + "the audit observes the project the production arm produced --");
+        CompilationOrchestrator orchestrator = fixture.orchestrator();
+        ExecutableLoweredProject project = orchestrator.producedProject();
+        check(project != null,
+            "the production compile exposes the project it produced: "
+                + orchestrator.diagnostics());
+        if (project == null) {
+            return;
+        }
+        int returnOps = 0;
+        for (LoweredModuleUnit unit : project.modules().values()) {
+            returnOps += opsOfKind(unit, SemanticOpKind.RETURN).size();
+        }
+        check(returnOps > 0,
+            "the produced project carries RETURN ops (the audit is non-empty)");
+        check(ProducedProjectIdentityAudit.audit(project).isEmpty(),
+            "the guard passes the produced project: "
+                + ProducedProjectIdentityAudit.audit(project));
+
+        BodyLocalCell cell = firstBodyLocalCell(project);
+        check(cell != null,
+            "the produced project carries a body-local K12 identity cell");
+        if (cell == null) {
+            return;
+        }
+        check(project.modules().get(cell.unit().moduleId()).functions()
+                .containsKey(cell.function()),
+            "the body-local cell belongs to a lowered body of the closure");
+        String before = SemanticIrDumper.dumpModuleText(cell.unit());
+        ProducedProjectIdentityAudit.audit(project);
+        checkEq(before, SemanticIrDumper.dumpModuleText(cell.unit()),
+            "the guard is read-only: the produced unit is unchanged");
+
+        // The lane-facing audit consumes the produced project, never a
+        // re-lowering; a lane that ran no production arm has nothing to
+        // audit.
+        check(JvmLane.laneIdentityFailure(project, "fixture.deal").isEmpty(),
+            "the JVM lane's audit accepts the produced project");
+        check(LuaLane.laneIdentityFailure(project, "fixture.deal").isEmpty(),
+            "the LuaJIT lane's audit accepts the produced project");
+        check(JvmLane.laneIdentityFailure(null, "fixture.deal").isEmpty(),
+            "a lane that ran no production arm has nothing to audit");
+        check(LuaLane.laneIdentityFailure(null, "fixture.deal").isEmpty(),
+            "a lane that ran no production arm has nothing to audit");
+
+        // (a) The reserved identity the never-called guard used to
+        // materialize is dropped: a restored never-called guard, or a
+        // reserved identity left dangling, fails by module/function/op.
+        LoweredModuleUnit danglingUnit = withOps(cell.unit(),
+            withoutOp(cell.unit(), cell.identity()));
+        ExecutableLoweredProject dangling = withUnit(project, danglingUnit);
+        Optional<ProducedProjectIdentityAudit.Violation> first =
+            ProducedProjectIdentityAudit.firstViolation(dangling);
+        check(first.isPresent(),
+            "the dangling reserved identity fails the audit");
+        if (first.isPresent()) {
+            checkEq(ProducedProjectIdentityAudit.ENCLOSING_INVOCATION_NOT_EMITTED,
+                first.get().rule(), "the dangling identity names its rule");
+            checkEq(cell.unit().moduleId().path(), first.get().modulePath(),
+                "the dangling identity names its module path");
+            checkEq(cell.function().toString(), first.get().function(),
+                "the dangling identity names its function");
+            checkEq(cell.identity().toString(), first.get().opId(),
+                "the dangling identity names the unresolved op id");
+        }
+        String laneFailure = JvmLane.laneIdentityFailure(dangling,
+            "fixture.deal").orElse(null);
+        check(laneFailure != null && laneFailure.contains("fixture.deal")
+                && laneFailure.contains(cell.unit().moduleId().path())
+                && laneFailure.contains(cell.function().toString())
+                && laneFailure.contains(cell.identity().toString())
+                && laneFailure.contains(
+                    ProducedProjectIdentityAudit.ENCLOSING_INVOCATION_NOT_EMITTED),
+            "the lane audit text names the fixture, the module path, the "
+                + "function, the unresolved op id, and the rule: " + laneFailure);
+
+        // (b) The named return boundary is never emitted.
+        Optional<ProducedProjectIdentityAudit.Violation> missingBoundary =
+            ProducedProjectIdentityAudit.firstViolation(withUnit(project,
+                withOps(cell.unit(), withoutOp(cell.unit(), cell.boundary()))));
+        check(missingBoundary.isPresent()
+                && missingBoundary.get().rule().equals(
+                    ProducedProjectIdentityAudit.RETURN_BOUNDARY_NOT_EMITTED),
+            "a dropped return boundary fails the audit by name: "
+                + missingBoundary);
+
+        // (c) The identity is emitted twice: the exactly-once
+        // materialization of a reserved identity.
+        Optional<ProducedProjectIdentityAudit.Violation> duplicated =
+            ProducedProjectIdentityAudit.firstViolation(withUnit(project,
+                withOps(cell.unit(),
+                    withOpDuplicated(cell.unit(), cell.identity()))));
+        check(duplicated.isPresent()
+                && duplicated.get().rule().equals(
+                    ProducedProjectIdentityAudit.ENCLOSING_INVOCATION_DUPLICATED),
+            "a twice-materialized identity fails the audit by name: "
+                + duplicated);
+
+        // The closed body-local cell's remaining clauses (K12; the
+        // validator's bodyLocalReturnCell): each omitted clause has its own
+        // named negative control, and the validator rejects each seeded
+        // unit, so the audit can never report a closed-rule violation as
+        // passing.
+        BodyLocalCell closureCell = firstClosureNewCell(project);
+        check(closureCell != null,
+            "the produced project carries a CLOSURE_NEW-owned body-local cell");
+        if (closureCell == null) {
+            return;
+        }
+        Map<OpId, SemanticOp> byId = new LinkedHashMap<>();
+        for (SemanticOp op : closureCell.unit().ops()) {
+            byId.putIfAbsent(op.opId(), op);
+        }
+        SemanticOp boundary = byId.get(closureCell.boundary());
+        SemanticOp identity = byId.get(closureCell.identity());
+        if (boundary == null || identity == null
+                || !(boundary.payload()
+                    instanceof KindPayload.BoundaryPayload boundaryPayload)
+                || !(identity.payload()
+                    instanceof KindPayload.ClosureNewPayload closureNew)) {
+            fail("the seedable CLOSURE_NEW cell's boundary and identity ops "
+                + "resolve with the closed payload shapes");
+            return;
+        }
+        String registryHash = orchestrator.invocation()
+            .capabilityRegistryHash();
+
+        // (d) The descriptor-kind failure policy: the boundary carries a
+        // policy that violates the descriptor-kind rule for its descriptor
+        // (a non-function descriptor must be checked under TYPE_DESCRIPTOR).
+        SemanticOp wrongPolicy = reseed(boundary, boundaryPayload,
+            FailurePolicyId.FUNCTION_SIGNATURE);
+        LoweredModuleUnit wrongPolicyUnit = withOps(closureCell.unit(),
+            withReplacedOp(closureCell.unit(), boundary.opId(), wrongPolicy));
+        Optional<ProducedProjectIdentityAudit.Violation> descriptorKind =
+            ProducedProjectIdentityAudit.firstViolation(
+                withUnit(project, wrongPolicyUnit));
+        check(descriptorKind.isPresent()
+                && descriptorKind.get().rule().equals(
+                    ProducedProjectIdentityAudit.BODY_LOCAL_DESCRIPTOR_KIND_MISMATCH),
+            "a boundary policy violating the descriptor-kind rule fails the "
+                + "audit by name: " + descriptorKind);
+
+        // (e) The declared return descriptor: the CLOSURE_NEW-owned boundary
+        // is changed to string under the still-matching TYPE_DESCRIPTOR
+        // policy, so only the declared-signature comparison can reject it.
+        SemanticOp wrongDescriptor = reseed(boundary,
+            new KindPayload.BoundaryPayload(boundaryPayload.kind(),
+                RuntimeDescriptor.String.INSTANCE, boundaryPayload.input(),
+                boundaryPayload.realization()),
+            boundary.failurePolicy());
+        LoweredModuleUnit wrongDescriptorUnit = withOps(closureCell.unit(),
+            withReplacedOp(closureCell.unit(), boundary.opId(),
+                wrongDescriptor));
+        Optional<ProducedProjectIdentityAudit.Violation> declaredDescriptor =
+            ProducedProjectIdentityAudit.firstViolation(
+                withUnit(project, wrongDescriptorUnit));
+        check(declaredDescriptor.isPresent()
+                && declaredDescriptor.get().rule().equals(
+                    ProducedProjectIdentityAudit.BODY_LOCAL_RETURN_DESCRIPTOR_MISMATCH),
+            "a boundary checking a descriptor other than the allocated "
+                + "function's declared return descriptor fails the audit by "
+                + "name: " + declaredDescriptor);
+        checkEq(boundary.opId().toString(), declaredDescriptor
+                .map(ProducedProjectIdentityAudit.Violation::opId).orElse(null),
+            "the declared-descriptor violation names the boundary op id");
+
+        // (f) The assigned static invocation shape: a statically
+        // materialized CALL of the closure names the boundary as its return
+        // boundary, so the body has an assigned invocation shape and its
+        // reserved identity must live on that op, never on the body's
+        // creation op.
+        SemanticOp witness = staticCallWitness(closureCell, boundary,
+            closureNew.signature());
+        LoweredModuleUnit assignedUnit = withOps(closureCell.unit(),
+            withAddedOp(closureCell.unit(), witness));
+        Optional<ProducedProjectIdentityAudit.Violation> assignedShape =
+            ProducedProjectIdentityAudit.firstViolation(
+                withUnit(project, assignedUnit));
+        check(assignedShape.isPresent()
+                && assignedShape.get().rule().equals(
+                    ProducedProjectIdentityAudit.BODY_LOCAL_ASSIGNED_INVOCATION_SHAPE),
+            "a body-local cell named by a statically materialized invocation "
+                + "fails the audit by name: " + assignedShape);
+
+        checkValidatorRejects(wrongPolicyUnit, registryHash,
+            "the descriptor-kind seed");
+        checkValidatorRejects(wrongDescriptorUnit, registryHash,
+            "the declared-descriptor seed");
+        checkValidatorRejects(assignedUnit, registryHash,
+            "the assigned-invocation-shape seed");
+    }
+
+    /**
+     * Asserts the validator rejects one seeded unit (the audit's
+     * independent-clause parity proof), and that its E6005 names the closed
+     * boundary rule.
+     */
+    private static void checkValidatorRejects(LoweredModuleUnit unit,
+            String registryHash, String subject) {
+        Optional<CompilerDiagnostic> diagnostic = SemanticIrValidator.validate(
+            unit, new SemanticIrValidator.ComparisonFacts(unit.interfaceHash(),
+                SemanticProfile.DEAL_V1_2_INT32, registryHash));
+        check(diagnostic.isPresent(),
+            subject + ": the validator rejects the seeded unit");
+        if (diagnostic.isPresent()) {
+            check(diagnostic.get().message().contains("R-BOUNDARY-TRIPLE")
+                    || diagnostic.get().message().contains("boundary"),
+                subject + ": the validator's E6005 names the boundary rule: "
+                    + diagnostic.get().message());
+        }
+    }
+
+    /**
+     * One op reseeded with the given payload and failure policy (the
+     * negative-control surface): the contract snapshot is rebuilt over the
+     * reseeded fields with its digest recomputed by the landed
+     * canonicalizer, so every seed is a well-formed op the validator would
+     * see.
+     */
+    private static SemanticOp reseed(SemanticOp op, KindPayload payload,
+            FailurePolicyId policy) {
+        ClosedSelector selector = payload instanceof KindPayload.SelectorCarrying carrying
+            ? carrying.selector() : null;
+        OperationContractSnapshot placeholder = new OperationContractSnapshot(
+            OperationContractSnapshot.VERSION, op.kind(), op.resultType(),
+            op.operandTypes(), selector, payload, policy,
+            op.contract().referencedSemanticIds(), "");
+        String digest = ContractSnapshotCanonicalizer.digest(placeholder);
+        OperationContractSnapshot contract = new OperationContractSnapshot(
+            OperationContractSnapshot.VERSION, op.kind(), op.resultType(),
+            op.operandTypes(), selector, payload, policy,
+            op.contract().referencedSemanticIds(), digest);
+        return new SemanticOp(op.opId(), op.kind(), op.origin(), op.result(),
+            op.resultType(), op.operands(), op.operandTypes(), payload, policy,
+            contract);
+    }
+
+    /**
+     * One statically materialized CALL witness of the given boundary: an
+     * indirect (non-dynamic) callee naming the boundary as its return
+     * boundary — the assigned-invocation-shape witness the closed cell
+     * refuses.
+     */
+    private static SemanticOp staticCallWitness(BodyLocalCell cell,
+            SemanticOp boundary, RuntimeDescriptor.Func signature) {
+        OpId witnessId = new OpId(cell.unit().moduleId(),
+            nextFreeOpId(cell.unit()));
+        KindPayload.CallPayload payload = new KindPayload.CallPayload(
+            CallMode.INDIRECT,
+            new KindPayload.CallCallee.Indirect(new ValueId(0)),
+            signature, List.of(), cell.boundary(), null, null, null);
+        OperationContractSnapshot placeholder = new OperationContractSnapshot(
+            OperationContractSnapshot.VERSION, SemanticOpKind.CALL, null,
+            List.of(), null, payload, FailurePolicyId.NO_DEAL_FAILURE,
+            List.of(), "");
+        String digest = ContractSnapshotCanonicalizer.digest(placeholder);
+        OperationContractSnapshot contract = new OperationContractSnapshot(
+            OperationContractSnapshot.VERSION, SemanticOpKind.CALL, null,
+            List.of(), null, payload, FailurePolicyId.NO_DEAL_FAILURE,
+            List.of(), digest);
+        SourceOrigin origin = boundary.origin();
+        return new SemanticOp(witnessId, SemanticOpKind.CALL, origin, null,
+            null, List.of(), List.of(), payload,
+            FailurePolicyId.NO_DEAL_FAILURE, contract);
+    }
+
+    /** The next unused op id of one unit. */
+    private static long nextFreeOpId(LoweredModuleUnit unit) {
+        long max = 0;
+        for (SemanticOp op : unit.ops()) {
+            max = Math.max(max, op.opId().id());
+        }
+        return max + 1;
+    }
+
+    /** The unit's ops with one op replaced (the seed surface). */
+    private static List<SemanticOp> withReplacedOp(LoweredModuleUnit unit,
+            OpId opId, SemanticOp replacement) {
+        List<SemanticOp> ops = new ArrayList<>();
+        for (SemanticOp op : unit.ops()) {
+            ops.add(op.opId().equals(opId) ? replacement : op);
+        }
+        return ops;
+    }
+
+    /** The unit's ops without the given one (the seed surface). */
+    private static List<SemanticOp> withoutOp(LoweredModuleUnit unit,
+            OpId opId) {
+        List<SemanticOp> ops = new ArrayList<>();
+        for (SemanticOp op : unit.ops()) {
+            if (!op.opId().equals(opId)) {
+                ops.add(op);
+            }
+        }
+        return ops;
+    }
+
+    /** The unit's ops with the given one emitted a second time. */
+    private static List<SemanticOp> withOpDuplicated(LoweredModuleUnit unit,
+            OpId opId) {
+        List<SemanticOp> ops = new ArrayList<>(unit.ops());
+        for (SemanticOp op : unit.ops()) {
+            if (op.opId().equals(opId)) {
+                ops.add(op);
+                break;
+            }
+        }
+        return ops;
+    }
+
+    /** The unit's ops plus one added op (the seed surface). */
+    private static List<SemanticOp> withAddedOp(LoweredModuleUnit unit,
+            SemanticOp added) {
+        List<SemanticOp> ops = new ArrayList<>(unit.ops());
+        ops.add(added);
+        return ops;
+    }
+
+    /** The project with one unit replaced (the seed surface). */
+    private static ExecutableLoweredProject withUnit(
+            ExecutableLoweredProject project, LoweredModuleUnit unit) {
+        Map<ModuleId, LoweredModuleUnit> modules =
+            new LinkedHashMap<>(project.modules());
+        modules.put(unit.moduleId(), unit);
+        return new ExecutableLoweredProject(project.semanticProfile(),
+            project.interfaceIndex(), modules, project.entryModule());
+    }
+
+    /**
+     * The first body-local identity cell of the project: a {@code RETURN}
+     * of a lowered body whose enclosing invocation identity resolves to the
+     * body's function-value creation op ({@code CLOSURE_NEW} or
+     * {@code RECURSIVE_GROUP_INIT}) — the K12 shape of a body no statically
+     * materialized invocation took over.
+     */
+    private static BodyLocalCell firstBodyLocalCell(
+            ExecutableLoweredProject project) {
+        for (LoweredModuleUnit unit : project.modules().values()) {
+            Map<OpId, SemanticOp> byId = opsById(unit);
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() != SemanticOpKind.RETURN
+                        || !(op.payload()
+                            instanceof KindPayload.ReturnPayload payload)
+                        || !unit.functions().containsKey(payload.function())) {
+                    continue;
+                }
+                SemanticOp identity = byId.get(payload.enclosingInvocationOpId());
+                if (identity != null
+                        && (identity.kind() == SemanticOpKind.CLOSURE_NEW
+                            || identity.kind() == SemanticOpKind.RECURSIVE_GROUP_INIT)) {
+                    return new BodyLocalCell(unit, payload.function(),
+                        identity.opId(), payload.returnBoundaryOpId());
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The first body-local identity cell whose enclosing invocation is a
+     * {@code CLOSURE_NEW} (the declared-return-descriptor clause's scope),
+     * or {@code null} when the project carries none.
+     */
+    private static BodyLocalCell firstClosureNewCell(
+            ExecutableLoweredProject project) {
+        for (LoweredModuleUnit unit : project.modules().values()) {
+            Map<OpId, SemanticOp> byId = opsById(unit);
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() != SemanticOpKind.RETURN
+                        || !(op.payload()
+                            instanceof KindPayload.ReturnPayload payload)
+                        || !unit.functions().containsKey(payload.function())) {
+                    continue;
+                }
+                SemanticOp identity = byId.get(payload.enclosingInvocationOpId());
+                if (identity != null
+                        && identity.kind() == SemanticOpKind.CLOSURE_NEW) {
+                    return new BodyLocalCell(unit, payload.function(),
+                        identity.opId(), payload.returnBoundaryOpId());
+                }
+            }
+        }
+        return null;
+    }
+
+    private static Map<OpId, SemanticOp> opsById(LoweredModuleUnit unit) {
+        Map<OpId, SemanticOp> byId = new LinkedHashMap<>();
+        for (SemanticOp op : unit.ops()) {
+            byId.putIfAbsent(op.opId(), op);
+        }
+        return byId;
+    }
+
     private static Optional<CompilerDiagnostic> validate(
             SemanticLowerer.ProjectLoweringResult result, LoweredModuleUnit unit) {
         ExecutableLoweredProject project = result.project();
@@ -780,7 +1205,8 @@ public class BodyInvocationIdentityTest {
         CheckedProjectInput checkedProject,
         ProjectInterfaceIndex index,
         List<SemanticRequirementManifest> manifests,
-        HostDeclarationSurface surface) {
+        HostDeclarationSurface surface,
+        CompilationOrchestrator orchestrator) {
     }
 
     private static RealProject compileProject(String source) throws Exception {
@@ -804,7 +1230,7 @@ public class BodyInvocationIdentityTest {
             throw new IllegalStateException("the fixture project did not build");
         }
         return new RealProject(proj, built.input(), built.index(), manifests.manifests(),
-            orchestrator.hostDeclarationSurface());
+            orchestrator.hostDeclarationSurface(), orchestrator);
     }
 
     private record LoweredProject(RealProject project,
@@ -1008,6 +1434,7 @@ public class BodyInvocationIdentityTest {
             testCarrierSliceEntryAcceptsNeverCalledDeclaration();
             testBodyLocalIdentityWithAssignedShape(zeroBaseline);
             testBodyLocalBoundaryOutsideReturn(storedBaseline);
+            testProducedProjectDanglingIdentityGuard(zeroCallSite);
         } finally {
             deleteRecursively(storedExpression == null ? null : storedExpression.root());
             deleteRecursively(zeroCallSite == null ? null : zeroCallSite.root());

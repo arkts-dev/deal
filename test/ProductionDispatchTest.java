@@ -11,6 +11,7 @@ import deal.diagnostics.CompilerDiagnostic;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
 import deal.module.CompilationOrchestrator;
+import deal.module.ProductionProjectEmission;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
 import deal.project.CliOverrides;
@@ -21,8 +22,11 @@ import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
 import deal.semantic.ReleaseConfiguration;
 import deal.semantic.SemanticLowerer;
+import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ReleaseState;
+import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
+import deal.test.conformance.ProducedProjectIdentityAudit;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -1664,6 +1668,223 @@ public class ProductionDispatchTest {
     }
 
     // =========================================================================
+    // 11. The produced-project accessor (ISSUE-0694 HR4(b))
+    // =========================================================================
+
+    /**
+     * The produced-project accessor
+     * ({@code conformance-cutover-guards-pins-and-production-source-removal}
+     * HR4(b) and the lane project identity audit contract): a production
+     * compile exposes the very validated project its one production arm
+     * lowered and emitted — the entry artifact's project, over which the
+     * lane-level dangling-identity guard runs — the JS arm and a compile
+     * that fails before phase 4 record none, and the production source reads
+     * the reference back nowhere, so no emission, staging, or comparison
+     * step consumes it.
+     */
+    private static void testProducedProjectAccessor() throws Exception {
+        System.out.println("-- the produced-project accessor: the production "
+            + "arm exposes the project it emitted; the reference is "
+            + "read-only and recorded at most once --");
+
+        // (1) A successful production compile exposes its own project: the
+        // entry artifact is the project's entry artifact and the identity
+        // guard passes it (the audit's subject is non-empty).
+        Path project = Files.createTempDirectory("production-dispatch-produced-");
+        ExecutableLoweredProject produced = null;
+        try {
+            write(project, "deal.json", DEAL_JSON_LUA);
+            write(project, "src/lib.deal", LIB_SOURCE);
+            write(project, "src/main.deal", SYNC_CALL_SOURCE);
+
+            ArmCompile production = compileWithInvocation(project,
+                "src/main.deal", productionInvocation());
+            check(production.success(), "the production compile succeeds: "
+                + production.orchestrator().diagnostics());
+            if (!production.success()) {
+                return;
+            }
+            produced = production.orchestrator().producedProject();
+            check(produced != null, "the production compile exposes the "
+                + "project it lowered and emitted");
+            if (produced == null) {
+                return;
+            }
+            checkEq(SemanticProfile.DEAL_V1_2_INT32,
+                produced.semanticProfile(),
+                "the produced project is the v1.2 profile");
+            check(produced.modules().containsKey(produced.entryModule()),
+                "the produced project carries its entry module");
+            check(containsReturnOp(produced),
+                "the produced project carries RETURN ops (the identity "
+                    + "audit's subject is non-empty)");
+            String artifactRelativePath = produced.entryModule().path()
+                .replace('.', '/') + ".lua";
+            Path artifact = project.resolve("out")
+                .resolve(artifactRelativePath);
+            check(Files.isRegularFile(artifact),
+                "the one staged artifact is the produced project's entry "
+                    + "artifact: " + artifact);
+            if (Files.isRegularFile(artifact)) {
+                String chunk = Files.readString(artifact,
+                    StandardCharsets.UTF_8);
+                check(chunk.contains("__exportSurfaces[\""
+                        + produced.entryModule().path() + "\"]"),
+                    "the staged artifact carries the produced project's "
+                        + "entry surface");
+            }
+            List<ProducedProjectIdentityAudit.Violation> violations =
+                ProducedProjectIdentityAudit.audit(produced);
+            check(violations.isEmpty(),
+                "the produced project passes the dangling-identity audit: "
+                    + violations);
+        } finally {
+            deleteRecursively(project);
+        }
+
+        // (2) The JS arm records none: the third, unchanged pipeline runs no
+        // production arm, so the accessor can never surface a JS artifact's
+        // project.
+        Path js = Files.createTempDirectory("production-dispatch-produced-js-");
+        try {
+            write(js, "deal.json", """
+                {
+                  "languageVersion": "1.2",
+                  "moduleRoots": ["src"],
+                  "output": "out",
+                  "backend": "js"
+                }
+                """);
+            write(js, "src/lib.deal", LIB_SOURCE);
+            write(js, "src/main.deal", SYNC_CALL_SOURCE);
+            ArmCompile arm = compileWithInvocation(js, "src/main.deal",
+                productionInvocation());
+            check(arm.orchestrator().producedProject() == null,
+                "the JS arm records no produced project");
+        } finally {
+            deleteRecursively(js);
+        }
+
+        // (3) A compile that fails before phase 4 records none: there is no
+        // project to expose, so the accessor can never surface a
+        // half-lowered or rejected project.
+        CompilerDiagnostic failedDiagnostic = null;
+        Path broken = Files.createTempDirectory(
+            "production-dispatch-produced-broken-");
+        try {
+            write(broken, "deal.json", DEAL_JSON_LUA);
+            write(broken, "src/main.deal",
+                "export function main(: null { return null }\n");
+            ArmCompile arm = compileWithInvocation(broken, "src/main.deal",
+                productionInvocation());
+            check(!arm.success(), "the parse-error fixture fails the "
+                + "compile");
+            check(arm.orchestrator().producedProject() == null,
+                "a compile that runs no production arm records no project");
+            checkEq(0, arm.orchestrator().semanticEmissionCount(),
+                "no project emission is recorded for the failing compile");
+            failedDiagnostic = arm.orchestrator().diagnostics().stream()
+                .findFirst().orElse(null);
+        } finally {
+            deleteRecursively(broken);
+        }
+
+        // (4) The result contract's fail-closed halves: a failed run
+        // carrying a produced project and an emitted run carrying none are
+        // both refused, so the accessor can never be observed for a run that
+        // produced nothing.
+        if (produced != null && failedDiagnostic != null) {
+            boolean failedRefused = false;
+            try {
+                new ProductionProjectEmission.Result(
+                    ProductionProjectEmission.Outcome.FAILED,
+                    List.of(failedDiagnostic), produced, null);
+            } catch (IllegalArgumentException expected) {
+                failedRefused = true;
+            }
+            check(failedRefused, "a failed production run refuses a "
+                + "produced-project reference");
+        }
+        boolean emittedRefused = false;
+        try {
+            new ProductionProjectEmission.Result(
+                ProductionProjectEmission.Outcome.EMITTED,
+                List.of(), null, "main.lua");
+        } catch (IllegalArgumentException expected) {
+            emittedRefused = true;
+        }
+        check(emittedRefused, "an emitted production run refuses a missing "
+            + "produced-project reference");
+
+        checkProducedProjectAccessorIsReadOnly();
+    }
+
+    /** Whether the project closure carries at least one RETURN op. */
+    private static boolean containsReturnOp(ExecutableLoweredProject project) {
+        return project.modules().values().stream().anyMatch(unit ->
+            unit.ops().stream().anyMatch(op ->
+                op.kind() == SemanticOpKind.RETURN));
+    }
+
+    /**
+     * The read-only wiring of the accessor: in the production source set the
+     * token occurs only in the orchestrator — exactly one writer, inside the
+     * production arm, refusing a second record — and in the production
+     * unit's result record, which carries the reference out once; no
+     * emission, staging, or comparison source reads it back.
+     */
+    private static void checkProducedProjectAccessorIsReadOnly()
+            throws Exception {
+        Path deal = Path.of("deal");
+        check(Files.isDirectory(deal), "the production source root exists");
+        if (!Files.isDirectory(deal)) {
+            return;
+        }
+        try (Stream<Path> listing = Files.walk(deal)) {
+            for (Path file : listing.filter(Files::isRegularFile).sorted()
+                    .toList()) {
+                String name = file.getFileName().toString();
+                if (!name.endsWith(".java")) {
+                    continue;
+                }
+                String source = Files.readString(file, StandardCharsets.UTF_8);
+                int occurrences = countOccurrences(source, "producedProject");
+                if (name.equals("CompilationOrchestrator.java")
+                        || name.equals("ProductionProjectEmission.java")) {
+                    check(occurrences > 0, "the accessor surface is declared "
+                        + "in " + name);
+                } else {
+                    checkEq(0, occurrences,
+                        "no emission, staging, or comparison source mentions "
+                            + "the produced-project reference (" + file + ")");
+                }
+            }
+        }
+        String orchestrator = Files.readString(
+            Path.of("deal", "module", "CompilationOrchestrator.java"),
+            StandardCharsets.UTF_8);
+        checkEq(1, countOccurrences(orchestrator,
+                "producedProject = Objects.requireNonNull("),
+            "the orchestrator assigns the reference at exactly one writer");
+        checkEq(2, countOccurrences(orchestrator, "recordProducedProject("),
+            "the writer helper has one declaration and one call site");
+        check(orchestrator.contains(
+                "recordProducedProject(result.producedProject());"),
+            "the production arm records the produced project it received");
+        check(orchestrator.contains("if (producedProject != null)"),
+            "the writer refuses a second record (set exactly once)");
+        String emission = Files.readString(
+            Path.of("deal", "module", "ProductionProjectEmission.java"),
+            StandardCharsets.UTF_8);
+        check(emission.contains("ExecutableLoweredProject producedProject,"),
+            "the production arm's result carries the read-only project "
+                + "reference");
+        checkEq(0, countOccurrences(emission, ".producedProject()"),
+            "no emission or staging step of the production unit reads the "
+                + "reference back");
+    }
+
+    // =========================================================================
     // Main
     // =========================================================================
 
@@ -1682,6 +1903,7 @@ public class ProductionDispatchTest {
         testSingleArmDispatch();
         testLegacyRejectionStagesNothingWithDumps();
         testRetainedTestScopeEmitters();
+        testProducedProjectAccessor();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
