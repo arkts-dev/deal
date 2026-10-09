@@ -120,7 +120,10 @@ import java.util.stream.Stream;
  * process exit status, or wrong stderr is rejected, and the exact-text
  * artifact leg is only credited when the process completes its tested body
  * with exit 0, empty transcripts, no probe defect, and no failure transport
- * (the nonzero-without-transport control included).</p>
+ * (the nonzero-without-transport control included), and the accepted-depth
+ * artifact leg consumes that same completed-process credit — a nonzero exit
+ * without a transport file can never be credited as a completed
+ * 512-container encode.</p>
  *
  * <p>The combined dependency step runs the oracle over every fixture of
  * the family through the same one-lowering closure (the runtime-ok
@@ -2354,6 +2357,19 @@ public class JsonableHelperProductionDriveTest {
         return mismatches;
     }
 
+    /**
+     * The valid-depth artifact leg's completed-process credit: the same
+     * comparison the exact-text drives use, so the 511-link chain (512
+     * containers) is credited only when the fixture process exits 0 with
+     * empty transcripts, no probe defect, and no failure transport. A
+     * nonzero exit without a written transport file — a toolchain that dies
+     * before running the tested body — is a mismatch, never a completed
+     * encode, so it can never be credited as the accepted-depth success.
+     */
+    private static List<String> validDepthArtifactMismatches(Execution execution) {
+        return exactHelperArtifactMismatches(execution);
+    }
+
     /** The shared nested-class fixture: {@code Wrapper.child.data} is the table field. */
     private static String nestedTableFixtureSource(String function) {
         return "// @jsonable\nexport class Child {\n  data: table = {};\n}\n\n"
@@ -2510,13 +2526,11 @@ public class JsonableHelperProductionDriveTest {
                 Execution execution = target == Target.LUAJIT
                     ? executeLua(project, validExports)
                     : executeJvm(project, validExports);
-                Capture capture = execution.capture();
-                check(capture == null, "the 511-link chain (512 containers) "
-                    + "completes on the " + target.laneName() + " artifact (exit "
-                    + execution.exitCode() + "; "
-                    + (capture == null ? ""
-                        : capture.code() + " " + capture.message())
-                    + ")");
+                for (String mismatch : validDepthArtifactMismatches(execution)) {
+                    check(false, "the 511-link chain (512 containers) "
+                        + "completes on the " + target.laneName() + " artifact: "
+                        + mismatch);
+                }
             } finally {
                 deleteRecursively(project.root());
             }
@@ -2779,6 +2793,30 @@ public class JsonableHelperProductionDriveTest {
                 .anyMatch(m -> m.contains("raises a failure")),
             "the comparator rejects a written failure transport: "
                 + exactHelperArtifactMismatches(captured));
+    }
+
+    /**
+     * The valid-depth artifact leg's negative control: the credit the
+     * 511-link accepted-depth leg consumes (the same method the leg calls)
+     * accepts only a completed zero-status, empty-transcript encode and
+     * rejects an execution that exits nonzero without writing a transport
+     * file — the exact case the leg's former {@code capture == null} check
+     * credited as the accepted-depth success. The rejection control uses
+     * the exit status observed in the depth-leg interception reproduction
+     * (a wrapper that dies before the transport file is written).
+     */
+    private static void testDepthArtifactCreditNegativeControl() {
+        System.out.println("-- the valid-depth artifact leg's negative control: a "
+            + "nonzero execution without a transport file is rejected --");
+        Execution completed = new Execution(0, "", "", null, false);
+        check(validDepthArtifactMismatches(completed).isEmpty(),
+            "the depth-leg credit accepts a completed 512-container encode "
+                + "(the control)");
+        Execution nonzeroNoTransport = new Execution(17, "", "", null, false);
+        List<String> mismatches = validDepthArtifactMismatches(nonzeroNoTransport);
+        check(mismatches.stream().anyMatch(m -> m.contains("exits nonzero")),
+            "the depth-leg credit rejects a nonzero execution without a "
+                + "transport file (exit 17): " + mismatches);
     }
 
     /**
@@ -3187,6 +3225,7 @@ public class JsonableHelperProductionDriveTest {
         testNestedTableInsertionOrder();
         testNestedTableNumericVariants();
         testNestedClassDepthBound();
+        testDepthArtifactCreditNegativeControl();
         testArrayExecutorViewSync();
         testArrayExecutorViewDeleteParity();
         testNestedClassFieldViewSync();
