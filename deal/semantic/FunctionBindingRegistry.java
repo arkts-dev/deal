@@ -507,4 +507,17 @@ public final class FunctionBindingRegistry {
     public boolean containsKey(FunctionAllocationIdentity identity) {
         return registrations.containsKey(identity);
     }
+
+    /**
+     * The single registration of one producing allocation, or
+     * {@code null} when the identity carries none. The lookup is the
+     * registration seam's read side: a producing site that pre-registered
+     * its body binding (the declared-body preallocation guarantee)
+     * resolves its own identical registration here instead of
+     * registering twice.
+     */
+    public FunctionExecutionBinding registrationOf(FunctionAllocationIdentity identity) {
+        return registrations.get(Objects.requireNonNull(identity,
+            "identity must not be null"));
+    }
 }

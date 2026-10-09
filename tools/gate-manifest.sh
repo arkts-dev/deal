@@ -89,4 +89,5 @@ WARNING: node not found, skipping standard library JS tests'
   'fg|=== Running LuaJIT Chunk Local Bound Tests (ISSUE-0716) ===|java -ea -cp build deal.test.LuaJitChunkLocalBoundTest'
   'fg|=== Running Unreachable Tail Production Tests (ISSUE-0713) ===|java -ea -cp build deal.test.UnreachableTailProductionTest'
   'fg|=== Running Nested Group Production Tests (ISSUE-0731) ===|java -ea -cp build deal.test.NestedGroupProductionTest'
+  'fg|=== Running Self-Alias Production Tests (ISSUE-0743) ===|java -ea -cp build deal.test.SelfAliasProductionTest'
 )

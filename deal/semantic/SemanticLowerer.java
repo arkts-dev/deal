@@ -2424,17 +2424,23 @@ public final class SemanticLowerer {
          */
         private final Map<FunctionId, LoweredFunction> functions = new LinkedHashMap<>();
         /**
-         * The recursive-group members whose {@code LoweredBody} execution
-         * binding is registered before their own body walk (the member
+         * The declared bodies whose {@code LoweredBody} execution binding
+         * is registered before their own body walk (the declared-body
          * preallocation guarantee) but whose capture list is not yet
-         * known: the member's {@code LoweredFunction} record is finalized
-         * only after its body walk completes, so an invocation of the
-         * member through an ordinary function value resolved while that
-         * walk is still open is value-carried — the closure carrier holds
-         * the creation-site captures, never a call-site re-resolution of
-         * an unresolved incarnation.
+         * known: the {@code LoweredFunction} record is finalized only
+         * after the body walk completes, so an invocation of the body
+         * through an ordinary function value resolved while that walk is
+         * still open is value-carried — the closure carrier holds the
+         * creation-site captures, never a call-site re-resolution of an
+         * unresolved incarnation. The set holds the recursive-group
+         * members pre-registered by {@link #lowerGroup} and every
+         * declared function pre-registered by
+         * {@link #lowerBindingFunctionDecl} (the local and module-level
+         * self-reference shapes: a checker-valid reference of a
+         * declaration to its own pre-allocated body identity, an
+         * ordinary function-value call included).
          */
-        private final Set<FunctionId> groupMemberBodiesPendingCaptures =
+        private final Set<FunctionId> bodiesPendingCaptures =
             new LinkedHashSet<>();
         /**
          * The member binding cells of every nested (non-module-level)
@@ -4955,6 +4961,24 @@ public final class SemanticLowerer {
                 functionIdentity.put(nameIncarnation, closureIdentity);
             }
             RuntimeDescriptor.Func signature = functionSignatureOf(function);
+            // The declared body's execution binding is pre-registered
+            // before its own body walk (C10/K12: every lowered body owns
+            // exactly one resolvable invocation identity, one return
+            // cell, and one execution binding). A reference of the
+            // declaration to its own pre-allocated identity — an ordinary
+            // function-value call (`let again = f; again(...)`) or its
+            // awaited twin — resolves through the registry while the walk
+            // is still open instead of failing closed on a
+            // not-yet-registered binding. The registration is exactly one
+            // per allocation identity; {@link #emitClosureNew} below
+            // reuses it instead of registering twice. The body's capture
+            // list is finalized only after the walk, so a pending body's
+            // value-carried classification is recorded until then
+            // ({@link #bodiesPendingCaptures}).
+            FunctionAllocationIdentity preRegisteredIdentity =
+                new FunctionAllocationIdentity(closureIdentity.id());
+            registry.registerClosure(preRegisteredIdentity, functionId, bodyBlock);
+            bodiesPendingCaptures.add(functionId);
             List<SemanticOp> bodyOps = new ArrayList<>();
             List<CapturedCell> captured = new ArrayList<>();
             emitTargets.push(bodyOps);
@@ -5013,6 +5037,10 @@ public final class SemanticLowerer {
             List<BindingGeneration> captureIds = captureGenerations(captured);
             emitClosureNew(functionId, closureIdentity, signature, captureIds, bodyBlock,
                 function.span(), captured);
+            // The body's capture list is final from here: every later
+            // reference classifies the value-carried invocation from the
+            // recorded captures.
+            bodiesPendingCaptures.remove(functionId);
             emitUserNullOp(SemanticOpKind.BINDING_INIT,
                 new KindPayload.BindingInitPayload(nameBinding, INITIAL_LOOP_GENERATION,
                     closureIdentity),
@@ -5072,7 +5100,7 @@ public final class SemanticLowerer {
             // member identity. The member's capture list is finalized only
             // after its body walk, so a pending member's value-carried
             // classification is recorded until then
-            // ({@link #groupMemberBodiesPendingCaptures}).
+            // ({@link #bodiesPendingCaptures}).
             List<FunctionContext> memberContexts = new ArrayList<>();
             for (int i = 0; i < members.size(); i++) {
                 FunctionDeclaration member = members.get(i);
@@ -5107,7 +5135,7 @@ public final class SemanticLowerer {
                     registry.registerGroupMember(new FunctionAllocationIdentity(
                         memberIdentities.get(i).id()), context.functionId,
                         context.bodyBlock);
-                    groupMemberBodiesPendingCaptures.add(context.functionId);
+                    bodiesPendingCaptures.add(context.functionId);
                 }
                 memberContexts.add(context);
             }
@@ -5193,7 +5221,7 @@ public final class SemanticLowerer {
                     // value-carried invocation from the recorded captures.
                     functions.put(functionId, new LoweredFunction(functionId, signature,
                         captureIds, bodyBlock));
-                    groupMemberBodiesPendingCaptures.remove(functionId);
+                    bodiesPendingCaptures.remove(functionId);
                 }
             }
             // Phase 2: exactly one RECURSIVE_GROUP_INIT op — the payload
@@ -6054,8 +6082,22 @@ public final class SemanticLowerer {
                 result, signature, FailurePolicyId.NO_DEAL_FAILURE, origin));
             functions.put(functionId, new LoweredFunction(functionId, signature, captures,
                 bodyBlock));
-            registry.registerClosure(new FunctionAllocationIdentity(result.id()),
-                functionId, bodyBlock);
+            // Exactly one registration per allocation identity: a
+            // pre-registered declared body (the preallocation guarantee of
+            // {@link #lowerBindingFunctionDecl}) holds an identical
+            // LoweredBody already — re-registering is a producer defect,
+            // never an overwrite.
+            FunctionAllocationIdentity identity =
+                new FunctionAllocationIdentity(result.id());
+            FunctionExecutionBinding previous = registry.registrationOf(identity);
+            if (previous == null) {
+                registry.registerClosure(identity, functionId, bodyBlock);
+            } else if (!previous.equals(binding)) {
+                throw new IllegalStateException("the allocation identity " + result
+                    + " carries a different function-binding registration (" + previous
+                    + ") than the produced CLOSURE_NEW body " + binding
+                    + " (producer defect)");
+            }
             List<ClosureCapture> captureFacts = new ArrayList<>();
             for (CapturedCell capture : captured) {
                 captureFacts.add(new ClosureCapture(capture.cell().name, capture.cell().id,
@@ -7872,7 +7914,7 @@ public final class SemanticLowerer {
                 // closure, so the invocation is value-carried — the
                 // creation-site captures travel with the carrier, never
                 // a call-site re-resolution of an unresolved incarnation.
-                return groupMemberBodiesPendingCaptures.contains(body.functionId());
+                return bodiesPendingCaptures.contains(body.functionId());
             }
             return !function.captures().isEmpty();
         }

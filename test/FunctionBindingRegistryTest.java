@@ -295,9 +295,10 @@ public class FunctionBindingRegistryTest {
         // at its head (the CLOSURE_NEW ops of the module-level
         // declarations, declaration order) and k's expression closure
         // last (inside h's flushed body ops); the registry map iterates
-        // in the walk's registration order — f, g, then k (registered
-        // during h's body walk, which precedes h's own CLOSURE_NEW),
-        // then h.
+        // in the walk's registration order — f, g, then h (each declared
+        // body pre-registers its LoweredBody before its own body walk,
+        // ISSUE-0743), then k (the function expression registers when its
+        // own emitting site closes, during h's body walk).
         check(closureNews.size() == 4, "four CLOSURE_NEW ops to order");
         if (closureNews.size() == 4) {
             FunctionAllocationIdentity fKey = new FunctionAllocationIdentity(
@@ -308,10 +309,11 @@ public class FunctionBindingRegistryTest {
                 ((ValueId) closureNews.get(2).result()).id());
             FunctionAllocationIdentity kKey = new FunctionAllocationIdentity(
                 ((ValueId) closureNews.get(3).result()).id());
-            check(closureKeys.equals(List.of(fKey, gKey, kKey, hKey)),
+            check(closureKeys.equals(List.of(fKey, gKey, hKey, kKey)),
                 "the map iterates in the walk's deterministic registration order "
-                    + "[f, g, k, h] (a nested closure registers during its enclosing "
-                    + "body walk, before the enclosing closure); got " + keys);
+                    + "[f, g, h, k] (a declared body pre-registers before its own body "
+                    + "walk, so a declared body precedes the closures its body declares "
+                    + "or creates); got " + keys);
             check(keys.size() == 7 && keys.subList(0, 3).equals(seedKeys),
                 "the three intrinsic seeds are registered first (they are seeded before "
                     + "the hoisted names, ISSUE-0632); got " + keys);
