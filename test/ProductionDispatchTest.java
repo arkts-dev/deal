@@ -252,6 +252,41 @@ public class ProductionDispatchTest {
         """;
 
     /**
+     * The shadowed-local-callee collision (review cycle 4): a nested
+     * function declaration shadows a same-named module-level function
+     * whose parameter names the codec sibling, while the nested
+     * declaration's parameter names the demanded ir sibling. The call
+     * constructs the nested declaration's class (default 7), never the
+     * top-level declaration's sibling (93).
+     */
+    private static final String SHADOWED_CALLEE_CODEC_FIRST = """
+        import * as console from "std/console";
+        import * as codec from "./m/codec";
+        import * as ir from "./m/ir";
+        function consume(x: codec.Ir): int { return x.a; }
+        export function main(): null {
+          function consume(x: ir.Ir): int { return x.a; }
+          if (consume({}) === 7) { console.log("ok"); }
+          else { console.log("wrong"); }
+          return null;
+        }
+        """;
+
+    /** The shadowed-local-callee collision with the imports reversed. */
+    private static final String SHADOWED_CALLEE_IR_FIRST = """
+        import * as console from "std/console";
+        import * as ir from "./m/ir";
+        import * as codec from "./m/codec";
+        function consume(x: codec.Ir): int { return x.a; }
+        export function main(): null {
+          function consume(x: ir.Ir): int { return x.a; }
+          if (consume({}) === 7) { console.log("ok"); }
+          else { console.log("wrong"); }
+          return null;
+        }
+        """;
+
+    /**
      * The nested-literal control (review cycle 2): the demanded class
      * is a nested field of an imported class, so the enclosing field
      * annotation names the outer class only. The declaring program's own
@@ -1486,6 +1521,135 @@ public class ProductionDispatchTest {
                 // observable outcome, never the sibling's (93).
                 checkJsArtifactRun(label, root.resolve("out"),
                     irFirst ? "main_body_ir_first.js" : "main_body.js");
+            }
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * The shadowed-local-callee collision (review cycle 4): a nested
+     * function declaration shadows a same-named module-level function,
+     * so the resolved callee's own declaration — never the same-named
+     * top-level declaration — owns the literal's parameter context. The
+     * completed ordinary walk and the published artifact must follow
+     * the nested declaration's provider in both import orders.
+     */
+    private static void testProductionShadowedLocalCalleeCollision()
+            throws Exception {
+        System.out.println("-- production invocation: a nested callee"
+            + " declaration shadows the module function (both import"
+            + " orders; exact provider, declaration, and artifact"
+            + " outcome) --");
+
+        Path root = Files.createTempDirectory("production-shadowed-");
+        try {
+            write(root, "deal.json", """
+                {
+                  "languageVersion": "1.2",
+                  "stdlib": "1.2",
+                  "moduleRoots": ["src"],
+                  "dependencies": {},
+                  "externals": {},
+                  "backend": "js",
+                  "output": "out"
+                }
+                """);
+            write(root, "src/m/ir.deal", CONTEXTUAL_IR_SOURCE);
+            write(root, "src/m/codec.deal", CONTEXTUAL_CODEC_SOURCE);
+            write(root, "src/main.deal", SHADOWED_CALLEE_CODEC_FIRST);
+            write(root, "src/main_ir_first.deal",
+                SHADOWED_CALLEE_IR_FIRST);
+
+            String codecFirstDigest = null;
+            for (String entry : List.of("src/main.deal",
+                    "src/main_ir_first.deal")) {
+                String label = entry.contains("ir_first") ? "ir-first"
+                    : "codec-first";
+                boolean irFirst = label.equals("ir-first");
+                ArmCompile compile = compileWithInvocation(root, entry,
+                    productionInvocation());
+                check(compile.success(), "the " + label
+                    + " shadowed-callee collision compile succeeds"
+                    + " through the production invocation: "
+                    + compile.orchestrator().diagnostics());
+                if (!compile.success()) {
+                    continue;
+                }
+                CompilationOrchestrator orchestrator =
+                    compile.orchestrator();
+                String mainUri = serializerModuleUri(orchestrator,
+                    "/" + entry);
+                String irUri = serializerModuleUri(orchestrator,
+                    "/src/m/ir.deal");
+                String codecUri = serializerModuleUri(orchestrator,
+                    "/src/m/codec.deal");
+                check(mainUri != null && irUri != null
+                        && codecUri != null, "the " + label
+                    + " shadowed-callee collision exposes every module"
+                    + " identity");
+                if (mainUri == null || irUri == null
+                        || codecUri == null) {
+                    continue;
+                }
+                DiagnosticRange irDeclaration = classDeclarationRange(
+                    CONTEXTUAL_IR_SOURCE,
+                    irUri.substring("file://".length()), "Ir");
+                DiagnosticRange codecIrDeclaration =
+                    classDeclarationRange(CONTEXTUAL_CODEC_SOURCE,
+                        codecUri.substring("file://".length()), "Ir");
+                check(irDeclaration != null
+                        && codecIrDeclaration != null, "the " + label
+                    + " shadowed-callee collision resolves both sibling"
+                    + " Ir declaration ranges");
+                if (irDeclaration == null
+                        || codecIrDeclaration == null) {
+                    continue;
+                }
+
+                // The nested declaration's parameter context owns the
+                // literal: the ordinary walk's occurrence and its
+                // runtime-use edge name the nested provider's exact
+                // declaration, never the top-level declaration's
+                // sibling provider.
+                List<RuntimeImportDependency> edges = classEdges(
+                    orchestrator, mainUri, "Ir",
+                    RuntimeImportDependency.Reason.RUNTIME_USE);
+                checkEq(1, edges.size(), "the " + label + " completed"
+                    + " graph holds exactly one ordinary Ir edge");
+                if (edges.size() != 1) {
+                    continue;
+                }
+                RuntimeImportDependency edge = edges.get(0);
+                checkEq(irUri, edge.toSemanticModuleIdentity()
+                        .canonicalResolvedSourceUri(), "the " + label
+                    + " ordinary Ir edge targets the nested declaration's"
+                    + " declaring module");
+                checkEq("ir", edge.importAlias(), "the " + label
+                    + " ordinary Ir edge keeps the spelled alias");
+                checkEq(irDeclaration, edge.semanticResourceIdentity()
+                        .lexicalDeclarationIdentity().sourceScalarRange(),
+                    "the " + label + " ordinary Ir edge carries the exact"
+                        + " nested declaration range");
+                check(!codecIrDeclaration.equals(edge
+                        .semanticResourceIdentity()
+                        .lexicalDeclarationIdentity().sourceScalarRange()),
+                    "the " + label + " ordinary Ir edge never binds the"
+                        + " top-level declaration's sibling provider");
+                if (irFirst) {
+                    checkEq(codecFirstDigest,
+                        edge.providerContractDigest(), "the " + label
+                        + " ordinary Ir provider digest is import-order"
+                        + " independent");
+                } else {
+                    codecFirstDigest = edge.providerContractDigest();
+                }
+
+                // The published artifact constructs the recorded
+                // provider's class: the demanded default (7) is the
+                // observable outcome, never the sibling's (93).
+                checkJsArtifactRun(label, root.resolve("out"),
+                    irFirst ? "main_ir_first.js" : "main.js");
             }
         } finally {
             deleteRecursively(root);
@@ -4121,6 +4285,7 @@ public class ProductionDispatchTest {
         testProductionSiblingModuleProviderIdentity();
         testProductionSameNameSiblingCollision();
         testProductionContextualCallSiblingCollision();
+        testProductionShadowedLocalCalleeCollision();
         testProductionNestedSiblingCollision();
         testProductionDeclaredContextSiblingCollision();
         testConversionOverflowTerminal();

@@ -225,6 +225,7 @@ public final class DefaultIrRecorderTest {
         testSiblingProvidersResolveTheDeclaringModule();
         testSameNameSiblingCollision();
         testContextualCallSiblingCollision();
+        testShadowedLocalCalleeSiblingCollision();
         testDeclaredContextSiblingCollision();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -578,6 +579,112 @@ public final class DefaultIrRecorderTest {
 
     /** One synthetic same-module top-level function of the probe. */
     private record LocalFunction(String name, String qualifiedParamType) {
+    }
+
+    /**
+     * The shadowed-local-callee body probe (review cycle 4): the module
+     * scope carries the top-level {@code consume} function symbol and a
+     * body block scope carries the nested same-named declaration's
+     * symbol (exactly the checker's scope shape); the body's call
+     * passes a class literal. The resolved symbol's own declaration —
+     * never the top-level declaration of that name — owns the literal's
+     * parameter context. Returns the recorded occurrences.
+     */
+    private static List<DefaultResourceOccurrence> siblingShadowedCallRun(
+            List<SiblingProvider> providers, SiblingProvider nested,
+            SiblingProvider topLevel) {
+        StringBuilder source = new StringBuilder();
+        for (SiblingProvider provider : providers) {
+            source.append("import * as ").append(provider.alias())
+                .append(" from \"./").append(provider.alias())
+                .append("\"\n");
+        }
+        source.append("function consume(x: ").append(topLevel.alias())
+            .append(".Ir): int { return x.v; }\n")
+            .append("function outer(): int {\n")
+            .append("  function consume(x: ").append(nested.alias())
+            .append(".Ir): int { return x.v; }\n")
+            .append("  return consume({ v: 7 });\n")
+            .append("}\n");
+        LexResult lex = new Lexer(source.toString(), "main.deal")
+            .tokenize();
+        check(!lex.hasErrors(), "shadowed-callee fixture lexes: "
+            + lex.diagnostics());
+        ParseResult parse = new Parser(lex.tokens(), "main.deal",
+            lex.directiveEvents()).parse();
+        check(!parse.hasErrors(), "shadowed-callee fixture parses: "
+            + parse.diagnostics());
+        ProgramNode program = parse.program();
+        FunctionDeclaration outer = null;
+        for (StatementNode stmt : program.statements()) {
+            if (stmt instanceof FunctionDeclaration fd
+                    && fd.name().equals("outer")) {
+                outer = fd;
+            }
+        }
+        FunctionDeclaration nestedDeclaration = outer == null ? null
+            : directFunctionOf(outer.body(), "consume");
+        check(outer != null && nestedDeclaration != null,
+            "the shadowed-callee fixture declares the nested consume");
+        if (outer == null || nestedDeclaration == null) {
+            return List.of();
+        }
+        Map<ExpressionNode, Type> typeMap = new HashMap<>();
+        for (StatementNode stmt : outer.body().statements()) {
+            if (stmt instanceof ReturnStatement rs) {
+                rs.expr().ifPresent(expr -> {
+                    for (ExpressionNode node : collectAll(expr)) {
+                        if (node instanceof ObjectLiteralExpr) {
+                            typeMap.put(node, nested.classType());
+                        }
+                        if (node instanceof deal.ast.CallExpr call) {
+                            typeMap.put(call.callee(),
+                                callableType(nested));
+                        }
+                    }
+                });
+            }
+        }
+        Map<String, DefaultPlanImport> imports = new LinkedHashMap<>();
+        Map<String, CanonicalModuleIdentity> classification =
+            new LinkedHashMap<>();
+        SymbolTable root = new SymbolTable();
+        for (SiblingProvider provider : providers) {
+            DefaultPlanImport planImport = provider.planImport();
+            imports.put(provider.alias(), planImport);
+            classification.put(provider.modulePath(), provider.identity());
+            root.define(provider.alias(), new deal.checker.Symbol
+                .ModuleSymbol(provider.alias(), planImport.exports(),
+                    new Span("main.deal", 1, 1, 1, 5)));
+        }
+        // The checker defines the module-level function in the module
+        // scope and each nested declaration in its body block scope.
+        root.define("consume", new deal.checker.Symbol.FunctionSymbol(
+            "consume", (Type.Func) callableType(topLevel)));
+        SymbolTable bodyScope = root.enterScope();
+        bodyScope.define("consume", new deal.checker.Symbol.FunctionSymbol(
+            "consume", (Type.Func) callableType(nested)));
+        Map<StatementNode, SymbolTable> scopeMap =
+            Map.of(outer.body(), bodyScope);
+        DefaultIrRecorder recorder = new DefaultIrRecorder(
+            typeMap, scopeMap, imports, classification,
+            CONSUMER_LOCATION, "src.main", program,
+            (typeNode, resolutionScope) -> Type.Error.INSTANCE,
+            Map.of());
+        recorder.recordFunctionBody(outer, root);
+        return recorder.occurrences();
+    }
+
+    /** The direct function declaration of the given name in a block. */
+    private static FunctionDeclaration directFunctionOf(Block block,
+            String name) {
+        for (StatementNode statement : block.statements()) {
+            if (statement instanceof FunctionDeclaration fd
+                    && fd.name().equals(name)) {
+                return fd;
+            }
+        }
+        return null;
     }
 
     /**
@@ -962,6 +1069,41 @@ public final class DefaultIrRecorderTest {
             checkSiblingClassOccurrence(
                 siblingContextualRun(order, ir, true), ir,
                 "the local-callee collision probe f(x: ir.Ir)");
+        }
+    }
+
+    /**
+     * The shadowed-local-callee collision (review cycle 4): a nested
+     * function declaration shadows a same-named module-level function,
+     * so the resolved callee's own declaration — never the top-level
+     * declaration carrying that name — owns the literal's parameter
+     * context. The nested declaration's provider must win in both
+     * import orders, in both directions of the shadowing.
+     */
+    private static void testShadowedLocalCalleeSiblingCollision() {
+        System.out.println("-- a nested callee declaration shadows the"
+            + " module function: its parameter context owns the literal"
+            + " (both import orders) --");
+        CanonicalModuleIdentity sibling =
+            new CanonicalModuleIdentity.ProjectModule(SIBLING_IDENTITY);
+        SiblingProvider ir = siblingProvider("ir", "/proj/src/m/ir.deal",
+            "src.m.ir", sibling, "Ir");
+        SiblingProvider codec = siblingProvider("codec",
+            "/proj/src/m/codec.deal", "src.m.codec", sibling, "Ir");
+        check(codec.classIdentity().equals(ir.classIdentity()),
+            "the fixture's exported same-name siblings are identity-equal"
+                + " (the directory-keyed model)");
+
+        for (List<SiblingProvider> order : List.of(
+                List.of(ir, codec), List.of(codec, ir))) {
+            checkSiblingClassOccurrence(
+                siblingShadowedCallRun(order, ir, codec), ir,
+                "the shadowed-callee collision probe (nested ir.Ir"
+                    + " shadows top-level codec.Ir)");
+            checkSiblingClassOccurrence(
+                siblingShadowedCallRun(order, codec, ir), codec,
+                "the shadowed-callee collision probe (nested codec.Ir"
+                    + " shadows top-level ir.Ir)");
         }
     }
 

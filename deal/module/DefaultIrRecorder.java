@@ -78,6 +78,14 @@ final class DefaultIrRecorder {
 
     private final Map<ExpressionNode, Type> typeMap;
     private final Map<StatementNode, SymbolTable> scopeMap;
+    /**
+     * The statement that introduced each checked lexical scope, by scope
+     * identity (the inverse of {@link #scopeMap}): a resolved local
+     * declaration's defining scope ties back to the declaration it was
+     * defined in, so a nested declaration shadowing a same-named
+     * top-level function supplies its own parameter contexts.
+     */
+    private final Map<SymbolTable, StatementNode> scopeOwners;
     private final Map<String, DefaultPlanImport> imports;
     private final Map<String, deal.identity.CanonicalModuleIdentity>
         classification;
@@ -138,6 +146,13 @@ final class DefaultIrRecorder {
             Map<String, String> qualifiedClassAliases) {
         this.typeMap = Objects.requireNonNull(typeMap, "typeMap");
         this.scopeMap = Objects.requireNonNull(scopeMap, "scopeMap");
+        Map<SymbolTable, StatementNode> owners =
+            new java.util.IdentityHashMap<>();
+        for (Map.Entry<StatementNode, SymbolTable> entry
+                : this.scopeMap.entrySet()) {
+            owners.put(entry.getValue(), entry.getKey());
+        }
+        this.scopeOwners = owners;
         this.imports = Objects.requireNonNull(imports, "imports");
         this.classification = Objects.requireNonNull(classification,
             "classification");
@@ -415,9 +430,11 @@ final class DefaultIrRecorder {
      * that provider's declaration while a qualified spelling names one
      * of the provider's own imports (resolvable through this module's
      * import surface only when the provider is this module). A
-     * parameter the route does not resolve to an owning import yields
-     * null and the class literal keeps the checked export-surface
-     * selection.
+     * same-module callee contributes the parameter types of the
+     * declaration the checked name resolved to (the nested declaration
+     * shadowing a same-named module function included). A parameter
+     * the route does not resolve to an owning import yields null and
+     * the class literal keeps the checked export-surface selection.
      */
     private List<DefaultPlanImport> paramContextProviders(CallExpr call,
             SymbolTable scope) {
@@ -437,10 +454,14 @@ final class DefaultIrRecorder {
                 owner = provider;
             }
         } else if (call.callee() instanceof IdentifierExpr cid
-                && scope.resolve(cid.name()) instanceof Symbol.FunctionSymbol) {
-            FunctionDeclaration declaration =
-                AstDeclarations.findFunctionDeclaration(program,
-                    cid.name());
+                && scope.resolve(cid.name())
+                    instanceof Symbol.FunctionSymbol function) {
+            // The declaration the callee name resolved to, never the
+            // first top-level declaration carrying the name: a nested
+            // declaration shadowing a module-level function owns its
+            // parameter contexts.
+            FunctionDeclaration declaration = functionDeclarationOf(
+                function, cid.name(), scope);
             if (declaration != null) {
                 paramNodes = declaration.params().stream()
                     .map(Parameter::type)
@@ -456,6 +477,60 @@ final class DefaultIrRecorder {
             providers.add(providerForTypeNode(node, owner));
         }
         return providers;
+    }
+
+    /**
+     * The declaration of the function a callee name resolved to: the
+     * defining scope of the resolved symbol is located on the checked
+     * scope chain (the innermost scope whose local binding is that
+     * exact symbol) and the declaration is read from the block that
+     * introduced that scope, so a nested declaration shadowing a same-named
+     * module-level function — or another nested declaration — supplies
+     * its own parameter types. The module scope resolves to the
+     * module's top-level declaration; a scope the checked walk did not
+     * record has no exact declaration and falls back to the top-level
+     * lookup.
+     */
+    private FunctionDeclaration functionDeclarationOf(
+            Symbol.FunctionSymbol symbol, String name, SymbolTable scope) {
+        for (SymbolTable defining = scope; defining != null;
+                defining = defining.parent()) {
+            if (defining.resolveLocal(name) != symbol) {
+                continue;
+            }
+            if (defining.parent() == null) {
+                return AstDeclarations.findFunctionDeclaration(program,
+                    name);
+            }
+            StatementNode owner = scopeOwners.get(defining);
+            FunctionDeclaration declaration = owner == null ? null
+                : directFunctionDeclaration(owner, name);
+            if (declaration != null) {
+                return declaration;
+            }
+            break;
+        }
+        return AstDeclarations.findFunctionDeclaration(program, name);
+    }
+
+    /**
+     * The direct function declaration of the given name in the block
+     * that introduced one lexical scope, or null: a declaration nested
+     * deeper in the same block belongs to another scope.
+     */
+    private static FunctionDeclaration directFunctionDeclaration(
+            StatementNode owner, String name) {
+        if (!(owner instanceof Block block)) {
+            return null;
+        }
+        for (StatementNode statement : block.statements()) {
+            FunctionDeclaration declaration =
+                AstDeclarations.functionDeclarationOf(statement);
+            if (declaration != null && declaration.name().equals(name)) {
+                return declaration;
+            }
+        }
+        return null;
     }
 
     /**
