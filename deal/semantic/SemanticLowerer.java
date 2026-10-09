@@ -7965,6 +7965,27 @@ public final class SemanticLowerer {
                 dynamicCallee);
         }
 
+        /**
+         * Records the source-call invocation shape of one body invocation
+         * through the closed single-shape guard. The generated
+         * {@code @jsonable} helper (R3(b)) is the one body whose reserved
+         * shape is never replaced: its declaration's reserved
+         * {@code EXTERNAL_ENTRY} stays the cross-module invocation record,
+         * and a same-module reference — a direct call
+         * ({@link #lowerDirectCall}) or a call carried through a
+         * function-typed binding ({@link #lowerIndirectCall}) — invokes the
+         * declaration's generated closure through the landed
+         * {@code LoweredBody} call shape while the body's single return
+         * cell keeps the entry's kind. Every other body assigns
+         * {@code SOURCE_CALL} through the guard, so a genuine two-shape
+         * invocation still fails closed.
+         */
+        private void assignSourceCallShape(FunctionContext context) {
+            if (!context.generatedHelper) {
+                context.assignShape(InvocationShape.SOURCE_CALL, context.callSiteOpId);
+            }
+        }
+
         private ValueId lowerDirectCall(CallExpr call, ValueId slot, IdentifierExpr identifier,
                                         FunctionContext context) {
             // The generated @jsonable helper's declaring module calls the
@@ -7973,12 +7994,10 @@ public final class SemanticLowerer {
             // stays the cross-module invocation record, so the helper
             // keeps its shape (and the body's EXTERNAL_RETURN cell the
             // entry names) while this call is a direct body call.
-            boolean entryInvocation = e7Calls
+            boolean entryInvocation = !context.generatedHelper && e7Calls
                 && context.shape == InvocationShape.EXTERNAL_ENTRY_SHAPE;
-            if (context.generatedHelper) {
-                entryInvocation = false;
-            } else if (e7Calls && !entryInvocation) {
-                context.assignShape(InvocationShape.SOURCE_CALL, context.callSiteOpId);
+            if (e7Calls && !entryInvocation) {
+                assignSourceCallShape(context);
             }
             // The audited callee evaluation: the identifier loads the
             // declared function binding (its result identity is the
@@ -8470,8 +8489,7 @@ public final class SemanticLowerer {
                         throw new ConstructUnlowered("the LoweredBody binding of '"
                             + calleeName + "' has no lowering context (producer defect)");
                     }
-                    sourceContext.assignShape(InvocationShape.SOURCE_CALL,
-                        sourceContext.callSiteOpId);
+                    assignSourceCallShape(sourceContext);
                     callOpId = sourceContext.callSiteUsed
                         ? ids.nextOpId(module, nextOrdinal++, 0)
                         : sourceContext.callSiteOpId;
@@ -8486,8 +8504,7 @@ public final class SemanticLowerer {
                             throw new ConstructUnlowered("the adapter's body-source "
                                 + "binding has no lowering context (producer defect)");
                         }
-                        sourceContext.assignShape(InvocationShape.SOURCE_CALL,
-                            sourceContext.callSiteOpId);
+                        assignSourceCallShape(sourceContext);
                         callOpId = sourceContext.callSiteUsed
                             ? ids.nextOpId(module, nextOrdinal++, 0)
                             : sourceContext.callSiteOpId;
@@ -8565,7 +8582,7 @@ public final class SemanticLowerer {
                         throw new ConstructUnlowered("the LoweredBody binding of '"
                             + calleeName + "' has no lowering context (producer defect)");
                     }
-                    context.assignShape(InvocationShape.SOURCE_CALL, context.callSiteOpId);
+                    assignSourceCallShape(context);
                     returnBoundaryOpId = context.returnBoundaryOpId;
                     bodyBlock = context.bodyBlock;
                 }
@@ -8584,8 +8601,7 @@ public final class SemanticLowerer {
                                 throw new ConstructUnlowered("the adapter's body-source "
                                     + "binding has no lowering context (producer defect)");
                             }
-                            context.assignShape(InvocationShape.SOURCE_CALL,
-                                context.callSiteOpId);
+                            assignSourceCallShape(context);
                             returnBoundaryOpId = context.returnBoundaryOpId;
                         }
                         case FunctionExecutionBinding.HostFunction host -> {

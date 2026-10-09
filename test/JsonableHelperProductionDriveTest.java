@@ -2166,6 +2166,138 @@ public class JsonableHelperProductionDriveTest {
     }
 
     /**
+     * The first-class helper binding (the three-consumer regression): each
+     * generated helper stored in a function-typed binding and invoked
+     * through that binding is a same-module reference, so the checker-valid
+     * project lowers with zero E6005 and the declaration's real helper
+     * result on all three consumers — the binding-carried call resolves the
+     * declaration's generated {@code LoweredBody} and its single return
+     * cell while the helper's one reserved {@code EXTERNAL_ENTRY} stays the
+     * cross-module record.
+     */
+    private static void testHelperFunctionBindingInvocation() throws Exception {
+        System.out.println("-- the first-class helper binding: each generated helper "
+            + "stored in a function-typed binding and invoked through it "
+            + "(zero E6005, the real result on all three consumers) --");
+        String source = """
+            // @jsonable
+            export class Box {
+              x: int = 0;
+            }
+
+            export function test_helper_binding(): null {
+              let b: Box = { x: 2 };
+              let f: (v: Box) => string = Box$toJson;
+              let json: string = f(b);
+              let expected: string = "{\\"x\\":2}";
+              if (json !== expected) {
+                throw { code: "MISMATCH", message: json };
+              }
+              let g: (s: string) => Box | null = Box$fromJson;
+              let parsed: Box | null = g(expected);
+              let reparsed: string = "";
+              if (parsed === null) {
+                throw { code: "MISMATCH", message: "fromJson binding returned null" };
+              } else {
+                reparsed = f(parsed);
+              }
+              if (reparsed !== expected) {
+                throw { code: "MISMATCH", message: reparsed };
+              }
+              return null;
+            }
+
+            export function main(): null {
+              return null;
+            }
+            """;
+        driveExactHelperText("helper-function-binding", source);
+        // The reserved shape survives the carrier-carried call: each
+        // helper keeps exactly one CLOSURE_NEW and one reserved
+        // EXTERNAL_ENTRY, and every binding-invoked helper CALL resolves
+        // that declaration's LoweredBody, its body block, and its single
+        // return cell without replacing the reserved shape (no
+        // same-module CALL(EXTERNAL) and no second entry).
+        Project project = syntheticProject("app", source, Target.JVM);
+        try {
+            Lowered lowered = lower(project, "helper binding IR");
+            if (lowered == null) {
+                return;
+            }
+            LoweredModuleUnit unit = lowered.project().modules()
+                .get(lowered.entryModule());
+            Map<FunctionId, OpId> entryReturnBoundary = new LinkedHashMap<>();
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
+                        && op.payload() instanceof KindPayload.ExternalEntryPayload entry
+                        && entry.exportName().startsWith("Box$")) {
+                    entryReturnBoundary.put(entry.function(), entry.returnBoundaryOpId());
+                }
+            }
+            checkEq(2, entryReturnBoundary.size(),
+                "exactly one reserved EXTERNAL_ENTRY per helper export");
+            Map<FunctionId, ValueId> closureIdentity = new LinkedHashMap<>();
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() == SemanticOpKind.CLOSURE_NEW
+                        && op.payload() instanceof KindPayload.ClosureNewPayload closure
+                        && op.result() instanceof ValueId identity
+                        && entryReturnBoundary.containsKey(closure.function())) {
+                    closureIdentity.put(closure.function(), identity);
+                }
+            }
+            checkEq(2, closureIdentity.size(),
+                "exactly one generated closure per helper");
+            Set<ValueId> loadedIdentities = new LinkedHashSet<>();
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() == SemanticOpKind.BINDING_LOAD
+                        && op.result() instanceof ValueId loaded) {
+                    loadedIdentities.add(loaded);
+                }
+            }
+            for (Map.Entry<FunctionId, ValueId> closure : closureIdentity.entrySet()) {
+                check(loadedIdentities.contains(closure.getValue()),
+                    "the helper binding load publishes the declaration's closure "
+                        + "identity " + closure.getValue());
+            }
+            int bindingHelperCalls = 0;
+            int externalHelperCalls = 0;
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() != SemanticOpKind.CALL
+                        || !(op.payload() instanceof KindPayload.CallPayload call)) {
+                    continue;
+                }
+                if (call.callee() instanceof KindPayload.CallCallee.Static staticCallee
+                        && staticCallee.binding()
+                            instanceof FunctionExecutionBinding.LoweredBody body
+                        && entryReturnBoundary.containsKey(body.functionId())) {
+                    bindingHelperCalls++;
+                    LoweredFunction helper = unit.functions().get(body.functionId());
+                    check(helper != null && helper.body().equals(call.bodyBlock()),
+                        "the binding-invoked helper call names the declaration's "
+                            + "body block");
+                    checkEq(entryReturnBoundary.get(body.functionId()),
+                        call.returnBoundaryOpId(),
+                        "the binding-invoked helper call shares the helper's single "
+                            + "return cell");
+                }
+                if (call.callee() instanceof KindPayload.CallCallee.Static staticCallee
+                        && staticCallee.binding()
+                            instanceof FunctionExecutionBinding.ExternalFunction external
+                        && external.moduleId().equals(lowered.entryModule())
+                        && external.exportName().startsWith("Box$")) {
+                    externalHelperCalls++;
+                }
+            }
+            checkEq(3, bindingHelperCalls, "every helper binding invocation resolves "
+                + "the declaration's LoweredBody (got " + bindingHelperCalls + ")");
+            checkEq(0, externalHelperCalls, "no same-module helper call resolves the "
+                + "ExternalFunction shape (the entry stays the cross-module record)");
+        } finally {
+            deleteRecursively(project.root());
+        }
+    }
+
+    /**
      * The class-instance-in-table-content negative (the three-consumer
      * regression): a class instance inside an array nested in a table
      * field is not JSON-shaped data, so the oracle, the LuaJIT artifact,
@@ -3222,6 +3354,7 @@ public class JsonableHelperProductionDriveTest {
         testNegatives();
         testMissingHelperFactsFailClosed();
         testDynamicHelperOrigin();
+        testHelperFunctionBindingInvocation();
         testTableClassInstanceRejection();
         testNestedTableInsertionOrder();
         testNestedTableNumericVariants();
