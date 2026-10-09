@@ -43,6 +43,7 @@ import deal.test.conformance.SidecarExpectations;
 import deal.test.conformance.SidecarSchemaValidator;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -172,23 +173,63 @@ public class CanonicalProjectionParityTest {
 
     private static CorpusSnapshot corpusSnapshot() throws Exception {
         if (corpusSnapshot == null) {
-            CorpusDiscovery.DiscoveryResult discovery = CorpusDiscovery.discover(CONFORMANCE);
-            Map<String, CorpusDiscovery.Fixture> byPath = new LinkedHashMap<>();
-            for (CorpusDiscovery.Fixture fixture : discovery.fixtures()) {
-                byPath.put(fixture.corpusPath(), fixture);
-            }
-            // The raw classification metadata is validated before any
-            // materialization or compile (CD3): a non-production or
-            // malformed declaration is a named gate-input defect naming
-            // the fixture and profile, never a compile, pass or skip
-            // under a metadata-selected invocation.
-            for (CorpusDiscovery.Fixture fixture : discovery.fixtures()) {
-                ConformanceHarnessMetadata.productionCorpusSource(
-                    fixture.rawSource(), fixture.corpusPath());
-            }
-            corpusSnapshot = new CorpusSnapshot(discovery, byPath);
+            corpusSnapshot = corpusSnapshot(CONFORMANCE);
         }
         return corpusSnapshot;
+    }
+
+    /**
+     * Loads one corpus root (CD3): the original classification metadata of
+     * every raw {@code .deal} source is validated against the production
+     * profile before discovery runs, so an unknown or duplicate
+     * declaration is the named gate-input defect instead of
+     * {@link CorpusDiscovery}'s unclassified metadata exception, and no
+     * metadata-selected invocation can be reached. Discovery's own
+     * unrelated errors stay distinct.
+     */
+    static CorpusSnapshot corpusSnapshot(Path root) throws Exception {
+        Path absolute = root.toAbsolutePath().normalize();
+        validateRawProfiles(absolute);
+        CorpusDiscovery.DiscoveryResult discovery =
+            CorpusDiscovery.discover(absolute);
+        Map<String, CorpusDiscovery.Fixture> byPath = new LinkedHashMap<>();
+        for (CorpusDiscovery.Fixture fixture : discovery.fixtures()) {
+            byPath.put(fixture.corpusPath(), fixture);
+        }
+        return new CorpusSnapshot(discovery, byPath);
+    }
+
+    /**
+     * Validates every raw {@code .deal} source of the root that discovery
+     * would read (the {@code host-fixtures} subtree excluded), before
+     * discovery can propagate an unclassified metadata exception.
+     */
+    private static void validateRawProfiles(Path root) throws IOException {
+        List<Path> files;
+        try (Stream<Path> stream = Files.walk(root)) {
+            files = stream.filter(p -> p.toString().endsWith(".deal"))
+                .filter(p -> {
+                    Path rel = root.relativize(p);
+                    return rel.getNameCount() == 0 || !"host-fixtures".equals(
+                        rel.getName(0).toString());
+                })
+                .sorted()
+                .toList();
+        }
+        for (Path file : files) {
+            String raw;
+            try {
+                raw = Files.readString(file);
+            } catch (IOException unreadable) {
+                continue; // discovery records its own classification failure
+            }
+            ConformanceHarnessMetadata.productionCorpusSource(raw,
+                slash(root.relativize(file)));
+        }
+    }
+
+    private static String slash(Path path) {
+        return path.toString().replace(File.separatorChar, '/');
     }
 
     /** One rendered failure tuple: the five compared fields. */
@@ -381,18 +422,42 @@ public class CanonicalProjectionParityTest {
      * and the drive's own entry module for a probe export.
      */
     private static Compiled compile(Case spec) throws Exception {
-        Path root = Files.createTempDirectory("projection-parity");
-        Path mirror = root.resolve("conformance");
         Map<String, CorpusDiscovery.Fixture> byPath = corpusSnapshot().byPath();
         CorpusDiscovery.Fixture entryFixture = byPath.get(spec.fixtureFile());
         if (entryFixture == null) {
             throw new IllegalStateException("the corpus carries no fixture "
                 + spec.fixtureFile());
         }
+        List<SidecarSchemaValidator.CompilationModule> compilationSet =
+            CorpusDiscovery.compilationSet(entryFixture, byPath, CONFORMANCE);
+        // The original classification metadata of every materialized module
+        // is validated (CD3) before any scratch root exists: a rejected
+        // declaration is a named gate-input defect and never allocates — and
+        // so can never leak — an owned temporary root. Every later
+        // preparation failure removes the allocated root and reports a
+        // cleanup failure on the original failure.
+        for (SidecarSchemaValidator.CompilationModule module : compilationSet) {
+            CorpusDiscovery.Fixture moduleFixture = byPath.get(
+                module.corpusPath());
+            ConformanceHarnessMetadata.productionCorpusSource(
+                moduleFixture.rawSource(), moduleFixture.corpusPath());
+        }
+        Path root = Files.createTempDirectory("projection-parity");
+        try {
+            return compileInto(root, spec, compilationSet, byPath);
+        } catch (Exception | Error failure) {
+            cleanupRejectedScratch(root, failure);
+            throw failure;
+        }
+    }
+
+    private static Compiled compileInto(Path root, Case spec,
+            List<SidecarSchemaValidator.CompilationModule> compilationSet,
+            Map<String, CorpusDiscovery.Fixture> byPath) throws Exception {
+        Path mirror = root.resolve("conformance");
         Map<String, Integer> stripped = new LinkedHashMap<>();
         Map<String, String> modules = new LinkedHashMap<>();
-        for (SidecarSchemaValidator.CompilationModule module
-                : CorpusDiscovery.compilationSet(entryFixture, byPath, CONFORMANCE)) {
+        for (SidecarSchemaValidator.CompilationModule module : compilationSet) {
             CorpusDiscovery.Fixture fixture = byPath.get(module.corpusPath());
             modules.put(module.corpusPath(), fixture.source());
             stripped.put(module.corpusPath(), fixture.headerLinesStripped());
@@ -461,7 +526,6 @@ public class CanonicalProjectionParityTest {
                 || built.hasErrors() || manifests == null
                 || manifests.manifests() == null
                 || orchestrator.hostDeclarationSurface() == null) {
-            deleteRecursively(root);
             throw new IllegalStateException(spec.what() + ": the production "
                 + "orchestrator did not compile the fixture: "
                 + (built == null ? "no checked project" : built.diagnostics())
@@ -490,7 +554,6 @@ public class CanonicalProjectionParityTest {
                 IntrinsicKind.BYTES_NEW),
             Set.of());
         if (lowering.hasErrors() || lowering.project() == null) {
-            deleteRecursively(root);
             throw new IllegalStateException(spec.what() + ": the production "
                 + "project lowering failed: " + lowering.diagnostics());
         }
@@ -519,6 +582,19 @@ public class CanonicalProjectionParityTest {
             }
         } catch (java.io.IOException ignored) {
             // best effort
+        }
+    }
+
+    /**
+     * Removes one rejected input's scratch root: the primary failure is
+     * preserved and a cleanup failure is reported on it, so a rejected
+     * input can never silently leave owned scratch state behind.
+     */
+    private static void cleanupRejectedScratch(Path root, Throwable primary) {
+        deleteRecursively(root);
+        if (Files.exists(root)) {
+            primary.addSuppressed(new IllegalStateException(
+                "the rejected input left its scratch root behind: " + root));
         }
     }
 
@@ -2993,6 +3069,139 @@ public class CanonicalProjectionParityTest {
     }
 
     // =========================================================================
+    // 7. The raw-profile gate-input controls
+    // =========================================================================
+
+    /**
+     * The raw-profile gate-input controls (CD3): the original
+     * classification metadata of every raw corpus source is validated
+     * before discovery can propagate an unclassified metadata exception, a
+     * rejected declaration names the fixture and never reaches
+     * materialization or compilation, and the rejected compile allocates
+     * no scratch root. The pristine source stays the acceptance control.
+     */
+    private static void testRawProfileInputControls() throws Exception {
+        System.out.println("-- the raw-profile gate-input controls: malformed "
+            + "metadata is rejected before discovery, materialization or "
+            + "compilation --");
+        String pristine = Files.readString(CONFORMANCE.resolve(BACKEND_RUNTIME)
+            .resolve("arrays/index-read.deal"), StandardCharsets.UTF_8);
+        Map<String, String> rejected = new LinkedHashMap<>();
+        rejected.put("legacy profile on line 41",
+            padding(40) + "// @profile: legacy-safe-int\n" + pristine);
+        rejected.put("empty profile",
+            padding(40) + "// @profile:\n" + pristine);
+        rejected.put("unknown profile",
+            "// @profile: no-such-profile\n" + pristine);
+        rejected.put("duplicate metadata",
+            "// @profile: deal-v1.2-int32\n// @profile: deal-v1.2-int32\n"
+                + pristine);
+        rejected.put("cross-boundary duplicate",
+            "// @profile: deal-v1.2-int32\n" + padding(39)
+                + "// @profile: legacy-safe-int\n" + pristine);
+        List<Path> roots = new ArrayList<>();
+        Path legacyRoot = null;
+        try {
+            for (Map.Entry<String, String> injection : rejected.entrySet()) {
+                Path root = scratchCorpus(
+                    injection.getKey().replace(' ', '-'), injection.getValue());
+                roots.add(root);
+                if (legacyRoot == null) {
+                    legacyRoot = root;
+                }
+                try {
+                    corpusSnapshot(root);
+                    check(false, "the " + injection.getKey()
+                        + " is rejected before discovery");
+                } catch (ConformanceHarnessMetadata.HarnessInputDefectException
+                        defect) {
+                    check(defect.getMessage().contains(
+                            ConformanceHarnessMetadata.HARNESS_DEFECT)
+                            && defect.getMessage().contains(
+                                "backend-runtime/fixture.deal"),
+                        "the " + injection.getKey() + " is a named "
+                            + ConformanceHarnessMetadata.HARNESS_DEFECT
+                            + " naming the fixture: " + defect.getMessage());
+                }
+            }
+            Path pristineRoot = scratchCorpus("pristine", pristine);
+            roots.add(pristineRoot);
+            CorpusSnapshot accepted = corpusSnapshot(pristineRoot);
+            check(accepted.byPath().containsKey("backend-runtime/fixture.deal")
+                    && !accepted.byPath().get("backend-runtime/fixture.deal")
+                        .source().contains("@profile:"),
+                "the pristine declaration is accepted before discovery (the "
+                    + "control)");
+
+            // The compile rejection path: the seeded snapshot carries the
+            // line-41 legacy declaration, so compile's own module validation
+            // rejects it before allocating any scratch root.
+            CorpusDiscovery.DiscoveryResult discovery =
+                CorpusDiscovery.discover(legacyRoot);
+            Map<String, CorpusDiscovery.Fixture> byPath = new LinkedHashMap<>();
+            for (CorpusDiscovery.Fixture fixture : discovery.fixtures()) {
+                byPath.put(fixture.corpusPath(), fixture);
+            }
+            CorpusSnapshot previous = corpusSnapshot;
+            Set<Path> before = scratchRoots("projection-parity");
+            corpusSnapshot = new CorpusSnapshot(discovery, byPath);
+            try {
+                compile(new Case("fixture", "main", Entry.MAIN, List.of(),
+                    null, null));
+                check(false, "the line-41 legacy declaration is rejected "
+                    + "before compilation");
+            } catch (ConformanceHarnessMetadata.HarnessInputDefectException
+                    defect) {
+                check(defect.getMessage().contains(
+                        ConformanceHarnessMetadata.HARNESS_DEFECT)
+                        && defect.getMessage().contains(
+                            "backend-runtime/fixture.deal"),
+                    "the rejected compile is the named gate-input defect: "
+                        + defect.getMessage());
+            } finally {
+                corpusSnapshot = previous;
+            }
+            Set<Path> after = scratchRoots("projection-parity");
+            check(after.equals(before), "the rejected compile leaves no "
+                + "projection-parity scratch root behind: " + after);
+        } finally {
+            for (Path root : roots) {
+                deleteRecursively(root);
+            }
+        }
+    }
+
+    /** A scratch corpus root carrying one {@code backend-runtime} fixture. */
+    private static Path scratchCorpus(String label, String raw) throws Exception {
+        Path root = Files.createTempDirectory(
+            "projection-raw-profile-" + label + "-");
+        Path file = root.resolve(BACKEND_RUNTIME).resolve("fixture.deal");
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, raw, StandardCharsets.UTF_8);
+        return root;
+    }
+
+    /** {@code lines} comment lines that carry no classification prefix. */
+    private static String padding(int lines) {
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < lines; i++) {
+            out.append("// padding line ").append(i).append('\n');
+        }
+        return out.toString();
+    }
+
+    /** The temporary roots whose file name starts with {@code prefix}. */
+    private static Set<Path> scratchRoots(String prefix) throws Exception {
+        Path tmp = Path.of(System.getProperty("java.io.tmpdir"));
+        Set<Path> roots = new LinkedHashSet<>();
+        try (var listing = Files.list(tmp)) {
+            listing.filter(p -> p.getFileName().toString().startsWith(prefix))
+                .forEach(roots::add);
+        }
+        return roots;
+    }
+
+    // =========================================================================
     // Main
     // =========================================================================
 
@@ -3013,6 +3222,7 @@ public class CanonicalProjectionParityTest {
         testArrayNullAndDeletedSlotCells();
         testCompletenessAndSingleSourceNegatives();
         testUnchangedSurfaces();
+        testRawProfileInputControls();
         System.out.println();
         System.out.println("Canonical projection parity: " + passed + " passed, "
             + failed + " failed");

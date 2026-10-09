@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 public final class ConformanceHarnessMetadata {
@@ -98,6 +99,13 @@ public final class ConformanceHarnessMetadata {
      * fixture and the profile — the production targets take no
      * metadata-selected invocation, so no compile, pass or skip happens.
      *
+     * <p>The validation observes <em>every</em> {@code // @profile:}
+     * declaration of the whole source, not the 40-line metadata window
+     * of {@link #profileFromMetadata}: the classification stripper drops
+     * profile lines throughout the input, so a declaration after line 40
+     * or a second declaration before it would otherwise be silently
+     * removed and the input could compile as a production cell.</p>
+     *
      * @param rawSource the fixture file's raw text, classification headers
      *                  included
      * @param locator   the corpus-relative fixture path used in the defect
@@ -109,24 +117,79 @@ public final class ConformanceHarnessMetadata {
      */
     public static String productionCorpusSource(String rawSource,
             String locator) {
-        SemanticProfile profile;
-        try {
-            profile = profileFromMetadata(rawSource, locator);
-        } catch (IllegalArgumentException malformed) {
+        List<String> declared = profileDeclarations(rawSource);
+        if (declared.size() > 1) {
             throw new HarnessInputDefectException(locator + ": "
-                + HARNESS_DEFECT + " — malformed corpus classification "
-                + "metadata: " + malformed.getMessage(), malformed);
+                + HARNESS_DEFECT + " — duplicate corpus classification "
+                + "metadata: " + declared.size() + " @profile declarations ("
+                + String.join(", ", declared) + "); the LuaJIT/JVM "
+                + "production materialization accepts at most one "
+                + SemanticProfile.DEAL_V1_2_INT32.name() + " declaration");
         }
-        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
-            throw new HarnessInputDefectException(locator + ": "
-                + HARNESS_DEFECT + " — the corpus input declares the "
-                + profile.name() + " profile; the LuaJIT/JVM production "
-                + "materialization accepts only "
-                + SemanticProfile.DEAL_V1_2_INT32.name()
-                + " (no metadata-selected invocation; no compile, no pass, "
-                + "no skip)");
+        if (declared.size() == 1) {
+            String value = declared.get(0);
+            if ("legacy-safe-int".equals(value)) {
+                throw new HarnessInputDefectException(locator + ": "
+                    + HARNESS_DEFECT + " — the corpus input declares the "
+                    + SemanticProfile.LEGACY_SAFE_INT.name() + " profile; the "
+                    + "LuaJIT/JVM production materialization accepts only "
+                    + SemanticProfile.DEAL_V1_2_INT32.name()
+                    + " (no metadata-selected invocation; no compile, no "
+                    + "pass, no skip)");
+            }
+            if (!"deal-v1.2-int32".equals(value)) {
+                throw new HarnessInputDefectException(locator + ": "
+                    + HARNESS_DEFECT + " — the corpus input declares the "
+                    + "unknown @profile '" + value + "'; the LuaJIT/JVM "
+                    + "production materialization accepts only "
+                    + SemanticProfile.DEAL_V1_2_INT32.name()
+                    + " (no metadata-selected invocation; no compile, no "
+                    + "pass, no skip)");
+            }
         }
         return stripClassificationHeaders(rawSource);
+    }
+
+    /**
+     * Every {@code // @profile:} declaration of {@code source}, in source
+     * order, scanned over the whole input with the same line-terminator
+     * handling as {@link #stripClassificationHeaders} — so the result is
+     * exactly the set of profile declarations the stripper removes.
+     */
+    public static List<String> profileDeclarations(String source) {
+        List<String> values = new ArrayList<>();
+        int lineStart = 0;
+        int i = 0;
+        while (i < source.length()) {
+            char c = source.charAt(i);
+            if (c == '\n') {
+                collectProfileDeclaration(source, lineStart, i, values);
+                lineStart = i + 1;
+                i++;
+            } else if (c == '\r') {
+                int contentEnd = i;
+                i++;
+                if (i < source.length() && source.charAt(i) == '\n') {
+                    i++;
+                }
+                collectProfileDeclaration(source, lineStart, contentEnd, values);
+                lineStart = i;
+            } else {
+                i++;
+            }
+        }
+        if (lineStart < source.length()) {
+            collectProfileDeclaration(source, lineStart, source.length(), values);
+        }
+        return values;
+    }
+
+    private static void collectProfileDeclaration(String source, int start,
+            int end, List<String> values) {
+        String trimmed = source.substring(start, end).trim();
+        if (trimmed.startsWith("// @profile:")) {
+            values.add(trimmed.substring("// @profile:".length()).trim());
+        }
     }
 
     public static CompilerInvocation invocation(SemanticProfile profile) {

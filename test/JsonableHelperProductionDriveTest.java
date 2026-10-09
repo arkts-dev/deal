@@ -3104,6 +3104,20 @@ public class JsonableHelperProductionDriveTest {
         injections.put("unknown profile", "// @profile: no-such-profile\n" + raw);
         injections.put("duplicate metadata",
             "// @profile: deal-v1.2-int32\n// @profile: deal-v1.2-int32\n" + raw);
+        // The declaration after the 40-line metadata window and the
+        // cross-boundary duplicate: the stripper removes profile lines
+        // throughout the input, so the validation must observe every
+        // declaration the stripper would drop — otherwise the input would
+        // compile as a production cell with the declaration silently gone.
+        injections.put("legacy profile on line 41",
+            profilePadding(40) + "// @profile: legacy-safe-int\n" + raw);
+        injections.put("unknown profile on line 41",
+            profilePadding(40) + "// @profile: no-such-profile\n" + raw);
+        injections.put("empty profile on line 41",
+            profilePadding(40) + "// @profile:\n" + raw);
+        injections.put("cross-boundary duplicate",
+            "// @profile: deal-v1.2-int32\n" + profilePadding(39)
+                + "// @profile: legacy-safe-int\n" + raw);
         Path tmp = Path.of(System.getProperty("java.io.tmpdir"));
         Set<Path> before = new LinkedHashSet<>();
         try (var listing = Files.list(tmp)) {
@@ -3141,6 +3155,15 @@ public class JsonableHelperProductionDriveTest {
         }
         check(leftovers.isEmpty(), "the rejected materializations remove every "
             + "scratch root before the defect propagates: " + leftovers);
+    }
+
+    /** {@code lines} comment lines that carry no classification prefix. */
+    private static String profilePadding(int lines) {
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < lines; i++) {
+            out.append("// padding line ").append(i).append('\n');
+        }
+        return out.toString();
     }
 
     /**

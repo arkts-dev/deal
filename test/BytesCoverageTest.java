@@ -432,29 +432,53 @@ public class BytesCoverageTest {
     /**
      * Materializes one bytes corpus fixture (headers stripped, the drive's
      * own entry added) and compiles it through the real orchestrator.
+     *
+     * <p>The original classification metadata of the fixture and of every
+     * companion is validated before any scratch state exists, so a
+     * non-production or malformed declaration is the named gate-input
+     * defect (CD3) and a rejected input allocates — and thus can never
+     * leak — an owned temporary root. Any later preparation failure
+     * removes the allocated root and reports a cleanup failure on the
+     * original failure.</p>
      */
     private static Compiled compileFixture(BytesFixture fixture) throws Exception {
-        Path root = Files.createTempDirectory("bytes-corpus-");
-        Path corpusRoot = root.resolve("corpus");
-        Path fixtureFile = corpusRoot.resolve(fixture.fixtureFile());
-        Files.createDirectories(fixtureFile.getParent());
         String raw = Files.readString(CORPUS.resolve(fixture.fixtureFile()),
             StandardCharsets.UTF_8);
         String stripped = ConformanceHarnessMetadata.productionCorpusSource(
             raw, fixture.fixtureFile());
         int strippedLines = raw.split("\n", -1).length
             - stripped.split("\n", -1).length;
-        Files.writeString(fixtureFile, stripped, StandardCharsets.UTF_8);
+        Map<String, String> companionSources = new LinkedHashMap<>();
         for (String companion : fixture.companions()) {
-            Path companionFile = corpusRoot.resolve(BYTES_DIR)
-                .resolve(companion + ".deal");
-            Files.createDirectories(companionFile.getParent());
             String companionCorpusPath = BYTES_DIR + "/" + companion + ".deal";
-            Files.writeString(companionFile,
+            companionSources.put(companion,
                 ConformanceHarnessMetadata.productionCorpusSource(
                     Files.readString(CORPUS.resolve(companionCorpusPath),
                         StandardCharsets.UTF_8),
-                    companionCorpusPath),
+                    companionCorpusPath));
+        }
+        Path root = Files.createTempDirectory("bytes-corpus-");
+        try {
+            return compileFixtureInto(root, fixture, stripped, strippedLines,
+                companionSources);
+        } catch (Exception | Error failure) {
+            cleanupRejectedScratch(root, failure);
+            throw failure;
+        }
+    }
+
+    private static Compiled compileFixtureInto(Path root, BytesFixture fixture,
+            String stripped, int strippedLines,
+            Map<String, String> companionSources) throws Exception {
+        Path corpusRoot = root.resolve("corpus");
+        Path fixtureFile = corpusRoot.resolve(fixture.fixtureFile());
+        Files.createDirectories(fixtureFile.getParent());
+        Files.writeString(fixtureFile, stripped, StandardCharsets.UTF_8);
+        for (Map.Entry<String, String> companion : companionSources.entrySet()) {
+            Path companionFile = corpusRoot.resolve(BYTES_DIR)
+                .resolve(companion.getKey() + ".deal");
+            Files.createDirectories(companionFile.getParent());
+            Files.writeString(companionFile, companion.getValue(),
                 StandardCharsets.UTF_8);
         }
         Path entry = "main".equals(fixture.export())
@@ -599,6 +623,19 @@ public class BytesCoverageTest {
             }
         } catch (java.io.IOException ignored) {
             // best effort
+        }
+    }
+
+    /**
+     * Removes one rejected input's scratch root: the primary failure is
+     * preserved and a cleanup failure is reported on it, so a rejected
+     * input can never silently leave owned scratch state behind.
+     */
+    private static void cleanupRejectedScratch(Path root, Throwable primary) {
+        deleteRecursively(root);
+        if (Files.exists(root)) {
+            primary.addSuppressed(new IllegalStateException(
+                "the rejected input left its scratch root behind: " + root));
         }
     }
 
@@ -4799,8 +4836,72 @@ public class BytesCoverageTest {
     // Entry point
     // =========================================================================
 
+    /**
+     * The rejected raw-profile cleanup control (the CD3 gate-input
+     * contract): a scratch corpus fixture whose original declaration is a
+     * legacy profile after the 40-line metadata window is rejected through
+     * the real fixture materialization with the named gate-input defect,
+     * and the rejected input allocates no owned {@code bytes-corpus-}
+     * scratch root (the validation precedes the allocation, so no leak can
+     * occur). The same scratch bytes without the declaration are accepted
+     * as a production-profile input (the control).
+     */
+    private static void testRejectedRawProfileLeavesNoScratch() throws Exception {
+        System.out.println("-- the rejected raw-profile input allocates no "
+            + "scratch root --");
+        Path scratch = Files.createTempDirectory("bytes-rejected-profile-");
+        try {
+            String pristine = Files.readString(CORPUS.resolve(BYTES_DIR)
+                .resolve("bytes-length.deal"), StandardCharsets.UTF_8);
+            StringBuilder padded = new StringBuilder();
+            for (int i = 0; i < 40; i++) {
+                padded.append("// padding line ").append(i).append('\n');
+            }
+            padded.append("// @profile: legacy-safe-int\n").append(pristine);
+            Files.writeString(scratch.resolve("legacy-line-41.deal"),
+                padded.toString(), StandardCharsets.UTF_8);
+            check(ConformanceHarnessMetadata.productionCorpusSource(pristine,
+                    BYTES_DIR + "/bytes-length.deal") != null,
+                "the pristine scratch bytes are a production-profile input "
+                    + "(the control)");
+            BytesFixture rejected = new BytesFixture(scratch.toString(),
+                "legacy-line-41", "main", "null", List.of(), null, null, 0, 0);
+            Set<Path> before = scratchRoots("bytes-corpus-");
+            try {
+                compileFixture(rejected);
+                check(false, "the line-41 legacy profile is rejected before "
+                    + "compilation");
+            } catch (ConformanceHarnessMetadata.HarnessInputDefectException
+                    defect) {
+                check(defect.getMessage().contains(
+                        ConformanceHarnessMetadata.HARNESS_DEFECT)
+                        && defect.getMessage().contains("legacy-line-41.deal"),
+                    "the line-41 legacy declaration is a named "
+                        + ConformanceHarnessMetadata.HARNESS_DEFECT
+                        + " naming the fixture: " + defect.getMessage());
+            }
+            Set<Path> after = scratchRoots("bytes-corpus-");
+            check(after.equals(before), "the rejected input leaves no "
+                + "bytes-corpus scratch root behind: " + after);
+        } finally {
+            deleteRecursively(scratch);
+        }
+    }
+
+    /** The temporary roots whose file name starts with {@code prefix}. */
+    private static Set<Path> scratchRoots(String prefix) throws Exception {
+        Path tmp = Path.of(System.getProperty("java.io.tmpdir"));
+        Set<Path> roots = new java.util.LinkedHashSet<>();
+        try (var listing = Files.list(tmp)) {
+            listing.filter(p -> p.getFileName().toString().startsWith(prefix))
+                .forEach(roots::add);
+        }
+        return roots;
+    }
+
     public static void main(String[] args) throws Exception {
         testCorpusPins();
+        testRejectedRawProfileLeavesNoScratch();
         testCorpusDrive();
         testJointBytesStagedProduction();
         testReadShapeAndWriteChain();
