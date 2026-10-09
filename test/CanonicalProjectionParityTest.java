@@ -1296,6 +1296,137 @@ public class CanonicalProjectionParityTest {
     }
 
     // =========================================================================
+    // 2d. The invalid-Unicode arm through the real boundary producers
+    //     (ISSUE-0705)
+    // =========================================================================
+
+    /** The invalid-Unicode callback seed: one declared {@code string[]} parameter. */
+    private static final String INVALID_UNICODE_CALLBACK_SOURCE = """
+        export function cb(x: int, values: string[]): int {
+          return x + 1;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The invalid-Unicode arm end-to-end (P1/P4, ISSUE-0705): the callback
+     * entry's declared {@code string[]} parameter slot receives an
+     * unpaired-surrogate element, and every consumer's boundary producer
+     * renders the element tuple selected by its own scalar validation at
+     * the invoking unit's program span — the boundary supplies the origin,
+     * never a fabricated one. The valid array is the admission control; the
+     * registered direct producer drives (the oracle's
+     * {@code BoundaryExecutor}, the JVM {@code bcheck}, and the emitted
+     * {@code __bcheck}, including the string cell, the nested element
+     * cells, and the completion cell) live in {@code FailureArmAuthorityTest};
+     * the direct {@code ARM_RENDERS} entry renders the arm but never
+     * exercises a boundary's validation.
+     */
+    private static void testInvalidUnicodeBoundaryOriginDrive() throws Exception {
+        System.out.println("-- the invalid-Unicode element through the callback entry's "
+            + "declared string[] parameter slot --");
+        CallbackSeed seed = lowerCallbackSeed(INVALID_UNICODE_CALLBACK_SOURCE,
+            "the invalid-unicode callback seed", Set.of("cb"));
+        if (seed == null) {
+            return;
+        }
+        deal.semantic.ir.LoweredModuleUnit unit = seed.project().modules()
+            .get(MATRIX_MODULE);
+        check(unit != null, "the invalid-unicode seed lowers the entry unit");
+        if (unit == null) {
+            return;
+        }
+        deal.semantic.ir.SemanticOp callback = null;
+        for (deal.semantic.ir.SemanticOp op : unit.ops()) {
+            if (op.kind() == deal.semantic.ir.SemanticOpKind.CALLBACK_INVOKE) {
+                callback = op;
+            }
+        }
+        check(callback != null, "the invalid-unicode seed records the "
+            + "CALLBACK_INVOKE op");
+        if (callback == null) {
+            return;
+        }
+        deal.semantic.ir.KindPayload.CallbackInvokePayload payload =
+            (deal.semantic.ir.KindPayload.CallbackInvokePayload) callback.payload();
+        deal.ast.Span programSpan = seed.input().ast().span();
+        String origin = MATRIX_SOURCE_ID + ":" + programSpan.startLine() + ":"
+            + programSpan.startColumn();
+        Path workspace = Files.createTempDirectory("projection-invalid-unicode");
+        try {
+            SemanticDifferentialHarness.Verdict verdict =
+                SemanticDifferentialHarness.runCallback(unit,
+                    seed.tables().get(MATRIX_MODULE), payload.function(),
+                    List.of(new SemanticDifferentialHarness.CallbackArg.Int(1),
+                        new SemanticDifferentialHarness.CallbackArg.Array(List.of(
+                            new SemanticDifferentialHarness.CallbackArg.Str("ok"),
+                            new SemanticDifferentialHarness.CallbackArg.Str("\uD800")))),
+                    SemanticDifferentialHarness.Expectation.failure(
+                        "the callback array slot", List.of(), "E8003", origin),
+                    workspace);
+            checkEq(3, verdict.runs().size(), "the invalid-unicode drive produced "
+                + "the three consumers: " + verdict.failures());
+            check(verdict.pass(), "the invalid-unicode three-consumer verdict "
+                + "passes: " + verdict.failures() + "\n" + verdict.report());
+            for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+                check(run.terminal()
+                        instanceof SemanticRuntimeModel.Terminal.DealFailure,
+                    run.consumer() + ": the invalid-unicode drive fails: "
+                        + run.terminal());
+                if (!(run.terminal()
+                        instanceof SemanticRuntimeModel.Terminal.DealFailure failure)) {
+                    continue;
+                }
+                SemanticRuntimeModel.ErrorSnapshot error = failure.error();
+                System.out.println("   " + run.consumer() + ": " + error.code() + " | "
+                    + error.message() + " | " + error.origin() + " | "
+                    + error.expected() + " | " + error.actual());
+                checkEq("E8003", error.code(), run.consumer()
+                    + ": the invalid-unicode element code");
+                checkEq("array element 2 type mismatch", error.message(),
+                    run.consumer() + ": the element arm's own text");
+                checkEq(origin, error.origin(), run.consumer() + ": the supplied "
+                    + "boundary origin (the invoking unit's program span)");
+                checkEq("string", error.expected(), run.consumer()
+                    + ": the expected token");
+                checkEq("invalid-unicode", error.actual(), run.consumer()
+                    + ": the actual token");
+            }
+        } finally {
+            deleteRecursively(workspace);
+        }
+        // The valid-array control: the same slot admits the valid elements
+        // and the callback body runs to its pinned success.
+        Path control = Files.createTempDirectory("projection-invalid-unicode-ok");
+        try {
+            SemanticDifferentialHarness.Verdict verdict =
+                SemanticDifferentialHarness.runCallback(unit,
+                    seed.tables().get(MATRIX_MODULE), payload.function(),
+                    List.of(new SemanticDifferentialHarness.CallbackArg.Int(1),
+                        new SemanticDifferentialHarness.CallbackArg.Array(List.of(
+                            new SemanticDifferentialHarness.CallbackArg.Str("ok"),
+                            new SemanticDifferentialHarness.CallbackArg.Str("two")))),
+                    SemanticDifferentialHarness.Expectation.success(
+                        "the callback array slot control", List.of(), "int:2"),
+                    control);
+            checkEq(3, verdict.runs().size(), "the valid-array control produced "
+                + "the three consumers: " + verdict.failures());
+            check(verdict.pass(), "the valid-array three-consumer verdict passes: "
+                + verdict.failures() + "\n" + verdict.report());
+            for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+                check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                    run.consumer() + ": the valid elements are admitted: "
+                        + run.terminal());
+            }
+        } finally {
+            deleteRecursively(control);
+        }
+    }
+
+    // =========================================================================
     // 3. The closed arm table through the serialized renderer and the runtime
     // =========================================================================
 
@@ -2863,6 +2994,7 @@ public class CanonicalProjectionParityTest {
         testNamedDivergences();
         testArmFamilies();
         testCallbackEntrySlot();
+        testInvalidUnicodeBoundaryOriginDrive();
         testMissingDeclaredAnnotationFailsClosed();
         testSerializedArmTableIdentity();
         testMarkedArmsAndFieldShapes();

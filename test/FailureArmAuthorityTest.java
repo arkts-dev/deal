@@ -98,6 +98,7 @@ public class FailureArmAuthorityTest {
         testCarrierKindStringActual();
         testCompletionFamilyDrive();
         testTypedBoundaryBytesCarrier();
+        testTypedBoundaryInvalidUnicode();
         testStdJsonArmDrive();
         testInt32AndSqrtArmFamily();
         testIntLadderWrongKindCell();
@@ -959,6 +960,194 @@ public class FailureArmAuthorityTest {
             "the Lua artifact renders the oracle's identical bytes-at-table tuple");
         checkEq(null, firstDifferingField(oracleInt, luaTuple(rows.get(1), span)),
             "the Lua artifact renders the oracle's identical bytes-at-int tuple");
+    }
+
+    // =========================================================================
+    // 9b. The typed-boundary invalid-Unicode cell (the DEAL string boundary)
+    // =========================================================================
+
+    /**
+     * The typed-boundary invalid-Unicode arm through the real boundary
+     * producers (P1/P4, ISSUE-0705): an unpaired-surrogate string — the
+     * Lua byte sequence/Java string the classification projects as
+     * {@code invalid-unicode} — fails the declared {@code string} boundary
+     * on the oracle's {@code BoundaryExecutor.core}, the JVM runtime's
+     * {@code bcheck}, and the emitted prelude's {@code __bcheck} alike,
+     * with the identical complete tuple. Before the scalar validation both
+     * targets admitted every string, so only the oracle rejected the
+     * value. The nested element cells project the element arm's own tuple
+     * with the closed {@code invalid-unicode} actual, the completion cells
+     * keep their pinned kind arm, and the valid strings are the admission
+     * controls; the direct {@code ARM_RENDERS} entry renders the arm but
+     * never exercises a boundary's validation.
+     */
+    static void testTypedBoundaryInvalidUnicode() throws Exception {
+        System.out.println("-- the typed-boundary invalid-Unicode cell (the DEAL "
+            + "string boundary) --");
+        String span = FailureContractRegistry.arm(
+            FailureArmId.TYPED_BOUNDARY_INVALID_UNICODE).origin().name();
+        String message = FailureContractRegistry.arm(
+            FailureArmId.TYPED_BOUNDARY_INVALID_UNICODE).template();
+        RuntimeDescriptor str = RuntimeDescriptor.String.INSTANCE;
+        RuntimeDescriptor arrStr = RuntimeDescriptor.parseCanonicalText("[string]");
+        RuntimeDescriptor arrArrStr = RuntimeDescriptor.parseCanonicalText("[[string]]");
+        BoundaryValueView bad = BoundaryValueView.of(ActualKind.INVALID_UNICODE);
+        BoundaryValueView valid = BoundaryValueView.of(ActualKind.STRING);
+
+        // The oracle leg: the string cell, the element cells, the
+        // completion cell, and the admission controls.
+        Tuple oracleString = tupleOf(oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.TYPE_DESCRIPTOR, str, bad, BoundaryContext.none()),
+            "the invalid-unicode string cell"), span);
+        checkEq(new Tuple("E8001", message, span, "string", "invalid-unicode"),
+            oracleString, "the oracle rejects the invalid string at its boundary");
+        check(BoundaryExecutor.check(FailurePolicyId.TYPE_DESCRIPTOR, str, valid,
+            BoundaryContext.none()) instanceof BoundaryOutcome.Pass,
+            "the oracle admits the valid string at the string boundary");
+        Tuple oracleElement = tupleOf(oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.TYPE_DESCRIPTOR, arrStr,
+            BoundaryValueView.ofArray(valid, bad), BoundaryContext.none()),
+            "the invalid-unicode element cell"), span);
+        checkEq(new Tuple("E8003", "array element 2 type mismatch", span,
+            "string", "invalid-unicode"), oracleElement,
+            "the oracle rejects the invalid array element with the element arm");
+        Tuple oracleNested = tupleOf(oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.TYPE_DESCRIPTOR, arrArrStr,
+            BoundaryValueView.ofArray(BoundaryValueView.ofArray(valid),
+                BoundaryValueView.ofArray(bad)), BoundaryContext.none()),
+            "the nested invalid-unicode element cell"), span);
+        checkEq(new Tuple("E8003", "array element 2 type mismatch", span,
+            "[string]", "array"), oracleNested,
+            "the oracle rejects the nested invalid element with the outer element "
+                + "arm");
+        check(BoundaryExecutor.check(FailurePolicyId.TYPE_DESCRIPTOR, arrStr,
+            BoundaryValueView.ofArray(valid, valid), BoundaryContext.none())
+            instanceof BoundaryOutcome.Pass,
+            "the oracle admits the valid array elements");
+        Tuple oracleCompletion = tupleOf(oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.ASYNC_COMPLETION, str, bad, BoundaryContext.none()),
+            "the invalid-unicode completion cell"), span);
+        checkEq(new Tuple("E8001", "expected string", span, "string",
+            "invalid-unicode"), oracleCompletion,
+            "the oracle's completion cell keeps its pinned expected-kind text");
+        check(BoundaryExecutor.check(FailurePolicyId.ASYNC_COMPLETION, str, valid,
+            BoundaryContext.none()) instanceof BoundaryOutcome.Pass,
+            "the oracle admits the valid completion string");
+
+        // The JVM runtime leg: the same cells through bcheck/bcheckCompletion.
+        deal.codegen.jvm.JvmRuntime.DealError jvmString = jvmFailure(
+            () -> deal.codegen.jvm.JvmRuntime.bcheck("string", "string", "\uD800"));
+        check(jvmString != null, "the JVM string boundary rejects the invalid string");
+        if (jvmString != null) {
+            checkEq(null, firstDifferingField(oracleString, new Tuple(jvmString.code,
+                jvmString.msg, span, jvmString.expected, jvmString.actual)),
+                "the JVM runtime renders the oracle's identical string tuple");
+        }
+        deal.codegen.jvm.JvmRuntime.DealError jvmMid = jvmFailure(
+            () -> deal.codegen.jvm.JvmRuntime.bcheck("string", "string", "a\uDC80b"));
+        check(jvmMid != null, "the JVM string boundary rejects the embedded lone "
+            + "low surrogate");
+        check(jvmFailure(() -> deal.codegen.jvm.JvmRuntime.bcheck("string", "string",
+            "ok")) == null, "the JVM string boundary admits the valid string");
+        check(jvmFailure(() -> deal.codegen.jvm.JvmRuntime.bcheck(
+            "array(string)", "array", jvmArray("ok", "\uD800"))) != null,
+            "the JVM array boundary rejects the invalid element");
+        deal.codegen.jvm.JvmRuntime.DealError jvmElement = jvmFailure(
+            () -> deal.codegen.jvm.JvmRuntime.bcheck("array(string)", "array",
+                jvmArray("ok", "\uD800")));
+        check(jvmElement != null, "the JVM array boundary rejects the invalid "
+            + "element");
+        if (jvmElement != null) {
+            checkEq(null, firstDifferingField(oracleElement, new Tuple(jvmElement.code,
+                jvmElement.msg, span, jvmElement.expected, jvmElement.actual)),
+                "the JVM runtime renders the oracle's identical element tuple");
+        }
+        deal.codegen.jvm.JvmRuntime.DealError jvmNested = jvmFailure(
+            () -> deal.codegen.jvm.JvmRuntime.bcheck("array(array(string))",
+                "array", jvmArray(jvmArray("ok"), jvmArray("\uD800"))));
+        check(jvmNested != null, "the JVM nested array boundary rejects the "
+            + "invalid element");
+        if (jvmNested != null) {
+            checkEq(null, firstDifferingField(oracleNested, new Tuple(jvmNested.code,
+                jvmNested.msg, span, jvmNested.expected, jvmNested.actual)),
+                "the JVM runtime renders the oracle's identical nested tuple");
+        }
+        deal.codegen.jvm.JvmRuntime.DealError jvmCompletion = jvmFailure(
+            () -> deal.codegen.jvm.JvmRuntime.bcheckCompletion("string", "string",
+                "\uD800"));
+        check(jvmCompletion != null, "the JVM completion cell rejects the "
+            + "invalid string");
+        if (jvmCompletion != null) {
+            checkEq(null, firstDifferingField(oracleCompletion,
+                new Tuple(jvmCompletion.code, jvmCompletion.msg, span,
+                    jvmCompletion.expected, jvmCompletion.actual)),
+                "the JVM runtime renders the oracle's identical completion tuple");
+        }
+
+        // The emitted prelude leg under real luajit: the same cells through
+        // __bcheck, with the invalid bytes spelled as the Lua byte sequence
+        // (CESU-8 for the unpaired surrogate).
+        List<String> rows = runPreludeProbe("""
+            local bad = "\\237\\160\\128"
+            local valid = "ok"
+            local function arr(...)
+              local out = {__a = true, __n = select("#", ...)}
+              for i = 1, out.__n do out[i] = (select(i, ...)) end
+              return out
+            end
+            row("string-bad", pcall(__bcheck, "string", "string", bad, nil))
+            row("string-ok", pcall(__bcheck, "string", "string", valid, nil))
+            row("element-bad", pcall(__bcheck, "array(string)", "array",
+              arr(valid, bad), nil))
+            row("element-ok", pcall(__bcheck, "array(string)", "array",
+              arr(valid, "two"), nil))
+            row("nested-bad", pcall(__bcheck, "array(array(string))", "array",
+              arr(arr(valid), arr(bad)), nil))
+            row("nested-ok", pcall(__bcheck, "array(array(string))", "array",
+              arr(arr(valid), arr("b")), nil))
+            row("completion-bad", pcall(__bcheck, "string", "string", bad, nil,
+              true))
+            row("completion-ok", pcall(__bcheck, "string", "string", valid, nil,
+              true))
+            """, "invalid-unicode-probe", 8);
+        checkEq("string-bad|E8001|string|invalid-unicode|" + message, rows.get(0),
+            "the emitted prelude rejects the invalid string with the declared arm");
+        checkEq("string-ok|OK|", rows.get(1),
+            "the emitted prelude admits the valid string");
+        checkEq("element-bad|E8003|string|invalid-unicode|array element 2 type "
+            + "mismatch", rows.get(2),
+            "the emitted prelude rejects the invalid array element with the element "
+                + "arm");
+        checkEq("element-ok|OK|", rows.get(3),
+            "the emitted prelude admits the valid array elements");
+        checkEq("nested-bad|E8003|[string]|array|array element 2 type mismatch",
+            rows.get(4), "the emitted prelude rejects the nested invalid element "
+                + "with the outer element arm");
+        checkEq("nested-ok|OK|", rows.get(5),
+            "the emitted prelude admits the valid nested elements");
+        checkEq("completion-bad|E8001|string|invalid-unicode|expected string",
+            rows.get(6), "the emitted prelude's completion cell keeps its pinned "
+                + "expected-kind text");
+        checkEq("completion-ok|OK|", rows.get(7),
+            "the emitted prelude admits the valid completion string");
+        checkEq(null, firstDifferingField(oracleString, luaTuple(rows.get(0), span)),
+            "the Lua artifact renders the oracle's identical string tuple");
+        checkEq(null, firstDifferingField(oracleElement, luaTuple(rows.get(2), span)),
+            "the Lua artifact renders the oracle's identical element tuple");
+        checkEq(null, firstDifferingField(oracleNested, luaTuple(rows.get(4), span)),
+            "the Lua artifact renders the oracle's identical nested tuple");
+        checkEq(null, firstDifferingField(oracleCompletion, luaTuple(rows.get(6), span)),
+            "the Lua artifact renders the oracle's identical completion tuple");
+    }
+
+    /** One JVM runtime array carrier with the given elements. */
+    private static deal.codegen.jvm.JvmRuntime.Array jvmArray(Object... elements) {
+        deal.codegen.jvm.JvmRuntime.Array array =
+            new deal.codegen.jvm.JvmRuntime.Array(elements.length);
+        for (Object element : elements) {
+            array.elements.add(element);
+        }
+        return array;
     }
 
     // =========================================================================

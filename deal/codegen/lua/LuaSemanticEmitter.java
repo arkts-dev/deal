@@ -8995,7 +8995,21 @@ local function __bcheck(desc, staticKind, v, csig, completion)
     if type(v) == "table" and v.__jn then return v end
     return fail("number")
   elseif desc == "string" then
-    if type(v) == "string" then return v end
+    if type(v) == "string" then
+      -- The DEAL string boundary's scalar validation (the oracle's
+      -- TYPED_BOUNDARY_INVALID_UNICODE selection): a valid Unicode
+      -- scalar sequence admits unchanged, while an invalid one renders
+      -- the declared invalid-Unicode arm (the completion cell keeps its
+      -- own pinned kind arm). The classification is the same one
+      -- __typedBoundaryKind and the oracle's value view use, so no
+      -- consumer admits an invalid scalar the others reject.
+      if __jsonValidUtf8(v) then return v end
+      if completion then
+        return failKind("string", "string")
+      end
+      return error(__arm("TYPED_BOUNDARY_INVALID_UNICODE", nil, "-", "string",
+        "invalid-unicode"), 0)
+    end
     return fail("string")
   elseif desc == "table" then
     -- A shared table carrier (__t) and a module export surface (the K15

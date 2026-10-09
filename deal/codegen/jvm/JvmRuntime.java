@@ -1098,7 +1098,22 @@ public final class JvmRuntime {
             throw kindFailure("number", actual, completion);
         }
         if ("string".equals(desc)) {
-            if (v instanceof String) {
+            if (v instanceof String string) {
+                // The DEAL string boundary's scalar validation (the
+                // oracle's TYPED_BOUNDARY_INVALID_UNICODE selection): a
+                // valid Unicode scalar sequence admits unchanged, while
+                // an invalid one renders the declared invalid-Unicode arm
+                // (the completion cell keeps its own pinned kind arm).
+                // The classification is the same one {@link #actualOf}
+                // and the oracle's value view use, so no consumer admits
+                // an invalid scalar the others reject.
+                if (!JvmJson.validScalars(string)) {
+                    if (completion) {
+                        throw kindFailure("string", actual, true);
+                    }
+                    throw arm(deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_INVALID_UNICODE,
+                        java.util.Map.of(), "-", "string", "invalid-unicode");
+                }
                 return v;
             }
             throw kindFailure("string", actual, completion);

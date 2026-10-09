@@ -428,7 +428,8 @@ public final class SemanticDifferentialHarness {
 
     /** One scripted host argument of a callback invocation. */
     public sealed interface CallbackArg
-        permits CallbackArg.Int, CallbackArg.Number, CallbackArg.Str, CallbackArg.Null {
+        permits CallbackArg.Int, CallbackArg.Number, CallbackArg.Str, CallbackArg.Null,
+                CallbackArg.Array {
 
         /** An int32 argument (the closed int carrier). */
         record Int(long value) implements CallbackArg {
@@ -438,12 +439,32 @@ public final class SemanticDifferentialHarness {
         record Number(double value) implements CallbackArg {
         }
 
-        /** A string argument. */
+        /**
+         * A string argument. The value is emitted byte-exact into both
+         * scripted drivers, so a string whose contents are not a valid
+         * Unicode scalar sequence (an unpaired surrogate code unit)
+         * survives the source encoding as the same invalid scalar
+         * content the oracle's value model carries.
+         */
         record Str(String value) implements CallbackArg {
         }
 
         /** A language-null argument. */
         record Null() implements CallbackArg {
+        }
+
+        /**
+         * An array argument (the closed carriers as elements): the
+         * scripted carrier is a real array value on every consumer, so a
+         * declared array parameter slot's element boundaries run over the
+         * scripted elements. The harness realizes the homogeneous
+         * String/Int/Number arrays; a mixed or unsupported element shape
+         * fails closed.
+         */
+        record Array(List<CallbackArg> elements) implements CallbackArg {
+            public Array {
+                elements = List.copyOf(elements);
+            }
         }
     }
 
@@ -519,7 +540,36 @@ public final class SemanticDifferentialHarness {
             case CallbackArg.Number value -> new SemanticOracle.Value.NumValue(value.value());
             case CallbackArg.Str value -> new SemanticOracle.Value.StrValue(value.value());
             case CallbackArg.Null ignored -> SemanticOracle.Value.NullValue.INSTANCE;
+            case CallbackArg.Array value -> new SemanticOracle.Value.ArrayValue(
+                value.elements().stream().map(SemanticDifferentialHarness::oracleValueOf)
+                    .toList(),
+                arrayElementDescriptorOf(value), false);
         };
+    }
+
+    /**
+     * The element descriptor of one scripted array argument: the closed
+     * carrier kind every element shares (String, Int, or Number); a mixed
+     * or unsupported array fails closed.
+     */
+    private static RuntimeDescriptor arrayElementDescriptorOf(CallbackArg.Array array) {
+        RuntimeDescriptor descriptor = null;
+        for (CallbackArg element : array.elements()) {
+            RuntimeDescriptor elementDescriptor = switch (element) {
+                case CallbackArg.Str ignored -> RuntimeDescriptor.String.INSTANCE;
+                case CallbackArg.Int ignored -> RuntimeDescriptor.Int.INSTANCE;
+                case CallbackArg.Number ignored -> RuntimeDescriptor.Number.INSTANCE;
+                default -> throw new IllegalArgumentException("the harness array "
+                    + "argument carries an unsupported element shape: " + element);
+            };
+            if (descriptor == null) {
+                descriptor = elementDescriptor;
+            } else if (!descriptor.equals(elementDescriptor)) {
+                throw new IllegalArgumentException("the harness array argument "
+                    + "elements are not homogeneous: " + array.elements());
+            }
+        }
+        return descriptor == null ? RuntimeDescriptor.String.INSTANCE : descriptor;
     }
 
     /** The dispatch entry name of one CALLBACK_INVOKE op (per-unit record). */
@@ -543,27 +593,122 @@ public final class SemanticDifferentialHarness {
      * The Lua literal of one scripted host argument (the closed carriers):
      * a DEAL number value is the runtime's number-variant carrier, an int
      * value a plain Lua number — exactly the artifact value model's
-     * int/number representation.
+     * int/number representation. A string argument is emitted byte-exact:
+     * a well-formed surrogate pair becomes its UTF-8 bytes, an unpaired
+     * surrogate its CESU-8 byte sequence (Lua strings are byte sequences,
+     * so the scripted invalid scalar content survives the source encoding).
      */
     private static String luaLiteralOf(CallbackArg arg) {
         return switch (arg) {
             case CallbackArg.Int value -> String.valueOf(value.value());
             case CallbackArg.Number value -> "{__jn = true, k = \"number\", d = "
                 + Double.toString(value.value()) + "}";
-            case CallbackArg.Str value -> quoteLua(value.value());
+            case CallbackArg.Str value -> luaByteLiteral(value.value());
             case CallbackArg.Null ignored -> "nil";
+            case CallbackArg.Array value -> {
+                StringBuilder sb = new StringBuilder("{__a = true, __n = ")
+                    .append(value.elements().size());
+                for (int i = 0; i < value.elements().size(); i++) {
+                    sb.append(", [").append(i + 1).append("] = ")
+                        .append(luaLiteralOf(value.elements().get(i)));
+                }
+                yield sb.append("}").toString();
+            }
         };
     }
 
-    /** The JVM literal of one scripted host argument (the closed carriers). */
+    /**
+     * One Lua byte-string literal preserving every UTF-16 code unit of the
+     * scripted value: printable ASCII stays raw, every other code unit (a
+     * control character and the non-ASCII range) becomes the decimal
+     * escapes of its UTF-8 bytes, and an unpaired surrogate becomes the
+     * escapes of its CESU-8 byte sequence — exactly the byte string the
+     * DEAL invalid-scalar classification rejects.
+     */
+    private static String luaByteLiteral(String text) {
+        StringBuilder sb = new StringBuilder("\"");
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c >= 0x20 && c <= 0x7E) {
+                if (c == '"' || c == '\\') {
+                    sb.append('\\');
+                }
+                sb.append(c);
+                continue;
+            }
+            int codePoint;
+            if (Character.isHighSurrogate(c) && i + 1 < text.length()
+                    && Character.isLowSurrogate(text.charAt(i + 1))) {
+                codePoint = Character.toCodePoint(c, text.charAt(i + 1));
+                i++;
+            } else {
+                codePoint = c;
+            }
+            appendUtf8Escapes(sb, codePoint);
+        }
+        return sb.append('"').toString();
+    }
+
+    /** The decimal {@code \ddd} escapes of one code point's UTF-8 (or CESU-8) bytes. */
+    private static void appendUtf8Escapes(StringBuilder sb, int codePoint) {
+        int[] bytes;
+        if (codePoint < 0x80) {
+            bytes = new int[] {codePoint};
+        } else if (codePoint < 0x800) {
+            bytes = new int[] {0xC0 | (codePoint >> 6), 0x80 | (codePoint & 0x3F)};
+        } else if (codePoint < 0x10000) {
+            bytes = new int[] {0xE0 | (codePoint >> 12),
+                0x80 | ((codePoint >> 6) & 0x3F), 0x80 | (codePoint & 0x3F)};
+        } else {
+            bytes = new int[] {0xF0 | (codePoint >> 18),
+                0x80 | ((codePoint >> 12) & 0x3F),
+                0x80 | ((codePoint >> 6) & 0x3F), 0x80 | (codePoint & 0x3F)};
+        }
+        for (int b : bytes) {
+            sb.append('\\').append(String.format("%03d", b));
+        }
+    }
+
+    /**
+     * The JVM literal of one scripted host argument (the closed carriers).
+     * A string argument keeps every UTF-16 code unit: printable ASCII stays
+     * raw and every other code unit is the Unicode escape of its own code
+     * unit, so an unpaired surrogate survives the source encoding as the
+     * same invalid scalar content the oracle's value model carries.
+     */
     private static String jvmLiteralOf(CallbackArg arg) {
         return switch (arg) {
             case CallbackArg.Int value -> value.value() + "L";
             case CallbackArg.Number value -> Double.toString(value.value()) + "d";
-            case CallbackArg.Str value -> "\"" + value.value()
-                .replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+            case CallbackArg.Str value -> javaStringLiteral(value.value());
             case CallbackArg.Null ignored -> "null";
+            case CallbackArg.Array value -> {
+                StringBuilder sb = new StringBuilder("__arrayArg(new Object[]{");
+                for (int i = 0; i < value.elements().size(); i++) {
+                    if (i > 0) {
+                        sb.append(", ");
+                    }
+                    sb.append(jvmLiteralOf(value.elements().get(i)));
+                }
+                yield sb.append("})").toString();
+            }
         };
+    }
+
+    /**
+     * The JVM driver's array-argument helper source (the {@code __arrayArg}
+     * literal target): one real runtime array carrier with the scripted
+     * elements, so a declared array parameter slot's element boundaries run
+     * over the same elements the oracle's array value carries.
+     */
+    private static String jvmArrayArgHelper() {
+        return "  private static deal.codegen.jvm.JvmRuntime.Array __arrayArg("
+            + "Object... elements) {\n"
+            + "    deal.codegen.jvm.JvmRuntime.Array array = "
+            + "new deal.codegen.jvm.JvmRuntime.Array(elements.length);\n"
+            + "    for (Object element : elements) { array.elements.add(element); }\n"
+            + "    return array;\n"
+            + "  }\n";
     }
 
     /** One Lua string literal. */
@@ -680,6 +825,7 @@ public final class SemanticDifferentialHarness {
             Path driver = workspace.resolve(driverClass + ".java");
             Files.writeString(driver,
                 "public class " + driverClass + " {\n"
+                    + jvmArrayArgHelper()
                     + "  public static void main(String[] args) {\n"
                     + "    try {\n"
                     + "      Object r = " + emission.className() + "."
@@ -1041,6 +1187,7 @@ public final class SemanticDifferentialHarness {
             Path driver = workspace.resolve(driverClass + ".java");
             StringBuilder driverSource = new StringBuilder();
             driverSource.append("public class ").append(driverClass).append(" {\n")
+                .append(jvmArrayArgHelper())
                 .append("  public static void main(String[] args) {\n");
             if (host != null) {
                 driverSource.append("    deal.codegen.jvm.JvmRuntime.HOST_ASYNC = "
@@ -1158,9 +1305,32 @@ public final class SemanticDifferentialHarness {
         return true;
     }
 
-    /** One Java string literal. */
+    /**
+     * One Java string literal preserving every UTF-16 code unit: printable
+     * ASCII stays raw and every other code unit becomes a Unicode escape,
+     * so an unpaired surrogate survives the source encoding as the same
+     * code unit the value carries.
+     */
     private static String javaStringLiteral(String text) {
-        return "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+        StringBuilder sb = new StringBuilder("\"");
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                default -> {
+                    if (c >= 0x20 && c <= 0x7E) {
+                        sb.append(c);
+                    } else {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    }
+                }
+            }
+        }
+        return sb.append('"').toString();
     }
 
     /** The closed static runtime kind of a descriptor (the emitter's map). */
