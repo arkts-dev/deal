@@ -222,6 +222,7 @@ public final class DefaultIrRecorderTest {
         testAwaitGate();
         testSiblingProvidersResolveTheDeclaringModule();
         testSameNameSiblingCollision();
+        testContextualCallSiblingCollision();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -546,11 +547,66 @@ public final class DefaultIrRecorderTest {
             List<SiblingProvider> providers,
             Map<String, String> qualifiedAliases, String fieldDecl,
             String literalSource, Type fieldType) {
+        return siblingRun(providers, qualifiedAliases, fieldDecl,
+            literalSource, fieldType, fieldType, null, null);
+    }
+
+    /**
+     * The contextual-call probe (review cycle 2): a class default whose
+     * literal arrives through a call, so the literal's class context is
+     * the callee's parameter type and the only exact provenance is the
+     * resolved callee's declaring module.
+     */
+    private static List<DefaultResourceOccurrence> siblingContextualRun(
+            List<SiblingProvider> providers, SiblingProvider callee,
+            boolean localCallee) {
+        String call = localCallee
+            ? "useEntry({ v: 7 })"
+            : callee.alias() + "." + callee.functionName()
+                + "({ v: 7 })";
+        return siblingRun(providers, Map.of(), "x: int", call,
+            Type.Int.INSTANCE, callee.classType(),
+            localCallee ? callableType(callee)
+                : callee.planImport().exports()
+                    .get(callee.functionName()),
+            localCallee ? new LocalFunction("useEntry",
+                callee.alias() + ".Ir") : null);
+    }
+
+    /** One synthetic same-module top-level function of the probe. */
+    private record LocalFunction(String name, String qualifiedParamType) {
+    }
+
+    private static Type callableType(SiblingProvider provider) {
+        return Types.func(List.of(provider.classType()),
+            Type.Int.INSTANCE);
+    }
+
+    /**
+     * One consumer over the given providers, in the given source
+     * import-declaration order: a class default holding one contextual
+     * class literal of the given field type. {@code literalType} pins
+     * every object literal's checked type, {@code calleeType} pins every
+     * call's callee expression (the contextual route), and
+     * {@code localFunction} optionally prepends a same-module top-level
+     * function declaration whose parameter is spelled with the given
+     * qualified type. Returns the recorded occurrences.
+     */
+    private static List<DefaultResourceOccurrence> siblingRun(
+            List<SiblingProvider> providers,
+            Map<String, String> qualifiedAliases, String fieldDecl,
+            String literalSource, Type fieldType, Type literalType,
+            Type calleeType, LocalFunction localFunction) {
         StringBuilder source = new StringBuilder();
         for (SiblingProvider provider : providers) {
             source.append("import * as ").append(provider.alias())
                 .append(" from \"./").append(provider.alias())
                 .append("\"\n");
+        }
+        if (localFunction != null) {
+            source.append("function ").append(localFunction.name())
+                .append("(x: ").append(localFunction.qualifiedParamType())
+                .append("): int { return x.v; }\n");
         }
         source.append("class Outer {\n")
             .append("  ").append(fieldDecl).append(" = ")
@@ -579,10 +635,17 @@ public final class DefaultIrRecorderTest {
         ExpressionNode defaultExpr = outer.fields().get(0).defaultExpr()
             .orElse(null);
         Map<ExpressionNode, Type> typeMap = new HashMap<>();
-        if (defaultExpr != null) {
+        if (defaultExpr != null && literalType != null) {
             for (ExpressionNode node : collectAll(defaultExpr)) {
                 if (node instanceof ObjectLiteralExpr) {
-                    typeMap.put(node, fieldType);
+                    typeMap.put(node, literalType);
+                }
+            }
+        }
+        if (defaultExpr != null && calleeType != null) {
+            for (ExpressionNode node : collectAll(defaultExpr)) {
+                if (node instanceof deal.ast.CallExpr call) {
+                    typeMap.put(call.callee(), calleeType);
                 }
             }
         }
@@ -590,6 +653,11 @@ public final class DefaultIrRecorderTest {
         Map<String, CanonicalModuleIdentity> classification =
             new LinkedHashMap<>();
         SymbolTable scope = new SymbolTable();
+        if (localFunction != null && calleeType instanceof Type.Func fn) {
+            scope.define(localFunction.name(),
+                new deal.checker.Symbol.FunctionSymbol(
+                    localFunction.name(), fn));
+        }
         for (SiblingProvider provider : providers) {
             DefaultPlanImport planImport = provider.planImport();
             imports.put(provider.alias(), planImport);
@@ -615,6 +683,25 @@ public final class DefaultIrRecorderTest {
             qualifiedAliases);
         recorder.record(defaultExpr, scope, fieldType);
         return recorder.occurrences();
+    }
+
+    /**
+     * The class-default-plan occurrence of a call-bearing probe: the
+     * imported-function wrapper occurrence of the callee is not the
+     * demand under assertion.
+     */
+    private static void checkSiblingClassOccurrence(
+            List<DefaultResourceOccurrence> occurrences,
+            SiblingProvider provider, String context) {
+        List<DefaultResourceOccurrence> plans = new java.util.ArrayList<>();
+        for (DefaultResourceOccurrence occurrence : occurrences) {
+            if (occurrence.kind()
+                    == RuntimeResourceReference.Kind
+                        .IMPORTED_CLASS_DEFAULT_PLAN) {
+                plans.add(occurrence);
+            }
+        }
+        checkSiblingOccurrence(plans, provider, context);
     }
 
     /** One occurrence naming the provider's exact defining declaration. */
@@ -739,6 +826,42 @@ public final class DefaultIrRecorderTest {
                 Map.of("Ir", "codec"), "r: codec.Ir", "{ v: 7 }",
                 codecExported.classType()), codecExported,
                 "the exported-collision codec spelling");
+        }
+    }
+
+    /**
+     * The contextual-call collision (review cycle 2): the class context
+     * arrives through a call's parameter, so the declaring field
+     * annotation names no class and both identity-equal siblings export
+     * the demanded name. The resolved callee's declaring module is the
+     * only exact provider — in both import orders, for an imported
+     * callee and for a same-module callee whose parameter spelling
+     * names an import.
+     */
+    private static void testContextualCallSiblingCollision() {
+        System.out.println("-- the resolved callee's parameter context names"
+            + " the class-literal provider (both import orders) --");
+        CanonicalModuleIdentity sibling =
+            new CanonicalModuleIdentity.ProjectModule(SIBLING_IDENTITY);
+        SiblingProvider ir = siblingProvider("ir", "/proj/src/m/ir.deal",
+            "src.m.ir", sibling, "Ir");
+        SiblingProvider codec = siblingProvider("codec",
+            "/proj/src/m/codec.deal", "src.m.codec", sibling, "Ir");
+        check(codec.classIdentity().equals(ir.classIdentity()),
+            "the fixture's exported same-name siblings are identity-equal"
+                + " (the directory-keyed model)");
+
+        for (List<SiblingProvider> order : List.of(
+                List.of(ir, codec), List.of(codec, ir))) {
+            checkSiblingClassOccurrence(
+                siblingContextualRun(order, ir, false), ir,
+                "the imported-callee collision probe ir.useIr");
+            checkSiblingClassOccurrence(
+                siblingContextualRun(order, codec, false), codec,
+                "the imported-callee collision probe codec.useIr");
+            checkSiblingClassOccurrence(
+                siblingContextualRun(order, ir, true), ir,
+                "the local-callee collision probe f(x: ir.Ir)");
         }
     }
 

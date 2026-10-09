@@ -58,18 +58,22 @@ import deal.codegen.SourceMapGenerator;
 import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.diagnostics.DiagnosticRange;
 import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalClassIdentityIndex;
 import deal.identity.CanonicalModuleIdentity;
 import deal.identity.ProjectModuleIdentity;
 import deal.module.CompilerClassDefaultEntry;
 import deal.module.CompilerClassDefaultPlan;
+import deal.module.DefaultIrNode;
 import deal.module.PlannedDefaultClass;
+import deal.module.ResolvedDefaultExpression;
 import deal.module.RuntimeClassDefaultPlan;
 import deal.module.RuntimeDefaultEvaluator;
 import deal.module.RuntimeDefaultPlanLowering;
 import deal.module.ModuleIdentityResolver;
 import deal.module.StdlibModuleResolver;
+import deal.module.TypedEvaluatorIr;
 import deal.semantic.ir.SemanticProfile;
 import deal.types.Type;
 import deal.types.Types;
@@ -380,6 +384,34 @@ public final class JsBackend {
     private Map<String, List<PlannedDefaultClass>> plansByModulePath =
         Map.of();
 
+    /** The module AST of this emission (the import declarations and the
+     * imported-resource target lookups read it). */
+    private ProgramNode moduleAst;
+
+    /**
+     * The checked class-literal targets of the plan default currently
+     * being emitted (AST node &rarr; the recorder's resolved target),
+     * installed from the entry's {@code semanticIr} while its evaluator
+     * text is produced. A constructed class literal whose target is an
+     * imported resource therefore references the exact recorded provider
+     * (the directory-keyed class identity alone is ambiguous across
+     * sibling modules — GitHub #6). Empty everywhere else (the
+     * synthesized pre-plan path and the body walk).
+     */
+    private Map<ExpressionNode, DefaultIrNode.Target> planLiteralTargets =
+        Map.of();
+
+    /**
+     * The declaration range of every planned class of this compilation
+     * (all modules) &rarr; the dotted module path declaring it, built
+     * once from the completed plan surface the orchestrator handed to
+     * the backend. The range is unique per file, so it resolves one
+     * exact provider module for a recorded imported-resource target
+     * without re-deriving identity locality.
+     */
+    private final Map<DiagnosticRange, String> classDeclarationModulePaths =
+        new HashMap<>();
+
     private final List<RuntimeClassDefaultPlan> runtimePlans =
         new ArrayList<>();
 
@@ -569,6 +601,8 @@ public final class JsBackend {
     }
 
     private JsCodegenResult generateProgram(ProgramNode program) {
+        this.moduleAst = program;
+        indexClassDeclarationModules();
         // The E6004 entry backstop (D7) scans before emission: a rejected
         // entry module emits no shim, and the orchestrator writes no
         // artifact for any module carrying an error diagnostic.
@@ -1987,8 +2021,9 @@ public final class JsBackend {
                 String label = RuntimeDefaultPlanLowering.labelOf(
                     identityText, entry.name(),
                     entry.defaultExpression().semanticDigest());
-                String evaluator = "() => " + emitExpression(
-                    entry.defaultExpression().expressionAst());
+                String evaluator = "() => "
+                    + emitPlanDefaultExpression(
+                        entry.defaultExpression());
                 sb.append(", evaluator: /* default evaluator ")
                     .append(label).append(" */ ").append(evaluator);
                 realizations.add(new RuntimeDefaultPlanLowering
@@ -2012,6 +2047,121 @@ public final class JsBackend {
                     + " carrier-side invocation seam is never invoked"
                     + " in-process");
         };
+    }
+
+    /**
+     * Emits one published plan entry's evaluator expression with the
+     * entry's recorded class-literal targets installed: the recorder's
+     * checked provider of every constructed class literal (the AST node
+     * &rarr; target index of the entry's semantic IR) is consulted by
+     * {@link #constructionRef}, so a sibling-module identity collision
+     * never re-derives the provider from the identity alone.
+     */
+    private String emitPlanDefaultExpression(
+            ResolvedDefaultExpression expression) {
+        Map<ExpressionNode, DefaultIrNode.Target> saved =
+            planLiteralTargets;
+        planLiteralTargets = planLiteralTargetsOf(expression.semanticIr());
+        try {
+            return emitExpression(expression.expressionAst());
+        } finally {
+            planLiteralTargets = saved;
+        }
+    }
+
+    /**
+     * The AST node &rarr; checked target index of one plan entry's
+     * semantic IR, or an empty map when the IR carries another
+     * realization. Identity-keyed: structurally equal literals are
+     * distinct source nodes.
+     */
+    private static Map<ExpressionNode, DefaultIrNode.Target>
+            planLiteralTargetsOf(TypedEvaluatorIr ir) {
+        if (!(ir instanceof DefaultIrNode root)) {
+            return Map.of();
+        }
+        Map<ExpressionNode, DefaultIrNode.Target> targets =
+            new IdentityHashMap<>();
+        collectPlanLiteralTargets(root, targets);
+        return targets;
+    }
+
+    private static void collectPlanLiteralTargets(DefaultIrNode node,
+            Map<ExpressionNode, DefaultIrNode.Target> targets) {
+        if (node.expression() != null && node.target() != null) {
+            targets.put(node.expression(), node.target());
+        }
+        for (DefaultIrNode child : node.children()) {
+            collectPlanLiteralTargets(child, targets);
+        }
+    }
+
+    /**
+     * The declaration range of every planned class of this compilation
+     * (all modules) &rarr; its dotted module path, built once from the
+     * completed plan surface the orchestrator handed to the backend.
+     */
+    private void indexClassDeclarationModules() {
+        for (Map.Entry<String, List<PlannedDefaultClass>> entry
+                : plansByModulePath.entrySet()) {
+            for (PlannedDefaultClass planned : entry.getValue()) {
+                classDeclarationModulePaths.putIfAbsent(
+                    planned.declaration().span().range(), entry.getKey());
+            }
+        }
+    }
+
+    /**
+     * The import alias a recorded imported-resource class-literal
+     * target names for the demanded class, or null when the literal has
+     * no recorded target (the synthesized pre-plan and body walks, which
+     * keep the identity-scan selection). The recorded declaration range
+     * resolves the declaring module path exactly (sibling modules in one
+     * directory share the canonical identity, never the declaration
+     * range), and the alias is accepted only when its checked export
+     * surface carries the demanded identity.
+     */
+    private String recordedProviderAlias(Type.Class cls,
+            ObjectLiteralExpr obj) {
+        DefaultIrNode.Target target = planLiteralTargets.get(obj);
+        if (target == null || target.kind()
+                != DefaultIrNode.TargetKind.IMPORTED_RESOURCE
+                || target.resourceIdentity() == null
+                || moduleAst == null) {
+            return null;
+        }
+        if (!target.resourceIdentity().lexicalDeclarationIdentity()
+                .declaredName().equals(cls.name())) {
+            return null;
+        }
+        DiagnosticRange declaration = target.resourceIdentity()
+            .lexicalDeclarationIdentity().sourceScalarRange();
+        String declaringModule =
+            classDeclarationModulePaths.get(declaration);
+        if (declaringModule == null) {
+            return null;
+        }
+        for (StatementNode stmt : moduleAst.statements()) {
+            if (!(stmt instanceof ImportDeclaration imp)) {
+                continue;
+            }
+            if (!declaringModule.equals(
+                    importResolutions.get(imp.modulePath()))) {
+                continue;
+            }
+            if (isLocalName(imp.alias())) {
+                continue; // a local binding shadows the import alias
+            }
+            Symbol sym = symbols.resolve(imp.alias());
+            if (sym instanceof Symbol.ModuleSymbol ms) {
+                Type exported = ms.exports().get(cls.name());
+                if (exported instanceof Type.Class tc
+                        && tc.identity().equals(cls.identity())) {
+                    return imp.alias();
+                }
+            }
+        }
+        return null;
     }
 
     /**
@@ -3426,18 +3576,27 @@ public final class JsBackend {
     }
 
     /**
-     * The construction closure reference for a class-typed literal: the
-     * checker's construction-provenance fact names the exact declaration
-     * the literal was laid out by, and its own artifact base is the
-     * unambiguous reference — a same-named declaration the literal's
-     * lexical scope happens to resolve (a nested shadowing declaration)
-     * must never capture the construction. When the fact names no local
-     * declaration (an imported or synthetic class symbol, or a synthetic
-     * checked-facts entry point) the name-based resolution below applies:
-     * the header {@code Error$new} for the builtin Error (module path
-     * empty), the module-private {@code <C>$new} binding for a local
-     * class, and the declaring module's exported {@code <alias>.<C>$new}
-     * for an imported class (T4 materializes the alias binding).
+     * The construction closure reference for a class-typed literal. Three
+     * resolution routes, in order:
+     *
+     * <ol>
+     *   <li>the checker's construction-provenance fact names the exact
+     *       declaration the literal was laid out by, and its own artifact
+     *       base is the unambiguous reference — a same-named declaration
+     *       the literal's lexical scope happens to resolve (a nested
+     *       shadowing declaration) must never capture the construction;</li>
+     *   <li>the recorded checked provider of a published plan default
+     *       (the recorder's resolved imported resource): the semantic IR
+     *       target's declaration range resolves the provider module, so a
+     *       sibling module's same-name class never captures the
+     *       construction (two files in one directory share the canonical
+     *       identity, never the declaration range);</li>
+     *   <li>the name-based resolution: the header {@code Error$new} for
+     *       the builtin Error (module path empty), the module-private
+     *       {@code <C>$new} binding for a local class, and the declaring
+     *       module's exported {@code <alias>.<C>$new} for an imported
+     *       class (T4 materializes the alias binding).</li>
+     * </ol>
      */
     private String constructionRef(Type.Class cls, ObjectLiteralExpr obj) {
         ClassDeclaration declaration = constructedClassDecls.get(obj);
@@ -3446,6 +3605,14 @@ public final class JsBackend {
             if (base != null) {
                 return base + "$new";
             }
+        }
+        // The recorded checked provider wins before the identity scan:
+        // two files in one directory share the module identity, so the
+        // scan alone cannot distinguish same-name sibling classes
+        // (GitHub #6) when both are exported.
+        String recorded = recordedProviderAlias(cls, obj);
+        if (recorded != null) {
+            return jsName(recorded) + "." + cls.name() + "$new";
         }
         // The import alias whose export carries this exact identity wins
         // first (two files in one directory share the module identity).

@@ -1,6 +1,7 @@
 package deal.module;
 
 import deal.ast.ArrayLiteralExpr;
+import deal.ast.ArrayType;
 import deal.ast.AssignmentExpr;
 import deal.ast.AwaitExpression;
 import deal.ast.BinaryExpr;
@@ -8,6 +9,7 @@ import deal.ast.Block;
 import deal.ast.BreakStatement;
 import deal.ast.CallExpr;
 import deal.ast.ClassDeclaration;
+import deal.ast.ClassField;
 import deal.ast.ContinueStatement;
 import deal.ast.DeleteStatement;
 import deal.ast.Either;
@@ -19,6 +21,7 @@ import deal.ast.ForOfStatement;
 import deal.ast.ForStatement;
 import deal.ast.FunctionDeclaration;
 import deal.ast.FunctionExpr;
+import deal.ast.FunctionType;
 import deal.ast.HasExpr;
 import deal.ast.IdentifierExpr;
 import deal.ast.IfStatement;
@@ -27,10 +30,13 @@ import deal.ast.IndexExpr;
 import deal.ast.LiteralExpr;
 import deal.ast.LiteralValue;
 import deal.ast.MemberAccessExpr;
+import deal.ast.NamedType;
+import deal.ast.NullableType;
 import deal.ast.ObjectLiteralExpr;
 import deal.ast.Parameter;
 import deal.ast.ProgramNode;
 import deal.ast.Property;
+import deal.ast.QualifiedType;
 import deal.ast.ReturnStatement;
 import deal.ast.Span;
 import deal.ast.StatementNode;
@@ -157,6 +163,23 @@ final class DefaultIrRecorder {
 
     private DefaultIrNode recordExpression(ExpressionNode expr,
             SymbolTable scope, List<Type> contexts, boolean evaluatorScope) {
+        return recordExpression(expr, scope, contexts, null,
+            evaluatorScope);
+    }
+
+    /**
+     * The provenance-carrying expression walk: {@code contextProvider}
+     * is the import whose checked declaration scope resolved the
+     * subtree's contextual class type, when the route that introduced
+     * the context names it — the resolved imported callee's parameter
+     * context, the enclosing class field's declaring provider, or the
+     * directly declared local variable type. A null provider means the
+     * checked route names no import and the class-literal provider
+     * falls back to the declaring-annotation/export-surface selection.
+     */
+    private DefaultIrNode recordExpression(ExpressionNode expr,
+            SymbolTable scope, List<Type> contexts,
+            DefaultPlanImport contextProvider, boolean evaluatorScope) {
         switch (expr) {
             case LiteralExpr lit -> {
                 return node(DefaultIrNode.NodeKind.LITERAL, null,
@@ -212,7 +235,7 @@ final class DefaultIrRecorder {
             }
             case ObjectLiteralExpr obj -> {
                 return recordObjectLiteral(obj, scope, contexts,
-                    evaluatorScope);
+                    contextProvider, evaluatorScope);
             }
             case FunctionExpr fe -> {
                 return recordFunctionExpression(fe, scope, contexts);
@@ -325,6 +348,8 @@ final class DefaultIrRecorder {
         }
 
         List<Type> paramContexts = paramContextsOf(call);
+        List<DefaultPlanImport> paramProviders =
+            paramContextProviders(call, scope);
         List<DefaultIrNode> children = new ArrayList<>();
         children.add(recordExpression(call.callee(), scope, List.of(),
             evaluatorScope));
@@ -332,6 +357,7 @@ final class DefaultIrRecorder {
             children.add(recordExpression(call.args().get(i), scope,
                 i < paramContexts.size()
                     ? List.of(paramContexts.get(i)) : List.of(),
+                i < paramProviders.size() ? paramProviders.get(i) : null,
                 evaluatorScope));
         }
         return node(DefaultIrNode.NodeKind.CALL, null, typeMap.get(call),
@@ -344,6 +370,83 @@ final class DefaultIrRecorder {
             return func.paramTypes();
         }
         return List.of();
+    }
+
+    /**
+     * The contextual provider of every callee parameter: the import
+     * whose resolved declaration scope introduced the parameter's class
+     * context. An imported callee's signature is resolved in its own
+     * module, so a parameter type spelled with a bare class name is
+     * that provider's declaration while a qualified spelling names one
+     * of the provider's own imports (resolvable through this module's
+     * import surface only when the provider is this module). A
+     * parameter the route does not resolve to an owning import yields
+     * null and the class literal keeps the checked export-surface
+     * selection.
+     */
+    private List<DefaultPlanImport> paramContextProviders(CallExpr call,
+            SymbolTable scope) {
+        TypeNode[] paramNodes = null;
+        DefaultPlanImport owner = null;
+        if (call.callee() instanceof MemberAccessExpr mae
+                && mae.object() instanceof IdentifierExpr id
+                && scope.resolve(id.name()) instanceof Symbol.ModuleSymbol) {
+            DefaultPlanImport provider = imports.get(id.name());
+            FunctionDeclaration declaration = provider == null ? null
+                : AstDeclarations.findFunctionDeclaration(
+                    provider.program(), mae.field());
+            if (declaration != null) {
+                paramNodes = declaration.params().stream()
+                    .map(Parameter::type)
+                    .toArray(TypeNode[]::new);
+                owner = provider;
+            }
+        } else if (call.callee() instanceof IdentifierExpr cid
+                && scope.resolve(cid.name()) instanceof Symbol.FunctionSymbol) {
+            FunctionDeclaration declaration =
+                AstDeclarations.findFunctionDeclaration(program,
+                    cid.name());
+            if (declaration != null) {
+                paramNodes = declaration.params().stream()
+                    .map(Parameter::type)
+                    .toArray(TypeNode[]::new);
+            }
+        }
+        if (paramNodes == null) {
+            return List.of();
+        }
+        List<DefaultPlanImport> providers = new ArrayList<>(
+            paramNodes.length);
+        for (TypeNode node : paramNodes) {
+            providers.add(providerForTypeNode(node, owner));
+        }
+        return providers;
+    }
+
+    /**
+     * The provider one declared type node spells for a class: a bare
+     * class name is the owner module's own declaration (that import),
+     * a qualified {@code Alias.Class} names one of the owner's imports
+     * — resolved through this module's import surface when the owner is
+     * this module. A class literal's context is always a directly named
+     * class type (the checker contextualizes a construction only
+     * against a {@code Type.Class}), so a compound node carries no
+     * provider. Returns null when the node names no resolvable class
+     * provider.
+     */
+    private DefaultPlanImport providerForTypeNode(TypeNode typeNode,
+            DefaultPlanImport owner) {
+        return switch (typeNode) {
+            case QualifiedType qualified -> owner == null
+                ? imports.get(qualified.moduleName()) : null;
+            case NamedType named -> owner != null
+                    && AstDeclarations.findClassDeclaration(owner.program(),
+                        named.name()) != null
+                ? owner : null;
+            case ArrayType ignored -> null;
+            case NullableType ignored -> null;
+            case FunctionType ignored -> null;
+        };
     }
 
     private DefaultIrNode recordMemberAccess(MemberAccessExpr mae,
@@ -396,9 +499,14 @@ final class DefaultIrRecorder {
 
     private DefaultIrNode recordObjectLiteral(ObjectLiteralExpr obj,
             SymbolTable scope, List<Type> contexts,
-            boolean evaluatorScope) {
+            DefaultPlanImport contextProvider, boolean evaluatorScope) {
         Type resolvedType = typeMap.get(obj);
         DefaultIrNode.Target target = null;
+        // The program declaring the constructed class and its import (a
+        // null import means this module): the nested literals' provider
+        // provenance, read from that program's own field declarations.
+        ProgramNode declaringProgram = null;
+        DefaultPlanImport declaringProvider = null;
         if (resolvedType instanceof Type.Class cls) {
             Symbol sym = scope.resolve(cls.name());
             Symbol.ClassSymbol sameModule = null;
@@ -413,12 +521,14 @@ final class DefaultIrRecorder {
                     sameModuleResource(
                         LexicalDeclarationIdentity.DeclarationKind.CLASS,
                         cls.name()));
+                declaringProgram = program;
             } else if (cls.identity().moduleIdentity()
                     instanceof CanonicalModuleIdentity.BuiltinModule) {
                 // The intrinsic Error class construction.
                 target = DefaultIrNode.Target.intrinsic(cls.name());
             } else {
-                DefaultPlanImport provider = providerForClass(cls);
+                DefaultPlanImport provider =
+                    providerForClass(cls, contextProvider);
                 if (provider != null) {
                     SemanticResourceIdentity resource = importedResource(
                         provider,
@@ -426,6 +536,8 @@ final class DefaultIrRecorder {
                         cls.name());
                     target = DefaultIrNode.Target.importedResource(
                         cls.name(), resource);
+                    declaringProgram = provider.program();
+                    declaringProvider = provider;
                     if (provider.publishesClassPlans()) {
                         // D4: a contextual class literal typed as a
                         // plan-bearing class declared in an imported
@@ -445,8 +557,14 @@ final class DefaultIrRecorder {
         }
         List<DefaultIrNode> children = new ArrayList<>();
         for (Property property : obj.properties()) {
+            DefaultPlanImport childProvider =
+                resolvedType instanceof Type.Class cls
+                    && declaringProgram != null
+                ? providerForDeclaredField(declaringProgram,
+                    declaringProvider, cls, property.name())
+                : null;
             children.add(recordExpression(property.value(), scope,
-                List.of(), evaluatorScope));
+                List.of(), childProvider, evaluatorScope));
         }
         List<Type> effectiveContexts = contexts;
         if (resolvedType instanceof Type.Class) {
@@ -528,8 +646,15 @@ final class DefaultIrRecorder {
             case VariableDeclaration vd -> {
                 List<DefaultIrNode> children = new ArrayList<>();
                 if (vd.initializer() != null) {
+                    // The declared annotation is the checked provenance
+                    // of the initializer's class context: a qualified
+                    // spelling names its provider import directly.
+                    DefaultPlanImport declaredProvider = vd.typeAnnotation()
+                        .map(typeNode -> providerForTypeNode(typeNode, null))
+                        .orElse(null);
                     children.add(recordExpression(vd.initializer(),
-                        effectiveScope, List.of(), evaluatorScope));
+                        effectiveScope, List.of(), declaredProvider,
+                        evaluatorScope));
                 }
                 return node(DefaultIrNode.NodeKind.VARIABLE_DECLARATION,
                     null, null, List.of(), children, null, null,
@@ -752,6 +877,12 @@ final class DefaultIrRecorder {
      * checked import provenance, over the consumer's import
      * declarations:</p>
      * <ol>
+     *   <li>the contextual provider the checked route names
+     *       ({@code provenance}), when its program declares the demanded
+     *       class and its classification carries the class identity —
+     *       the resolved imported callee's parameter context, the
+     *       enclosing class field's declaring provider, or the directly
+     *       declared variable type;</li>
      *   <li>the import the occurrence's resolved qualified alias names
      *       (the checked spelling of the declaring annotation), when its
      *       export surface carries the class identity;</li>
@@ -766,10 +897,14 @@ final class DefaultIrRecorder {
      *       serialization).</li>
      * </ol>
      */
-    private DefaultPlanImport providerForClass(Type.Class cls) {
+    private DefaultPlanImport providerForClass(Type.Class cls,
+            DefaultPlanImport provenance) {
         CanonicalModuleIdentity target = cls.identity().moduleIdentity();
         if (target instanceof CanonicalModuleIdentity.BuiltinModule) {
             return null;
+        }
+        if (provenance != null && ownsClass(provenance, cls, target)) {
+            return provenance;
         }
         String qualified = qualifiedClassAliases.get(cls.name());
         DefaultPlanImport identityMatch = null;
@@ -803,6 +938,48 @@ final class DefaultIrRecorder {
             }
         }
         return exportedMatch != null ? exportedMatch : identityMatch;
+    }
+
+    /**
+     * True when one import is the declared owner of the demanded class:
+     * its program declares the class name and its module classification
+     * carries the class's module identity (the directory-keyed identity
+     * alone is ambiguous across sibling modules).
+     */
+    private boolean ownsClass(DefaultPlanImport provider, Type.Class cls,
+            CanonicalModuleIdentity classIdentity) {
+        return AstDeclarations.findClassDeclaration(provider.program(),
+                cls.name()) != null
+            && classIdentity.equals(
+                classification.get(provider.modulePath()));
+    }
+
+    /**
+     * The contextual provider of one nested class literal: the property
+     * name selects the owning class's field declaration in its declaring
+     * program, whose declared type node names the nested class's
+     * provider (a bare name is the declaring module's own declaration, a
+     * qualified name one of that module's imports). Null when the
+     * declaration or field is absent, or its spelling names no owning
+     * import: the caller then keeps the checked export-surface
+     * selection.
+     */
+    private DefaultPlanImport providerForDeclaredField(
+            ProgramNode declaringProgram,
+            DefaultPlanImport declaringProvider, Type.Class owner,
+            String fieldName) {
+        ClassDeclaration declaration = AstDeclarations.findClassDeclaration(
+            declaringProgram, owner.name());
+        if (declaration == null) {
+            return null;
+        }
+        for (ClassField field : declaration.fields()) {
+            if (field.name().equals(fieldName)) {
+                return providerForTypeNode(field.type(),
+                    declaringProvider);
+            }
+        }
+        return null;
     }
 
     /**

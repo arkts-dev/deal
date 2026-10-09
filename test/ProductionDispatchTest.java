@@ -181,6 +181,80 @@ public class ProductionDispatchTest {
         }
         """;
 
+    /**
+     * The contextual-call collision (review cycle 2): the class context
+     * arrives only through {@code ir.useIr}'s parameter, and both
+     * identity-equal siblings export the demanded {@code Ir} name, so
+     * the resolved imported callee's declaring module must own the
+     * recorded plan and the emitted construction (the codec sibling's
+     * own default never serializes as the demanded class).
+     */
+    private static final String CONTEXTUAL_IR_SOURCE = """
+        export class Ir { a: int = 7; }
+        export function useIr(x: Ir): int { return x.a; }
+        """;
+
+    private static final String CONTEXTUAL_CODEC_SOURCE = """
+        export class Ir { a: int = 93; }
+        export class Codec { b: int = 9; }
+        export function useCodec(y: Codec): int { return y.b; }
+        """;
+
+    /** The contextual collision consumer: the literal is an argument of
+     * the {@code ir}-imported callee, so only the callee's parameter
+     * context names the demanded provider. */
+    private static final String CONTEXTUAL_MAIN_CODEC_FIRST = """
+        import * as console from "std/console";
+        import * as codec from "./m/codec";
+        import * as ir from "./m/ir";
+        export class Outer { x: int = ir.useIr({}); c: codec.Codec = {}; }
+        export function main(): null {
+          let o: Outer = {};
+          if (o.x === 7 && o.c.b === 9) { console.log("ok"); }
+          return null;
+        }
+        """;
+
+    /** The contextual collision consumer with the imports reversed. */
+    private static final String CONTEXTUAL_MAIN_IR_FIRST = """
+        import * as console from "std/console";
+        import * as ir from "./m/ir";
+        import * as codec from "./m/codec";
+        export class Outer { x: int = ir.useIr({}); c: codec.Codec = {}; }
+        export function main(): null {
+          let o: Outer = {};
+          if (o.x === 7 && o.c.b === 9) { console.log("ok"); }
+          return null;
+        }
+        """;
+
+    /**
+     * The nested-literal control (review cycle 2): the demanded class
+     * is a nested field of an imported class, so the enclosing field
+     * annotation names the outer class only. The declaring program's own
+     * field declaration carries the nested class's provider.
+     */
+    private static final String NESTED_IR_SOURCE = """
+        export class Ir { a: int = 7; }
+        export class Wrap { inner: Ir = {}; }
+        """;
+
+    private static final String NESTED_CODEC_SOURCE = """
+        export class Ir { a: int = 93; }
+        """;
+
+    private static final String NESTED_MAIN_CODEC_FIRST = """
+        import * as console from "std/console";
+        import * as codec from "./m/codec";
+        import * as ir from "./m/ir";
+        export class Outer { w: ir.Wrap = { inner: {} }; }
+        export function main(): null {
+          let o: Outer = {};
+          if (o.w.inner.a === 7) { console.log("ok"); }
+          return null;
+        }
+        """;
+
     private static final String HOST_DEAL_JSON_LUA = """
         {
           "languageVersion": "1.2",
@@ -998,13 +1072,19 @@ public class ProductionDispatchTest {
 
     /** The JS artifact of the sibling project under the real node. */
     private static void checkSiblingJsRun(String label, Path out) {
+        checkJsArtifactRun(label, out, "main.js");
+    }
+
+    /** One named JS entry artifact under the real node. */
+    private static void checkJsArtifactRun(String label, Path out,
+            String artifact) {
         if (!probeNode()) {
             System.out.println("  SKIP (node unavailable): the " + label
                 + " artifact execution");
             return;
         }
         checkSiblingStdout(label, "node",
-            runProcessUnchecked(out, "node", "main.js"));
+            runProcessUnchecked(out, "node", artifact));
     }
 
     /** The LuaJIT artifact of the sibling project under the real luajit. */
@@ -1149,6 +1229,191 @@ public class ProductionDispatchTest {
     }
 
     /**
+     * The contextual-call collision (review cycle 2): the class context
+     * arrives only through the resolved imported callee's parameter, and
+     * both identity-equal siblings export the demanded class name. The
+     * recorded occurrence and deferred edge must name the callee's
+     * declaring module, its exact declaration range, and the class's own
+     * plan digest — in both import orders, and the published artifact
+     * must construct that provider's class (the demanded default 7 is
+     * observable on stdout, never the sibling's 93).
+     */
+    private static void testProductionContextualCallSiblingCollision()
+            throws Exception {
+        System.out.println("-- production invocation: the resolved imported"
+            + " callee's parameter context owns the class literal (both"
+            + " import orders; exact provider, digest, and artifact"
+            + " outcome) --");
+
+        Path root = Files.createTempDirectory("production-contextual-");
+        try {
+            write(root, "deal.json", """
+                {
+                  "languageVersion": "1.2",
+                  "stdlib": "1.2",
+                  "moduleRoots": ["src"],
+                  "dependencies": {},
+                  "externals": {},
+                  "backend": "js",
+                  "output": "out"
+                }
+                """);
+            write(root, "src/m/ir.deal", CONTEXTUAL_IR_SOURCE);
+            write(root, "src/m/codec.deal", CONTEXTUAL_CODEC_SOURCE);
+            write(root, "src/main.deal", CONTEXTUAL_MAIN_CODEC_FIRST);
+            write(root, "src/main_ir_first.deal",
+                CONTEXTUAL_MAIN_IR_FIRST);
+
+            String codecFirstDigest = null;
+            String codecFirstCodecDigest = null;
+            for (String entry : List.of("src/main.deal",
+                    "src/main_ir_first.deal")) {
+                String label = entry.contains("ir_first") ? "ir-first"
+                    : "codec-first";
+                boolean irFirst = label.equals("ir-first");
+                ArmCompile compile = compileWithInvocation(root, entry,
+                    productionInvocation());
+                check(compile.success(), "the " + label + " contextual"
+                    + " collision compile succeeds through the production"
+                    + " invocation: " + compile.orchestrator()
+                        .diagnostics());
+                if (!compile.success()) {
+                    continue;
+                }
+                CompilationOrchestrator orchestrator =
+                    compile.orchestrator();
+                String mainUri = serializerModuleUri(orchestrator,
+                    "/" + entry);
+                String irUri = serializerModuleUri(orchestrator,
+                    "/src/m/ir.deal");
+                String codecUri = serializerModuleUri(orchestrator,
+                    "/src/m/codec.deal");
+                check(mainUri != null && irUri != null
+                        && codecUri != null, "the " + label
+                    + " contextual collision compile exposes every module"
+                    + " identity");
+                if (mainUri == null || irUri == null || codecUri == null) {
+                    continue;
+                }
+                DiagnosticRange irDeclaration = classDeclarationRange(
+                    CONTEXTUAL_IR_SOURCE, irUri.substring("file://"
+                        .length()), "Ir");
+                DiagnosticRange codecIrDeclaration = classDeclarationRange(
+                    CONTEXTUAL_CODEC_SOURCE, codecUri.substring("file://"
+                        .length()), "Ir");
+                check(irDeclaration != null
+                        && codecIrDeclaration != null,
+                    "the contextual collision resolves both sibling Ir"
+                        + " declaration ranges");
+                if (irDeclaration == null || codecIrDeclaration == null) {
+                    continue;
+                }
+
+                String irDigest = checkClassDefaultResource(orchestrator,
+                    label, mainUri, irUri, "ir", "Ir", irDeclaration,
+                    codecIrDeclaration);
+                String codecDigest = checkClassDefaultResource(
+                    orchestrator, label, mainUri, codecUri, "codec",
+                    "Codec", classDeclarationRange(CONTEXTUAL_CODEC_SOURCE,
+                        codecUri.substring("file://".length()), "Codec"),
+                    codecIrDeclaration);
+                if (irFirst) {
+                    checkEq(codecFirstDigest, irDigest, "the contextual Ir"
+                        + " provider digest is import-order independent");
+                    checkEq(codecFirstCodecDigest, codecDigest, "the"
+                        + " contextual Codec provider digest is"
+                        + " import-order independent");
+                } else {
+                    codecFirstDigest = irDigest;
+                    codecFirstCodecDigest = codecDigest;
+                }
+
+                // The published artifact constructs the recorded
+                // provider's class: the demanded default (7) is the
+                // observable outcome, never the sibling's (93).
+                checkJsArtifactRun(label, root.resolve("out"),
+                    irFirst ? "main_ir_first.js" : "main.js");
+            }
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * The nested-literal control (review cycle 2): the demanded class
+     * arrives as a nested field literal of an imported class, so the
+     * enclosing field annotation names the outer class only and the
+     * declaring program's own field declaration is the nested class's
+     * provider. The completed plan, its digest, and the published
+     * artifact's construction must all name that provider.
+     */
+    private static void testProductionNestedSiblingCollision()
+            throws Exception {
+        System.out.println("-- production invocation: a nested literal of an"
+            + " imported class keeps the declaring program's field provider"
+            + " --");
+
+        Path root = Files.createTempDirectory("production-nested-");
+        try {
+            write(root, "deal.json", """
+                {
+                  "languageVersion": "1.2",
+                  "stdlib": "1.2",
+                  "moduleRoots": ["src"],
+                  "dependencies": {},
+                  "externals": {},
+                  "backend": "js",
+                  "output": "out"
+                }
+                """);
+            write(root, "src/m/ir.deal", NESTED_IR_SOURCE);
+            write(root, "src/m/codec.deal", NESTED_CODEC_SOURCE);
+            write(root, "src/main.deal", NESTED_MAIN_CODEC_FIRST);
+
+            ArmCompile compile = compileWithInvocation(root,
+                "src/main.deal", productionInvocation());
+            check(compile.success(), "the nested collision compile"
+                + " succeeds through the production invocation: "
+                + compile.orchestrator().diagnostics());
+            if (compile.success()) {
+                CompilationOrchestrator orchestrator =
+                    compile.orchestrator();
+                String mainUri = serializerModuleUri(orchestrator,
+                    "/src/main.deal");
+                String irUri = serializerModuleUri(orchestrator,
+                    "/src/m/ir.deal");
+                String codecUri = serializerModuleUri(orchestrator,
+                    "/src/m/codec.deal");
+                DiagnosticRange irDeclaration = classDeclarationRange(
+                    NESTED_IR_SOURCE, irUri.substring("file://".length()),
+                    "Ir");
+                DiagnosticRange codecIrDeclaration = classDeclarationRange(
+                    NESTED_CODEC_SOURCE, codecUri.substring("file://"
+                        .length()), "Ir");
+                check(mainUri != null && irUri != null
+                        && codecUri != null && irDeclaration != null
+                        && codecIrDeclaration != null,
+                    "the nested collision resolves every module identity"
+                        + " and declaration range");
+                if (mainUri != null && irUri != null && codecUri != null
+                        && irDeclaration != null
+                        && codecIrDeclaration != null) {
+                    checkClassDefaultResource(orchestrator, "codec-first",
+                        mainUri, irUri, "ir", "Ir", irDeclaration,
+                        codecIrDeclaration);
+                }
+                // The published artifact constructs the inner Ir of the
+                // declaring program: the demanded default (7) is the
+                // observable outcome, never the sibling's (93).
+                checkSiblingJsRun("the nested collision",
+                    root.resolve("out"));
+            }
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
      * Asserts the completed graph facts of one demanded imported class:
      * exactly one class-default-plan occurrence and exactly one deferred
      * dependency edge, both on the declaring module's URI, the spelled
@@ -1204,7 +1469,7 @@ public class ProductionDispatchTest {
         check(edges.stream().noneMatch(e -> e.semanticResourceIdentity()
                 .lexicalDeclarationIdentity().sourceScalarRange()
                 .equals(forbiddenDeclaration)), "the " + label + " "
-            + className + " edge never binds the private same-name"
+            + className + " edge never binds the forbidden same-name"
             + " sibling declaration");
         return edge.providerContractDigest();
     }
@@ -3561,6 +3826,8 @@ public class ProductionDispatchTest {
         testProductionLuaJitTwoModuleSurfaces();
         testProductionSiblingModuleProviderIdentity();
         testProductionSameNameSiblingCollision();
+        testProductionContextualCallSiblingCollision();
+        testProductionNestedSiblingCollision();
         testConversionOverflowTerminal();
         testAtomicFailureThroughDispatch();
         testFailClosedFamilies();
