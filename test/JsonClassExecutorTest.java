@@ -543,11 +543,16 @@ public class JsonClassExecutorTest {
         }
 
         private static ClassOpsExecutor.JsonStringify stringify(Value value, String prefix) {
+            return stringify(value, prefix, 0);
+        }
+
+        private static ClassOpsExecutor.JsonStringify stringify(Value value, String prefix,
+                                                               int depth) {
             Set<Object> path = java.util.Collections.newSetFromMap(
                 new java.util.IdentityHashMap<>());
             try {
                 UnicodeScalars.ScalarString scalar = UnicodeScalars.validate(
-                    stringifyValue(value, "", path));
+                    stringifyValue(value, "", path, depth));
                 if (!(scalar instanceof UnicodeScalars.Valid valid)) {
                     throw new IllegalStateException("the fixture stringify emitted an "
                         + "invalid scalar sequence — a fixture defect");
@@ -580,7 +585,7 @@ public class JsonClassExecutorTest {
         }
 
         private static String stringifyValue(Value value, String relativePath,
-                                           Set<Object> path) {
+                                           Set<Object> path, int depth) {
             switch (value) {
                 case Value.Null ignored -> {
                     return "null";
@@ -608,6 +613,11 @@ public class JsonClassExecutorTest {
                     return escape(valid.carrier());
                 }
                 case Value.Table table -> {
+                    if (depth > ClassOpsExecutor.JSON_MAX_DEPTH) {
+                        throw new StringifyFailure(relativePath,
+                            deal.semantic.ir.FailureProjections.typedBoundaryToken(
+                                ActualKind.TABLE, null));
+                    }
                     if (!path.add(table.table())) {
                         throw new StringifyFailure(relativePath,
                             deal.semantic.ir.FailureProjections.typedBoundaryToken(
@@ -628,7 +638,7 @@ public class JsonClassExecutorTest {
                                 instanceof SemanticTable.Lookup.Present<Value> present
                                     ? present.value()
                                     : Value.Null.INSTANCE,
-                                relativePath + "." + key, path));
+                                relativePath + "." + key, path, depth + 1));
                         }
                         out.append('}');
                         return out.toString();
@@ -637,6 +647,11 @@ public class JsonClassExecutorTest {
                     }
                 }
                 case Value.Array array -> {
+                    if (depth > ClassOpsExecutor.JSON_MAX_DEPTH) {
+                        throw new StringifyFailure(relativePath,
+                            deal.semantic.ir.FailureProjections.typedBoundaryToken(
+                                ActualKind.ARRAY, null));
+                    }
                     if (!path.add(array.array())) {
                         throw new StringifyFailure(relativePath,
                             deal.semantic.ir.FailureProjections.typedBoundaryToken(
@@ -650,7 +665,7 @@ public class JsonClassExecutorTest {
                                 out.append(',');
                             }
                             out.append(stringifyValue(array.array().elementAt(i),
-                                relativePath + "[" + i + "]", path));
+                                relativePath + "[" + i + "]", path, depth + 1));
                         }
                         out.append(']');
                         return out.toString();
@@ -2195,6 +2210,70 @@ public class JsonClassExecutorTest {
                 + "container with the pinned mixed segments and the array token, no "
                 + "expected field, and the supplied call origin (never the generated "
                 + "body's synthetic anchor)");
+
+        // The depth bound is one of the walk's first-failure conditions in
+        // walk order, never a preflight that overrides an earlier selected
+        // failure: a table whose first key holds a nonfinite number and whose
+        // second key holds a 513-deep chain fails at the earlier nonfinite
+        // position (both seams), and the same graph with the chain first
+        // fails at the exceeding container.
+        SemanticTable<Value> earlierFailureThenDepth = new SemanticTable<>();
+        earlierFailureThenDepth.put("bad", new Value.Number(Double.NaN));
+        earlierFailureThenDepth.put("k", nestedTableChain(513));
+        Value.Class shallowFailure = instanceOf(tableLayout,
+            Map.of("data", new Value.Table(earlierFailureThenDepth)));
+        ValueId shallowFailureClassId = nextValue();
+        SemanticOp shallowFailureOp = jsonToOp(tableLayout, shallowFailureClassId);
+        SourceOrigin shallowFailureOrigin = nextOrigin(null);
+        Outcome<Value> earlierPositionFailure = ClassOpsExecutor.executeJsonToClass(
+            shallowFailureOp, Map.of(shallowFailureClassId, shallowFailure),
+            Map.of(POINT, tableLayout), JsonClassAlgorithmAdapter.stringifier(),
+            shallowFailureOrigin);
+        check(earlierPositionFailure instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().code() == DiagnosticCode.E8001
+                && failure.failure().failure().message().equals(
+                    "value at data.bad is not JSON serializable: number")
+                && failure.failure().failure().expected() == null
+                && failure.failure().failure().actual().equals("number")
+                && "data.bad".equals(
+                    failure.failure().failure().metadata().get("fieldPath"))
+                && failure.failure().origin().equals(shallowFailureOrigin)
+                && !failure.failure().origin().equals(shallowFailureOp.origin()),
+            "a nonfinite value before a 513-deep chain fails the production adapter "
+                + "at the earlier position (the depth bound never overrides an "
+                + "earlier selected failure), with the pinned walk tuple and the "
+                + "supplied call origin");
+        Outcome<Value> earlierPositionFixture = ClassOpsExecutor.executeJsonToClass(
+            shallowFailureOp, Map.of(shallowFailureClassId, shallowFailure),
+            Map.of(POINT, tableLayout), FixtureJson.stringifier(),
+            nextOrigin(null));
+        check(earlierPositionFixture instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().message().equals(
+                    "value at data.bad is not JSON serializable: number")
+                && failure.failure().failure().actual().equals("number"),
+            "the fixture seam selects the same earlier position over the depth bound");
+
+        SemanticTable<Value> depthThenLaterFailure = new SemanticTable<>();
+        depthThenLaterFailure.put("k", nestedTableChain(513));
+        depthThenLaterFailure.put("zbad", new Value.Number(Double.NaN));
+        Value.Class depthFirst = instanceOf(tableLayout,
+            Map.of("data", new Value.Table(depthThenLaterFailure)));
+        ValueId depthFirstClassId = nextValue();
+        SemanticOp depthFirstOp = jsonToOp(tableLayout, depthFirstClassId);
+        Outcome<Value> depthFirstFailure = ClassOpsExecutor.executeJsonToClass(
+            depthFirstOp, Map.of(depthFirstClassId, depthFirst),
+            Map.of(POINT, tableLayout), JsonClassAlgorithmAdapter.stringifier(),
+            nextOrigin(null));
+        check(depthFirstFailure instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().code() == DiagnosticCode.E8001
+                && failure.failure().failure().message().equals("value at "
+                    + overflowPath + " is not JSON serializable: table")
+                && failure.failure().failure().actual().equals("table")
+                && overflowPath.equals(
+                    failure.failure().failure().metadata().get("fieldPath")),
+            "a 513-deep chain before a nonfinite value keeps the depth bound's own "
+                + "failure at the exceeding container (the bound is a first-failure "
+                + "condition, never demoted)");
     }
 
     // =========================================================================

@@ -7,6 +7,7 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.IntFunction;
 import java.util.function.Supplier;
 
 public final class ClassOpsExecutor {
@@ -176,14 +177,16 @@ public final class ClassOpsExecutor {
             public Class {
                 Objects.requireNonNull(classId, "classId must not be null");
                 Objects.requireNonNull(fields, "fields must not be null");
-                fields = List.copyOf(fields);
-                for (FieldState field : fields) {
-                    if (field instanceof FieldState.Present present
-                            && present.value() instanceof Missing) {
-                        throw new Defect("a present class field never carries the internal "
-                            + "Missing view — a field value is language null (Null), a "
-                            + "value, or the field is absent (the Missing field state): "
-                            + "a shape outside the pinned contracts, never executed");
+                if (!(fields instanceof LiveFields)) {
+                    fields = List.copyOf(fields);
+                    for (FieldState field : fields) {
+                        if (field instanceof FieldState.Present present
+                                && present.value() instanceof Missing) {
+                            throw new Defect("a present class field never carries the internal "
+                                + "Missing view — a field value is language null (Null), a "
+                                + "value, or the field is absent (the Missing field state): "
+                                + "a shape outside the pinned contracts, never executed");
+                        }
                     }
                 }
             }
@@ -216,6 +219,63 @@ public final class ClassOpsExecutor {
                 return ActualKind.MISSING;
             }
         }
+    }
+
+    /**
+     * The read-only live field-state list of one converted class view:
+     * {@code fieldAt} converts the field state at {@code index} on every
+     * read from the backing class value. A converted class view is never
+     * copied or materialized at conversion time, so a field reference back
+     * to the same backing class value reads back as the same view object (a
+     * path-local re-entry stays one) and a field commit to the backing
+     * value is observed by every alias. {@link #get} keeps the closed
+     * field-state invariant: {@link FieldState.Present}'s own construction
+     * rejects a present internal {@code Missing}.
+     */
+    private static final class LiveFields extends java.util.AbstractList<FieldState> {
+
+        private final int size;
+        private final IntFunction<FieldState> fieldAt;
+
+        LiveFields(int size, IntFunction<FieldState> fieldAt) {
+            this.size = size;
+            this.fieldAt = fieldAt;
+        }
+
+        @Override
+        public FieldState get(int index) {
+            if (index < 0 || index >= size) {
+                throw new IndexOutOfBoundsException("live class field index " + index
+                    + " outside [0, " + size + ")");
+            }
+            return Objects.requireNonNull(fieldAt.apply(index),
+                "a live class field state must not be null");
+        }
+
+        @Override
+        public int size() {
+            return size;
+        }
+    }
+
+    /**
+     * A read-only live class view over the conversion boundary's backing
+     * class value: the canonical {@code classId} tag plus {@code fieldCount}
+     * lazily converted field states in declaration order. The conversion
+     * boundary creates exactly one view per backing class value
+     * (identity-keyed), so a field reference back to the same class value
+     * yields the same view object — a path-local class re-entry stays one,
+     * and a field commit to the backing value is observed by every alias.
+     */
+    public static Value.Class liveClassView(ClassId classId, int fieldCount,
+                                            IntFunction<FieldState> fieldAt) {
+        Objects.requireNonNull(classId, "classId must not be null");
+        Objects.requireNonNull(fieldAt, "fieldAt must not be null");
+        if (fieldCount < 0) {
+            throw new Defect("a live class view's field count must be non-negative, got "
+                + fieldCount);
+        }
+        return new Value.Class(classId, new LiveFields(fieldCount, fieldAt));
     }
 
     /**
@@ -1662,10 +1722,24 @@ public final class ClassOpsExecutor {
 
         /**
          * Stringifies one JSON-shaped value per the E8
-         * {@code JSON_STRINGIFY} row.
+         * {@code JSON_STRINGIFY} row: {@code depth} is the walk depth of
+         * {@code jsonShaped} itself (the enclosing class walk's depth for a
+         * table-typed field value), so the seam's own first-failure walk
+         * selects the pinned {@link #JSON_MAX_DEPTH} bound in walk order
+         * beside every carrier/cycle failure — an earlier position's failure
+         * is never overridden by a later exceeding container.
          *
          */
-        JsonStringify stringify(Value jsonShaped, String fieldPathPrefix);
+        JsonStringify stringify(Value jsonShaped, String fieldPathPrefix, int depth);
+
+        /**
+         * The depth-0 stringify of one JSON-shaped value (the direct seam
+         * callers outside the class walk).
+         *
+         */
+        default JsonStringify stringify(Value jsonShaped, String fieldPathPrefix) {
+            return stringify(jsonShaped, fieldPathPrefix, 0);
+        }
     }
 
     @FunctionalInterface
@@ -2259,26 +2333,26 @@ public final class ClassOpsExecutor {
                 if (!(value instanceof Value.Null)) {
                     throw new JsonToFailure(fieldPath, actualTokenOf(value));
                 }
-                yield seamText(op, stringifier, value, fieldPath);
+                yield seamText(op, stringifier, value, fieldPath, depth);
             }
             case RuntimeDescriptor.Boolean ignored -> {
                 if (!(value instanceof Value.Bool)) {
                     throw new JsonToFailure(fieldPath, actualTokenOf(value));
                 }
-                yield seamText(op, stringifier, value, fieldPath);
+                yield seamText(op, stringifier, value, fieldPath, depth);
             }
             case RuntimeDescriptor.Int ignored -> {
                 if (!(value instanceof Value.Int)) {
                     throw new JsonToFailure(fieldPath, actualTokenOf(value));
                 }
-                yield seamText(op, stringifier, value, fieldPath);
+                yield seamText(op, stringifier, value, fieldPath, depth);
             }
             case RuntimeDescriptor.Number ignored -> {
                 if (!(value instanceof Value.Number) && !(value instanceof Value.Int)) {
                     throw new JsonToFailure(fieldPath, actualTokenOf(value));
                 }
                 // Nonfinite numbers fail inside the seam (the E8 row).
-                yield seamText(op, stringifier, value, fieldPath);
+                yield seamText(op, stringifier, value, fieldPath, depth);
             }
             case RuntimeDescriptor.String ignored -> {
                 if (!(value instanceof Value.String string)) {
@@ -2289,16 +2363,16 @@ public final class ClassOpsExecutor {
                         FailureProjections.typedBoundaryToken(
                             ActualKind.INVALID_UNICODE, null));
                 }
-                yield seamText(op, stringifier, value, fieldPath);
+                yield seamText(op, stringifier, value, fieldPath, depth);
             }
             case RuntimeDescriptor.Table ignored -> {
                 if (!(value instanceof Value.Table)) {
                     throw new JsonToFailure(fieldPath, actualTokenOf(value));
                 }
-                boundTableContentsDepth(op, value, fieldPath, depth,
-                    java.util.Collections.newSetFromMap(
-                        new java.util.IdentityHashMap<>()));
-                yield seamText(op, stringifier, value, fieldPath);
+                // The seam's own first-failure walk owns the table contents'
+                // depth bound in walk order (the pre-walk selects an earlier
+                // position's carrier/cycle failure first).
+                yield seamText(op, stringifier, value, fieldPath, depth);
             }
             case RuntimeDescriptor.Array arrayDescriptor -> {
                 if (!(value instanceof Value.Array elements)) {
@@ -2309,7 +2383,7 @@ public final class ClassOpsExecutor {
             }
             case RuntimeDescriptor.Nullable nullable -> {
                 if (value instanceof Value.Null) {
-                    yield seamText(op, stringifier, value, fieldPath);
+                    yield seamText(op, stringifier, value, fieldPath, depth);
                 }
                 yield encodeField(op, nullable.inner(), value, fieldPath, layouts,
                     stringifier, entered, depth);
@@ -2373,8 +2447,8 @@ public final class ClassOpsExecutor {
      * path prefixed with the caller's field path).
      */
     private static String seamText(SemanticOp op, JsonStringifier stringifier,
-                                   Value value, String fieldPath) {
-        JsonStringify rendered = stringifier.stringify(value, fieldPath);
+                                   Value value, String fieldPath, int depth) {
+        JsonStringify rendered = stringifier.stringify(value, fieldPath, depth);
         return switch (rendered) {
             case JsonStringify.Success success -> success.text().carrier();
             case JsonStringify.Failure failure -> throw failure.cycle()
@@ -2547,56 +2621,6 @@ public final class ClassOpsExecutor {
             default -> {
                 // JSON-shaped leaves (validated by requireJsonShape at
                 // every recursion site): no depth level consumed.
-            }
-        }
-    }
-
-    private static void boundTableContentsDepth(SemanticOp op, Value value,
-                                                String fieldPath, int depth,
-                                                Set<Object> entered) {
-        switch (value) {
-            case Value.Table table -> {
-                if (depth > JSON_MAX_DEPTH) {
-                    throw new JsonToFailure(fieldPath, actualTokenOf(value));
-                }
-                if (!entered.add(table.table())) {
-                    return; // path-local re-entry: the seam reports the pinned cycle token
-                }
-                try {
-                    for (String key : table.table().keys()) {
-                        SemanticTable.Lookup<Value> lookup = table.table().get(key);
-                        if (!(lookup instanceof SemanticTable.Lookup.Present<Value> present)) {
-                            throw new Defect("JSON_TO_CLASS " + op.opId() + ": a table "
-                                + "key '" + key + "' reads Missing: a table's listed key "
-                                + "is always present — a wrong table view is a producer "
-                                + "defect, never executed");
-                        }
-                        boundTableContentsDepth(op, present.value(),
-                            fieldPath + "." + key, depth + 1, entered);
-                    }
-                } finally {
-                    entered.remove(table.table());
-                }
-            }
-            case Value.Array array -> {
-                if (depth > JSON_MAX_DEPTH) {
-                    throw new JsonToFailure(fieldPath, actualTokenOf(value));
-                }
-                if (!entered.add(array.array())) {
-                    return; // path-local re-entry: the seam reports the pinned cycle token
-                }
-                try {
-                    for (int i = 0; i < array.array().size(); i++) {
-                        boundTableContentsDepth(op, array.array().elementAt(i),
-                            fieldPath + "[" + i + "]", depth + 1, entered);
-                    }
-                } finally {
-                    entered.remove(array.array());
-                }
-            }
-            default -> {
-                // Leaves (unsupported carriers included): the seam's
-                // pinned failures, never this walk's depth concern.
             }
         }
     }

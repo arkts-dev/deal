@@ -485,6 +485,133 @@ public class ClassOpsExecutorTest {
     }
 
     // =========================================================================
+    // 1b. The live read-only conversion views
+    // =========================================================================
+
+    /**
+     * The conversion boundary's live read-only views: a live table/array/
+     * class view reads its backing state on every call, so a reference
+     * cycle and any later commit are observed without materializing or
+     * descending at view creation; the views never mutate their backing
+     * state, and a write through the live table surface fails closed.
+     */
+    static void testLiveContainerViews() {
+        System.out.println("-- the live read-only conversion views --");
+
+        // The live table: keys/lookups read the backing map again after a
+        // commit, an absent key stays Missing, and the read-only surface
+        // rejects put/remove.
+        Map<String, Value> backingTable = new LinkedHashMap<>();
+        backingTable.put("a", new Value.Int(1));
+        SemanticTable<Value> liveTable = SemanticTable.live(
+            () -> List.copyOf(backingTable.keySet()),
+            key -> backingTable.containsKey(key)
+                ? new SemanticTable.Lookup.Present<>(backingTable.get(key))
+                : new SemanticTable.Lookup.Missing<>());
+        check(liveTable.size() == 1 && liveTable.keys().equals(List.of("a")),
+            "a live table reads its backing keys and size");
+        check(liveTable.get("a") instanceof SemanticTable.Lookup.Present<Value> present
+                && present.value().equals(new Value.Int(1)),
+            "a live table reads the backing value of a present key");
+        check(liveTable.get("absent") instanceof SemanticTable.Lookup.Missing<Value>,
+            "a live table reports an absent backing key as Missing");
+        backingTable.put("b", new Value.Int(2));
+        check(liveTable.size() == 2 && liveTable.keys().equals(List.of("a", "b")),
+            "a live table observes a commit to its backing state");
+        expectIllegalState(() -> liveTable.put("c", new Value.Int(3)),
+            "a put through a live read-only table view");
+        expectIllegalState(() -> liveTable.remove("a"),
+            "a remove through a live read-only table view");
+
+        // The live array: element reads follow the backing list in place
+        // (including a size change), the bounds contract stays the closed
+        // Defect, and elements() is an immutable snapshot.
+        List<Value> backingArray = new ArrayList<>(List.of(new Value.Int(7)));
+        SemanticArray<Value> liveArray = SemanticArray.live(
+            backingArray::size, backingArray::get);
+        check(liveArray.size() == 1
+                && liveArray.elementAt(0).equals(new Value.Int(7)),
+            "a live array reads its backing elements");
+        backingArray.set(0, new Value.Int(8));
+        backingArray.add(new Value.Int(9));
+        check(liveArray.size() == 2
+                && liveArray.elementAt(0).equals(new Value.Int(8))
+                && liveArray.elementAt(1).equals(new Value.Int(9)),
+            "a live array observes an in-place commit and a backing size change");
+        check(liveArray.elements().equals(List.of(new Value.Int(8), new Value.Int(9))),
+            "a live array materializes its elements as an immutable snapshot");
+        try {
+            liveArray.elementAt(2);
+            fail("the live array's pinned bounds Defect for elementAt(2)");
+        } catch (SemanticArray.Defect expected) {
+            passed++;
+        }
+
+        // The live class view: field states convert on read and follow the
+        // backing field states after a commit; the closed field-state
+        // invariant stays enforced by the present-state construction.
+        List<FieldState> backingFields = new ArrayList<>(List.of(
+            new FieldState.Present(new Value.Int(1)), FieldState.Missing.INSTANCE));
+        Value.Class liveClass = ClassOpsExecutor.liveClassView(CLS, backingFields.size(),
+            backingFields::get);
+        check(liveClass.classId().equals(CLS) && liveClass.actualKind() == ActualKind.CLASS,
+            "a live class view carries the canonical classId tag");
+        check(liveClass.fields().get(0) instanceof FieldState.Present present
+                && present.value().equals(new Value.Int(1))
+                && liveClass.fields().get(1) == FieldState.Missing.INSTANCE,
+            "a live class view reads its backing field states in declaration order");
+        backingFields.set(0, new FieldState.Present(new Value.Int(2)));
+        backingFields.set(1, new FieldState.Present(Value.Null.INSTANCE));
+        check(liveClass.fields().get(0) instanceof FieldState.Present present
+                && present.value().equals(new Value.Int(2))
+                && liveClass.fields().get(1) instanceof FieldState.Present nullPresent
+                && nullPresent.value() == Value.Null.INSTANCE,
+            "a live class view observes a field commit to its backing state");
+        check(liveClass.fields().size() == 2,
+            "a live class view reports its backing field count");
+        expectUnsupported(() -> liveClass.fields().add(FieldState.Missing.INSTANCE),
+            "an add through a live read-only class field list");
+        try {
+            liveClass.fields().get(2);
+            fail("the live class field list's bounds check for get(2)");
+        } catch (IndexOutOfBoundsException expected) {
+            passed++;
+        }
+        expectNpe(() -> ClassOpsExecutor.liveClassView(null, 0, index -> null),
+            "liveClassView(null, …)");
+        expectNpe(() -> ClassOpsExecutor.liveClassView(CLS, 0, null),
+            "liveClassView(…, null)");
+        expectDefect(() -> ClassOpsExecutor.liveClassView(CLS, -1, index -> null),
+            "a negative live class field count");
+    }
+
+    private static void expectIllegalState(Runnable runnable, String what) {
+        try {
+            runnable.run();
+            fail("expected IllegalStateException for " + what
+                + ", but no exception was raised");
+        } catch (IllegalStateException expected) {
+            passed++;
+        } catch (Throwable other) {
+            fail("expected IllegalStateException for " + what + ", got "
+                + other.getClass().getSimpleName() + ": " + other.getMessage());
+        }
+    }
+
+    private static void expectUnsupported(Runnable runnable, String what) {
+        try {
+            runnable.run();
+            fail("expected UnsupportedOperationException for " + what
+                + ", but no exception was raised");
+        } catch (UnsupportedOperationException expected) {
+            passed++;
+        } catch (Throwable other) {
+            fail("expected UnsupportedOperationException for " + what + ", got "
+                + other.getClass().getSimpleName() + ": " + other.getMessage());
+        }
+    }
+
+    // =========================================================================
     // 2. CLASS_DEFAULT
     // =========================================================================
 
@@ -1323,6 +1450,7 @@ public class ClassOpsExecutorTest {
         System.out.println("=== Class Ops Executor Tests (ISSUE-0512 K-D4/K-D11) ===\n");
 
         testValueViewClassification();
+        testLiveContainerViews();
         testClassDefaultExecution();
         testClassNewLocalSuccessReorderAndOverlay();
         testClassNewLocalDefaultsAndSkipProvided();

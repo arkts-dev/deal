@@ -2613,7 +2613,13 @@ public final class SemanticOracle {
          * model and the executor's closed view (identity-keyed): a heap
          * value converted twice yields the same view (and back), so a
          * class field stores the original value's identity — never a
-         * re-converted copy with a fresh allocation id.
+         * re-converted copy with a fresh allocation id. Table, array,
+         * and class values convert to read-only live views over the
+         * oracle heap (the conversion never descends at conversion
+         * time), so a reference cycle in the heap reads back as a
+         * reference cycle of the same view objects and every later
+         * commit to a table, array, or class value is observed by every
+         * alias of its view.
          */
         final IdentityHashMap<Value, ClassOpsExecutor.Value> executorViews =
             new IdentityHashMap<>();
@@ -2677,21 +2683,29 @@ public final class SemanticOracle {
                 case Value.StrValue str ->
                     ClassOpsExecutor.Value.string(str.value());
                 case Value.TableValue table -> {
-                    SemanticTable<ClassOpsExecutor.Value> entries =
-                        new SemanticTable<>();
-                    for (Map.Entry<String, Value> entry : table.entries().entrySet()) {
-                        entries.put(entry.getKey(), executorValueOf(entry.getValue()));
-                    }
-                    yield new ClassOpsExecutor.Value.Table(entries);
+                    // The conversion boundary's live table view: the same
+                    // view object represents the same oracle table (identity)
+                    // and every read asks the oracle entries again (current
+                    // contents), so a reference cycle reads back as one and a
+                    // later commit is observed by every alias. The view is
+                    // created without descending (a self-reference cannot
+                    // recurse), and registration happens before any read.
+                    yield new ClassOpsExecutor.Value.Table(SemanticTable.live(
+                        () -> List.copyOf(table.entries().keySet()),
+                        key -> {
+                            Value child = table.entries().get(key);
+                            return child == null
+                                ? new SemanticTable.Lookup.Missing<>()
+                                : new SemanticTable.Lookup.Present<>(
+                                    executorValueOf(child));
+                        }));
                 }
-                case Value.ArrayValue array -> {
-                    List<ClassOpsExecutor.Value> elements = new ArrayList<>();
-                    for (Value element : array.elements()) {
-                        elements.add(executorValueOf(element));
-                    }
-                    yield new ClassOpsExecutor.Value.Array(
-                        SemanticArray.of(elements));
-                }
+                case Value.ArrayValue array ->
+                    // The conversion boundary's live array view (the same
+                    // identity/currentness contract as the live table view).
+                    new ClassOpsExecutor.Value.Array(SemanticArray.live(
+                        () -> array.elements().size(),
+                        index -> executorValueOf(array.elements().get(index))));
                 case Value.BytesValue bytes -> new ClassOpsExecutor.Value.Bytes(
                     bytes.storage(), bytes.length());
                 case Value.FuncValue func ->
@@ -2703,14 +2717,23 @@ public final class SemanticOracle {
                 case Value.HostEntryValue entry ->
                     new ClassOpsExecutor.Value.Function(entry.descriptor());
                 case Value.ClassValue classValue ->
-                    new ClassOpsExecutor.Value.Class(classValue.classId(),
-                        classValue.fields().stream()
-                            .<ClassOpsExecutor.FieldState>map(field ->
-                                field instanceof Value.ClassFieldState.Present present
-                                    ? new ClassOpsExecutor.FieldState.Present(
-                                        executorValueOf(present.value()))
-                                    : ClassOpsExecutor.FieldState.Missing.INSTANCE)
-                            .toList());
+                    // The conversion boundary's live class view (the same
+                    // identity/currentness contract as the container views):
+                    // the field states convert on read, so a field reference
+                    // back to this class value yields the same view object
+                    // and a field commit is observed by every alias.
+                    ClassOpsExecutor.liveClassView(classValue.classId(),
+                        classValue.fields().size(), index -> {
+                            Value.ClassFieldState state =
+                                classValue.fields().get(index);
+                            return switch (state) {
+                                case Value.ClassFieldState.Present present ->
+                                    new ClassOpsExecutor.FieldState.Present(
+                                        executorValueOf(present.value()));
+                                case Value.ClassFieldState.Missing ignored ->
+                                    ClassOpsExecutor.FieldState.Missing.INSTANCE;
+                            };
+                        });
                 case Value.ErrorValue error ->
                     // The builtin Error carrier's closed class view (K13 item
                     // 5): both declared fields present in declaration order —

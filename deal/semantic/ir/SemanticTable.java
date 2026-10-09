@@ -5,6 +5,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 public final class SemanticTable<V> {
 
@@ -17,8 +19,46 @@ public final class SemanticTable<V> {
     /** Present key → slot index; iteration order of this map is never observable. */
     private final Map<String, Integer> index = new HashMap<>();
 
+    /**
+     * The ordered keys of a live read-only view (null for a materialized
+     * table): every read asks the backing state again, so the view stays
+     * current after a commit to the backing carrier.
+     */
+    private final Supplier<List<String>> liveKeys;
+
+    /**
+     * The current present/missing outcome of one key of a live read-only
+     * view (null for a materialized table).
+     */
+    private final Function<String, Lookup<V>> liveLookup;
+
     /** Allocates a fresh, empty table with a fresh identity. */
     public SemanticTable() {
+        liveKeys = null;
+        liveLookup = null;
+    }
+
+    private SemanticTable(Supplier<List<String>> liveKeys,
+                          Function<String, Lookup<V>> liveLookup) {
+        this.liveKeys = liveKeys;
+        this.liveLookup = liveLookup;
+    }
+
+    /**
+     * A read-only live view over opaque backing state: {@code keys} supplies
+     * the ordered keys and {@code lookup} the present/missing outcome of one
+     * key, both read from the backing state on every call. Identity and
+     * current contents cross a representation boundary through this view: a
+     * reference cycle in the backing state reads back as a reference cycle
+     * in the view (the same view object for the same backing table), and a
+     * commit to the backing state is observed by every alias. A live view is
+     * never mutated: {@link #put}/{@link #remove} fail closed.
+     */
+    public static <V> SemanticTable<V> live(Supplier<List<String>> keys,
+                                            Function<String, Lookup<V>> lookup) {
+        Objects.requireNonNull(keys, "keys must not be null");
+        Objects.requireNonNull(lookup, "lookup must not be null");
+        return new SemanticTable<>(keys, lookup);
     }
 
     /**
@@ -48,10 +88,15 @@ public final class SemanticTable<V> {
     /**
      * Stores {@code value} under {@code key} with the closed order
      * contract: a new key appends a slot at the end; an existing present
-     * key replaces the value in place and keeps its slot.
+     * key replaces the value in place and keeps its slot. A live view
+     * fails closed (its backing state owns the contents).
      *
      */
     public void put(String key, V value) {
+        if (liveKeys != null) {
+            throw new IllegalStateException("a live read-only table view never "
+                + "mutates: its backing state owns the contents");
+        }
         Objects.requireNonNull(key, "key must not be null");
         Objects.requireNonNull(value,
             "value must not be null (language null is the closed value type's "
@@ -73,6 +118,10 @@ public final class SemanticTable<V> {
      *
      */
     public void remove(String key) {
+        if (liveKeys != null) {
+            throw new IllegalStateException("a live read-only table view never "
+                + "mutates: its backing state owns the contents");
+        }
         Objects.requireNonNull(key, "key must not be null");
         Integer slot = index.remove(key);
         if (slot == null) {
@@ -96,6 +145,11 @@ public final class SemanticTable<V> {
      */
     public Lookup<V> get(String key) {
         Objects.requireNonNull(key, "key must not be null");
+        if (liveLookup != null) {
+            Lookup<V> lookup = liveLookup.apply(key);
+            Objects.requireNonNull(lookup, "a live table lookup must not be null");
+            return lookup;
+        }
         Integer slot = index.get(key);
         if (slot == null) {
             return new Lookup.Missing<>();
@@ -111,6 +165,9 @@ public final class SemanticTable<V> {
      *
      */
     public List<String> keys() {
+        if (liveKeys != null) {
+            return List.copyOf(liveKeys.get());
+        }
         return List.copyOf(keys);
     }
 
@@ -119,6 +176,9 @@ public final class SemanticTable<V> {
      *
      */
     public int size() {
+        if (liveKeys != null) {
+            return liveKeys.get().size();
+        }
         return keys.size();
     }
 }

@@ -110,6 +110,7 @@ public class FailureArmAuthorityTest {
         testWalkArmThreeConsumerDrive();
         testAbsentOriginFailsClosed();
         testWalkArmOracleDispatchLeg();
+        testWalkArmOracleDispatchCycles();
         testLandedPresentNullRead();
         testWalkOracleNumericPositions();
         testWalkOracleKindPositions();
@@ -3616,7 +3617,7 @@ public class FailureArmAuthorityTest {
     }
 
     /** The producer kinds of one dispatch construction. */
-    private enum DispatchValue { STRING, INT, NUMBER, TABLE, ARRAY }
+    private enum DispatchValue { STRING, INT, NUMBER, NUMBER_FINITE, TABLE, ARRAY }
 
     /** The produced ops and the class-value result of one construction. */
     private record DispatchConstruction(List<deal.semantic.ir.SemanticOp> ops,
@@ -3799,6 +3800,261 @@ public class FailureArmAuthorityTest {
         }
     }
 
+    // =========================================================================
+    // 17b. The walk arm's oracle-dispatch cycle leg (the runtime-to-executor
+    //      container boundary)
+    // =========================================================================
+
+    /**
+     * The oracle-dispatch leg's cycle remediation (the runtime-to-executor
+     * container boundary): the oracle heap's containers cross into the
+     * closed executor view identity-preserving and current, so a lowered
+     * {@code JSON_TO_CLASS} op over a cyclic heap renders the bound walk
+     * family through the authority — the cycle arm for a path-local
+     * re-entry, and the walk arm at the first failing position when an
+     * unsupported value precedes the cycle. Every case builds the graph
+     * with producer/commit ops ({@code TABLE_NEW}/{@code ARRAY_NEW}/
+     * {@code MEMBER_WRITE}) and the class construction, then runs the
+     * executing module-init block: a pre-construction container cycle must
+     * not exhaust the stack at the conversion boundary, a cycle introduced
+     * after the class construction must not serialize the construction-time
+     * snapshot, and the recorded first failure stays the selected arm.
+     */
+    static void testWalkArmOracleDispatchCycles() throws Exception {
+        System.out.println("-- the walk arm's oracle-dispatch cycle leg --");
+
+        // (1) A table re-entry created before the class construction: the
+        // walk operand is an uncached self-referential table, so the
+        // conversion boundary must preserve the container identity instead
+        // of recursing before the cycle needle selects the cycle arm.
+        {
+            DispatchIds ids = new DispatchIds();
+            deal.semantic.ir.ValueId table = ids.value();
+            List<deal.semantic.ir.SemanticOp> ops = new ArrayList<>();
+            ops.add(dispatchEmptyTable(ids, table));
+            ops.add(dispatchMemberWrite(ids, table, "self", table));
+            DispatchConstruction construction = dispatchCycleConstruction(ids, table);
+            ops.addAll(construction.ops());
+            checkDispatchCycleTuple("dispatch-table-cycle-before-construction",
+                dispatchUnit(ids, ops, construction.instance(),
+                    Map.of(WALK_ID, walkLayout())),
+                "JSON_TO_WALK_CYCLE", null, null);
+        }
+
+        // (2) A table re-entry introduced after the class construction (the
+        // construction cache already holds the table's view): the live view
+        // reads the commit, so the walk selects the cycle arm instead of
+        // serializing the construction-time snapshot.
+        {
+            DispatchIds ids = new DispatchIds();
+            deal.semantic.ir.ValueId table = ids.value();
+            List<deal.semantic.ir.SemanticOp> ops = new ArrayList<>();
+            ops.add(dispatchEmptyTable(ids, table));
+            DispatchConstruction construction = dispatchCycleConstruction(ids, table);
+            ops.addAll(construction.ops());
+            ops.add(dispatchMemberWrite(ids, table, "self", table));
+            checkDispatchCycleTuple("dispatch-table-cycle-after-construction",
+                dispatchUnit(ids, ops, construction.instance(),
+                    Map.of(WALK_ID, walkLayout())),
+                "JSON_TO_WALK_CYCLE", null, null);
+        }
+
+        // (3) A mixed table/array re-entry introduced after the class
+        // construction through an array-element write: the construction
+        // snapshots the table with its array's element still a second table,
+        // so the later INDEX_WRITE must be observed by the array view and the
+        // re-entry needle is the table entered before the array.
+        {
+            DispatchIds ids = new DispatchIds();
+            deal.semantic.ir.ValueId table = ids.value();
+            deal.semantic.ir.ValueId element = ids.value();
+            List<deal.semantic.ir.SemanticOp> ops = new ArrayList<>();
+            ops.add(dispatchEmptyTable(ids, table));
+            ops.add(dispatchEmptyTable(ids, element));
+            deal.semantic.ir.ValueId array = ids.value();
+            ops.addAll(dispatchArrayOf(ids, element, array));
+            ops.add(dispatchMemberWrite(ids, table, "arr", array));
+            DispatchConstruction construction = dispatchCycleConstruction(ids, table);
+            ops.addAll(construction.ops());
+            ops.addAll(dispatchArrayElementWrite(ids, array, table));
+            checkDispatchCycleTuple("dispatch-mixed-cycle-after-construction",
+                dispatchUnit(ids, ops, construction.instance(),
+                    Map.of(WALK_ID, walkLayout())),
+                "JSON_TO_WALK_CYCLE", null, null);
+        }
+
+        // (4) An unsupported carrier before the table's own re-entry: the
+        // table holds a class instance under 'bad' before its re-entry under
+        // 'self', so the walk's first failure is the earlier position and the
+        // walk arm renders it (the cycle behind it stays untraversed).
+        {
+            DispatchIds ids = new DispatchIds();
+            deal.semantic.ir.ValueId table = ids.value();
+            List<deal.semantic.ir.SemanticOp> ops = new ArrayList<>();
+            DispatchConstruction foreign = buildDispatchConstruction(ids, FOREIGN_ID,
+                foreignLayout(), Map.of("x", DispatchValue.INT));
+            ops.addAll(foreign.ops());
+            ops.add(dispatchEmptyTable(ids, table));
+            DispatchConstruction construction = dispatchCycleConstruction(ids, table);
+            ops.addAll(construction.ops());
+            ops.add(dispatchMemberWrite(ids, table, "bad", foreign.instance()));
+            ops.add(dispatchMemberWrite(ids, table, "self", table));
+            checkDispatchCycleTuple("dispatch-unsupported-before-table-cycle",
+                dispatchUnit(ids, ops, construction.instance(),
+                    Map.of(WALK_ID, walkLayout(), FOREIGN_ID, foreignLayout())),
+                "JSON_TO_WALK", "data.bad", FOREIGN_ID.text());
+        }
+
+        // (5) The cycle-first control over the same graph shape: the re-entry
+        // under 'self' precedes the unsupported carrier under 'zbad', so the
+        // needle's own closed marker still selects the cycle arm (the
+        // selection is the walk's first failure, never the presence of an
+        // unsupported value anywhere in the subtree).
+        {
+            DispatchIds ids = new DispatchIds();
+            deal.semantic.ir.ValueId table = ids.value();
+            List<deal.semantic.ir.SemanticOp> ops = new ArrayList<>();
+            DispatchConstruction foreign = buildDispatchConstruction(ids, FOREIGN_ID,
+                foreignLayout(), Map.of("x", DispatchValue.INT));
+            ops.addAll(foreign.ops());
+            ops.add(dispatchEmptyTable(ids, table));
+            DispatchConstruction construction = dispatchCycleConstruction(ids, table);
+            ops.addAll(construction.ops());
+            ops.add(dispatchMemberWrite(ids, table, "self", table));
+            ops.add(dispatchMemberWrite(ids, table, "zbad", foreign.instance()));
+            checkDispatchCycleTuple("dispatch-cycle-before-unsupported-value",
+                dispatchUnit(ids, ops, construction.instance(),
+                    Map.of(WALK_ID, walkLayout(), FOREIGN_ID, foreignLayout())),
+                "JSON_TO_WALK_CYCLE", null, null);
+        }
+    }
+
+    /** One empty {@code TABLE_NEW} op of the dispatch cycle leg. */
+    private static deal.semantic.ir.SemanticOp dispatchEmptyTable(DispatchIds ids,
+            deal.semantic.ir.ValueId table) {
+        return dispatchOp(ids.op(), deal.semantic.ir.SemanticOpKind.TABLE_NEW,
+            new KindPayload.TableNewPayload(List.of()), table,
+            RuntimeDescriptor.Table.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE,
+            dispatchOrigin(ids, null));
+    }
+
+    /** One {@code MEMBER_WRITE} commit op of the dispatch cycle leg. */
+    private static deal.semantic.ir.SemanticOp dispatchMemberWrite(DispatchIds ids,
+            deal.semantic.ir.ValueId table, String key, deal.semantic.ir.ValueId value) {
+        return dispatchOp(ids.op(), deal.semantic.ir.SemanticOpKind.MEMBER_WRITE,
+            new KindPayload.MemberWritePayload(table, key, value), null, null,
+            FailurePolicyId.NO_DEAL_FAILURE, dispatchOrigin(ids, null));
+    }
+
+    /**
+     * The dispatch cycle leg's mixed path: one single-element
+     * {@code ARRAY_NEW} over the given element table and its pinned
+     * {@code ARRAY_LITERAL_ELEMENT} boundary child.
+     */
+    private static List<deal.semantic.ir.SemanticOp> dispatchArrayOf(DispatchIds ids,
+            deal.semantic.ir.ValueId element, deal.semantic.ir.ValueId array) {
+        deal.semantic.ir.OpId arrayOp = ids.op();
+        deal.semantic.ir.OpId elementBoundary = ids.op();
+        deal.semantic.ir.SemanticOp arrayNew = dispatchOp(arrayOp,
+            deal.semantic.ir.SemanticOpKind.ARRAY_NEW,
+            new KindPayload.ArrayNewPayload(RuntimeDescriptor.Table.INSTANCE,
+                List.of(element), List.of(elementBoundary)),
+            array, new RuntimeDescriptor.Array(RuntimeDescriptor.Table.INSTANCE),
+            FailurePolicyId.NO_DEAL_FAILURE, dispatchOrigin(ids, null));
+        deal.semantic.ir.SemanticOp boundary = dispatchOp(elementBoundary,
+            deal.semantic.ir.SemanticOpKind.BOUNDARY,
+            new KindPayload.BoundaryPayload(BoundaryKind.ARRAY_LITERAL_ELEMENT,
+                RuntimeDescriptor.Table.INSTANCE, element,
+                new deal.semantic.ir.BoundaryRealization.RuntimeValidation(
+                    deal.semantic.SemanticLowerer.CANONICAL_RUNTIME_VALIDATION_ID)),
+            null, null, FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
+            dispatchOrigin(ids, arrayOp));
+        return List.of(arrayNew, boundary);
+    }
+
+    /**
+     * One array-element write of the dispatch cycle leg, in the landed
+     * lowering order: the index constant, the {@code ARRAY_LENGTH} read, the
+     * {@code ARRAY_WRITE} slot normalization, and the {@code INDEX_WRITE}
+     * commit that mutates the container's element in place.
+     */
+    private static List<deal.semantic.ir.SemanticOp> dispatchArrayElementWrite(
+            DispatchIds ids, deal.semantic.ir.ValueId array,
+            deal.semantic.ir.ValueId value) {
+        deal.semantic.ir.ValueId key = ids.value();
+        deal.semantic.ir.SemanticOp keyOp = dispatchOp(ids.op(),
+            deal.semantic.ir.SemanticOpKind.CONST,
+            new KindPayload.ConstPayload(new ScalarValue.Int(0)), key,
+            RuntimeDescriptor.Int.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE,
+            dispatchOrigin(ids, null));
+        deal.semantic.ir.ValueId length = ids.value();
+        deal.semantic.ir.SemanticOp lengthOp = dispatchOp(ids.op(),
+            deal.semantic.ir.SemanticOpKind.ARRAY_LENGTH,
+            new KindPayload.ArrayLengthPayload(array), length,
+            RuntimeDescriptor.Int.INSTANCE, FailurePolicyId.INT32_RESULT,
+            dispatchOrigin(ids, null));
+        deal.semantic.ir.ValueId slot = ids.value();
+        deal.semantic.ir.SemanticOp normalizeOp = dispatchOp(ids.op(),
+            deal.semantic.ir.SemanticOpKind.INDEX_NORMALIZE,
+            new KindPayload.IndexNormalizePayload(
+                deal.semantic.ir.IndexMode.ARRAY_WRITE, key, length),
+            slot, RuntimeDescriptor.Int.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE,
+            dispatchOrigin(ids, null));
+        deal.semantic.ir.SemanticOp writeOp = dispatchOp(ids.op(),
+            deal.semantic.ir.SemanticOpKind.INDEX_WRITE,
+            new KindPayload.IndexWritePayload(array, slot, value), null, null,
+            FailurePolicyId.NO_DEAL_FAILURE, dispatchOrigin(ids, null));
+        return List.of(keyOp, lengthOp, normalizeOp, writeOp);
+    }
+
+    /**
+     * One dispatch cycle construction: the drive's walk layout with the
+     * prebuilt table in the declared {@code data} field and the other
+     * fields' pinned producers (a finite ratio, so the cycle position is
+     * the first failure).
+     */
+    private static DispatchConstruction dispatchCycleConstruction(DispatchIds ids,
+            deal.semantic.ir.ValueId table) {
+        Map<String, DispatchValue> present = new LinkedHashMap<>();
+        present.put("name", DispatchValue.STRING);
+        present.put("age", DispatchValue.INT);
+        present.put("ratio", DispatchValue.NUMBER_FINITE);
+        present.put("tags", DispatchValue.ARRAY);
+        return buildDispatchConstruction(ids, WALK_ID, walkLayout(), present,
+            Map.of("data", table));
+    }
+
+    /**
+     * Runs one dispatch cycle unit and asserts its rendered walk tuple: the
+     * closed arm at the executing op's own {@code SourceOrigin}, with the
+     * arms' own expected/actual presence (the cycle arm carries neither; the
+     * walk arm carries the failing value's token and the pinned message).
+     */
+    private static void checkDispatchCycleTuple(String label, DispatchUnit unit,
+            String arm, String fieldPath, String actual) {
+        deal.semantic.SemanticRuntimeModel.ConsumerRun run =
+            deal.semantic.SemanticOracle.executeProjectInits(
+                unit.project(), unit.tables(), Map.of(), null);
+        check(run.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal
+                .DealFailure,
+            label + ": the oracle dispatch terminates with the walk's DEAL failure; "
+                + "got " + run.terminal());
+        if (!(run.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal
+                .DealFailure failure)) {
+            return;
+        }
+        deal.semantic.SemanticRuntimeModel.ErrorSnapshot error = failure.error();
+        String expectedMessage = "JSON_TO_WALK_CYCLE".equals(arm)
+            ? "cyclic value cannot be encoded as JSON"
+            : "value at " + fieldPath + " is not JSON serializable: " + actual;
+        checkEq(new Tuple("E8001", expectedMessage, WALK_SPAN,
+                null, "JSON_TO_WALK_CYCLE".equals(arm) ? null : actual),
+            new Tuple(error.code(), error.message(), error.origin(),
+                error.expected(), error.actual()),
+            label + ": the oracle dispatch renders the bound walk arm's tuple at the "
+                + "executing op's own SourceOrigin");
+    }
+
     /** One dispatch construction with its producer ops and the walk op. */
     private static DispatchCase dispatchCase(String label, String fieldPath,
             String actual, DispatchIds ids, deal.semantic.ir.ClassId classId,
@@ -3830,11 +4086,31 @@ public class FailureArmAuthorityTest {
     private static DispatchConstruction buildDispatchConstruction(DispatchIds ids,
             deal.semantic.ir.ClassId classId, deal.semantic.ir.ClassLayout layout,
             Map<String, DispatchValue> present) {
+        return buildDispatchConstruction(ids, classId, layout, present, Map.of());
+    }
+
+    /**
+     * One executable construction with prebuilt field operands: every field
+     * named in {@code prebuilt} uses the caller's already-produced value
+     * (the cycle leg's mutated table), and every field named in
+     * {@code present} gets the pinned producer op; the declaration-order
+     * boundary children and the {@code CLASS_NEW} op stay the pinned shape.
+     */
+    private static DispatchConstruction buildDispatchConstruction(DispatchIds ids,
+            deal.semantic.ir.ClassId classId, deal.semantic.ir.ClassLayout layout,
+            Map<String, DispatchValue> present,
+            Map<String, deal.semantic.ir.ValueId> prebuilt) {
         deal.semantic.ir.OpId classNewOp = ids.op();
         List<deal.semantic.ir.SemanticOp> ops = new ArrayList<>();
         List<KindPayload.ProvidedField> provided = new ArrayList<>();
         Map<String, deal.semantic.ir.ValueId> values = new LinkedHashMap<>();
         for (deal.semantic.ir.ClassLayout.FieldLayout field : layout.fields()) {
+            deal.semantic.ir.ValueId built = prebuilt.get(field.name());
+            if (built != null) {
+                provided.add(new KindPayload.ProvidedField(field.name(), built));
+                values.put(field.name(), built);
+                continue;
+            }
             DispatchValue kind = present.get(field.name());
             if (kind == null) {
                 continue;
@@ -3885,6 +4161,11 @@ public class FailureArmAuthorityTest {
             case NUMBER -> {
                 payload = new KindPayload.ConstPayload(
                     new ScalarValue.Number(Double.NaN));
+                opKind = deal.semantic.ir.SemanticOpKind.CONST;
+                resultType = RuntimeDescriptor.Number.INSTANCE;
+            }
+            case NUMBER_FINITE -> {
+                payload = new KindPayload.ConstPayload(new ScalarValue.Number(0.5));
                 opKind = deal.semantic.ir.SemanticOpKind.CONST;
                 resultType = RuntimeDescriptor.Number.INSTANCE;
             }
@@ -3959,10 +4240,21 @@ public class FailureArmAuthorityTest {
     private static DispatchUnit dispatchUnit(DispatchIds ids,
             DispatchConstruction construction,
             Map<deal.semantic.ir.ClassId, deal.semantic.ir.ClassLayout> layouts) {
+        return dispatchUnit(ids, construction.ops(), construction.instance(), layouts);
+    }
+
+    /**
+     * The dispatch project over one explicit op list: the produced ops in
+     * order, the walk op over the given class-value operand, and the
+     * module-init table.
+     */
+    private static DispatchUnit dispatchUnit(DispatchIds ids,
+            List<deal.semantic.ir.SemanticOp> producedOps,
+            deal.semantic.ir.ValueId instance,
+            Map<deal.semantic.ir.ClassId, deal.semantic.ir.ClassLayout> layouts) {
         deal.semantic.ir.ModuleId entry = ids.module();
-        deal.semantic.ir.SemanticOp json = walkJsonOp(ids.op(),
-            construction.instance(), ids.value());
-        List<deal.semantic.ir.SemanticOp> ops = new ArrayList<>(construction.ops());
+        deal.semantic.ir.SemanticOp json = walkJsonOp(ids.op(), instance, ids.value());
+        List<deal.semantic.ir.SemanticOp> ops = new ArrayList<>(producedOps);
         ops.add(json);
         deal.semantic.ir.BlockId initBlock = new deal.semantic.ir.BlockId(0);
         List<deal.semantic.ir.OpId> members = new ArrayList<>();

@@ -126,19 +126,19 @@ public final class JsonClassAlgorithmAdapter {
     /**
      * Stringifies one JSON-shaped executor value through the E8
      * algorithm: the segment-aware first-failure pre-walk decides the
-     * pinned failure position (and selects the walk family's cycle arm
-     * for a path-local container re-entry), and E8 emits the exact text
-     * of every clean value. A value with a selected failure is never
-     * mapped through E8: the mapping would traverse contents behind the
-     * selected failure, and those contents may include a container
-     * re-entry (or an arbitrarily long chain) the mapping cannot
-     * represent.
+     * pinned failure position (the pinned walk depth bound, the unsupported
+     * carriers, and the walk family's cycle arm for a path-local container
+     * re-entry, all in walk order), and E8 emits the exact text of every
+     * clean value. A value with a selected failure is never mapped through
+     * E8: the mapping would traverse contents behind the selected failure,
+     * and those contents may include a container re-entry (or an arbitrarily
+     * long chain) the mapping cannot represent.
      */
     private static ClassOpsExecutor.JsonStringify stringify(
-            ClassOpsExecutor.Value value, String fieldPathPrefix) {
+            ClassOpsExecutor.Value value, String fieldPathPrefix, int depth) {
         Objects.requireNonNull(value, "value must not be null");
         Objects.requireNonNull(fieldPathPrefix, "fieldPathPrefix must not be null");
-        FirstFailure first = firstFailure(value);
+        FirstFailure first = firstFailure(value, depth);
         if (first != null) {
             // A selected failure: the pre-walk is its sole authority. The
             // cycle needle's own closed marker selects the walk family's
@@ -334,15 +334,19 @@ public final class JsonClassAlgorithmAdapter {
      * depth-first traversal as E8's walk, and records the failing
      * position in the pinned {@code JSON_TO_CLASS} segment convention
      * (a table key {@code k} appends {@code ".k"}, an array element
-     * {@code i} appends {@code "[i]"}). A selected failure ends the walk
+     * {@code i} appends {@code "[i]"}). The {@code depth} of the entry value
+     * is the enclosing class walk's depth, and each nested container
+     * consumes one level, exactly like the walk's own table-subtree bound:
+     * a container past {@link ClassOpsExecutor#JSON_MAX_DEPTH} fails with its
+     * own carrier token at its pinned path. A selected failure ends the walk
      * (the value behind it stays untraversed), so a cycle later in the
      * walk order never reaches the mapping.
      *
      */
-    private static FirstFailure firstFailure(ClassOpsExecutor.Value root) {
+    private static FirstFailure firstFailure(ClassOpsExecutor.Value root, int depth) {
         Set<Object> path = Collections.newSetFromMap(new IdentityHashMap<>());
         try {
-            walkForFirstFailure(root, "", path);
+            walkForFirstFailure(root, "", path, depth);
             return null;
         } catch (FirstFailure first) {
             return first;
@@ -351,7 +355,8 @@ public final class JsonClassAlgorithmAdapter {
 
     /** One depth-first pre-order step of the first-failure pre-walk (the E8 traversal). */
     private static void walkForFirstFailure(ClassOpsExecutor.Value value,
-                                            String pinnedPath, Set<Object> path) {
+                                            String pinnedPath, Set<Object> path,
+                                            int depth) {
         switch (value) {
             case ClassOpsExecutor.Value.Null ignored -> {
                 // A JSON-shaped leaf: no failure.
@@ -377,6 +382,14 @@ public final class JsonClassAlgorithmAdapter {
                 }
             }
             case ClassOpsExecutor.Value.Table table -> {
+                // The depth bound precedes the cycle needle at this container
+                // (the exceeding container is its own failure, exactly like
+                // the walk's table-subtree bound before it moved here).
+                if (depth > ClassOpsExecutor.JSON_MAX_DEPTH) {
+                    throw new FirstFailure(pinnedPath,
+                        FailureProjections.typedBoundaryToken(ActualKind.TABLE, null),
+                        false);
+                }
                 if (!path.add(table.table())) {
                     throw new FirstFailure(pinnedPath,
                         FailureProjections.typedBoundaryToken(ActualKind.TABLE, null),
@@ -393,13 +406,18 @@ public final class JsonClassAlgorithmAdapter {
                                 + "' — a producer defect, never a projection");
                         }
                         walkForFirstFailure(present.value(), pinnedPath + "." + key,
-                            path);
+                            path, depth + 1);
                     }
                 } finally {
                     path.remove(table.table());
                 }
             }
             case ClassOpsExecutor.Value.Array array -> {
+                if (depth > ClassOpsExecutor.JSON_MAX_DEPTH) {
+                    throw new FirstFailure(pinnedPath,
+                        FailureProjections.typedBoundaryToken(ActualKind.ARRAY, null),
+                        false);
+                }
                 if (!path.add(array.array())) {
                     throw new FirstFailure(pinnedPath,
                         FailureProjections.typedBoundaryToken(ActualKind.ARRAY, null),
@@ -408,7 +426,7 @@ public final class JsonClassAlgorithmAdapter {
                 try {
                     for (int i = 0; i < array.array().size(); i++) {
                         walkForFirstFailure(array.array().elementAt(i),
-                            pinnedPath + "[" + i + "]", path);
+                            pinnedPath + "[" + i + "]", path, depth + 1);
                     }
                 } finally {
                     path.remove(array.array());
