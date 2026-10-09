@@ -197,6 +197,17 @@ public final class CompilationOrchestrator {
     private List<RuntimeImportDependency> runtimeDependencies =
         List.of();
 
+    /**
+     * The per-module imported class-literal providers of the executed
+     * dependency graph (dotted module path &rarr; literal range &rarr;
+     * import alias): the JavaScript emitter's exact construction
+     * reference for literals outside published plan defaults (the plan
+     * IR target route covers the defaults). Empty before the graph runs
+     * and for every module the graph skipped.
+     */
+    private Map<String, Map<DiagnosticRange, String>>
+        classLiteralProvidersByModulePath = Map.of();
+
     private final Map<String, JsBackend.JsCodegenResult>
         jsGeneratedResults = new LinkedHashMap<>();
 
@@ -1625,6 +1636,7 @@ public final class CompilationOrchestrator {
             hasErrors = true;
             plannedDefaultClasses.clear();
             runtimeDependencies = List.of();
+            classLiteralProvidersByModulePath = Map.of();
             return;
         }
         // Acyclic: request the provider digests now — the serializer
@@ -1639,6 +1651,7 @@ public final class CompilationOrchestrator {
             hasErrors = true;
             plannedDefaultClasses.clear();
             runtimeDependencies = List.of();
+            classLiteralProvidersByModulePath = Map.of();
             return;
         }
         ModuleDependencyGraph.PublishedGraph published =
@@ -1647,6 +1660,16 @@ public final class CompilationOrchestrator {
                 serialized.providerDigests());
         completedDefaultPlans.putAll(published.completedPlans());
         runtimeDependencies = published.runtimeDependencies();
+        Map<String, Map<DiagnosticRange, String>> literalProviders =
+            new LinkedHashMap<>();
+        for (Map.Entry<String, Map<DiagnosticRange, String>> entry
+                : free.classLiteralProviders().entrySet()) {
+            ModuleInfo info = modules.get(entry.getKey());
+            if (info != null) {
+                literalProviders.put(info.modulePath, entry.getValue());
+            }
+        }
+        classLiteralProvidersByModulePath = literalProviders;
         dependencyOrder = free.initializationOrder();
         log("  Runtime graph: " + runtimeDependencies.size()
             + " dependency edge(s); initialization order "
@@ -2280,7 +2303,8 @@ public final class CompilationOrchestrator {
                 identityIndex, identityIndex.moduleIdentityLookup(),
                 sourceMap ? new SourceMapGenerator() : null,
                 invocation.semanticProfile(),
-                completedPlansByModulePath());
+                completedPlansByModulePath(),
+                classLiteralProvidersByModulePath);
             // Native ranged backend list (T12): the backend emits
             // CompilerDiagnostic entries directly, so the orchestrator
             // merge needs no boundary conversion — real spans keep their

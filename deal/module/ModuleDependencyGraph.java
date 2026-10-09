@@ -116,7 +116,8 @@ public final class ModuleDependencyGraph {
         List<ProvisionalEdge> provisionalEdges,
         List<DefaultResourceOccurrence> ordinaryOccurrences,
         List<String> initializationOrder,
-        boolean failed
+        boolean failed,
+        Map<String, Map<DiagnosticRange, String>> classLiteralProviders
     ) {
 
         public DigestFreeResult {
@@ -128,6 +129,8 @@ public final class ModuleDependencyGraph {
                 ordinaryOccurrences, "ordinaryOccurrences"));
             initializationOrder = List.copyOf(Objects.requireNonNull(
                 initializationOrder, "initializationOrder"));
+            classLiteralProviders = Map.copyOf(Objects.requireNonNull(
+                classLiteralProviders, "classLiteralProviders"));
         }
     }
 
@@ -212,6 +215,17 @@ public final class ModuleDependencyGraph {
 
         private final List<DefaultResourceOccurrence>
             ordinaryOccurrences = new ArrayList<>();
+
+        /**
+         * source path &rarr; the module walk's imported class-literal
+         * providers (literal range &rarr; import alias), one entry per
+         * constructed literal of every top-level function body. The
+         * emitters consume it so an imported construction references the
+         * exact recorded provider even when its resource occurrence was
+         * deduplicated at an earlier literal (GitHub #6).
+         */
+        private final Map<String, Map<DiagnosticRange, String>>
+            classLiteralProviders = new LinkedHashMap<>();
         private final List<ProvisionalEdge> mergedEdges =
             new ArrayList<>();
         private final Set<ProvisionalEdge> mergedSeen =
@@ -249,12 +263,12 @@ public final class ModuleDependencyGraph {
             classifyCycles();
             if (failed) {
                 return new DigestFreeResult(diagnostics, List.of(),
-                    List.of(), List.of(), true);
+                    List.of(), List.of(), true, Map.of());
             }
             List<String> order = initializationOrder(
                 new ArrayList<>(modules.keySet()), typeEdges);
             return new DigestFreeResult(diagnostics, mergedEdges,
-                ordinaryOccurrences, order, false);
+                ordinaryOccurrences, order, false, classLiteralProviders);
         }
 
         /**
@@ -306,6 +320,14 @@ public final class ModuleDependencyGraph {
                     if (mergedSeen.add(edge)) {
                         mergedEdges.add(edge);
                     }
+                }
+                Map<DiagnosticRange, String> providers =
+                    recorder.classLiteralProviders();
+                if (!providers.isEmpty()) {
+                    classLiteralProviders
+                        .computeIfAbsent(input.sourcePath(),
+                            key -> new LinkedHashMap<>())
+                        .putAll(providers);
                 }
             }
         }

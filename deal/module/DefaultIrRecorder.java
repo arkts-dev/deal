@@ -101,6 +101,17 @@ final class DefaultIrRecorder {
         new LinkedHashMap<>();
     private final LinkedHashMap<SemanticResourceIdentity,
         DefaultResourceOccurrence> occurrences = new LinkedHashMap<>();
+
+    /**
+     * The imported class-literal providers of this walk (literal range
+     * &rarr; import alias), one entry per literal in walk order: the
+     * resource occurrences deduplicate by semantic resource identity,
+     * while an emitter needs the exact provider of every constructed
+     * literal, repeated demands included.
+     */
+    private final LinkedHashMap<DiagnosticRange, String>
+        classLiteralProviders = new LinkedHashMap<>();
+
     private final List<CompilerDiagnostic> awaitDiagnostics =
         new ArrayList<>();
 
@@ -140,6 +151,14 @@ final class DefaultIrRecorder {
      */
     List<DefaultResourceOccurrence> occurrences() {
         return List.copyOf(occurrences.values());
+    }
+
+    /**
+     * The imported class-literal providers of this walk (literal range
+     * &rarr; import alias), one entry per constructed literal.
+     */
+    Map<DiagnosticRange, String> classLiteralProviders() {
+        return Map.copyOf(classLiteralProviders);
     }
 
     /** The E3020 evaluator-scope-await diagnostics. */
@@ -551,6 +570,8 @@ final class DefaultIrRecorder {
                                 .IMPORTED_CLASS_DEFAULT_PLAN,
                             provider, alias, resource,
                             obj.span().range());
+                        classLiteralProviders.put(obj.span().range(),
+                            alias);
                     }
                 }
             }

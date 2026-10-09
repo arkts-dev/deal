@@ -402,6 +402,17 @@ public final class JsBackend {
         Map.of();
 
     /**
+     * The executed graph's imported class-literal providers of this
+     * module (literal range &rarr; import alias): the exact construction
+     * reference of every literal outside a published plan default (a
+     * function-body construction, whose resource occurrence may have
+     * been deduplicated at an earlier literal). Empty when no graph
+     * surface was supplied (the standalone and retained entry points).
+     */
+    private Map<DiagnosticRange, String> recordedClassLiteralProviders =
+        Map.of();
+
+    /**
      * The declaration range of every planned class of this compilation
      * (all modules) &rarr; the dotted module path declaring it, built
      * once from the completed plan surface the orchestrator handed to
@@ -575,6 +586,26 @@ public final class JsBackend {
                                            SemanticProfile semanticProfile,
                                            Map<String, List<PlannedDefaultClass>>
                                                plansByModulePath) {
+        return generate(program, result, sourcePath, modulePath,
+            importResolutions, hostModules, externCImports, isEntry,
+            identityIndex, moduleIdentities, sourceMap, semanticProfile,
+            plansByModulePath, Map.of());
+    }
+
+    public static JsCodegenResult generate(ProgramNode program, CheckResult result,
+                                           String sourcePath, String modulePath,
+                                           Map<String, String> importResolutions,
+                                           Map<String, HostModuleDeclarations> hostModules,
+                                           Set<String> externCImports,
+                                           boolean isEntry,
+                                           CanonicalClassIdentityIndex identityIndex,
+                                           Function<String, CanonicalModuleIdentity> moduleIdentities,
+                                           SourceMapGenerator sourceMap,
+                                           SemanticProfile semanticProfile,
+                                           Map<String, List<PlannedDefaultClass>>
+                                               plansByModulePath,
+                                           Map<String, Map<DiagnosticRange, String>>
+                                               classLiteralProvidersByModulePath) {
         java.util.Objects.requireNonNull(program, "program must not be null");
         java.util.Objects.requireNonNull(result, "result must not be null");
         java.util.Objects.requireNonNull(importResolutions,
@@ -591,12 +622,17 @@ public final class JsBackend {
             "semanticProfile must not be null");
         java.util.Objects.requireNonNull(plansByModulePath,
             "plansByModulePath must not be null");
+        java.util.Objects.requireNonNull(classLiteralProvidersByModulePath,
+            "classLiteralProvidersByModulePath must not be null");
         JsBackend backend = new JsBackend(result.typeMap(), result.symbolTable(),
             result.constructedClassDecls(),
             sourcePath, modulePath, importResolutions, hostModules,
             externCImports, isEntry,
             identityIndex, moduleIdentities, sourceMap, semanticProfile);
         backend.plansByModulePath = Map.copyOf(plansByModulePath);
+        backend.recordedClassLiteralProviders =
+            Map.copyOf(classLiteralProvidersByModulePath.getOrDefault(
+                modulePath == null ? "" : modulePath, Map.of()));
         return backend.generateProgram(program);
     }
 
@@ -2124,7 +2160,25 @@ public final class JsBackend {
     private String recordedProviderAlias(Type.Class cls,
             ObjectLiteralExpr obj) {
         DefaultIrNode.Target target = planLiteralTargets.get(obj);
-        if (target == null || target.kind()
+        if (target != null) {
+            return recordedTargetAlias(cls, target);
+        }
+        // A literal outside a published plan default: the executed
+        // graph's per-literal binding (its resource occurrence may have
+        // been deduplicated at an earlier literal).
+        return recordedAlias(recordedClassLiteralProviders.get(
+            obj.span().range()), cls);
+    }
+
+    /**
+     * The alias a recorded imported-resource target names for the
+     * demanded class, or null when the target is no imported class
+     * resource (or its provider module is not among this module's
+     * imports).
+     */
+    private String recordedTargetAlias(Type.Class cls,
+            DefaultIrNode.Target target) {
+        if (target.kind()
                 != DefaultIrNode.TargetKind.IMPORTED_RESOURCE
                 || target.resourceIdentity() == null
                 || moduleAst == null) {
@@ -2145,20 +2199,33 @@ public final class JsBackend {
             if (!(stmt instanceof ImportDeclaration imp)) {
                 continue;
             }
-            if (!declaringModule.equals(
+            if (declaringModule.equals(
                     importResolutions.get(imp.modulePath()))) {
-                continue;
-            }
-            if (isLocalName(imp.alias())) {
-                continue; // a local binding shadows the import alias
-            }
-            Symbol sym = symbols.resolve(imp.alias());
-            if (sym instanceof Symbol.ModuleSymbol ms) {
-                Type exported = ms.exports().get(cls.name());
-                if (exported instanceof Type.Class tc
-                        && tc.identity().equals(cls.identity())) {
-                    return imp.alias();
+                String alias = recordedAlias(imp.alias(), cls);
+                if (alias != null) {
+                    return alias;
                 }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Validates one recorded provider alias for the demanded class: the
+     * alias is a module alias visible at the construction site (a local
+     * binding shadowing the import alias is never a provider) whose
+     * checked export surface carries the demanded class identity.
+     */
+    private String recordedAlias(String alias, Type.Class cls) {
+        if (alias == null || isLocalName(alias)) {
+            return null;
+        }
+        Symbol sym = symbols.resolve(alias);
+        if (sym instanceof Symbol.ModuleSymbol ms) {
+            Type exported = ms.exports().get(cls.name());
+            if (exported instanceof Type.Class tc
+                    && tc.identity().equals(cls.identity())) {
+                return alias;
             }
         }
         return null;

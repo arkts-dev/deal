@@ -228,6 +228,29 @@ public class ProductionDispatchTest {
         }
         """;
 
+    /** The original reproducer shape (a body call) under the exported
+     * same-name sibling collision: the construction sits outside a
+     * published plan default. */
+    private static final String CONTEXTUAL_BODY_CODEC_FIRST = """
+        import * as console from "std/console";
+        import * as codec from "./m/codec";
+        import * as ir from "./m/ir";
+        export function main(): null {
+          if (ir.useIr({}) === 7) { console.log("ok"); }
+          return null;
+        }
+        """;
+
+    private static final String CONTEXTUAL_BODY_IR_FIRST = """
+        import * as console from "std/console";
+        import * as ir from "./m/ir";
+        import * as codec from "./m/codec";
+        export function main(): null {
+          if (ir.useIr({}) === 7) { console.log("ok"); }
+          return null;
+        }
+        """;
+
     /**
      * The nested-literal control (review cycle 2): the demanded class
      * is a nested field of an imported class, so the enclosing field
@@ -1263,6 +1286,10 @@ public class ProductionDispatchTest {
             write(root, "src/main.deal", CONTEXTUAL_MAIN_CODEC_FIRST);
             write(root, "src/main_ir_first.deal",
                 CONTEXTUAL_MAIN_IR_FIRST);
+            write(root, "src/main_body.deal",
+                CONTEXTUAL_BODY_CODEC_FIRST);
+            write(root, "src/main_body_ir_first.deal",
+                CONTEXTUAL_BODY_IR_FIRST);
 
             String codecFirstDigest = null;
             String codecFirstCodecDigest = null;
@@ -1333,6 +1360,80 @@ public class ProductionDispatchTest {
                 // observable outcome, never the sibling's (93).
                 checkJsArtifactRun(label, root.resolve("out"),
                     irFirst ? "main_ir_first.js" : "main.js");
+            }
+
+            // The same collision with the construction in a function body
+            // (the original reproducer's shape): the ordinary runtime-use
+            // edge and the emitted construction must target the resolved
+            // callee's declaring module in both import orders.
+            String bodyCodecFirstDigest = null;
+            for (String entry : List.of("src/main_body.deal",
+                    "src/main_body_ir_first.deal")) {
+                String label = entry.contains("ir_first")
+                    ? "body ir-first" : "body codec-first";
+                boolean irFirst = entry.contains("ir_first");
+                ArmCompile compile = compileWithInvocation(root, entry,
+                    productionInvocation());
+                check(compile.success(), "the " + label + " contextual"
+                    + " collision compile succeeds through the production"
+                    + " invocation: " + compile.orchestrator()
+                        .diagnostics());
+                if (!compile.success()) {
+                    continue;
+                }
+                CompilationOrchestrator orchestrator =
+                    compile.orchestrator();
+                String mainUri = serializerModuleUri(orchestrator,
+                    "/" + entry);
+                String irUri = serializerModuleUri(orchestrator,
+                    "/src/m/ir.deal");
+                String codecUri = serializerModuleUri(orchestrator,
+                    "/src/m/codec.deal");
+                DiagnosticRange irDeclaration = mainUri == null
+                        || irUri == null || codecUri == null ? null
+                    : classDeclarationRange(CONTEXTUAL_IR_SOURCE,
+                        irUri.substring("file://".length()), "Ir");
+                check(irDeclaration != null, "the " + label
+                    + " collision resolves the declaring declaration"
+                    + " range");
+                if (irDeclaration == null) {
+                    continue;
+                }
+                List<RuntimeImportDependency> edges = classEdges(
+                    orchestrator, mainUri, "Ir",
+                    RuntimeImportDependency.Reason.RUNTIME_USE);
+                checkEq(1, edges.size(), "the " + label + " completed"
+                    + " graph holds exactly one ordinary Ir edge");
+                if (edges.size() != 1) {
+                    continue;
+                }
+                RuntimeImportDependency edge = edges.get(0);
+                checkEq(irUri, edge.toSemanticModuleIdentity()
+                        .canonicalResolvedSourceUri(), "the " + label
+                    + " ordinary Ir edge targets the declaring module");
+                checkEq("ir", edge.importAlias(), "the " + label
+                    + " ordinary Ir edge keeps the spelled alias");
+                checkEq(irDeclaration, edge.semanticResourceIdentity()
+                        .lexicalDeclarationIdentity().sourceScalarRange(),
+                    "the " + label + " ordinary Ir edge carries the exact"
+                        + " defining declaration range");
+                if (irFirst) {
+                    checkEq(bodyCodecFirstDigest,
+                        edge.providerContractDigest(), "the " + label
+                        + " ordinary Ir provider digest is import-order"
+                        + " independent");
+                } else {
+                    bodyCodecFirstDigest = edge.providerContractDigest();
+                    checkEq(codecFirstDigest, bodyCodecFirstDigest,
+                        "the body-walk Ir provider digest equals the"
+                            + " plan-default digest of the same provider");
+                }
+
+                // The published artifact constructs the recorded
+                // provider's class: the demanded default (7) is the
+                // observable outcome, never the sibling's (93).
+                checkJsArtifactRun(label, root.resolve("out"),
+                    irFirst ? "main_body_ir_first.js" : "main_body.js");
             }
         } finally {
             deleteRecursively(root);
@@ -1507,12 +1608,20 @@ public class ProductionDispatchTest {
     private static List<RuntimeImportDependency> classPlanEdges(
             CompilationOrchestrator orchestrator, String fromUri,
             String className) {
+        return classEdges(orchestrator, fromUri, className,
+            RuntimeImportDependency.Reason.DEFERRED_DEFAULT_BINDING);
+    }
+
+    /** The completed dependency edges of the given class name and reason
+     * whose consuming module is {@code fromUri}. */
+    private static List<RuntimeImportDependency> classEdges(
+            CompilationOrchestrator orchestrator, String fromUri,
+            String className,
+            RuntimeImportDependency.Reason reason) {
         List<RuntimeImportDependency> matches = new ArrayList<>();
         for (RuntimeImportDependency edge
                 : orchestrator.runtimeDependencies()) {
-            if (edge.reason()
-                        == RuntimeImportDependency.Reason
-                            .DEFERRED_DEFAULT_BINDING
+            if (edge.reason() == reason
                     && edge.fromSemanticModuleIdentity()
                         .canonicalResolvedSourceUri().equals(fromUri)
                     && edge.semanticResourceIdentity()
