@@ -779,14 +779,7 @@ public final class FailureContractRegistry {
                                          String expected, String actual,
                                          BoundaryFailure cause) {
         FailureArm arm = arm(id);
-        if (arm.isInnerOnly()) {
-            throw new BoundaryExecutor.Defect("arm " + id + " is INNER_ONLY: it renders "
-                + "only into another arm's inner reason and publishes no tuple");
-        }
-        if (arm.isSiblingOwned()) {
-            throw new BoundaryExecutor.Defect("arm " + id + " has a SIBLING_OWNED "
-                + "projection binding and no production consumer may render it");
-        }
+        requireTupleRenderable(arm);
         checkParameters(arm, parameters);
         checkArmFields(arm, parameters, expected, actual);
         String message = instantiateArm(arm, parameters);
@@ -819,7 +812,10 @@ public final class FailureContractRegistry {
      * @param metadata      the render's metadata; may be empty, never null
      * @param cause         the leaf failure where the row pins one, else null
      * @return the rendered boundary failure
-     * @throws BoundaryExecutor.Defect if the render is not the arm's own
+     * @throws BoundaryExecutor.Defect if the render is not the arm's own,
+     *         including an {@code INNER_ONLY} arm addressed by its retained
+     *         template position (the same forbidden scope {@link #render}
+     *         rejects)
      */
     public static BoundaryFailure renderAtTemplate(FailurePolicyId policy, int templateIndex,
                                                    String expected, String actual,
@@ -827,6 +823,7 @@ public final class FailureContractRegistry {
                                                    BoundaryFailure cause) {
         Objects.requireNonNull(policy, "policy must not be null");
         FailureArm arm = armForTemplate(policy, templateIndex);
+        requireTupleRenderable(arm);
         Map<String, String> supplied = metadata == null
             ? new LinkedHashMap<>() : metadata;
         Map<String, String> parameters = new LinkedHashMap<>();
@@ -854,6 +851,27 @@ public final class FailureContractRegistry {
         checkArmFields(arm, parameters, expected, actual);
         return new BoundaryFailure(policy, codeOfArm(arm),
             instantiateArm(arm, parameters), expected, actual, supplied, cause);
+    }
+
+    /**
+     * Enforces the arm's render scope at every tuple-producing entry: an
+     * {@code INNER_ONLY} arm publishes no tuple of its own — it renders only
+     * into another arm's {@code {inner}} parameter — and a marked
+     * sibling-owned arm has no production consumer. Both are fail-closed
+     * producer defects at {@link #render} and at
+     * {@link #renderAtTemplate} (the {@code BoundaryFailure.fromRow}
+     * delegate included), so a row-addressed render can never bypass the
+     * scope the arm-addressed entry enforces.
+     */
+    private static void requireTupleRenderable(FailureArm arm) {
+        if (arm.isInnerOnly()) {
+            throw new BoundaryExecutor.Defect("arm " + arm.id() + " is INNER_ONLY: it renders "
+                + "only into another arm's inner reason and publishes no tuple");
+        }
+        if (arm.isSiblingOwned()) {
+            throw new BoundaryExecutor.Defect("arm " + arm.id() + " has a SIBLING_OWNED "
+                + "projection binding and no production consumer may render it");
+        }
     }
 
     // =========================================================================
@@ -1047,14 +1065,25 @@ public final class FailureContractRegistry {
             }
             throw shapeDefect(arm, field, value, "a canonical descriptor text");
         }
+        if (isDescriptorSpelling(value)) {
+            return;
+        }
+        throw shapeDefect(arm, field, value, "a canonical descriptor text");
+    }
+
+    /**
+     * True iff one text is a closed descriptor spelling: the canonical
+     * grammar decoded by the one decoder, or the emitters' internal dialect
+     * ({@code array(…)}/… ). The one predicate the arm field shapes and the
+     * closed host inner-reason vocabulary share, so an unknown descriptor
+     * text is never admitted by either.
+     */
+    private static boolean isDescriptorSpelling(String value) {
         try {
             RuntimeDescriptor.parseCanonicalText(value);
-            return;
+            return true;
         } catch (RuntimeException decodeFailure) {
-
-        }
-        if (!isDialectDescriptorText(value)) {
-            throw shapeDefect(arm, field, value, "a canonical descriptor text");
+            return isDialectDescriptorText(value);
         }
     }
 
@@ -1199,6 +1228,158 @@ public final class FailureContractRegistry {
             throw new BoundaryExecutor.Defect("arm " + arm.id() + " declares the parameters "
                 + arm.parameters() + " but the render supplied " + parameters.keySet());
         }
+        // A HOST_INNER_REASON parameter is not free text: it is the render of
+        // one declared inner-reason arm, so the closed-vocabulary check rejects
+        // a consumer-composed reason at every tuple-producing entry (P2 item 3;
+        // the parameter's literal index data stays untouched).
+        for (Map.Entry<String, FailureArm.ParameterSource> entry
+                : arm.parameterSources().entrySet()) {
+            if (entry.getValue() == FailureArm.ParameterSource.HOST_INNER_REASON) {
+                requireClosedHostInnerReason(parameters.get(entry.getKey()));
+            }
+        }
+    }
+
+    /**
+     * Enforces the closed host inner-reason vocabulary on one supplied
+     * {@code HOST_INNER_REASON} value (P2 item 3): the text must be the render
+     * of one of the declared inner-reason arms — the typed-boundary kind text,
+     * the int refinement, the signed32 range, the two host string-carrier
+     * texts, the function signature, the class identity, or the array-element
+     * mismatch. A consumer-composed or foreign text is a fail-closed producer
+     * defect on every consumer ({@link #render}/
+     * {@link #renderAtTemplate}/{@code JvmRuntime.arm}), never a published
+     * inner reason.
+     *
+     * @return the value unchanged when it is a closed inner reason
+     */
+    public static String requireClosedHostInnerReason(String inner) {
+        Objects.requireNonNull(inner, "inner must not be null");
+        if (isClosedHostInnerReason(inner)) {
+            return inner;
+        }
+        throw new BoundaryExecutor.Defect("the host inner-reason render supplied \""
+            + inner + "\", which is outside the closed inner-reason vocabulary (the "
+            + "declared typed-boundary kind/refinement/range/string-carrier texts, the "
+            + "function signature, the class identity, and the array-element mismatch "
+            + "only; a producer defect, never a composed reason)");
+    }
+
+    /**
+     * True iff one text is a closed host inner reason: the declared
+     * kind/refinement/range/string-carrier arm texts, or the declared
+     * signature/identity/element templates instantiated with their closed
+     * parameter shapes. The vocabulary is derived from the declared arm
+     * templates, so a foreign text can never slip in through a hardcoded copy.
+     */
+    private static boolean isClosedHostInnerReason(String text) {
+        FailureArm kindArm = arm(FailureArmId.TYPED_BOUNDARY_KIND);
+        for (String kindText : KIND_TEXTS) {
+            if (text.equals(kindArm.template().replace("{kind}", kindText))) {
+                return true;
+            }
+        }
+        for (FailureArmId id : List.of(FailureArmId.INT_CONVERSION_NAN,
+                FailureArmId.INT_CONVERSION_INFINITY,
+                FailureArmId.INT_CONVERSION_FRACTIONAL,
+                FailureArmId.INT32_RANGE,
+                FailureArmId.HOST_STRING_INVALID_UTF8,
+                FailureArmId.HOST_STRING_SURROGATE)) {
+            if (text.equals(arm(id).template())) {
+                return true;
+            }
+        }
+        return isInstantiatedSignatureReason(text)
+            || isInstantiatedIdentityReason(text)
+            || isInstantiatedElementReason(text);
+    }
+
+    /** The signature arm's template instantiated with two descriptor texts. */
+    private static boolean isInstantiatedSignatureReason(String text) {
+        FailureArm arm = arm(FailureArmId.FUNCTION_SIGNATURE_MISMATCH);
+        String prefix = templatePrefix(arm);
+        String infix = templateInfix(arm);
+        if (!text.startsWith(prefix)) {
+            return false;
+        }
+        int split = text.indexOf(infix, prefix.length());
+        if (split < 0) {
+            return false;
+        }
+        String expected = text.substring(prefix.length(), split);
+        String actual = text.substring(split + infix.length());
+        // The signature fields admit the empty carried text (the arm's own
+        // declared field shape); every other text is a closed descriptor
+        // spelling.
+        return (expected.isEmpty() || isDescriptorSpelling(expected))
+            && (actual.isEmpty() || isDescriptorSpelling(actual));
+    }
+
+    /** The identity arm's template instantiated with two canonical class atoms. */
+    private static boolean isInstantiatedIdentityReason(String text) {
+        FailureArm arm = arm(FailureArmId.CLASS_IDENTITY);
+        String prefix = templatePrefix(arm);
+        String infix = templateInfix(arm);
+        if (!text.startsWith(prefix)) {
+            return false;
+        }
+        int split = text.indexOf(infix, prefix.length());
+        if (split < 0) {
+            return false;
+        }
+        return isClassAtomText(text.substring(prefix.length(), split))
+            && isClassAtomText(text.substring(split + infix.length()));
+    }
+
+    /** The element arm's template instantiated with a one-based index. */
+    private static boolean isInstantiatedElementReason(String text) {
+        FailureArm arm = arm(FailureArmId.ARRAY_ELEMENT_KIND);
+        String prefix = templatePrefix(arm);
+        String suffix = templateSuffix(arm);
+        if (!text.startsWith(prefix) || !text.endsWith(suffix)
+                || text.length() <= prefix.length() + suffix.length()) {
+            return false;
+        }
+        String index = text.substring(prefix.length(), text.length() - suffix.length());
+        if (index.charAt(0) == '0') {
+            return false;
+        }
+        for (int i = 0; i < index.length(); i++) {
+            if (index.charAt(i) < '0' || index.charAt(i) > '9') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** The literal segment of an arm template before its first placeholder. */
+    private static String templatePrefix(FailureArm arm) {
+        String template = arm.template();
+        int open = template.indexOf('{');
+        return open < 0 ? template : template.substring(0, open);
+    }
+
+    /** The literal segment between the two placeholders of a two-parameter template. */
+    private static String templateInfix(FailureArm arm) {
+        String template = arm.template();
+        int firstClose = template.indexOf('}');
+        int secondOpen = firstClose < 0 ? -1 : template.indexOf('{', firstClose + 1);
+        if (firstClose < 0 || secondOpen < 0) {
+            throw new BoundaryExecutor.Defect("arm " + arm.id() + " carries no "
+                + "two-placeholder template: \"" + template + "\"");
+        }
+        return template.substring(firstClose + 1, secondOpen);
+    }
+
+    /** The literal segment of an arm template after its last placeholder. */
+    private static String templateSuffix(FailureArm arm) {
+        String template = arm.template();
+        int lastClose = template.lastIndexOf('}');
+        if (lastClose < 0) {
+            throw new BoundaryExecutor.Defect("arm " + arm.id() + " carries no placeholder: "
+                + "\"" + template + "\"");
+        }
+        return template.substring(lastClose + 1);
     }
 
     /**

@@ -8438,6 +8438,9 @@ local function __checkMarkedBindingSlots(id, arm)
     end
   end
 end
+local __checkInnerReason -- assigned below, once the descriptor and class-atom
+-- checks are declared: an HOST_INNER_REASON parameter is validated against
+-- the closed inner-reason vocabulary (P2 item 3) at every template render.
 local function __renderTemplate(id, values)
   local arm = __arms[id]
   if arm == nil then
@@ -8459,6 +8462,18 @@ local function __renderTemplate(id, values)
   if supplied ~= count then
     error("failure arm '"..id.."' declares the parameters ["..__parametersText(arm)
       .."] but the render supplied "..supplied.." (producer defect)", 0)
+  end
+  -- The closed host inner-reason vocabulary (P2 item 3): an HOST_INNER_REASON
+  -- parameter is the render of one declared inner-reason arm, never free
+  -- text; a consumer-composed or foreign reason is a producer defect.
+  for entry in string.gmatch(arm.k or "", "[^,]+") do
+    local eq = string.find(entry, "=", 1, true)
+    if eq ~= nil and string.sub(entry, eq + 1) == "HOST_INNER_REASON" then
+      local name = string.sub(entry, 1, eq - 1)
+      local value = nil
+      if values ~= nil then value = values[name] end
+      if value ~= nil then __checkInnerReason(id, name, value) end
+    end
   end
   -- One single pass over the arm's own template: each {name} placeholder
   -- is replaced by the value the render supplied and the inserted value is
@@ -8575,6 +8590,55 @@ local function __isDescriptorText(s)
       and __isDescriptorText(string.sub(inner, semi + 1))
   end
   return false
+end
+-- The closed host inner-reason vocabulary (P2 item 3): the texts the
+-- declared inner-reason arms produce — the typed-boundary kind text, the
+-- int refinement, the signed32 range, the two host string-carrier texts,
+-- the function signature, the class identity, and the array-element
+-- mismatch. A consumer-composed or foreign text is a producer defect,
+-- never a published inner reason; the arm's literal index data is not
+-- inspected here.
+local function __isInnerReason(s)
+  if type(s) ~= "string" then return false end
+  if string.sub(s, 1, 9) == "expected " and __kindTexts[string.sub(s, 10)] then
+    return true
+  end
+  if s == "expected int, got NaN" or s == "expected int, got infinity"
+      or s == "expected int, got non-integer number" then return true end
+  if s == "int out of safe range" then return true end
+  if s == "expected string, got invalid UTF-8 encoding"
+      or s == "expected string, got UTF-16 surrogate code point" then return true end
+  local signature = "function signature mismatch: expected "
+  if string.sub(s, 1, #signature) == signature then
+    local sep = string.find(s, ", got ", #signature + 1, true)
+    if sep == nil then return false end
+    local expected = string.sub(s, #signature + 1, sep - 1)
+    local actual = string.sub(s, sep + 6)
+    return (expected == "" or __isDescriptorText(expected))
+      and (actual == "" or __isDescriptorText(actual))
+  end
+  local identity = "expected instance of "
+  if string.sub(s, 1, #identity) == identity then
+    local sep = string.find(s, ", got ", #identity + 1, true)
+    if sep == nil then return false end
+    return __isClassAtom(string.sub(s, #identity + 1, sep - 1))
+      and __isClassAtom(string.sub(s, sep + 6))
+  end
+  local element = "array element "
+  local mismatch = " type mismatch"
+  if string.sub(s, 1, #element) == element
+      and string.sub(s, -#mismatch) == mismatch
+      and #s > #element + #mismatch then
+    local index = string.sub(s, #element + 1, -(#mismatch + 1))
+    return string.find(index, "^[1-9]%d*$") ~= nil
+  end
+  return false
+end
+__checkInnerReason = function(id, name, value)
+  if __isInnerReason(value) then return end
+  error("failure arm '"..id.."' declares its parameter {"..name.."} as a host "
+    .."inner-reason render but the render supplied '"..tostring(value).."', which "
+    .."is outside the closed inner-reason vocabulary (producer defect)", 0)
 end
 -- The canonical floating-point text of the failing value (the sqrt arm's
 -- actual): Java's hex-float spelling or the special values.

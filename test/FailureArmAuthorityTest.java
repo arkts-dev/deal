@@ -105,6 +105,7 @@ public class FailureArmAuthorityTest {
         testBoundsAndBytesArms();
         testDeclaredFieldShapeNegatives();
         testTypedBoundaryClassSpellingNegatives();
+        testForbiddenRenderScopesAndInnerReasons();
         testHostInnerReasonDescriptorValidation();
         testEmittedParameterContract();
         testNegativeSingleSourceControl();
@@ -1812,6 +1813,179 @@ public class FailureArmAuthorityTest {
             "the Lua arm renderer fails closed on the empty class: prefix");
         checkEq("atom-control|true|@/Error", rows.get(3),
             "the Lua arm renderer keeps the carried canonical atom (the control)");
+    }
+
+    // =========================================================================
+    // 12c. The forbidden render scopes and the closed host inner reasons
+    // =========================================================================
+
+    /**
+     * The row-addressed entry point enforces the arm's render scope (P1/P2
+     * and Verification 2: a forbidden scope fails closed at every
+     * tuple-producing entry), and every renderer validates a
+     * {@code HOST_INNER_REASON} value against the closed inner-reason
+     * vocabulary — the registry's two entries and its {@code fromRow}
+     * delegate, the JVM runtime (through the registry), and the emitted Lua
+     * prelude's {@code __arm}/{@code __renderTemplate}. The declared
+     * pass-throughs (kind, refinement, range, string carriers, signature,
+     * identity, element) stay green as the controls.
+     */
+    static void testForbiddenRenderScopesAndInnerReasons() throws Exception {
+        System.out.println("-- the forbidden render scopes and the closed host inner "
+            + "reasons --");
+        FailurePolicyRow typeDescriptor =
+            FailureContractRegistry.row(FailurePolicyId.TYPE_DESCRIPTOR);
+        // The row-addressed INNER_ONLY bypass: the retained template position
+        // of either host string-carrier arm is rejected exactly like the
+        // arm-addressed render.
+        expectDefect(() -> BoundaryFailure.fromRow(typeDescriptor, 3, null, null,
+            new LinkedHashMap<>(), null),
+            "the row-addressed render of the invalid-UTF-8 INNER_ONLY arm fails closed");
+        expectDefect(() -> BoundaryFailure.fromRow(typeDescriptor, 4, null, null,
+            new LinkedHashMap<>(), null),
+            "the row-addressed render of the surrogate INNER_ONLY arm fails closed");
+        expectDefect(() -> FailureContractRegistry.renderAtTemplate(
+            FailurePolicyId.TYPE_DESCRIPTOR, 3, null, null, Map.of(), null),
+            "the direct template-position render of an INNER_ONLY arm fails closed");
+        // Controls: the inner render of both arms and a row-addressed
+        // TOP_LEVEL render stay green.
+        checkEq("expected string, got invalid UTF-8 encoding",
+            FailureContractRegistry.renderInner(FailureArmId.HOST_STRING_INVALID_UTF8,
+                Map.of()),
+            "the inner render of the invalid-UTF-8 arm stays green (the control)");
+        checkEq("expected string, got UTF-16 surrogate code point",
+            FailureContractRegistry.renderInner(FailureArmId.HOST_STRING_SURROGATE,
+                Map.of()),
+            "the inner render of the surrogate arm stays green (the control)");
+        checkEq("int out of safe range", FailureContractRegistry.renderAtTemplate(
+                FailurePolicyId.INT32_RESULT, 0, null, null, Map.of(), null).message(),
+            "a row-addressed TOP_LEVEL render stays green (the control)");
+
+        // The registry's unknown-inner negatives: an invented reason and an
+        // off-vocabulary plausible text never publish.
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.HOST_PARAMETER_CELL,
+            Map.of("index", "1", "inner", "invented reason"), "int", "number", null),
+            "the registry rejects an invented host inner reason");
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.HOST_PARAMETER_CELL,
+            Map.of("index", "1", "inner", "expected int, got string"), "int",
+            "string", null),
+            "the registry rejects the consumer-composed suffixed kind reason");
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.HOST_SYNC_RETURN_CELL,
+            Map.of("inner", "expected string, got string with unpaired surrogate "
+                + "code units"), "string", "string", null),
+            "the registry rejects the JVM matcher's unpaired-surrogate sub-message");
+        expectDefect(() -> BoundaryFailure.fromRow(
+            FailureContractRegistry.row(FailurePolicyId.HOST_PARAMETER), 0, "int",
+            "number", new LinkedHashMap<>(Map.of("index", "1", "inner",
+                "invented reason")), null),
+            "the row-addressed host render rejects an invented inner reason");
+        // The declared pass-throughs stay green (the controls).
+        checkEq("parameter 1 type mismatch: expected bytes",
+            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner",
+                    FailureProjections.kindReason(RuntimeDescriptor.Bytes.INSTANCE)),
+                "bytes", "number", null).message(),
+            "the descriptor-kind pass-through stays green (the control)");
+        checkEq("parameter 1 type mismatch: expected int, got NaN",
+            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", FailureContractRegistry
+                    .arm(FailureArmId.INT_CONVERSION_NAN).template()), "int",
+                "number", null).message(),
+            "the int-refinement pass-through stays green (the control)");
+        checkEq("return value 1 type mismatch: int out of safe range",
+            FailureContractRegistry.render(FailureArmId.HOST_SYNC_RETURN_CELL,
+                Map.of("inner", FailureContractRegistry.arm(FailureArmId.INT32_RANGE)
+                    .template()), "int", "number", null).message(),
+            "the signed32-range pass-through stays green (the control)");
+        checkEq("return value 1 type mismatch: expected string, got UTF-16 surrogate "
+                + "code point",
+            FailureContractRegistry.render(FailureArmId.HOST_SYNC_RETURN_CELL,
+                Map.of("inner", FailureContractRegistry.renderInner(
+                    FailureArmId.HOST_STRING_SURROGATE, Map.of())), "string",
+                "string", null).message(),
+            "the host string-carrier pass-through stays green (the control)");
+        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
+                + "(int)->int, got (string)->int",
+            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", "function signature mismatch: "
+                    + "expected (int)->int, got (string)->int"), "?(int)->int",
+                "table", null).message(),
+            "the signature pass-through stays green (the control)");
+        checkEq("parameter 1 type mismatch: expected instance of @corpus/a/A, got "
+                + "@corpus/b/B",
+            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", "expected instance of @corpus/a/A, "
+                    + "got @corpus/b/B"), "@corpus/a/A", "table", null).message(),
+            "the identity pass-through stays green (the control)");
+        checkEq("parameter 1 type mismatch: array element 2 type mismatch",
+            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", "array element 2 type mismatch"),
+                "[int]", "table", null).message(),
+            "the element pass-through stays green (the control)");
+        checkEq("parameter 1 type mismatch: expected bytes",
+            BoundaryFailure.fromRow(FailureContractRegistry.row(
+                    FailurePolicyId.HOST_PARAMETER), 0, "bytes", "number",
+                new LinkedHashMap<>(Map.of("index", "1", "inner", "expected "
+                    + "bytes")), null).message(),
+            "the row-addressed declared host render stays green (the control)");
+
+        // The JVM runtime's arm render (it delegates to the same registry).
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(
+            FailureArmId.HOST_PARAMETER_CELL,
+            Map.of("index", "1", "inner", "invented reason"), "-", "int",
+            "number"),
+            "the JVM arm render rejects an invented host inner reason");
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(
+            FailureArmId.HOST_SYNC_RETURN_CELL,
+            Map.of("inner", "expected int, got string"), "-", "string", "string"),
+            "the JVM arm render rejects a composed suffixed kind reason");
+        checkEq("parameter 1 type mismatch: expected bytes",
+            deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", "expected bytes"), "-", "bytes",
+                "number").msg,
+            "the JVM arm render keeps the descriptor-kind reason (the control)");
+
+        // The emitted Lua prelude, under real luajit: the same negatives on
+        // both the arm renderer and the raw template renderer.
+        List<String> rows = runPreludeProbe("""
+            local ok = pcall(__arm, "HOST_PARAMETER_CELL",
+              {index = "1", inner = "invented reason"}, "-", "int", "number")
+            print("invented|" .. tostring(ok))
+            ok = pcall(__arm, "HOST_SYNC_RETURN_CELL",
+              {inner = "expected int, got string"}, "-", "string", "string")
+            print("suffixed|" .. tostring(ok))
+            ok = pcall(__renderTemplate, "HOST_PARAMETER_CELL",
+              {index = "1", inner = "invented reason"})
+            print("template-invented|" .. tostring(ok))
+            ok, value = pcall(__arm, "HOST_PARAMETER_CELL",
+              {index = "1", inner = "expected bytes"}, "-", "bytes", "number")
+            print("kind-control|" .. tostring(ok) .. "|" .. (ok and value.m or ""))
+            ok, value = pcall(__arm, "HOST_PARAMETER_CELL",
+              {index = "1", inner = "function signature mismatch: expected (int)->int, got (string)->int"},
+              "-", "?(int)->int", "table")
+            print("signature-control|" .. tostring(ok) .. "|" .. (ok and value.m or ""))
+            ok, value = pcall(__arm, "HOST_SYNC_RETURN_CELL",
+              {inner = "int out of safe range"}, "-", "int", "number")
+            print("range-control|" .. tostring(ok) .. "|" .. (ok and value.m or ""))
+            """, "inner-reason-probe", 6);
+        checkEq("invented|false", rows.get(0),
+            "the Lua arm renderer rejects an invented host inner reason");
+        checkEq("suffixed|false", rows.get(1),
+            "the Lua arm renderer rejects a composed suffixed kind reason");
+        checkEq("template-invented|false", rows.get(2),
+            "the Lua template renderer rejects an invented host inner reason");
+        checkEq("kind-control|true|parameter 1 type mismatch: expected bytes",
+            rows.get(3),
+            "the Lua arm renderer keeps the descriptor-kind reason (the control)");
+        checkEq("signature-control|true|parameter 1 type mismatch: function signature "
+                + "mismatch: expected (int)->int, got (string)->int", rows.get(4),
+            "the Lua arm renderer keeps the signature pass-through (the control)");
+        checkEq("range-control|true|return value 1 type mismatch: int out of safe "
+                + "range", rows.get(5),
+            "the Lua arm renderer keeps the signed32-range pass-through (the control)");
     }
 
     // =========================================================================
