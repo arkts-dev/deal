@@ -43,6 +43,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Stream;
 
 /**
@@ -1278,12 +1279,12 @@ public class NestedGroupProductionTest {
             Path entry = src.resolve("main.deal");
 
             // Surface 1: both release-owned production lanes.
-            for (String lane : List.of("luajit", "jvm")) {
-                compileLane(testCase, project, entry, lane);
-            }
+            CompilationOrchestrator luaCompilation =
+                compileLane(testCase, project, entry, "luajit");
+            compileLane(testCase, project, entry, "jvm");
 
             // Surface 2: the one lowering and the member ownership.
-            Lowered lowered = lower(testCase, project, entry);
+            Lowered lowered = lower(testCase, luaCompilation);
             if (lowered == null) {
                 return;
             }
@@ -1318,15 +1319,16 @@ public class NestedGroupProductionTest {
     // Surface 1: the release-owned production invocation on both lanes
     // =========================================================================
 
-    private static void compileLane(Case testCase, Path project, Path entry,
-                                    String lane) throws Exception {
+    private static CompilationOrchestrator compileLane(Case testCase, Path project,
+                                                        Path entry, String lane)
+            throws Exception {
         String outName = "out-" + lane;
         ProjectLocator.LocateResult located = ProjectLocator.locate(entry.toString(),
             new CliOverrides(lane, project.resolve(outName).toString()));
         check(located.context() != null, testCase.name() + " [" + lane
             + "]: the generated deal.json locates strictly");
         if (located.context() == null) {
-            return;
+            return null;
         }
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             located.context(), entry, false, false, false, false, null,
@@ -1345,7 +1347,7 @@ public class NestedGroupProductionTest {
             + "]: exactly one project artifact: semantic="
             + orchestrator.semanticEmissionCount());
         if (!compiled) {
-            return;
+            return orchestrator;
         }
         Path out = project.resolve(outName);
         if ("luajit".equals(lane)) {
@@ -1359,6 +1361,7 @@ public class NestedGroupProductionTest {
                 compileStagedJvm(testCase, out, artifact);
             }
         }
+        return orchestrator;
     }
 
     /** The parent epic's JVM criterion on the staged artifact. */
@@ -1367,8 +1370,8 @@ public class NestedGroupProductionTest {
         Path classes = out.resolve("classes");
         Files.createDirectories(classes);
         ProcessBuilder javac = new ProcessBuilder("javac", "--release", "25",
-            "-proc:none", "-cp", absoluteClasspath(), "-d", classes.toString(),
-            artifact.toString());
+            "-proc:none", "-cp", classes + File.pathSeparator + absoluteClasspath(),
+            "-d", classes.toString(), artifact.toString());
         javac.directory(out.toFile());
         javac.redirectErrorStream(true);
         Process compile = javac.start();
@@ -1433,12 +1436,17 @@ public class NestedGroupProductionTest {
         Long entryId = asyncEntryIdOf(lowered.unit(), export);
         check(entryId != null, testCase.name() + " [jvm]: the unit records the async "
             + "export's EXTERNAL_ENTRY over the production entry surface");
-        if (Files.isRegularFile(artifact) && entryId != null) {
-            Path classes = jvmOut.resolve("async-drive-classes");
-            Files.createDirectories(classes);
-            Path probe = jvmOut.resolve("NestedGroupAsyncProbe.java");
+        Path classes = jvmOut.resolve("classes");
+        boolean artifactCompiled = Files.isRegularFile(
+            classes.resolve(JvmNames.classNameFor("main") + ".class"));
+        check(artifactCompiled, testCase.name()
+            + " [jvm]: the staged artifact is compiled for the async drive");
+        if (Files.isRegularFile(artifact) && entryId != null && artifactCompiled) {
+            String probeClass = "NestedGroupAsyncProbe_"
+                + UUID.randomUUID().toString().replace("-", "");
+            Path probe = jvmOut.resolve(probeClass + ".java");
             Files.writeString(probe,
-                "public final class NestedGroupAsyncProbe {\n"
+                "public final class " + probeClass + " {\n"
                     + "  public static void main(String[] args) {\n"
                     + "    Main.dealMain();\n"
                     + "    Object result = Main.ae" + entryId
@@ -1449,17 +1457,17 @@ public class NestedGroupProductionTest {
                     + "}\n",
                 StandardCharsets.UTF_8);
             ProcessBuilder javac = new ProcessBuilder("javac", "--release", "25",
-                "-proc:none", "-cp", absoluteClasspath(), "-d", classes.toString(),
-                artifact.toString(), probe.toString());
+                "-proc:none", "-sourcepath", "", "-cp",
+                classes + File.pathSeparator + absoluteClasspath(),
+                "-d", classes.toString(), probe.toString());
             javac.directory(jvmOut.toFile());
             ProcessOutput compile = runProcess(javac);
-            check(compile.exit() == 0, testCase.name() + " [jvm]: the staged artifact "
-                + "and the async probe compile under javac --release 25 -proc:none: "
+            check(compile.exit() == 0, testCase.name() + " [jvm]: the async probe "
+                + "compiles against the staged classes under javac --release 25 -proc:none: "
                 + compile.describe());
             if (compile.exit() == 0) {
                 ProcessBuilder java = new ProcessBuilder("java", "-cp",
-                    absoluteClasspath() + File.pathSeparator + classes,
-                    "NestedGroupAsyncProbe");
+                    classes + File.pathSeparator + absoluteClasspath(), probeClass);
                 java.directory(jvmOut.toFile());
                 ProcessOutput run = runProcess(java);
                 check(run.exit() == 0 && run.stderr().isEmpty(), testCase.name()
@@ -1509,7 +1517,7 @@ public class NestedGroupProductionTest {
                 + "sync drive: " + classes.resolve(className + ".class"));
         if (Files.isRegularFile(classes.resolve(className + ".class"))) {
             ProcessBuilder java = new ProcessBuilder("java", "-cp",
-                absoluteClasspath() + File.pathSeparator + classes, className);
+                classes + File.pathSeparator + absoluteClasspath(), className);
             java.directory(jvmOut.toFile());
             ProcessOutput run = runProcess(java);
             check(run.exit() == 0 && run.stderr().isEmpty(), testCase.name()
@@ -1582,20 +1590,12 @@ public class NestedGroupProductionTest {
     // Surface 2: the one lowering and the member ownership
     // =========================================================================
 
-    private static Lowered lower(Case testCase, Path project, Path entry)
-            throws Exception {
-        Path oracleOut = project.resolve("out-oracle");
-        ProjectLocator.LocateResult located = ProjectLocator.locate(entry.toString(),
-            new CliOverrides("luajit", oracleOut.toString()));
-        check(located.context() != null, testCase.name()
+    private static Lowered lower(Case testCase, CompilationOrchestrator orchestrator) {
+        check(orchestrator != null, testCase.name()
             + ": the oracle closure locates strictly");
-        if (located.context() == null) {
+        if (orchestrator == null) {
             return null;
         }
-        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            located.context(), entry, false, false, false, false, null,
-            productionInvocation());
-        orchestrator.compile();
         CheckedProjectBuildResult built = orchestrator.checkedProject();
         RequirementManifestResult manifests = orchestrator.requirementManifests();
         check(built != null && built.input() != null && built.index() != null

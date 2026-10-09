@@ -5,7 +5,6 @@ import deal.codegen.Backend;
 import deal.codegen.jvm.JvmBackend;
 import deal.codegen.jvm.JvmNames;
 import deal.codegen.jvm.JvmSemanticEmitter;
-import deal.codegen.lua.LuaSemanticEmitter;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
 import deal.ffi.FfiGeneratedModule;
@@ -400,7 +399,8 @@ public class BytesCoverageTest {
         List<SemanticRequirementManifest> manifests,
         HostDeclarationSurface surface,
         Map<ModuleId, CanonicalModuleIdentity> identities,
-        int strippedHeaderLines) {
+        int strippedHeaderLines,
+        String luaSource) {
     }
 
     private record Drive(
@@ -505,8 +505,11 @@ public class BytesCoverageTest {
                     ? declaration.path().replace('/', '.')
                     : declaration.path()));
         }
+        String modulePath = built.input().entryModule().path();
+        String luaSource = Files.readString(root.resolve("out").resolve(
+            modulePath.replace('.', '/') + ".lua"), StandardCharsets.UTF_8);
         return new Compiled(root, built.input(), built.index(), manifests.manifests(),
-            orchestrator.hostDeclarationSurface(), identities, strippedLines);
+            orchestrator.hostDeclarationSurface(), identities, strippedLines, luaSource);
     }
 
     /** The drive's own entry: it imports the fixture and calls its test export. */
@@ -1346,8 +1349,7 @@ public class BytesCoverageTest {
             + "\n";
         String terminalTranscript = "DEAL_ERROR_CODE: " + pinned.code() + "\n";
         String pinnedOutcome = probeTranscript.strip();
-        String chunk = LuaSemanticEmitter.emitProductionProject(drive.project(),
-            drive.tables(), drive.registries(), drive.compiled().surface());
+        String chunk = drive.compiled().luaSource();
         ArtifactRun lua = luaProduction(drive, hostSpecifier, hostLua, chunk);
         assertTranscript(label, "luajit probe", lua.probe(), 0, probeTranscript);
         assertTranscript(label, "luajit terminal", lua.terminal(), 1,
@@ -1368,17 +1370,12 @@ public class BytesCoverageTest {
      * pipeline: the oracle and both production artifacts reach the pinned
      * success with no terminal.
      */
-    private static void driveFocusedSuccess(String label, Compiled compiled)
+    private static void driveFocusedSuccess(String label, Drive drive)
             throws Exception {
-        BytesFixture spec = new BytesFixture(BYTES_DIR, label, "main", "null",
-            List.of(), null, null, 0, 0);
-        Drive drive = lowerFocused(compiled, spec);
-        if (drive != null) {
-            driveFocusedSuccess(label, drive);
-        }
+        driveFocusedSuccess(label, drive, null);
     }
 
-    private static void driveFocusedSuccess(String label, Drive drive)
+    private static void driveFocusedSuccess(String label, Drive drive, String jvmSource)
             throws Exception {
         SemanticRuntimeModel.ConsumerRun oracle =
             SemanticOracle.executeProjectInits(drive.project(), drive.tables(),
@@ -1392,7 +1389,7 @@ public class BytesCoverageTest {
             + ": a runtime-ok drive runs no direct terminal artifact");
         checkEq("OK", lua.outcome(), label
             + ": the LuaJIT production artifact runs to success");
-        ArtifactRun jvm = jvmProduction(drive);
+        ArtifactRun jvm = jvmProduction(drive, null, null, jvmSource);
         assertTranscript(label, "jvm probe", jvm.probe(), 0, "OK\n");
         check(jvm.terminal() == null, label
             + ": a runtime-ok drive runs no direct terminal artifact");
@@ -1777,8 +1774,11 @@ public class BytesCoverageTest {
                 new CanonicalModuleIdentity.ExternalModule(hostStem == null
                     ? declaration.path() : declaration.path().replace('/', '.')));
         }
+        String modulePath = built.input().entryModule().path();
+        String luaSource = Files.readString(root.resolve("out").resolve(
+            modulePath.replace('.', '/') + ".lua"), StandardCharsets.UTF_8);
         return new Compiled(root, built.input(), built.index(), manifests.manifests(),
-            orchestrator.hostDeclarationSurface(), identities, 0);
+            orchestrator.hostDeclarationSurface(), identities, 0, luaSource);
     }
 
     /** The production project lowering entry over one focused program. */
@@ -1825,6 +1825,7 @@ public class BytesCoverageTest {
             Files.writeString(src.resolve("main.deal"), DECODED_INERTNESS_SOURCE,
                 StandardCharsets.UTF_8);
             Compiled inertness = null;
+            String inertnessJvmSource = null;
             for (Backend backend : List.of(Backend.LUAJIT, Backend.JVM)) {
                 String artifact = backend == Backend.JVM
                     ? JvmBackend.classNameFor("main") + ".java" : "main.lua";
@@ -1832,10 +1833,10 @@ public class BytesCoverageTest {
                 if (backend == Backend.LUAJIT) {
                     inertness = compileFocused(root, DECODED_INERTNESS_SOURCE,
                         null, null);
-                    first = inertness == null ? null : Files.readString(
-                        root.resolve("out").resolve(artifact), StandardCharsets.UTF_8);
+                    first = inertness == null ? null : inertness.luaSource();
                 } else {
                     first = compileArtifact(root, src, backend, artifact);
+                    inertnessJvmSource = first;
                 }
                 String second = compileArtifact(root, src, backend, artifact);
                 check(first != null && second != null, "the " + backend
@@ -1844,7 +1845,14 @@ public class BytesCoverageTest {
                     + "emission are byte-identical");
             }
             if (inertness != null) {
-                driveFocusedSuccess("decoded-array inertness", inertness);
+                BytesFixture spec = new BytesFixture(BYTES_DIR,
+                    "decoded-array inertness", "main", "null", List.of(),
+                    null, null, 0, 0);
+                Drive drive = lowerFocused(inertness, spec);
+                if (drive != null) {
+                    driveFocusedSuccess("decoded-array inertness", drive,
+                        inertnessJvmSource);
+                }
             }
         } finally {
             deleteRecursively(root);
@@ -2203,9 +2211,8 @@ public class BytesCoverageTest {
         Path workspace = Files.createTempDirectory("bytes-async-lua");
         try {
             Path artifact = workspace.resolve("project.lua");
-            Files.writeString(artifact, LuaSemanticEmitter.emitProductionProject(
-                drive.project(), drive.tables(), drive.registries(),
-                drive.compiled().surface()), StandardCharsets.UTF_8);
+            Files.writeString(artifact, drive.compiled().luaSource(),
+                StandardCharsets.UTF_8);
             deployRuntime(workspace);
             Path probe = workspace.resolve("probe.lua");
             Files.writeString(probe, ("""
@@ -2260,8 +2267,9 @@ public class BytesCoverageTest {
             if (entryId < 0) {
                 return;
             }
-            Files.writeString(workspace.resolve("Probe.java"), ("""
-                final class Probe {
+            String probeName = jvmProbeName();
+            Files.writeString(workspace.resolve(probeName + ".java"), ("""
+                final class %s {
                   public static void main(String[] args) {
                     try {
                       %s.dealMain();
@@ -2277,11 +2285,12 @@ public class BytesCoverageTest {
                     }
                   }
                 }
-                """).formatted(className, className, entryId), StandardCharsets.UTF_8);
+                """).formatted(probeName, className, className, entryId),
+                StandardCharsets.UTF_8);
             Path classes = workspace.resolve("classes");
             Files.createDirectories(classes);
             BoundedRun compile = runJavac(workspace, classes,
-                List.of(className + ".java", "Probe.java"));
+                List.of(className + ".java", probeName + ".java"));
             check(compile.captureClean() && compile.exitCode() == 0, spec.what()
                 + ": the JVM async fixture compiles with the emitted production "
                 + "artifact: " + compile.stdout() + compile.stderr());
@@ -2289,7 +2298,7 @@ public class BytesCoverageTest {
                 return;
             }
             assertTranscript(spec.what(), "jvm async probe",
-                runJava(absoluteClasspath(), classes, "Probe"), 0, "OK:0\n");
+                runJava(absoluteClasspath(), classes, probeName), 0, "OK:0\n");
         } finally {
             deleteRecursively(workspace);
         }
@@ -2300,9 +2309,8 @@ public class BytesCoverageTest {
         Path workspace = Files.createTempDirectory("bytes-host-lua");
         try {
             Path artifact = workspace.resolve("project.lua");
-            Files.writeString(artifact, LuaSemanticEmitter.emitProductionProject(
-                drive.project(), drive.tables(), drive.registries(),
-                drive.compiled().surface()), StandardCharsets.UTF_8);
+            Files.writeString(artifact, drive.compiled().luaSource(),
+                StandardCharsets.UTF_8);
             deployRuntime(workspace);
             Path hostDir = workspace.resolve("host");
             Files.createDirectories(hostDir);
@@ -2357,8 +2365,9 @@ public class BytesCoverageTest {
             }
             check(entryId >= 0, spec.what() + ": the fixture module records its async "
                 + "EXTERNAL_ENTRY");
-            Files.writeString(workspace.resolve("Probe.java"), ("""
-                final class Probe {
+            String probeName = jvmProbeName();
+            Files.writeString(workspace.resolve(probeName + ".java"), ("""
+                final class %s {
                   public static void main(String[] args) {
                     try {
                       %s.dealMain();
@@ -2374,11 +2383,13 @@ public class BytesCoverageTest {
                     }
                   }
                 }
-                """).formatted(className, className, entryId), StandardCharsets.UTF_8);
+                """).formatted(probeName, className, className, entryId),
+                StandardCharsets.UTF_8);
             Path classes = workspace.resolve("classes");
             Files.createDirectories(classes);
             BoundedRun compile = runJavac(workspace, classes,
-                List.of(className + ".java", hostClass + ".java", "Probe.java"));
+                List.of(className + ".java", hostClass + ".java",
+                    probeName + ".java"));
             check(compile.captureClean() && compile.exitCode() == 0, spec.what()
                 + ": the JVM host fixture compiles with the emitted host ABI surface "
                 + "and the deployed host class: " + compile.stdout()
@@ -2387,7 +2398,7 @@ public class BytesCoverageTest {
                 return;
             }
             assertTranscript(spec.what(), "jvm host probe",
-                runJava(absoluteClasspath(), classes, "Probe"), 0, "OK\n");
+                runJava(absoluteClasspath(), classes, probeName), 0, "OK\n");
         } finally {
             deleteRecursively(workspace);
         }
@@ -2523,6 +2534,10 @@ public class BytesCoverageTest {
         return stdout.lines()
             .filter(line -> line.startsWith("ERR:") || line.equals("OK"))
             .reduce((first, second) -> second).orElse("");
+    }
+
+    private static String jvmProbeName() {
+        return "BytesProbe_" + java.util.UUID.randomUUID().toString().replace("-", "");
     }
 
     private static String absoluteClasspath() {
@@ -2782,8 +2797,7 @@ public class BytesCoverageTest {
     private static ArtifactRun luaProduction(Drive drive, String hostModule,
             Path hostImplementation) throws Exception {
         return luaProduction(drive, hostModule, hostImplementation,
-            LuaSemanticEmitter.emitProductionProject(drive.project(), drive.tables(),
-                drive.registries(), drive.compiled().surface()));
+            drive.compiled().luaSource());
     }
 
     private static ArtifactRun luaProduction(Drive drive, String hostModule,
@@ -2861,16 +2875,22 @@ public class BytesCoverageTest {
      */
     private static ArtifactRun jvmProduction(Drive drive, String hostModule,
             Path hostImplementation) throws Exception {
+        return jvmProduction(drive, hostModule, hostImplementation, null);
+    }
+
+    private static ArtifactRun jvmProduction(Drive drive, String hostModule,
+            Path hostImplementation, String source) throws Exception {
         Path workspace = Files.createTempDirectory("bytes-jvm");
         try {
             String className = JvmBackend.classNameFor(
                 drive.project().entryModule().path());
-            JvmSemanticEmitter.EmissionResult emission =
-                JvmSemanticEmitter.emitProductionProject(drive.project(),
+            if (source == null) {
+                source = JvmSemanticEmitter.emitProductionProject(drive.project(),
                     drive.tables(), drive.registries(), className,
-                    drive.compiled().surface());
+                    drive.compiled().surface()).source();
+            }
             Files.writeString(workspace.resolve(className + ".java"),
-                emission.source(), StandardCharsets.UTF_8);
+                source, StandardCharsets.UTF_8);
             List<String> sources = new ArrayList<>();
             sources.add(className + ".java");
             if (hostModule != null) {
@@ -2878,8 +2898,9 @@ public class BytesCoverageTest {
                 Files.copy(hostImplementation, workspace.resolve(hostClass + ".java"));
                 sources.add(hostClass + ".java");
             }
-            Files.writeString(workspace.resolve("Probe.java"), """
-                final class Probe {
+            String probeName = jvmProbeName();
+            Files.writeString(workspace.resolve(probeName + ".java"), """
+                final class %s {
                   public static void main(String[] args) {
                     try {
                       %s.dealMain();
@@ -2893,8 +2914,8 @@ public class BytesCoverageTest {
                     System.out.println("OK");
                   }
                 }
-                """.formatted(className), StandardCharsets.UTF_8);
-            sources.add("Probe.java");
+                """.formatted(probeName, className), StandardCharsets.UTF_8);
+            sources.add(probeName + ".java");
             Path classes = workspace.resolve("classes");
             Files.createDirectories(classes);
             BoundedRun compile = runJavac(workspace, classes, sources);
@@ -2905,7 +2926,7 @@ public class BytesCoverageTest {
             if (compile.exitCode() != 0) {
                 return new ArtifactRun(failedRun(), null);
             }
-            BoundedRun probeRun = runJava(absoluteClasspath(), classes, "Probe");
+            BoundedRun probeRun = runJava(absoluteClasspath(), classes, probeName);
             BoundedRun terminalRun = drive.spec().runtimeOk() ? null
                 : runJava(absoluteClasspath(), classes, className);
             return new ArtifactRun(probeRun, terminalRun);
@@ -2918,7 +2939,8 @@ public class BytesCoverageTest {
     private static BoundedRun runJavac(Path workspace, Path classes,
             List<String> sources) throws Exception {
         List<String> argv = new ArrayList<>(List.of("javac", "--release", "25",
-            "-proc:none", "-cp", absoluteClasspath(), "-d", classes.toString()));
+            "-proc:none", "-cp", classes + File.pathSeparator + absoluteClasspath(),
+            "-d", classes.toString()));
         argv.addAll(sources);
         return runBounded(argv, workspace, Map.of());
     }
@@ -2927,7 +2949,7 @@ public class BytesCoverageTest {
     private static BoundedRun runJava(String classpath, Path classes, String mainClass)
             throws Exception {
         return runBounded(List.of("java", "-cp",
-            classpath + File.pathSeparator + classes, mainClass),
+            classes + File.pathSeparator + classpath, mainClass),
             classes.getParent(), Map.of());
     }
 
@@ -3264,34 +3286,22 @@ public class BytesCoverageTest {
      * build output), materialized alongside the declaration companion.
      */
     private static ManifestProject materializeCorpusProject(String corpusRel,
-            String backend, boolean ffi, Path nativeLibrary) throws Exception {
+            CorpusSource source, String backend, String ffiDeclaration,
+            Path nativeLibrary) throws Exception {
         Path root = Files.createTempDirectory("bytes-manifest-");
         Path entry = root.resolve(corpusRel);
         Files.createDirectories(entry.getParent());
-        String raw = Files.readString(CORPUS.resolve(corpusRel),
-            StandardCharsets.UTF_8);
-        String stripped = ConformanceHarnessMetadata.stripClassificationHeaders(raw);
-        int strippedLines = raw.split("\n", -1).length
-            - stripped.split("\n", -1).length;
-        Files.writeString(entry, stripped, StandardCharsets.UTF_8);
+        Files.writeString(entry, source.stripped(), StandardCharsets.UTF_8);
         String externals = "";
         Path declaration = null;
-        if (ffi) {
-            CorpusFfi.Wiring wiring = CorpusFfi.wiring(CORPUS).get("candidate/native");
-            if (wiring == null) {
-                throw new IllegalStateException("the corpus FFI wiring carries no "
-                    + "'candidate/native' entry");
-            }
+        if (ffiDeclaration != null) {
             if (nativeLibrary == null) {
                 throw new IllegalStateException("the FFI project requires a "
                     + "caller-owned native library");
             }
             declaration = root.resolve("support").resolve("native.d.deal");
             Files.createDirectories(declaration.getParent());
-            Files.writeString(declaration, ConformanceHarnessMetadata
-                .stripClassificationHeaders(Files.readString(
-                    CORPUS.resolve(FFI_CORPUS).resolve(wiring.declarationCorpusPath()),
-                    StandardCharsets.UTF_8)), StandardCharsets.UTF_8);
+            Files.writeString(declaration, ffiDeclaration, StandardCharsets.UTF_8);
             externals = ",\n  \"externals\": { \"candidate/native\": { "
                 + "\"declaration\": \"support/native.d.deal\", \"nativeLibrary\": \""
                 + nativeLibrary.toAbsolutePath().normalize().toString()
@@ -3305,7 +3315,16 @@ public class BytesCoverageTest {
         String modulePath = corpusRel.substring(0,
             corpusRel.length() - ".deal".length()).replace('/', '.');
         return new ManifestProject(root, entry, root.resolve("out"), corpusRel,
-            strippedLines, modulePath, declaration);
+            source.strippedHeaderLines(), modulePath, declaration);
+    }
+
+    private record CorpusSource(String stripped, int strippedHeaderLines) {
+    }
+
+    private static CorpusSource prepareCorpusSource(String raw) {
+        String stripped = ConformanceHarnessMetadata.stripClassificationHeaders(raw);
+        return new CorpusSource(stripped, raw.split("\n", -1).length
+            - stripped.split("\n", -1).length);
     }
 
     /**
@@ -3471,10 +3490,10 @@ public class BytesCoverageTest {
      * actual) to the given path. A non-DEAL error is transported as
      * NON_DEAL, never silently swallowed.
      */
-    private static String jvmAcceptanceProbe(String className, String modulePath,
-            List<String> exports, Path transport) {
+    private static String jvmAcceptanceProbe(String probeName, String className,
+            String modulePath, List<String> exports, Path transport) {
         StringBuilder probe = new StringBuilder();
-        probe.append("public final class Probe {\n");
+        probe.append("public final class ").append(probeName).append(" {\n");
         probe.append("  public static void main(String[] args) {\n");
         probe.append("    try {\n");
         probe.append("      ").append(className).append(".dealMain();\n");
@@ -3624,8 +3643,10 @@ public class BytesCoverageTest {
                 CORPUS.resolve(STDLIB_JSON_CORPUS)
                     .resolve(fixture + ".expect.json"), StandardCharsets.UTF_8));
 
-        ManifestProject luaProject = materializeCorpusProject(corpusRel, "luajit",
-            false, null);
+        CorpusSource source = prepareCorpusSource(Files.readString(
+            CORPUS.resolve(corpusRel), StandardCharsets.UTF_8));
+        ManifestProject luaProject = materializeCorpusProject(corpusRel, source,
+            "luajit", null, null);
         try {
             ManifestCompile lua = compileManifest(luaProject, "luajit");
             check(lua.success(), fixture + ": the LuaJIT production compile "
@@ -3669,8 +3690,8 @@ public class BytesCoverageTest {
             deleteRecursively(luaProject.root());
         }
 
-        ManifestProject jvmProject = materializeCorpusProject(corpusRel, "jvm", false,
-            null);
+        ManifestProject jvmProject = materializeCorpusProject(corpusRel, source,
+            "jvm", null, null);
         try {
             ManifestCompile jvm = compileManifest(jvmProject, "jvm");
             check(jvm.success(), fixture + ": the JVM production compile succeeds: "
@@ -3682,21 +3703,22 @@ public class BytesCoverageTest {
                     + "artifact exists: " + artifact);
                 if (Files.isRegularFile(artifact)) {
                     Path transport = jvmProject.out().resolve(ACCEPT_TRANSPORT);
-                    Files.writeString(jvmProject.out().resolve("Probe.java"),
-                        jvmAcceptanceProbe(className, jvmProject.modulePath(),
-                            List.of(export), transport), StandardCharsets.UTF_8);
+                    String probeName = jvmProbeName();
+                    Files.writeString(jvmProject.out().resolve(probeName + ".java"),
+                        jvmAcceptanceProbe(probeName, className,
+                            jvmProject.modulePath(), List.of(export), transport),
+                        StandardCharsets.UTF_8);
                     Path classes = jvmProject.out().resolve("classes");
                     Files.createDirectories(classes);
                     BoundedRun compile = runJavac(jvmProject.out(), classes,
-                        List.of(artifact.toString(), "Probe.java"));
+                        List.of(artifact.toString(), probeName + ".java"));
                     check(compile.captureClean() && compile.exitCode() == 0,
                         fixture + ": the staged JVM artifact compiles with javac "
                             + "--release 25 -proc:none: " + compile.stdout()
                             + compile.stderr());
                     if (compile.exitCode() == 0) {
-                        BoundedRun run = runBounded(List.of("java", "-cp",
-                            absoluteClasspath() + File.pathSeparator + classes,
-                            "Probe"), jvmProject.out(), Map.of());
+                        BoundedRun run = runJava(absoluteClasspath(), classes,
+                            probeName);
                         assertPinnedRuntimeError(fixture + " (jvm staged artifact)",
                             sidecar, "jvm", readAcceptanceTuple(transport), run,
                             jvmProject);
@@ -3736,11 +3758,20 @@ public class BytesCoverageTest {
                 CORPUS.resolve(FFI_CORPUS).resolve(FFI_BYTES_FIXTURE
                     + ".expect.json"), StandardCharsets.UTF_8));
 
+        CorpusSource source = prepareCorpusSource(raw);
+        CorpusFfi.Wiring wiring = CorpusFfi.wiring(CORPUS).get(FFI_SPECIFIER);
+        if (wiring == null) {
+            throw new IllegalStateException("the corpus FFI wiring carries no "
+                + "'candidate/native' entry");
+        }
+        String declaration = ConformanceHarnessMetadata.stripClassificationHeaders(
+            Files.readString(CORPUS.resolve(FFI_CORPUS).resolve(
+                wiring.declarationCorpusPath()), StandardCharsets.UTF_8));
         Path nativeDir = Files.createTempDirectory("bytes-ffi-native-");
         try {
             Path nativeLibrary = compileCorpusNativeLibrary(nativeDir);
-            ManifestProject luaProject = materializeCorpusProject(corpusRel, "luajit",
-                true, nativeLibrary);
+            ManifestProject luaProject = materializeCorpusProject(corpusRel, source,
+                "luajit", declaration, nativeLibrary);
             try {
                 ManifestCompile lua = compileManifest(luaProject, "luajit");
                 check(lua.success(), "ffi/016: the LuaJIT production compile succeeds: "
@@ -3790,8 +3821,8 @@ public class BytesCoverageTest {
                 deleteRecursively(luaProject.root());
             }
 
-            ManifestProject preserved = materializeCorpusProject(corpusRel, "jvm",
-                true, nativeLibrary);
+            ManifestProject preserved = materializeCorpusProject(corpusRel, source,
+                "jvm", declaration, nativeLibrary);
             try {
                 Files.createDirectories(preserved.out());
                 Files.writeString(preserved.out().resolve("previous-artifact.java"),
@@ -3807,8 +3838,8 @@ public class BytesCoverageTest {
                 deleteRecursively(preserved.root());
             }
 
-            ManifestProject fresh = materializeCorpusProject(corpusRel, "jvm", true,
-                nativeLibrary);
+            ManifestProject fresh = materializeCorpusProject(corpusRel, source,
+                "jvm", declaration, nativeLibrary);
             try {
                 ManifestCompile jvm = compileManifest(fresh, "jvm");
                 assertPinnedJvmFfiRejection("ffi/016 (fresh output root)", sidecar, jvm);
@@ -4420,22 +4451,21 @@ public class BytesCoverageTest {
             return;
         }
         Path transport = project.out().resolve(ACCEPT_TRANSPORT);
-        Files.writeString(project.out().resolve("Probe.java"),
-            jvmAcceptanceProbe(className, project.modulePath(), List.of(), transport),
-            StandardCharsets.UTF_8);
+        String probeName = jvmProbeName();
+        Files.writeString(project.out().resolve(probeName + ".java"),
+            jvmAcceptanceProbe(probeName, className, project.modulePath(), List.of(),
+                transport), StandardCharsets.UTF_8);
         Path classes = project.out().resolve("classes");
         Files.createDirectories(classes);
         BoundedRun compile = runJavac(project.out(), classes,
-            List.of(artifact.toString(), "Probe.java"));
+            List.of(artifact.toString(), probeName + ".java"));
         check(compile.captureClean() && compile.exitCode() == 0, label + " ("
             + backend + "): the staged JVM artifact compiles with javac --release "
             + "25 -proc:none: " + compile.stdout() + compile.stderr());
         if (compile.exitCode() != 0) {
             return;
         }
-        BoundedRun run = runBounded(List.of("java", "-cp",
-            absoluteClasspath() + File.pathSeparator + classes, "Probe"),
-            project.out(), Map.of());
+        BoundedRun run = runJava(absoluteClasspath(), classes, probeName);
         assertScratchRun(label + " (" + backend + ")", run,
             readAcceptanceTuple(transport), expectSuccess, expectedOrigin);
     }

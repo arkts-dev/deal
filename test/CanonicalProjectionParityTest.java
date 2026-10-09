@@ -1469,17 +1469,15 @@ public class CanonicalProjectionParityTest {
 
     /** Runs the LuaJIT production artifact under the deferred-entry probe. */
     private static Tuple luaArtifact(Compiled compiled) throws Exception {
-        Path out = compiled.root().resolve("out-luajit");
-        deal.module.ProductionProjectEmission.Result result = emit(compiled,
-            Backend.LUAJIT, out);
+        Path out = compiled.root().resolve("out");
         for (String stem : compiled.hostStems()) {
             Path host = out.resolve("host/" + stem + ".lua");
             Files.createDirectories(host.getParent());
             Files.copy(Path.of("test", "conformance", "host-fixtures", stem + ".lua"),
                 host, StandardCopyOption.REPLACE_EXISTING);
         }
-        String artifact = out.resolve(result.artifactRelativePath())
-            .toAbsolutePath().toString();
+        String artifact = out.resolve(compiled.checkedProject().entryModule().path()
+            .replace('.', '/') + ".lua").toAbsolutePath().toString();
         Files.writeString(out.resolve("probe.lua"),
             luaProbe(artifact, compiled.checkedProject().entryModule().path()),
             StandardCharsets.UTF_8);

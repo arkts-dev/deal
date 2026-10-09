@@ -243,11 +243,10 @@ public class JsonableHelperProductionDriveTest {
     // 1. The corpus inventory
     // =========================================================================
 
-    private static void testCorpusInventory() throws Exception {
+    private static void testCorpusInventory(List<String> discovered) throws Exception {
         System.out.println("-- the @jsonable helper family inventory: current corpus "
             + "discovery (sidecar-bearing fixtures), the required structural "
             + "fixtures, and the companion-covered sidecar-free fixtures --");
-        List<String> discovered = discoveredFamilyFixtures();
         check(!discovered.isEmpty(),
             "the jsonable directory discovers at least one driven fixture");
         // The explicitly required fixtures of the helper contract: the
@@ -404,25 +403,41 @@ public class JsonableHelperProductionDriveTest {
     // 3. The production compile and the deferred-entry drive
     // =========================================================================
 
-    private static boolean compile(Project project, String fixtureRel, Target target,
-            List<String> diagnosticsOut) throws Exception {
+    private record Compilation(boolean compiled, List<String> diagnostics,
+                               CheckedProjectBuildResult built,
+                               RequirementManifestResult manifests,
+                               HostDeclarationSurface surface) {
+    }
+
+    private static Compilation compileObservation(Project project, String fixtureRel,
+            Target target) throws Exception {
         ProjectLocator.LocateResult located = ProjectLocator.locate(
             project.entryFile().toString(), null);
         if (located.context() == null) {
             check(false, fixtureRel + " [" + target.laneName()
                 + "]: the generated deal.json locates strictly");
-            return false;
+            return new Compilation(false, List.of(), null, null, null);
         }
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             located.context(), project.entryFile(), false, false, false, false,
             null, productionInvocation());
         boolean compiled = orchestrator.compile();
+        List<String> diagnostics = new ArrayList<>();
         for (CompilerDiagnostic diagnostic : orchestrator.diagnostics()) {
             if ("error".equals(diagnostic.severity())) {
-                diagnosticsOut.add(diagnostic.code() + " " + diagnostic.message());
+                diagnostics.add(diagnostic.code() + " " + diagnostic.message());
             }
         }
-        return compiled;
+        return new Compilation(compiled, List.copyOf(diagnostics),
+            orchestrator.checkedProject(), orchestrator.requirementManifests(),
+            orchestrator.hostDeclarationSurface());
+    }
+
+    private static boolean compile(Project project, String fixtureRel, Target target,
+            List<String> diagnosticsOut) throws Exception {
+        Compilation observation = compileObservation(project, fixtureRel, target);
+        diagnosticsOut.addAll(observation.diagnostics());
+        return observation.compiled();
     }
 
     private static Path artifactOf(Project project, Target target) {
@@ -800,8 +815,10 @@ public class JsonableHelperProductionDriveTest {
         Path classes = out.resolve("classes");
         Files.createDirectories(classes);
         String classpath = absoluteClasspath();
+        String probeName = "JsonableArtifactProbe_"
+            + java.util.UUID.randomUUID().toString().replace("-", "");
         StringBuilder probe = new StringBuilder();
-        probe.append("public final class JsonableArtifactProbe {\n");
+        probe.append("public final class ").append(probeName).append(" {\n");
         probe.append("  static final String TRANSPORT = \"")
             .append(transport.toString().replace("\\", "\\\\")).append("\";\n");
         probe.append("  public static void main(String[] args) {\n");
@@ -853,7 +870,7 @@ public class JsonableHelperProductionDriveTest {
             + ".replace(\"\\n\", \"\\\\n\").replace(\"\\t\", \"\\\\t\");\n");
         probe.append("    out.append(key).append('\\t').append(escaped).append('\\n');\n");
         probe.append("  }\n}\n");
-        Path probeFile = out.resolve("JsonableArtifactProbe.java");
+        Path probeFile = out.resolve(probeName + ".java");
         Files.writeString(probeFile, probe.toString(), StandardCharsets.UTF_8);
         ProcessOutcome compile = runProcess(out, Map.of(), BOUNDED_PROCESS_BUDGET_MS,
             "javac", "--release", "25", "-proc:none", "-cp", classpath, "-d",
@@ -868,7 +885,7 @@ public class JsonableHelperProductionDriveTest {
         }
         ProcessOutcome outcome = runProcess(out, Map.of(), BOUNDED_PROCESS_BUDGET_MS,
             "java", "-cp", classes + File.pathSeparator + classpath,
-            "JsonableArtifactProbe");
+            probeName);
         Capture capture = readTransport(transport);
         boolean defect = capture != null && "PROBE_DEFECT".equals(capture.code());
         return new Execution(outcome.exitCode(), outcome.stdout(), outcome.stderr(),
@@ -961,8 +978,13 @@ public class JsonableHelperProductionDriveTest {
     private static final Map<String, Map<Target, String>> RECORD =
         new LinkedHashMap<>();
 
-    private static void testProductionDrive() throws Exception {
-        List<String> discovered = discoveredFamilyFixtures();
+    private record CorpusObservation(Project project, Compilation compilation,
+                                     Lowered lowered, List<Export> exports,
+                                     Optional<SidecarExpectations.RuntimeExpectation.Executed> pinned) {
+    }
+
+    private static void testProductionDrive(List<String> discovered,
+            Map<String, CorpusObservation> observations) throws Exception {
         System.out.println("-- the @jsonable helper family production drive: "
             + discovered.size() + " discovered fixtures on both targets --");
         List<String> driven = new ArrayList<>(discovered);
@@ -974,13 +996,25 @@ public class JsonableHelperProductionDriveTest {
             Project luaProject = materialize(fixtureRel, Target.LUAJIT);
             Project jvmProject = materialize(fixtureRel, Target.JVM);
             try {
+                Optional<SidecarExpectations.RuntimeExpectation.Executed> pinned =
+                    pinnedOf(fixtureRel);
+                List<Export> exports = List.copyOf(exportsOf(
+                    Files.readString(jvmProject.entryFile(), StandardCharsets.UTF_8)));
                 Map<Target, String> legs = new LinkedHashMap<>();
-                legs.put(Target.LUAJIT, driveLeg(fixtureRel, luaProject, Target.LUAJIT));
-                legs.put(Target.JVM, driveLeg(fixtureRel, jvmProject, Target.JVM));
+                legs.put(Target.LUAJIT, driveLeg(fixtureRel, luaProject, Target.LUAJIT,
+                    compileObservation(luaProject, fixtureRel, Target.LUAJIT), exports, pinned));
+                Compilation jvmCompilation = compileObservation(jvmProject, fixtureRel,
+                    Target.JVM);
+                observations.put(fixtureRel,
+                    new CorpusObservation(jvmProject, jvmCompilation, null, exports, pinned));
+                legs.put(Target.JVM, driveLeg(fixtureRel, jvmProject, Target.JVM,
+                    jvmCompilation, exports, pinned));
                 RECORD.put(fixtureRel, legs);
             } finally {
                 deleteRecursively(luaProject.root());
-                deleteRecursively(jvmProject.root());
+                if (!observations.containsKey(fixtureRel)) {
+                    deleteRecursively(jvmProject.root());
+                }
             }
         }
         // The family's pinned compile-error fixture: the frontend rejects
@@ -1002,10 +1036,12 @@ public class JsonableHelperProductionDriveTest {
         }
     }
 
-    private static String driveLeg(String fixtureRel, Project project, Target target)
+    private static String driveLeg(String fixtureRel, Project project, Target target,
+            Compilation observation, List<Export> exports,
+            Optional<SidecarExpectations.RuntimeExpectation.Executed> pinned)
             throws Exception {
-        List<String> diagnostics = new ArrayList<>();
-        boolean compiled = compile(project, fixtureRel, target, diagnostics);
+        List<String> diagnostics = observation.diagnostics();
+        boolean compiled = observation.compiled();
         for (String diagnostic : diagnostics) {
             check(!diagnostic.startsWith("E6005 "), fixtureRel + " ["
                 + target.laneName() + "]: zero E6005 over the in-scope fixture: "
@@ -1020,18 +1056,12 @@ public class JsonableHelperProductionDriveTest {
         if (!compiled || !Files.isRegularFile(artifact)) {
             return "compile-failure";
         }
-        String entrySource = Files.readString(project.entryFile(), StandardCharsets.UTF_8);
-        List<Export> exports = exportsOf(entrySource);
         Execution execution = target == Target.LUAJIT
             ? executeLua(project, exports) : executeJvm(project, exports);
         check(!execution.probeDefect(), fixtureRel + " [" + target.laneName()
             + "]: the artifact drive reaches every export: "
             + (execution.capture() == null ? "" : execution.capture().message()));
         Capture capture = normalize(project, execution.capture());
-        String sidecarPath = fixtureRel.contains("/")
-            ? fixtureRel : FAMILY_DIR + "/" + fixtureRel;
-        Optional<SidecarExpectations.RuntimeExpectation.Executed> pinned =
-            pinnedOf(sidecarPath);
         if (pinned.isEmpty()) {
             checkEq("", execution.stderr(), fixtureRel + " [" + target.laneName()
                 + "]: the artifact run emits no stderr");
@@ -1181,9 +1211,16 @@ public class JsonableHelperProductionDriveTest {
             List.of(project.srcRoot()), Path.of("std").toAbsolutePath().normalize(),
             null, productionInvocation());
         boolean compiled = orchestrator.compile();
-        CheckedProjectBuildResult built = orchestrator.checkedProject();
-        RequirementManifestResult manifests = orchestrator.requirementManifests();
-        HostDeclarationSurface surface = orchestrator.hostDeclarationSurface();
+        return lower(new Compilation(compiled, List.of(), orchestrator.checkedProject(),
+            orchestrator.requirementManifests(), orchestrator.hostDeclarationSurface()),
+            label);
+    }
+
+    private static Lowered lower(Compilation observation, String label) {
+        boolean compiled = observation.compiled();
+        CheckedProjectBuildResult built = observation.built();
+        RequirementManifestResult manifests = observation.manifests();
+        HostDeclarationSurface surface = observation.surface();
         check(compiled && built != null && built.input() != null && built.index() != null
                 && !built.hasErrors() && manifests != null
                 && manifests.manifests() != null && surface != null,
@@ -1243,9 +1280,7 @@ public class JsonableHelperProductionDriveTest {
      * {@code main} exactly once — the exact sequence the artifact probes run
      * first. Returns the failure, or {@code null} on success.
      */
-    private static SemanticRuntimeModel.ErrorSnapshot oracleMainFailure(
-            Project project, String label) throws Exception {
-        Lowered lowered = lower(project, label);
+    private static SemanticRuntimeModel.ErrorSnapshot oracleMainFailure(Lowered lowered) {
         if (lowered == null) {
             return null;
         }
@@ -1302,28 +1337,33 @@ public class JsonableHelperProductionDriveTest {
      * canonical failure projection authority's cycle arm) renders the
      * pinned tuple at the invoking call expression.
      */
-    private static void testOracleAgreement() throws Exception {
+    private static void testOracleAgreement(List<String> discovered,
+            Map<String, CorpusObservation> observations) throws Exception {
         System.out.println("-- the combined dependency step: the oracle over every "
             + "family fixture (each fixture's main through its own entry "
             + "delegation, the cross-module helper call, and the pinned helper "
             + "JSON failure included) --");
-        List<String> driven = new ArrayList<>(discoveredFamilyFixtures());
+        List<String> driven = new ArrayList<>(discovered);
         driven.add(NEAR_COLLISION);
         driven.add(EXPORT_KEYS);
         for (String fixture : driven) {
             String fixtureRel = fixture.contains("/") ? fixture
                 : FAMILY_DIR + "/" + fixture;
-            Project project = materialize(fixtureRel, Target.JVM);
+            CorpusObservation observation = observations.get(fixtureRel);
+            Project project = observation.project();
             try {
-                List<Export> exports = exportsOf(
-                    Files.readString(project.entryFile(), StandardCharsets.UTF_8));
+                List<Export> exports = observation.exports();
                 // The main leg: the fixture is the entry module of its own
                 // one-lowering closure, so the entry delegation invokes its
                 // declared main exactly once — the artifact probes' first
                 // step. A main-leg failure dominates (the probes never reach
                 // the export loop after a failing main).
+                Lowered mainLeg = lower(observation.compilation(),
+                    fixtureRel + " (oracle main)");
+                observations.put(fixtureRel, new CorpusObservation(project,
+                    observation.compilation(), mainLeg, exports, observation.pinned()));
                 SemanticRuntimeModel.ErrorSnapshot mainFailure =
-                    oracleMainFailure(project, fixtureRel + " (oracle main)");
+                    oracleMainFailure(mainLeg);
                 String mainOutcome = mainFailure == null ? "ok"
                     : oracleOutcomeOfFailure(project, mainFailure);
                 Path driver = project.srcRoot().resolve("__oracle_drive.deal");
@@ -1343,7 +1383,7 @@ public class JsonableHelperProductionDriveTest {
                 System.out.println("   oracle " + fixtureRel + ": main "
                     + mainOutcome + "; exports " + exportOutcome);
                 Optional<SidecarExpectations.RuntimeExpectation.Executed> pinned =
-                    pinnedOf(fixtureRel);
+                    observation.pinned();
                 if (pinned.isPresent()) {
                     if (pinned.get().isRuntimeError()) {
                         checkEq(pinnedOracleOutcome(pinned.get().error()), outcome,
@@ -1372,7 +1412,7 @@ public class JsonableHelperProductionDriveTest {
                             + outcome);
                 }
             } finally {
-                deleteRecursively(project.root());
+                Files.deleteIfExists(project.srcRoot().resolve("__oracle_drive.deal"));
             }
         }
     }
@@ -1390,12 +1430,11 @@ public class JsonableHelperProductionDriveTest {
     // 6. The helper surface in the produced unit
     // =========================================================================
 
-    private static void testHelperSurface() throws Exception {
+    private static void testHelperSurface(Lowered crossModule, Lowered sameModule) {
         System.out.println("-- the helper surface: one identity and one entry per "
             + "helper export, the same-module and cross-module call shapes --");
-        Project project = materialize(CROSS_MODULE_FIXTURE, Target.JVM);
-        try {
-            Lowered lowered = lower(project, "helper surface");
+        {
+            Lowered lowered = crossModule;
             if (lowered == null) {
                 return;
             }
@@ -1504,8 +1543,6 @@ public class JsonableHelperProductionDriveTest {
             check(exportRead, "the cross-module helper read lowers as an EXPORT_READ");
             check(externalCall, "the cross-module helper call binds the closed "
                 + "ExternalFunction(SHARED_BODY) shape to the callee's recorded entry");
-        } finally {
-            deleteRecursively(project.root());
         }
         // The same-module call shape (R3(b)): a same-module reference
         // resolves the class's generated closure identity (the
@@ -1513,9 +1550,8 @@ public class JsonableHelperProductionDriveTest {
         // landed LoweredBody call shape — one recorded EXTERNAL_ENTRY per
         // helper export remains for the cross-module callers, and no
         // same-module call resolves the ExternalFunction shape.
-        Project same = materialize(FAMILY_DIR + "/jsonable-roundtrip", Target.JVM);
-        try {
-            Lowered sameLowered = lower(same, "same-module helper surface");
+        {
+            Lowered sameLowered = sameModule;
             if (sameLowered == null) {
                 return;
             }
@@ -1592,8 +1628,6 @@ public class JsonableHelperProductionDriveTest {
                 + directHelperCalls + ")");
             checkEq(0, sameModuleExternalCalls, "no same-module call resolves the "
                 + "ExternalFunction shape (the entry stays the cross-module record)");
-        } finally {
-            deleteRecursively(same.root());
         }
     }
 
@@ -1608,13 +1642,8 @@ public class JsonableHelperProductionDriveTest {
         // The near-collision fixture: a local identifier `User_fromJson`
         // next to the helper `User$fromJson` changes no outcome (its leg
         // already reproduced the pinned runtime-ok sidecar byte-exact).
-        Project near = materialize(NEAR_COLLISION, Target.LUAJIT);
-        try {
-            String leg = RECORD.get(NEAR_COLLISION).get(Target.LUAJIT);
-            checkEq("ok", leg, "the near-collision identifier changes no outcome");
-        } finally {
-            deleteRecursively(near.root());
-        }
+        String leg = RECORD.get(NEAR_COLLISION).get(Target.LUAJIT);
+        checkEq("ok", leg, "the near-collision identifier changes no outcome");
         // A declared class that is not @jsonable gains no helper: the
         // non-jsonable fixture lowers no JSON closure and no JSON op.
         Path root = Files.createTempDirectory("jsonable-negative-");
@@ -1819,29 +1848,20 @@ public class JsonableHelperProductionDriveTest {
      * missing recorded {@code EXTERNAL_ENTRY} — are rejected by both
      * production emitters with the named producer defect and stage nothing.
      */
-    private static void testMissingHelperFactsFailClosed() throws Exception {
+    private static void testMissingHelperFactsFailClosed(CorpusObservation observation)
+            throws Exception {
         System.out.println("-- the inconsistent-fact negatives: a missing generated "
             + "helper export and a missing recorded callee entry fail closed "
             + "through the producer guard and stage nothing --");
         checkEq("SHARED_EMITTER_COVERAGE",
             ProductionProjectEmission.SHARED_EMITTER_COVERAGE,
             "the registered emitter-coverage rule id an emitter rejection maps to");
-        Project project = materialize(FAMILY_DIR + "/jsonable-cross-module", Target.JVM);
-        try {
-            ProjectLocator.LocateResult located = ProjectLocator.locate(
-                project.entryFile().toString(), null);
-            check(located.context() != null,
-                "the cross-module fixture locates for the negatives");
-            if (located.context() == null) {
-                return;
-            }
-            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-                located.context(), project.entryFile(), false, false, false, false,
-                null, productionInvocation());
-            boolean compiled = orchestrator.compile();
-            CheckedProjectBuildResult built = orchestrator.checkedProject();
-            RequirementManifestResult manifests = orchestrator.requirementManifests();
-            HostDeclarationSurface surface = orchestrator.hostDeclarationSurface();
+        Project project = observation.project();
+        {
+            boolean compiled = observation.compilation().compiled();
+            CheckedProjectBuildResult built = observation.compilation().built();
+            RequirementManifestResult manifests = observation.compilation().manifests();
+            HostDeclarationSurface surface = observation.compilation().surface();
             check(compiled && built != null && built.input() != null
                     && built.index() != null && manifests != null
                     && manifests.manifests() != null && surface != null,
@@ -1956,7 +1976,7 @@ public class JsonableHelperProductionDriveTest {
             // EXPORT_PUBLISH publication (a missing helper export), and,
             // separately, its recorded EXTERNAL_ENTRY (a missing callee
             // entry while the export stays published).
-            Lowered lowered = lower(project, "inconsistent-fact negatives");
+            Lowered lowered = observation.lowered();
             if (lowered == null) {
                 return;
             }
@@ -1971,8 +1991,6 @@ public class JsonableHelperProductionDriveTest {
                         && op.payload().toString().contains("Widget$fromJson")),
                 surface, "externalEntryRef",
                 "does not resolve to a recorded EXTERNAL_ENTRY");
-        } finally {
-            deleteRecursively(project.root());
         }
     }
 
@@ -2016,19 +2034,14 @@ public class JsonableHelperProductionDriveTest {
      * success. */
     private static SemanticRuntimeModel.ErrorSnapshot oracleFailure(Project project,
             List<Export> exports) throws Exception {
+        return oracleMainFailure(lowerOracleExports(project, exports, "synthetic oracle"));
+    }
+
+    private static Lowered lowerOracleExports(Project project, List<Export> exports,
+            String label) throws Exception {
         Path driver = project.srcRoot().resolve("__oracle_drive.deal");
         Files.writeString(driver, oracleDriver(project, exports), StandardCharsets.UTF_8);
-        Lowered lowered = lower(project, driver, "synthetic oracle");
-        if (lowered == null) {
-            return null;
-        }
-        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.executeProjectInits(
-            lowered.project(), lowered.tables(), lowered.registries(),
-            new SemanticOracle.HostResponder() { });
-        if (run.terminal() instanceof SemanticRuntimeModel.Terminal.Success) {
-            return null;
-        }
-        return ((SemanticRuntimeModel.Terminal.DealFailure) run.terminal()).error();
+        return lower(project, driver, label);
     }
 
     /** The {@code line:column} suffix of a {@code file:line:column} origin. */
@@ -2082,8 +2095,9 @@ public class JsonableHelperProductionDriveTest {
         // The oracle leg.
         Project oracleProject = syntheticProject("app", source, Target.JVM);
         try {
-            SemanticRuntimeModel.ErrorSnapshot oracle =
-                oracleFailure(oracleProject, exports);
+            Lowered lowered = lowerOracleExports(oracleProject, exports,
+                "dynamic-helper oracle and IR");
+            SemanticRuntimeModel.ErrorSnapshot oracle = oracleMainFailure(lowered);
             check(oracle != null,
                 "the oracle rejects the cyclic helper invocation");
             if (oracle != null) {
@@ -2094,18 +2108,9 @@ public class JsonableHelperProductionDriveTest {
                     "the oracle renders the f(w) call origin (got " + oracle.origin()
                         + ")");
             }
-        } finally {
-            deleteRecursively(oracleProject.root());
-        }
-        // The covered lowering path: the f(w) call is a dynamic
-        // DEAL-body invocation (CallMode.INDIRECT over a CallCallee.Dynamic),
-        // never a statically resolved call.
-        Project irProject = syntheticProject("app", source, Target.JVM);
-        try {
-            Path driver = irProject.srcRoot().resolve("__oracle_drive.deal");
-            Files.writeString(driver, oracleDriver(irProject, exports),
-                StandardCharsets.UTF_8);
-            Lowered lowered = lower(irProject, driver, "dynamic-helper IR");
+            // The covered lowering path: the f(w) call is a dynamic
+            // DEAL-body invocation (CallMode.INDIRECT over a CallCallee.Dynamic),
+            // never a statically resolved call.
             if (lowered != null) {
                 boolean dynamicCall = false;
                 for (LoweredModuleUnit unit : lowered.project().modules().values()) {
@@ -2123,7 +2128,7 @@ public class JsonableHelperProductionDriveTest {
                     + "DEAL-body invocation");
             }
         } finally {
-            deleteRecursively(irProject.root());
+            deleteRecursively(oracleProject.root());
         }
         // The two real-toolchain legs.
         for (Target target : Target.values()) {
@@ -2211,16 +2216,16 @@ public class JsonableHelperProductionDriveTest {
               return null;
             }
             """;
-        driveExactHelperText("helper-function-binding", source);
+        Compilation compilation = driveExactHelperText("helper-function-binding", source);
         // The reserved shape survives the carrier-carried call: each
         // helper keeps exactly one CLOSURE_NEW and one reserved
         // EXTERNAL_ENTRY, and every binding-invoked helper CALL resolves
         // that declaration's LoweredBody, its body block, and its single
         // return cell without replacing the reserved shape (no
         // same-module CALL(EXTERNAL) and no second entry).
-        Project project = syntheticProject("app", source, Target.JVM);
-        try {
-            Lowered lowered = lower(project, "helper binding IR");
+        {
+            Lowered lowered = compilation == null ? null
+                : lower(compilation, "helper binding IR");
             if (lowered == null) {
                 return;
             }
@@ -2292,8 +2297,6 @@ public class JsonableHelperProductionDriveTest {
                 + "the declaration's LoweredBody (got " + bindingHelperCalls + ")");
             checkEq(0, externalHelperCalls, "no same-module helper call resolves the "
                 + "ExternalFunction shape (the entry stays the cross-module record)");
-        } finally {
-            deleteRecursively(project.root());
         }
     }
 
@@ -2413,9 +2416,10 @@ public class JsonableHelperProductionDriveTest {
      * transcripts empty, no probe defect, and no failure transport
      * ({@link #exactHelperArtifactMismatches}).
      */
-    private static void driveExactHelperText(String label, String source)
+    private static Compilation driveExactHelperText(String label, String source)
             throws Exception {
         List<Export> exports = exportsOf(source);
+        Compilation jvmCompilation = null;
         Project oracleProject = syntheticProject("app", source, Target.JVM);
         try {
             SemanticRuntimeModel.ErrorSnapshot oracle =
@@ -2431,8 +2435,12 @@ public class JsonableHelperProductionDriveTest {
         for (Target target : Target.values()) {
             Project project = syntheticProject("app", source, target);
             try {
-                List<String> diagnostics = new ArrayList<>();
-                boolean compiled = compile(project, label, target, diagnostics);
+                Compilation compilation = compileObservation(project, label, target);
+                if (target == Target.JVM) {
+                    jvmCompilation = compilation;
+                }
+                List<String> diagnostics = compilation.diagnostics();
+                boolean compiled = compilation.compiled();
                 check(compiled, label + " [" + target.laneName() + "]: the project "
                     + "compiles through the production invocation: " + diagnostics);
                 if (!compiled) {
@@ -2449,6 +2457,7 @@ public class JsonableHelperProductionDriveTest {
                 deleteRecursively(project.root());
             }
         }
+        return jvmCompilation;
     }
 
     /**
@@ -3337,8 +3346,7 @@ public class JsonableHelperProductionDriveTest {
             }
             checkEq(1, entryInvokes, "the main leg's entry delegation is the "
                 + "fixture main's single invocation (one ENTRY_INVOKE op)");
-            SemanticRuntimeModel.ErrorSnapshot mainFailure = oracleMainFailure(
-                project, "main-only control (capture)");
+            SemanticRuntimeModel.ErrorSnapshot mainFailure = oracleMainFailure(mainLeg);
             check(mainFailure != null, "the main-only fixture's deliberate failure "
                 + "is captured by the oracle's main leg");
             if (mainFailure != null) {
@@ -3365,12 +3373,11 @@ public class JsonableHelperProductionDriveTest {
      * stderr, and a missing capture — the process-level pins the
      * runtime-error branch previously never compared.
      */
-    private static void testRuntimeErrorSidecarNegativeControls() throws Exception {
+    private static void testRuntimeErrorSidecarNegativeControls(
+            Optional<SidecarExpectations.RuntimeExpectation.Executed> pinned) {
         System.out.println("-- the pinned-failure leg's negative controls: the "
             + "process stdout, exit code, and stderr are part of the byte-exact "
             + "pin --");
-        Optional<SidecarExpectations.RuntimeExpectation.Executed> pinned =
-            pinnedOf(CYCLIC_FIXTURE);
         check(pinned.isPresent(), CYCLIC_FIXTURE + ": the pinned runtime-error "
             + "sidecar parses");
         if (pinned.isEmpty()) {
@@ -3485,12 +3492,23 @@ public class JsonableHelperProductionDriveTest {
     }
 
     public static void main(String[] args) throws Exception {
-        testCorpusInventory();
-        testProductionDrive();
-        testOracleAgreement();
-        testHelperSurface();
-        testNegatives();
-        testMissingHelperFactsFailClosed();
+        List<String> discovered = List.copyOf(discoveredFamilyFixtures());
+        Map<String, CorpusObservation> observations = new LinkedHashMap<>();
+        Optional<SidecarExpectations.RuntimeExpectation.Executed> cyclicPin;
+        try {
+            testCorpusInventory(discovered);
+            testProductionDrive(discovered, observations);
+            testOracleAgreement(discovered, observations);
+            testHelperSurface(observations.get(CROSS_MODULE_FIXTURE).lowered(),
+                observations.get(FAMILY_DIR + "/jsonable-roundtrip").lowered());
+            testNegatives();
+            testMissingHelperFactsFailClosed(observations.get(CROSS_MODULE_FIXTURE));
+            cyclicPin = observations.get(CYCLIC_FIXTURE).pinned();
+        } finally {
+            for (CorpusObservation observation : observations.values()) {
+                deleteRecursively(observation.project().root());
+            }
+        }
         testDynamicHelperOrigin();
         testHelperFunctionBindingInvocation();
         testTableClassInstanceRejection();
@@ -3507,7 +3525,7 @@ public class JsonableHelperProductionDriveTest {
         testDeclaredArrayNumericVariants();
         testNestedClassDefaultNumericCarrier();
         testOracleDriverMainCoverage();
-        testRuntimeErrorSidecarNegativeControls();
+        testRuntimeErrorSidecarNegativeControls(cyclicPin);
         testExactHelperArtifactNegativeControls();
         testDeterminismAndExportKey();
         System.out.println("");
