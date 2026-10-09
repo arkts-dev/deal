@@ -2602,7 +2602,7 @@ public class JsonableHelperProductionDriveTest {
     }
 
     // =========================================================================
-    // 7d. The oracle carrier mirror and the helper carrier regressions
+    // 7d. The oracle's live carrier views and the helper carrier regressions
     // =========================================================================
 
     /**
@@ -2667,15 +2667,15 @@ public class JsonableHelperProductionDriveTest {
     }
 
     /**
-     * The oracle's carrier-to-executor mutation mirror for arrays (the
-     * three-consumer regression): a class field's array mutated in place by
-     * an element replacement and an append is what the helper serializes on
-     * the oracle, the LuaJIT artifact, and the JVM artifact alike — the
-     * cached executor view never goes stale behind the carrier's in-place
-     * commit.
+     * The oracle's live array conversion view (the three-consumer
+     * regression): a class field's array mutated in place by an element
+     * replacement and an append is what the helper serializes on the
+     * oracle, the LuaJIT artifact, and the JVM artifact alike — the live
+     * executor view reads the carrier's current elements, so it never
+     * serves the stale pre-commit contents.
      */
     private static void testArrayExecutorViewSync() throws Exception {
-        System.out.println("-- the oracle's array carrier mirror: replacement and "
+        System.out.println("-- the oracle's live array view: replacement and "
             + "append serialize on all three consumers --");
         String source = "// @jsonable\nexport class Box {\n  xs: int[] = [];\n}\n\n"
             + "// @jsonable\nexport class Wrapper {\n  data: table = {};\n}\n\n"
@@ -2685,7 +2685,7 @@ public class JsonableHelperProductionDriveTest {
             + "  b.xs[1] = 3;\n"
             // The second instance's field holds the same array identity;
             // mutating it through the alias must be visible through the
-            // first instance's cached view (the mirror preserves identity).
+            // first instance's view (the live view is identity-keyed).
             + "  let c: Box = { xs: b.xs };\n"
             + "  c.xs[0] = 9;\n"
             + "  let json: string = Box$toJson(b);\n"
@@ -2696,9 +2696,10 @@ public class JsonableHelperProductionDriveTest {
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
-            // The array nested in a table field: the cached table view
-            // shares the array view, so the same in-place commit is what
-            // the descriptor-free table walk serializes.
+            // The array nested in a table field: the live table view
+            // reads the array carrier's current contents, so the same
+            // in-place commit is what the descriptor-free table walk
+            // serializes.
             + "export function test_table_nested_array(): null {\n"
             + "  let w: Wrapper = { data: { xs: [1] } };\n"
             + "  let arr: int[] = w.data.xs;\n"
@@ -2717,14 +2718,14 @@ public class JsonableHelperProductionDriveTest {
     }
 
     /**
-     * The oracle's carrier mirror on deletion (the three-consumer
-     * agreement): an element deleted from a class field's array is observed
-     * by the helper walk on the oracle and both artifacts with the same
-     * outcome — the mirror keeps the deleted slot as the missing element,
-     * never the stale pre-delete value.
+     * The oracle's live view on deletion (the three-consumer agreement):
+     * an element deleted from a class field's array is observed by the
+     * helper walk on the oracle and both artifacts with the same outcome —
+     * the live view reads the deleted slot as the missing element, never
+     * the stale pre-delete value.
      */
     private static void testArrayExecutorViewDeleteParity() throws Exception {
-        System.out.println("-- the oracle's array carrier mirror: a deleted element "
+        System.out.println("-- the oracle's live array view: a deleted element "
             + "agrees on all three consumers --");
         String source = "// @jsonable\nexport class Box {\n  xs: int[] = [];\n}\n\n"
             + "export function test_array_delete(): string {\n"
@@ -2823,9 +2824,9 @@ public class JsonableHelperProductionDriveTest {
      * The committed nested-class view (the three-consumer regression): a
      * field write on a class instance held as another class's declared
      * field is observable through the parent's helper call on the oracle,
-     * the LuaJIT artifact, and the JVM artifact alike — the cached executor
-     * view of the child is updated in place rather than rebound, so the
-     * parent view that embeds it never serializes the stale pre-commit
+     * the LuaJIT artifact, and the JVM artifact alike — the live executor
+     * class view of the child reads the current committed field states, so
+     * the parent view that embeds it never serializes the stale pre-commit
      * state. The alias function proves the same commit through two parents
      * that hold the same child identity.
      */
@@ -2870,8 +2871,8 @@ public class JsonableHelperProductionDriveTest {
      * a field write on a separately constructed class instance held in a
      * declared {@code Child[]} is observable through the parent's helper
      * call on the oracle, the LuaJIT artifact, and the JVM artifact alike —
-     * the array's cached view embeds the one instance view, which is
-     * updated in place by the commit.
+     * the array's live view reads the one instance's current committed
+     * field states.
      */
     private static void testArrayHeldClassViewSync() throws Exception {
         System.out.println("-- the committed array-held class view: a field write "
