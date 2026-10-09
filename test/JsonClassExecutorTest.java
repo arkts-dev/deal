@@ -2861,9 +2861,54 @@ public class JsonClassExecutorTest {
     // Runner
     // =========================================================================
 
+    /**
+     * The 512/513 walk-depth checks descend the production encoder and the
+     * production adapter's seam walk to their full supported depth (about
+     * one thousand nested frames for a 513-deep class chain). The frame
+     * sizes depend on the JIT's compilation state; C1 frames alone need
+     * over 1 MiB, so the JVM's default main-thread stack (1 MiB) can
+     * overflow nondeterministically before the pinned depth failure is
+     * rendered. The suite therefore runs on a dedicated thread with a
+     * fixed, generous stack: the depth-bound assertions then measure the
+     * implemented bound instead of the default stack size, and the pinned
+     * tuple is asserted on every run.
+     */
+    private static final long WALK_DEPTH_TEST_STACK_BYTES = 32L * 1024 * 1024;
+
     public static void main(String[] args) {
         System.out.println("=== Json Class Executor Tests (ISSUE-0515 K-D8/K-D9/K-D10/K-D11) ===\n");
 
+        // A StackOverflowError escaping the depth checks would kill the
+        // runner before it reports, so the worker's failure is rethrown on
+        // the main thread (the counters are read after join).
+        Throwable[] unexpected = { null };
+        Thread runner = new Thread(null, () -> {
+            try {
+                runAll();
+            } catch (Throwable failure) {
+                unexpected[0] = failure;
+            }
+        }, "json-class-executor-tests", WALK_DEPTH_TEST_STACK_BYTES);
+        runner.start();
+        try {
+            runner.join();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            unexpected[0] = interrupted;
+        }
+        if (unexpected[0] != null) {
+            unexpected[0].printStackTrace();
+            System.exit(1);
+        }
+
+        System.out.println("\nJsonClassExecutorTest: " + passed + " passed, "
+            + failed + " failed");
+        if (failed > 0) {
+            System.exit(1);
+        }
+    }
+
+    private static void runAll() {
         testFixtureRowsAndAdapterParity();
         testFromJsonTopLevelGate();
         testFromJsonFailures();
@@ -2875,11 +2920,5 @@ public class JsonClassExecutorTest {
         testToJsonNoncycleFailureBeforeCycle();
         testToJsonSelectedFailureBeforeOverDepthTail();
         testRoundtripAndDefects();
-
-        System.out.println("\nJsonClassExecutorTest: " + passed + " passed, "
-            + failed + " failed");
-        if (failed > 0) {
-            System.exit(1);
-        }
     }
 }
