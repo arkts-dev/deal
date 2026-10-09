@@ -97,6 +97,19 @@ public class CompositeTerminatorAnalysisTest {
      */
     private record Fixture(String relativePath, String probe, String pinnedValue,
                            boolean async) {
+
+        /**
+         * The pinned probe value as the raw runtime text of the executed
+         * probe: a DEAL string literal loses its quotes, every other pinned
+         * value ({@code 0}, {@code true}) is already its own runtime text.
+         */
+        String pinnedRuntimeText() {
+            if (pinnedValue.length() >= 2 && pinnedValue.startsWith("\"")
+                    && pinnedValue.endsWith("\"")) {
+                return pinnedValue.substring(1, pinnedValue.length() - 1);
+            }
+            return pinnedValue;
+        }
     }
 
     private static final List<Fixture> FIXTURES = List.of(
@@ -119,8 +132,24 @@ public class CompositeTerminatorAnalysisTest {
     private static final Fixture DIRECT_RECURSION_FIXTURE = new Fixture(
         "functions/direct-recursion", "test_direct_recursion", "0", false);
 
-    private static final List<Fixture> NESTED_BODY_FIXTURES = List.of(
+    /**
+     * The named mutual-recursion acceptance subject: the corpus fixture's
+     * module-level mutually recursive pair ({@code even}/{@code odd}) whose
+     * exported {@code test_mutual_recursion} probe pins the boolean true.
+     * The release-owned production invocation must stage exactly one project
+     * artifact per target whose published surface runs the probe.
+     */
+    private static final Fixture MUTUAL_RECURSION_FIXTURE = new Fixture(
+        "functions/mutual-recursion", "test_mutual_recursion", "true", false);
+
+    /**
+     * The residual acceptance subjects of the staged production drive and
+     * the three-consumer differential drive: the direct and nested-scope
+     * self-recursion, the mutual recursion, and the protected return.
+     */
+    private static final List<Fixture> RESIDUAL_ACCEPTANCE_FIXTURES = List.of(
         DIRECT_RECURSION_FIXTURE,
+        MUTUAL_RECURSION_FIXTURE,
         new Fixture("functions/nested-scope-recursion", "test_nested_scope_recursion",
             "0", false),
         new Fixture("control-flow/return-in-try", "test_return_in_try_loop", "5", false));
@@ -135,8 +164,16 @@ public class CompositeTerminatorAnalysisTest {
     private static final Fixture ASYNC_AWAIT_STATEMENT_FIXTURE = new Fixture(
         "async-await/async-await-statement", "f", "0", true);
 
+    /**
+     * The three recursive acceptance subjects: the differential harness's
+     * two re-entry pairing notices (a recursive call op starts again before
+     * its previous terminal and also terminates without a matching open
+     * START) are the accepted shape of their recursive group, so only those
+     * notices are tolerated; every other harness failure still fails.
+     */
     private static final Set<String> RECURSIVE_FIXTURES = Set.of(
-        "functions/direct-recursion", "functions/nested-scope-recursion");
+        "functions/direct-recursion", "functions/nested-scope-recursion",
+        "functions/mutual-recursion");
 
     static final String NULL_BOTH_RETURN_TAIL_SOURCE = """
         export function probe(c: boolean): null {
@@ -1115,11 +1152,12 @@ public class CompositeTerminatorAnalysisTest {
 
     static void testProductionArtifacts() throws Exception {
         System.out.println("-- the named residual fixtures (the four composite "
-            + "fixtures, the nested-body acceptance subjects, and the "
+            + "fixtures, the residual acceptance subjects — direct recursion, "
+            + "mutual recursion, nested-scope recursion, return-in-try — and the "
             + "async-await-statement discarded-await subject) through the "
             + "release-owned production invocation on LuaJIT and JVM --");
         List<Fixture> stagedFixtures = new ArrayList<>(FIXTURES);
-        stagedFixtures.addAll(NESTED_BODY_FIXTURES);
+        stagedFixtures.addAll(RESIDUAL_ACCEPTANCE_FIXTURES);
         stagedFixtures.add(ASYNC_AWAIT_STATEMENT_FIXTURE);
         for (Fixture fixture : stagedFixtures) {
             Path root = Files.createTempDirectory("composite-terminator-fixture-");
@@ -1225,8 +1263,9 @@ public class CompositeTerminatorAnalysisTest {
     /**
      * The LuaJIT fixture driver: the deferred module walk, the published
      * entry surface, and the fixture's exported probe invoked once through
-     * the surface's callable. Nothing is printed: the pinned outcome is the
-     * fixture's own guard and the empty sidecar transcript.
+     * the surface's callable with its result compared to the pinned probe
+     * value. Nothing is printed: the pinned outcome is the fixture's own
+     * guard and the empty sidecar transcript.
      */
     private static String luaDriver(Fixture fixture) {
         if (fixture.async()) {
@@ -1237,8 +1276,12 @@ public class CompositeTerminatorAnalysisTest {
             local ok, err = __dealMain()
             if not ok then error(err, 0) end
             %s
-            probe.f()
-            """.formatted(fixture.relativePath(), luaSurfaceProbeCheck(fixture));
+            local value = probe.f()
+            if tostring(value) ~= %s then
+              error("the probe result " .. tostring(value), 0)
+            end
+            """.formatted(fixture.relativePath(), luaSurfaceProbeCheck(fixture),
+                quotedStringLiteral(fixture.pinnedRuntimeText()));
     }
 
     /**
@@ -1263,11 +1306,12 @@ public class CompositeTerminatorAnalysisTest {
             assert(entry ~= nil, "the artifact publishes the async entry")
             local okA, res = pcall(entry, "-", true)
             if not okA then error(res, 0) end
-            if tostring(res) ~= "%s" then
+            if tostring(res) ~= %s then
               error("the async probe result " .. tostring(res), 0)
             end
             """.formatted(fixture.relativePath(), luaSurfaceProbeCheck(fixture),
-                fixture.probe().length() + 1, fixture.probe(), fixture.pinnedValue());
+                fixture.probe().length() + 1, fixture.probe(),
+                quotedStringLiteral(fixture.pinnedRuntimeText()));
     }
 
     /** The published-surface probe publication check of one fixture driver. */
@@ -1280,10 +1324,17 @@ public class CompositeTerminatorAnalysisTest {
             """.formatted(fixture.probe());
     }
 
+    /** One runtime text as a quoted Lua/JVM string literal. */
+    private static String quotedStringLiteral(String text) {
+        return "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"")
+            .replace("\n", "\\n").replace("\r", "\\r") + "\"";
+    }
+
     /**
      * The JVM fixture driver: the module walk, the published entry
-     * surface, and the fixture's exported probe invoked once; silent on
-     * success so the sidecar transcript comparison is the pin.
+     * surface, and the fixture's exported probe invoked once with its
+     * result compared to the pinned probe value; silent on success so the
+     * sidecar transcript comparison is the pin.
      */
     private static String jvmDriver(Fixture fixture, String className,
             String jvmSource) {
@@ -1304,11 +1355,14 @@ public class CompositeTerminatorAnalysisTest {
                   throw new IllegalStateException(
                       "the entry surface publishes the fixture probe");
                 }
-                fn.fn.invoke(new Object[0]);
+                Object value = fn.fn.invoke(new Object[0]);
+                if (!String.valueOf(value).equals(%s)) {
+                  throw new IllegalStateException("the probe result " + value);
+                }
               }
             }
             """.formatted(className, className, jvmModuleKey(fixture),
-                fixture.probe());
+                fixture.probe(), quotedStringLiteral(fixture.pinnedRuntimeText()));
     }
 
     /**
@@ -1326,13 +1380,14 @@ public class CompositeTerminatorAnalysisTest {
               public static void main(String[] args) {
                 %s.main(new String[0]);
                 Object result = %s.%s("-", true, new Object[]{});
-                if (!String.valueOf(result).equals("%s")) {
+                if (!String.valueOf(result).equals(%s)) {
                   throw new IllegalStateException(
                       "the async probe result " + result);
                 }
               }
             }
-            """.formatted(className, className, entry, fixture.pinnedValue());
+            """.formatted(className, className, entry,
+                quotedStringLiteral(fixture.pinnedRuntimeText()));
     }
 
     /**
@@ -1371,8 +1426,8 @@ public class CompositeTerminatorAnalysisTest {
         driveDifferentialFixtures(differentialFixtures);
     }
 
-    static void testNestedBodyProductionParity() throws Exception {
-        driveDifferentialFixtures(NESTED_BODY_FIXTURES);
+    static void testResidualAcceptanceParity() throws Exception {
+        driveDifferentialFixtures(RESIDUAL_ACCEPTANCE_FIXTURES);
     }
 
     /**
@@ -1853,7 +1908,7 @@ public class CompositeTerminatorAnalysisTest {
         testLiteralTrueLoopOnNonNullBodyAtUnitLevel();
         testProductionArtifacts();
         testDifferentialMatrix();
-        testNestedBodyProductionParity();
+        testResidualAcceptanceParity();
         testPartialTransferProductionParity();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
