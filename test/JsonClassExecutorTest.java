@@ -548,8 +548,14 @@ public class JsonClassExecutorTest {
 
         private static ClassOpsExecutor.JsonStringify stringify(Value value, String prefix,
                                                                int depth) {
-            Set<Object> path = java.util.Collections.newSetFromMap(
-                new java.util.IdentityHashMap<>());
+            return stringify(value, prefix, depth,
+                java.util.Collections.newSetFromMap(
+                    new java.util.IdentityHashMap<>()));
+        }
+
+        private static ClassOpsExecutor.JsonStringify stringify(Value value, String prefix,
+                                                               int depth,
+                                                               Set<Object> path) {
             try {
                 UnicodeScalars.ScalarString scalar = UnicodeScalars.validate(
                     stringifyValue(value, "", path, depth));

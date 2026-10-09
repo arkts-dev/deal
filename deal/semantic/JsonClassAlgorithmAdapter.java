@@ -10,8 +10,6 @@ import deal.semantic.ir.SourceOriginKind;
 import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.UnicodeScalars;
 
-import java.util.Collections;
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -129,16 +127,23 @@ public final class JsonClassAlgorithmAdapter {
      * pinned failure position (the pinned walk depth bound, the unsupported
      * carriers, and the walk family's cycle arm for a path-local container
      * re-entry, all in walk order), and E8 emits the exact text of every
-     * clean value. A value with a selected failure is never mapped through
-     * E8: the mapping would traverse contents behind the selected failure,
-     * and those contents may include a container re-entry (or an arbitrarily
-     * long chain) the mapping cannot represent.
+     * clean value. The pre-walk continues the enclosing class/declared-array
+     * walk's path-local container-identity set: it enters its own
+     * table/array containers on that same set and leaves every entry it did
+     * not add, so a table-subtree position that re-enters an already-entered
+     * declared-array container selects the cycle arm at the re-entry exactly
+     * like the emitted Lua/JVM walks. A value with a selected failure is
+     * never mapped through E8: the mapping would traverse contents behind
+     * the selected failure, and those contents may include a container
+     * re-entry (or an arbitrarily long chain) the mapping cannot represent.
      */
     private static ClassOpsExecutor.JsonStringify stringify(
-            ClassOpsExecutor.Value value, String fieldPathPrefix, int depth) {
+            ClassOpsExecutor.Value value, String fieldPathPrefix, int depth,
+            Set<Object> entered) {
         Objects.requireNonNull(value, "value must not be null");
         Objects.requireNonNull(fieldPathPrefix, "fieldPathPrefix must not be null");
-        FirstFailure first = firstFailure(value, depth);
+        Objects.requireNonNull(entered, "entered must not be null");
+        FirstFailure first = firstFailure(value, depth, entered);
         if (first != null) {
             // A selected failure: the pre-walk is its sole authority. The
             // cycle needle's own closed marker selects the walk family's
@@ -338,13 +343,19 @@ public final class JsonClassAlgorithmAdapter {
      * is the enclosing class walk's depth, and each nested container
      * consumes one level, exactly like the walk's own table-subtree bound:
      * a container past {@link ClassOpsExecutor#JSON_MAX_DEPTH} fails with its
-     * own carrier token at its pinned path. A selected failure ends the walk
+     * own carrier token at its pinned path. The {@code path} set is the
+     * enclosing class/declared-array walk's own path-local identity set
+     * (never a fresh subtree-local set): the pre-walk enters its containers
+     * on that set and removes exactly the entries it added, so a table
+     * position that re-enters an already-entered declared-array container
+     * selects the cycle arm there, exactly like the emitted Lua/JVM walks.
+     * A selected failure ends the walk
      * (the value behind it stays untraversed), so a cycle later in the
      * walk order never reaches the mapping.
      *
      */
-    private static FirstFailure firstFailure(ClassOpsExecutor.Value root, int depth) {
-        Set<Object> path = Collections.newSetFromMap(new IdentityHashMap<>());
+    private static FirstFailure firstFailure(ClassOpsExecutor.Value root, int depth,
+                                             Set<Object> path) {
         try {
             walkForFirstFailure(root, "", path, depth);
             return null;

@@ -108,6 +108,7 @@ public class FailureArmAuthorityTest {
         testEmittedParameterContract();
         testNegativeSingleSourceControl();
         testWalkArmThreeConsumerDrive();
+        testDeclaredArraySharedReferenceControl();
         testAbsentOriginFailsClosed();
         testWalkArmOracleDispatchLeg();
         testWalkArmOracleDispatchCycles();
@@ -1728,6 +1729,18 @@ public class FailureArmAuthorityTest {
             // trigger of the walk's admission check.
             new deal.semantic.ir.ClassLayout.FieldLayout("note",
                 new RuntimeDescriptor.Nullable(RuntimeDescriptor.String.INSTANCE), false,
+                deal.semantic.ir.DefaultOwner.LOCAL),
+            // The declared-array container-identity routes (the
+            // declared-array self re-entry and the mixed
+            // declared-array/table re-entry of walkCases()): both are
+            // optional so every drive case that does not place them keeps
+            // its landed shape and text.
+            new deal.semantic.ir.ClassLayout.FieldLayout("grid",
+                new RuntimeDescriptor.Array(new RuntimeDescriptor.Array(
+                    RuntimeDescriptor.Table.INSTANCE)), false,
+                deal.semantic.ir.DefaultOwner.LOCAL),
+            new deal.semantic.ir.ClassLayout.FieldLayout("matrix",
+                new RuntimeDescriptor.Array(RuntimeDescriptor.Table.INSTANCE), false,
                 deal.semantic.ir.DefaultOwner.LOCAL)));
     }
 
@@ -1934,6 +1947,42 @@ public class FailureArmAuthorityTest {
                 "data", "arrCycTable", "tags", "{__a = true, __n = 1, [1] = 1}"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5,
                 "data", jvmCyclicArrayViaTables(), "tags", jvmIntArray(1L))));
+        // The declared-array container needle: the grid field's declared
+        // array (array(array(table))) holds itself as its own first element,
+        // so the re-entry is detected at the declared-array container on
+        // every consumer. Without the declared-array needle the oracle
+        // descends the element descriptor and publishes a walk failure at
+        // the deeper table-descriptor position instead of the cycle arm.
+        cases.add(walkCase("declared-array-self-reentry", "JSON_TO_WALK_CYCLE", null,
+            null,
+            Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Int(1),
+                "ratio", new ClassOpsExecutor.Value.Number(0.5),
+                "data", walkEmptyTable(), "tags", walkIntArray(1),
+                "grid", walkSelfReferentialArray()),
+            Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
+                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}",
+                "grid", "gridSelf"),
+            Map.of("name", "n", "age", 1L, "ratio", 0.5, "data",
+                new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L),
+                "grid", jvmSelfReferentialArray())));
+        // The mixed declared-array/table route: the matrix field's declared
+        // array (array(table)) holds one table and that table holds the same
+        // array again, so the declared-array container is re-entered from
+        // inside the table-subtree seam — the seam continues the class
+        // walk's path-local identity set, so the cycle is selected at that
+        // re-entry on every consumer.
+        cases.add(walkCase("declared-array-table-mixed-reentry", "JSON_TO_WALK_CYCLE",
+            null, null,
+            Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Int(1),
+                "ratio", new ClassOpsExecutor.Value.Number(0.5),
+                "data", walkEmptyTable(), "tags", walkIntArray(1),
+                "matrix", walkTableHoldingItsOwnArray()),
+            Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
+                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}",
+                "matrix", "mixArr"),
+            Map.of("name", "n", "age", 1L, "ratio", 0.5, "data",
+                new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L),
+                "matrix", jvmTableHoldingItsOwnArray())));
         // A selected noncycle failure with a path-local table re-entry
         // behind it: the table-typed field holds the unsupported function
         // under 'bad' before its own re-entry under 'self', so the first
@@ -2278,6 +2327,79 @@ public class FailureArmAuthorityTest {
                 declaredKeyed.actual())),
             "a projection caller keying the numeric token on the declared int text is "
                 + "reported by field name actual");
+    }
+
+    // =========================================================================
+    // 14a. The declared-array needle's shared-reference control
+    // =========================================================================
+
+    /**
+     * The declared-array container-identity discipline's shared-reference
+     * control (the remediation's repeated noncyclic array-reference case):
+     * one inner array value placed at two sibling elements of one declared
+     * array field is admitted on every consumer — the needle's fact is a
+     * re-entry on the current path, so the identity is entered and removed
+     * around each array's own subtree, never kept globally — and the oracle,
+     * the emitted Lua walk under real luajit, and the emitted JVM walk emit
+     * the identical text. The cycle routes themselves are the walkCases()
+     * drive's declared-array-self-reentry and declared-array-table-mixed-reentry
+     * rows (E8001, the exact cycle message, the supplied origin, absent
+     * expected/actual, and empty cycle metadata on all three consumers).
+     */
+    static void testDeclaredArraySharedReferenceControl() throws Exception {
+        System.out.println("-- the declared-array needle's shared-reference control --");
+        String expectedText = "{\"name\":\"n\",\"age\":1,\"ratio\":0.5,"
+            + "\"data\":{},\"tags\":[1],\"grid\":[[],[]]}";
+
+        // The oracle leg: the production adapter's class walk with the
+        // executing op's own origin.
+        deal.semantic.ir.SemanticOp op = walkJsonOp();
+        Map<String, ClassOpsExecutor.Value> oracleFields = new LinkedHashMap<>();
+        oracleFields.put("name", walkString("n"));
+        oracleFields.put("age", new ClassOpsExecutor.Value.Int(1));
+        oracleFields.put("ratio", new ClassOpsExecutor.Value.Number(0.5));
+        oracleFields.put("data", walkEmptyTable());
+        oracleFields.put("tags", walkIntArray(1));
+        oracleFields.put("grid", walkRepeatedInnerArray());
+        ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome =
+            ClassOpsExecutor.executeJsonToClass(op,
+                Map.of(((KindPayload.JsonToClassPayload) op.payload()).classValue(),
+                    walkOracleInstance(oracleFields)),
+                Map.of(WALK_ID, walkLayout()),
+                deal.semantic.JsonClassAlgorithmAdapter.stringifier(), op.origin());
+        check(outcome instanceof ClassOpsExecutor.Outcome.Success<
+                ClassOpsExecutor.Value> success
+                && success.value() instanceof ClassOpsExecutor.Value.String text
+                && text.scalar() instanceof deal.semantic.ir.UnicodeScalars.Valid valid
+                && valid.carrier().equals(expectedText),
+            "the oracle's declared-array walk admits the shared noncyclic inner array "
+                + "at both sibling elements and serializes " + expectedText
+                + "; got " + outcome);
+
+        // The emitted Lua leg (the real luajit lane).
+        String body = "local sharedInner = {__a = true, __n = 0}\n"
+            + "local root = " + walkLuaRoot(Map.of(
+                "name", luaString("n"), "age", "1", "ratio", "0.5",
+                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}",
+                "grid", "{__a = true, __n = 2, sharedInner, sharedInner}")) + "\n"
+            + "local ok, text = __jsonToClassOp(" + quote(WALK_ID.text()) + ", root)\n"
+            + "if ok then print(\"shared-array-ref|OK|\" .. text)\n"
+            + "else print(\"shared-array-ref|FAIL|\") end\n";
+        List<String> rows = runProbe(emittedWalkChunk(), "arm-walk", body,
+            "shared-array-ref", 1);
+        checkEq("shared-array-ref|OK|" + expectedText, rows.get(0),
+            "the emitted Lua walk admits the shared noncyclic inner array at both "
+                + "sibling elements and serializes " + expectedText);
+
+        // The emitted JVM leg (the shared walk machinery the artifact links).
+        String jvmText = deal.codegen.jvm.JvmJson.toClass(walkPlan(),
+            walkJvmInstance(Map.of(
+                "name", "n", "age", 1L, "ratio", 0.5, "data",
+                new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L),
+                "grid", jvmRepeatedInnerArray())));
+        checkEq(expectedText, jvmText,
+            "the JVM walk admits the shared noncyclic inner array at both sibling "
+                + "elements and serializes " + expectedText);
     }
 
     // =========================================================================
@@ -2867,6 +2989,74 @@ public class FailureArmAuthorityTest {
         return first;
     }
 
+    /**
+     * The declared-array self re-entry of the drive's grid field: the
+     * declared array holds itself as its own first element, so the re-entry
+     * needle is the declared-array container itself. The live view carries
+     * the array's current contents (the oracle's mutable array carrier), so
+     * the element is exactly the container identity the walk entered.
+     */
+    private static ClassOpsExecutor.Value walkSelfReferentialArray() {
+        List<ClassOpsExecutor.Value> elements = new ArrayList<>();
+        SemanticArray<ClassOpsExecutor.Value> live = SemanticArray.live(
+            elements::size, elements::get);
+        ClassOpsExecutor.Value array = new ClassOpsExecutor.Value.Array(live);
+        elements.add(array);
+        return array;
+    }
+
+    /**
+     * The mixed declared-array/table route of the drive's matrix field: the
+     * declared array holds one table and that table holds the same array
+     * again, so the walk re-enters the declared-array container from inside
+     * the table-subtree seam.
+     */
+    private static ClassOpsExecutor.Value walkTableHoldingItsOwnArray() {
+        SemanticTable<ClassOpsExecutor.Value> table = new SemanticTable<>();
+        ClassOpsExecutor.Value tableView = new ClassOpsExecutor.Value.Table(table);
+        List<ClassOpsExecutor.Value> elements = new ArrayList<>();
+        SemanticArray<ClassOpsExecutor.Value> live = SemanticArray.live(
+            elements::size, elements::get);
+        ClassOpsExecutor.Value array = new ClassOpsExecutor.Value.Array(live);
+        elements.add(tableView);
+        table.put("a", array);
+        return array;
+    }
+
+    /**
+     * The shared-reference control of the declared-array needle: one inner
+     * array value sits at both sibling elements of the grid field's declared
+     * array, so the path-local needle must admit the repeated reference (the
+     * needle's fact is re-entry on the current path, never repetition).
+     */
+    private static ClassOpsExecutor.Value walkRepeatedInnerArray() {
+        ClassOpsExecutor.Value inner = new ClassOpsExecutor.Value.Array(
+            SemanticArray.of(List.of()));
+        return new ClassOpsExecutor.Value.Array(SemanticArray.of(List.of(inner, inner)));
+    }
+
+    private static deal.codegen.jvm.JvmRuntime.Array jvmSelfReferentialArray() {
+        deal.codegen.jvm.JvmRuntime.Array array = new deal.codegen.jvm.JvmRuntime.Array(1);
+        array.elements.add(array);
+        return array;
+    }
+
+    private static deal.codegen.jvm.JvmRuntime.Array jvmTableHoldingItsOwnArray() {
+        deal.codegen.jvm.JvmRuntime.Table table = new deal.codegen.jvm.JvmRuntime.Table();
+        deal.codegen.jvm.JvmRuntime.Array array = new deal.codegen.jvm.JvmRuntime.Array(1);
+        table.write("a", array);
+        array.elements.add(table);
+        return array;
+    }
+
+    private static deal.codegen.jvm.JvmRuntime.Array jvmRepeatedInnerArray() {
+        deal.codegen.jvm.JvmRuntime.Array inner = new deal.codegen.jvm.JvmRuntime.Array(0);
+        deal.codegen.jvm.JvmRuntime.Array outer = new deal.codegen.jvm.JvmRuntime.Array(2);
+        outer.elements.add(inner);
+        outer.elements.add(inner);
+        return outer;
+    }
+
     private static deal.codegen.jvm.JvmRuntime.Array jvmIntArray(long... values) {
         deal.codegen.jvm.JvmRuntime.Array array =
             new deal.codegen.jvm.JvmRuntime.Array(values.length);
@@ -2930,6 +3120,10 @@ public class FailureArmAuthorityTest {
                 new deal.codegen.jvm.JvmJson.Field("tags", "array(int)", false, "int"),
                 new deal.codegen.jvm.JvmJson.Field("note", "nullable:string", true,
                     "string"),
+                new deal.codegen.jvm.JvmJson.Field("grid", "array(array(table))", true,
+                    "table"),
+                new deal.codegen.jvm.JvmJson.Field("matrix", "array(table)", true,
+                    "table"),
             }, null);
     }
 
@@ -2950,6 +3144,18 @@ public class FailureArmAuthorityTest {
         body.append("local arrCycArr = {__a = true, __n = 1, arrCycTblB}\n");
         body.append("arrCycTblB.b = arrCycArr\n");
         body.append("arrCycTable.a = arrCycArr\n");
+        // The declared-array container needle: the grid field's declared
+        // array (array(array(table))) holds itself as its own first element,
+        // so the declared-array container is re-entered at the first
+        // element.
+        body.append("local gridSelf = {__a = true, __n = 1}\n");
+        body.append("gridSelf[1] = gridSelf\n");
+        // The mixed declared-array/table route: the matrix field's declared
+        // array (array(table)) holds the table and that table holds the same
+        // array again.
+        body.append("local mixArrTable = {__t = true, __keys = {a = true}}\n");
+        body.append("local mixArr = {__a = true, __n = 1, mixArrTable}\n");
+        body.append("mixArrTable.a = mixArr\n");
         // A selected noncycle failure with a table cycle behind it: 'bad'
         // sorts before 'self', so both the ascending-key walk and the
         // first-insertion declaration order meet the unsupported value

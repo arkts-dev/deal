@@ -1724,13 +1724,33 @@ public final class ClassOpsExecutor {
          * Stringifies one JSON-shaped value per the E8
          * {@code JSON_STRINGIFY} row: {@code depth} is the walk depth of
          * {@code jsonShaped} itself (the enclosing class walk's depth for a
-         * table-typed field value), so the seam's own first-failure walk
-         * selects the pinned {@link #JSON_MAX_DEPTH} bound in walk order
-         * beside every carrier/cycle failure — an earlier position's failure
-         * is never overridden by a later exceeding container.
+         * table-typed field value), and {@code entered} is the enclosing
+         * class/declared-array walk's path-local container-identity set
+         * (see {@link ClassOpsExecutor#executeJsonToClass}). The seam's own first-failure
+         * walk continues that same identity discipline — it adds its own
+         * table/array containers on entry and removes them on exit, and it
+         * never removes an entry it did not add — so a table-subtree
+         * position that re-enters a container already on the path (a
+         * declared-array element position included) selects the cycle arm
+         * exactly like the emitted Lua/JVM walks. The walk selects the
+         * pinned {@link #JSON_MAX_DEPTH} bound in walk order beside every
+         * carrier/cycle failure — an earlier position's failure is never
+         * overridden by a later exceeding container.
          *
          */
-        JsonStringify stringify(Value jsonShaped, String fieldPathPrefix, int depth);
+        JsonStringify stringify(Value jsonShaped, String fieldPathPrefix, int depth,
+                               Set<Object> entered);
+
+        /**
+         * The stringify of one JSON-shaped value with a fresh path-local
+         * identity set (the direct seam callers outside the class walk).
+         *
+         */
+        default JsonStringify stringify(Value jsonShaped, String fieldPathPrefix,
+                                        int depth) {
+            return stringify(jsonShaped, fieldPathPrefix, depth,
+                java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
+        }
 
         /**
          * The depth-0 stringify of one JSON-shaped value (the direct seam
@@ -2333,26 +2353,26 @@ public final class ClassOpsExecutor {
                 if (!(value instanceof Value.Null)) {
                     throw new JsonToFailure(fieldPath, actualTokenOf(value));
                 }
-                yield seamText(op, stringifier, value, fieldPath, depth);
+                yield seamText(op, stringifier, value, fieldPath, depth, entered);
             }
             case RuntimeDescriptor.Boolean ignored -> {
                 if (!(value instanceof Value.Bool)) {
                     throw new JsonToFailure(fieldPath, actualTokenOf(value));
                 }
-                yield seamText(op, stringifier, value, fieldPath, depth);
+                yield seamText(op, stringifier, value, fieldPath, depth, entered);
             }
             case RuntimeDescriptor.Int ignored -> {
                 if (!(value instanceof Value.Int)) {
                     throw new JsonToFailure(fieldPath, actualTokenOf(value));
                 }
-                yield seamText(op, stringifier, value, fieldPath, depth);
+                yield seamText(op, stringifier, value, fieldPath, depth, entered);
             }
             case RuntimeDescriptor.Number ignored -> {
                 if (!(value instanceof Value.Number) && !(value instanceof Value.Int)) {
                     throw new JsonToFailure(fieldPath, actualTokenOf(value));
                 }
                 // Nonfinite numbers fail inside the seam (the E8 row).
-                yield seamText(op, stringifier, value, fieldPath, depth);
+                yield seamText(op, stringifier, value, fieldPath, depth, entered);
             }
             case RuntimeDescriptor.String ignored -> {
                 if (!(value instanceof Value.String string)) {
@@ -2363,7 +2383,7 @@ public final class ClassOpsExecutor {
                         FailureProjections.typedBoundaryToken(
                             ActualKind.INVALID_UNICODE, null));
                 }
-                yield seamText(op, stringifier, value, fieldPath, depth);
+                yield seamText(op, stringifier, value, fieldPath, depth, entered);
             }
             case RuntimeDescriptor.Table ignored -> {
                 if (!(value instanceof Value.Table)) {
@@ -2372,7 +2392,7 @@ public final class ClassOpsExecutor {
                 // The seam's own first-failure walk owns the table contents'
                 // depth bound in walk order (the pre-walk selects an earlier
                 // position's carrier/cycle failure first).
-                yield seamText(op, stringifier, value, fieldPath, depth);
+                yield seamText(op, stringifier, value, fieldPath, depth, entered);
             }
             case RuntimeDescriptor.Array arrayDescriptor -> {
                 if (!(value instanceof Value.Array elements)) {
@@ -2383,7 +2403,7 @@ public final class ClassOpsExecutor {
             }
             case RuntimeDescriptor.Nullable nullable -> {
                 if (value instanceof Value.Null) {
-                    yield seamText(op, stringifier, value, fieldPath, depth);
+                    yield seamText(op, stringifier, value, fieldPath, depth, entered);
                 }
                 yield encodeField(op, nullable.inner(), value, fieldPath, layouts,
                     stringifier, entered, depth);
@@ -2425,30 +2445,48 @@ public final class ClassOpsExecutor {
             SemanticOp op, RuntimeDescriptor elementDescriptor, Value.Array elements,
             String fieldPath, Map<ClassId, ClassLayout> layouts,
             JsonStringifier stringifier, Set<Object> entered, int depth) {
-        StringBuilder out = new StringBuilder();
-        out.append('[');
-        for (int i = 0; i < elements.array().size(); i++) {
-            if (i > 0) {
-                out.append(',');
-            }
-            String elementPath = fieldPath + "[" + i + "]";
-            out.append(encodeField(op, elementDescriptor,
-                elements.array().elementAt(i), elementPath, layouts, stringifier,
-                entered, depth + 1));
+        // The path-local cycle check over entered array containers (the
+        // same needle discipline the emitted Lua/JVM walks apply, and the
+        // same identity set the table-subtree seam continues): the
+        // needle's own fact selects the cycle arm (never a token
+        // comparison). The array's own depth bound was already applied at
+        // the enclosing field entry, exactly like the emitted walks.
+        if (!entered.add(elements.array())) {
+            throw JsonToFailure.cycle();
         }
-        out.append(']');
-        return out.toString();
+        try {
+            StringBuilder out = new StringBuilder();
+            out.append('[');
+            for (int i = 0; i < elements.array().size(); i++) {
+                if (i > 0) {
+                    out.append(',');
+                }
+                String elementPath = fieldPath + "[" + i + "]";
+                out.append(encodeField(op, elementDescriptor,
+                    elements.array().elementAt(i), elementPath, layouts, stringifier,
+                    entered, depth + 1));
+            }
+            out.append(']');
+            return out.toString();
+        } finally {
+            entered.remove(elements.array());
+        }
     }
 
     /**
      * Encodes one leaf/table value through the stringify seam and
      * converts the seam's failure into the walk's own
      * {@link JsonToFailure} (the seam reports the full pinned-convention
-     * path prefixed with the caller's field path).
+     * path prefixed with the caller's field path). The seam continues the
+     * class walk's path-local container-identity set, so a table-subtree
+     * position that re-enters an already-entered declared-array container
+     * selects the cycle arm at the re-entry, exactly like the emitted
+     * Lua/JVM walks.
      */
     private static String seamText(SemanticOp op, JsonStringifier stringifier,
-                                   Value value, String fieldPath, int depth) {
-        JsonStringify rendered = stringifier.stringify(value, fieldPath, depth);
+                                   Value value, String fieldPath, int depth,
+                                   Set<Object> entered) {
+        JsonStringify rendered = stringifier.stringify(value, fieldPath, depth, entered);
         return switch (rendered) {
             case JsonStringify.Success success -> success.text().carrier();
             case JsonStringify.Failure failure -> throw failure.cycle()
