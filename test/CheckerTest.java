@@ -267,6 +267,8 @@ public class CheckerTest {
         testForHeadDeclarationOrder();
         testClassProvenanceAtInitializationAndNullableTarget();
         testClassProvenanceThroughAssignmentExpressions();
+        testClassProvenanceThroughConstructedLiterals();
+        testClassProvenanceConstructedLiteralPublicCompile();
         testClassProvenanceAssignmentExprPublicCompile();
         testNestedClass();
         // ISSUE-0717 (defect snippet 47): a nested class that shadows an
@@ -2259,6 +2261,256 @@ public class CheckerTest {
         assertNoErrors(control,
             "assignment-expression values within one declaration stay "
                 + "legal (class shadowing is not rejected globally)");
+    }
+
+    /**
+     * ISSUE-0717 review: a contextually constructed class literal carries
+     * the exact declaration that laid it out — the contextual declaration
+     * (the assignment target's or the annotated declaration's) when it
+     * names the same canonical class, otherwise the declaration
+     * construction resolves. The E3019 gate consumes that checked fact at
+     * the initialization and assignment boundaries, so a literal crossing
+     * two distinct same-named declarations is rejected before any backend
+     * lowers the duplicate layout. The reviewer reproduction
+     * (`let b: A = (a = {});` under a shadowing class A) previously
+     * compiled on JS and failed at run time with E8001, and reached E6005
+     * on LuaJIT/JVM.
+     */
+    static void testClassProvenanceThroughConstructedLiterals() {
+        System.out.println("-- class provenance is preserved through "
+            + "contextually constructed literals --");
+        CheckerOutput init = checkProgram(
+            "class A { n: int = 7; }\n" +
+            "export function f(): null {\n" +
+            "  let a: A = {};\n" +
+            "  {\n" +
+            "    class A { n: string = \"ok\"; }\n" +
+            "    let b: A = (a = {});\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(init, "E3019",
+            "a constructed-literal assignment-expression value at an "
+                + "initialization boundary keeps its declaration "
+                + "provenance -> E3019");
+
+        CheckerOutput nullable = checkProgram(
+            "class A { n: int = 7; }\n" +
+            "export function f(): null {\n" +
+            "  let a: A = {};\n" +
+            "  {\n" +
+            "    class A { n: string = \"ok\"; }\n" +
+            "    let b: A | null = (a = {});\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(nullable, "E3019",
+            "a constructed-literal value at a nullable initialization "
+                + "boundary keeps its declaration provenance -> E3019");
+
+        CheckerOutput assignment = checkProgram(
+            "class A { n: int = 7; }\n" +
+            "export function f(): null {\n" +
+            "  let a: A = {};\n" +
+            "  {\n" +
+            "    class A { n: string = \"ok\"; }\n" +
+            "    let b: A = {};\n" +
+            "    a = (b = {});\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(assignment, "E3019",
+            "a constructed-literal assignment-expression value at an "
+                + "assignment boundary keeps its declaration provenance "
+                + "-> E3019");
+
+        CheckerOutput control = checkProgram(
+            "class A { n: int = 7; }\n" +
+            "export function f(): null {\n" +
+            "  let a: A = {};\n" +
+            "  let b: A = (a = {});\n" +
+            "  let c: A | null = (a = {});\n" +
+            "  c = (b = {});\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(control,
+            "constructed-literal assignment-expression values within one "
+                + "declaration stay legal");
+
+        CheckerOutput contextual = checkProgram(
+            "class A { n: int = 7; }\n" +
+            "export function f(): null {\n" +
+            "  let a: A = {};\n" +
+            "  {\n" +
+            "    class A { n: string = \"ok\"; }\n" +
+            "    a = {};\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(contextual,
+            "a literal assigned to a binding of the enclosing declaration "
+                + "is constructed by that declaration (the target's exact "
+                + "declaration), never rejected as a spurious crossing");
+    }
+
+    /**
+     * ISSUE-0717 review: the constructed-literal probes through the
+     * release-owned public CLI. The review reproduction and its nullable
+     * and assignment-statement spellings are rejected with E3019 on all
+     * three backends before any artifact is published, and the
+     * same-declaration literal control compiles on all three and its JS
+     * artifact executes (node) with the expected field value.
+     */
+    static void testClassProvenanceConstructedLiteralPublicCompile() {
+        System.out.println("-- public deal compile: the constructed-literal "
+            + "provenance crossing on js/jvm/luajit --");
+        Path root;
+        try {
+            root = Files.createTempDirectory("deal_provenance_literal_");
+        } catch (IOException e) {
+            fail("public constructed-literal provenance: cannot create temp "
+                + "directory: " + e.getMessage());
+            return;
+        }
+        try {
+            String[] negatives = {
+                "{\n"
+                    + "    class A { n: string = \"ok\"; }\n"
+                    + "    let b: A = (a = {});\n"
+                    + "  }",
+                "{\n"
+                    + "    class A { n: string = \"ok\"; }\n"
+                    + "    let b: A | null = (a = {});\n"
+                    + "  }",
+                "{\n"
+                    + "    class A { n: string = \"ok\"; }\n"
+                    + "    let b: A = {};\n"
+                    + "    a = (b = {});\n"
+                    + "  }"
+            };
+            String[] names = {"init", "nullable", "assignment"};
+            for (int p = 0; p < negatives.length; p++) {
+                Path probeSrc = root.resolve("probe_" + names[p] + "/src");
+                Files.createDirectories(probeSrc);
+                Files.writeString(root.resolve("probe_" + names[p] + "/deal.json"),
+                    "{\"languageVersion\":\"1.2\",\"backend\":\"js\","
+                        + "\"moduleRoots\":[\"src\"]}\n");
+                Path probeEntry = probeSrc.resolve("main.deal");
+                Files.writeString(probeEntry,
+                    "class A { n: int = 7; }\n"
+                        + "export function main(): null {\n"
+                        + "  let a: A = {};\n"
+                        + "  " + negatives[p] + "\n"
+                        + "  return null;\n"
+                        + "}\n");
+                for (String backend : List.of("js", "jvm", "luajit")) {
+                    Path out = root.resolve("out_" + names[p] + "_" + backend);
+                    ByteArrayOutputStream err = new ByteArrayOutputStream();
+                    PrintStream originalErr = System.err;
+                    int exitCode;
+                    try {
+                        System.setErr(new PrintStream(err, true,
+                            StandardCharsets.UTF_8));
+                        exitCode = Main.run(new String[]{"compile",
+                            probeEntry.toString(), "--backend", backend,
+                            "--output", out.toString()});
+                        System.err.flush();
+                    } finally {
+                        System.setErr(originalErr);
+                    }
+                    String stderr = err.toString(StandardCharsets.UTF_8);
+                    check(exitCode == 1,
+                        "the constructed-literal provenance crossing ("
+                            + names[p] + ") is rejected on " + backend
+                            + ": " + stderr);
+                    check(stderr.contains("E3019"),
+                        "the " + backend + " rejection of the " + names[p]
+                            + " probe is E3019: " + stderr);
+                    check(!Files.exists(out),
+                        "the rejected " + backend + " compile of the "
+                            + names[p] + " probe publishes no artifact "
+                            + "directory");
+                }
+            }
+
+            Path controlSrc = root.resolve("control/src");
+            Files.createDirectories(controlSrc);
+            Files.writeString(root.resolve("control/deal.json"),
+                "{\"languageVersion\":\"1.2\",\"backend\":\"js\","
+                    + "\"moduleRoots\":[\"src\"]}\n");
+            Path controlEntry = controlSrc.resolve("main.deal");
+            Files.writeString(controlEntry,
+                "import * as console from \"std/console\"\n"
+                    + "class A { n: int = 7; }\n"
+                    + "export function main(): null {\n"
+                    + "  let a: A = {};\n"
+                    + "  let b: A = (a = {});\n"
+                    + "  let c: A | null = (a = {});\n"
+                    + "  c = (b = {});\n"
+                    + "  if (c !== null) {\n"
+                    + "    if (c.n !== 7) {\n"
+                    + "      throw { code: \"PROVENANCE_FAIL\", message: "
+                    + "\"same-declaration value\" };\n"
+                    + "    }\n"
+                    + "  }\n"
+                    + "  console.log(\"CONSTRUCTED_OK\");\n"
+                    + "  return null;\n"
+                    + "}\n");
+            Path controlOutJs = root.resolve("control_out_js");
+            for (String backend : List.of("js", "jvm", "luajit")) {
+                Path out = backend.equals("js")
+                    ? controlOutJs : root.resolve("control_out_" + backend);
+                ByteArrayOutputStream err = new ByteArrayOutputStream();
+                PrintStream originalErr = System.err;
+                int exitCode;
+                try {
+                    System.setErr(new PrintStream(err, true,
+                        StandardCharsets.UTF_8));
+                    exitCode = Main.run(new String[]{"compile",
+                        controlEntry.toString(), "--backend", backend,
+                        "--output", out.toString()});
+                    System.err.flush();
+                } finally {
+                    System.setErr(originalErr);
+                }
+                String stderr = err.toString(StandardCharsets.UTF_8);
+                check(exitCode == 0,
+                    "the same-declaration constructed-literal control "
+                        + "compiles on " + backend + ": " + stderr);
+            }
+
+            Path artifact = controlOutJs.resolve("main.js");
+            check(Files.isRegularFile(artifact),
+                "the constructed-literal control's JS artifact exists: "
+                    + artifact);
+            if (Files.isRegularFile(artifact)) {
+                ProcessBuilder pb = new ProcessBuilder("node", "main.js");
+                pb.directory(controlOutJs.toFile());
+                pb.redirectErrorStream(true);
+                Process node = pb.start();
+                String output = new String(node.getInputStream().readAllBytes(),
+                    StandardCharsets.UTF_8);
+                int nodeExit = node.waitFor();
+                check(nodeExit == 0 && output.contains("CONSTRUCTED_OK"),
+                    "the control artifact executes the same-declaration "
+                        + "constructed-literal value assertion (exit "
+                        + nodeExit + "): " + output);
+            }
+        } catch (IOException e) {
+            fail("public constructed-literal provenance: I/O failure: "
+                + e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            fail("public constructed-literal provenance: interrupted: "
+                + e.getMessage());
+        } finally {
+            deleteRecursively(root);
+        }
     }
 
     /**

@@ -37,6 +37,24 @@ public final class TypeChecker {
     // -- Contextual expected type (for table reads and class construction) --
     private Type expectedType = null;
 
+    // -- The exact class declaration that supplies the current contextual
+    //    type. Set only where a binding or an annotated declaration is the
+    //    context's source: an object literal constructed under that context
+    //    is laid out by that declaration, never by an unrelated same-named
+    //    declaration the lexical scope happens to resolve (two same-named
+    //    declarations share one canonical identity and are
+    //    indistinguishable in Type.Class alone). --
+    private Symbol.ClassSymbol contextualClassDecl = null;
+
+    // -- Checked expression facts: the exact class declaration a
+    //    contextually constructed object literal was laid out by, keyed by
+    //    the literal node. The E3019 cross-declaration gate consumes it at
+    //    initialization and assignment-expression boundaries, so a value
+    //    that crosses two distinct same-named declarations is rejected
+    //    before any backend sees the duplicate layout. --
+    private final Map<ExpressionNode, Symbol.ClassSymbol> constructedClassDecls =
+        new IdentityHashMap<>();
+
     // -- Tracking variables assigned in try blocks --
     private final Set<String> varsAssignedInTry = new HashSet<>();
     private boolean insideTry = false;
@@ -504,9 +522,24 @@ public final class TypeChecker {
         }
 
         Type savedExpected = expectedType;
+        Symbol.ClassSymbol savedContextualClass = contextualClassDecl;
         expectedType = targetType;
+        // An annotated declaration supplies its own exact class
+        // declaration as the construction context: an initializer object
+        // literal is laid out by the declaration the annotation names, so
+        // the value's provenance is that declaration even when a
+        // same-named local binding would resolve under the literal's own
+        // lexical scope.
+        contextualClassDecl = null;
+        if (vd.typeAnnotation().isPresent()) {
+            Symbol declSym = currentScope.resolveLocal(vd.name());
+            if (declSym instanceof Symbol.VariableSymbol vs) {
+                contextualClassDecl = vs.declaredClass();
+            }
+        }
         Type exprType = checkExpression(vd.initializer());
         expectedType = savedExpected;
+        contextualClassDecl = savedContextualClass;
 
         // The initializer's class provenance is resolved while the
         // declaration is still pending, so a self reference names the
@@ -1727,16 +1760,32 @@ public final class TypeChecker {
     }
 
     private Type checkClassConstruction(ObjectLiteralExpr obj, Type.Class cls) {
-        Symbol sym = currentScope.resolve(cls.name());
-        // If not found locally, try identity-keyed cross-module
-        // resolution
-        if (!(sym instanceof Symbol.ClassSymbol)) {
-            sym = resolveClassSymbol(cls);
+        // The contextual declaration wins when it names this exact class
+        // (same canonical identity): the value is laid out for the
+        // declaration that supplied the context, not for a same-named
+        // declaration the lexical scope resolves instead.
+        Symbol sym;
+        Symbol.ClassSymbol contextual = contextualClassDecl;
+        if (contextual != null
+                && contextual.name().equals(cls.name())
+                && contextual.identity().equals(cls.identity())) {
+            sym = contextual;
+        } else {
+            sym = currentScope.resolve(cls.name());
+            // If not found locally, try identity-keyed cross-module
+            // resolution
+            if (!(sym instanceof Symbol.ClassSymbol)) {
+                sym = resolveClassSymbol(cls);
+            }
         }
         if (!(sym instanceof Symbol.ClassSymbol cs)) {
             error(DiagnosticCode.E3004, "Unknown class '" + cls.name() + "'", obj.span());
             return Type.Error.INSTANCE;
         }
+        // Checked expression fact: the exact declaration this literal was
+        // laid out by, consumed by the E3019 cross-declaration gate at
+        // initialization and assignment-expression boundaries.
+        constructedClassDecls.put(obj, cs);
 
         List<ClassField> classFields = cs.fields();
         Map<String, Property> provided = new HashMap<>();
@@ -1963,12 +2012,25 @@ public final class TypeChecker {
 
         // F3: Use the target type as contextual expected type for the value
         Type savedExpected = expectedType;
+        Symbol.ClassSymbol savedContextualClass = contextualClassDecl;
         if (declaredTarget != null && declaredTarget != Type.Error.INSTANCE
                 && !(declaredTarget instanceof Type.Table)) {
             expectedType = declaredTarget;
         }
+        // The target binding's exact class declaration is the construction
+        // context for a same-typed object literal: an assignment into
+        // `a: A` constructs the value as that A, never as an unrelated
+        // same-named declaration the lexical scope would resolve.
+        contextualClassDecl = null;
+        if (assign.target() instanceof IdentifierExpr targetId) {
+            Symbol targetSym = resolveVisibleBinding(targetId.name());
+            if (targetSym instanceof Symbol.VariableSymbol vs) {
+                contextualClassDecl = vs.declaredClass();
+            }
+        }
         Type valueType = checkExpression(assign.value());
         expectedType = savedExpected;
+        contextualClassDecl = savedContextualClass;
 
         if (valueType == Type.Error.INSTANCE || targetType == Type.Error.INSTANCE) {
             return Type.Error.INSTANCE;
@@ -2079,6 +2141,20 @@ public final class TypeChecker {
         // (ISSUE-0717 review).
         if (expr instanceof AssignmentExpr assign) {
             return declaredClassOf(assign.value());
+        }
+        // A contextually constructed object literal evaluates to an
+        // instance of the declaration that laid it out (the contextual
+        // declaration, or the declaration construction resolved): that
+        // declaration is the value's provenance exactly like a class-typed
+        // binding's, so the E3019 gate sees the crossing at
+        // `let b: A = (a = {})` and its nullable and assignment-boundary
+        // spellings instead of publishing an artifact with the wrong
+        // layout (ISSUE-0717 review).
+        if (expr instanceof ObjectLiteralExpr obj) {
+            Symbol.ClassSymbol constructed = constructedClassDecls.get(obj);
+            if (constructed != null) {
+                return constructed;
+            }
         }
         return null;
     }
