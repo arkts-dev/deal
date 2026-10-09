@@ -3110,10 +3110,15 @@ public final class SemanticOracle {
         /**
          * Applies one committed instance state to the receiver's live
          * storage: the declaration-order field states are replaced in
-         * place (every alias of the instance observes the commit) and the
-         * executor-view cache is rebound to the updated instance, so the
-         * next delegation converts the committed state — never a stale
-         * pre-commit view.
+         * place (every alias of the instance observes the commit). The
+         * receiver's identity-keyed live view stays cached: it reads the
+         * committed field states through the backing class value on every
+         * read, so every parent-held reference — a class field or a
+         * container element — observes the commit and every later commit
+         * to the same instance. Replacing the live view with the
+         * executor's snapshot would freeze the instance into any parent
+         * that snapshots its fields at a later commit, so the snapshot is
+         * never cached as the receiver's view.
          */
         private void applyInstanceState(Value.ClassValue receiver,
                                         ClassOpsExecutor.Value updated) {
@@ -3141,11 +3146,15 @@ public final class SemanticOracle {
                 };
                 receiver.replaceField(i, applied);
             }
-            // The conversion caches stay symmetric: the updated instance
-            // view is the receiver's view (a later delegation converts the
-            // committed state, and a boundary round-trip atomizes the same
-            // instance the receiver references — never a fresh copy).
-            executorViews.put(receiver, updated);
+            // The conversion caches stay symmetric in the identity they
+            // resolve: the commit's published instance view maps back to
+            // the receiver, so a boundary round-trip atomizes the same
+            // instance the receiver references — never a fresh copy. The
+            // receiver's live view (the identity-keyed cache entry) is
+            // deliberately not replaced by the executor's snapshot: the
+            // live view reads the committed field states, so a parent that
+            // snapshots this instance's fields later still observes every
+            // subsequent commit through the original alias.
             oracleOriginals.put(updated, receiver);
         }
 

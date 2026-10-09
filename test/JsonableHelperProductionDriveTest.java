@@ -2960,14 +2960,33 @@ public class JsonableHelperProductionDriveTest {
      * class view of the child reads the current committed field states, so
      * the parent view that embeds it never serializes the stale pre-commit
      * state. The alias function proves the same commit through two parents
-     * that hold the same child identity.
+     * that hold the same child identity. The intervening-commit function
+     * (Box also declares {@code y: int}) proves the later child commit is
+     * still observed after an unrelated parent-field commit: the parent's
+     * committed state must hold the child's live view identity, never a
+     * snapshot frozen when the parent wrote {@code y}.
      */
     private static void testNestedClassFieldViewSync() throws Exception {
         System.out.println("-- the committed nested-class view: a field write "
             + "through the parent serializes on all three consumers --");
-        String expected = dealStringLiteral("{\"child\":{\"x\":2}}");
+        String expected = dealStringLiteral("{\"child\":{\"x\":2},\"y\":0}");
         String source = "// @jsonable\nexport class Child {\n  x: int = 0;\n}\n\n"
-            + "// @jsonable\nexport class Box {\n  child: Child = {};\n}\n\n"
+            + "// @jsonable\nexport class Box {\n  child: Child = {};\n"
+            + "  y: int = 0;\n}\n\n"
+            + "export function test_nested_class_intervening_commit(): null {\n"
+            + "  let c: Child = { x: 1 };\n"
+            + "  let b: Box = { child: c };\n"
+            + "  c.x = 2;\n"
+            + "  b.y = 1;\n"
+            + "  c.x = 3;\n"
+            + "  let json: string = Box$toJson(b);\n"
+            + "  let expected: string = "
+            + dealStringLiteral("{\"child\":{\"x\":3},\"y\":1}") + ";\n"
+            + "  if (json !== expected) {\n"
+            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "  }\n"
+            + "  return null;\n"
+            + "}\n\n"
             + "export function test_nested_class_mutation(): null {\n"
             + "  let b: Box = { child: { x: 1 } };\n"
             + "  b.child.x = 2;\n"
@@ -3004,20 +3023,37 @@ public class JsonableHelperProductionDriveTest {
      * declared {@code Child[]} is observable through the parent's helper
      * call on the oracle, the LuaJIT artifact, and the JVM artifact alike —
      * the array's live view reads the one instance's current committed
-     * field states.
+     * field states. The intervening-commit function (Box also declares
+     * {@code y: int}) proves the later array-element commit is still
+     * observed after an unrelated parent-field commit.
      */
     private static void testArrayHeldClassViewSync() throws Exception {
         System.out.println("-- the committed array-held class view: a field write "
             + "through b.children[0].x serializes on all three consumers --");
         String source = "// @jsonable\nexport class Child {\n  x: int = 0;\n}\n\n"
-            + "// @jsonable\nexport class Box {\n  children: Child[] = [];\n}\n\n"
+            + "// @jsonable\nexport class Box {\n  children: Child[] = [];\n"
+            + "  y: int = 0;\n}\n\n"
+            + "export function test_array_held_intervening_commit(): null {\n"
+            + "  let c: Child = { x: 1 };\n"
+            + "  let b: Box = { children: [c] };\n"
+            + "  b.children[0].x = 2;\n"
+            + "  b.y = 1;\n"
+            + "  b.children[0].x = 3;\n"
+            + "  let json: string = Box$toJson(b);\n"
+            + "  let expected: string = "
+            + dealStringLiteral("{\"children\":[{\"x\":3}],\"y\":1}") + ";\n"
+            + "  if (json !== expected) {\n"
+            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "  }\n"
+            + "  return null;\n"
+            + "}\n\n"
             + "export function test_array_held_class_mutation(): null {\n"
             + "  let c: Child = { x: 1 };\n"
             + "  let b: Box = { children: [c] };\n"
             + "  b.children[0].x = 2;\n"
             + "  let json: string = Box$toJson(b);\n"
             + "  let expected: string = "
-            + dealStringLiteral("{\"children\":[{\"x\":2}]}") + ";\n"
+            + dealStringLiteral("{\"children\":[{\"x\":2}],\"y\":0}") + ";\n"
             + "  if (json !== expected) {\n"
             + "    throw { code: \"MISMATCH\", message: json };\n"
             + "  }\n"
