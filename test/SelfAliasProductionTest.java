@@ -475,6 +475,7 @@ public class SelfAliasProductionTest {
         Map<FunctionId, Integer> closureNews = new LinkedHashMap<>();
         Map<Long, SemanticOp> closureByResult = new LinkedHashMap<>();
         Map<FunctionId, OpId> returnBoundaries = new LinkedHashMap<>();
+        Map<FunctionId, Set<OpId>> declaringBodyInvocations = new LinkedHashMap<>();
         for (SemanticOp op : unit.ops()) {
             if (op.kind() == SemanticOpKind.CLOSURE_NEW
                     && op.payload() instanceof KindPayload.ClosureNewPayload closure) {
@@ -486,17 +487,25 @@ public class SelfAliasProductionTest {
             if (op.kind() == SemanticOpKind.RETURN
                     && op.payload() instanceof KindPayload.ReturnPayload returned) {
                 returnBoundaries.put(returned.function(), returned.returnBoundaryOpId());
+                declaringBodyInvocations
+                    .computeIfAbsent(returned.function(),
+                        ignored -> new java.util.LinkedHashSet<>())
+                    .add(returned.enclosingInvocationOpId());
                 check(returned.returnBoundaryOpId() != null, testCase.name()
                     + ": the RETURN of function " + returned.function()
                     + " names its return-boundary op");
             }
         }
 
-        // The self-alias invocation: a value-carried CALL(INDIRECT) (sync) or
-        // ASYNC_START(Indirect) (the awaited twin) whose callee value is the
-        // declaration's pre-allocated allocation identity and whose recorded
-        // return cell is that body's own return boundary.
+        // The carrier invocations of a declared body: a value-carried
+        // CALL(INDIRECT) (sync) or ASYNC_START(Indirect) (the awaited twin)
+        // whose callee value is the declaration's pre-allocated allocation
+        // identity and whose recorded return cell is that body's own return
+        // boundary. The declaring body's own self-alias invocation is the one
+        // whose op is the reserved invocation identity its RETURN ops name
+        // (the enclosing direct call is value-carried too now).
         List<SemanticOp> selfAliasInvocations = new ArrayList<>();
+        int declaringBodyCarrierInvocations = 0;
         for (SemanticOp op : unit.ops()) {
             KindPayload.CallCallee.Indirect indirect = null;
             OpId invocationReturnBoundary = null;
@@ -528,6 +537,10 @@ public class SelfAliasProductionTest {
                 continue;
             }
             selfAliasInvocations.add(op);
+            if (declaringBodyInvocations.getOrDefault(body.functionId(), Set.of())
+                    .contains(op.opId())) {
+                declaringBodyCarrierInvocations++;
+            }
             SemanticOp closure = closureByResult.get(indirect.callee().id());
             KindPayload.ClosureNewPayload closurePayload =
                 (KindPayload.ClosureNewPayload) closure.payload();
@@ -556,9 +569,10 @@ public class SelfAliasProductionTest {
                     + body.functionId() + " (exactly-once closure creation); got "
                     + closureNews.getOrDefault(body.functionId(), 0));
         }
-        check(selfAliasInvocations.size() == 1, testCase.name()
-            + ": exactly one value-carried self-alias invocation at the declaration's "
-            + "pre-allocated identity; got " + selfAliasInvocations.size());
+        check(declaringBodyCarrierInvocations >= 1, testCase.name()
+            + ": the declaring body's own alias invocation (its reserved call-site "
+            + "identity) is value-carried at the declaration's pre-allocated identity; "
+            + "the body's carrier invocations are " + selfAliasInvocations.size());
 
         // The single registration per pre-allocated identity: every
         // CLOSURE_NEW result identity of this unit resolves to exactly one

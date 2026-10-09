@@ -158,16 +158,23 @@ public class ProductionDispatchTest {
         }
         """;
 
-    /** The function-typed materialization (a later slice's construct). */
-    private static final String FUNCTION_VALUE_SOURCE = """
+    /**
+     * The unrealized construct seed: a function-typed {@code for} counter
+     * (the per-iteration carry load's function identity is outside the
+     * closed lowering coverage, B5), so the production compile still fails
+     * the module with the named E6005 {@code CONSTRUCT_UNLOWERED} before any
+     * emission. The forward function-typed materialization this battery
+     * previously pinned as a later slice's construct is production-covered
+     * now: a module-level declaration's execution binding registers at the
+     * hoist, so a forward alias resolves its body.
+     */
+    private static final String UNREALIZED_CONSTRUCT_SOURCE = """
         export function main(): null {
-          let f: (a: int) => int = one
-          let x: int = f(1)
+          let counter: (a: int) => int = function(a: int): int { return a; };
+          for (let f: (a: int) => int = counter; f(1) === 1; f = counter) {
+            break;
+          }
           return null
-        }
-
-        function one(x: int): int {
-          return x
         }
         """;
 
@@ -689,7 +696,7 @@ public class ProductionDispatchTest {
             Path out = project.resolve("out");
             write(project, "deal.json", DEAL_JSON_LUA);
 
-            write(project, "src/main.deal", FUNCTION_VALUE_SOURCE);
+            write(project, "src/main.deal", UNREALIZED_CONSTRUCT_SOURCE);
             // A previous artifact set in the live output root.
             write(out, "main.lua", "-- previous artifact\n");
             write(out, "deal/runtime.lua", "-- previous runtime\n");
@@ -697,7 +704,7 @@ public class ProductionDispatchTest {
             ProjectOutcome compile = productionCompile(project, "src/main.deal",
                 "out");
             check(compile.exitCode() != 0,
-                "the function-typed-materialization production compile fails "
+                "the function-typed for-counter production compile fails "
                     + "closed");
             check(compile.stderr().contains("E6005")
                     && compile.stderr().contains("CONSTRUCT_UNLOWERED"),
@@ -898,8 +905,8 @@ public class ProductionDispatchTest {
 
         checkBytesProductionCoverage();
         checkTimeNowMillisCoverage();
-        checkLaterSliceConstruct("function-typed materialization",
-            Map.of("src/main.deal", FUNCTION_VALUE_SOURCE),
+        checkLaterSliceConstruct("function-typed for-counter",
+            Map.of("src/main.deal", UNREALIZED_CONSTRUCT_SOURCE),
             "CONSTRUCT_UNLOWERED");
         checkBuiltinErrorConstruction();
 
@@ -1308,7 +1315,7 @@ public class ProductionDispatchTest {
         Path fail = Files.createTempDirectory("production-dispatch-diag-");
         try {
             write(fail, "deal.json", DEAL_JSON_LUA);
-            write(fail, "src/main.deal", FUNCTION_VALUE_SOURCE);
+            write(fail, "src/main.deal", UNREALIZED_CONSTRUCT_SOURCE);
             ArmCompile releaseFail = compileWithInvocation(fail,
                 "src/main.deal", productionInvocation());
             ArmCompile shadowFail = compileWithInvocation(fail,
