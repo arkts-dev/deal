@@ -4,8 +4,10 @@
 -- and admits the valid ones; the raw carrier decodes at scalar and array
 -- element positions (including nested and nullable element positions). The
 -- nullable nested-array export carries one explicit null element, which must
--- stay the language null, and the nested-tail export is rejected at its
--- later element, so its earlier elements must stay the raw host values.
+-- stay the language null, the shared-nested-array export returns the same
+-- inner array twice (one DEAL array observed through both aliases), and the
+-- nested-tail export is rejected at its later element, so its earlier
+-- elements must stay the raw host values.
 
 local rt = require("deal.runtime")
 
@@ -60,6 +62,15 @@ end
 -- array carrier) and the nested array's element must stay readable.
 function M.rawNullableArrayArray()
   return { rt.__NULL, { "ok" } }
+end
+
+-- Returns a declared string[][] whose two elements are the same inner host
+-- array: the projection maps the one raw host table to one DEAL array, so a
+-- DEAL identity comparison of the two elements is false and a mutation
+-- through either alias is observed through the other.
+function M.sharedNestedStringArray()
+  local shared = { "ok" }
+  return { shared, shared }
 end
 
 -- Returns a declared string[][] whose second element is not an array: the

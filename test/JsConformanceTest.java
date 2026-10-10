@@ -115,9 +115,11 @@ module.exports = {
 // the offending code point (the embedded surrogate included). The valid
 // exports exercise the admitted carriers at scalar and array element
 // positions (the raw carrier decodes to the same "ok" string), the
-// nullable nested-array element that must stay the language null, and
-// the rejected nested tail whose retained earlier elements must stay
-// untouched.
+// nullable nested-array element that must stay the language null, one
+// inner array returned at both positions of a declared string[][] (the
+// same DEAL array, so identity holds and a mutation is observed through
+// both aliases), and the rejected nested tail whose retained earlier
+// elements must stay untouched.
 module.exports = {
   badString: function () {
     return "a\\uD800b";
@@ -149,6 +151,11 @@ module.exports = {
 
   rawNullableArrayArray: function () {
     return [null, ["ok"]];
+  },
+
+  sharedNestedStringArray: function () {
+    var shared = ["ok"];
+    return [shared, shared];
   },
 
   badNestedTail: function () {

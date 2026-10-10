@@ -11,8 +11,11 @@
 // admitted carriers: the decoded raw UTF-8 byte carrier at a scalar
 // position, the decoded element results inside the production array
 // carriers (the element projection must land them back in the array so
-// ordinary DEAL reads observe them), and a nullable nested-array element
-// that must stay the language null. The nested-tail export returns a
+// ordinary DEAL reads observe them), a nullable nested-array element
+// that must stay the language null, and one inner array returned at both
+// positions of a declared string[][] (the same production array, so DEAL
+// identity holds and a mutation through either alias is observed through
+// the other). The nested-tail export returns a
 // declared string[][] whose later element is not an array: the return is
 // rejected, and the retained earlier slots must stay untouched (the
 // name-shifted accessor below is the probe's observation of the retained
@@ -73,6 +76,17 @@ final class HostBad_string {
     deal.codegen.jvm.JvmRuntime.Array outer =
         new deal.codegen.jvm.JvmRuntime.Array(2);
     outer.elements.add(null);
+    outer.elements.add(inner);
+    return outer;
+  }
+
+  public static Object sharedNestedStringArray() {
+    deal.codegen.jvm.JvmRuntime.Array inner =
+        new deal.codegen.jvm.JvmRuntime.Array(1);
+    inner.elements.add(new byte[] { 0x6F, 0x6B });
+    deal.codegen.jvm.JvmRuntime.Array outer =
+        new deal.codegen.jvm.JvmRuntime.Array(2);
+    outer.elements.add(inner);
     outer.elements.add(inner);
     return outer;
   }

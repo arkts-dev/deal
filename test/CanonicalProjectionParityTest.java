@@ -724,6 +724,24 @@ public class CanonicalProjectionParityTest {
                                     RuntimeDescriptor.String.INSTANCE, false)),
                                 RuntimeDescriptor.parseCanonicalText("?[string]"),
                                 false));
+                        // The same inner host array at both positions of the
+                        // declared string[][]: the one oracle array value is
+                        // the one DEAL array (reference identity), and its
+                        // element list is mutable like the oracle's own
+                        // arrays so a DEAL element write commits in place and
+                        // is observed through the sibling alias.
+                        case "sharedNestedStringArray" -> {
+                            SemanticOracle.Value inner =
+                                new SemanticOracle.Value.ArrayValue(
+                                    new java.util.ArrayList<>(List.of(
+                                        new SemanticOracle.Value.StrValue("ok"))),
+                                    RuntimeDescriptor.String.INSTANCE, false);
+                            yield new SyncOutcome.Returned(
+                                new SemanticOracle.Value.ArrayValue(
+                                    new java.util.ArrayList<>(List.of(inner, inner)),
+                                    RuntimeDescriptor.parseCanonicalText("[string]"),
+                                    false));
+                        }
                         // The rejected nested tail: element 2 is not the
                         // declared nested array, so the return fails the
                         // element arm after element 1 was checked.
@@ -1748,19 +1766,48 @@ public class CanonicalProjectionParityTest {
         "deal.codegen.jvm.JvmRuntime$Array|[B|java.lang.String|alias";
 
     /**
-     * The host nested-array projection (ISSUE-0760 cycle 2): a nullable
-     * nested-array element stays the language null while its non-null
-     * sibling decodes (all three consumers), and a later element's
-     * rejection leaves every retained slot and the array alias of the
-     * failed return untouched.
+     * The repeated inner-array identity control (ISSUE-0760 cycle 3): the
+     * declared {@code string[][]} return carries the same host inner array
+     * at both positions, so the projection yields one DEAL array whose
+     * element the entry body mutates through one alias and reads through
+     * the other. A per-occurrence projection (two distinct carriers) fails
+     * the identity comparison or the shared-mutation read.
+     */
+    private static final String HOST_CARRIER_SHARED_ARRAY_DRIVER = """
+        import * as host from "host/bad_string"
+
+        export function main(): null {
+          let xs: string[][] = host.sharedNestedStringArray()
+          if (xs[0] !== xs[1]) {
+            throw { code: "PROBE_ALIAS", message: "the same host inner array became two DEAL arrays" }
+          }
+          xs[0][0] = "changed"
+          let s: string = xs[1][0]
+          if (s !== "changed") {
+            throw { code: "PROBE_ALIAS", message: "the shared host inner array did not observe the mutation through both aliases" }
+          }
+          return null
+        }
+        """;
+
+    /**
+     * The host nested-array projection (ISSUE-0760 cycles 2 and 3): a
+     * nullable nested-array element stays the language null while its
+     * non-null sibling decodes (all three consumers), a repeated inner
+     * array stays one DEAL array observed through both aliases, and a
+     * later element's rejection leaves every retained slot and the array
+     * alias of the failed return untouched.
      */
     private static void testHostNestedArrayProjection() throws Exception {
         System.out.println("-- the host nested-array projection: the nullable "
-            + "element stays null and the rejected nested tail mutates nothing "
-            + "--");
+            + "element stays null, the repeated inner array keeps its identity, "
+            + "and the rejected nested tail mutates nothing --");
         safely("the nullable nested-array element control", () ->
             driveHostCarrierSuccess("the nullable nested-array element control",
                 HOST_CARRIER_NULLABLE_ARRAY_DRIVER));
+        safely("the repeated host inner array", () ->
+            driveHostCarrierSuccess("the repeated host inner array",
+                HOST_CARRIER_SHARED_ARRAY_DRIVER));
         safely("the rejected nested tail",
             CanonicalProjectionParityTest::driveHostNestedTail);
     }
