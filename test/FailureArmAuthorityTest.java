@@ -128,6 +128,7 @@ public class FailureArmAuthorityTest {
         testBoundsAndBytesArms();
         testDeclaredFieldShapeNegatives();
         testTypedBoundaryClassSpellingNegatives();
+        testFieldParameterBindingNegatives();
         testForbiddenRenderScopesAndInnerReasons();
         testDescriptorAndClassAtomVocabularyDepth();
         testNullableInnerInvariant();
@@ -2449,6 +2450,190 @@ public class FailureArmAuthorityTest {
             "the Lua arm renderer fails closed on the empty class: prefix");
         checkEq("atom-control|true|@/Error", rows.get(3),
             "the Lua arm renderer keeps the carried canonical atom (the control)");
+    }
+
+    // =========================================================================
+    // 11f. The field/parameter binding fails closed (W1's same-token rule)
+    // =========================================================================
+
+    /**
+     * W1's same-token rule (the declared parameter-source contract): every
+     * message parameter whose declared source carries a tuple field's own
+     * value must render the identical token as that field. A
+     * closed-but-contradictory pair — two different closed tokens, one in
+     * the message parameter and one in the field — is a fail-closed
+     * producer defect on every tuple-producing renderer: the registry's
+     * arm render, the JVM arm render (routed through the registry), and the
+     * serialized Lua arm renderer. The matching pairs stay green as the
+     * controls, and the independent parameter data (the walk's literal
+     * {@code fieldPath}) stays untouched.
+     */
+    static void testFieldParameterBindingNegatives() throws Exception {
+        System.out.println("-- the declared field/parameter binding fails closed --");
+        // The walk arm's {actual} parameter beside its actual field: the
+        // exact closed-but-contradictory pair of the acceptance review.
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.JSON_TO_WALK,
+            Map.of("fieldPath", "data.k", "actual", "function"), null, "number", null),
+            "the walk arm's contradictory actual parameter and field (function vs "
+                + "number) fail closed");
+        // The std/json rejection arm's {actual} parameter beside its field.
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.JSON_STRINGIFY_UNSUPPORTED, Map.of("actual", "function"),
+            "string, number, boolean, or table", "bytes", null),
+            "the std/json arm's contradictory actual parameter and field (function "
+                + "vs bytes) fail closed");
+        // The identity arm's two operands.
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.CLASS_IDENTITY,
+            Map.of("expected", "@corpus/a/A", "actual", "@corpus/b/B"), "@corpus/c/C",
+            "@corpus/b/B", null),
+            "the identity arm's contradictory expected operand fails closed");
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.CLASS_IDENTITY,
+            Map.of("expected", "@corpus/a/A", "actual", "@corpus/b/B"), "@corpus/a/A",
+            "@corpus/c/C", null),
+            "the identity arm's contradictory actual operand fails closed");
+        // The signature arm's two operands.
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.FUNCTION_SIGNATURE_MISMATCH,
+            Map.of("expected", "(int)->int", "actual", "(int)->string"),
+            "(int)->number", "(int)->string", null),
+            "the signature arm's contradictory expected operand fails closed");
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.FUNCTION_SIGNATURE_MISMATCH,
+            Map.of("expected", "(int)->int", "actual", "(int)->string"),
+            "(int)->int", "(int)->number", null),
+            "the signature arm's contradictory actual operand fails closed");
+        // The remaining bound families run through the same check: the
+        // completion refinement, the async shape, and the no-value host
+        // return.
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.ASYNC_COMPLETION_REFINEMENT,
+            Map.of("expected", "int", "actual", "number"), "int", "string", null),
+            "the completion refinement's contradictory actual fails closed");
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.ASYNC_SHAPE,
+            Map.of("actual", "number"), "async operation", "string", null),
+            "the async-shape arm's contradictory actual fails closed");
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.HOST_SYNC_RETURN_NOTHING, Map.of("expected", "int"),
+            "number", "nothing", null),
+            "the no-value host return's contradictory expected fails closed");
+        // The independent parameter data stays untouched: the walk's literal
+        // fieldPath (even a spelling that names a placeholder) never binds
+        // to the actual field.
+        checkEq("value at {actual} is not JSON serializable: function",
+            FailureContractRegistry.render(FailureArmId.JSON_TO_WALK,
+                Map.of("fieldPath", "{actual}", "actual", "function"), null,
+                "function", null).message(),
+            "the walk arm's fieldPath parameter stays independent of the bound "
+                + "actual (the control)");
+        // The matching pairs render on the registry (the valid controls).
+        checkEq("value at data.k is not JSON serializable: function",
+            FailureContractRegistry.render(FailureArmId.JSON_TO_WALK,
+                Map.of("fieldPath", "data.k", "actual", "function"), null,
+                "function", null).message(),
+            "the walk arm's matching actual pair renders (the control)");
+        checkEq("unsupported type for JSON encoding: bytes",
+            FailureContractRegistry.render(FailureArmId.JSON_STRINGIFY_UNSUPPORTED,
+                Map.of("actual", "bytes"), "string, number, boolean, or table",
+                "bytes", null).message(),
+            "the std/json arm's matching actual pair renders (the control)");
+        checkEq("expected instance of @corpus/a/A, got @corpus/b/B",
+            FailureContractRegistry.render(FailureArmId.CLASS_IDENTITY,
+                Map.of("expected", "@corpus/a/A", "actual", "@corpus/b/B"),
+                "@corpus/a/A", "@corpus/b/B", null).message(),
+            "the identity arm's matching operands render (the control)");
+        checkEq("function signature mismatch: expected (int)->int, got (int)->string",
+            FailureContractRegistry.render(FailureArmId.FUNCTION_SIGNATURE_MISMATCH,
+                Map.of("expected", "(int)->int", "actual", "(int)->string"),
+                "(int)->int", "(int)->string", null).message(),
+            "the signature arm's matching operands render (the control)");
+        // The JVM arm render (routed through the registry's own renderer).
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
+            Map.of("fieldPath", "data.k", "actual", "function"), WALK_SPAN, null,
+            "number"),
+            "the JVM arm render fails closed on the walk arm's contradictory actual");
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(
+            FailureArmId.JSON_STRINGIFY_UNSUPPORTED, Map.of("actual", "function"),
+            WALK_SPAN, "string, number, boolean, or table", "bytes"),
+            "the JVM arm render fails closed on the std/json arm's contradictory "
+                + "actual");
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.CLASS_IDENTITY,
+            Map.of("expected", "@corpus/a/A", "actual", "@corpus/b/B"), WALK_SPAN,
+            "@corpus/c/C", "@corpus/b/B"),
+            "the JVM arm render fails closed on the identity arm's contradictory "
+                + "expected operand");
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(
+            FailureArmId.FUNCTION_SIGNATURE_MISMATCH,
+            Map.of("expected", "(int)->int", "actual", "(int)->string"), WALK_SPAN,
+            "(int)->int", "(int)->number"),
+            "the JVM arm render fails closed on the signature arm's contradictory "
+                + "actual operand");
+        // The JVM matching controls.
+        checkEq("function", deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
+                Map.of("fieldPath", "data.k", "actual", "function"), WALK_SPAN, null,
+                "function").actual,
+            "the JVM arm render keeps the matching walk pair (the control)");
+        checkEq("expected instance of @corpus/a/A, got @corpus/b/B",
+            deal.codegen.jvm.JvmRuntime.arm(FailureArmId.CLASS_IDENTITY,
+                Map.of("expected", "@corpus/a/A", "actual", "@corpus/b/B"), WALK_SPAN,
+                "@corpus/a/A", "@corpus/b/B").msg,
+            "the JVM arm render keeps the matching identity pair (the control)");
+        // The serialized Lua arm renderer, under real luajit: the six
+        // contradictory pairs fail closed and the matching pairs render.
+        List<String> rows = runPreludeProbe("""
+            local ok, value = pcall(__arm, "JSON_TO_WALK",
+              {fieldPath = "data.k", actual = "function"}, "-", nil, "number")
+            print("walk-actual|" .. tostring(ok))
+            ok = pcall(__arm, "JSON_STRINGIFY_UNSUPPORTED", {actual = "function"},
+              "-", "string, number, boolean, or table", "bytes")
+            print("stdjson-actual|" .. tostring(ok))
+            ok = pcall(__arm, "CLASS_IDENTITY",
+              {expected = "@corpus/a/A", actual = "@corpus/b/B"}, "-", "@corpus/c/C",
+              "@corpus/b/B")
+            print("identity-expected|" .. tostring(ok))
+            ok = pcall(__arm, "CLASS_IDENTITY",
+              {expected = "@corpus/a/A", actual = "@corpus/b/B"}, "-", "@corpus/a/A",
+              "@corpus/c/C")
+            print("identity-actual|" .. tostring(ok))
+            ok = pcall(__arm, "FUNCTION_SIGNATURE_MISMATCH",
+              {expected = "(int)->int", actual = "(int)->string"}, "-",
+              "(int)->number", "(int)->string")
+            print("signature-expected|" .. tostring(ok))
+            ok = pcall(__arm, "FUNCTION_SIGNATURE_MISMATCH",
+              {expected = "(int)->int", actual = "(int)->string"}, "-",
+              "(int)->int", "(int)->number")
+            print("signature-actual|" .. tostring(ok))
+            value = __arm("JSON_TO_WALK",
+              {fieldPath = "data.k", actual = "function"}, "-", nil, "function")
+            print("walk-control|" .. value.code .. "|" .. value.a .. "|" .. value.m)
+            value = __arm("FUNCTION_SIGNATURE_MISMATCH",
+              {expected = "(int)->int", actual = "(int)->string"}, "-",
+              "(int)->int", "(int)->string")
+            print("signature-control|" .. value.code .. "|" .. value.m)
+            """, "field-binding-probe", 8);
+        checkEq("walk-actual|false", rows.get(0),
+            "the Lua arm renderer fails closed on the walk arm's contradictory "
+                + "actual");
+        checkEq("stdjson-actual|false", rows.get(1),
+            "the Lua arm renderer fails closed on the std/json arm's contradictory "
+                + "actual");
+        checkEq("identity-expected|false", rows.get(2),
+            "the Lua arm renderer fails closed on the identity arm's contradictory "
+                + "expected operand");
+        checkEq("identity-actual|false", rows.get(3),
+            "the Lua arm renderer fails closed on the identity arm's contradictory "
+                + "actual operand");
+        checkEq("signature-expected|false", rows.get(4),
+            "the Lua arm renderer fails closed on the signature arm's contradictory "
+                + "expected operand");
+        checkEq("signature-actual|false", rows.get(5),
+            "the Lua arm renderer fails closed on the signature arm's contradictory "
+                + "actual operand");
+        checkEq("walk-control|E8001|function|value at data.k is not JSON serializable: "
+                + "function", rows.get(6),
+            "the Lua arm renderer keeps the matching walk pair (the control)");
+        checkEq("signature-control|E8010|function signature mismatch: expected "
+                + "(int)->int, got (int)->string", rows.get(7),
+            "the Lua arm renderer keeps the matching signature pair (the control)");
     }
 
     // =========================================================================

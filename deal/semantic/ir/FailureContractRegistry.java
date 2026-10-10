@@ -914,10 +914,13 @@ public final class FailureContractRegistry {
 
     /**
      * Enforces the arm's declared expected/actual field contract: presence
-     * exactly when the arm declares the field, and the closed shape of the
-     * arm's declared token source or projection. A caller-supplied token the
-     * arm's declaration does not produce is a producer defect — the renderer
-     * never publishes a fabricated field.
+     * exactly when the arm declares the field, the closed shape of the
+     * arm's declared token source or projection, and the declared
+     * parameter-source binding (a message parameter that carries a field's
+     * own value must equal that field). A caller-supplied token the arm's
+     * declaration does not produce, or a closed-but-contradictory
+     * parameter/field pair, is a producer defect — the renderer never
+     * publishes a fabricated or contradictory field.
      */
     private static void checkArmFields(FailureArm arm, Map<String, String> parameters,
                                        String expected, String actual) {
@@ -936,6 +939,58 @@ public final class FailureContractRegistry {
         }
         if (actual != null) {
             checkActualShape(arm, actual);
+        }
+        checkFieldParameterBinding(arm, parameters, expected, actual);
+    }
+
+    /**
+     * Enforces the declared parameter-source binding (the {@code @jsonable}
+     * walk arm's W1 same-token rule): a parameter whose declared source
+     * carries a tuple field's own value — the expected-field sources
+     * ({@code CELL_DESCRIPTOR}, {@code ELEMENT_DESCRIPTOR},
+     * {@code DECLARED_SIGNATURE}, {@code CLASS_ATOM}) and the actual-field
+     * sources ({@code TYPED_BOUNDARY_ACTUAL}, {@code CARRIER_KIND_ACTUAL},
+     * {@code CARRIED_CLASS_ATOM}, {@code CARRIED_SIGNATURE}) — must equal
+     * that field's value. A render that supplies a closed-but-contradictory
+     * pair (two different tokens, one in the message parameter and one in
+     * the field) is a fail-closed producer defect: the parameter and its
+     * corresponding field render the identical value, never a message that
+     * disagrees with its own tuple. Every other parameter source (the kind
+     * text, the host inner reason, the literal index/name/module/path data)
+     * is independent data and stays untouched.
+     */
+    private static void checkFieldParameterBinding(FailureArm arm,
+                                                   Map<String, String> parameters,
+                                                   String expected, String actual) {
+        for (String parameter : arm.parameters()) {
+            FailureArm.ParameterSource source = arm.parameterSources().get(parameter);
+            String field;
+            String fieldName;
+            switch (source) {
+                case CELL_DESCRIPTOR, ELEMENT_DESCRIPTOR, DECLARED_SIGNATURE,
+                        CLASS_ATOM -> {
+                    field = expected;
+                    fieldName = "expected";
+                }
+                case CARRIED_SIGNATURE, CARRIED_CLASS_ATOM, TYPED_BOUNDARY_ACTUAL,
+                        CARRIER_KIND_ACTUAL -> {
+                    field = actual;
+                    fieldName = "actual";
+                }
+                default -> {
+                    continue;
+                }
+            }
+            String value = parameters.get(parameter);
+            if (!Objects.equals(value, field)) {
+                throw new BoundaryExecutor.Defect("arm " + arm.id()
+                    + " declares its parameter {" + parameter + "} with the "
+                    + fieldName + " field's own source (" + source
+                    + "), so the message parameter and the " + fieldName
+                    + " field render the identical value; the render supplied \""
+                    + value + "\" and \"" + field + "\" (a contradictory tuple is "
+                    + "a producer defect)");
+            }
         }
     }
 
