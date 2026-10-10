@@ -9,6 +9,7 @@ import deal.semantic.DescriptorService;
 import deal.semantic.HostDeclarationSurface;
 import deal.semantic.StdlibFunctionCatalog;
 import deal.semantic.ir.AdaptSourceRef;
+import deal.semantic.ir.AsyncLinkKind;
 import deal.semantic.ir.AsyncTokenId;
 import deal.semantic.ir.AsyncTokenOwner;
 import deal.semantic.ir.BindingCellKind;
@@ -5789,23 +5790,39 @@ public final class LuaSemanticEmitter {
             if (projectSession) {
                 resolveExternalAsyncEntry(op, link);
             }
-            out.append("__asyncEntries[")
+            // The entry returns this activation's own task instance and the
+            // awaiting token binds it, so a re-entrant activation resolves
+            // its own completion (never the nested activation's).
+            out.append("__entryBind(").append(token.tokenId()).append(", ")
+                .append("__asyncEntries[")
                 .append(luaString(link.calleeModuleId().path() + "#"
                     + link.exportName())).append("](")
                 .append(luaString(opKey(op.opId()))).append(", false, unpack(S.__sa")
                 .append(op.opId().id()).append(", 1, #S.__sa")
-                .append(op.opId().id()).append("))\n");
+                .append(op.opId().id()).append(")))\n");
         }
 
         private void emitAwait(SemanticOp op) {
             KindPayload.AwaitPayload payload = (KindPayload.AwaitPayload) op.payload();
             long canonicalId = canonicalReferent(payload.token());
+            boolean externalLink = payload.token() instanceof AsyncTokenId.Alias alias
+                && alias.linkKind() == AsyncLinkKind.EXTERNAL_LINK;
             SemanticOp boundary = opsById.get(payload.completionBoundaryOpId());
             KindPayload.BoundaryPayload boundaryPayload =
                 (KindPayload.BoundaryPayload) boundary.payload();
             emitStart(op);
             out.append("__asyncDrain()\n");
-            out.append("__tA = __tasks[").append(canonicalId).append("]\n");
+            // The external activation takes its own task instance back
+            // from the LIFO slot after the drain: every nested activation
+            // pushed and took its own instance inside the drain, so the
+            // slot's top is this activation's completion (the emitted
+            // expression needs no local — a goto must never jump into a
+            // local's scope).
+            out.append("__tA = __tasks[")
+                .append(externalLink
+                    ? "__entryTake(" + payload.token().tokenId() + ")"
+                    : "__entryTakeOr(" + canonicalId + ")")
+                .append("]\n");
             out.append("if __tA == nil then\n");
             out.append("  error(\"AWAIT consumes an unbound token ")
                 .append(payload.token()).append(" (producer defect)\", 0)\n");
@@ -5923,7 +5940,11 @@ public final class LuaSemanticEmitter {
                     .append(", ").append(luaString(op.contract().canonicalDigest()))
                     .append(", __parentKey, {}, nil, nil)\n");
             }
-            out.append("  __asyncStartTask(").append(op.opId().id())
+            // Every activation runs its own task instance: the
+            // declaration's static entry token is never a replaceable task
+            // slot, so a re-entrant activation keeps the starter's task.
+            out.append("  local __tk = __entryTaskInstance()\n");
+            out.append("  __asyncStartTask(__tk")
                 .append(", \"DEAL_BODY_TASK\", coroutine.create(function()\n");
             // The body task runs at the caller's AWAIT drain (or at the
             // entry's own drive below), so it establishes the callee
@@ -5952,7 +5973,7 @@ public final class LuaSemanticEmitter {
             }
             out.append("  if __drive then\n");
             out.append("    __asyncDrain()\n");
-            out.append("    local __tE = __tasks[").append(op.opId().id()).append("]\n");
+            out.append("    local __tE = __tasks[__tk]\n");
             // The caller context is restored before the entry returns or
             // raises: the drive's own failure is the caller's to observe.
             emitModulePop();
@@ -5960,6 +5981,8 @@ public final class LuaSemanticEmitter {
             out.append("    return __tE.value\n");
             out.append("  end\n");
             emitModulePop();
+            // The link caller receives this activation's own task instance.
+            out.append("  return __tk\n");
             out.append("end\n");
         }
 
@@ -9834,6 +9857,56 @@ local function __asyncStartTask(tokenId, owner, co, args)
                       status = 0, value = nil, err = nil, label = nil}
   table.insert(__ready, tokenId)
   return tokenId
+end
+-- The per-activation task instances of the external async linkage:
+-- every link invocation starts its own task record, so a re-entrant
+-- activation (a recursive export alias or a direct await of an exported
+-- declaration) never replaces the live task of its starter. The caller
+-- binds the fresh instance to its awaiting token and the AWAIT takes it
+-- back; the binding is a LIFO slot per awaiting token, because the
+-- deterministic FIFO drain completes every nested activation before its
+-- starter's AWAIT reads the slot. The four helpers are chunk-global
+-- like __tasks/__ready (LuaJIT admits 200 locals in one function and
+-- the emitted module-init walk spends nearly the whole budget), so the
+-- fixed helper set never takes a chunk-level local.
+__entryTasks = __entryTasks or {}
+__entrySeq = __entrySeq or 0
+__entryTaskInstance = function()
+  __entrySeq = __entrySeq - 1
+  return __entrySeq
+end
+__entryBind = function(tokenId, instanceId)
+  local slot = __entryTasks[tokenId]
+  if slot == nil then
+    slot = {}
+    __entryTasks[tokenId] = slot
+  end
+  slot[#slot + 1] = instanceId
+  return instanceId
+end
+__entryTake = function(tokenId)
+  local slot = __entryTasks[tokenId]
+  if slot == nil or #slot == 0 then
+    error("AWAIT consumes an unbound external token " .. tostring(tokenId)
+      .. " (producer defect)", 0)
+  end
+  local instanceId = slot[#slot]
+  slot[#slot] = nil
+  return instanceId
+end
+-- The adapter-over-async resolution: an ADAPTER_INNER token's canonical
+-- referent is the nested source token, which is activation-bound exactly
+-- when the nested source is an external entry; a source that owns no
+-- per-activation instance (a DEAL body, host operation, or intrinsic)
+-- keeps its static task key.
+__entryTakeOr = function(tokenId)
+  local slot = __entryTasks[tokenId]
+  if slot == nil or #slot == 0 then
+    return tokenId
+  end
+  local instanceId = slot[#slot]
+  slot[#slot] = nil
+  return instanceId
 end
 -- One async host operation record: a production operation carries the
 -- operation handle the loaded declared async export returned (its

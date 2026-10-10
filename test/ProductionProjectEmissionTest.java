@@ -316,15 +316,26 @@ public class ProductionProjectEmissionTest {
         }
         """;
 
+    /**
+     * The still-fail-closed source: an arity-extended adapter call whose
+     * source is a non-identifier expression — the call-result
+     * REEVALUATE_THUNK source (the function-typed-value child's ISSUE-0531
+     * residue) — so the production lowering fails the module with the named
+     * E6005 CONSTRUCT_UNLOWERED rule before any emission. The forward
+     * binding-reference adapter source this fixture previously named is
+     * production-covered now: a module-level declaration's execution
+     * binding registers at the hoist, so the adapter's single proved
+     * {@code BINDING_LOAD} resolves a statically fixed source identity.
+     */
     private static final String ADAPTER_SOURCE_APP_SOURCE = """
         export function main(): null {
-          let f: (a: int, b: int) => int = one;
+          let f: (a: int, b: int) => int = make();
           f(1, 2)
           return null
         }
 
-        function one(x: int): int {
-          return x
+        function make(): (a: int) => int {
+          return function(a: int): int { return a; }
         }
         """;
 

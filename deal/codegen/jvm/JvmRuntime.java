@@ -1418,6 +1418,64 @@ public final class JvmRuntime {
         PENDING.add(task);
     }
 
+    // =========================================================================
+    // The per-activation external async entry instances
+    // =========================================================================
+
+    /**
+     * The per-activation task instances of the external async linkage,
+     * keyed by the awaiting (caller-side) alias token: every entry
+     * activation runs its own task record, so a re-entrant activation (a
+     * recursive export alias or a direct await of an exported declaration)
+     * never replaces the live task of its starter. The slots are LIFO:
+     * every nested activation completes under the drain before its
+     * starter's AWAIT takes its own instance back.
+     */
+    static final Map<Long, ArrayDeque<Long>> ENTRY_INSTANCES = new HashMap<>();
+
+    /**
+     * The per-activation entry task instance sequence (negative: an
+     * instance id never collides with an allocated token identity).
+     */
+    private static long entryTaskSequence = 0;
+
+    /** One fresh task instance for one external async entry activation. */
+    public static long newEntryTaskInstance() {
+        return --entryTaskSequence;
+    }
+
+    /** Binds one activation's instance to the awaiting token (LIFO slot). */
+    public static long bindEntryTask(long tokenId, long instanceId) {
+        ENTRY_INSTANCES.computeIfAbsent(tokenId, key -> new ArrayDeque<>())
+            .push(instanceId);
+        return instanceId;
+    }
+
+    /** The awaiting activation's own entry task instance (fail closed). */
+    public static long takeEntryTask(long tokenId) {
+        ArrayDeque<Long> slot = ENTRY_INSTANCES.get(tokenId);
+        if (slot == null || slot.isEmpty()) {
+            throw new IllegalStateException("AWAIT consumes an unbound external "
+                + "token " + tokenId + " (producer defect)");
+        }
+        return slot.pop();
+    }
+
+    /**
+     * The adapter-over-async resolution: an ADAPTER_INNER token's canonical
+     * referent is the nested source token, which is activation-bound
+     * exactly when the nested source is an external entry; a source that
+     * owns no per-activation instance (a DEAL body, host operation, or
+     * intrinsic) keeps its static task key.
+     */
+    public static long takeEntryTaskOr(long tokenId) {
+        ArrayDeque<Long> slot = ENTRY_INSTANCES.get(tokenId);
+        if (slot == null || slot.isEmpty()) {
+            return tokenId;
+        }
+        return slot.pop();
+    }
+
     /** Registers one async host operation: its future completes through the host seam. */
     public static void startHostTask(long tokenId, String label) {
         AsyncTask task = new AsyncTask(tokenId, "HOST_OPERATION",
@@ -1514,6 +1572,27 @@ public final class JvmRuntime {
      */
     public static Object awaitTask(long tokenId, String awaitOrigin) {
         drainTasks();
+        return completeAwait(tokenId, awaitOrigin);
+    }
+
+    /**
+     * The external async linkage's AWAIT: the deterministic FIFO drain
+     * first, then the awaiting activation's own task instance. The
+     * instance is resolved after the drain because an adapter-over-async
+     * source starts its nested entry inside the adapter task (during the
+     * drain); the nested activation pushes and takes its own instance, so
+     * the starter's slot top is its own completion.
+     */
+    public static Object awaitEntryTask(long tokenId, boolean externalLink,
+                                        String awaitOrigin) {
+        drainTasks();
+        long resolved = externalLink ? takeEntryTask(tokenId)
+            : takeEntryTaskOr(tokenId);
+        return completeAwait(resolved, awaitOrigin);
+    }
+
+    /** The post-drain completion of one awaited task or host operation. */
+    private static Object completeAwait(long tokenId, String awaitOrigin) {
         AsyncTask task = TASKS.get(tokenId);
         if (task == null) {
             throw new IllegalStateException("AWAIT consumes an unbound token " + tokenId
