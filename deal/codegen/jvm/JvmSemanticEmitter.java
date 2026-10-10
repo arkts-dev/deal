@@ -6711,6 +6711,16 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent + 2)).append("JvmRuntime.pushFrame(")
                 .append(javaString(String.valueOf(payload.function().id())))
                 .append(");\n");
+            // The entry task's body execution is the async counterpart of
+            // the synchronous external-entry invocation: a recursive await
+            // of the same entry runs the nested activation inline (the
+            // serial drain) while the enclosing invocation is still live,
+            // so the body's private slots are saved before the body runs
+            // and restored on the success and failure paths. The enclosing
+            // invocation may itself have been started by a body task or an
+            // entry, so the save/restore is unconditional.
+            StateSlot savedState = emitAsyncInvocationStateSave(
+                payload.function(), op.opId(), indent + 2);
             out.append(indent(indent + 2)).append("try {\n");
             out.append(indent(indent + 3)).append("return ")
                 .append(fnFactory(payload.function())).append("(").append(caps)
@@ -6719,6 +6729,8 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent + 3)).append("JvmRuntime.popFrame();\n");
             out.append(indent(indent + 3)).append("MODULE = __prevModule;\n");
             out.append(indent(indent + 3)).append("JvmRuntime.setModule(__prevM);\n");
+            emitAsyncInvocationStateRestore(payload.function(), savedState,
+                indent + 3);
             out.append(indent(indent + 2)).append("}\n");
             out.append(indent(indent + 1)).append("});\n");
             if (trace) {

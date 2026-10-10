@@ -646,6 +646,48 @@ public class DeclaredBodyCarrierProductionTest {
         List.of("declared-body-direct-recursive-ok"), "drive", "int:1", 0, 2, true);
 
     /**
+     * The recursive activation that reads its enclosing parameter and local
+     * after the nested await: every activation of an exported async
+     * declaration shares the emitted class's per-body static slots, so a
+     * nested activation that leaves its own values in place corrupts the
+     * enclosing activation's reads — {@code f(3)} returned the deepest
+     * activation's parameter ({@code int:0}) instead of the declared
+     * {@code int:12}. The entry task's body execution must save the
+     * enclosing activation's private state and restore it on every path,
+     * exactly like the synchronous external call and the lowered-body task
+     * arms.
+     */
+    private static final Case EXPORTED_RECURSIVE_ENCLOSING_STATE = new Case(
+        "exported-recursive-enclosing-state",
+        """
+        import * as console from "std/console"
+
+        export async function drive(): int {
+          let v: int = await f(3);
+          if (v === 12) {
+            console.log("declared-body-enclosing-state-ok");
+          } else {
+            console.log("declared-body-enclosing-state-bad");
+          }
+          return v;
+        }
+
+        export function main(): null {
+          return null;
+        }
+
+        export async function f(n: int): int {
+          let step: int = n;
+          if (n <= 0) {
+            return 0;
+          }
+          let nested: int = await f(n - 1);
+          return nested + n + step;
+        }
+        """,
+        List.of("declared-body-enclosing-state-ok"), "drive", "int:12", 0, 2, true);
+
+    /**
      * The forwarded exported alias over two recursive activations: the
      * nested chain re-enters the same declared call site twice, so the
      * per-activation task instances must nest (the LIFO discipline of the
@@ -728,7 +770,8 @@ public class DeclaredBodyCarrierProductionTest {
         TWO_ESCAPED_INSTANCES_ASYNC, FORWARD_ALIAS, FORWARD_ALIAS_ASYNC,
         FORWARD_ALIAS_EXPORTED, FORWARD_ALIAS_EXPORTED_ASYNC,
         EXPORTED_DIRECT_AWAIT_ASYNC, FORWARD_ALIAS_EXPORTED_ASYNC_RECURSIVE,
-        EXPORTED_DIRECT_AWAIT_ASYNC_RECURSIVE, FORWARD_ALIAS_EXPORTED_ASYNC_DEEP,
+        EXPORTED_DIRECT_AWAIT_ASYNC_RECURSIVE, EXPORTED_RECURSIVE_ENCLOSING_STATE,
+        FORWARD_ALIAS_EXPORTED_ASYNC_DEEP,
         ADAPTER_OVER_ASYNC_EXTERNAL);
 
     // =========================================================================
