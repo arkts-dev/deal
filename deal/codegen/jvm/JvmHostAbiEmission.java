@@ -1275,9 +1275,25 @@ final class JvmHostAbiEmission {
     private String elementExtract(Type element, String expression) {
         if (element instanceof Type.Nullable nullable) {
             Type inner = nullable.inner();
-            return "(" + expression + " == null ? null : "
-                + boxedOf(inner, "((java.lang.Number) " + expression + ")", expression)
-                + ")";
+            // The slot expression may itself be a conditional (the
+            // missing-slot read) and its static type is the boxed value
+            // model, so it is parenthesized for the null test and cast to
+            // the declared element carrier for the non-null arm; without
+            // both the emitted declaration would not compile and would
+            // rebind the null test into the wrong branch.
+            String slot = "(" + expression + ")";
+            String boxed = switch (inner) {
+                case Type.Int ignored -> "java.lang.Integer.valueOf(((java.lang.Number) "
+                    + slot + ").intValue())";
+                case Type.Number ignored -> "java.lang.Double.valueOf(((java.lang.Number) "
+                    + slot + ").doubleValue())";
+                case Type.Boolean ignored -> "java.lang.Boolean.valueOf((java.lang.Boolean) "
+                    + slot + ")";
+                case Type.Bytes ignored -> "($DealRt.Bytes) __hostBytesToHost("
+                    + slot + ")";
+                default -> "(" + boxedCarrier(inner) + ") " + slot;
+            };
+            return "(" + slot + " == null ? null : " + boxed + ")";
         }
         return switch (element) {
             case Type.Int ignored -> "((java.lang.Number) (" + expression + ")).intValue()";
@@ -1316,20 +1332,14 @@ final class JvmHostAbiEmission {
         return boxed;
     }
 
-    /** The boxed expression of one primitive inner carrier. */
-    private String boxedOf(Type inner, String numberExpression, String expression) {
-        return switch (inner) {
-            case Type.Int ignored -> "java.lang.Integer.valueOf("
-                + numberExpression + ".intValue())";
-            case Type.Number ignored -> "java.lang.Double.valueOf("
-                + numberExpression + ".doubleValue())";
-            case Type.Boolean ignored -> "java.lang.Boolean.valueOf((java.lang.Boolean) "
-                + expression + ")";
-            default -> expression;
-        };
-    }
-
-    /** The descriptor-driven value check of the parameter/return cells. */
+    /**
+     * The descriptor-driven value check of the parameter/return cells: the
+     * check returns the canonical carrier for the checked position. A
+     * declared array check recurses and returns the same production array
+     * with every element canonically projected (a raw backend-native
+     * string carrier decodes into its UTF-16 carrier), preserving the
+     * array identity and mutating nothing when an element fails.
+     */
     private void emitCheckValue(StringBuilder out) {
         out.append("  static java.lang.Object __hostCheckValue(java.lang.String d,"
             + " java.lang.Object v, java.lang.String oFile, int oLine, int oCol) {\n");
@@ -1377,11 +1387,21 @@ final class JvmHostAbiEmission {
             + " java.lang.Object v, java.lang.String oFile, int oLine, int oCol) {\n");
         out.append("    java.lang.String __inner = d.substring(1, d.length() - 1);\n");
         out.append("    if (v instanceof JvmRuntime.Array __arr) {\n");
+        // The element check is also the element projection: a declared
+        // string cell returns the decoded value for the raw UTF-8 byte
+        // carrier, and a nested array cell returns the same array with
+        // its own elements canonically projected. The checked results
+        // land back in the production array after every element passes
+        // (array identity and the failure state are preserved: a failed
+        // check mutates nothing), so a value admitted here is usable by
+        // ordinary DEAL reads at the same array identity.
+        out.append("      java.util.ArrayList<java.lang.Object> __checked = new java.util.ArrayList<>(__arr.elements.size());\n");
         out.append("      for (int __i = 0; __i < __arr.elements.size(); __i++) {\n");
         out.append("        java.lang.Object __e = __arr.elements.get(__i);\n");
-        out.append("        try { __hostCheckValue(__inner, __e, oFile, oLine, oCol); }\n");
+        out.append("        try { __checked.add(__hostCheckValue(__inner, __e, oFile, oLine, oCol)); }\n");
         out.append("        catch (JvmRuntime.DealError __leaf) { throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.ARRAY_ELEMENT_KIND, java.util.Map.of(\"oneBasedIndex\", java.lang.Integer.toString(__i + 1)), oFile + \":\" + oLine + \":\" + oCol, __inner, __hostKind(__e)); }\n");
         out.append("      }\n");
+        out.append("      for (int __i = 0; __i < __checked.size(); __i++) { __arr.elements.set(__i, __checked.get(__i)); }\n");
         out.append("      return v;\n");
         out.append("    }\n");
         for (Map.Entry<String, String> carrier : declaredArrayCarriers().entrySet()) {

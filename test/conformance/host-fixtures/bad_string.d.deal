@@ -1,7 +1,15 @@
 // Host-module fixture (host-module-abi D6): declaration for the bad_string
 // host module — a host surface whose returned strings violate DEAL v1.2
 // string encoding rules (malformed UTF-8 bytes, UTF-16 surrogate code
-// points).
+// points) and whose valid returns exercise the raw backend-native carrier at
+// scalar, array, nested-array, and nullable-element positions (a raw UTF-8
+// byte carrier decodes at the declared string cell; the decoded element
+// result lands back in the production array).
 
 export function badString(): string;
 export function surrogateString(): string;
+export function embeddedSurrogateString(): string;
+export function validString(): string;
+export function rawStringArray(): string[];
+export function rawNestedStringArray(): string[][];
+export function rawNullableStringArray(): (string | null)[];

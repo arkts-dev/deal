@@ -92,7 +92,14 @@ import java.util.stream.Stream;
  *       families; each drive asserts the sidecar pins per consumer and the
  *       three-consumer tuple identity. Where the oracle's host seam cannot
  *       carry the value the corpus host returns (the non-operation async
- *       handle), the oracle leg renders the same closed arm.</li>
+ *       handle), the oracle leg renders the same closed arm. The host
+ *       string-carrier producers drive the four closed carrier responses
+ *       (lone surrogate, embedded surrogate, malformed non-surrogate, and
+ *       valid) through a generated host-importing entry: every invalid
+ *       class renders the complete pinned tuple on all three consumers, and
+ *       every valid control's decoded value (the raw UTF-8 byte carrier at
+ *       scalar, array, nested-array, and nullable-element positions) is
+ *       consumed by the entry body.</li>
  *   <li><b>The closed arm table's renderer identity.</b> Every declared
  *       arm renders its own template with the same named parameters,
  *       expected token, and actual token from the registry renderer, the
@@ -423,6 +430,17 @@ public class CanonicalProjectionParityTest {
      * and the drive's own entry module for a probe export.
      */
     private static Compiled compile(Case spec) throws Exception {
+        return compile(spec, null);
+    }
+
+    /**
+     * Materializes one corpus case, optionally with the drive's own entry
+     * module supplied by the caller (the host-producer cases import the
+     * host module directly and call the declared export at a fixed
+     * position, so the generated module carries the pinned call origin).
+     */
+    private static Compiled compile(Case spec, String driverSource)
+            throws Exception {
         Map<String, CorpusDiscovery.Fixture> byPath = corpusSnapshot().byPath();
         CorpusDiscovery.Fixture entryFixture = byPath.get(spec.fixtureFile());
         if (entryFixture == null) {
@@ -445,7 +463,7 @@ public class CanonicalProjectionParityTest {
         }
         Path root = Files.createTempDirectory("projection-parity");
         try {
-            return compileInto(root, spec, compilationSet, byPath);
+            return compileInto(root, spec, compilationSet, byPath, driverSource);
         } catch (Exception | Error failure) {
             cleanupRejectedScratch(root, failure);
             throw failure;
@@ -454,7 +472,8 @@ public class CanonicalProjectionParityTest {
 
     private static Compiled compileInto(Path root, Case spec,
             List<SidecarSchemaValidator.CompilationModule> compilationSet,
-            Map<String, CorpusDiscovery.Fixture> byPath) throws Exception {
+            Map<String, CorpusDiscovery.Fixture> byPath, String driverSource)
+            throws Exception {
         Path mirror = root.resolve("conformance");
         Map<String, Integer> stripped = new LinkedHashMap<>();
         Map<String, String> modules = new LinkedHashMap<>();
@@ -483,10 +502,19 @@ public class CanonicalProjectionParityTest {
             moduleDirToCorpus.putIfAbsent(slash < 0 ? ""
                 : modulePath.substring(0, slash), module.getKey());
         }
-        // The drive's own entry module: it imports the fixture and calls
-        // its probe export, so the failing call runs inside the entry
-        // module's {@code main} on all three consumers.
-        if (spec.entry() == Entry.DRIVER) {
+        // The drive's own entry module: the caller-supplied host-producer
+        // module (it imports the host directly), or the fixture-probe driver
+        // that imports the fixture and calls its probe export, so the
+        // failing call runs inside the entry module's {@code main} on all
+        // three consumers.
+        if (driverSource != null) {
+            Path app = mirror.resolve("app.deal");
+            Files.writeString(app, driverSource, StandardCharsets.UTF_8);
+            stripped.put("app.deal", 0);
+            modulePathToCorpus.put("app", "app.deal");
+            modulePathToCorpus.put("app.deal", "app.deal");
+            entry = app;
+        } else if (spec.entry() == Entry.DRIVER) {
             String fixtureSpec = spec.fixtureFile().substring(
                 0, spec.fixtureFile().length() - ".deal".length());
             Path app = mirror.resolve("app.deal");
@@ -499,7 +527,11 @@ public class CanonicalProjectionParityTest {
             entry = app;
         }
         Set<String> hostStems = new LinkedHashSet<>();
-        for (String source : modules.values()) {
+        List<String> hostScan = new ArrayList<>(modules.values());
+        if (driverSource != null) {
+            hostScan.add(driverSource);
+        }
+        for (String source : hostScan) {
             Matcher matcher = Pattern.compile("from \"host/([A-Za-z0-9_]+)\"")
                 .matcher(source);
             while (matcher.find()) {
@@ -604,17 +636,20 @@ public class CanonicalProjectionParityTest {
     // =========================================================================
 
     /** The oracle's program drive of one compiled case. */
-    private static Tuple oracleTuple(Compiled compiled) {
+    private static SemanticRuntimeModel.ConsumerRun oracleRun(Compiled compiled) {
         SemanticOracle.HostResponder responder = responderFor(compiled.spec());
-        SemanticRuntimeModel.ConsumerRun run;
         if (compiled.spec().entry() == Entry.ASYNC) {
-            run = SemanticOracle.invokeAsyncEntry(compiled.project(),
+            return SemanticOracle.invokeAsyncEntry(compiled.project(),
                 compiled.tables(), responder, compiled.checkedProject().entryModule(),
                 compiled.spec().probe(), List.of());
-        } else {
-            run = SemanticOracle.executeProjectInits(compiled.project(),
-                compiled.tables(), compiled.registries(), responder);
         }
+        return SemanticOracle.executeProjectInits(compiled.project(),
+            compiled.tables(), compiled.registries(), responder);
+    }
+
+    /** The oracle's program drive of one compiled case that must fail. */
+    private static Tuple oracleTuple(Compiled compiled) {
+        SemanticRuntimeModel.ConsumerRun run = oracleRun(compiled);
         if (!(run.terminal()
                 instanceof SemanticRuntimeModel.Terminal.DealFailure failure)) {
             throw new IllegalStateException(compiled.spec().what()
@@ -650,6 +685,31 @@ public class CanonicalProjectionParityTest {
                         // carrier's own scalar validity selects the class.
                         case "surrogateString" -> new SyncOutcome.Returned(
                             new SemanticOracle.Value.StrValue("\uD800"));
+                        // The embedded surrogate code point: the class is
+                        // the offending scalar, never the carrier's length.
+                        case "embeddedSurrogateString" -> new SyncOutcome.Returned(
+                            new SemanticOracle.Value.StrValue("a\uD800b"));
+                        // The valid carrier control.
+                        case "validString" -> new SyncOutcome.Returned(
+                            new SemanticOracle.Value.StrValue("ok"));
+                        // The valid carrier inside the declared array
+                        // positions (the decoded element results).
+                        case "rawStringArray" -> new SyncOutcome.Returned(
+                            new SemanticOracle.Value.ArrayValue(List.of(
+                                new SemanticOracle.Value.StrValue("ok")),
+                                RuntimeDescriptor.String.INSTANCE, false));
+                        case "rawNestedStringArray" -> new SyncOutcome.Returned(
+                            new SemanticOracle.Value.ArrayValue(List.of(
+                                new SemanticOracle.Value.ArrayValue(List.of(
+                                    new SemanticOracle.Value.StrValue("ok")),
+                                    RuntimeDescriptor.String.INSTANCE, false)),
+                                RuntimeDescriptor.parseCanonicalText("[string]"),
+                                false));
+                        case "rawNullableStringArray" -> new SyncOutcome.Returned(
+                            new SemanticOracle.Value.ArrayValue(List.of(
+                                new SemanticOracle.Value.StrValue("ok")),
+                                RuntimeDescriptor.parseCanonicalText("?string"),
+                                false));
                         default -> throw new IllegalStateException(
                             "the bad_string host seam scripts no export '"
                                 + export + "'");
@@ -1539,6 +1599,186 @@ public class CanonicalProjectionParityTest {
     }
 
     // =========================================================================
+    // 2e. The host string-carrier producers (ISSUE-0760)
+    // =========================================================================
+
+    /** The corpus fixture whose host surface the carrier drives compile. */
+    private static final String HOST_CARRIER_ANCHOR =
+        "host-abi/host-surrogate-utf8-e8010";
+
+    /**
+     * The carrier drives' generated entry module: it imports the host
+     * surface directly and calls the declared export at the fixed call
+     * origin (line 4, column 19) the failure tuples are pinned to.
+     */
+    private static final String HOST_CARRIER_DRIVER = """
+        import * as host from "host/bad_string"
+
+        export function main(): null {
+          let s: string = host.%s()
+          return null
+        }
+        """;
+
+    /** The scalar valid control: the entry consumes the admitted carrier. */
+    private static final String HOST_CARRIER_VALID_DRIVER = """
+        import * as host from "host/bad_string"
+
+        export function main(): null {
+          let s: string = host.validString()
+          if (s !== "ok") {
+            throw { code: "PROBE_STRING_CARRIER", message: "the valid host string carrier did not decode to 'ok'" }
+          }
+          return null
+        }
+        """;
+
+    /** The declared-array control: DEAL must read the decoded element result. */
+    private static final String HOST_CARRIER_ARRAY_DRIVER = """
+        import * as host from "host/bad_string"
+
+        export function main(): null {
+          let xs: string[] = host.rawStringArray()
+          let s: string = xs[0]
+          if (s !== "ok") {
+            throw { code: "PROBE_STRING_CARRIER", message: "the raw host string element did not decode to 'ok'" }
+          }
+          return null
+        }
+        """;
+
+    /** The nested array position control. */
+    private static final String HOST_CARRIER_NESTED_DRIVER = """
+        import * as host from "host/bad_string"
+
+        export function main(): null {
+          let xs: string[][] = host.rawNestedStringArray()
+          let s: string = xs[0][0]
+          if (s !== "ok") {
+            throw { code: "PROBE_STRING_CARRIER", message: "the nested raw host string element did not decode to 'ok'" }
+          }
+          return null
+        }
+        """;
+
+    /** The nullable element position control. */
+    private static final String HOST_CARRIER_NULLABLE_DRIVER = """
+        import * as host from "host/bad_string"
+
+        export function main(): null {
+          let xs: (string | null)[] = host.rawNullableStringArray()
+          let s: string | null = xs[0]
+          if (s !== null) {
+            if (s !== "ok") {
+              throw { code: "PROBE_STRING_CARRIER", message: "the nullable raw host string element did not decode to 'ok'" }
+            }
+            return null
+          }
+          throw { code: "PROBE_STRING_CARRIER", message: "the nullable raw host string element decoded to null" }
+        }
+        """;
+
+    /**
+     * The host string-carrier producers end-to-end (ISSUE-0760): the three
+     * invalid encoding classes (the lone surrogate, the embedded surrogate
+     * at a mid-string position, and the malformed non-surrogate sequence)
+     * render the complete pinned failure tuple — code, composite message,
+     * span at the call expression, expected, and actual — from the oracle's
+     * host seam, the emitted LuaJIT wrapper under {@code luajit}, and the
+     * emitted JVM wrapper under {@code javac} plus {@code java}. The valid
+     * carriers (the scalar string and the raw UTF-8 byte element inside a
+     * declared array, at its nested array and nullable element positions)
+     * are admitted and their decoded values are consumed by the entry body,
+     * so a wrong reason selection or an unprojected element result fails
+     * the drive.
+     */
+    private static void testHostStringCarrierProducers() throws Exception {
+        System.out.println("-- the host string-carrier producers: the closed reason "
+            + "selection and the decoded element results from the oracle, the "
+            + "LuaJIT artifact, and the JVM artifact --");
+        safely("the lone surrogate host return", () -> driveHostCarrierFailure(
+            FailureArmId.HOST_STRING_SURROGATE, "surrogateString"));
+        safely("the embedded surrogate host return", () -> driveHostCarrierFailure(
+            FailureArmId.HOST_STRING_SURROGATE, "embeddedSurrogateString"));
+        safely("the malformed non-surrogate host return", () ->
+            driveHostCarrierFailure(FailureArmId.HOST_STRING_INVALID_UTF8,
+                "badString"));
+        safely("the valid scalar string host return", () -> driveHostCarrierSuccess(
+            "the valid scalar string host return", HOST_CARRIER_VALID_DRIVER));
+        safely("the raw string element inside a declared array", () ->
+            driveHostCarrierSuccess("the raw string element inside a declared "
+                + "array", HOST_CARRIER_ARRAY_DRIVER));
+        safely("the raw string element inside a nested array", () ->
+            driveHostCarrierSuccess("the raw string element inside a nested "
+                + "array", HOST_CARRIER_NESTED_DRIVER));
+        safely("the raw string element at a nullable array position", () ->
+            driveHostCarrierSuccess("the raw string element at a nullable array "
+                + "position", HOST_CARRIER_NULLABLE_DRIVER));
+    }
+
+    /** The host-carrier drive's anchor case (the generated module is the entry). */
+    private static Case hostCarrierCase() {
+        return new Case(HOST_CARRIER_ANCHOR, "main", Entry.MAIN, List.of(),
+            "bad_string", null);
+    }
+
+    /**
+     * Drives one invalid carrier class: the oracle's host seam, the LuaJIT
+     * artifact, and the JVM artifact each render the complete pinned tuple
+     * (the registry arm's composite with its declared fields and the call
+     * expression origin), and the three tuples are identical.
+     */
+    private static void driveHostCarrierFailure(FailureArmId reason, String export)
+            throws Exception {
+        String label = "host." + export + "()";
+        Compiled compiled = compile(hostCarrierCase(),
+            HOST_CARRIER_DRIVER.formatted(export));
+        try {
+            BoundaryFailure expected = FailureContractRegistry.render(
+                FailureArmId.HOST_SYNC_RETURN_CELL,
+                Map.of("inner", FailureContractRegistry.renderInner(reason, Map.of())),
+                "string", "string", null);
+            Tuple expectedTuple = new Tuple(expected.code().name(), expected.message(),
+                "app.deal", 4, 19, "string", "string");
+            Tuple oracle = oracleTuple(compiled);
+            checkEq(expectedTuple, oracle, label + " (oracle): the complete "
+                + "failure tuple");
+            Tuple lua = luaArtifact(compiled);
+            checkEq(expectedTuple, lua, label + " (luajit): the complete "
+                + "failure tuple");
+            Tuple jvm = jvmArtifact(compiled);
+            checkEq(expectedTuple, jvm, label + " (jvm): the complete "
+                + "failure tuple");
+            checkEq(null, firstDifferingField(oracle, lua), label
+                + ": the oracle and the LuaJIT artifact render the identical tuple");
+            checkEq(null, firstDifferingField(oracle, jvm), label
+                + ": the oracle and the JVM artifact render the identical tuple");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /**
+     * Drives one valid carrier control: the oracle completes with a success
+     * terminal and both production artifacts complete without a failure
+     * event, after the entry body consumed the checked value.
+     */
+    private static void driveHostCarrierSuccess(String label, String driverSource)
+            throws Exception {
+        Compiled compiled = compile(hostCarrierCase(), driverSource);
+        try {
+            SemanticRuntimeModel.ConsumerRun run = oracleRun(compiled);
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                label + " (oracle): the drive completes with no failure terminal: "
+                    + run.terminal());
+            luaArtifactOk(compiled, label);
+            jvmArtifactOk(compiled, label);
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    // =========================================================================
     // 3. The closed arm table through the serialized renderer and the runtime
     // =========================================================================
 
@@ -1710,8 +1950,9 @@ public class CanonicalProjectionParityTest {
         return result;
     }
 
-    /** Runs the LuaJIT production artifact under the deferred-entry probe. */
-    private static Tuple luaArtifact(Compiled compiled) throws Exception {
+    /** Runs the LuaJIT production artifact under the deferred-entry probe
+     *  and returns the probe's raw output. */
+    private static String luaArtifactOutput(Compiled compiled) throws Exception {
         Path out = compiled.root().resolve("out");
         for (String stem : compiled.hostStems()) {
             Path host = out.resolve("host/" + stem + ".lua");
@@ -1734,10 +1975,29 @@ public class CanonicalProjectionParityTest {
         int exit = process.waitFor();
         check(exit == 0, compiled.spec().what() + " (luajit): the probe runs: exit="
             + exit + " output=" + output);
+        return output;
+    }
+
+    /** Runs the LuaJIT production artifact and captures its failure tuple. */
+    private static Tuple luaArtifact(Compiled compiled) throws Exception {
+        String output = luaArtifactOutput(compiled);
         Tuple tuple = parseLuaProbe(output, compiled);
         check(tuple != null, compiled.spec().what() + " (luajit): the probe "
             + "captures the failure: " + output);
         return tuple;
+    }
+
+    /**
+     * Runs the LuaJIT production artifact and requires the deferred-entry
+     * probe to complete without a failure event: the entry body consumed
+     * the checked host value (the valid-carrier controls), so a wrong or
+     * unprojected carrier cannot reach this outcome.
+     */
+    private static void luaArtifactOk(Compiled compiled, String label)
+            throws Exception {
+        String output = luaArtifactOutput(compiled);
+        check(!output.contains("ERR|") && output.contains("OK"), label
+            + " (luajit): the drive completes without a failure event: " + output);
     }
 
     /** The deferred-entry LuaJIT probe: the arm fields, framed. */
@@ -1801,8 +2061,12 @@ public class CanonicalProjectionParityTest {
         return null;
     }
 
-    /** Runs the JVM production artifact under {@code javac} plus {@code java}. */
-    private static Tuple jvmArtifact(Compiled compiled) throws Exception {
+    /**
+     * Runs the JVM production artifact under {@code javac} plus {@code java}
+     * and returns the probe's raw output, or {@code null} when the artifact
+     * did not compile (the failed check is already recorded).
+     */
+    private static String jvmArtifactOutput(Compiled compiled) throws Exception {
         Path out = compiled.root().resolve("out-jvm");
         deal.module.ProductionProjectEmission.Result result = emit(compiled,
             Backend.JVM, out);
@@ -1846,10 +2110,34 @@ public class CanonicalProjectionParityTest {
         int exit = javaProcess.waitFor();
         check(exit == 0, compiled.spec().what() + " (jvm): the probe runs: exit="
             + exit + " output=" + output);
+        return output;
+    }
+
+    /** Runs the JVM production artifact and captures its failure tuple. */
+    private static Tuple jvmArtifact(Compiled compiled) throws Exception {
+        String output = jvmArtifactOutput(compiled);
+        if (output == null) {
+            return null;
+        }
         Tuple tuple = parseJvmProbe(output, compiled);
         check(tuple != null, compiled.spec().what() + " (jvm): the probe captures "
             + "the failure: " + output);
         return tuple;
+    }
+
+    /**
+     * Runs the JVM production artifact and requires the probe to complete
+     * without a failure event: the entry body consumed the checked host
+     * value (the valid-carrier controls), so a wrong or unprojected carrier
+     * (the raw UTF-8 element retained in the production array) cannot reach
+     * this outcome.
+     */
+    private static void jvmArtifactOk(Compiled compiled, String label)
+            throws Exception {
+        String output = jvmArtifactOutput(compiled);
+        check(output != null && !output.contains("ERR|") && output.contains("OK"),
+            label + " (jvm): the drive completes without a failure event: "
+                + output);
     }
 
     private static String jvmProbe(String className, String entryModulePath) {
@@ -3306,6 +3594,7 @@ public class CanonicalProjectionParityTest {
         testArmFamilies();
         testCallbackEntrySlot();
         testInvalidUnicodeBoundaryOriginDrive();
+        testHostStringCarrierProducers();
         testMissingDeclaredAnnotationFailsClosed();
         testSerializedArmTableIdentity();
         testMarkedArmsAndFieldShapes();

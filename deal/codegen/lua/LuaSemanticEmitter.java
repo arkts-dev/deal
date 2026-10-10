@@ -7701,14 +7701,23 @@ end
 -- The declared return cell of one host call: the loaded wrapper's own
 -- return rule, projected through the pinned E8010 return template, then
 -- the host-to-DEAL projection of the admitted value (the language-null
--- sentinel and a declared array position's shared array carrier).
-local function __hostToDealArray(v)
+-- sentinel and a declared array position's shared array carrier). The
+-- projection recurses through declared array element positions, so a
+-- nested array the host returned is a usable DEAL array at every level
+-- (the chunk's own carrier mark), never a plain table the ordinary DEAL
+-- boundaries would reject.
+local function __hostToDealArray(desc, v)
   if type(v) ~= "table" or v.__a then return v end
+  local body = string.sub(desc, 1, 1) == "?" and string.sub(desc, 2) or desc
+  local inner = string.sub(body, 2, -2)
+  local arrayElement = string.sub(inner, 1, 1) == "["
+    or string.sub(inner, 1, 2) == "?["
   local out = {__a = true, __n = 0, __nK = {}}
   local n = 0
   for i = 1, #v do
     local element = v[i]
     if element == __rt.__NULL then element = __NULL end
+    if arrayElement then element = __hostToDealArray(inner, element) end
     out[i] = element
     n = i
   end
@@ -7731,7 +7740,7 @@ local function __hostReturnCell(desc, v, origin, nothing)
   end
   if checked == __rt.__NULL then return nil end
   if string.sub(desc, 1, 1) == "[" or string.sub(desc, 1, 2) == "?[" then
-    return __hostToDealArray(checked)
+    return __hostToDealArray(desc, checked)
   end
   return checked
 end
