@@ -135,6 +135,7 @@ public class FailureArmAuthorityTest {
         testNullableInnerInvariant();
         testKindOnlySpellingVocabulary();
         testHostInnerReasonTemplateAuthority();
+        testHostSignaturePlaceholderParity();
         testHostInnerReasonDescriptorValidation();
         testEmittedParameterContract();
         testNegativeSingleSourceControl();
@@ -3507,6 +3508,115 @@ public class FailureArmAuthorityTest {
             rows.get(13),
             "the restored declared templates admit their own reasons again (the "
                 + "control)");
+    }
+
+    /**
+     * The host parameter/return cells with a placeholder-shaped descriptor
+     * module component (ISSUE-0765): a declared function-typed position
+     * whose parameter class lives in a module component carrying the literal
+     * spelling of another arm placeholder ({@code {actual}}). The signature
+     * inner reason is the signature arm's own single-pass render on every
+     * consumer, so the inserted expected descriptor reaches the message
+     * byte-for-byte and the closed inner-reason check admits it — a
+     * consumer that composes the text with successive replacements rescans
+     * the inserted component and fails closed (the oracle defect this drive
+     * pins). The oracle boundary cell, the JVM runtime arm renderer, and the
+     * emitted Lua prelude under {@code luajit} publish the identical tuple
+     * for the same arm and values.
+     */
+    static void testHostSignaturePlaceholderParity() throws Exception {
+        System.out.println("-- the host parameter/return cells: a placeholder-shaped "
+            + "descriptor module component stays byte-for-byte in the signature "
+            + "inner reason on every consumer --");
+        String declared = "(@src/{actual}/C)->int";
+        String carried = "(int)->int";
+        RuntimeDescriptor descriptor = RuntimeDescriptor.parseCanonicalText(declared);
+        RuntimeDescriptor.Func carriedFunction = (RuntimeDescriptor.Func)
+            RuntimeDescriptor.parseCanonicalText(carried);
+        String span = FailureContractRegistry.arm(FailureArmId.HOST_PARAMETER_CELL)
+            .origin().name();
+        // The oracle leg: the complete parameter/return tuples, with the
+        // inserted expected module component published unchanged.
+        Tuple oracleParameter = tupleOf(oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.HOST_PARAMETER, descriptor,
+            BoundaryValueView.ofFunction(carriedFunction), BoundaryContext.parameter(1)),
+            "the placeholder-shaped host parameter cell"), span);
+        checkEq(new Tuple("E8010", "parameter 1 type mismatch: function signature "
+            + "mismatch: expected " + declared + ", got " + carried, span, declared,
+            "table"), oracleParameter,
+            "the oracle keeps the placeholder-shaped expected module component "
+                + "byte-for-byte and publishes the host parameter tuple");
+        Tuple oracleReturn = tupleOf(oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.HOST_SYNC_RETURN, descriptor,
+            BoundaryValueView.ofFunction(carriedFunction), BoundaryContext.none()),
+            "the placeholder-shaped host return cell"), span);
+        checkEq(new Tuple("E8010", "return value 1 type mismatch: function signature "
+            + "mismatch: expected " + declared + ", got " + carried, span, declared,
+            "table"), oracleReturn,
+            "the oracle keeps the placeholder-shaped expected module component "
+                + "byte-for-byte and publishes the host return tuple");
+        // The JVM leg: the emitted host ABI renders the inner reason through
+        // its FUNCTION_SIGNATURE_MISMATCH arm and the host cell through its own
+        // arm (the emitted __hostInnerMessage passes the inner message).
+        deal.codegen.jvm.JvmRuntime.DealError jvmParameter =
+            deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", deal.codegen.jvm.JvmRuntime.arm(
+                    FailureArmId.FUNCTION_SIGNATURE_MISMATCH,
+                    Map.of("expected", declared, "actual", carried), span, declared,
+                    carried).msg),
+                span, declared, "table");
+        checkEq(null, firstDifferingField(oracleParameter, new Tuple(
+            jvmParameter.code, jvmParameter.msg, span, jvmParameter.expected,
+            jvmParameter.actual)),
+            "the JVM runtime renders the oracle's identical placeholder-shaped "
+                + "host parameter tuple");
+        deal.codegen.jvm.JvmRuntime.DealError jvmReturn =
+            deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_SYNC_RETURN_CELL,
+                Map.of("inner", deal.codegen.jvm.JvmRuntime.arm(
+                    FailureArmId.FUNCTION_SIGNATURE_MISMATCH,
+                    Map.of("expected", declared, "actual", carried), span, declared,
+                    carried).msg),
+                span, declared, "table");
+        checkEq(null, firstDifferingField(oracleReturn, new Tuple(jvmReturn.code,
+            jvmReturn.msg, span, jvmReturn.expected, jvmReturn.actual)),
+            "the JVM runtime renders the oracle's identical placeholder-shaped "
+                + "host return tuple");
+        // The emitted Lua prelude leg, under real luajit.
+        List<String> rows = runPreludeProbe("""
+            local inner = __renderTemplate("FUNCTION_SIGNATURE_MISMATCH",
+              {expected = "(@src/{actual}/C)->int", actual = "(int)->int"})
+            print("inner-provided|" .. inner)
+            local value = __arm("HOST_PARAMETER_CELL",
+              {index = "1", inner = inner}, "-", "(@src/{actual}/C)->int", "table")
+            print("param|" .. value.code .. "|" .. value.e .. "|" .. value.a
+              .. "|" .. value.m)
+            value = __arm("HOST_SYNC_RETURN_CELL", {inner = inner}, "-",
+              "(@src/{actual}/C)->int", "table")
+            print("return|" .. value.code .. "|" .. value.e .. "|" .. value.a
+              .. "|" .. value.m)
+            """, "host-signature-placeholder-probe", 3);
+        checkEq("inner-provided|function signature mismatch: expected " + declared
+            + ", got " + carried, rows.get(0),
+            "the prelude's single-pass render keeps the placeholder-shaped component "
+                + "byte-for-byte");
+        String[] parts = rows.get(1).split("\\|", -1);
+        checkEq(5, parts.length, "the prelude frames the parameter row as "
+            + "label|code|expected|actual|message: " + rows.get(1));
+        if (parts.length == 5) {
+            checkEq(null, firstDifferingField(oracleParameter, new Tuple(parts[1],
+                parts[4], span, parts[2], parts[3])),
+                "the Lua prelude renders the oracle's identical placeholder-shaped "
+                    + "host parameter tuple");
+        }
+        parts = rows.get(2).split("\\|", -1);
+        checkEq(5, parts.length, "the prelude frames the return row as "
+            + "label|code|expected|actual|message: " + rows.get(2));
+        if (parts.length == 5) {
+            checkEq(null, firstDifferingField(oracleReturn, new Tuple(parts[1],
+                parts[4], span, parts[2], parts[3])),
+                "the Lua prelude renders the oracle's identical placeholder-shaped "
+                    + "host return tuple");
+        }
     }
 
     // =========================================================================

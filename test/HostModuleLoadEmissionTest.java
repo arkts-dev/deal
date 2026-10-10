@@ -17,15 +17,24 @@ import deal.semantic.HostDeclarationSurface;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticRequirementManifest;
+import deal.semantic.ir.ActualKind;
+import deal.semantic.ir.BoundaryContext;
+import deal.semantic.ir.BoundaryExecutor;
+import deal.semantic.ir.BoundaryFailure;
+import deal.semantic.ir.BoundaryOutcome;
+import deal.semantic.ir.BoundaryValueView;
 import deal.semantic.ir.ExecutableLoweredProject;
+import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.ModuleImportKind;
 import deal.semantic.ir.ProjectInterfaceIndex;
+import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
+import deal.semantic.ir.UnicodeScalars;
 import deal.types.Type;
 
 import java.nio.charset.StandardCharsets;
@@ -69,6 +78,7 @@ public class HostModuleLoadEmissionTest {
     private static final String PROBE_SPECIFIER = "host/abi_probe";
     private static final String CFG_SPECIFIER = "host/cfg";
     private static final String MISSING_SPECIFIER = "host/missing_export";
+    private static final String ARRAY_SPECIFIER = "host/array_probe";
 
     /** The host ABI declaration: scalar, array, function, bytes, and async positions. */
     private static final String ABI_DECLARATION_SOURCE = """
@@ -133,6 +143,44 @@ public class HostModuleLoadEmissionTest {
 
         export function main(): null {
           return null;
+        }
+        """;
+
+    /**
+     * The declared-array declaration (ISSUE-0765): a declared
+     * {@code string[]} parameter and return, so the emitted wrapper's
+     * declared element-shape carriers are driven directly.
+     */
+    private static final String ARRAY_DECLARATION_SOURCE = """
+        export function echoArray(parts: string[]): string[];
+        export function badArray(): string[];
+        """;
+
+    /** The declared-array-importing application (the wrappers are driven directly). */
+    private static final String ARRAY_APP_SOURCE = """
+        import * as arr from "host/array_probe"
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The deployed JVM host implementation of the declared-array fixture: the
+     * declared element-shape carrier is the host-facing wrapper, and
+     * {@code badArray} returns one whose second element is a lone surrogate
+     * code unit, so the declared element cell must reject it.
+     */
+    private static final String ARRAY_JAVA_HOST = """
+        final class HostArray_probe {
+          public static Object echoArray($DealRt.__StringArray parts) { return parts; }
+          public static Object badArray() {
+            return new $DealRt.__StringArray(
+                new String[] { "ok", loneSurrogate() });
+          }
+          private static String loneSurrogate() {
+            return new String(new char[] { (char) 0xD800 });
+          }
         }
         """;
 
@@ -312,6 +360,14 @@ public class HostModuleLoadEmissionTest {
         sources.put("src/app.deal", MISSING_DECLARATION_APP_SOURCE);
         return compileProject(sources,
             Map.of(MISSING_SPECIFIER, "src/missing_export.d.deal"));
+    }
+
+    private static Fixture arrayFixture() throws Exception {
+        Map<String, String> sources = new LinkedHashMap<>();
+        sources.put("src/array_probe.d.deal", ARRAY_DECLARATION_SOURCE);
+        sources.put("src/app.deal", ARRAY_APP_SOURCE);
+        return compileProject(sources,
+            Map.of(ARRAY_SPECIFIER, "src/array_probe.d.deal"));
     }
 
     private static SemanticLowerer.ProjectLoweringResult lower(Fixture fixture) {
@@ -965,6 +1021,161 @@ public class HostModuleLoadEmissionTest {
         }
     }
 
+    /**
+     * The declared JVM host array wrappers (ISSUE-0765): a declared
+     * element-shape carrier is not an admission — its elements are the
+     * declared element cells, so a failing element is projected through the
+     * closed element arm and the host parameter/return composite, exactly
+     * like the production array carrier. The deployed artifact is driven
+     * under {@code javac --release 25 -proc:none} + {@code java} with the
+     * declared carrier crossing the emitted wrappers, and the canonical
+     * oracle cell of the same values renders the identical tuple.
+     */
+    private static void testJvmDeclaredArrayElementProjection(Baseline fixture)
+            throws Exception {
+        System.out.println("-- the JVM host wrappers: a declared array carrier's "
+            + "elements are the declared element cells --");
+        // The oracle's own cell projection of the same values: the element
+        // arm as the host return cell's inner reason (the canonical tuple
+        // the emitted wrapper must publish).
+        BoundaryOutcome outcome = BoundaryExecutor.check(
+            FailurePolicyId.HOST_SYNC_RETURN,
+            RuntimeDescriptor.parseCanonicalText("[string]"),
+            BoundaryValueView.ofArray(BoundaryValueView.of(ActualKind.STRING),
+                BoundaryValueView.ofInvalidUnicode(
+                    UnicodeScalars.Defect.SURROGATE)),
+            BoundaryContext.none());
+        if (!(outcome instanceof BoundaryOutcome.Fail fail)) {
+            fail("the oracle's declared-array return cell rejects a failing element: "
+                + outcome);
+            return;
+        }
+        BoundaryFailure expected = fail.failure();
+        checkEq("E8010", expected.code().name(),
+            "the canonical element-failure code");
+        checkEq("return value 1 type mismatch: array element 2 type mismatch",
+            expected.message(), "the canonical host return composite");
+        checkEq("[string]", expected.expected(),
+            "the host return cell keeps the declared element-shape descriptor");
+        checkEq("table", expected.actual(),
+            "the host return cell projects the carrier kind of the declared "
+                + "carrier");
+        Path workspace = Files.createTempDirectory("host-load-jvm-array");
+        try {
+            SemanticLowerer.ProjectLoweringResult result = fixture.result();
+            if (result.project() == null) {
+                fail("the declared-array fixture lowers: " + result.diagnostics());
+                return;
+            }
+            ExecutableLoweredProject project = result.project();
+            String className = JvmBackend.classNameFor(project.entryModule().path());
+            JvmSemanticEmitter.EmissionResult emission = fixture.jvm();
+            Files.writeString(workspace.resolve(className + ".java"),
+                emission.source(), StandardCharsets.UTF_8);
+            Files.writeString(workspace.resolve("HostArray_probe.java"),
+                ARRAY_JAVA_HOST, StandardCharsets.UTF_8);
+            ModuleId arrayModule = hostImportModule(project, ARRAY_SPECIFIER);
+            String key = JvmBackend.escapedIdentifier(arrayModule.path());
+            Files.writeString(workspace.resolve("HostArrayProbeMain.java"),
+                arrayProbeSource(key), StandardCharsets.UTF_8);
+            Path classes = workspace.resolve("classes");
+            Files.createDirectories(classes);
+            String classpath = absoluteClasspath();
+            ProcessOutcome javacRun = runProcess(List.of("javac", "--release", "25",
+                "-proc:none", "-cp", classpath, "-d", classes.toString(),
+                workspace.resolve(className + ".java").toAbsolutePath().toString(),
+                "HostArray_probe.java", "HostArrayProbeMain.java"), workspace, false);
+            check(javacRun.exitCode() == 0,
+                "the declared-array wrappers compile beside their host: "
+                    + javacRun.output());
+            if (javacRun.exitCode() != 0) {
+                return;
+            }
+            ProcessOutcome run = runProcess(List.of("java", "-cp",
+                classpath + java.io.File.pathSeparator + classes,
+                "HostArrayProbeMain"), workspace, false);
+            check(run.exitCode() == 0 && run.stdout().contains("PROBE-OK"),
+                "the declared-array wrappers project every element failure through "
+                    + "the host cells: exit=" + run.exitCode() + " stdout="
+                    + escaped(run.stdout()) + " stderr=" + escaped(run.stderr()));
+        } finally {
+            deleteRecursively(workspace);
+        }
+    }
+
+    /**
+     * The declared-array probe: the valid carrier is admitted and projected
+     * into the production array, and a failing element of the declared
+     * parameter/return carrier renders the element arm inside the host
+     * parameter/return composite with the declared descriptor and the
+     * carrier-kind actual.
+     */
+    private static String arrayProbeSource(String key) {
+        return """
+            final class HostArrayProbeMain {
+              private static int passed = 0;
+              private static int failed = 0;
+
+              private static void check(boolean condition, String message) {
+                if (condition) { passed++; }
+                else { failed++; System.err.println("FAIL: " + message); }
+              }
+
+              private static void expect(String code, String message, String expected,
+                  String actual, Runnable action) {
+                try {
+                  action.run();
+                  failed++;
+                  System.err.println("FAIL: no error for " + message);
+                } catch (deal.codegen.jvm.JvmRuntime.DealError error) {
+                  check(code.equals(error.code), "code " + error.code + " for " + message);
+                  check(message.equals(error.msg),
+                      "message '" + error.msg + "' for " + message);
+                  check(expected.equals(error.expected),
+                      "expected '" + error.expected + "' for " + message);
+                  check(actual.equals(error.actual),
+                      "actual '" + error.actual + "' for " + message);
+                }
+              }
+
+              public static void main(String[] args) {
+                App.dealMain();
+                // The valid declared carrier crosses both wrapper cells and
+                // its element lands in the production array.
+                deal.codegen.jvm.JvmRuntime.Array good =
+                    (deal.codegen.jvm.JvmRuntime.Array) App.__host$%s$echoArray(
+                        new $DealRt.__StringArray(new String[] { "ok" }),
+                        "probe.deal", 1, 1);
+                check("ok".equals(good.elements.get(0)),
+                    "the valid declared array element is projected: " + good.elements);
+                // The failing element of the declared parameter carrier is
+                // the element cell, projected through the host parameter cell.
+                expect("E8010",
+                    "parameter 1 type mismatch: array element 2 type mismatch",
+                    "[string]", "table", () -> App.__host$%s$echoArray(
+                        new $DealRt.__StringArray(
+                            new String[] { "ok", loneSurrogate() }),
+                        "probe.deal", 1, 1));
+                // The same element failure on the declared return carrier is
+                // projected through the host return cell.
+                expect("E8010",
+                    "return value 1 type mismatch: array element 2 type mismatch",
+                    "[string]", "table", () -> App.__host$%s$badArray(
+                        "probe.deal", 2, 1));
+                if (failed != 0) {
+                  throw new IllegalStateException("FAIL: " + failed
+                      + " declared-array probe failures");
+                }
+                System.out.println("PROBE-OK " + passed);
+              }
+
+              private static String loneSurrogate() {
+                return new String(new char[] { (char) 0xD800 });
+              }
+            }
+            """.formatted(key, key, key);
+    }
+
     /** The deployed JVM host implementation of the ABI declaration. */
     private static final String HOST_ABI_JAVA = """
         import java.util.concurrent.CompletableFuture;
@@ -1388,11 +1599,13 @@ public class HostModuleLoadEmissionTest {
             Baseline aliases = prepare(abiFixture(TWO_ALIAS_APP_SOURCE), false, roots);
             Baseline missing = prepare(missingFixture(), true, roots);
             Baseline cfg = prepare(cfgOnlyFixture(), true, roots);
+            Baseline array = prepare(arrayFixture(), true, roots);
             testLuaArtifactText(abi, aliases);
             testLuaExecution(aliases, missing, cfg);
             testJvmArtifactText(abi);
             testJvmToolchain(abi);
             testJvmMissingExport(missing, cfg);
+            testJvmDeclaredArrayElementProjection(array);
             testSignatureExtension();
         } finally {
             for (Path root : roots) {
