@@ -39,6 +39,19 @@ public class LuaJitChunkLocalBoundTest {
     /** The marker the growing fixture prints once its sums hold. */
     private static final String FIXTURE_MARKER = "GROWING-FACTORY-OK";
 
+    /**
+     * The chunk-level locals the budget probe appends to a real production
+     * chunk. LuaJIT admits 200 locals in one function and the emitted
+     * chunk's module-init walk spends nearly all of them, so the fixed
+     * prelude helper set must stay chunk-global: the ISSUE-0757 async entry
+     * linkage's four helpers declared chunk-level locals and the walk probe
+     * of the failure-arm battery stopped loading at the limit. The fixture
+     * chunk had 11 chunk-level locals of headroom before the helpers became
+     * chunk-global and 15 after, so the 12-local probe body is the
+     * regression control for the defect.
+     */
+    private static final int PROBE_LOCALS = 12;
+
     private static final String DEAL_JSON = """
         {
           "languageVersion": "1.2",
@@ -236,6 +249,60 @@ public class LuaJitChunkLocalBoundTest {
     }
 
     // =========================================================================
+    // 3. The prelude's main-chunk local budget
+    // =========================================================================
+
+    /**
+     * The prelude's fixed helper set spends no main-chunk local: the guard
+     * loads the real production chunk of the skill example with an appended
+     * body of {@link #PROBE_LOCALS} chunk-level locals under real luajit, so
+     * a helper set that declares chunk-level locals fails to load here
+     * before it can push a legitimate program body over LuaJIT's limit.
+     */
+    private static void testPreludeChunkLocalBudget() throws Exception {
+        System.out.println("-- the prelude's main-chunk local budget: the "
+            + "production chunk and the appended probe body --");
+        Path root = Files.createTempDirectory("deal-prelude-budget-");
+        try {
+            Path entry = SKILL_EXAMPLE_ROOT.resolve("src/main.deal").toAbsolutePath();
+            Path out = root.resolve("out").toAbsolutePath();
+            List<String> diagnostics = new ArrayList<>();
+            check(productionCompile(entry, out, diagnostics),
+                "the budget fixture compiles through the release-owned "
+                    + "production invocation: " + diagnostics);
+            write(root, "budget-probe.lua", """
+                local text = io.open("out/main.lua"):read("*a")
+                text = text:gsub("%%s*$", "")
+                local tail = 'return __exportSurfaces["main"]'
+                assert(text:sub(-#tail) == tail,
+                  "the artifact tail is the surface return")
+                local extra = {}
+                for i = 1, %d do
+                  extra[i] = "local __budget" .. i .. " = i"
+                end
+                local body = text:sub(1, #text - #tail)
+                  .. table.concat(extra, "\\n") .. "\\n" .. tail
+                local chunk, err = load(body, "budget-probe")
+                if chunk == nil then
+                  print("BUDGET-FAIL|" .. tostring(err))
+                else
+                  print("BUDGET-OK")
+                end
+                """.formatted(PROBE_LOCALS));
+            ProcessOutcome run = runProcess(root,
+                List.of("luajit", "budget-probe.lua"));
+            checkEq(0, run.exitCode(),
+                "the local-budget probe runs under real luajit: " + run.output());
+            check(run.stdout().contains("BUDGET-OK"),
+                "the production chunk keeps room for the appended probe body "
+                    + "of " + PROBE_LOCALS + " locals: "
+                    + run.stdout().replace("\n", "\\n"));
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    // =========================================================================
     // Helpers
     // =========================================================================
 
@@ -346,6 +413,7 @@ public class LuaJitChunkLocalBoundTest {
         System.out.println("=== LuaJIT Chunk Local Bound Test (ISSUE-0716) ===\n");
         testGrowingFactoryChunk();
         testSkillExampleEntry();
+        testPreludeChunkLocalBudget();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

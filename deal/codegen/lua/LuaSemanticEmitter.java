@@ -9865,14 +9865,17 @@ end
 -- binds the fresh instance to its awaiting token and the AWAIT takes it
 -- back; the binding is a LIFO slot per awaiting token, because the
 -- deterministic FIFO drain completes every nested activation before its
--- starter's AWAIT reads the slot.
+-- starter's AWAIT reads the slot. The four helpers are chunk-global
+-- like __tasks/__ready (LuaJIT admits 200 locals in one function and
+-- the emitted module-init walk spends nearly the whole budget), so the
+-- fixed helper set never takes a chunk-level local.
 __entryTasks = __entryTasks or {}
 __entrySeq = __entrySeq or 0
-local function __entryTaskInstance()
+__entryTaskInstance = function()
   __entrySeq = __entrySeq - 1
   return __entrySeq
 end
-local function __entryBind(tokenId, instanceId)
+__entryBind = function(tokenId, instanceId)
   local slot = __entryTasks[tokenId]
   if slot == nil then
     slot = {}
@@ -9881,7 +9884,7 @@ local function __entryBind(tokenId, instanceId)
   slot[#slot + 1] = instanceId
   return instanceId
 end
-local function __entryTake(tokenId)
+__entryTake = function(tokenId)
   local slot = __entryTasks[tokenId]
   if slot == nil or #slot == 0 then
     error("AWAIT consumes an unbound external token " .. tostring(tokenId)
@@ -9896,7 +9899,7 @@ end
 -- when the nested source is an external entry; a source that owns no
 -- per-activation instance (a DEAL body, host operation, or intrinsic)
 -- keeps its static task key.
-local function __entryTakeOr(tokenId)
+__entryTakeOr = function(tokenId)
   local slot = __entryTasks[tokenId]
   if slot == nil or #slot == 0 then
     return tokenId
