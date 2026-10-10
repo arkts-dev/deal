@@ -162,5 +162,5 @@ WARNING: node not found, skipping standard library JS tests'
   'fg|=== Running Unreachable Tail Production Tests (ISSUE-0713) ===|java -ea -cp build deal.test.UnreachableTailProductionTest'
   'fg|=== Running Nested Group Production Tests (ISSUE-0731) ===|java -ea -cp build deal.test.NestedGroupProductionTest'
   'fg|=== Running Self-Alias Production Tests (ISSUE-0743) ===|java -ea -cp build deal.test.SelfAliasProductionTest'
-  'fg|=== Running Declared-Body Carrier Production Tests (ISSUE-0757) ===|java -ea -cp build deal.test.DeclaredBodyCarrierProductionTest'
+  'fg|=== Running Declared-Body Carrier Production Tests (ISSUE-0757, ISSUE-0758) ===|java -ea -cp build deal.test.DeclaredBodyCarrierProductionTest'
 )

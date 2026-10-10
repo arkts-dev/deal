@@ -14,9 +14,16 @@ import deal.semantic.ReleaseConfiguration;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticRuntimeModel;
+import deal.semantic.ir.AsyncLinkKind;
+import deal.semantic.ir.AsyncStartSource;
+import deal.semantic.ir.AsyncTokenId;
+import deal.semantic.ir.AsyncTokenOwner;
 import deal.semantic.ir.BindingGeneration;
+import deal.semantic.ir.BoundaryKind;
+import deal.semantic.ir.CallMode;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ExecutableLoweredProject;
+import deal.semantic.ir.ExternalAsyncLink;
 import deal.semantic.ir.ExternalExecutionOwner;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
@@ -27,6 +34,8 @@ import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.OpId;
+import deal.semantic.ir.ParameterBoundaryMode;
+import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.StructuredBodyTable;
@@ -94,6 +103,27 @@ import java.util.stream.Stream;
  * cell identity is preserved and the static entry token is never a
  * replaceable task slot during re-entry.</p>
  *
+ * <p>The fourth integration gap — the exported declaration's
+ * arity-extension adapter: an alias whose target type extends the
+ * declaration's parameter list ({@code let alias: (n: int, extra: int) =&gt;
+ * int = f}, docs/spec-v1.2.md, Function type compatibility) resolves the D15
+ * {@code FUNCTION_ADAPT} over the declaration's pre-allocated body identity.
+ * The adapter's statically resolved body source still assigned
+ * {@code SOURCE_CALL}/{@code SOURCE_ASYNC} over the declaration's reserved
+ * {@code EXTERNAL_ENTRY} context, so the closed two-shape guard failed the
+ * lowering with E6005 and the valid program published no LuaJIT/JVM
+ * artifact. The adapter invocation now keeps the declaration's reserved
+ * shape: the synchronous call runs the indirect D15 protocol over the
+ * published closure (the xN target-signature {@code FUNCTION_PARAMETER}
+ * cells and the leading-argument projection are the adapter's own) and
+ * records the entry-owned {@code EXTERNAL_RETURN} cell, and the awaited
+ * adapter's nested source {@code ASYNC_START} realizes the declaration's own
+ * async entry — the {@code ELIDED_BY_ADAPTER} leading-M operands, zero
+ * parameter boundaries, the entry's canonical body-task token through the
+ * {@code ExternalAsyncLink}, and zero nested return boundaries — with the
+ * nested start's own activation-bound token under the outer
+ * {@code ADAPTER_INNER} alias.</p>
+ *
  * <p>Per case, the measured surfaces:</p>
  *
  * <ol>
@@ -109,7 +139,10 @@ import java.util.stream.Stream;
  *       a call-site factory reconstruction ({@code Static}); every
  *       value-carried invocation resolves a registered {@code LoweredBody}
  *       through the declaration's own closure identity and records the
- *       body's single return cell.</li>
+ *       body's single return cell; an arity-extension adapter over an
+ *       exported declaration keeps the reserved entry protocol (the
+ *       entry-owned return cell, or the nested entry source start on the
+ *       awaited path) rather than a second invocation shape.</li>
  *   <li><b>The three-consumer differential matrix.</b> The semantic oracle,
  *       the shared LuaJIT artifact, and the shared JVM artifact execute the
  *       program to the pinned success terminal and the pinned console
@@ -164,7 +197,7 @@ public class DeclaredBodyCarrierProductionTest {
                         String asyncExport, String resultAtom,
                         int minCarrierInvocations, int minEntryInvocations,
                         boolean recursive, Map<String, String> extraSources,
-                        boolean sharedMatrix) {
+                        boolean sharedMatrix, boolean arityExtensionAdapter) {
 
         Case {
             effects = List.copyOf(effects);
@@ -175,7 +208,7 @@ public class DeclaredBodyCarrierProductionTest {
         private Case(String name, String source, List<String> effects,
                      int minCarrierInvocations) {
             this(name, source, effects, null, "null", minCarrierInvocations, 0, false,
-                Map.of(), true);
+                Map.of(), true, false);
         }
 
         /** The async-entry case without a same-module exported entry. */
@@ -183,7 +216,7 @@ public class DeclaredBodyCarrierProductionTest {
                      String asyncExport, String resultAtom,
                      int minCarrierInvocations) {
             this(name, source, effects, asyncExport, resultAtom,
-                minCarrierInvocations, 0, false, Map.of(), true);
+                minCarrierInvocations, 0, false, Map.of(), true, false);
         }
 
         /** The non-recursive async-entry case with a same-module exported entry. */
@@ -191,7 +224,8 @@ public class DeclaredBodyCarrierProductionTest {
                      String asyncExport, String resultAtom,
                      int minCarrierInvocations, int minEntryInvocations) {
             this(name, source, effects, asyncExport, resultAtom,
-                minCarrierInvocations, minEntryInvocations, false, Map.of(), true);
+                minCarrierInvocations, minEntryInvocations, false, Map.of(), true,
+                false);
         }
 
         /** The recursive async-entry case (no sibling modules). */
@@ -200,7 +234,8 @@ public class DeclaredBodyCarrierProductionTest {
                      int minCarrierInvocations, int minEntryInvocations,
                      boolean recursive) {
             this(name, source, effects, asyncExport, resultAtom,
-                minCarrierInvocations, minEntryInvocations, recursive, Map.of(), true);
+                minCarrierInvocations, minEntryInvocations, recursive, Map.of(), true,
+                false);
         }
 
         /** The multi-module case (the shared async-entry matrix is inapplicable). */
@@ -209,7 +244,24 @@ public class DeclaredBodyCarrierProductionTest {
                      int minCarrierInvocations, int minEntryInvocations,
                      Map<String, String> extraSources) {
             this(name, source, effects, asyncExport, resultAtom,
-                minCarrierInvocations, minEntryInvocations, false, extraSources, false);
+                minCarrierInvocations, minEntryInvocations, false, extraSources, false,
+                false);
+        }
+
+        /**
+         * The exported arity-extension adapter case: the program's single
+         * source invocation is the D15 {@code FUNCTION_ADAPT} over an
+         * exported declaration's pre-allocated body identity, so the
+         * arity-extension adapter battery
+         * ({@link #checkArityExtensionAdapters}) pins the adapter protocol
+         * against the body's reserved {@code EXTERNAL_ENTRY}.
+         */
+        private Case(String name, String source, List<String> effects,
+                     String asyncExport, String resultAtom,
+                     boolean arityExtensionAdapter) {
+            this(name, source, effects, asyncExport, resultAtom, 0,
+                asyncExport == null ? 0 : 1, false, Map.of(), true,
+                arityExtensionAdapter);
         }
     }
 
@@ -765,6 +817,139 @@ public class DeclaredBodyCarrierProductionTest {
             }
             """));
 
+    /**
+     * The forward arity-extension alias of an exported declaration, sync:
+     * the alias type ({@code (n: int, extra: int) => int}) extends the
+     * exported declaration's parameter list, so the assignment resolves the
+     * D15 arity-extension adapter and the invocation runs the adapter
+     * protocol over the declaration's pre-allocated body identity. Before
+     * the fix the adapter's statically resolved body source assigned
+     * {@code SOURCE_CALL} over the declaration's reserved
+     * {@code EXTERNAL_ENTRY} context, so the closed two-shape guard failed
+     * the lowering with E6005 and the valid program published no artifact.
+     * The adapter call now records the entry-owned return cell (the closed
+     * adapter table admits the {@code EXTERNAL_RETURN}) while the target
+     * parameters keep their {@code FUNCTION_PARAMETER} cells and the
+     * adapter drops the extra target argument. The result value pins the
+     * leading-argument selection: the extra argument ({@code 7}) would
+     * yield {@code 70} if it displaced the leading one.
+     */
+    private static final Case FORWARD_ALIAS_EXPORTED_ADAPTER = new Case(
+        "forward-alias-exported-adapter",
+        """
+        import * as console from "std/console"
+
+        export function main(): null {
+          let alias: (n: int, extra: int) => int = f;
+          if (alias(1, 7) === 10) {
+            console.log("declared-body-forward-alias-exported-adapter-ok");
+          } else {
+            console.log("declared-body-forward-alias-exported-adapter-bad");
+          }
+          return null;
+        }
+
+        export function f(n: int): int {
+          return n * 10;
+        }
+        """,
+        List.of("declared-body-forward-alias-exported-adapter-ok"),
+        null, "null", true);
+
+    /** The reverse declaration order of
+     *  {@link #FORWARD_ALIAS_EXPORTED_ADAPTER}. */
+    private static final Case FORWARD_ALIAS_EXPORTED_ADAPTER_REVERSE = new Case(
+        "forward-alias-exported-adapter-reverse",
+        """
+        import * as console from "std/console"
+
+        export function f(n: int): int {
+          return n * 10;
+        }
+
+        export function main(): null {
+          let alias: (n: int, extra: int) => int = f;
+          if (alias(1, 7) === 10) {
+            console.log("declared-body-forward-alias-exported-adapter-reverse-ok");
+          } else {
+            console.log("declared-body-forward-alias-exported-adapter-reverse-bad");
+          }
+          return null;
+        }
+        """,
+        List.of("declared-body-forward-alias-exported-adapter-reverse-ok"),
+        null, "null", true);
+
+    /**
+     * The awaited forward arity-extension alias of an exported async
+     * declaration: the async twin of
+     * {@link #FORWARD_ALIAS_EXPORTED_ADAPTER}. The awaited adapter source
+     * assigned {@code SOURCE_ASYNC} over the declaration's reserved
+     * {@code EXTERNAL_ENTRY} context before the fix; its nested source
+     * {@code ASYNC_START} now realizes the declaration's own entry — the
+     * {@code ELIDED_BY_ADAPTER} leading-argument operands, the entry's
+     * canonical body-task token through the {@code ExternalAsyncLink}, and
+     * zero nested return boundaries — while the outer adapter start keeps
+     * the xN target-signature {@code FUNCTION_PARAMETER} cells.
+     */
+    private static final Case FORWARD_ALIAS_EXPORTED_ADAPTER_ASYNC = new Case(
+        "forward-alias-exported-adapter-async",
+        """
+        import * as console from "std/console"
+
+        export async function drive(): int {
+          let alias: async (n: int, extra: int) => int = f;
+          let v: int = await alias(1, 7);
+          if (v === 10) {
+            console.log("declared-body-forward-alias-exported-adapter-async-ok");
+          } else {
+            console.log("declared-body-forward-alias-exported-adapter-async-bad");
+          }
+          return v;
+        }
+
+        export function main(): null {
+          return null;
+        }
+
+        export async function f(n: int): int {
+          return n * 10;
+        }
+        """,
+        List.of("declared-body-forward-alias-exported-adapter-async-ok"),
+        "drive", "int:10", true);
+
+    /** The reverse declaration order of
+     *  {@link #FORWARD_ALIAS_EXPORTED_ADAPTER_ASYNC}. */
+    private static final Case FORWARD_ALIAS_EXPORTED_ADAPTER_ASYNC_REVERSE = new Case(
+        "forward-alias-exported-adapter-async-reverse",
+        """
+        import * as console from "std/console"
+
+        export async function f(n: int): int {
+          return n * 10;
+        }
+
+        export async function drive(): int {
+          let alias: async (n: int, extra: int) => int = f;
+          let v: int = await alias(1, 7);
+          if (v === 10) {
+            console.log(
+              "declared-body-forward-alias-exported-adapter-async-reverse-ok");
+          } else {
+            console.log(
+              "declared-body-forward-alias-exported-adapter-async-reverse-bad");
+          }
+          return v;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """,
+        List.of("declared-body-forward-alias-exported-adapter-async-reverse-ok"),
+        "drive", "int:10", true);
+
     private static final List<Case> CASES = List.of(
         ACYCLIC_SIBLING, TWO_ESCAPED_INSTANCES, ACYCLIC_SIBLING_ASYNC,
         TWO_ESCAPED_INSTANCES_ASYNC, FORWARD_ALIAS, FORWARD_ALIAS_ASYNC,
@@ -772,6 +957,9 @@ public class DeclaredBodyCarrierProductionTest {
         EXPORTED_DIRECT_AWAIT_ASYNC, FORWARD_ALIAS_EXPORTED_ASYNC_RECURSIVE,
         EXPORTED_DIRECT_AWAIT_ASYNC_RECURSIVE, EXPORTED_RECURSIVE_ENCLOSING_STATE,
         FORWARD_ALIAS_EXPORTED_ASYNC_DEEP,
+        FORWARD_ALIAS_EXPORTED_ADAPTER, FORWARD_ALIAS_EXPORTED_ADAPTER_REVERSE,
+        FORWARD_ALIAS_EXPORTED_ADAPTER_ASYNC,
+        FORWARD_ALIAS_EXPORTED_ADAPTER_ASYNC_REVERSE,
         ADAPTER_OVER_ASYNC_EXTERNAL);
 
     // =========================================================================
@@ -1116,6 +1304,205 @@ public class DeclaredBodyCarrierProductionTest {
             + ": the unit records at least " + testCase.minEntryInvocations()
             + " same-module exported-entry realization(s); got "
             + moduleEntryInvocations);
+        if (testCase.arityExtensionAdapter()) {
+            checkArityExtensionAdapters(testCase, unit);
+        }
+    }
+
+    /**
+     * The exported arity-extension adapter battery (the ISSUE-0758
+     * review-cycle-3 gap): an alias whose target type extends the source's
+     * parameter list resolves the D15 {@code FUNCTION_ADAPT} over the
+     * exported declaration's pre-allocated body identity, so the invocation
+     * must not re-shape the declaration's reserved {@code EXTERNAL_ENTRY}.
+     * The synchronous adapter call keeps the indirect protocol over the
+     * published closure, runs its xN target-signature
+     * {@code FUNCTION_PARAMETER} cells, and records the entry-owned return
+     * cell; the awaited adapter's nested source {@code ASYNC_START}
+     * realizes the entry protocol — the {@code ELIDED_BY_ADAPTER}
+     * leading-M-argument operands, zero parameter boundaries, zero nested
+     * return boundaries, and the {@code ExternalAsyncLink} naming the
+     * entry's canonical body-task token — and the outer
+     * {@code ADAPTER_INNER} alias token resolves through the nested source
+     * start's own activation-bound token. Exactly one adapter invocation
+     * exists (the program's single source invocation), and the declaration's
+     * body RETURN keeps naming the entry and its single return cell.
+     */
+    private static void checkArityExtensionAdapters(Case testCase,
+                                                    LoweredModuleUnit unit) {
+        Map<OpId, String> entryReturnCells = new LinkedHashMap<>();
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
+                    && op.payload()
+                        instanceof KindPayload.ExternalEntryPayload entry) {
+                entryReturnCells.put(entry.returnBoundaryOpId(), entry.exportName());
+            }
+        }
+        int syncAdapters = 0;
+        int asyncAdapters = 0;
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() == SemanticOpKind.CALL
+                    && op.payload() instanceof KindPayload.CallPayload call) {
+                FunctionExecutionBinding.AdapterBinding adapter =
+                    arityExtensionAdapter(call.callee());
+                if (adapter == null) {
+                    continue;
+                }
+                syncAdapters++;
+                check(call.mode() == CallMode.INDIRECT && call.externalEntryRef() == null
+                        && call.bodyBlock() == null, testCase.name()
+                    + ": the sync arity-extension adapter call " + op.opId()
+                    + " runs the indirect protocol over the exported declaration's"
+                    + " published closure; got mode " + call.mode() + " and entry ref "
+                    + call.externalEntryRef());
+                checkTargetParameterCells(testCase, unit, op,
+                    call.parameterBoundaryOpIds(), adapter);
+                SemanticOp cell = opOf(unit, call.returnBoundaryOpId());
+                check(cell != null && cell.kind() == SemanticOpKind.BOUNDARY
+                        && cell.payload()
+                            instanceof KindPayload.BoundaryPayload boundary
+                        && boundary.kind() == BoundaryKind.EXTERNAL_RETURN
+                        && entryReturnCells.containsKey(call.returnBoundaryOpId()),
+                    testCase.name() + ": the sync arity-extension adapter call "
+                        + op.opId() + " records the entry-owned EXTERNAL_RETURN cell"
+                        + " of the exported declaration " + entryReturnCells
+                        + "; got " + call.returnBoundaryOpId());
+            } else if (op.kind() == SemanticOpKind.ASYNC_START
+                    && op.payload() instanceof KindPayload.AsyncStartPayload started
+                    && started.parameterBoundaryMode() == ParameterBoundaryMode.RUN) {
+                FunctionExecutionBinding.AdapterBinding adapter =
+                    arityExtensionAdapter(started.callee());
+                if (adapter == null) {
+                    continue;
+                }
+                asyncAdapters++;
+                check(started.returnBoundaryOpId() == null, testCase.name()
+                    + ": the outer adapter-over-async start " + op.opId()
+                    + " runs zero return boundaries of its own");
+                checkTargetParameterCells(testCase, unit, op,
+                    started.parameterBoundaryOpIds(), adapter);
+                checkNestedEntrySource(testCase, unit, op, adapter);
+            }
+        }
+        check(syncAdapters + asyncAdapters == 1, testCase.name()
+            + ": exactly one arity-extension adapter invocation; got "
+            + syncAdapters + " sync and " + asyncAdapters + " async");
+    }
+
+    /**
+     * The awaited arity-extension adapter's nested source start: the
+     * exported declaration's own entry protocol, bound to the nested start's
+     * activation token.
+     */
+    private static void checkNestedEntrySource(Case testCase, LoweredModuleUnit unit,
+                                               SemanticOp outer,
+                                               FunctionExecutionBinding.AdapterBinding adapter) {
+        SemanticOp nested = null;
+        for (SemanticOp candidate : unit.ops()) {
+            if (candidate.kind() == SemanticOpKind.ASYNC_START
+                    && outer.opId().equals(candidate.origin().parentOpId())) {
+                nested = candidate;
+            }
+        }
+        check(nested != null, testCase.name()
+            + ": the adapter-over-async start " + outer.opId()
+            + " carries its nested source ASYNC_START");
+        if (nested == null) {
+            return;
+        }
+        KindPayload.AsyncStartPayload inner =
+            (KindPayload.AsyncStartPayload) nested.payload();
+        check(inner.source() == AsyncStartSource.EXTERNAL
+                && inner.parameterBoundaryMode() == ParameterBoundaryMode.ELIDED_BY_ADAPTER
+                && inner.parameterBoundaryOpIds().isEmpty()
+                && inner.returnBoundaryOpId() == null, testCase.name()
+            + ": the nested source start " + nested.opId() + " realizes the entry"
+            + " protocol (EXTERNAL, ELIDED_BY_ADAPTER, zero parameter boundaries, zero"
+            + " return boundaries); got source " + inner.source() + ", mode "
+            + inner.parameterBoundaryMode() + ", "
+            + inner.parameterBoundaryOpIds().size() + " parameter cell(s), return "
+            + inner.returnBoundaryOpId());
+        int leading = adapter.sourceSignature().paramTypes().size();
+        check(nested.operands().equals(outer.operands().subList(0, leading)),
+            testCase.name() + ": the nested source start " + nested.opId()
+                + " passes exactly the leading " + leading
+                + " argument operand(s); got " + nested.operands() + " of "
+                + outer.operands());
+        FunctionExecutionBinding nestedBinding = inner.callee()
+                instanceof KindPayload.CallCallee.Static stat ? stat.binding() : null;
+        check(nestedBinding instanceof FunctionExecutionBinding.ExternalFunction external
+                && external.executionOwner() == ExternalExecutionOwner.SHARED_BODY
+                && external.moduleId().equals(unit.moduleId()), testCase.name()
+            + ": the nested source start's callee is the module's own SHARED_BODY"
+            + " external record; got " + nestedBinding);
+        ExternalAsyncLink link = inner.externalAsyncLink();
+        check(link != null && link.calleeModuleId().equals(unit.moduleId())
+                && link.calleeTokenId() instanceof AsyncTokenId.Canonical canonical
+                && canonical.owner() == AsyncTokenOwner.DEAL_BODY_TASK, testCase.name()
+            + ": the nested source start's ExternalAsyncLink names the entry's"
+            + " canonical body-task token in the same module; got " + link);
+        SemanticOp entry = link == null ? null
+            : opOf(unit, new OpId(unit.moduleId(), link.calleeTokenId().tokenId()));
+        check(entry != null && entry.kind() == SemanticOpKind.EXTERNAL_ENTRY
+                && entry.payload() instanceof KindPayload.ExternalEntryPayload payload
+                && payload.async(), testCase.name()
+            + ": the nested source link's token names the exported declaration's"
+            + " reserved async EXTERNAL_ENTRY; got " + entry);
+        check(outer.result() instanceof AsyncTokenId outerToken
+                && outerToken instanceof AsyncTokenId.Alias outerAlias
+                && outerAlias.linkKind() == AsyncLinkKind.ADAPTER_INNER
+                && outerAlias.referent().equals(nested.result()), testCase.name()
+            + ": the outer ADAPTER_INNER alias " + outer.result()
+            + " resolves the nested source start's own activation-bound token; got "
+            + nested.result());
+    }
+
+    /** The adapter's xN target-signature {@code FUNCTION_PARAMETER} cells. */
+    private static void checkTargetParameterCells(Case testCase, LoweredModuleUnit unit,
+            SemanticOp invocation, List<OpId> boundaryIds,
+            FunctionExecutionBinding.AdapterBinding adapter) {
+        List<RuntimeDescriptor> targetParams =
+            adapter.targetSignature().paramTypes();
+        check(boundaryIds.size() == targetParams.size(), testCase.name()
+            + ": the adapter invocation " + invocation.opId() + " runs one"
+            + " FUNCTION_PARAMETER cell per target parameter; got " + boundaryIds.size());
+        for (int i = 0; i < boundaryIds.size(); i++) {
+            SemanticOp boundary = opOf(unit, boundaryIds.get(i));
+            check(boundary != null && boundary.kind() == SemanticOpKind.BOUNDARY
+                    && boundary.payload() instanceof KindPayload.BoundaryPayload payload
+                    && payload.kind() == BoundaryKind.FUNCTION_PARAMETER
+                    && i < targetParams.size()
+                    && targetParams.get(i).equals(payload.descriptor()),
+                testCase.name() + ": the adapter invocation " + invocation.opId()
+                    + " boundary " + boundaryIds.get(i) + " is target parameter "
+                    + (i + 1) + "'s FUNCTION_PARAMETER cell");
+        }
+    }
+
+    /** The arity-extension adapter binding of one callee, or null. */
+    private static FunctionExecutionBinding.AdapterBinding arityExtensionAdapter(
+            KindPayload.CallCallee callee) {
+        if (!(callee instanceof KindPayload.CallCallee.Static stat)
+                || !(stat.binding()
+                    instanceof FunctionExecutionBinding.AdapterBinding adapter)) {
+            return null;
+        }
+        return adapter.sourceSignature().paramTypes().size()
+                < adapter.targetSignature().paramTypes().size()
+            ? adapter : null;
+    }
+
+    /** The unit op with the given id, or null. */
+    private static SemanticOp opOf(LoweredModuleUnit unit, OpId opId) {
+        if (opId == null) {
+            return null;
+        }
+        for (SemanticOp op : unit.ops()) {
+            if (op.opId().equals(opId)) {
+                return op;
+            }
+        }
+        return null;
     }
 
     /**

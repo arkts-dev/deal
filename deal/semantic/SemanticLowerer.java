@@ -8714,7 +8714,18 @@ public final class SemanticLowerer {
                             throw new ConstructUnlowered("the adapter's body-source "
                                 + "binding has no lowering context (producer defect)");
                         }
-                        assignSourceCallShape(sourceContext);
+                        // The adapter's source invocation is not a second
+                        // source-call shape: the exported declaration's
+                        // reserved context is already the module's entry
+                        // ({@link #moduleEntryExportName}), and that entry
+                        // owns the body's single return cell. The D15
+                        // protocol runs the published closure under the
+                        // reserved identity (the target-parameter checks and
+                        // the leading-argument projection are the adapter's
+                        // own), so the reserved shape is never replaced.
+                        if (moduleEntryExportName(sourceContext) == null) {
+                            assignSourceCallShape(sourceContext);
+                        }
                         callOpId = sourceContext.callSiteUsed
                             ? ids.nextOpId(module, nextOrdinal++, 0)
                             : sourceContext.callSiteOpId;
@@ -8811,7 +8822,14 @@ public final class SemanticLowerer {
                                 throw new ConstructUnlowered("the adapter's body-source "
                                     + "binding has no lowering context (producer defect)");
                             }
-                            assignSourceCallShape(context);
+                            // The entry-shaped source keeps its reserved
+                            // shape; its single return cell (the
+                            // EXTERNAL_RETURN the entry names) stays the
+                            // adapter invocation's recorded return boundary
+                            // — the closed adapter table admits it.
+                            if (moduleEntryExportName(context) == null) {
+                                assignSourceCallShape(context);
+                            }
                             returnBoundaryOpId = context.returnBoundaryOpId;
                         }
                         case FunctionExecutionBinding.HostFunction host -> {
@@ -9833,6 +9851,11 @@ public final class SemanticLowerer {
             String nestedHostLabel = null;
             ExternalAsyncLink nestedLink = null;
             AsyncStartSource nestedSource;
+            // The nested source op's callee binding: the statically fixed
+            // source, or the exported body's recorded entry protocol (the
+            // same-module SHARED_BODY binding) when the source is an
+            // entry-shaped declaration.
+            FunctionExecutionBinding nestedBinding = source;
             FailurePolicyId nestedPolicy = FailurePolicyId.NO_DEAL_FAILURE;
             switch (source) {
                 case FunctionExecutionBinding.LoweredBody body -> {
@@ -9841,15 +9864,47 @@ public final class SemanticLowerer {
                         throw new ConstructUnlowered("the adapter's body-source binding "
                             + "has no lowering context (producer defect)");
                     }
-                    context.assignShape(InvocationShape.SOURCE_ASYNC, context.callSiteOpId);
-                    nestedOpId = context.callSiteUsed
-                        ? ids.nextOpId(module, nextOrdinal++, 0) : context.callSiteOpId;
-                    context.callSiteUsed = true;
-                    nestedReturnBoundary = context.returnBoundaryOpId;
-                    nestedSource = AsyncStartSource.DEAL_BODY;
-                    sourceToken = new AsyncTokenId.Canonical(
-                        ids.nextTokenId(module, nextOrdinal++, 0),
-                        AsyncTokenOwner.DEAL_BODY_TASK);
+                    String entryExportName = moduleEntryExportName(context);
+                    if (entryExportName == null) {
+                        context.assignShape(InvocationShape.SOURCE_ASYNC,
+                            context.callSiteOpId);
+                        nestedOpId = context.callSiteUsed
+                            ? ids.nextOpId(module, nextOrdinal++, 0)
+                            : context.callSiteOpId;
+                        context.callSiteUsed = true;
+                        nestedReturnBoundary = context.returnBoundaryOpId;
+                        nestedSource = AsyncStartSource.DEAL_BODY;
+                        sourceToken = new AsyncTokenId.Canonical(
+                            ids.nextTokenId(module, nextOrdinal++, 0),
+                            AsyncTokenOwner.DEAL_BODY_TASK);
+                    } else {
+                        // The exported declaration's reserved entry shape
+                        // owns the awaited invocation record: the nested
+                        // source op realizes the declaration's own entry —
+                        // its body identity and single return cell stay the
+                        // reservation's — exactly like the awaited direct
+                        // declared-name call ({@link #lowerModuleEntryAsyncStart})
+                        // and the awaited alias of the declaration. The
+                        // nested op's own token is the activation-bound
+                        // awaiting identity (never the entry's shared static
+                        // token), and the link names the entry's canonical
+                        // body-task token; the outer ADAPTER_INNER alias
+                        // resolves through it. The reserved entry shape is
+                        // never re-shaped into a source async start.
+                        nestedOpId = ids.nextOpId(module, nextOrdinal++, 0);
+                        nestedBinding = new FunctionExecutionBinding.ExternalFunction(
+                            module, entryExportName, context.signature,
+                            ExternalExecutionOwner.SHARED_BODY);
+                        nestedReturnBoundary = null;
+                        nestedSource = AsyncStartSource.EXTERNAL;
+                        AsyncTokenId calleeToken = new AsyncTokenId.Canonical(
+                            context.shapeOpId.id(), AsyncTokenOwner.DEAL_BODY_TASK);
+                        sourceToken = new AsyncTokenId.Canonical(
+                            ids.nextTokenId(module, nextOrdinal++, 0),
+                            AsyncTokenOwner.DEAL_BODY_TASK);
+                        nestedLink = new ExternalAsyncLink(module, entryExportName,
+                            calleeToken);
+                    }
                 }
                 case FunctionExecutionBinding.HostFunction host -> {
                     nestedOpId = ids.nextOpId(module, nextOrdinal++, 0);
@@ -9924,7 +9979,7 @@ public final class SemanticLowerer {
                 SourceOriginKind.SYNTHETIC, nestedAnchor, outerOpId);
             emit(buildOp(nestedOpId, SemanticOpKind.ASYNC_START,
                 new KindPayload.AsyncStartPayload(
-                    new KindPayload.CallCallee.Static(source), nestedSource,
+                    new KindPayload.CallCallee.Static(nestedBinding), nestedSource,
                     ParameterBoundaryMode.ELIDED_BY_ADAPTER, List.of(),
                     sourceSignature.returnType(), nestedReturnBoundary, nestedHostLabel,
                     nestedLink),
