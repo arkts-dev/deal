@@ -35,9 +35,17 @@ import java.util.stream.Stream;
  * text at the integral-value, precision, and exponent boundaries; an
  * int-variant read keeps the integer spelling); empty, nested empty,
  * and object-field empty arrays (the JSON array shape survives every
- * depth); shared references that encode at every position and cyclic
- * completions that are value-representation failures; a bytes completion
- * and a non-finite number classified as representation failures; a
+ * depth); parsed-JSON completions (every decoded numeric leaf keeps its
+ * own variant — the precision-boundary, nested fractional, and integral
+ * leaves — and the decoded container shapes survive); absent versus
+ * present-null slots (a deleted array element is a value-representation
+ * failure, an explicit null element stays JSON {@code null}); shared
+ * references that encode at every position and cyclic completions that
+ * are value-representation failures; a bytes completion and a
+ * non-finite number classified as representation failures; class,
+ * function, and builtin Error completions that pass the matcher and are
+ * rejected by the shared encoder (top-level, nullable, nested in an
+ * array, and as a table field) instead of a fabricated DEAL error; a
  * delayed host async completion awaited by the export; a typed completion
  * rejection at the await site (E8001, message unchanged); a DEAL error
  * raised by the async operation and by {@code main()} (code/message/
@@ -352,6 +360,215 @@ public class AsyncExportInvokerProductionTest {
         """;
 
     /**
+     * The parsed-JSON numeric leaves (the latest ISSUE-0749 review, finding
+     * 1): a {@code std/json} decode carries each numeric leaf's variant in
+     * the carrier itself ({@code __jn.k}), never in a container slot mark,
+     * so the projection must record the destination slot's variant when it
+     * unwraps the carrier. The precision-boundary leaf, the integral leaf,
+     * and the nested {@code 5.0} leaf must all spell through the shared
+     * walker's canonical text like the JVM sibling, never through the
+     * default {@code tostring}'s lossy {@code %.14g}.
+     */
+    private static final String PARSED_JSON_NUMBERS_SOURCE = """
+        import * as json from "std/json";
+
+        export async function run(): table | null {
+          return json.parse("{\\"x\\":0.30000000000000004,\\"xs\\":[5.0],\\"n\\":7}");
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The parsed-JSON container shapes and null field: an empty decoded
+     * array keeps its JSON array shape, a decoded object keeps its null
+     * field as the JSON null slot, and both encode without a carrier key.
+     */
+    private static final String PARSED_JSON_CONTAINER_SOURCE = """
+        import * as json from "std/json";
+
+        export async function run(): table | null {
+          return json.parse("{\\"xs\\":[],\\"o\\":{\\"n\\":null}}");
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The parsed-JSON exponent and signed-zero leaves: the variant mark
+     * carries the walker's canonical decimal spelling for every numeric
+     * leaf the decoder produces, the exponent and negative-zero forms
+     * included.
+     */
+    private static final String PARSED_JSON_EXPONENT_SOURCE = """
+        import * as json from "std/json";
+
+        export async function run(): table | null {
+          return json.parse("{\\"xs\\":[1e17,1e-320,-0.0]}");
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The deleted array slot (the latest ISSUE-0749 review, finding 2): a raw
+     * nil slot is the absent/deleted element, which the shared JSON walk
+     * rejects as a value-representation failure — never a fabricated JSON
+     * null. The JVM sibling's {@code MISSING} slot rejects identically.
+     */
+    private static final String DELETED_SLOT_SOURCE = """
+        export async function run(): table {
+          let xs: int[] = [7, 8];
+          delete xs[0];
+          return { xs: xs };
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The explicit-null counterpart of the deleted slot: a present null
+     * element is the language null and must keep its JSON {@code null}
+     * slot (the absent/missing distinction stays visible).
+     */
+    private static final String EXPLICIT_NULL_SLOT_SOURCE = """
+        export async function run(): table {
+          let xs: (int | null)[] = [null, 8];
+          return { xs: xs };
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The class completion (the latest ISSUE-0749 review, finding 3): a valid
+     * compiled class instance is admitted by the canonical matcher (the
+     * projection carries the matcher's {@code __kind}/{@code __classname}
+     * shape) and rejected by the shared encoder as a non-encodable
+     * table-carried value — a representation failure on both targets,
+     * never a fabricated DEAL error.
+     */
+    private static final String CLASS_COMPLETION_SOURCE = """
+        class C {
+          x: int = 7;
+        }
+
+        export async function run(): C {
+          let c: C = { x: 7 };
+          return c;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /** The same class value nested in an array completion. */
+    private static final String CLASS_ARRAY_COMPLETION_SOURCE = """
+        class C {
+          x: int = 7;
+        }
+
+        export async function run(): C[] {
+          let c: C = { x: 7 };
+          return [c];
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /** The same class value under a nullable completion descriptor. */
+    private static final String NULLABLE_CLASS_COMPLETION_SOURCE = """
+        class C {
+          x: int = 7;
+        }
+
+        export async function run(): C | null {
+          let c: C = { x: 7 };
+          return c;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The function completion (the latest ISSUE-0749 review, finding 3): a
+     * declared {@code () => int} value is admitted by the canonical
+     * matcher (the projection carries the matcher's
+     * {@code __kind}/{@code sig} shape) and rejected by the shared encoder
+     * as a DEAL function value on both targets.
+     */
+    private static final String FUNCTION_COMPLETION_SOURCE = """
+        export async function run(): () => int {
+          let f: () => int = function(): int { return 7; };
+          return f;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /** The same function value nested in an array completion. */
+    private static final String FUNCTION_ARRAY_COMPLETION_SOURCE = """
+        export async function run(): (() => int)[] {
+          let f: () => int = function(): int { return 7; };
+          return [f];
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /** A stdlib callable completion under its declared function descriptor. */
+    private static final String STDLIB_FUNCTION_COMPLETION_SOURCE = """
+        import * as json from "std/json";
+
+        export async function run(): (t: table) => string {
+          return json.stringify;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The builtin Error value as a table field: the {@code __d} carrier
+     * takes the matcher's class shape for nested occurrences and the
+     * encoder rejects it as a table-carried value on both targets.
+     */
+    private static final String ERROR_FIELD_COMPLETION_SOURCE = """
+        function passThrough(): Error {
+          try { throw { code: "E_CANON", message: "roundtrip" }; }
+          catch (e) { return e; }
+        }
+
+        export async function run(): table {
+          return { e: passThrough() };
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
      * The parameterized published wrapper: the retained-caller ABI's
      * {@code run.f(7)} must forward its declared argument into the async
      * entry (ISSUE-0749 review cycle 2, finding 4).
@@ -579,6 +796,9 @@ public class AsyncExportInvokerProductionTest {
         testNumericReadCompletionsBothTargets();
         testEmptyArrayCompletionsBothTargets();
         testGraphCompletionsBothTargets();
+        testParsedJsonCompletionsBothTargets();
+        testAbsentAndNullSlotsBothTargets();
+        testNonEncodableCarrierCompletionsBothTargets();
         testRepresentationFailureBothTargets();
         testDelayedHostCompletionBothTargets();
         testTypedCompletionRejectionBothTargets();
@@ -789,6 +1009,133 @@ public class AsyncExportInvokerProductionTest {
             } finally {
                 deleteRecursively(cyclic.root());
             }
+        }
+    }
+
+    /**
+     * The parsed-JSON completion surface (the latest ISSUE-0749 review,
+     * finding 1): a {@code std/json} decode carries each numeric leaf's
+     * variant in the carrier itself, so unwrapping a leaf must record the
+     * destination slot's own variant — the precision-boundary and nested
+     * fractional leaves spell through the shared walker's canonical text,
+     * an integral leaf keeps the integer spelling, and the decoded
+     * container shapes (an empty array, a null field) survive the
+     * projection without a carrier key. The JVM sibling is the reference.
+     */
+    private static void testParsedJsonCompletionsBothTargets() throws Exception {
+        System.out.println("-- parsed-JSON leaves keep their numeric variants"
+            + " and shapes");
+        for (String backend : List.of("luajit", "jvm")) {
+            Project numbers = compile("parsed-json-numbers-" + backend, backend,
+                String.format(PLAIN_MANIFEST, backend),
+                PARSED_JSON_NUMBERS_SOURCE, null, null);
+            try {
+                Object result = invoke(numbers, "run", "?table");
+                checkEq(valueResult(backend, "?table",
+                        "{\"x\":0.30000000000000004,\"xs\":[5.0],\"n\":7}"),
+                    result,
+                    backend + ": every parsed numeric leaf keeps its variant"
+                        + " text: " + result);
+                assertNoInternalKeys(backend, valueJson(result));
+            } finally {
+                deleteRecursively(numbers.root());
+            }
+            Project containers = compile("parsed-json-containers-" + backend,
+                backend, String.format(PLAIN_MANIFEST, backend),
+                PARSED_JSON_CONTAINER_SOURCE, null, null);
+            try {
+                Object result = invoke(containers, "run", "?table");
+                checkEq(valueResult(backend, "?table",
+                        "{\"xs\":[],\"o\":{\"n\":null}}"), result,
+                    backend + ": a parsed empty array and null field keep their"
+                        + " JSON shapes: " + result);
+                assertNoInternalKeys(backend, valueJson(result));
+            } finally {
+                deleteRecursively(containers.root());
+            }
+            Project exponents = compile("parsed-json-exponents-" + backend,
+                backend, String.format(PLAIN_MANIFEST, backend),
+                PARSED_JSON_EXPONENT_SOURCE, null, null);
+            try {
+                Object result = invoke(exponents, "run", "?table");
+                checkEq(valueResult(backend, "?table",
+                        "{\"xs\":[1.0E17,1.0E-320,-0.0]}"), result,
+                    backend + ": parsed exponent and signed-zero leaves keep"
+                        + " their canonical text: " + result);
+                assertNoInternalKeys(backend, valueJson(result));
+            } finally {
+                deleteRecursively(exponents.root());
+            }
+        }
+    }
+
+    /**
+     * The absent/present-null slot distinction (the latest ISSUE-0749 review,
+     * finding 2): a deleted array element is the internal missing slot and
+     * the shared encoder rejects it as a value-representation failure on
+     * both targets — the projection never fabricates a present JSON null
+     * from an absent slot. A genuinely present null element keeps the JSON
+     * null slot, so the two remain distinguishable.
+     */
+    private static void testAbsentAndNullSlotsBothTargets() throws Exception {
+        System.out.println("-- a deleted slot is a representation failure; an"
+            + " explicit null slot stays JSON null");
+        for (String backend : List.of("luajit", "jvm")) {
+            assertRepresentationFailure(backend, "deleted-slot",
+                DELETED_SLOT_SOURCE, "table",
+                "unsupported type for JSON encoding: nil");
+            Project project = compile("explicit-null-slot-" + backend, backend,
+                String.format(PLAIN_MANIFEST, backend),
+                EXPLICIT_NULL_SLOT_SOURCE, null, null);
+            try {
+                Object result = invoke(project, "run", "table");
+                checkEq(valueResult(backend, "table", "{\"xs\":[null,8]}"),
+                    result,
+                    backend + ": a present null slot keeps its JSON null: "
+                        + result);
+                assertNoInternalKeys(backend, valueJson(result));
+            } finally {
+                deleteRecursively(project.root());
+            }
+        }
+    }
+
+    /**
+     * The non-encodable value carriers (the latest ISSUE-0749 review, finding
+     * 3): a valid compiled class instance, a declared function value, and
+     * the builtin Error carrier are admitted by the canonical matcher —
+     * the projection carries the matcher's own class and function shapes —
+     * and the shared encoder rejects each as a value-representation
+     * failure, exactly like the JVM sibling. A fabricated DEAL error for a
+     * valid completion is the defect this pins, at the top level, under a
+     * nullable descriptor, nested in an array, and as a table field.
+     */
+    private static void testNonEncodableCarrierCompletionsBothTargets()
+            throws Exception {
+        System.out.println("-- class, function, and Error completions reach the"
+            + " encoder as representation failures");
+        for (String backend : List.of("luajit", "jvm")) {
+            assertRepresentationFailure(backend, "class-completion",
+                CLASS_COMPLETION_SOURCE, "@src/C",
+                "unsupported type for JSON encoding: table");
+            assertRepresentationFailure(backend, "class-array-completion",
+                CLASS_ARRAY_COMPLETION_SOURCE, "[@src/C]",
+                "unsupported type for JSON encoding: table");
+            assertRepresentationFailure(backend, "nullable-class-completion",
+                NULLABLE_CLASS_COMPLETION_SOURCE, "?@src/C",
+                "unsupported type for JSON encoding: table");
+            assertRepresentationFailure(backend, "function-completion",
+                FUNCTION_COMPLETION_SOURCE, "()->int",
+                "unsupported type for JSON encoding: function");
+            assertRepresentationFailure(backend, "function-array-completion",
+                FUNCTION_ARRAY_COMPLETION_SOURCE, "[()->int]",
+                "unsupported type for JSON encoding: function");
+            assertRepresentationFailure(backend, "stdlib-function-completion",
+                STDLIB_FUNCTION_COMPLETION_SOURCE, "(table)->string",
+                "unsupported type for JSON encoding: function");
+            assertRepresentationFailure(backend, "error-field-completion",
+                ERROR_FIELD_COMPLETION_SOURCE, "table",
+                "unsupported type for JSON encoding: table");
         }
     }
 

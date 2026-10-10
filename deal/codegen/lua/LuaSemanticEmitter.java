@@ -10066,32 +10066,57 @@ end
 -- deployed runtime's invoke_async_export validates the completion with the
 -- runtime's canonical matcher, so the wrapper hands over the ABI
 -- representation — the language null as the runtime's own __NULL
--- sentinel, a numeric read carrier as the number it carries, and the
--- shared containers as the same carriers (the array carrier keeps its
--- __n length, the table carrier its first-insertion order, and both keep
--- their number-slot marks, so the encoder spells each slot by its own
--- variant). The copy is graph-preserving: one projected table per source
--- table, so a shared reference stays shared and a cyclic completion
--- reaches the encoder's cycle guard instead of exhausting the Lua stack.
--- Scalars, bytes, function carriers, class instances, and every other
--- value pass through unchanged, so the shared encoder's rejection keeps
--- its authority over the non-encodable surface. The projection also
--- records the top-level scalar number's own variant in the
--- __dealAsyncExportVariant chunk global: a numeric carrier's kind, or
--- the declaration's declared number type for a plain number (the
+-- sentinel, a numeric read carrier as the number it carries (its own
+-- variant recorded as the destination slot's number mark, so a parsed
+-- JSON leaf spells through the walker's canonical decimal like a typed
+-- number write), and the shared containers as the same carriers (the
+-- array carrier keeps its __n length, the table carrier its
+-- first-insertion order, and both keep their number-slot marks). The
+-- copy returns the projected value and, as its second result, whether
+-- the value carries the number variant (the caller records the
+-- corresponding destination slot mark). The copy is graph-preserving:
+-- one projected table per source table, so a shared reference stays
+-- shared and a cyclic completion reaches the encoder's cycle guard
+-- instead of exhausting the Lua stack. The absent markers (a deleted
+-- array slot, a missing field) stay absent — never a fabricated present
+-- null — while a genuine language null becomes the runtime's own
+-- sentinel, so the encoder's array walk keeps its absent-slot rejection
+-- and a table's present nil-valued field renders null. The shared class
+-- carrier (__c/__id) and the builtin Error carrier (__d) take the
+-- matcher's class shape (__kind/__classname), and the shared function
+-- carriers (__fn/__csig) the matcher's function shape (__kind/sig),
+-- while keeping their carrier marks, so canonical matching admits valid
+-- values and the shared encoder's rejection keeps its authority over
+-- the non-encodable surface. Scalars, bytes, host ABI wrappers, module
+-- namespace surfaces, and every other value pass through unchanged. The
+-- projection also records the top-level scalar number's own variant in
+-- the __dealAsyncExportVariant chunk global: a numeric carrier's kind,
+-- or the declaration's declared number type for a plain number (the
 -- wrapper passes __declaredNumber), so the encoder spells a top-level
 -- scalar number exactly like the shared walker's marked slots — the JVM
 -- sibling's boxed-double text — and leaves an int completion integral.
 local function __asyncExportCompletion(__rtAsync, v, __declaredNumber, __seen)
   local __top = __seen == nil
   if __top then __dealAsyncExportVariant = nil end
-  if v == nil or v == __NULL or v == __MISSING or v == __rtAsync.__NULL
-      or v == __rtAsync.__MISSING then
+  if v == nil then
+    -- The top-level value position spells the language null as a raw
+    -- nil (the emitted ScalarValue.Null), so a top-level nil is the
+    -- checked null; inside a container slot a raw nil is the absent
+    -- (deleted) slot the encoder's array walk rejects.
+    if __top then return __rtAsync.__NULL end
+    return nil
+  end
+  if v == __MISSING or v == __rtAsync.__MISSING then
+    if __top then return __rtAsync.__NULL end
+    return __MISSING
+  end
+  if v == __NULL or v == __rtAsync.__NULL then
     return __rtAsync.__NULL
   end
   if type(v) ~= "table" then
     if __top and __declaredNumber and type(v) == "number" then
       __dealAsyncExportVariant = "number"
+      return v, true
     end
     return v
   end
@@ -10099,7 +10124,7 @@ local function __asyncExportCompletion(__rtAsync, v, __declaredNumber, __seen)
     if __top then
       __dealAsyncExportVariant = v.k == "number" and "number" or "int"
     end
-    return v.d
+    return v.d, (v.k == "number")
   end
   local seen = __seen
   if seen == nil then seen = {} end
@@ -10109,10 +10134,17 @@ local function __asyncExportCompletion(__rtAsync, v, __declaredNumber, __seen)
     local out = {__a = true, __n = v.__n}
     seen[v] = out
     local marks = v.__nK
-    if type(marks) == "table" then out.__nK = {} end
+    if type(marks) ~= "table" then marks = nil end
     for i = 1, v.__n do
-      out[i] = __asyncExportCompletion(__rtAsync, v[i], nil, seen)
-      if out.__nK ~= nil and marks[i] == true then out.__nK[i] = true end
+      local child, childNumber =
+          __asyncExportCompletion(__rtAsync, v[i], nil, seen)
+      if child ~= nil then
+        out[i] = child
+        if childNumber or (marks ~= nil and marks[i] == true) then
+          if out.__nK == nil then out.__nK = {} end
+          out.__nK[i] = true
+        end
+      end
     end
     return out
   end
@@ -10120,19 +10152,45 @@ local function __asyncExportCompletion(__rtAsync, v, __declaredNumber, __seen)
     local out = {__t = true, __keys = {}, __order = {}}
     seen[v] = out
     local marks = v.__nK
-    if type(marks) == "table" then out.__nK = {} end
+    if type(marks) ~= "table" then marks = nil end
     local order = v.__order
     if type(order) == "table" then
       for i = 1, #order do
         local key = order[i]
-        out[key] = __asyncExportCompletion(__rtAsync, v[key], nil, seen)
+        local child, childNumber =
+            __asyncExportCompletion(__rtAsync, v[key], nil, seen)
+        out[key] = child
         out.__keys[key] = true
         out.__order[i] = key
-        if out.__nK ~= nil and marks ~= nil and marks[key] == true then
+        if childNumber or (marks ~= nil and marks[key] == true) then
+          if out.__nK == nil then out.__nK = {} end
           out.__nK[key] = true
         end
       end
     end
+    return out
+  end
+  if v.__c then
+    local out = {__kind = "class", __c = true, __id = v.__id,
+                 __classname = v.__id}
+    seen[v] = out
+    return out
+  end
+  if v.__d then
+    local out = {__kind = "class", __d = true,
+                 __classname = "@$builtin/Error"}
+    seen[v] = out
+    return out
+  end
+  if v.__fn ~= nil or v.__f or v.__kind == "function" then
+    if v.__kind == "function" and v.sig ~= nil then
+      return v
+    end
+    local sig = v.__csig or v.sig
+    if sig == nil then return v end
+    local out = {__kind = "function", sig = sig, __fn = v.__fn,
+                 __csig = v.__csig, __sig = v.__sig}
+    seen[v] = out
     return out
   end
   return v
