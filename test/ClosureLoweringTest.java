@@ -8,6 +8,8 @@ import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
 import deal.parser.ParseResult;
@@ -1078,6 +1080,42 @@ public class ClosureLoweringTest {
                         && diagnostic.diagnosticCode() == DiagnosticCode.E6005
                         && diagnostic.message().contains(SemanticLowerer.CONSTRUCT_UNLOWERED),
                     "the foreign function expression converts to E6005 CONSTRUCT_UNLOWERED");
+            }
+        }
+
+        // ISSUE-0750: the rejected for-let update shape is identified by its
+        // own span — the E6005 carries the BinaryExpr update's exact SOURCE
+        // range (not the whole loop's, and not a synthetic anchor), while
+        // the rejection, the code, the message, and the absent unit stay as
+        // before.
+        CheckedSlice updateSlice = checkSlice("for (let i: int = 0; i < 3; 1 + 1) { }\n");
+        if (updateSlice != null) {
+            SemanticLowerer.BindingCoreResult update = SemanticLowerer.lowerModuleBindingCore(
+                moduleOf(updateSlice), SemanticProfile.DEAL_V1_2_INT32, Map.of(),
+                INTERFACE_HASH, REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
+            check(update != null && update.lowering().hasErrors()
+                    && update.lowering().unit() == null,
+                "the for-let update shape fails hard in the binding-core window with no unit");
+            if (update != null && update.lowering().hasErrors()) {
+                CompilerDiagnostic diagnostic = update.lowering().diagnostics().get(0);
+                check("E6005".equals(diagnostic.code())
+                        && diagnostic.diagnosticCode() == DiagnosticCode.E6005
+                        && diagnostic.message().contains(SemanticLowerer.CONSTRUCT_UNLOWERED)
+                        && diagnostic.message().contains(
+                            "for-let update expression BinaryExpr"),
+                    "the for-let update shape converts to E6005 CONSTRUCT_UNLOWERED naming "
+                        + "the offending update expression; got " + diagnostic.message());
+                DiagnosticRange range = diagnostic.range();
+                check(range.origin() == RangeOrigin.SOURCE
+                        && "test.deal".equals(range.file())
+                        && range.startLine() == 1 && range.startColumn() == 29
+                        && range.endLine() == 1 && range.endColumn() == 34
+                        && range.startScalarOffset() == 28
+                        && range.endScalarOffset() == 33
+                        && range.scalarLength() == 5,
+                    "the for-let update failure carries the update expression's own "
+                        + "exact SOURCE range test.deal 1:29-1:34 [28,33) length 5; got "
+                        + range);
             }
         }
 

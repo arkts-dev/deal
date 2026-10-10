@@ -166,16 +166,35 @@ public final class ClassConstructionValidator {
             }
         }
 
-        /** Builds the E6005 diagnostic of one failing rule. */
-        private CompilerDiagnostic defect(String rule, String origin) {
-            return FailureContractRegistry.e6005(new LoweringFailureDetail(
+        /** Builds the E6005 detail of one failing rule. */
+        private LoweringFailureDetail detail(String rule, String origin) {
+            return new LoweringFailureDetail(
                 unit.moduleId().path(), SemanticCapability.CLASSES, rule,
                 unit.semanticProfile(), LoweredModuleUnit.FORMAT_VERSION,
-                "ClassConstructionValidator " + rule + " (" + origin + ")"));
+                "ClassConstructionValidator " + rule + " (" + origin + ")");
+        }
+
+        /** Builds the E6005 diagnostic of one failing rule. */
+        private CompilerDiagnostic defect(String rule, String origin) {
+            return FailureContractRegistry.e6005(detail(rule, origin));
         }
 
         private Optional<CompilerDiagnostic> fail(String rule, String origin) {
             return Optional.of(defect(rule, origin));
+        }
+
+        /**
+         * One failing rule naming an offending op: the E6005 diagnostic
+         * carries that op's own source origin as its range (never a
+         * guessed anchor). A failure with no produced offending op keeps
+         * the canonical synthetic range.
+         */
+        private Optional<CompilerDiagnostic> fail(String rule, String origin,
+                                                  SemanticOp op) {
+            return Optional.of(op == null
+                ? defect(rule, origin)
+                : FailureContractRegistry.e6005(detail(rule, origin),
+                    op.origin().span().range()));
         }
 
         /** The op named by the id, or {@code null}. */
@@ -320,7 +339,7 @@ public final class ClassConstructionValidator {
                     return fail(FACTORY_COHERENCE, "two CLASS_DEFAULT ops (" + other.opId()
                         + " and " + op.opId() + ") exist for " + payload.classId() + "."
                         + payload.field() + ": the pinned shape carries exactly one "
-                        + "default child per defaulted field");
+                        + "default child per defaulted field", op);
                 }
             }
 
@@ -341,7 +360,7 @@ public final class ClassConstructionValidator {
                         return fail(FACTORY_COHERENCE, "non-defaulted field '"
                             + field.name() + "' of exported class " + entry.classId()
                             + " carries a CLASS_DEFAULT op (" + defaultOp.opId()
-                            + "): only defaulted fields produce default ops");
+                            + "): only defaulted fields produce default ops", defaultOp);
                     }
                 }
             }
@@ -398,7 +417,7 @@ public final class ClassConstructionValidator {
                     if (binding.getValue().equals(op.opId())) {
                         if (registered) {
                             return fail(FACTORY_COHERENCE, "factory op " + op.opId()
-                                + " is registered under two construction entries");
+                                + " is registered under two construction entries", op);
                         }
                         registered = true;
                         ClassId owner = entryOwners.get(binding.getKey());
@@ -406,7 +425,7 @@ public final class ClassConstructionValidator {
                             return fail(FACTORY_COHERENCE, "factory op " + op.opId()
                                 + " of class " + payload.classId() + " is registered "
                                 + "under " + binding.getKey() + " (the entry of "
-                                + owner + ")");
+                                + owner + ")", op);
                         }
                     }
                 }
@@ -414,7 +433,7 @@ public final class ClassConstructionValidator {
                     return fail(FACTORY_COHERENCE, "factory op " + op.opId() + " of "
                         + payload.classId() + " is not registered in the factory "
                         + "registry: every produced CLASS_FACTORY is the construction "
-                        + "entry of exactly one exported class");
+                        + "entry of exactly one exported class", op);
                 }
             }
             return Optional.empty();
@@ -426,41 +445,41 @@ public final class ClassConstructionValidator {
             if (factory.kind() != SemanticOpKind.CLASS_FACTORY) {
                 return fail(FACTORY_COHERENCE, "the registered op " + factory.opId()
                     + " of " + entry.classId() + " is " + factory.kind()
-                    + ", not CLASS_FACTORY");
+                    + ", not CLASS_FACTORY", factory);
             }
             if (factory.failurePolicy() != FailurePolicyId.CLASS_CONSTRUCTION) {
                 return fail(FACTORY_COHERENCE, "factory op " + factory.opId() + " of "
                     + entry.classId() + " carries policy " + factory.failurePolicy()
-                    + ", not the pinned CLASS_CONSTRUCTION");
+                    + ", not the pinned CLASS_CONSTRUCTION", factory);
             }
             KindPayload.ClassFactoryPayload payload =
                 (KindPayload.ClassFactoryPayload) factory.payload();
             if (!payload.classId().equals(entry.classId())) {
                 return fail(FACTORY_COHERENCE, "factory op " + factory.opId()
                     + " registered under " + entry.classId() + "'s constructionEntry "
-                    + "carries classId " + payload.classId());
+                    + "carries classId " + payload.classId(), factory);
             }
             if (factory.origin().parentOpId() != null) {
                 return fail(FACTORY_COHERENCE, "factory op " + factory.opId()
                     + " records parentOpId " + factory.origin().parentOpId()
                     + ": the factory is a detached static op, never parented (its "
-                    + "executed parentOpId is the triggering caller op at execution)");
+                    + "executed parentOpId is the triggering caller op at execution)", factory);
             }
             if (!(factory.result() instanceof ValueId)) {
                 return fail(FACTORY_COHERENCE, "factory op " + factory.opId()
                     + " publishes result " + factory.result() + ", not a ValueId "
-                    + "(the default-filled transfer instance)");
+                    + "(the default-filled transfer instance)", factory);
             }
             if (!(factory.resultType() instanceof RuntimeDescriptor.Class resultClass)
                     || !resultClass.classId().equals(entry.classId())) {
                 return fail(FACTORY_COHERENCE, "factory op " + factory.opId()
                     + " publishes result type " + factory.resultType() + ", not the "
-                    + "class descriptor of " + entry.classId());
+                    + "class descriptor of " + entry.classId(), factory);
             }
             if (!boundaryChildren(factory).isEmpty()) {
                 return fail(FACTORY_COHERENCE, "factory op " + factory.opId()
                     + " has boundary children: the factory runs zero boundaries and "
-                    + "zero return boundaries");
+                    + "zero return boundaries", factory);
             }
             // classDefaultOpIds = exactly the required-present defaulted
             // fields' CLASS_DEFAULT op ids in declaration order.
@@ -475,7 +494,7 @@ public final class ClassConstructionValidator {
                 return fail(FACTORY_COHERENCE, "factory op " + factory.opId() + " lists "
                     + listed.size() + " CLASS_DEFAULT children for " + expected.size()
                     + " required-present defaulted fields: the pinned payload lists "
-                    + "exactly those fields' op ids in declaration order");
+                    + "exactly those fields' op ids in declaration order", factory);
             }
             ClassLayout layout = layoutContext.get(entry.classId());
             if (layout == null) {
@@ -489,12 +508,12 @@ public final class ClassConstructionValidator {
                 if (child == null) {
                     return fail(FACTORY_COHERENCE, "factory op " + factory.opId()
                         + " lists CLASS_DEFAULT child " + listed.get(i) + " (field '"
-                        + fieldName + "') which is not a produced op of the unit");
+                        + fieldName + "') which is not a produced op of the unit", factory);
                 }
                 if (child.kind() != SemanticOpKind.CLASS_DEFAULT) {
                     return fail(FACTORY_COHERENCE, "factory op " + factory.opId()
                         + " lists child " + listed.get(i) + " of kind " + child.kind()
-                        + " for field '" + fieldName + "', not CLASS_DEFAULT");
+                        + " for field '" + fieldName + "', not CLASS_DEFAULT", child);
                 }
                 KindPayload.ClassDefaultPayload childPayload =
                     (KindPayload.ClassDefaultPayload) child.payload();
@@ -503,19 +522,19 @@ public final class ClassConstructionValidator {
                     return fail(FACTORY_COHERENCE, "factory op " + factory.opId()
                         + " lists child " + listed.get(i) + " for "
                         + childPayload.classId() + "." + childPayload.field()
-                        + ", not " + entry.classId() + "." + fieldName);
+                        + ", not " + entry.classId() + "." + fieldName, child);
                 }
                 if (child.failurePolicy() != FailurePolicyId.NO_DEAL_FAILURE) {
                     return fail(FACTORY_COHERENCE, "factory op " + factory.opId()
                         + " lists CLASS_DEFAULT child " + listed.get(i) + " carrying "
-                        + "policy " + child.failurePolicy() + ", not NO_DEAL_FAILURE");
+                        + "policy " + child.failurePolicy() + ", not NO_DEAL_FAILURE", child);
                 }
                 ClassLayout.FieldLayout fieldLayout = fieldOf(layout, fieldName);
                 if (fieldLayout == null || !fieldLayout.required()) {
                     return fail(FACTORY_COHERENCE, "factory op " + factory.opId()
                         + " lists CLASS_DEFAULT child " + listed.get(i) + " for field '"
                         + fieldName + "' which is not a required declared field of "
-                        + entry.classId());
+                        + entry.classId(), child);
                 }
             }
             return Optional.empty();
@@ -542,7 +561,7 @@ public final class ClassConstructionValidator {
             if (op.failurePolicy() != FailurePolicyId.CLASS_CONSTRUCTION) {
                 return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                     + " carries policy " + op.failurePolicy()
-                    + ", not the pinned CLASS_CONSTRUCTION");
+                    + ", not the pinned CLASS_CONSTRUCTION", op);
             }
             KindPayload.ClassNewPayload payload =
                 (KindPayload.ClassNewPayload) op.payload();
@@ -552,7 +571,7 @@ public final class ClassConstructionValidator {
                 return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                     + " carries classId " + payload.classId() + " and a layout of "
                     + payload.layout().classId() + ": the layout must carry the "
-                    + "payload's classId");
+                    + "payload's classId", op);
             }
             ClassLayout resolved = layoutContext.get(payload.classId());
             if (resolved == null) {
@@ -560,13 +579,13 @@ public final class ClassConstructionValidator {
                     + " classId " + payload.classId() + " does not resolve in the "
                     + "layout context (the unit's classLayouts plus the imported "
                     + "classes' layouts and the declaration classes' registered "
-                    + "layouts)");
+                    + "layouts)", op);
             }
             if (!resolved.equals(payload.layout())) {
                 return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                     + " carries a layout that differs from the resolved layout of "
                     + payload.classId() + ": the payload's layout must be exactly the "
-                    + "resolved layout");
+                    + "resolved layout", op);
             }
             boolean own = unit.classLayouts().containsKey(payload.classId());
 
@@ -582,7 +601,7 @@ public final class ClassConstructionValidator {
                 if (fieldOf(resolved, name) == null) {
                     return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                         + " provides field '" + name + "' which is not a declared "
-                        + "field of " + payload.classId());
+                        + "field of " + payload.classId(), op);
                 }
             }
             List<String> expectedDefaults = new ArrayList<>();
@@ -593,13 +612,13 @@ public final class ClassConstructionValidator {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                             + " of imported class " + payload.classId() + " carries "
                             + "defaultOwner LOCAL: imported classes construct through "
-                            + "the owner's CLASS_FACTORY (SHARED_FACTORY), never LOCAL");
+                            + "the owner's CLASS_FACTORY (SHARED_FACTORY), never LOCAL", op);
                     }
                     if (payload.classFactoryRef() != null) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                             + " carries classFactoryRef " + payload.classFactoryRef()
                             + " under LOCAL: the pinned LOCAL shape carries a null "
-                            + "factory ref");
+                            + "factory ref", op);
                     }
                     for (ClassLayout.FieldLayout field : resolved.fields()) {
                         if (field.required() && defaultOp(payload.classId(),
@@ -614,7 +633,7 @@ public final class ClassConstructionValidator {
                             + " CLASS_DEFAULT children for " + expectedDefaults.size()
                             + " omitted required-present defaulted fields: the pinned "
                             + "child list names exactly those fields' op ids in "
-                            + "declaration order");
+                            + "declaration order", op);
                     }
                     for (int i = 0; i < expectedDefaults.size(); i++) {
                         Optional<CompilerDiagnostic> child =
@@ -630,19 +649,19 @@ public final class ClassConstructionValidator {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                             + " of same-module class " + payload.classId() + " carries "
                             + "defaultOwner SHARED_FACTORY: same-module literals stay "
-                            + "LOCAL");
+                            + "LOCAL", op);
                     }
                     if (payload.classFactoryRef() == null) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                             + " of imported class " + payload.classId() + " carries a "
                             + "null classFactoryRef under SHARED_FACTORY: the pinned "
-                            + "shape carries the interface's constructionEntry");
+                            + "shape carries the interface's constructionEntry", op);
                     }
                     if (!payload.classDefaultOpIds().isEmpty()) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                             + " (SHARED_FACTORY) lists " + payload.classDefaultOpIds()
                             + ": the pinned imported shape carries an empty child list "
-                            + "(defaults transfer to the owner's factory)");
+                            + "(defaults transfer to the owner's factory)", op);
                     }
                     SharedFactoryFacts facts = factsOf(payload.classId());
                     if (facts == null) {
@@ -650,7 +669,7 @@ public final class ClassConstructionValidator {
                             + " of imported class " + payload.classId() + " has no "
                             + "shared-factory facts in the context: SHARED_FACTORY "
                             + "construction without the owner's factory facts is never "
-                            + "produced (the RETAINED_ABI deferral)");
+                            + "produced (the RETAINED_ABI deferral)", op);
                     }
                     if (!facts.interfaceEntry().constructionEntry()
                             .equals(payload.classFactoryRef())) {
@@ -658,7 +677,7 @@ public final class ClassConstructionValidator {
                             + " carries classFactoryRef " + payload.classFactoryRef()
                             + ", not the interface's constructionEntry "
                             + facts.interfaceEntry().constructionEntry() + " of "
-                            + payload.classId());
+                            + payload.classId(), op);
                     }
                     sharedFactoryResult = facts.factoryResult();
                     for (ClassLayout.FieldLayout field : resolved.fields()) {
@@ -671,7 +690,7 @@ public final class ClassConstructionValidator {
                     return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                         + " carries defaultOwner RETAINED_ABI: the retained ABI "
                         + "transfer is E10's (ISSUE-0239) and is never produced in "
-                        + "this epic — the lowerer defers with RETAINED_ABI_DEFERRED");
+                        + "this epic — the lowerer defers with RETAINED_ABI_DEFERRED", op);
                 }
                 case HOST_DEFAULTS -> {
 
@@ -685,13 +704,13 @@ public final class ClassConstructionValidator {
                             + " admissible only for a declared host class of the"
                             + " compilation's class registration seeds — an"
                             + " unregistered class under HOST_DEFAULTS is a"
-                            + " fail-closed producer defect");
+                            + " fail-closed producer defect", op);
                     }
                     if (own) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                             + " of same-module class " + payload.classId()
                             + " carries defaultOwner HOST_DEFAULTS: a same-module"
-                            + " class never carries a declaration-class owner");
+                            + " class never carries a declaration-class owner", op);
                     }
                     if (!registration.layout().equals(payload.layout())) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
@@ -699,14 +718,14 @@ public final class ClassConstructionValidator {
                             + " declaration layout of " + payload.classId()
                             + " (the declaration surface's fields in declaration"
                             + " order): a foreign layout is a fail-closed producer"
-                            + " defect");
+                            + " defect", op);
                     }
                     if (payload.classFactoryRef() != null) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                             + " carries classFactoryRef " + payload.classFactoryRef()
                             + " under HOST_DEFAULTS: the host construction carries a"
                             + " null factory ref (the loaded defaults are data,"
-                            + " never a factory transfer)");
+                            + " never a factory transfer)", op);
                     }
                     if (!payload.classDefaultOpIds().isEmpty()) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
@@ -714,7 +733,7 @@ public final class ClassConstructionValidator {
                             + ": the host construction carries an empty child list"
                             + " (the omitted fields' values come from the loaded"
                             + " {@code <C>_defaults} entry — no in-project default"
-                            + " expression is evaluated)");
+                            + " expression is evaluated)", op);
                     }
                     for (KindPayload.FieldBoundary entry : payload.fieldBoundaries()) {
                         if (entry.kind() != BoundaryKind.CLASS_LITERAL_FIELD) {
@@ -723,7 +742,7 @@ public final class ClassConstructionValidator {
                                 + entry.field() + "' carries kind " + entry.kind()
                                 + ", not CLASS_LITERAL_FIELD: the host construction"
                                 + " carries exactly one CLASS_LITERAL_FIELD boundary"
-                                + " per provided field and no CLASS_DEFAULT_FIELD");
+                                + " per provided field and no CLASS_DEFAULT_FIELD", op);
                         }
                     }
                 }
@@ -739,13 +758,13 @@ public final class ClassConstructionValidator {
                             + " admissible only for a declared extern-C C-struct"
                             + " class of the compilation's class registration"
                             + " seeds — an unregistered class under FFI_PLAN is a"
-                            + " fail-closed producer defect");
+                            + " fail-closed producer defect", op);
                     }
                     if (own) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                             + " of same-module class " + payload.classId()
                             + " carries defaultOwner FFI_PLAN: a same-module"
-                            + " class never carries a declaration-class owner");
+                            + " class never carries a declaration-class owner", op);
                     }
                     if (!registration.layout().equals(payload.layout())) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
@@ -753,14 +772,14 @@ public final class ClassConstructionValidator {
                             + " extern-C declaration layout of " + payload.classId()
                             + " (the validated plan's ordered fields in class"
                             + " source order): a foreign layout is a fail-closed"
-                            + " producer defect");
+                            + " producer defect", op);
                     }
                     if (payload.classFactoryRef() != null) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                             + " carries classFactoryRef " + payload.classFactoryRef()
                             + " under FFI_PLAN: the C-struct construction carries"
                             + " a null factory ref (the loaded plan is the single"
-                            + " default authority, never a factory transfer)");
+                            + " default authority, never a factory transfer)", op);
                     }
                     if (!payload.classDefaultOpIds().isEmpty()) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
@@ -768,7 +787,7 @@ public final class ClassConstructionValidator {
                             + ": the C-struct construction carries an empty child"
                             + " list (the omitted fields' evaluators are the"
                             + " loaded {@code <C>_plan} entry's — no in-project"
-                            + " default expression is evaluated)");
+                            + " default expression is evaluated)", op);
                     }
                     for (KindPayload.FieldBoundary entry : payload.fieldBoundaries()) {
                         if (entry.kind() != BoundaryKind.CLASS_LITERAL_FIELD) {
@@ -779,7 +798,7 @@ public final class ClassConstructionValidator {
                                 + " construction carries exactly one"
                                 + " CLASS_LITERAL_FIELD boundary per provided"
                                 + " field and no CLASS_DEFAULT_FIELD (the omitted"
-                                + " fields are the loaded plan's defaults)");
+                                + " fields are the loaded plan's defaults)", op);
                         }
                     }
                 }
@@ -791,7 +810,7 @@ public final class ClassConstructionValidator {
                             + payload.classId() + ": the builtin-defaults owner"
                             + " is admissible only for the builtin Error class "
                             + ClassId.ERROR.text() + " (a non-builtin class under"
-                            + " BUILTIN_DEFAULTS is a fail-closed producer defect)");
+                            + " BUILTIN_DEFAULTS is a fail-closed producer defect)", op);
                     }
                     if (!payload.layout().equals(ClassLayout.BUILTIN_ERROR)) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
@@ -799,7 +818,7 @@ public final class ClassConstructionValidator {
                             + " the compiler-owned builtin Error layout (exactly the"
                             + " two string required-present fields code and"
                             + " message): a foreign layout is a fail-closed"
-                            + " producer defect");
+                            + " producer defect", op);
                     }
                     if (payload.classFactoryRef() != null) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
@@ -807,7 +826,7 @@ public final class ClassConstructionValidator {
                             + " under BUILTIN_DEFAULTS: the builtin Error"
                             + " construction carries a null factory ref (the"
                             + " builtin defaults are compiler constants, never a"
-                            + " factory transfer)");
+                            + " factory transfer)", op);
                     }
                     if (!payload.classDefaultOpIds().isEmpty()) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
@@ -815,7 +834,7 @@ public final class ClassConstructionValidator {
                             + payload.classDefaultOpIds()
                             + ": the builtin Error construction carries an empty"
                             + " child list (the omitted fields take the compiler"
-                            + " constant empty string at the construction site)");
+                            + " constant empty string at the construction site)", op);
                     }
                     for (KindPayload.FieldBoundary entry : payload.fieldBoundaries()) {
                         if (entry.kind() != BoundaryKind.CLASS_LITERAL_FIELD) {
@@ -826,7 +845,7 @@ public final class ClassConstructionValidator {
                                 + " construction carries exactly one"
                                 + " CLASS_LITERAL_FIELD boundary per provided field"
                                 + " and no CLASS_DEFAULT_FIELD (the omitted fields"
-                                + " take the compiler constant empty string)");
+                                + " take the compiler constant empty string)", op);
                         }
                     }
                 }
@@ -837,7 +856,7 @@ public final class ClassConstructionValidator {
                     return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                         + " carries defaultOwner " + payload.defaultOwner()
                         + ": an owner outside the closed default-ownership set"
-                        + " is a fail-closed producer defect");
+                        + " is a fail-closed producer defect", op);
                 }
             }
 
@@ -862,14 +881,14 @@ public final class ClassConstructionValidator {
                     + boundaries.size() + " field-boundary entries for "
                     + expectedBoundaries.size() + " present fields: the pinned shape "
                     + "carries exactly one boundary per provided field and per "
-                    + "omitted required-present defaulted field in declaration order");
+                    + "omitted required-present defaulted field in declaration order", op);
             }
             List<SemanticOp> parentedChildren = boundaryChildren(op);
             if (parentedChildren.size() != boundaries.size()) {
                 return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId() + " parents "
                     + parentedChildren.size() + " boundary children for "
                     + boundaries.size() + " payload entries: the op's boundary children "
-                    + "are exactly the payload's listed ids");
+                    + "are exactly the payload's listed ids", op);
             }
             for (int i = 0; i < boundaries.size(); i++) {
                 KindPayload.FieldBoundary entry = boundaries.get(i);
@@ -877,31 +896,31 @@ public final class ClassConstructionValidator {
                     return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                         + " field-boundary entry " + i + " names '" + entry.field()
                         + "': the pinned declaration order names '"
-                        + expectedBoundaries.get(i) + "'");
+                        + expectedBoundaries.get(i) + "'", op);
                 }
                 if (entry.kind() != expectedKinds.get(i)) {
                     return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                         + " field-boundary entry for '" + entry.field() + "' carries "
-                        + "kind " + entry.kind() + ", not " + expectedKinds.get(i));
+                        + "kind " + entry.kind() + ", not " + expectedKinds.get(i), op);
                 }
                 SemanticOp child = op(entry.boundaryOpId());
                 if (child == null) {
                     return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                         + " names boundary child " + entry.boundaryOpId() + " which is "
-                        + "not a produced op of the unit");
+                        + "not a produced op of the unit", op);
                 }
                 if (!child.opId().equals(parentedChildren.get(i).opId())) {
                     return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                         + " payload boundary order does not match the op's parented "
                         + "children: entry " + i + " names " + entry.boundaryOpId()
                         + " but the i-th parented child is "
-                        + parentedChildren.get(i).opId());
+                        + parentedChildren.get(i).opId(), op);
                 }
                 ClassLayout.FieldLayout fieldLayout = fieldOf(resolved, entry.field());
                 String shape = boundaryShapeViolation(child, op, entry.kind(),
                     fieldLayout.descriptor(), null);
                 if (shape != null) {
-                    return fail(CONSTRUCTION_COHERENCE, shape);
+                    return fail(CONSTRUCTION_COHERENCE, shape, child);
                 }
                 KindPayload.BoundaryPayload boundaryPayload =
                     (KindPayload.BoundaryPayload) child.payload();
@@ -920,7 +939,7 @@ public final class ClassConstructionValidator {
                             return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                                 + " names CLASS_DEFAULT_FIELD for '" + entry.field()
                                 + "' without a CLASS_DEFAULT child publishing a "
-                                + "ValueId result");
+                                + "ValueId result", op);
                         }
                         pinnedInput = resultId;
                     }
@@ -928,7 +947,7 @@ public final class ClassConstructionValidator {
                 if (pinnedInput == null) {
                     return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                         + " boundary for '" + entry.field() + "' has no pinned input "
-                        + "(a literal field without a provided value)");
+                        + "(a literal field without a provided value)", op);
                 }
                 if (!boundaryPayload.input().equals(pinnedInput)) {
                     return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
@@ -936,7 +955,7 @@ public final class ClassConstructionValidator {
                         + boundaryPayload.input() + ", not the pinned " + pinnedInput
                         + " (the provided value op for CLASS_LITERAL_FIELD; the "
                         + "field's CLASS_DEFAULT child result for LOCAL; the owner "
-                        + "factory result for SHARED_FACTORY)");
+                        + "factory result for SHARED_FACTORY)", child);
                 }
             }
             return Optional.empty();
@@ -951,12 +970,12 @@ public final class ClassConstructionValidator {
             if (child == null) {
                 return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + owner.opId()
                     + " lists CLASS_DEFAULT child " + childId + " (field '" + fieldName
-                    + "') which is not a produced op of the unit");
+                    + "') which is not a produced op of the unit", owner);
             }
             if (child.kind() != SemanticOpKind.CLASS_DEFAULT) {
                 return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + owner.opId()
                     + " lists child " + childId + " of kind " + child.kind()
-                    + " for field '" + fieldName + "', not CLASS_DEFAULT");
+                    + " for field '" + fieldName + "', not CLASS_DEFAULT", child);
             }
             KindPayload.ClassDefaultPayload payload =
                 (KindPayload.ClassDefaultPayload) child.payload();
@@ -964,12 +983,12 @@ public final class ClassConstructionValidator {
                     || !payload.field().equals(fieldName)) {
                 return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + owner.opId()
                     + " lists child " + childId + " for " + payload.classId() + "."
-                    + payload.field() + ", not " + layout.classId() + "." + fieldName);
+                    + payload.field() + ", not " + layout.classId() + "." + fieldName, child);
             }
             if (child.failurePolicy() != FailurePolicyId.NO_DEAL_FAILURE) {
                 return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + owner.opId()
                     + " lists CLASS_DEFAULT child " + childId + " carrying policy "
-                    + child.failurePolicy() + ", not NO_DEAL_FAILURE");
+                    + child.failurePolicy() + ", not NO_DEAL_FAILURE", child);
             }
             return Optional.empty();
         }
@@ -1011,7 +1030,7 @@ public final class ClassConstructionValidator {
             if (op.failurePolicy() != FailurePolicyId.NO_DEAL_FAILURE) {
                 return fail(FIELD_OPERATION_SHAPE, "FIELD_READ " + op.opId()
                     + " carries policy " + op.failurePolicy()
-                    + ", not the pinned NO_DEAL_FAILURE");
+                    + ", not the pinned NO_DEAL_FAILURE", op);
             }
             KindPayload.FieldReadPayload payload =
                 (KindPayload.FieldReadPayload) op.payload();
@@ -1019,18 +1038,18 @@ public final class ClassConstructionValidator {
             if (children.size() != 2) {
                 return fail(FIELD_OPERATION_SHAPE, "FIELD_READ " + op.opId() + " parents "
                     + children.size() + " boundary children: the pinned shape is "
-                    + "exactly [UNTYPED_CLASS_INPUT, OPTIONAL_FIELD_READ]");
+                    + "exactly [UNTYPED_CLASS_INPUT, OPTIONAL_FIELD_READ]", op);
             }
             String receiver = boundaryShapeViolation(children.get(0), op,
                 BoundaryKind.UNTYPED_CLASS_INPUT, classDescriptor(payload.classId()),
                 payload.classValue());
             if (receiver != null) {
-                return fail(FIELD_OPERATION_SHAPE, receiver);
+                return fail(FIELD_OPERATION_SHAPE, receiver, children.get(0));
             }
             if (!(op.result() instanceof ValueId readResult)) {
                 return fail(FIELD_OPERATION_SHAPE, "FIELD_READ " + op.opId()
                     + " publishes result " + op.result() + ", not a ValueId (the "
-                    + "OPTIONAL_FIELD_READ input is the op's own result)");
+                    + "OPTIONAL_FIELD_READ input is the op's own result)", op);
             }
             // The pinned OPTIONAL_FIELD_READ descriptor is the read's
             // checked result descriptor — the op's own resultType (the
@@ -1040,12 +1059,12 @@ public final class ClassConstructionValidator {
                 return fail(FIELD_OPERATION_SHAPE, "FIELD_READ " + op.opId()
                     + " publishes result type " + op.resultType() + ", not a "
                     + "descriptor: the pinned OPTIONAL_FIELD_READ descriptor is the "
-                    + "read's checked result descriptor");
+                    + "read's checked result descriptor", op);
             }
             String field = boundaryShapeViolation(children.get(1), op,
                 BoundaryKind.OPTIONAL_FIELD_READ, readDescriptor, readResult);
             if (field != null) {
-                return fail(FIELD_OPERATION_SHAPE, field);
+                return fail(FIELD_OPERATION_SHAPE, field, children.get(1));
             }
             ClassLayout layout = layoutContext.get(payload.classId());
             ClassLayout.FieldLayout fieldLayout = layout == null
@@ -1063,7 +1082,7 @@ public final class ClassConstructionValidator {
                     + " publishes result descriptor "
                     + readDescriptor.canonicalSpecText() + ", not the checker's "
                     + "optional-read wrap "
-                    + readResultDescriptorOf(fieldLayout).canonicalSpecText());
+                    + readResultDescriptorOf(fieldLayout).canonicalSpecText(), op);
             }
             return Optional.empty();
         }
@@ -1072,7 +1091,7 @@ public final class ClassConstructionValidator {
             if (op.failurePolicy() != FailurePolicyId.NO_DEAL_FAILURE) {
                 return fail(FIELD_OPERATION_SHAPE, "FIELD_WRITE " + op.opId()
                     + " carries policy " + op.failurePolicy()
-                    + ", not the pinned NO_DEAL_FAILURE");
+                    + ", not the pinned NO_DEAL_FAILURE", op);
             }
             KindPayload.FieldWritePayload payload =
                 (KindPayload.FieldWritePayload) op.payload();
@@ -1104,25 +1123,25 @@ public final class ClassConstructionValidator {
                     + "own classLayouts, the builtin Error layout, or the declaration "
                     + "classes' registered layouts and the field must be a declared "
                     + "field (the CLASS_FIELD_ASSIGNMENT descriptor is the field's "
-                    + "declared descriptor from that layout)");
+                    + "declared descriptor from that layout)", op);
             }
             List<SemanticOp> children = boundaryChildren(op);
             if (children.size() != 2) {
                 return fail(FIELD_OPERATION_SHAPE, "FIELD_WRITE " + op.opId() + " parents "
                     + children.size() + " boundary children: the pinned shape is "
-                    + "exactly [UNTYPED_CLASS_INPUT, CLASS_FIELD_ASSIGNMENT]");
+                    + "exactly [UNTYPED_CLASS_INPUT, CLASS_FIELD_ASSIGNMENT]", op);
             }
             String receiver = boundaryShapeViolation(children.get(0), op,
                 BoundaryKind.UNTYPED_CLASS_INPUT, classDescriptor(payload.classId()),
                 payload.classValue());
             if (receiver != null) {
-                return fail(FIELD_OPERATION_SHAPE, receiver);
+                return fail(FIELD_OPERATION_SHAPE, receiver, children.get(0));
             }
             String field = boundaryShapeViolation(children.get(1), op,
                 BoundaryKind.CLASS_FIELD_ASSIGNMENT, fieldLayout.descriptor(),
                 payload.value());
             if (field != null) {
-                return fail(FIELD_OPERATION_SHAPE, field);
+                return fail(FIELD_OPERATION_SHAPE, field, children.get(1));
             }
             return Optional.empty();
         }
@@ -1131,7 +1150,7 @@ public final class ClassConstructionValidator {
             if (op.failurePolicy() != FailurePolicyId.NO_DEAL_FAILURE) {
                 return fail(FIELD_OPERATION_SHAPE, "FIELD_DELETE " + op.opId()
                     + " carries policy " + op.failurePolicy()
-                    + ", not the pinned NO_DEAL_FAILURE");
+                    + ", not the pinned NO_DEAL_FAILURE", op);
             }
             KindPayload.FieldDeletePayload payload =
                 (KindPayload.FieldDeletePayload) op.payload();
@@ -1139,13 +1158,13 @@ public final class ClassConstructionValidator {
             if (children.size() != 1) {
                 return fail(FIELD_OPERATION_SHAPE, "FIELD_DELETE " + op.opId() + " parents "
                     + children.size() + " boundary children: the pinned shape is "
-                    + "exactly [UNTYPED_CLASS_INPUT]");
+                    + "exactly [UNTYPED_CLASS_INPUT]", op);
             }
             String receiver = boundaryShapeViolation(children.get(0), op,
                 BoundaryKind.UNTYPED_CLASS_INPUT, classDescriptor(payload.classId()),
                 payload.classValue());
             if (receiver != null) {
-                return fail(FIELD_OPERATION_SHAPE, receiver);
+                return fail(FIELD_OPERATION_SHAPE, receiver, children.get(0));
             }
             // When the layout resolves, a required-field delete is never
             // produced (checker E4004).
@@ -1156,7 +1175,7 @@ public final class ClassConstructionValidator {
                 return fail(FIELD_OPERATION_SHAPE, "FIELD_DELETE " + op.opId()
                     + " deletes required field '" + payload.field() + "' of "
                     + payload.classId() + ": required-field deletes never reach the IR "
-                    + "(checker E4004)");
+                    + "(checker E4004)", op);
             }
             return Optional.empty();
         }
@@ -1215,13 +1234,13 @@ public final class ClassConstructionValidator {
                     return fail(DEFAULT_BLOCK_ADMISSION, "CLASS_DEFAULT " + op.opId()
                         + " of " + payload.classId() + "." + payload.field()
                         + " references block " + payload.defaultBlock() + " which is not "
-                        + "a block of the membership table");
+                        + "a block of the membership table", op);
                 }
                 Set<BlockId> closure = defaultClosure(payload.defaultBlock());
                 if (closure == null) {
                     return fail(DEFAULT_BLOCK_ADMISSION, "CLASS_DEFAULT " + op.opId()
                         + " of " + payload.classId() + "." + payload.field()
-                        + " references a payload block outside the membership table");
+                        + " references a payload block outside the membership table", op);
                 }
                 Set<BlockId> admitted = new LinkedHashSet<>(closure);
                 admitted.add(moduleInitBlock);
@@ -1292,7 +1311,7 @@ public final class ClassConstructionValidator {
                         + producing) + ": a default block admits only allocations inside "
                     + "the default closure itself and module-level bindings resolved "
                     + "through the module-init block (an enclosing-region free "
-                    + "reference is invalid — K-D3)");
+                    + "reference is invalid — K-D3)", defaultOp);
             }
             return Optional.empty();
         }
@@ -1404,7 +1423,7 @@ public final class ClassConstructionValidator {
                 if (op == null || op.kind() != SemanticOpKind.JSON_FROM_CLASS) {
                     return fail(JSON_LAYOUT_COHERENCE, "the JsonDefaultChildTable "
                         + "records a default-child entry for " + key + " which is not "
-                        + "a produced JSON_FROM_CLASS op of the unit");
+                        + "a produced JSON_FROM_CLASS op of the unit", op);
                 }
             }
             return Optional.empty();
@@ -1432,7 +1451,7 @@ public final class ClassConstructionValidator {
                 return fail(JSON_LAYOUT_COHERENCE, "JSON_FROM_CLASS " + op.opId()
                     + " violates the pinned shape: policy must be JSON_FROM_NULL and "
                     + "the payload layout must be exactly the unit's own layout of "
-                    + payload.layout().classId());
+                    + payload.layout().classId(), op);
             }
             // The per-site default children: exactly the class's
             // required-present defaulted fields' CLASS_DEFAULT op ids in
@@ -1453,19 +1472,19 @@ public final class ClassConstructionValidator {
                     + " records " + children.size() + " per-site CLASS_DEFAULT "
                     + "children for " + expected.size() + " required-present defaulted "
                     + "fields: the pinned table entry lists exactly those fields' op "
-                    + "ids in declaration order");
+                    + "ids in declaration order", op);
             }
             for (int i = 0; i < expected.size(); i++) {
                 SemanticOp child = op(children.get(i));
                 if (child == null) {
                     return fail(JSON_LAYOUT_COHERENCE, "JSON_FROM_CLASS " + op.opId()
                         + " lists CLASS_DEFAULT child " + children.get(i) + " (field '"
-                        + expected.get(i) + "') which is not a produced op of the unit");
+                        + expected.get(i) + "') which is not a produced op of the unit", op);
                 }
                 if (child.kind() != SemanticOpKind.CLASS_DEFAULT) {
                     return fail(JSON_LAYOUT_COHERENCE, "JSON_FROM_CLASS " + op.opId()
                         + " lists child " + children.get(i) + " of kind " + child.kind()
-                        + " for field '" + expected.get(i) + "', not CLASS_DEFAULT");
+                        + " for field '" + expected.get(i) + "', not CLASS_DEFAULT", child);
                 }
                 KindPayload.ClassDefaultPayload childPayload =
                     (KindPayload.ClassDefaultPayload) child.payload();
@@ -1474,12 +1493,12 @@ public final class ClassConstructionValidator {
                     return fail(JSON_LAYOUT_COHERENCE, "JSON_FROM_CLASS " + op.opId()
                         + " lists child " + children.get(i) + " for "
                         + childPayload.classId() + "." + childPayload.field() + ", not "
-                        + layout.classId() + "." + expected.get(i));
+                        + layout.classId() + "." + expected.get(i), child);
                 }
                 if (child.failurePolicy() != FailurePolicyId.NO_DEAL_FAILURE) {
                     return fail(JSON_LAYOUT_COHERENCE, "JSON_FROM_CLASS " + op.opId()
                         + " lists CLASS_DEFAULT child " + children.get(i) + " carrying "
-                        + "policy " + child.failurePolicy() + ", not NO_DEAL_FAILURE");
+                        + "policy " + child.failurePolicy() + ", not NO_DEAL_FAILURE", child);
                 }
             }
             return checkNestedJsonable(layout, new LinkedHashSet<>());
@@ -1494,7 +1513,7 @@ public final class ClassConstructionValidator {
                 return fail(JSON_LAYOUT_COHERENCE, "JSON_TO_CLASS " + op.opId()
                     + " violates the pinned shape: policy must be JSON_TO_ERROR and "
                     + "the payload layout must be exactly the unit's own layout of "
-                    + payload.layout().classId());
+                    + payload.layout().classId(), op);
             }
             return checkNestedJsonable(layout, new LinkedHashSet<>());
         }

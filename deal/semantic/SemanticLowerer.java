@@ -5690,10 +5690,11 @@ public final class SemanticLowerer {
             }
             if (statement.update().isPresent()
                     && !(statement.update().get() instanceof AssignmentExpr)) {
+                ExpressionNode update = statement.update().get();
                 throw new ConstructUnlowered("for-let update expression "
-                    + statement.update().get().getClass().getSimpleName()
+                    + update.getClass().getSimpleName()
                     + " (the pinned shape is the assignment chain in the update block; "
-                    + "another update shape is outside this child's window)", statement.span());
+                    + "another update shape is outside this child's window)", update.span());
             }
             VariableDeclaration decl = varDecl.decl();
             BindingId counter = ids.nextBindingId(module, nextOrdinal++, 0);

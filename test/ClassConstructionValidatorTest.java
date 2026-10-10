@@ -6,6 +6,8 @@ import deal.checker.NameResolver;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
 import deal.lexer.Lexer;
 import deal.parser.Parser;
 import deal.semantic.CapabilityRegistry;
@@ -27,6 +29,7 @@ import deal.semantic.ir.BlockId;
 import deal.semantic.ir.ClassFactoryId;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ClassId;
+import deal.semantic.ir.ClassInterface;
 import deal.semantic.ir.ClassLayout;
 import deal.semantic.ir.ClosedSelector;
 import deal.semantic.ir.ConstructKind;
@@ -290,6 +293,38 @@ public class ClassConstructionValidatorTest {
             "the failure detail carries the IR version");
         check(diagnostic.message().contains("origin ClassConstructionValidator " + rule),
             "the failure detail carries the ClassConstructionValidator origin");
+    }
+
+    /**
+     * Asserts one E6005 whose range is exactly the pinned SOURCE range
+     * (ISSUE-0750: the offending op's own file/span survives the shared
+     * failure construction).
+     */
+    private static void expectE6005Range(Optional<CompilerDiagnostic> outcome, String rule,
+                                         String file, int startLine, int startColumn,
+                                         int endLine, int endColumn, int startOffset,
+                                         int endOffset) {
+        expectE6005(outcome, rule);
+        if (outcome.isEmpty()) {
+            return;
+        }
+        DiagnosticRange range = outcome.get().range();
+        check(range.origin() == RangeOrigin.SOURCE,
+            rule + ": the range is SOURCE; got " + range);
+        check(file.equals(range.file()),
+            rule + ": the range names " + file + "; got " + range.file());
+        check(range.startLine() == startLine && range.startColumn() == startColumn
+                && range.endLine() == endLine && range.endColumn() == endColumn,
+            rule + ": the range positions are " + startLine + ":" + startColumn + "-"
+                + endLine + ":" + endColumn + "; got " + range.startLine() + ":"
+                + range.startColumn() + "-" + range.endLine() + ":"
+                + range.endColumn());
+        check(range.startScalarOffset() == startOffset
+                && range.endScalarOffset() == endOffset
+                && range.scalarLength() == endOffset - startOffset,
+            rule + ": the range offsets are [" + startOffset + "," + endOffset
+                + "); got [" + range.startScalarOffset() + ","
+                + range.endScalarOffset() + ") length " + range.scalarLength());
     }
 
     // =========================================================================
@@ -1046,6 +1081,126 @@ public class ClassConstructionValidatorTest {
     }
 
     // =========================================================================
+    // 8. Failure origins (ISSUE-0750)
+    // =========================================================================
+
+    /**
+     * ISSUE-0750: a shared validation failure that identifies an offending
+     * produced op carries that op's own exact source range — never the
+     * empty-file synthetic 1:1 anchor — while a failure with no produced
+     * offending op keeps the canonical synthetic range. Codes, messages,
+     * and validation order are unchanged.
+     */
+    private static void testFailureRangeOrigins() {
+        System.out.println("-- failure origins: an offending op's exact source range "
+            + "survives the shared E6005; a genuinely originless failure keeps the "
+            + "canonical empty-file synthetic range --");
+
+        String source = """
+            export class Point {
+              x: int = 40 + 2;
+            }
+            """;
+        LoweredSlice lowered = lowerModule(source);
+        SemanticLowerer.ClassDeclarationCoreResult result =
+            lowered == null ? null : lowered.result();
+        check(result != null && !result.lowering().hasErrors()
+                && result.lowering().unit() != null, "the origin slice lowers");
+        if (result == null || result.lowering().hasErrors()
+                || result.lowering().unit() == null) {
+            return;
+        }
+        LoweredModuleUnit unit = result.lowering().unit();
+
+        // (a) A duplicate CLASS_DEFAULT op (fresh ids, the offending op's
+        // own origin retained): the factory-coherence failure carries the
+        // default expression's exact SOURCE range.
+        SemanticOp firstDefault = firstOfKind(unit, SemanticOpKind.CLASS_DEFAULT);
+        KindPayload.ClassDefaultPayload defaultPayload =
+            (KindPayload.ClassDefaultPayload) firstDefault.payload();
+        KindPayload.ClassDefaultPayload clonePayload =
+            new KindPayload.ClassDefaultPayload(defaultPayload.classId(),
+                defaultPayload.field(), defaultPayload.defaultBlock());
+        String cloneDigest = ContractSnapshotCanonicalizer.digest(contractFor(
+            firstDefault, clonePayload, "placeholder"));
+        SemanticOp clone = new SemanticOp(new OpId(MODULE, 99_999), firstDefault.kind(),
+            firstDefault.origin(), new ValueId(99_999), firstDefault.resultType(),
+            firstDefault.operands(), firstDefault.operandTypes(), clonePayload,
+            FailurePolicyId.NO_DEAL_FAILURE,
+            contractFor(firstDefault, clonePayload, cloneDigest));
+        List<SemanticOp> withClone = new ArrayList<>(unit.ops());
+        withClone.add(clone);
+        expectE6005Range(ClassConstructionValidator.validate(unitWithOps(unit, withClone),
+            result.lowering().table(), result.registry(), result.jsonDefaults(),
+            lowered.ownInterface(), Map.of()),
+            ClassConstructionValidator.FACTORY_COHERENCE,
+            SOURCE_ID, 2, 12, 2, 18, 32, 38);
+
+        // (b) A second converted branch: a CLASS_NEW-carried failure keeps
+        // the CLASS_NEW op's own range (its origin), not the synthetic
+        // anchor — proven against the op's own converted span.
+        String constructionSource = """
+            class Point {
+              x: int;
+            }
+            let p: Point = {x: 1}
+            """;
+        LoweredSlice constructionLowered = lowerModule(constructionSource);
+        SemanticLowerer.ClassDeclarationCoreResult constructionResult =
+            constructionLowered == null ? null : constructionLowered.result();
+        if (constructionResult != null && !constructionResult.lowering().hasErrors()
+                && constructionResult.lowering().unit() != null) {
+            LoweredModuleUnit constructionUnit = constructionResult.lowering().unit();
+            SemanticOp classNew = firstOfKind(constructionUnit, SemanticOpKind.CLASS_NEW);
+            KindPayload.ClassNewPayload newPayload =
+                (KindPayload.ClassNewPayload) classNew.payload();
+            Optional<CompilerDiagnostic> classNewFailure = ClassConstructionValidator
+                .validate(unitWithOps(constructionUnit, replaceOp(constructionUnit,
+                    rebuild(classNew, new KindPayload.ClassNewPayload(newPayload.classId(),
+                        newPayload.layout(), newPayload.providedFields(),
+                        DefaultOwner.LOCAL, newPayload.classDefaultOpIds(),
+                        new ClassFactoryId(77), newPayload.fieldBoundaries())))),
+                    constructionResult.lowering().table(), constructionResult.registry(),
+                    constructionResult.jsonDefaults(), constructionLowered.ownInterface(),
+                    Map.of());
+            expectE6005(classNewFailure, ClassConstructionValidator.CONSTRUCTION_COHERENCE);
+            if (classNewFailure.isPresent()) {
+                DiagnosticRange expected = classNew.origin().span().range();
+                check(classNewFailure.get().range().origin() == RangeOrigin.SOURCE
+                        && classNewFailure.get().range().equals(expected),
+                    "the CLASS_NEW failure carries the offending op's own SOURCE "
+                        + "range " + expected + "; got " + classNewFailure.get().range());
+            }
+        } else {
+            fail("the construction origin slice lowers");
+        }
+
+        // (c) The originless control: a registry entry naming an op the
+        // unit does not produce identifies no produced offending op, so
+        // the canonical empty-file synthetic range is preserved.
+        List<ClassInterface> ownClasses = lowered.ownInterface().classes();
+        if (ownClasses.isEmpty()) {
+            fail("the origin slice exports one class");
+            return;
+        }
+        ClassFactoryId constructionEntry = ownClasses.get(0).constructionEntry();
+        Map<ClassFactoryId, OpId> orphaned = new LinkedHashMap<>(
+            result.registry().factories());
+        orphaned.put(constructionEntry, new OpId(MODULE, 1_000_000));
+        Optional<CompilerDiagnostic> originless = ClassConstructionValidator.validate(
+            unit, result.lowering().table(), new ClassFactoryRegistry(orphaned),
+            result.jsonDefaults(), lowered.ownInterface(), Map.of());
+        expectE6005(originless, ClassConstructionValidator.FACTORY_COHERENCE);
+        if (originless.isPresent()) {
+            DiagnosticRange range = originless.get().range();
+            check(range.origin() == RangeOrigin.SYNTHETIC && range.isCanonicalSynthetic()
+                    && range.file().isEmpty(),
+                "the originless failure keeps the canonical empty-file synthetic "
+                    + "range, got " + range);
+        }
+    }
+
+    // =========================================================================
     // Main
     // =========================================================================
 
@@ -1058,6 +1213,7 @@ public class ClassConstructionValidatorTest {
         testDefaultBlockAdmissionNegatives();
         testJsonNegatives();
         testDetailsDumpDeterminism();
+        testFailureRangeOrigins();
         System.out.println();
         if (failed == 0) {
             System.out.println("ClassConstructionValidatorTest: " + passed + " passed, "
