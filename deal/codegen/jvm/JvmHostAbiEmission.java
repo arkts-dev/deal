@@ -1352,7 +1352,15 @@ final class JvmHostAbiEmission {
      * lands the conversions back in the same production arrays. One check
      * cell carries one identity-keyed memo (the declared carrier → its
      * materialized production array) so a repeated nested carrier stays
-     * one DEAL array, exactly like the reference projection's memo.
+     * one DEAL array, exactly like the reference projection's memo. The
+     * memo is materialization identity only: it never stands in for an
+     * element check. Every position walks the (possibly memoized)
+     * production array's elements against the descriptor required at that
+     * position — a carrier reused at another descriptor depth re-validates
+     * its elements there, like the oracle's {@code coreArray} and the
+     * loaded runtime's matcher — and no validation state is recorded at
+     * all, so an in-progress materialization can never satisfy a later
+     * check.
      */
     private void emitCheckValue(StringBuilder out) {
         out.append("  static java.lang.Object __hostCheckValue(java.lang.String d,"
@@ -1422,21 +1430,29 @@ final class JvmHostAbiEmission {
         // same element projection `__hostToDeal` applies) and then walked
         // by the shared element loop below, so its Java storage class is
         // never an element check. The identity memo maps one carrier to
-        // one production array across repeated nested positions and the
-        // materialization is registered before its elements are walked,
-        // exactly like the reference projection's memo; the commit stays
-        // staged in the pending plan, so a failure at any level leaves
-        // every carrier and every retained alias byte-identical.
+        // one production array across repeated nested positions (the
+        // reference projection's memo); a hit reuses that array and is
+        // still walked here. The commit stays staged in the pending plan,
+        // so a failure at any level leaves every carrier and every
+        // retained alias byte-identical.
         for (Map.Entry<String, String> carrier : declaredArrayCarriers().entrySet()) {
             String desc = javaString(carrier.getKey());
             out.append("    else if (d.equals(").append(desc)
                 .append(") && v instanceof $DealRt.").append(carrier.getValue())
                 .append(" __car) {\n");
+            // The memo keeps one carrier one materialized production
+            // array (the reference identity contract), never the earlier
+            // position's validation: a hit reuses the array below and the
+            // shared element loop re-checks its elements against this
+            // position's own descriptor, so a carrier that recurs at a
+            // different descriptor depth can never be admitted on its
+            // first (shallower) materialization.
             out.append("      java.lang.Object __mapped = __memo.get(__car);\n");
-            out.append("      if (__mapped != null) return __mapped;\n");
-            out.append("      __arr = __hostArrayToDeal(").append(desc)
-                .append(", __car);\n");
-            out.append("      __memo.put(__car, __arr);\n");
+            out.append("      if (__mapped != null) { __arr = (JvmRuntime.Array) __mapped; }\n");
+            out.append("      else {");
+            out.append(" __arr = __hostArrayToDeal(").append(desc)
+                .append(", __car);");
+            out.append(" __memo.put(__car, __arr); }\n");
             out.append("    }\n");
         }
         out.append("    if (__arr == null) { throw __hostFail(JvmRuntime.kindReason(\"array\"), d, v, oFile, oLine, oCol); }\n");

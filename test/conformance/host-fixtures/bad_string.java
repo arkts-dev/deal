@@ -31,6 +31,12 @@
 // returns one inner carrier at both positions, so the projection must keep
 // one DEAL array). Java String[] storage never proves Unicode validity, so
 // the declared-array check must walk these carrier elements recursively.
+// The nativeDifferingDepthStringArray export shares one inner carrier (c)
+// between two positions with different descriptor depths (c is the root's
+// first element and also the sole element of the root's second element e),
+// so every position must re-validate the elements against its own
+// descriptor — a check that admitted the deeper occurrence on the shallower
+// materialization would accept the value.
 //
 // The top-level class is deliberately package-private: the corpus file
 // keeps its <name>.java stem while the JVM lane deploys the source
@@ -145,6 +151,15 @@ final class HostBad_string {
     $DealRt.__StringArray inner =
         new $DealRt.__StringArray(new String[] { "ok" });
     return new $DealRt.__RefArray(new Object[] { inner, inner });
+  }
+
+  public static Object nativeDifferingDepthStringArray() {
+    $DealRt.__StringArray s =
+        new $DealRt.__StringArray(new String[] { "ok" });
+    $DealRt.__RefArray d = new $DealRt.__RefArray(new Object[] { s });
+    $DealRt.__RefArray c = new $DealRt.__RefArray(new Object[] { d });
+    $DealRt.__RefArray e = new $DealRt.__RefArray(new Object[] { c });
+    return new $DealRt.__RefArray(new Object[] { c, e });
   }
 
   /**

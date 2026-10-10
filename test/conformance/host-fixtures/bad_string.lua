@@ -11,7 +11,13 @@
 -- same declared shapes through the backend-native array carrier (one plain
 -- Lua table here; the JVM host's declared $DealRt wrapper there), so every
 -- valid control must land as a usable DEAL array at every nesting level
--- and every invalid element must be rejected by the element check.
+-- and every invalid element must be rejected by the element check. The
+-- nativeDifferingDepthStringArray export shares one inner table between two
+-- positions with different descriptor depths (the same table is checked as
+-- the root's first element and again under the root's second element at one
+-- depth less), so every position must re-validate the elements against its
+-- own descriptor (the return is rejected, never admitted on the shallower
+-- materialization).
 
 local rt = require("deal.runtime")
 
@@ -122,6 +128,22 @@ end
 function M.nativeSharedNestedStringArray()
   local shared = { "ok" }
   return { shared, shared }
+end
+
+-- Returns a declared string[][][][] whose first element (c) is shared: c
+-- is also the sole element of the root's second element (e), so the same
+-- host table is checked under [[[string]]] (where its element d descends to
+-- the valid s) and again under [[string]] (where d must be re-validated as
+-- a string[] and is not). The reference matcher descends the descriptor
+-- chain at every position and rejects the second occurrence with the
+-- element arm; a check that admitted it on the shallower materialization
+-- would accept the value.
+function M.nativeDifferingDepthStringArray()
+  local s = { "ok" }
+  local d = { s }
+  local c = { d }
+  local e = { c }
+  return { c, e }
 end
 
 return M

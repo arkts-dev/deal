@@ -17,7 +17,12 @@
 // nativeBadNestedTail's later element is not an array while its earlier
 // nested carrier is valid, and the valid controls must land as usable DEAL
 // arrays (including one inner carrier returned at both positions of a
-// declared string[][], which stays one DEAL array).
+// declared string[][], which stays one DEAL array). The
+// nativeDifferingDepthStringArray export shares one inner array between two
+// positions with different descriptor depths (the same carrier is checked
+// as the root's first element and again under the root's second element at
+// one depth less), so every position must re-validate the elements against
+// its own descriptor and the return is rejected with the element arm.
 
 export function badString(): string;
 export function surrogateString(): string;
@@ -34,3 +39,4 @@ export function nativeBadNestedTail(): string[][];
 export function nativeStringArray(): string[];
 export function nativeNestedStringArray(): string[][];
 export function nativeSharedNestedStringArray(): string[][];
+export function nativeDifferingDepthStringArray(): string[][][][];
