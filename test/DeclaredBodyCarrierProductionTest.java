@@ -17,6 +17,7 @@ import deal.semantic.SemanticRuntimeModel;
 import deal.semantic.ir.BindingGeneration;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ExecutableLoweredProject;
+import deal.semantic.ir.ExternalExecutionOwner;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
@@ -74,7 +75,13 @@ import java.util.stream.Stream;
  * binding registered only at the target's own declaration arm, after the
  * referring body's walk. Module-level declared bodies now register at the
  * hoist, so the forward alias (and the capture-carrying declared-name call)
- * resolves the body from the hoist on.</p>
+ * resolves the body from the hoist on. An exported declaration's reserved
+ * invocation shape is its {@code EXTERNAL_ENTRY}: a same-module reference —
+ * the direct declared-name call or await, or any value-carried alias of the
+ * declaration — realizes that entry over the shared body, preserving the
+ * declaration's body identity and single return cell; the closed two-shape
+ * guard stays in force and the reservation is never re-shaped into a source
+ * call or source async start.</p>
  *
  * <p>Per case, the measured surfaces:</p>
  *
@@ -130,12 +137,13 @@ public class DeclaredBodyCarrierProductionTest {
     /**
      * One declared-body program: the source, the pinned console effects, the
      * driven async export (null for the sync-entry cases), the pinned result
-     * atom of the differential terminal, and the minimum number of
-     * carrier-carried declared-body invocations the unit must record.
+     * atom of the differential terminal, the minimum number of
+     * carrier-carried declared-body invocations the unit must record, and the
+     * minimum number of same-module exported-entry realizations.
      */
     private record Case(String name, String source, List<String> effects,
                         String asyncExport, String resultAtom,
-                        int minCarrierInvocations) {
+                        int minCarrierInvocations, int minEntryInvocations) {
 
         Case {
             effects = List.copyOf(effects);
@@ -144,7 +152,15 @@ public class DeclaredBodyCarrierProductionTest {
         /** The sync-entry case: the {@code main} drive and the null terminal. */
         private Case(String name, String source, List<String> effects,
                      int minCarrierInvocations) {
-            this(name, source, effects, null, "null", minCarrierInvocations);
+            this(name, source, effects, null, "null", minCarrierInvocations, 0);
+        }
+
+        /** The async-entry case without a same-module exported entry. */
+        private Case(String name, String source, List<String> effects,
+                     String asyncExport, String resultAtom,
+                     int minCarrierInvocations) {
+            this(name, source, effects, asyncExport, resultAtom,
+                minCarrierInvocations, 0);
         }
     }
 
@@ -387,9 +403,124 @@ public class DeclaredBodyCarrierProductionTest {
         """,
         List.of("declared-body-forward-alias-async-ok"), "drive", "int:5", 0);
 
+    /**
+     * The forward module function alias whose target is an exported
+     * declaration: {@code g} — placed before {@code f} — holds and calls an
+     * alias of the later-declared {@code export function f}. An exported
+     * declaration's reserved invocation shape is its
+     * {@code EXTERNAL_ENTRY}, so the value-carried invocation realizes that
+     * entry over the shared body (the declaration's body identity and
+     * single return cell) instead of re-shaping the reservation into a
+     * {@code SOURCE_CALL}; the closed two-shape guard stays in force. The
+     * declared parameter exercises the entry's {@code EXTERNAL_PARAMETER}
+     * cells.
+     */
+    private static final Case FORWARD_ALIAS_EXPORTED = new Case(
+        "forward-alias-exported",
+        """
+        import * as console from "std/console"
+
+        export function main(): null {
+          let v: int = g();
+          if (v === 5) {
+            console.log("declared-body-forward-alias-exported-ok");
+          } else {
+            console.log("declared-body-forward-alias-exported-bad");
+          }
+          return null;
+        }
+
+        function g(): int {
+          let alias: (n: int) => int = f;
+          return alias(5);
+        }
+
+        export function f(n: int): int {
+          return n;
+        }
+        """,
+        List.of("declared-body-forward-alias-exported-ok"), null, "null", 0, 1);
+
+    /**
+     * The awaited forward alias whose target is an exported async
+     * declaration: the awaited twin of {@link #FORWARD_ALIAS_EXPORTED}. The
+     * await realizes the export's reserved async {@code EXTERNAL_ENTRY} (the
+     * caller token aliases the entry's canonical {@code DEAL_BODY_TASK}
+     * token) instead of re-shaping the reservation into a
+     * {@code SOURCE_ASYNC} body task.
+     */
+    private static final Case FORWARD_ALIAS_EXPORTED_ASYNC = new Case(
+        "forward-alias-exported-async",
+        """
+        import * as console from "std/console"
+
+        export async function drive(): int {
+          let v: int = await g();
+          if (v === 5) {
+            console.log("declared-body-forward-alias-exported-async-ok");
+          } else {
+            console.log("declared-body-forward-alias-exported-async-bad");
+          }
+          return v;
+        }
+
+        export function main(): null {
+          return null;
+        }
+
+        async function g(): int {
+          let alias: async () => int = f;
+          return await alias();
+        }
+
+        async function helper(): int {
+          return 5;
+        }
+
+        export async function f(): int {
+          return await helper();
+        }
+        """,
+        List.of("declared-body-forward-alias-exported-async-ok"), "drive",
+        "int:5", 0, 1);
+
+    /**
+     * The direct awaited reference to a later-declared exported async
+     * declaration: {@code drive} awaits {@code f} by name. The direct
+     * declared-name await realizes the export's reserved async
+     * {@code EXTERNAL_ENTRY} exactly like the value-carried alias above; a
+     * {@code SOURCE_ASYNC} re-shape of the reservation fails closed.
+     */
+    private static final Case EXPORTED_DIRECT_AWAIT_ASYNC = new Case(
+        "exported-direct-await-async",
+        """
+        import * as console from "std/console"
+
+        export async function drive(): int {
+          let v: int = await f();
+          if (v === 5) {
+            console.log("declared-body-exported-direct-await-ok");
+          } else {
+            console.log("declared-body-exported-direct-await-bad");
+          }
+          return v;
+        }
+
+        export function main(): null {
+          return null;
+        }
+
+        export async function f(): int {
+          return 5;
+        }
+        """,
+        List.of("declared-body-exported-direct-await-ok"), "drive", "int:5", 0, 1);
+
     private static final List<Case> CASES = List.of(
         ACYCLIC_SIBLING, TWO_ESCAPED_INSTANCES, ACYCLIC_SIBLING_ASYNC,
-        TWO_ESCAPED_INSTANCES_ASYNC, FORWARD_ALIAS, FORWARD_ALIAS_ASYNC);
+        TWO_ESCAPED_INSTANCES_ASYNC, FORWARD_ALIAS, FORWARD_ALIAS_ASYNC,
+        FORWARD_ALIAS_EXPORTED, FORWARD_ALIAS_EXPORTED_ASYNC,
+        EXPORTED_DIRECT_AWAIT_ASYNC);
 
     // =========================================================================
     // The case driver
@@ -561,9 +692,11 @@ public class DeclaredBodyCarrierProductionTest {
     /**
      * The declared-body carrier battery: the validator admission, exactly one
      * closure creation per declaration, the absence of any call-site factory
-     * reconstruction of a capture-carrying body, and the value-carried
+     * reconstruction of a capture-carrying body, the value-carried
      * invocation's resolution of the declaration's own closure identity and
-     * single return cell.
+     * single return cell, and the same-module exported-entry realization's
+     * recording of the declaration's reserved {@code EXTERNAL_ENTRY}
+     * (identity and single return cell) instead of a source-call re-shape.
      */
     private static void checkDeclaredBodyCarriers(Case testCase, LoweredModuleUnit unit,
                                                   StructuredBodyTable table) {
@@ -574,6 +707,9 @@ public class DeclaredBodyCarrierProductionTest {
         Map<FunctionId, Integer> closureNews = new LinkedHashMap<>();
         Map<Long, SemanticOp> closureByResult = new LinkedHashMap<>();
         Map<FunctionId, OpId> returnBoundaries = new LinkedHashMap<>();
+        Map<String, SemanticOp> recordedEntries = new LinkedHashMap<>();
+        Map<FunctionId, List<KindPayload.ReturnPayload>> returnsByFunction =
+            new LinkedHashMap<>();
         Set<FunctionId> entryDelegated = new java.util.LinkedHashSet<>();
         for (SemanticOp op : unit.ops()) {
             if (op.kind() == SemanticOpKind.CLOSURE_NEW
@@ -587,6 +723,13 @@ public class DeclaredBodyCarrierProductionTest {
                     && op.payload() instanceof KindPayload.ReturnPayload returned) {
                 returnBoundaries.put(returned.function(),
                     returned.returnBoundaryOpId());
+                returnsByFunction.computeIfAbsent(returned.function(),
+                    key -> new ArrayList<>()).add(returned);
+            }
+            if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
+                    && op.payload()
+                        instanceof KindPayload.ExternalEntryPayload entryPayload) {
+                recordedEntries.put(entryPayload.exportName(), op);
             }
             if (op.payload() instanceof KindPayload.EntryInvokePayload entry) {
                 // The runtime entry delegation is emitted by the entry
@@ -607,9 +750,62 @@ public class DeclaredBodyCarrierProductionTest {
 
         int carrierInvocations = 0;
         int staticCaptureInvocations = 0;
+        int moduleEntryInvocations = 0;
         for (SemanticOp op : unit.ops()) {
             KindPayload.CallCallee callee = invocationCallee(op);
             if (callee == null) {
+                continue;
+            }
+            if (callee instanceof KindPayload.CallCallee.Static stat
+                    && stat.binding()
+                        instanceof FunctionExecutionBinding.ExternalFunction external
+                    && external.executionOwner() == ExternalExecutionOwner.SHARED_BODY
+                    && external.moduleId().equals(unit.moduleId())) {
+                // The same-module exported-entry realization: the
+                // invocation records the declaration's reserved
+                // EXTERNAL_ENTRY identity and its single return cell, with
+                // the body's RETURN naming that entry — the reservation is
+                // never re-shaped into a source call.
+                moduleEntryInvocations++;
+                SemanticOp entry = recordedEntries.get(external.exportName());
+                check(entry != null, testCase.name() + ": the invocation "
+                    + op.opId() + " realizes the recorded EXTERNAL_ENTRY of export '"
+                    + external.exportName() + "'");
+                if (entry != null) {
+                    KindPayload.ExternalEntryPayload entryPayload =
+                        (KindPayload.ExternalEntryPayload) entry.payload();
+                    check(entryPayload.async()
+                            == (op.kind() == SemanticOpKind.ASYNC_START),
+                        testCase.name() + ": the invocation " + op.opId()
+                            + " realizes the " + (entryPayload.async() ? "async" : "sync")
+                            + " entry " + entry.opId());
+                    OpId recordedEntryRef = invocationEntryRef(op);
+                    check(entry.opId().equals(recordedEntryRef), testCase.name()
+                        + ": the invocation " + op.opId()
+                        + " records the declaration's reserved entry " + entry.opId()
+                        + "; got " + recordedEntryRef);
+                    check(unit.functions().containsKey(entryPayload.function()),
+                        testCase.name() + ": the entry " + entry.opId()
+                            + " names the declaration's lowered function "
+                            + entryPayload.function());
+                    List<KindPayload.ReturnPayload> returns =
+                        returnsByFunction.getOrDefault(entryPayload.function(),
+                            List.of());
+                    check(!returns.isEmpty(), testCase.name() + ": the declaration "
+                        + entryPayload.function() + " carries its own RETURN");
+                    for (KindPayload.ReturnPayload returned : returns) {
+                        check(entry.opId().equals(returned.enclosingInvocationOpId()),
+                            testCase.name() + ": the RETURN of " + entryPayload.function()
+                                + " names the reserved entry " + entry.opId()
+                                + "; got " + returned.enclosingInvocationOpId());
+                        check(entryPayload.returnBoundaryOpId()
+                                .equals(returned.returnBoundaryOpId()),
+                            testCase.name() + ": the RETURN of "
+                                + entryPayload.function() + " runs the entry's single"
+                                + " return cell " + entryPayload.returnBoundaryOpId()
+                                + "; got " + returned.returnBoundaryOpId());
+                    }
+                }
                 continue;
             }
             FunctionExecutionBinding resolved = switch (callee) {
@@ -657,6 +853,10 @@ public class DeclaredBodyCarrierProductionTest {
         check(carrierInvocations >= testCase.minCarrierInvocations(), testCase.name()
             + ": the unit records at least " + testCase.minCarrierInvocations()
             + " carrier-carried declared-body invocation(s); got " + carrierInvocations);
+        check(moduleEntryInvocations >= testCase.minEntryInvocations(), testCase.name()
+            + ": the unit records at least " + testCase.minEntryInvocations()
+            + " same-module exported-entry realization(s); got "
+            + moduleEntryInvocations);
     }
 
     /**
@@ -707,6 +907,21 @@ public class DeclaredBodyCarrierProductionTest {
             case ASYNC_START -> invocation.payload()
                 instanceof KindPayload.AsyncStartPayload start
                     ? start.returnBoundaryOpId() : null;
+            default -> null;
+        };
+    }
+
+    /** The recorded callee entry op of one invocation op (CALL or ASYNC_START). */
+    private static OpId invocationEntryRef(SemanticOp invocation) {
+        return switch (invocation.kind()) {
+            case CALL -> invocation.payload()
+                instanceof KindPayload.CallPayload call ? call.externalEntryRef() : null;
+            case ASYNC_START -> invocation.payload()
+                instanceof KindPayload.AsyncStartPayload start
+                    && start.externalAsyncLink() != null
+                    ? new OpId(start.externalAsyncLink().calleeModuleId(),
+                        start.externalAsyncLink().calleeTokenId().tokenId())
+                    : null;
             default -> null;
         };
     }

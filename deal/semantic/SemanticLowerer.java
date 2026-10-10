@@ -2543,6 +2543,19 @@ public final class SemanticLowerer {
         /** The hoisted module-level functions' allocation identities by name. */
         private final Map<String, ValueId> moduleFunctionIdentities = new LinkedHashMap<>();
         /**
+         * The module's exported function names whose reserved invocation
+         * shape is the declaration's {@code EXTERNAL_ENTRY}, by function id
+         * (the same-module entry realization's export key): populated at
+         * the hoist beside the shape reservation, and never for
+         * {@code main} (the {@code ENTRY_INVOKE} delegation owns its single
+         * invocation shape), for a callback export (host-driven
+         * {@code CALLBACK_INVOKE}), or for the generated helper (its
+         * same-module references keep the landed {@code LoweredBody} call
+         * shape — R3(b)).
+         */
+        private final Map<FunctionId, String> moduleEntryExportNames =
+            new LinkedHashMap<>();
+        /**
          * The innermost enclosing function context of the current body
          * walk (RETURN resolution).
          */
@@ -3622,11 +3635,21 @@ public final class SemanticLowerer {
                             // enclosing invocation resolves forward to
                             // the reserved id.
                             OpId shapeOpId = ids.nextOpId(module, nextOrdinal++, 0);
-                            context.assignShape(
+                            InvocationShape shape =
                                 callbackExports.contains(function.name())
                                     ? InvocationShape.CALLBACK_SHAPE
-                                    : InvocationShape.EXTERNAL_ENTRY_SHAPE,
-                                shapeOpId);
+                                    : InvocationShape.EXTERNAL_ENTRY_SHAPE;
+                            context.assignShape(shape, shapeOpId);
+                            if (shape == InvocationShape.EXTERNAL_ENTRY_SHAPE) {
+                                // The same-module entry realization's
+                                // export key (see
+                                // {@link #moduleEntryExportName}): a
+                                // declaration-name or value-carried
+                                // reference realizes the entry over the
+                                // shared body.
+                                moduleEntryExportNames.put(functionId,
+                                    function.name());
+                            }
                         }
                         functionContexts.put(incarnation, context);
                         moduleFunctionContexts.put(function.name(), context);
@@ -8055,6 +8078,23 @@ public final class SemanticLowerer {
             }
         }
 
+        /**
+         * The module's exported function name whose reserved invocation
+         * shape is the declaration's {@code EXTERNAL_ENTRY}, or {@code null}
+         * for every body whose same-module references are source
+         * invocations. The generated {@code @jsonable} helper is excluded:
+         * its reserved entry stays the cross-module invocation record while
+         * its same-module references keep the landed {@code LoweredBody}
+         * call shape (R3(b)).
+         */
+        private String moduleEntryExportName(FunctionContext context) {
+            if (context == null || context.generatedHelper || !e7Calls
+                    || context.shape != InvocationShape.EXTERNAL_ENTRY_SHAPE) {
+                return null;
+            }
+            return moduleEntryExportNames.get(context.functionId);
+        }
+
         private ValueId lowerDirectCall(CallExpr call, ValueId slot, IdentifierExpr identifier,
                                         FunctionContext context) {
             // The generated @jsonable helper's declaring module calls the
@@ -8072,6 +8112,37 @@ public final class SemanticLowerer {
             // declared function binding (its result identity is the
             // closure identity — R-FUNCTION-BINDING) before the CALL.
             lowerExpression(identifier);
+            return emitDeclaredBodyInvocation(call, slot, context, identifier.name(),
+                entryInvocation);
+        }
+
+        /**
+         * Emits one declared-body invocation over an already-evaluated
+         * callee: the landed {@code CALL(DIRECT)} body call, or — when the
+         * body's reserved invocation shape is its {@code EXTERNAL_ENTRY} —
+         * the same-module entry realization: {@code CALL(EXTERNAL)} over the
+         * declaration's {@code SHARED_BODY} record, naming the reserved
+         * entry op and the declaration's single return cell. The two arms
+         * differ only in the boundary kinds, the callee record, and the
+         * recorded return cell; the declaration's own parameter spans, the
+         * reserved call-site identity, and the result materialization are
+         * shared. A same-module reference — the direct declared-name call
+         * ({@link #lowerDirectCall}) or a value-carried reference through
+         * the declaration's published closure carrier
+         * ({@link #lowerIndirectCall}) — realizes the entry, never re-shapes
+         * it into a source call.
+         */
+        private ValueId emitDeclaredBodyInvocation(CallExpr call, ValueId slot,
+                                                   FunctionContext context,
+                                                   String calleeName,
+                                                   boolean entryInvocation) {
+            String entryExportName = entryInvocation
+                ? moduleEntryExportName(context) : null;
+            if (entryInvocation && entryExportName == null) {
+                throw new ConstructUnlowered("the exported entry invocation of '"
+                    + calleeName + "' has no recorded module export name"
+                    + " (producer defect)");
+            }
             // The first call site reuses the function's reserved
             // canonical call-site identity (the RETURN ops' enclosing
             // invocation); later call sites allocate fresh op identities
@@ -8090,7 +8161,7 @@ public final class SemanticLowerer {
                     checkedType(argument)));
             }
             if (args.size() != context.signature.paramTypes().size()) {
-                throw new ConstructUnlowered("call of '" + identifier.name()
+                throw new ConstructUnlowered("call of '" + calleeName
                     + "' with " + args.size() + " arguments for "
                     + context.signature.paramTypes().size()
                     + " parameters (the checker admits exact arity only)");
@@ -8126,7 +8197,7 @@ public final class SemanticLowerer {
                     ? new KindPayload.CallPayload(CallMode.EXTERNAL,
                         new KindPayload.CallCallee.Static(
                             new FunctionExecutionBinding.ExternalFunction(module,
-                                identifier.name(), context.signature,
+                                entryExportName, context.signature,
                                 ExternalExecutionOwner.SHARED_BODY)),
                         context.signature, parameterBoundaryIds, null, null, null,
                         context.shapeOpId)
@@ -8141,9 +8212,10 @@ public final class SemanticLowerer {
             for (SemanticOp boundary : parameterBoundaryOps) {
                 emit(boundary);
             }
-            // The producer rule's call arm: a direct call result with a
-            // function-typed result registers exactly one dynamic
-            // materialization keyed by the call's result identity.
+            // The producer rule's call arm: a declared-body invocation
+            // result with a function-typed result registers exactly one
+            // dynamic materialization keyed by the invocation's result
+            // identity.
             registerDynamicMaterialization(result, callOpId, resultType);
             return result;
         }
@@ -8564,6 +8636,26 @@ public final class SemanticLowerer {
                 throw new ConstructUnlowered("call of async callee '" + calleeName
                     + "' outside await (the checker's E3014 pins the shape; the await "
                     + "arm owns async starts)");
+            }
+            if (binding instanceof FunctionExecutionBinding.LoweredBody body) {
+                FunctionContext entryContext =
+                    contextsByFunctionId.get(body.functionId());
+                if (entryContext != null
+                        && moduleEntryExportName(entryContext) != null) {
+                    // The exported declaration's reserved entry shape owns
+                    // the invocation record: a same-module value-carried
+                    // reference — an alias or any other function-typed
+                    // binding holding the declaration's published closure
+                    // — realizes the declaration's own entry over the
+                    // shared body, exactly like the direct declared-name
+                    // call ({@link #lowerDirectCall}). The body identity
+                    // and its single return cell stay the reservation's;
+                    // the reserved entry is never re-shaped into a source
+                    // call (the closed two-shape guard stays in force).
+                    // The carrier read already ran at the call site.
+                    return emitDeclaredBodyInvocation(call, slot, entryContext,
+                        calleeName, true);
+                }
             }
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
@@ -9343,12 +9435,103 @@ public final class SemanticLowerer {
                 throw new ConstructUnlowered("await of non-async function '"
                     + identifier.name() + "' (the checker's E3013 pins the shape)");
             }
+            String entryExportName = moduleEntryExportName(context);
+            if (entryExportName != null) {
+                // The exported declaration's reserved entry shape owns the
+                // awaited invocation record: a same-module await realizes
+                // the declaration's own entry — its body identity and
+                // single return cell stay the reservation's — instead of
+                // re-shaping the reservation into a source async start.
+                lowerExpression(identifier);
+                return lowerModuleEntryAsyncStart(call, slot, awaitSpan, context,
+                    entryExportName);
+            }
             context.assignShape(InvocationShape.SOURCE_ASYNC, context.callSiteOpId);
             lowerExpression(identifier);
             return lowerAsyncStart(call, slot, awaitSpan,
                 new FunctionExecutionBinding.LoweredBody(context.functionId,
                     context.bodyBlock),
                 false);
+        }
+
+        /**
+         * The same-module entry realization of one awaited exported
+         * declaration: the declaration's reserved {@code EXTERNAL_ENTRY}
+         * owns the invocation record, so the call realizes the closed async
+         * external link over the module's own entry — the caller token
+         * aliases the entry's canonical {@code DEAL_BODY_TASK} token through
+         * {@code ExternalAsyncLink} — and the entry runs the single
+         * {@code FUNCTION_RETURN} cell. The parameter cells keep the
+         * declaration-owned origins (P3). One realization serves the direct
+         * declared-name await ({@link #lowerAwaitDeclared}) and every
+         * value-carried reference through the declaration's published
+         * closure carrier ({@link #lowerAsyncStart}'s {@code LoweredBody}
+         * arm).
+         */
+        private ValueId lowerModuleEntryAsyncStart(CallExpr call, ValueId slot,
+                                                   Span awaitSpan,
+                                                   FunctionContext context,
+                                                   String exportName) {
+            RuntimeDescriptor.Func signature = context.signature;
+            List<ValueId> args = new ArrayList<>();
+            List<RuntimeDescriptor> argTypes = new ArrayList<>();
+            for (ExpressionNode argument : call.args()) {
+                args.add(lowerCallArgument(argument));
+                argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
+                    checkedType(argument)));
+            }
+            OpId startOpId = context.callSiteUsed
+                ? ids.nextOpId(module, nextOrdinal++, 0)
+                : context.callSiteOpId;
+            context.callSiteUsed = true;
+            AsyncTokenId calleeToken = new AsyncTokenId.Canonical(
+                context.shapeOpId.id(), AsyncTokenOwner.DEAL_BODY_TASK);
+            AsyncTokenId token = new AsyncTokenId.Alias(
+                ids.nextTokenId(module, nextOrdinal++, 0), calleeToken,
+                AsyncLinkKind.EXTERNAL_LINK);
+            ExternalAsyncLink externalAsyncLink = new ExternalAsyncLink(module,
+                exportName, calleeToken);
+            if (args.size() != signature.paramTypes().size()) {
+                throw new ConstructUnlowered("async call of the exported '"
+                    + exportName + "' with " + args.size() + " arguments for "
+                    + signature.paramTypes().size()
+                    + " parameters (the checker admits exact arity only)");
+            }
+            RuntimeDescriptor completion = signature.returnType();
+            ValueId awaitResult = slot != null ? slot
+                : ids.nextValueId(module, nextOrdinal++, 0);
+            List<SemanticOp> parameterBoundaryOps = new ArrayList<>();
+            List<OpId> parameterBoundaryIds = new ArrayList<>();
+            for (int i = 0; i < args.size(); i++) {
+                // The declared callee's own parameter annotation is the
+                // parameter cell's origin (P3), in the callee's file: the
+                // same declaration-owned origin the cross-module arm
+                // resolves from the declared-parameter index.
+                SemanticOp boundary = buildChildBoundary(
+                    BoundaryKind.EXTERNAL_PARAMETER,
+                    signature.paramTypes().get(i), args.get(i),
+                    context.parameterSpan(i), startOpId);
+                parameterBoundaryOps.add(boundary);
+                parameterBoundaryIds.add(boundary.opId());
+            }
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(call.span()),
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(startOpId, SemanticOpKind.ASYNC_START,
+                new KindPayload.AsyncStartPayload(
+                    new KindPayload.CallCallee.Static(
+                        new FunctionExecutionBinding.ExternalFunction(module,
+                            exportName, signature,
+                            ExternalExecutionOwner.SHARED_BODY)),
+                    AsyncStartSource.EXTERNAL, ParameterBoundaryMode.RUN,
+                    parameterBoundaryIds, completion, null, null,
+                    externalAsyncLink),
+                token, InternalResultType.INTERNAL_ASYNC, args, argTypes,
+                FailurePolicyId.NO_DEAL_FAILURE, origin));
+            for (SemanticOp boundary : parameterBoundaryOps) {
+                emit(boundary);
+            }
+            return lowerAwait(token, completion, awaitSpan, awaitResult);
         }
 
         /**
@@ -9415,6 +9598,25 @@ public final class SemanticLowerer {
                     + describeDynamicCallee(call.callee()) + "' resolves the static class "
                     + binding.getClass().getSimpleName()
                     + " instead of a declared body carrier (producer defect)");
+            }
+            if (binding instanceof FunctionExecutionBinding.LoweredBody body) {
+                FunctionContext entryContext =
+                    contextsByFunctionId.get(body.functionId());
+                String entryExportName = entryContext == null ? null
+                    : moduleEntryExportName(entryContext);
+                if (entryExportName != null) {
+                    // The exported declaration's reserved entry shape owns
+                    // the awaited invocation record: a same-module
+                    // value-carried reference — an awaited alias or any
+                    // other function-typed binding holding the
+                    // declaration's published closure — realizes the
+                    // declaration's own entry over the shared body,
+                    // exactly like the direct declared-name await
+                    // ({@link #lowerAwaitDeclared}); the carrier read
+                    // already ran at the await site.
+                    return lowerModuleEntryAsyncStart(call, slot, awaitSpan,
+                        entryContext, entryExportName);
+                }
             }
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
