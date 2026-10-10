@@ -5861,18 +5861,20 @@ public final class LuaSemanticEmitter {
                 (KindPayload.BoundaryPayload) boundary.payload();
             emitStart(op);
             out.append("__asyncDrain()\n");
-            // The awaited activation takes its own task instance back
-            // from the LIFO slot after the drain: every nested activation
-            // (a local body start, an external entry, or a dynamic start)
+            // The awaited activation takes its own task record back from
+            // the LIFO slot after the drain: every nested activation (a
+            // local body start, an external entry, or a dynamic start)
             // pushed and took its own instance inside the drain, so the
-            // slot's top is this activation's completion (the emitted
-            // expression needs no local — a goto must never jump into a
-            // local's scope).
-            out.append("__tA = __tasks[")
+            // slot's top is this activation's completion. The take
+            // releases the instance record from the task table (one AWAIT
+            // is its single consumer), so a sequential await loop retains
+            // no completed activation (the emitted expression needs no
+            // local — a goto must never jump into a local's scope).
+            out.append("__tA = ")
                 .append(externalLink
                     ? "__entryTake(" + payload.token().tokenId() + ")"
                     : "__entryTakeOr(" + canonicalId + ")")
-                .append("]\n");
+                .append("\n");
             out.append("if __tA == nil then\n");
             out.append("  error(\"AWAIT consumes an unbound token ")
                 .append(payload.token()).append(" (producer defect)\", 0)\n");
@@ -6024,6 +6026,11 @@ public final class LuaSemanticEmitter {
             out.append("  if __drive then\n");
             out.append("    __asyncDrain()\n");
             out.append("    local __tE = __tasks[__tk]\n");
+            // The drive is this activation record's single consumer: the
+            // record is released on the success and failure paths (the
+            // local keeps it reachable for the value/error read), so a
+            // repeated drive never accumulates completed entry records.
+            out.append("    __tasks[__tk] = nil\n");
             // The caller context is restored before the entry returns or
             // raises: the drive's own failure is the caller's to observe.
             emitModulePop();
@@ -10013,29 +10020,39 @@ __entryTake = function(tokenId)
   end
   local instanceId = slot[#slot]
   slot[#slot] = nil
-  return instanceId
+  -- One AWAIT is the instance record's single consumer: the record is
+  -- removed from the task table as it is taken, so a sequential await
+  -- loop retains no completed activation.
+  local record = __tasks[instanceId]
+  __tasks[instanceId] = nil
+  return record
 end
 -- The adapter-over-async resolution: an ADAPTER_INNER token's canonical
 -- referent is the nested source token, which is activation-bound for
 -- every source that owns a per-activation instance (a local DEAL body or
 -- an external entry); a source that owns none (a host operation or an
--- intrinsic) keeps its static task key.
+-- intrinsic) keeps its static task key. A popped instance record is
+-- removed from the task table as it is taken (the awaiter is its single
+-- consumer), so a long-running sequential await loop retains no
+-- completed activation; the static fallback record is left in place.
 __entryTakeOr = function(tokenId)
   local slot = __entryTasks[tokenId]
   if slot == nil or #slot == 0 then
-    return tokenId
+    return __tasks[tokenId]
   end
   local instanceId = slot[#slot]
   slot[#slot] = nil
-  return instanceId
+  local record = __tasks[instanceId]
+  __tasks[instanceId] = nil
+  return record
 end
 -- One local DEAL body task activation: a fresh instance record is bound
 -- to the start token's LIFO slot (the same slot discipline as the
 -- external linkage), so a re-entrant activation of the same source call
 -- site never replaces a live task and the AWAIT takes its own
--- activation's completion back after the drain. The canonical token
--- identity, the DEAL_BODY_TASK owner, and the recorded return cell stay
--- unchanged.
+-- activation's completion back after the drain (and releases the record).
+-- The canonical token identity, the DEAL_BODY_TASK owner, and the
+-- recorded return cell stay unchanged.
 __asyncStartBodyTask = function(tokenId, owner, co, args)
   local instanceId = __entryTaskInstance()
   __entryBind(tokenId, instanceId)

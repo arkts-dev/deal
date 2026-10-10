@@ -114,6 +114,17 @@ import java.util.stream.Stream;
  * surfaces: both production lanes, the one lowering's canonical identity,
  * the three-consumer differential matrix (the oracle and both real
  * toolchains), and the staged production drives.</p>
+ *
+ * <p>ISSUE-0762 review cycle 1 adds the consumed-activation release battery:
+ * the per-activation task record is the single AWAIT's to consume, so a
+ * repeated sequential await of one local body start (success and failure
+ * paths) must retain no completed record. A frozen-JVM-runtime drive of
+ * 10,000 successful and 10,000 failing sequential awaits counts the
+ * runtime's canonical registry; the sequential-await case then counts the
+ * oracle's own execution state and both staged artifacts' registries after
+ * a 100-iteration loop with a caught mid-level E8005. The recursive
+ * accumulation and failure-propagation cases stay in place, so activation
+ * isolation and release are proven together.</p>
  */
 public class SelfAliasProductionTest {
 
@@ -452,9 +463,55 @@ public class SelfAliasProductionTest {
         """,
         List.of("async-recursion-alias-fail:E8005"), "drive", "int:1", false);
 
+    /**
+     * The sequential-await release case: one local declared body start is
+     * awaited {@code SEQUENTIAL_ITERATIONS} times in a loop and a second
+     * declared body's activation fails with E8005 after it. Every
+     * activation consumes its own completion record and releases it, so
+     * the loop accumulates values (0+1+...+99 = 4950) without retaining
+     * any completed activation record, and the failing activation's
+     * record is released on the failure path.
+     */
+    private static final Case SEQUENTIAL_RELEASE = new Case(
+        "seq-await",
+        """
+        import * as console from "std/console";
+
+        async function step(n: int): int {
+          return n;
+        }
+
+        async function fail(n: int): int {
+          let q: int = 1 / (n - 1);
+          return q;
+        }
+
+        export async function drive(): int {
+          let i: int = 0;
+          let total: int = 0;
+          while (i < 100) {
+            total = total + await step(i);
+            i = i + 1;
+          }
+          try {
+            let bad: int = await fail(1);
+            console.log("seq-await-fail-bad");
+          } catch (e) {
+            console.log("seq-await-fail:" + e.code);
+          }
+          return total;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """,
+        List.of("seq-await-fail:E8005"), "drive", "int:4950", false);
+
     private static final List<Case> CASES =
         List.of(NESTED_SYNC, MODULE_SYNC, NESTED_ASYNC, MODULE_ASYNC,
-            DIRECT_ACCUM, ALIAS_ACCUM, DIRECT_ACCUM_FAIL, ALIAS_ACCUM_FAIL);
+            DIRECT_ACCUM, ALIAS_ACCUM, DIRECT_ACCUM_FAIL, ALIAS_ACCUM_FAIL,
+            SEQUENTIAL_RELEASE);
 
     /**
      * The accumulating-recursion cases: the awaited invocation keeps its
@@ -464,7 +521,18 @@ public class SelfAliasProductionTest {
      * failure through the differential matrix and the staged drives.
      */
     private static final Set<String> RECURSION_CASES = Set.of(
-        "direct-accum", "alias-accum", "direct-accum-fail", "alias-accum-fail");
+        "direct-accum", "alias-accum", "direct-accum-fail", "alias-accum-fail",
+        "seq-await");
+
+    /**
+     * The consumed-activation release cases: after the drive, every
+     * per-activation task record the sequential awaits consumed must be
+     * released on the success and failure paths.
+     */
+    private static final Set<String> RELEASE_CASES = Set.of("seq-await");
+
+    /** The sequential-await release case's loop bound (see the case source). */
+    private static final int SEQUENTIAL_ITERATIONS = 100;
 
     // =========================================================================
     // The case driver
@@ -508,6 +576,15 @@ public class SelfAliasProductionTest {
                 driveProductionAsync(testCase, project, lowered);
             } else {
                 driveProductionSync(testCase, project);
+            }
+
+            // Surface 5: the consumed-activation release (the ISSUE-0762
+            // review-cycle-1 correction): the oracle's own execution state
+            // and both staged artifacts retain no consumed per-activation
+            // record after the sequential awaits.
+            if (RELEASE_CASES.contains(testCase.name())) {
+                checkOracleActivationRelease(testCase, lowered);
+                checkStagedActivationRelease(testCase, project, lowered);
             }
         } finally {
             deleteRecursively(project);
@@ -1037,6 +1114,242 @@ public class SelfAliasProductionTest {
         }
     }
 
+    // =========================================================================
+    // Surface 5: the consumed-activation release (ISSUE-0762 review cycle 1)
+    // =========================================================================
+
+    /** The retained-record count printed by the release probes. */
+    private static final String RETAINED_MARKER = "RETAINED:";
+
+    /**
+     * The oracle's consumed-activation release: the oracle's own execution
+     * state is driven through the entry module's async export and the
+     * retained task records are counted afterwards. Every per-activation
+     * instance the sequential awaits consume (one per loop iteration plus
+     * the failing activation) is released at its AWAIT on the success and
+     * failure paths; only the entry's canonical static record stays. Before
+     * the correction this drive retained one record per consumed activation
+     * ({@link #SEQUENTIAL_ITERATIONS} instances plus the failing one).
+     */
+    private static void checkOracleActivationRelease(Case testCase, Lowered lowered)
+            throws Exception {
+        LoweredModuleUnit unit = lowered.unit();
+        SemanticOp entry = null;
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
+                    && op.payload() instanceof KindPayload.ExternalEntryPayload payload
+                    && payload.async()
+                    && testCase.asyncExport().equals(payload.exportName())) {
+                entry = op;
+                break;
+            }
+        }
+        check(entry != null, testCase.name() + " [oracle]: the unit records the async"
+            + " export's EXTERNAL_ENTRY for the release drive");
+        if (entry == null) {
+            return;
+        }
+        Class<?> executionClass =
+            Class.forName("deal.semantic.SemanticOracle$Execution");
+        java.lang.reflect.Constructor<?> constructor = executionClass
+            .getDeclaredConstructor(ExecutableLoweredProject.class, Map.class,
+                Class.forName("deal.semantic.SemanticOracle$HostResponder"));
+        constructor.setAccessible(true);
+        Object state = constructor.newInstance(lowered.project(), lowered.tables(), null);
+        java.lang.reflect.Method runInit = executionClass
+            .getDeclaredMethod("runModuleInit", LoweredModuleUnit.class);
+        runInit.setAccessible(true);
+        runInit.invoke(state, unit);
+        java.lang.reflect.Method executeEntry = executionClass
+            .getDeclaredMethod("executeAsyncEntry", SemanticOp.class, OpId.class,
+                List.class, long.class);
+        executeEntry.setAccessible(true);
+        executeEntry.invoke(state, entry, null, List.of(), entry.opId().id());
+        java.lang.reflect.Method drain =
+            executionClass.getDeclaredMethod("drainReadyTasks");
+        drain.setAccessible(true);
+        drain.invoke(state);
+        java.lang.reflect.Field tasks = executionClass.getDeclaredField("tasks");
+        tasks.setAccessible(true);
+        int retained = ((Map<?, ?>) tasks.get(state)).size();
+        check(retained <= 2, testCase.name() + " [oracle]: the sequential awaits consume"
+            + " and release their own activation records (the oracle retains only the"
+            + " entry's canonical record); retained=" + retained);
+    }
+
+    /**
+     * Both staged artifacts' consumed-activation release: after the drive,
+     * the Lua chunk's chunk-global {@code __tasks} registry and the JVM
+     * runtime's {@code TASKS} registry count no consumed activation record.
+     * The Lua probe counts the emitted chunk's task table directly; the JVM
+     * probe reads the frozen runtime's registry reflectively (the staged
+     * class runs in its own JVM, so the count is program-scoped). Before the
+     * correction each registry retained one record per consumed activation
+     * ({@link #SEQUENTIAL_ITERATIONS} instances plus the failing one).
+     */
+    private static void checkStagedActivationRelease(Case testCase, Path project,
+                                                     Lowered lowered) throws Exception {
+        String surface = lowered.project().entryModule().path() + "#"
+            + testCase.asyncExport();
+
+        Path luaOut = project.resolve("out-luajit");
+        Path chunk = luaOut.resolve("main.lua");
+        check(Files.isRegularFile(chunk), testCase.name()
+            + " [luajit]: the staged chunk carries the release case: " + chunk);
+        if (Files.isRegularFile(chunk)) {
+            Path probe = luaOut.resolve("__seq_await_release_probe.lua");
+            Files.writeString(probe,
+                "dofile(\"" + luaString(chunk.toAbsolutePath().normalize().toString())
+                    + "\")\n"
+                    + "local __ok, __err = __dealMain()\n"
+                    + "if not __ok then error(__err, 0) end\n"
+                    + "local __okA, __resA = pcall(__asyncEntries[\""
+                    + luaString(surface) + "\"], \"-\", true)\n"
+                    + "if not __okA then error(__resA, 0) end\n"
+                    + "local __retained = 0\n"
+                    + "for __id in pairs(__tasks) do __retained = __retained + 1 end\n"
+                    + "print(\"" + RETAINED_MARKER + "\" .. tostring(__retained))\n",
+                StandardCharsets.UTF_8);
+            ProcessBuilder builder = new ProcessBuilder("luajit",
+                probe.getFileName().toString());
+            builder.directory(luaOut.toFile());
+            builder.environment().put("DEAL_DEFER_MAIN", "1");
+            ProcessOutput run = runProcess(builder);
+            Integer retained = retainedOf(run.stdout());
+            check(run.exit() == 0 && run.stderr().isEmpty() && retained != null
+                    && retained <= 2,
+                testCase.name() + " [luajit]: the emitted chunk releases every consumed"
+                    + " per-activation record (retained <= 2); "
+                    + (retained == null ? run.describe() : "retained=" + retained));
+        }
+
+        Path jvmOut = project.resolve("out-jvm");
+        Path classes = jvmOut.resolve("classes");
+        String className = JvmNames.classNameFor("main");
+        Long entryId = asyncEntryIdOf(lowered.unit(), testCase.asyncExport());
+        boolean compiled = Files.isRegularFile(classes.resolve(className + ".class"));
+        check(entryId != null && compiled, testCase.name()
+            + " [jvm]: the staged artifact is compiled and carries the async entry for"
+            + " the release drive: entry=" + entryId + " compiled=" + compiled);
+        if (entryId != null && compiled) {
+            String probeClass = "SelfAliasReleaseProbe_"
+                + UUID.randomUUID().toString().replace("-", "");
+            Path probe = jvmOut.resolve(probeClass + ".java");
+            Files.writeString(probe,
+                "public final class " + probeClass + " {\n"
+                    + "  public static void main(String[] args) throws Exception {\n"
+                    + "    " + className + ".dealMain();\n"
+                    + "    Object result = " + className + ".ae" + entryId
+                    + "(\"-\", true, new Object[]{});\n"
+                    + "    java.lang.reflect.Field tasks = Class"
+                    + ".forName(\"deal.codegen.jvm.JvmRuntime\")"
+                    + ".getDeclaredField(\"TASKS\");\n"
+                    + "    tasks.setAccessible(true);\n"
+                    + "    int retained = ((java.util.Map<?, ?>) tasks.get(null)).size();\n"
+                    + "    System.out.println(\"" + RETAINED_MARKER + "\" + retained);\n"
+                    + "  }\n"
+                    + "}\n",
+                StandardCharsets.UTF_8);
+            ProcessBuilder javac = new ProcessBuilder("javac", "--release", "25",
+                "-proc:none", "-sourcepath", "", "-cp",
+                classes + File.pathSeparator + absoluteClasspath(),
+                "-d", classes.toString(), probe.toString());
+            javac.directory(jvmOut.toFile());
+            ProcessOutput compile = runProcess(javac);
+            check(compile.exit() == 0, testCase.name() + " [jvm]: the release probe"
+                + " compiles under javac --release 25 -proc:none: " + compile.describe());
+            if (compile.exit() == 0) {
+                ProcessBuilder java = new ProcessBuilder("java", "-cp",
+                    classes + File.pathSeparator + absoluteClasspath(), probeClass);
+                java.directory(jvmOut.toFile());
+                ProcessOutput run = runProcess(java);
+                Integer retained = retainedOf(run.stdout());
+                check(run.exit() == 0 && run.stderr().isEmpty() && retained != null
+                        && retained <= 2,
+                    testCase.name() + " [jvm]: the staged artifact releases every consumed"
+                        + " per-activation record (retained <= 2); "
+                        + (retained == null ? run.describe() : "retained=" + retained));
+            }
+        }
+    }
+
+    /** The probe's retained-record count, or null when it did not report. */
+    private static Integer retainedOf(List<String> stdout) {
+        for (String line : stdout) {
+            if (line.startsWith(RETAINED_MARKER)) {
+                try {
+                    return Integer.parseInt(line.substring(RETAINED_MARKER.length()));
+                } catch (NumberFormatException malformed) {
+                    return null;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The frozen JVM runtime's consumed-activation release: 10,000
+     * sequential successful awaits and 10,000 sequential failing awaits of
+     * one local body start must leave the runtime's canonical task registry
+     * at its pre-loop size (every fresh instance record is released at its
+     * single consuming AWAIT on both paths) and the activation slot empty.
+     * Before the correction each loop retained one record per iteration.
+     */
+    private static void checkFrozenRuntimeActivationRelease() throws Exception {
+        java.lang.reflect.Field tasksField =
+            deal.codegen.jvm.JvmRuntime.class.getDeclaredField("TASKS");
+        tasksField.setAccessible(true);
+        Map<?, ?> tasks = (Map<?, ?>) tasksField.get(null);
+        java.lang.reflect.Field slotsField =
+            deal.codegen.jvm.JvmRuntime.class.getDeclaredField("ENTRY_INSTANCES");
+        slotsField.setAccessible(true);
+        Map<?, ?> slots = (Map<?, ?>) slotsField.get(null);
+        long token = 762_000_001L;
+        int iterations = 10_000;
+
+        int before = tasks.size();
+        int mismatched = 0;
+        for (int i = 0; i < iterations; i++) {
+            final int value = i;
+            deal.codegen.jvm.JvmRuntime.startBodyTaskInstance(token, "DEAL_BODY_TASK",
+                () -> value);
+            Object completed = deal.codegen.jvm.JvmRuntime.awaitEntryTask(token, false,
+                "release-probe");
+            if (!Integer.valueOf(value).equals(completed)) {
+                mismatched++;
+            }
+        }
+        check(mismatched == 0, "the frozen JVM runtime's sequential successful awaits"
+            + " consume their own completions; mismatched=" + mismatched);
+        check(tasks.size() - before <= 2, "the frozen JVM runtime releases every consumed"
+            + " activation record on the success path (" + iterations
+            + " sequential awaits); retained delta=" + (tasks.size() - before));
+
+        before = tasks.size();
+        int caught = 0;
+        for (int i = 0; i < iterations; i++) {
+            deal.codegen.jvm.JvmRuntime.startBodyTaskInstance(token, "DEAL_BODY_TASK",
+                () -> {
+                    throw new deal.codegen.jvm.JvmRuntime.DealError("E8005",
+                        "integer division by zero", "-", null, null, "", null);
+                });
+            try {
+                deal.codegen.jvm.JvmRuntime.awaitEntryTask(token, false, "release-probe");
+            } catch (deal.codegen.jvm.JvmRuntime.DealError expected) {
+                caught++;
+            }
+        }
+        check(caught == iterations, "the frozen JVM runtime's sequential failing awaits"
+            + " rethrow each activation's own error; caught=" + caught);
+        check(tasks.size() - before <= 2, "the frozen JVM runtime releases every consumed"
+            + " activation record on the failure path (" + iterations
+            + " sequential awaits); retained delta=" + (tasks.size() - before));
+        Object slot = slots.get(token);
+        check(slot == null || ((java.util.Collection<?>) slot).isEmpty(),
+            "the frozen JVM runtime leaves no residual activation slot for the"
+                + " repeatedly awaited token; slot=" + slot);
+    }
+
     /** The printed form of the pinned result atom (descriptor prefix removed). */
     private static String productionResultText(String atom) {
         int colon = atom.indexOf(':');
@@ -1128,6 +1441,8 @@ public class SelfAliasProductionTest {
         for (Case testCase : CASES) {
             runCase(testCase);
         }
+        System.out.println("\n-- the frozen JVM runtime's consumed-activation release --");
+        checkFrozenRuntimeActivationRelease();
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
             System.exit(1);

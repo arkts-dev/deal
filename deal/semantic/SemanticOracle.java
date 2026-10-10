@@ -846,7 +846,9 @@ public final class SemanticOracle {
          * direct await of an exported declaration) never replaces a live
          * task. The slots are LIFO: every nested activation completes
          * under the drain before its starter's AWAIT takes its own
-         * instance back.
+         * instance back, and that AWAIT releases the instance record
+         * (one AWAIT is its single consumer), so a sequential await loop
+         * retains no completed activation.
          */
         final Map<Long, ArrayDeque<Long>> activationTaskInstances = new HashMap<>();
         /**
@@ -5119,8 +5121,9 @@ public final class SemanticOracle {
          * to the start token's LIFO slot and the task record lives under
          * the instance id, so a re-entrant activation of the same source
          * call site never replaces a live task and the AWAIT takes its own
-         * activation's completion back after the drain. The canonical IR
-         * token identity, owner, and return cell stay unchanged.
+         * activation's completion back after the drain (and releases the
+         * instance record). The canonical IR token identity, owner, and
+         * return cell stay unchanged.
          */
         private void registerBodyTaskInstance(AsyncTokenId token,
                 java.util.function.Supplier<Value> body) {
@@ -5293,40 +5296,57 @@ public final class SemanticOracle {
                 throw new IllegalStateException("AWAIT consumes an unbound token "
                     + payload.token() + " (producer defect)");
             }
-            if (!task.completed) {
-                // A host operation: the completion arrives from the host.
-                String label = hostOperations.get(canonicalId);
-                if (label == null) {
-                    throw new IllegalStateException("the AWAIT token " + payload.token()
-                        + " has no task and no host operation label (producer defect)");
+            try {
+                if (!task.completed) {
+                    // A host operation: the completion arrives from the host.
+                    String label = hostOperations.get(canonicalId);
+                    if (label == null) {
+                        throw new IllegalStateException("the AWAIT token "
+                            + payload.token() + " has no task and no host operation"
+                            + " label (producer defect)");
+                    }
+                    requireHostResponder();
+                    HostResponder.SyncOutcome outcome = responder.completeAsync(label);
+                    switch (outcome) {
+                        case HostResponder.SyncOutcome.Returned returned -> {
+                            effects.add(new SemanticRuntimeModel.EffectEvent(
+                                SemanticRuntimeModel.EffectEvent.Kind
+                                    .ASYNC_COMPLETE_RETURN,
+                                label + "=" + atomOf(returned.value())));
+                            task.value = returned.value();
+                            task.completed = true;
+                        }
+                        case HostResponder.SyncOutcome.Thrown thrown -> {
+                            effects.add(new SemanticRuntimeModel.EffectEvent(
+                                SemanticRuntimeModel.EffectEvent.Kind
+                                    .ASYNC_COMPLETE_THROW,
+                                label + "!" + thrown.code()));
+                            task.failure = new DealFailure(thrown.code(),
+                                thrown.message(), op.origin(), null, null, null,
+                                List.copyOf(frames));
+                            task.completed = true;
+                        }
+                    }
                 }
-                requireHostResponder();
-                HostResponder.SyncOutcome outcome = responder.completeAsync(label);
-                switch (outcome) {
-                    case HostResponder.SyncOutcome.Returned returned -> {
-                        effects.add(new SemanticRuntimeModel.EffectEvent(
-                            SemanticRuntimeModel.EffectEvent.Kind.ASYNC_COMPLETE_RETURN,
-                            label + "=" + atomOf(returned.value())));
-                        task.value = returned.value();
-                        task.completed = true;
-                    }
-                    case HostResponder.SyncOutcome.Thrown thrown -> {
-                        effects.add(new SemanticRuntimeModel.EffectEvent(
-                            SemanticRuntimeModel.EffectEvent.Kind.ASYNC_COMPLETE_THROW,
-                            label + "!" + thrown.code()));
-                        task.failure = new DealFailure(thrown.code(), thrown.message(),
-                            op.origin(), null, null, null, List.copyOf(frames));
-                        task.completed = true;
-                    }
+                if (task.failure != null) {
+                    throw task.failure; // the identical error — never re-checked or copied
+                }
+                Value completed = task.value == null ? Value.NullValue.INSTANCE
+                    : task.value;
+                SemanticOp boundary = opOf(payload.completionBoundaryOpId());
+                Value checked = runBoundaryChild(boundary, completed,
+                    BoundaryContext.none());
+                return publish(op, checked);
+            } finally {
+                // One AWAIT consumes one activation: a fresh per-activation
+                // instance record is released here on the success and failure
+                // paths (this await is its single consumer), so a long-running
+                // sequential await loop retains no completed activation. A
+                // canonical token keeps its single static task record.
+                if (canonicalId < 0) {
+                    tasks.remove(canonicalId);
                 }
             }
-            if (task.failure != null) {
-                throw task.failure; // the identical error — never re-checked or copied
-            }
-            Value completed = task.value == null ? Value.NullValue.INSTANCE : task.value;
-            SemanticOp boundary = opOf(payload.completionBoundaryOpId());
-            Value checked = runBoundaryChild(boundary, completed, BoundaryContext.none());
-            return publish(op, checked);
         }
 
         /** The canonical referent token identity (alias chains resolve transitively). */

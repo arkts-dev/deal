@@ -1465,8 +1465,9 @@ public final class JvmRuntime {
      * start token's LIFO slot and the task record lives under the instance
      * id, so a re-entrant activation of the same source call site never
      * replaces a live task and the AWAIT takes its own activation's
-     * completion back after the drain. The canonical IR token identity,
-     * owner, and return cell stay unchanged.
+     * completion back after the drain (and releases the instance record).
+     * The canonical IR token identity, owner, and return cell stay
+     * unchanged.
      */
     public static void startBodyTaskInstance(long tokenId, String owner,
                                              java.util.function.Supplier<Object> body) {
@@ -1652,13 +1653,33 @@ public final class JvmRuntime {
         return completeAwait(resolved, awaitOrigin);
     }
 
-    /** The post-drain completion of one awaited task or host operation. */
+    /**
+     * The post-drain completion of one awaited task or host operation. A
+     * fresh per-activation instance (a negative instance id: a local body
+     * task or an external entry activation) is released here on the
+     * success and failure paths — one AWAIT is its single consumer — so a
+     * long-running sequential await loop retains no completed activation
+     * record. A canonical token keeps its single static record (one key
+     * per token identity, pre-existing behavior).
+     */
     private static Object completeAwait(long tokenId, String awaitOrigin) {
         AsyncTask task = TASKS.get(tokenId);
         if (task == null) {
             throw new IllegalStateException("AWAIT consumes an unbound token " + tokenId
                 + " (producer defect)");
         }
+        try {
+            return completeAwaitTask(tokenId, task, awaitOrigin);
+        } finally {
+            if (tokenId < 0) {
+                TASKS.remove(tokenId);
+            }
+        }
+    }
+
+    /** One awaited task's completion (the released instance's single read). */
+    private static Object completeAwaitTask(long tokenId, AsyncTask task,
+                                            String awaitOrigin) {
         if (task.hostLabel != null && task.hostOperation != null) {
 
             try {
