@@ -97,6 +97,7 @@ public class FailureArmAuthorityTest {
         testEmittedTable();
         testCarrierKindStringActual();
         testCompletionFamilyDrive();
+        testCompletionSignatureDrive();
         testTypedBoundaryBytesCarrier();
         testTypedBoundaryInvalidUnicode();
         testStdJsonArmDrive();
@@ -770,6 +771,143 @@ public class FailureArmAuthorityTest {
         checkEq(null, firstDifferingField(oraclePinned,
             new Tuple(parts[1], parts[4], span, parts[2], parts[3])),
             "the Lua artifact renders the pinned identical completion tuple");
+    }
+
+    /**
+     * The completion cell's function-signature family (P4's tuple identity,
+     * the ISSUE-0759 remediation): a differing carried signature at the
+     * completion position renders the agreed closed
+     * {@code FUNCTION_SIGNATURE_MISMATCH} arm on all three producers — the
+     * oracle's completion check, the JVM completion check
+     * ({@code bcheckCompletion}), and the emitted Lua completion check
+     * ({@code __fnRow} through {@code __bcheck}) — with the declared and
+     * carried canonical texts and the supplied await origin, and the
+     * matching carried signature stays an admission control on every
+     * consumer.
+     */
+    static void testCompletionSignatureDrive() throws Exception {
+        System.out.println("-- the completion cell's function-signature family: the "
+            + "three producers render the agreed signature arm at the await origin --");
+        String awaitOrigin = FailureContractRegistry.arm(
+            FailureArmId.ASYNC_COMPLETION_KIND).origin().name();
+        checkEq(FailureArm.OriginConvention.AWAIT_EXPRESSION.name(), awaitOrigin,
+            "the completion cell's origin convention is the await expression");
+        RuntimeDescriptor.Func declared = (RuntimeDescriptor.Func)
+            RuntimeDescriptor.parseCanonicalText("(int)->int");
+        RuntimeDescriptor.Func carried = (RuntimeDescriptor.Func)
+            RuntimeDescriptor.parseCanonicalText("(int)->string");
+        RuntimeDescriptor nullableDeclared =
+            RuntimeDescriptor.parseCanonicalText("?(int)->int");
+        Tuple signature = new Tuple("E8010", "function signature mismatch: expected "
+            + "(int)->int, got (int)->string", awaitOrigin, "(int)->int",
+            "(int)->string");
+
+        // The oracle producer leg: the direct and the nullable completion
+        // cells render the identical full tuple.
+        Tuple oracleDirect = tupleOf(oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.ASYNC_COMPLETION, declared,
+            BoundaryValueView.ofFunction(carried), BoundaryContext.none()),
+            "the direct function completion cell"), awaitOrigin);
+        checkEq(signature, oracleDirect,
+            "the oracle renders the direct function completion signature tuple");
+        Tuple oracleNullable = tupleOf(oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.ASYNC_COMPLETION, nullableDeclared,
+            BoundaryValueView.ofFunction(carried), BoundaryContext.none()),
+            "the nullable function completion cell"), awaitOrigin);
+        checkEq(signature, oracleNullable,
+            "the oracle renders the nullable function completion signature tuple");
+
+        // The JVM producer leg (the shared JvmRuntime.bcheckCompletion the
+        // emitted AWAIT site calls): the same arm and texts.
+        deal.codegen.jvm.JvmRuntime.FunctionValue carriedJvm =
+            new deal.codegen.jvm.JvmRuntime.FunctionValue(null, "(int)->string",
+                "(int)->string", null);
+        deal.codegen.jvm.JvmRuntime.DealError jvmDirect = jvmFailure(
+            () -> deal.codegen.jvm.JvmRuntime.bcheckCompletion("function(int;int)",
+                "function", carriedJvm, "(int)->int"));
+        check(jvmDirect != null, "the JVM direct completion check fails: " + jvmDirect);
+        if (jvmDirect != null) {
+            checkEq(null, firstDifferingField(signature, new Tuple(jvmDirect.code,
+                jvmDirect.msg, awaitOrigin, jvmDirect.expected, jvmDirect.actual)),
+                "the JVM runtime renders the oracle's identical direct function "
+                    + "completion tuple");
+        }
+        deal.codegen.jvm.JvmRuntime.DealError jvmNullable = jvmFailure(
+            () -> deal.codegen.jvm.JvmRuntime.bcheckCompletion(
+                "nullable(function(int;int))", "function", carriedJvm,
+                "?(int)->int"));
+        check(jvmNullable != null, "the JVM nullable completion check fails: "
+            + jvmNullable);
+        if (jvmNullable != null) {
+            checkEq(null, firstDifferingField(signature, new Tuple(jvmNullable.code,
+                jvmNullable.msg, awaitOrigin, jvmNullable.expected,
+                jvmNullable.actual)),
+                "the JVM runtime renders the oracle's identical nullable function "
+                    + "completion tuple");
+        }
+        deal.codegen.jvm.JvmRuntime.FunctionValue matchingJvm =
+            new deal.codegen.jvm.JvmRuntime.FunctionValue(null, "(int)->int",
+                "(int)->int", null);
+        checkEq(matchingJvm, deal.codegen.jvm.JvmRuntime.bcheckCompletion(
+            "function(int;int)", "function", matchingJvm, "(int)->int"),
+            "the JVM direct completion check admits the matching signature unchanged");
+        checkEq(matchingJvm, deal.codegen.jvm.JvmRuntime.bcheckCompletion(
+            "nullable(function(int;int))", "function", matchingJvm, "?(int)->int"),
+            "the JVM nullable completion check admits the matching signature unchanged");
+
+        // The emitted Lua producer leg, under real luajit.
+        List<String> luaRows = luaCompletionSignatureRows();
+        checkEq("direct-signature|E8010|(int)->int|(int)->string|function signature "
+            + "mismatch: expected (int)->int, got (int)->string", luaRows.get(0),
+            "the emitted prelude renders the direct function completion signature arm");
+        checkEq("nullable-signature|E8010|(int)->int|(int)->string|function signature "
+            + "mismatch: expected (int)->int, got (int)->string", luaRows.get(1),
+            "the emitted prelude renders the nullable function completion signature arm");
+        checkEq("direct-match|OK|", luaRows.get(2),
+            "the emitted prelude admits the matching direct signature unchanged");
+        checkEq("nullable-match|OK|", luaRows.get(3),
+            "the emitted prelude admits the matching nullable signature unchanged");
+        String[] parts = luaRows.get(0).split("\\|", -1);
+        checkEq(null, firstDifferingField(oracleDirect,
+            new Tuple(parts[1], parts[4], awaitOrigin, parts[2], parts[3])),
+            "the Lua artifact renders the oracle's identical direct function "
+                + "completion tuple");
+        parts = luaRows.get(1).split("\\|", -1);
+        checkEq(null, firstDifferingField(oracleNullable,
+            new Tuple(parts[1], parts[4], awaitOrigin, parts[2], parts[3])),
+            "the Lua artifact renders the oracle's identical nullable function "
+                + "completion tuple");
+
+        // The origin negative: a consumer that publishes a span other than
+        // the supplied await origin is reported by field name span.
+        checkEq("span", firstDifferingField(oracleDirect, new Tuple(
+            signature.code(), signature.message(), "consumer-anchor.deal:1:1",
+            signature.expected(), signature.actual())),
+            "a consumer-derived completion span is reported by field name span");
+    }
+
+    /**
+     * Runs the emitted prelude's completion signature renders under
+     * {@code luajit}: one {@code label|code|expected|actual|message} row per
+     * failing cell and one {@code label|OK|} row per admission control.
+     */
+    private static List<String> luaCompletionSignatureRows() throws Exception {
+        return runPreludeProbe("""
+            local carried = {__fn = true, __csig = "(int)->string"}
+            local ok, value = pcall(__bcheck, "function(int;int)", "function",
+              carried, "(int)->int", true)
+            row("direct-signature", ok, value)
+            ok, value = pcall(__bcheck, "nullable(function(int;int))", "function",
+              carried, "?(int)->int", true)
+            row("nullable-signature", ok, value)
+            local matching = {__fn = true, __csig = "(int)->int"}
+            ok, value = pcall(__bcheck, "function(int;int)", "function",
+              matching, "(int)->int", true)
+            row("direct-match", ok, value)
+            ok, value = pcall(__bcheck, "nullable(function(int;int))", "function",
+              matching, "?(int)->int", true)
+            row("nullable-match", ok, value)
+            """, "completion-signature-probe", 4);
     }
 
     /**

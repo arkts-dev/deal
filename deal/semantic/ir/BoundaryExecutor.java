@@ -244,7 +244,10 @@ public final class BoundaryExecutor {
      * completion value's numeric carrier has the single {@code number} kind
      * (the corpus completion-cell pin {@code expected string} /
      * {@code number} for an integral host completion), while every other
-     * kind keeps the shared token.
+     * kind keeps the shared token. A differing carried function signature
+     * projects the agreed {@code FUNCTION_SIGNATURE_MISMATCH} arm (E8010,
+     * {@link #asyncProjection()}), exactly as both target runtimes' own
+     * completion checks do.
      */
     private static BoundaryOutcome checkAsyncCompletion(RuntimeDescriptor descriptor,
                                                         BoundaryValueView view) {
@@ -670,11 +673,17 @@ public final class BoundaryExecutor {
     /**
      * ASYNC_COMPLETION: kind mismatches through the row's corpus-aligned
      * {@code expected {expected}} arm, the int ladder's pinned refinement
-     * texts through the row's second arm.
+     * texts through the row's second arm, and a differing carried function
+     * signature through the agreed {@code FUNCTION_SIGNATURE_MISMATCH} arm —
+     * the same closed arm both target runtimes reach at the completion
+     * position (the JVM {@code bcheckCompletion} and the emitted Lua
+     * {@code __fnRow}), so the awaited function-typed completion publishes
+     * the identical E8010 signature tuple on all three consumers.
      */
     private static Projection asyncProjection() {
         return new Projection(FailureArmId.ASYNC_COMPLETION_KIND,
-            FailureArmId.ASYNC_COMPLETION_REFINEMENT, FailureArmId.ASYNC_COMPLETION_KIND, null);
+            FailureArmId.ASYNC_COMPLETION_REFINEMENT, FailureArmId.ASYNC_COMPLETION_KIND,
+            FailureArmId.FUNCTION_SIGNATURE_MISMATCH);
     }
 
     /** The descriptor-kind outcome: Pass keeps the value; a failure projects per the set. */

@@ -106,6 +106,9 @@ public class BoundaryExecutorTest {
         DescriptorService.describe(new Type.Func(List.of(Type.Int.INSTANCE), Type.String.INSTANCE));
     private static final RuntimeDescriptor.Func SYNC_INT_TO_INT = (RuntimeDescriptor.Func)
         DescriptorService.describe(new Type.Func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE));
+    private static final RuntimeDescriptor NULLABLE_SYNC_INT_TO_INT =
+        DescriptorService.describe(new Type.Nullable(
+            new Type.Func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE)));
     private static final RuntimeDescriptor.Func ASYNC_INT_TO_STRING = (RuntimeDescriptor.Func)
         DescriptorService.describe(new Type.Func(List.of(Type.Int.INSTANCE), Type.String.INSTANCE, true));
 
@@ -794,6 +797,48 @@ public class BoundaryExecutorTest {
         expectPass(okOutcome, "async completion vs string");
         check(((BoundaryOutcome.Pass) okOutcome).value() == ok,
             "async completion pass unchanged");
+
+        // The completion cell's function-signature family (P4 tuple identity):
+        // a differing carried signature renders the agreed closed
+        // FUNCTION_SIGNATURE_MISMATCH arm — the same arm the JVM completion
+        // check (bcheckCompletion) and the emitted Lua completion check
+        // (__fnRow) reach — with the declared and carried canonical texts,
+        // never a producer defect. Both the direct and the nullable declared
+        // function descriptor project the inner descriptor's canonical text.
+        expectFail(checkCell(FailurePolicyId.ASYNC_COMPLETION, SYNC_INT_TO_INT,
+                BoundaryValueView.ofFunction(SYNC_INT_TO_STRING)),
+            FailurePolicyId.FUNCTION_SIGNATURE, DiagnosticCode.E8010,
+            "function signature mismatch: expected (int)->int, got (int)->string",
+            "(int)->int", "(int)->string", new LinkedHashMap<>(), null,
+            "async direct function completion vs differing signature");
+        expectFail(checkCell(FailurePolicyId.ASYNC_COMPLETION,
+                NULLABLE_SYNC_INT_TO_INT,
+                BoundaryValueView.ofFunction(SYNC_INT_TO_STRING)),
+            FailurePolicyId.FUNCTION_SIGNATURE, DiagnosticCode.E8010,
+            "function signature mismatch: expected (int)->int, got (int)->string",
+            "(int)->int", "(int)->string", new LinkedHashMap<>(), null,
+            "async nullable function completion vs differing signature");
+
+        // The matching-signature controls: the same descriptors admit the
+        // structurally equal carried signature unchanged, and the nullable
+        // descriptor still admits the language null.
+        BoundaryValueView matching = BoundaryValueView.ofFunction(SYNC_INT_TO_INT);
+        BoundaryOutcome directMatch = checkCell(FailurePolicyId.ASYNC_COMPLETION,
+            SYNC_INT_TO_INT, matching);
+        expectPass(directMatch, "async direct function completion with the matching "
+            + "signature");
+        check(((BoundaryOutcome.Pass) directMatch).value() == matching,
+            "the direct function completion keeps the matching value unchanged");
+        BoundaryOutcome nullableMatch = checkCell(FailurePolicyId.ASYNC_COMPLETION,
+            NULLABLE_SYNC_INT_TO_INT, matching);
+        expectPass(nullableMatch, "async nullable function completion with the matching "
+            + "signature");
+        check(((BoundaryOutcome.Pass) nullableMatch).value() == matching,
+            "the nullable function completion keeps the matching value unchanged");
+        BoundaryOutcome nullableNull = checkCell(FailurePolicyId.ASYNC_COMPLETION,
+            NULLABLE_SYNC_INT_TO_INT, BoundaryValueView.nullView());
+        expectPass(nullableNull, "async nullable function completion admits the "
+            + "language null");
     }
 
     // =========================================================================
