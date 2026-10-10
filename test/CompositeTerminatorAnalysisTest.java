@@ -470,6 +470,11 @@ public class CompositeTerminatorAnalysisTest {
                   for (let i: int = 0; true; i = i + 1) { return null; }
                 }
                 """), "LOOP"),
+            new Positive("test-less for-let returning", probeProgram("""
+                export function probe(): null {
+                  for (let i: int = 0; ; i = i + 1) { return null; }
+                }
+                """), "LOOP"),
             new Positive("if/else both returning inside a literal-true loop",
                 probeProgram("""
                     export function probe(c: boolean): null {
@@ -699,7 +704,9 @@ public class CompositeTerminatorAnalysisTest {
             new LoopForm("while (true)", "while (true) {"),
             new LoopForm("for (; true; )", "for (; true; ) {"),
             new LoopForm("for (;;)", "for (;;) {"),
-            new LoopForm("for-let", "for (let i: int = 0; true; i = i + 1) {"));
+            new LoopForm("for-let", "for (let i: int = 0; true; i = i + 1) {"),
+            new LoopForm("test-less for-let",
+                "for (let i: int = 0; ; i = i + 1) {"));
         record PartialShape(String name, String body, boolean publicFallOff) {
         }
         List<PartialShape> shapes = List.of(
@@ -749,8 +756,8 @@ public class CompositeTerminatorAnalysisTest {
                 }
             }
         }
-        checkEq(40, names.size(), "the partial-transfer matrix carries all forty probes");
-        if (names.size() != 40) {
+        checkEq(50, names.size(), "the partial-transfer matrix carries all fifty probes");
+        if (names.size() != 50) {
             return;
         }
         // The public build rejects every reachable break-exit body with one
@@ -768,15 +775,15 @@ public class CompositeTerminatorAnalysisTest {
             return;
         }
         List<BlockId> bodies = lowered.declaredBodyBlocks();
-        checkEq(41, bodies.size(), "the unit carries the forty probe bodies in source "
+        checkEq(51, bodies.size(), "the unit carries the fifty probe bodies in source "
             + "order and the entry main body");
-        if (bodies.size() != 41) {
+        if (bodies.size() != 51) {
             return;
         }
-        checkEq(41L, bodies.stream().distinct().count(),
-            "the forty probe bodies and main have distinct blocks");
+        checkEq(51L, bodies.stream().distinct().count(),
+            "the fifty probe bodies and main have distinct blocks");
         List<SemanticOp> allImplicit = lowered.implicitReturns();
-        checkEq(40, allImplicit.size(), "only the forty partial-transfer bodies keep "
+        checkEq(50, allImplicit.size(), "only the fifty partial-transfer bodies keep "
             + "the pinned implicit null returns");
         for (int i = 0; i < names.size(); i++) {
             String name = names.get(i);
@@ -1079,6 +1086,11 @@ public class CompositeTerminatorAnalysisTest {
                   while (true) { return 1; }
                 }
                 """),
+            new NonNullLoop("test-less for-let", """
+                export function probe(): int {
+                  for (let i: int = 0; ; i = i + 1) { return 1; }
+                }
+                """),
             new NonNullLoop("for (;;)", """
                 export function probe(): int {
                   for (;;) { return 1; }
@@ -1120,6 +1132,99 @@ public class CompositeTerminatorAnalysisTest {
                     == SemanticOpKind.LOOP,
                 nonNull.name() + ": the body block ends with its literal-true LOOP "
                     + "(op kinds " + kindsOf(lowered, bodies.get(0)) + ")");
+        }
+    }
+
+    /**
+     * The omitted-test for-let loop on the two release-owned production
+     * lanes: the all-return body (the shape the public build admits)
+     * compiles with zero diagnostics, stages exactly one artifact per
+     * lane, and executes through the real toolchains with the loop body's
+     * console effect printed exactly once. The partial break/continue
+     * bodies are fall-off shapes the public build rejects (one E5002 per
+     * open body, the spec's no-fall-off rule), so their retained implicit
+     * null return is the retained-profile battery above.
+     */
+    static void testTestlessForLetProductionArtifacts() throws Exception {
+        System.out.println("-- the omitted-test for-let loop through the two "
+            + "release-owned production lanes (the all-return shape) --");
+        String source = """
+            import * as console from "std/console";
+
+            export function terminateForLetTestless(): null {
+              for (let i: int = 0; ; i = i + 1) {
+                console.log("testless-for-let-terminate");
+                return null;
+              }
+            }
+
+            export function main(): null {
+              terminateForLetTestless();
+              return null;
+            }
+            """;
+        Path root = Files.createTempDirectory("testless-for-let-production-");
+        try {
+            write(root, "src/main.deal", source);
+            Path entry = root.resolve("src/main.deal");
+
+            // LuaJIT: the production compile stages the entry chunk; the
+            // real luajit execution prints the terminated body's effect
+            // exactly once. The artifact is read and run before the JVM
+            // lane's whole-compile publication replaces the output set.
+            CompilationOrchestrator lua = productionCompile(root.resolve("src"),
+                entry, Backend.LUAJIT);
+            check(lua.diagnostics().isEmpty(), "LuaJIT: the omitted-test for-let "
+                + "compiles with zero diagnostics: " + lua.diagnostics());
+            check(lua.semanticEmissionCount() == 1, "LuaJIT: exactly one project "
+                + "artifact stages: semantic=" + lua.semanticEmissionCount());
+            Path out = root.resolve("out");
+            Path chunk = out.resolve("main.lua");
+            check(Files.isRegularFile(chunk), "LuaJIT: the one project artifact "
+                + "stages at the entry path");
+            if (Files.isRegularFile(chunk)) {
+                ProcessOutcome run = runProcess(out, Map.of(), "luajit", "main.lua");
+                checkEq(0, run.exitCode(), "LuaJIT: the staged chunk executes: "
+                    + run.stderr());
+                checkEq("testless-for-let-terminate\n", run.stdout(), "LuaJIT: the "
+                    + "terminated loop body executes exactly once");
+                checkEq("", run.stderr(), "LuaJIT: the staged chunk raises nothing");
+            }
+
+            // JVM: the production compile stages the entry class, which
+            // compiles under javac --release 25 -proc:none and executes the
+            // same terminated body once under the real java.
+            CompilationOrchestrator jvm = productionCompile(root.resolve("src"),
+                entry, Backend.JVM);
+            check(jvm.diagnostics().isEmpty(), "JVM: the omitted-test for-let "
+                + "compiles with zero diagnostics: " + jvm.diagnostics());
+            check(jvm.semanticEmissionCount() == 1, "JVM: exactly one project "
+                + "artifact stages: semantic=" + jvm.semanticEmissionCount());
+            String className = JvmBackend.classNameFor("main");
+            Path artifact = out.resolve(className + ".java");
+            check(Files.isRegularFile(artifact), "JVM: the one project artifact is "
+                + "the entry class " + className + ".java");
+            if (Files.isRegularFile(artifact)) {
+                Path classes = root.resolve("classes");
+                Files.createDirectories(classes);
+                ProcessOutcome javac = runProcess(out, Map.of(), "javac", "--release",
+                    "25", "-proc:none", "-cp", absoluteClasspath(), "-d",
+                    classes.toString(), artifact.toAbsolutePath().toString());
+                checkEq(0, javac.exitCode(), "JVM: the staged artifact compiles under "
+                    + "javac --release 25 -proc:none: " + javac.stderr());
+                if (javac.exitCode() == 0) {
+                    ProcessOutcome run = runProcess(out, Map.of(), "java", "-cp",
+                        absoluteClasspath() + File.pathSeparator + classes, className);
+                    checkEq(0, run.exitCode(), "JVM: the staged artifact executes: "
+                        + run.stderr());
+                    checkEq("testless-for-let-terminate\n", run.stdout(), "JVM: the "
+                        + "terminated loop body executes exactly once");
+                    checkEq("", run.stderr(), "JVM: the staged artifact raises "
+                        + "nothing");
+                }
+            }
+        } finally {
+            deleteRecursively(root);
         }
     }
 
@@ -1565,19 +1670,22 @@ public class CompositeTerminatorAnalysisTest {
     }
 
     /**
-     * The fourteen partial-transfer probes of the real-toolchain matrix:
-     * the six break/return shapes (the four literal-true loop forms —
-     * while, {@code for (; true; )}, test-less {@code for (;;)}, for-let —
-     * plus the open-branch {@code if}/{@code else} and {@code try}/{@code
-     * catch} shapes), four finite partial-continue probes (one per loop
-     * form) whose continue path executes exactly once before the probe's
-     * break exit, and four partial-transfer-then-throw probes (one per
-     * loop form) whose throw executes on the non-break path and is caught
-     * by the body's own catch (so the loop itself never fails and the
-     * three consumers stay event-for-event). Every probe keeps its pinned
-     * implicit null return; the driver entry executes every break exit
-     * (the retained implicit return), every continue (the finite loop's
-     * first iteration), and every throw (the caught error path).
+     * The seventeen partial-transfer probes of the real-toolchain matrix:
+     * the seven break/return shapes (the five literal-true loop forms —
+     * while, {@code for (; true; )}, test-less {@code for (;;)}, for-let,
+     * test-less for-let — plus the open-branch {@code if}/{@code else} and
+     * {@code try}/{@code catch} shapes), five finite partial-continue
+     * probes (one per loop form) whose continue path executes exactly once
+     * before the probe's break exit, and five partial-transfer-then-throw
+     * probes (one per loop form) whose throw executes on the non-break
+     * path and is caught by the body's own catch (so the loop itself never
+     * fails and the three consumers stay event-for-event). Every
+     * partial-transfer probe keeps its pinned implicit null return; the
+     * unit additionally carries the all-return omitted-test for-let probe
+     * (no implicit return, real-toolchain execution). The driver entry
+     * executes every break exit (the retained implicit return), every
+     * continue (the finite loop's first iteration), and every throw (the
+     * caught error path).
      */
     private static final String PARTIAL_TRANSFER_PROBE_SOURCE = """
         export function probeWhile(c: boolean): null {
@@ -1604,6 +1712,19 @@ public class CompositeTerminatorAnalysisTest {
         export function probeForLet(c: boolean): null {
           for (let i: int = 0; true; i = i + 1) {
             if (c) { break; }
+            return null;
+          }
+        }
+
+        export function probeForLetTestless(c: boolean): null {
+          for (let i: int = 0; ; i = i + 1) {
+            if (c) { break; }
+            return null;
+          }
+        }
+
+        export function probeTerminateForLetTestless(): null {
+          for (let i: int = 0; ; i = i + 1) {
             return null;
           }
         }
@@ -1657,6 +1778,14 @@ public class CompositeTerminatorAnalysisTest {
           }
         }
 
+        export function probeContinueForLetTestless(c: boolean): null {
+          for (let i: int = 0; ; i = i + 1) {
+            if (i < 1) { continue; }
+            if (c) { break; }
+            return null;
+          }
+        }
+
         export function probeThrowWhile(c: boolean): null {
           while (true) {
             try {
@@ -1701,6 +1830,17 @@ public class CompositeTerminatorAnalysisTest {
           }
         }
 
+        export function probeThrowForLetTestless(c: boolean): null {
+          for (let i: int = 0; ; i = i + 1) {
+            try {
+              if (c) { break; }
+              throw { code: "T_FORLET_TESTLESS", message: "partial" }
+            } catch (e) {
+              return null;
+            }
+          }
+        }
+
         export function main(): null {
           probeWhile(true);
           probeWhile(false);
@@ -1710,6 +1850,9 @@ public class CompositeTerminatorAnalysisTest {
           probeTestless(false);
           probeForLet(true);
           probeForLet(false);
+          probeForLetTestless(true);
+          probeForLetTestless(false);
+          probeTerminateForLetTestless();
           probeIfElse(true);
           probeIfElse(false);
           probeTryCatch(true);
@@ -1722,6 +1865,8 @@ public class CompositeTerminatorAnalysisTest {
           probeContinueTestless(false);
           probeContinueForLet(true);
           probeContinueForLet(false);
+          probeContinueForLetTestless(true);
+          probeContinueForLetTestless(false);
           probeThrowWhile(true);
           probeThrowWhile(false);
           probeThrowFor(true);
@@ -1730,6 +1875,8 @@ public class CompositeTerminatorAnalysisTest {
           probeThrowTestless(false);
           probeThrowForLet(true);
           probeThrowForLet(false);
+          probeThrowForLetTestless(true);
+          probeThrowForLetTestless(false);
           return null;
         }
         """;
@@ -1740,9 +1887,9 @@ public class CompositeTerminatorAnalysisTest {
      * outcome (no trace mismatch is admitted), every retained implicit
      * null return is a member of its declared body block and executes
      * exactly once per consumer on its probe's break exit, and the
-     * affected transfer/error paths execute — the four finite
+     * affected transfer/error paths execute — the five finite
      * partial-continue paths (each continue runs exactly once) and the
-     * four caught partial-transfer throw bodies (each throw runs exactly
+     * five caught partial-transfer throw bodies (each throw runs exactly
      * once) per consumer. The same program's public compile is rejected
      * with one E5002 per open probe body (the spec's no-fall-off rule;
      * ISSUE-0717 defect snippets 25/26), so the parity drive uses the
@@ -1756,7 +1903,7 @@ public class CompositeTerminatorAnalysisTest {
         try {
             write(root, "src/app.deal", PARTIAL_TRANSFER_PROBE_SOURCE);
             // The open break-exit probes fall off under the spec's rule, so
-            // the public build rejects all fourteen (pinned below); the
+            // the public build rejects all seventeen (pinned below); the
             // retained harness profile keeps the landed implicit null
             // returns the closed analysis marks and drives the same lowered
             // project through the real toolchains.
@@ -1765,10 +1912,10 @@ public class CompositeTerminatorAnalysisTest {
             if (lowered == null) {
                 return;
             }
-            checkPublicFallOffCount("the fourteen partial-transfer probes",
-                PARTIAL_TRANSFER_PROBE_SOURCE, 14);
+            checkPublicFallOffCount("the seventeen partial-transfer probes",
+                PARTIAL_TRANSFER_PROBE_SOURCE, 17);
             List<SemanticOp> implicit = lowered.implicitReturns();
-            checkEq(14, implicit.size(), "the fourteen partial-transfer probes each "
+            checkEq(17, implicit.size(), "the seventeen partial-transfer probes each "
                 + "retain their implicit null return");
             List<OpId> implicitIds = implicit.stream().map(SemanticOp::opId).toList();
             for (OpId id : implicitIds) {
@@ -1793,9 +1940,9 @@ public class CompositeTerminatorAnalysisTest {
                     throwOps.add(op.opId());
                 }
             }
-            checkEq(4, continueOps.size(), "the unit carries the four finite "
+            checkEq(5, continueOps.size(), "the unit carries the five finite "
                 + "partial-continue probes' continue ops");
-            checkEq(4, throwOps.size(), "the unit carries the four partial-transfer"
+            checkEq(5, throwOps.size(), "the unit carries the five partial-transfer"
                 + " throw bodies' throw ops");
             Path workspace = Files.createTempDirectory("partial-transfer-parity-ws-");
             try {
@@ -1843,10 +1990,10 @@ public class CompositeTerminatorAnalysisTest {
                             executedThrows.add(event.op());
                         }
                     }
-                    checkEq(8, continues, run.consumer() + " executed the four "
+                    checkEq(10, continues, run.consumer() + " executed the five "
                         + "finite partial-continue probes' continue path once per "
                         + "invocation (both the break and the return drive)");
-                    checkEq(4, throwsExecuted, run.consumer() + " executed the four "
+                    checkEq(5, throwsExecuted, run.consumer() + " executed the five "
                         + "partial-transfer throw bodies exactly once each");
                     checkEq(continueOps, executedContinues, run.consumer()
                         + " executed the continue op of every finite "
@@ -2110,6 +2257,7 @@ public class CompositeTerminatorAnalysisTest {
         testNestedGroupFallOffExemption();
         testUnterminatedNonNullStillFailsClosed();
         testLiteralTrueLoopOnNonNullBodyAtUnitLevel();
+        testTestlessForLetProductionArtifacts();
         testProductionArtifacts();
         testDifferentialMatrix();
         testResidualAcceptanceParity();

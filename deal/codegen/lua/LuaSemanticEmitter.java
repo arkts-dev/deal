@@ -3970,7 +3970,7 @@ public final class LuaSemanticEmitter {
             out.append("  if __dynM == nil then\n");
             emitDynamicCarrierFailure(op, origin);
             out.append("  end\n");
-            out.append("  __asyncStartTask(").append(token.tokenId())
+            out.append("  __asyncStartBodyTask(").append(token.tokenId())
                 .append(", \"DEAL_BODY_TASK\", coroutine.create(function()\n");
             out.append("    __modStack[#__modStack + 1] = __module\n");
             out.append("    __module = __dynM\n");
@@ -4030,7 +4030,7 @@ public final class LuaSemanticEmitter {
             out.append("    __dynC = __dynS\n");
             emitDynamicCarrierFailure(op, origin);
             out.append("  end\n");
-            out.append("  __asyncStartTask(").append(token.tokenId())
+            out.append("  __asyncStartBodyTask(").append(token.tokenId())
                 .append(", \"DEAL_BODY_TASK\", coroutine.create(function()\n");
             out.append("    __modStack[#__modStack + 1] = __module\n");
             out.append("    __module = __dynM\n");
@@ -5625,7 +5625,7 @@ public final class LuaSemanticEmitter {
                         }
                         caps.append(captureArg(capture));
                     }
-                    out.append("__asyncStartTask(").append(token.tokenId())
+                    out.append("__asyncStartBodyTask(").append(token.tokenId())
                         .append(", \"DEAL_BODY_TASK\", coroutine.create(function()\n");
                     out.append("  table.insert(__frames, 1, ")
                         .append(luaString(String.valueOf(body.functionId().id())))
@@ -5861,8 +5861,9 @@ public final class LuaSemanticEmitter {
                 (KindPayload.BoundaryPayload) boundary.payload();
             emitStart(op);
             out.append("__asyncDrain()\n");
-            // The external activation takes its own task instance back
+            // The awaited activation takes its own task instance back
             // from the LIFO slot after the drain: every nested activation
+            // (a local body start, an external entry, or a dynamic start)
             // pushed and took its own instance inside the drain, so the
             // slot's top is this activation's completion (the emitted
             // expression needs no local — a goto must never jump into a
@@ -9966,22 +9967,27 @@ end
 __tasks = __tasks or {}
 __ready = __ready or {}
 -- One DEAL body task record: the coroutine wrapping the body-task
--- closure (the canonical AsyncTokenId is the task record).
+-- closure (the canonical AsyncTokenId is the task record). A static-key
+-- registration is the adapter-over-async runner and the leaf intrinsic,
+-- whose completion is read by the starting activation itself; a local
+-- declared body registers through __asyncStartBodyTask below.
 local function __asyncStartTask(tokenId, owner, co, args)
   __tasks[tokenId] = {token = tokenId, owner = owner, co = co, args = args,
                       status = 0, value = nil, err = nil, label = nil}
   table.insert(__ready, tokenId)
   return tokenId
 end
--- The per-activation task instances of the external async linkage:
--- every link invocation starts its own task record, so a re-entrant
--- activation (a recursive export alias or a direct await of an exported
--- declaration) never replaces the live task of its starter. The caller
--- binds the fresh instance to its awaiting token and the AWAIT takes it
--- back; the binding is a LIFO slot per awaiting token, because the
--- deterministic FIFO drain completes every nested activation before its
--- starter's AWAIT reads the slot. The four helpers are chunk-global
--- like __tasks/__ready (LuaJIT admits 200 locals in one function and
+-- The per-activation task instances of every local DEAL body activation
+-- and of the external async linkage: every body start and every link
+-- invocation runs its own task record, so a re-entrant activation (a
+-- recursive local await through the same source call site, a recursive
+-- export alias, or a direct await of an exported declaration) never
+-- replaces the live task of its starter. The starter binds the fresh
+-- instance to its awaiting token and the AWAIT takes it back; the
+-- binding is a LIFO slot per awaiting token, because the deterministic
+-- FIFO drain completes every nested activation before its starter's
+-- AWAIT reads the slot. The helpers are chunk-global like
+-- __tasks/__ready (LuaJIT admits 200 locals in one function and
 -- the emitted module-init walk spends nearly the whole budget), so the
 -- fixed helper set never takes a chunk-level local.
 __entryTasks = __entryTasks or {}
@@ -10010,10 +10016,10 @@ __entryTake = function(tokenId)
   return instanceId
 end
 -- The adapter-over-async resolution: an ADAPTER_INNER token's canonical
--- referent is the nested source token, which is activation-bound exactly
--- when the nested source is an external entry; a source that owns no
--- per-activation instance (a DEAL body, host operation, or intrinsic)
--- keeps its static task key.
+-- referent is the nested source token, which is activation-bound for
+-- every source that owns a per-activation instance (a local DEAL body or
+-- an external entry); a source that owns none (a host operation or an
+-- intrinsic) keeps its static task key.
 __entryTakeOr = function(tokenId)
   local slot = __entryTasks[tokenId]
   if slot == nil or #slot == 0 then
@@ -10021,6 +10027,21 @@ __entryTakeOr = function(tokenId)
   end
   local instanceId = slot[#slot]
   slot[#slot] = nil
+  return instanceId
+end
+-- One local DEAL body task activation: a fresh instance record is bound
+-- to the start token's LIFO slot (the same slot discipline as the
+-- external linkage), so a re-entrant activation of the same source call
+-- site never replaces a live task and the AWAIT takes its own
+-- activation's completion back after the drain. The canonical token
+-- identity, the DEAL_BODY_TASK owner, and the recorded return cell stay
+-- unchanged.
+__asyncStartBodyTask = function(tokenId, owner, co, args)
+  local instanceId = __entryTaskInstance()
+  __entryBind(tokenId, instanceId)
+  __tasks[instanceId] = {token = tokenId, owner = owner, co = co, args = args,
+                         status = 0, value = nil, err = nil, label = nil}
+  table.insert(__ready, instanceId)
   return instanceId
 end
 -- One async host operation record: a production operation carries the

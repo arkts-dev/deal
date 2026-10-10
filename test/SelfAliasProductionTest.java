@@ -14,6 +14,8 @@ import deal.semantic.ReleaseConfiguration;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticRuntimeModel;
+import deal.semantic.ir.AsyncTokenId;
+import deal.semantic.ir.AsyncTokenOwner;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.CallMode;
 import deal.semantic.ir.ClassFactoryRegistry;
@@ -97,6 +99,21 @@ import java.util.stream.Stream;
  *       {@code main}, or the async export through the production
  *       async-entry surface) and publish the pinned effects and result.</li>
  * </ol>
+ *
+ * <p>ISSUE-0762 adds the accumulating recursion pairs: a non-exported async
+ * declaration whose completion accumulates across the recursion ({@code
+ * let v: int = await f(n - 1); return n + v;}), reached by the direct
+ * declared name and through the declaration's typed alias, plus the
+ * mid-level failure-propagation twins (the second activation fails with
+ * E8005 after its await, so the outer awaits must not read a nested
+ * activation's completion). Each awaited invocation keeps its canonical IR token
+ * identity, owner, and return cell; every activation runs its own task
+ * instance, so the outer await resolves its own completion (the pre-fix
+ * artifact yielded the leaf value 3 instead of the pinned 6, and swallowed
+ * the mid-level failure). The regression battery is the same four
+ * surfaces: both production lanes, the one lowering's canonical identity,
+ * the three-consumer differential matrix (the oracle and both real
+ * toolchains), and the staged production drives.</p>
  */
 public class SelfAliasProductionTest {
 
@@ -287,8 +304,167 @@ public class SelfAliasProductionTest {
         List.of("self-alias-module-async-leaf", "self-alias-module-async-ok"),
         "drive", "int:5", false);
 
+    /**
+     * The accumulating direct-name recursion of a non-exported async
+     * declaration: the leaf returns 0 and every activation adds its own
+     * {@code n}, so a completion replacement (the outer await reading the
+     * nested activation's completion through the static call-site token)
+     * yields 3 instead of the pinned 6.
+     */
+    private static final Case DIRECT_ACCUM = new Case(
+        "direct-accum",
+        """
+        import * as console from "std/console";
+
+        async function f(n: int): int {
+          if (n <= 0) {
+            return 0;
+          }
+          let v: int = await f(n - 1);
+          return n + v;
+        }
+
+        export async function drive(): int {
+          let v: int = await f(3);
+          if (v === 6) {
+            console.log("async-recursion-direct-ok");
+          } else {
+            console.log("async-recursion-direct-bad");
+          }
+          return v;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """,
+        List.of("async-recursion-direct-ok"), "drive", "int:6", false);
+
+    /**
+     * The accumulating typed-alias recursion: the same declaration reached
+     * through its own {@code async (n: int) => int} function value, so the
+     * awaited invocation is value-carried and each activation's await must
+     * still receive its own invocation's completion.
+     */
+    private static final Case ALIAS_ACCUM = new Case(
+        "alias-accum",
+        """
+        import * as console from "std/console";
+
+        async function f(n: int): int {
+          if (n <= 0) {
+            return 0;
+          }
+          let again: async (n: int) => int = f;
+          let v: int = await again(n - 1);
+          return n + v;
+        }
+
+        export async function drive(): int {
+          let v: int = await f(3);
+          if (v === 6) {
+            console.log("async-recursion-alias-ok");
+          } else {
+            console.log("async-recursion-alias-bad");
+          }
+          return v;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """,
+        List.of("async-recursion-alias-ok"), "drive", "int:6", false);
+
+    /**
+     * The direct-name recursion's mid-level failure propagation: the
+     * second activation fails (E8005 {@code integer division by zero})
+     * after its own await, so the failure must travel through every
+     * enclosing await to the drive's catch. A replaced completion would
+     * let the outer awaits read the leaf's successful value and swallow
+     * the mid-level failure.
+     */
+    private static final Case DIRECT_ACCUM_FAIL = new Case(
+        "direct-accum-fail",
+        """
+        import * as console from "std/console";
+
+        async function f(n: int): int {
+          if (n <= 0) {
+            return 0;
+          }
+          let v: int = await f(n - 1);
+          let q: int = 1 / (n - 2);
+          return n + v + q;
+        }
+
+        export async function drive(): int {
+          try {
+            let v: int = await f(3);
+            console.log("async-recursion-direct-fail-bad");
+            return v;
+          } catch (e) {
+            console.log("async-recursion-direct-fail:" + e.code);
+            return 1;
+          }
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """,
+        List.of("async-recursion-direct-fail:E8005"), "drive", "int:1", false);
+
+    /**
+     * The mid-level failure propagation through the typed alias: the same
+     * E8005 at the second activation, awaited through the declaration's
+     * {@code async (n: int) => int} function value.
+     */
+    private static final Case ALIAS_ACCUM_FAIL = new Case(
+        "alias-accum-fail",
+        """
+        import * as console from "std/console";
+
+        async function f(n: int): int {
+          if (n <= 0) {
+            return 0;
+          }
+          let again: async (n: int) => int = f;
+          let v: int = await again(n - 1);
+          let q: int = 1 / (n - 2);
+          return n + v + q;
+        }
+
+        export async function drive(): int {
+          try {
+            let v: int = await f(3);
+            console.log("async-recursion-alias-fail-bad");
+            return v;
+          } catch (e) {
+            console.log("async-recursion-alias-fail:" + e.code);
+            return 1;
+          }
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """,
+        List.of("async-recursion-alias-fail:E8005"), "drive", "int:1", false);
+
     private static final List<Case> CASES =
-        List.of(NESTED_SYNC, MODULE_SYNC, NESTED_ASYNC, MODULE_ASYNC);
+        List.of(NESTED_SYNC, MODULE_SYNC, NESTED_ASYNC, MODULE_ASYNC,
+            DIRECT_ACCUM, ALIAS_ACCUM, DIRECT_ACCUM_FAIL, ALIAS_ACCUM_FAIL);
+
+    /**
+     * The accumulating-recursion cases: the awaited invocation keeps its
+     * canonical DEAL_BODY_TASK token identity and return cell, and the
+     * activation isolation (the distinct completion instance per
+     * activation) is proven by the accumulating values and the mid-level
+     * failure through the differential matrix and the staged drives.
+     */
+    private static final Set<String> RECURSION_CASES = Set.of(
+        "direct-accum", "alias-accum", "direct-accum-fail", "alias-accum-fail");
 
     // =========================================================================
     // The case driver
@@ -450,9 +626,79 @@ public class SelfAliasProductionTest {
         if (unit == null || table == null) {
             return null;
         }
-        checkSelfAliasOwnership(testCase, unit, table);
+        if (RECURSION_CASES.contains(testCase.name())) {
+            checkRecursionTaskIdentity(testCase, unit, table);
+        } else {
+            checkSelfAliasOwnership(testCase, unit, table);
+        }
         return new Lowered(result.project(), result.tables(), result.registries(),
             unit, table);
+    }
+
+    /**
+     * The accumulating-recursion IR battery: the control-flow validator's
+     * admission, exactly one {@code CLOSURE_NEW} per declared function
+     * (the reusable body identity), and every awaited invocation of a
+     * declared body keeping its canonical {@code DEAL_BODY_TASK} token
+     * identity and its recorded return cell equal to the body's own
+     * return boundary. The activation isolation is a runtime property,
+     * proven by the accumulating values and the mid-level failure through
+     * the differential matrix and the staged production drives.
+     */
+    private static void checkRecursionTaskIdentity(Case testCase,
+                                                   LoweredModuleUnit unit,
+                                                   StructuredBodyTable table) {
+        java.util.Optional<CompilerDiagnostic> admission =
+            ControlFlowValidator.validate(unit, table);
+        check(admission.isEmpty(), testCase.name()
+            + ": the control-flow validator admits the recursion unit: " + admission);
+        Map<FunctionId, Integer> closureNews = new LinkedHashMap<>();
+        Map<FunctionId, OpId> returnCells = new LinkedHashMap<>();
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() == SemanticOpKind.CLOSURE_NEW
+                    && op.payload() instanceof KindPayload.ClosureNewPayload closure) {
+                closureNews.merge(closure.function(), 1, Integer::sum);
+            }
+            if (op.kind() == SemanticOpKind.RETURN
+                    && op.payload() instanceof KindPayload.ReturnPayload returned) {
+                returnCells.put(returned.function(), returned.returnBoundaryOpId());
+            }
+        }
+        int awaitedDeclaredBodies = 0;
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() != SemanticOpKind.ASYNC_START
+                    || !(op.payload() instanceof KindPayload.AsyncStartPayload started)) {
+                continue;
+            }
+            FunctionExecutionBinding binding = switch (started.callee()) {
+                case KindPayload.CallCallee.Static staticCallee -> staticCallee.binding();
+                case KindPayload.CallCallee.Indirect indirect -> unit.functionBindings()
+                    .get(new FunctionAllocationIdentity(indirect.callee().id()));
+                case KindPayload.CallCallee.Dynamic ignored -> null;
+            };
+            if (!(binding instanceof FunctionExecutionBinding.LoweredBody body)) {
+                continue;
+            }
+            awaitedDeclaredBodies++;
+            check(op.result() instanceof AsyncTokenId.Canonical canonical
+                    && canonical.owner() == AsyncTokenOwner.DEAL_BODY_TASK,
+                testCase.name() + ": the awaited invocation " + op.opId()
+                    + " keeps the canonical DEAL_BODY_TASK token identity; got "
+                    + op.result());
+            check(started.returnBoundaryOpId() != null && started.returnBoundaryOpId()
+                    .equals(returnCells.get(body.functionId())),
+                testCase.name() + ": the awaited invocation " + op.opId()
+                    + " records the declaring body's own return cell "
+                    + returnCells.get(body.functionId()) + "; got "
+                    + started.returnBoundaryOpId());
+            check(closureNews.getOrDefault(body.functionId(), 0) == 1, testCase.name()
+                + ": exactly one CLOSURE_NEW materializes function "
+                + body.functionId() + "; got "
+                + closureNews.getOrDefault(body.functionId(), 0));
+        }
+        check(awaitedDeclaredBodies >= 2, testCase.name()
+            + ": the recursion unit carries the drive's await and the declaration's "
+            + "recursive await; got " + awaitedDeclaredBodies);
     }
 
     /**

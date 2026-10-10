@@ -3972,7 +3972,7 @@ public final class JvmSemanticEmitter {
                 .append(" == null) {\n");
             emitDynamicCarrierFailure(op, source, indent + 2);
             out.append(indent(indent + 1)).append("}\n");
-            out.append(indent(indent + 1)).append("JvmRuntime.startBodyTask(")
+            out.append(indent(indent + 1)).append("JvmRuntime.startBodyTaskInstance(")
                 .append(token.tokenId()).append(", \"DEAL_BODY_TASK\", () -> {\n");
             out.append(indent(indent + 2)).append("String __prevM = "
                 + "JvmRuntime.currentModule();\n");
@@ -4022,7 +4022,7 @@ public final class JvmSemanticEmitter {
                 .append(" == null) {\n");
             emitDynamicCarrierFailure(op, carrier, indent + 2);
             out.append(indent(indent + 1)).append("}\n");
-            out.append(indent(indent + 1)).append("JvmRuntime.startBodyTask(")
+            out.append(indent(indent + 1)).append("JvmRuntime.startBodyTaskInstance(")
                 .append(token.tokenId()).append(", \"DEAL_BODY_TASK\", () -> {\n");
             out.append(indent(indent + 2)).append("String __prevM = "
                 + "JvmRuntime.currentModule();\n");
@@ -6359,7 +6359,7 @@ public final class JvmSemanticEmitter {
                         }
                         caps.append(captureArg(capture));
                     }
-                    out.append(indent(indent)).append("JvmRuntime.startBodyTask(")
+                    out.append(indent(indent)).append("JvmRuntime.startBodyTaskInstance(")
                         .append(token.tokenId()).append(", \"DEAL_BODY_TASK\", () -> {\n");
                     out.append(indent(indent + 1)).append("String __prevM = "
                         + "JvmRuntime.currentModule();\n");
@@ -6653,13 +6653,15 @@ public final class JvmSemanticEmitter {
             boolean externalLink = payload.token() instanceof AsyncTokenId.Alias alias
                 && alias.linkKind() == AsyncLinkKind.EXTERNAL_LINK;
             // The activation's own task instance is taken after the drain:
-            // the nested activations the drain runs (an adapter-over-async
-            // source starts its nested entry inside the adapter task) push
-            // and take their own instances, so the slot's top is this
-            // activation's completion. An external-link token pairs by its
-            // own alias identity; every other token pairs by its canonical
-            // referent (entering the slot only when the referent is an
-            // external entry nested under an adapter).
+            // the nested activations the drain runs (a recursive local
+            // body or an adapter-over-async source starting its nested
+            // entry inside the adapter task) push and take their own
+            // instances, so the slot's top is this activation's
+            // completion. An external-link token pairs by its own alias
+            // identity; every other token pairs by its canonical referent
+            // (a local body or a dynamic start binding its own identity,
+            // an adapter-over-async token entering the nested source's
+            // slot).
             String awaitCall = "JvmRuntime.awaitEntryTask("
                 + (externalLink
                     ? payload.token().tokenId() + "L, true, "

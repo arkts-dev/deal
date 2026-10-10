@@ -5611,11 +5611,6 @@ public final class SemanticLowerer {
                     + "(the binding-core child lowers exactly the for-let shape; a "
                     + "non-let for is the control-flow epic's)");
             }
-            if (statement.condition().isEmpty()) {
-                throw new ConstructUnlowered("for-let without a condition (the LOOP payload "
-                    + "carries the condition value — an unconditional for is outside this "
-                    + "child's window)");
-            }
             if (statement.update().isPresent()
                     && !(statement.update().get() instanceof AssignmentExpr)) {
                 throw new ConstructUnlowered("for-let update expression "
@@ -5679,9 +5674,25 @@ public final class SemanticLowerer {
                 new KindPayload.BindingInitPayload(counter, INITIAL_LOOP_GENERATION,
                     initializer),
                 decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
-            ValueId condition = fullProgram
-                ? lowerExpression(statement.condition().get(), conditionSlot)
-                : lowerExpression(statement.condition().get());
+            ValueId condition;
+            if (statement.condition().isPresent()) {
+                condition = fullProgram
+                    ? lowerExpression(statement.condition().get(), conditionSlot)
+                    : lowerExpression(statement.condition().get());
+            } else {
+                // The test-less FOR row of the for-let arm: exactly one
+                // CONST true in the init block as the condition production
+                // (SYNTHETIC, the statement span), publishing the one
+                // condition slot under the full-program session — a
+                // constant needs no per-iteration re-production.
+                condition = emitValueOpWith(SemanticOpKind.CONST,
+                    new KindPayload.ConstPayload(new ScalarValue.Boolean(true)),
+                    statement.span(),
+                    ContainerPayloadDescriptors.resultDescriptorOf(
+                        Type.Boolean.INSTANCE),
+                    FailurePolicyId.NO_DEAL_FAILURE, conditionSlot,
+                    SourceOriginKind.SYNTHETIC);
+            }
 
             blockStack.pop();
             if (!fullProgram) {
@@ -5718,7 +5729,8 @@ public final class SemanticLowerer {
             // plain for/while arms (the body block's state is read before
             // the pops; the enclosing block is marked after).
             BlockExitState forLetBodyExit = exitStateOf(bodyBlock);
-            boolean forLetLiteralTrue = isLiteralTrue(statement.condition().get());
+            boolean forLetLiteralTrue = statement.condition().isEmpty()
+                || isLiteralTrue(statement.condition().get());
             if (forLetLoopOpId != null) {
                 popLoopTarget();
             }
@@ -5736,11 +5748,12 @@ public final class SemanticLowerer {
             if (statement.update().isPresent()) {
                 lowerExpression(statement.update().get());
             }
-            if (fullProgram) {
+            if (statement.condition().isPresent() && fullProgram) {
                 // The update-block condition re-production publishes the
-                // one condition slot (C-D4).
+                // one condition slot (C-D4; the test-less row's synthetic
+                // constant needs no re-production).
                 lowerExpression(statement.condition().get(), conditionSlot);
-            } else {
+            } else if (statement.condition().isPresent()) {
                 lowerExpression(statement.condition().get());
             }
             blockStack.pop();

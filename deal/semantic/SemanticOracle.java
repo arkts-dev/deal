@@ -838,20 +838,22 @@ public final class SemanticOracle {
 
         final Map<Long, Long> dynamicReferents = new LinkedHashMap<>();
         /**
-         * The per-activation task instances of the external async linkage,
-         * keyed by the awaiting (caller-side) alias token: every entry
-         * activation runs its own task record, so a re-entrant activation
-         * (a recursive alias or a direct await of an exported declaration)
-         * never replaces a live task. The slots are LIFO: every nested
-         * activation completes under the drain before its starter's AWAIT
-         * takes its own instance back.
+         * The per-activation task instances of the local DEAL body tasks
+         * and the external async linkage, keyed by the awaited token: a
+         * local body start and every entry activation runs its own task
+         * record, so a re-entrant activation (a recursive local await
+         * through the same source call site, a recursive alias, or a
+         * direct await of an exported declaration) never replaces a live
+         * task. The slots are LIFO: every nested activation completes
+         * under the drain before its starter's AWAIT takes its own
+         * instance back.
          */
-        final Map<Long, ArrayDeque<Long>> externalEntryInstances = new HashMap<>();
+        final Map<Long, ArrayDeque<Long>> activationTaskInstances = new HashMap<>();
         /**
-         * The per-activation entry task instance sequence (negative: an
+         * The per-activation task instance sequence (negative: an
          * instance id never collides with an allocated token identity).
          */
-        long entryTaskSequence = 0;
+        long taskInstanceSequence = 0;
         /** The heap function value → resolved execution binding index. */
         final IdentityHashMap<Value, FunctionExecutionBinding> bindingsByValue =
             new IdentityHashMap<>();
@@ -4747,9 +4749,8 @@ public final class SemanticOracle {
             }
             switch (binding) {
                 case FunctionExecutionBinding.LoweredBody body -> {
-                    tasks.put(token.tokenId(), new Task(token,
-                        () -> runTaskBody(op, body, checkedArgs, calleeValue)));
-                    readyQueue.add(token.tokenId());
+                    registerBodyTaskInstance(token, () ->
+                        runTaskBody(op, body, checkedArgs, calleeValue));
                 }
                 case FunctionExecutionBinding.AdapterBinding adapter -> {
                     tasks.put(token.tokenId(), new Task(token,
@@ -4814,10 +4815,9 @@ public final class SemanticOracle {
                 case DEAL_BODY -> {
                     FunctionExecutionBinding.LoweredBody body =
                         (FunctionExecutionBinding.LoweredBody) binding;
-                    tasks.put(token.tokenId(), new Task(token,
-                        () -> runTaskBodyWithRecordedCell(op, body, checkedArgs,
-                            calleeValue)));
-                    readyQueue.add(token.tokenId());
+                    registerBodyTaskInstance(token, () ->
+                        runTaskBodyWithRecordedCell(op, body, checkedArgs,
+                            calleeValue));
                 }
                 case HOST -> {
                     requireHostResponder();
@@ -4849,7 +4849,8 @@ public final class SemanticOracle {
                     SemanticOp entry = externalEntryOpOf(external, true);
                     long calleeTokenId = entry.opId().id();
                     dynamicReferents.put(token.tokenId(), calleeTokenId);
-                    executeAsyncEntry(entry, op.opId(), checkedArgs, calleeTokenId);
+                    executeAsyncEntry(entry, op.opId(), checkedArgs, calleeTokenId,
+                        token.tokenId());
                 }
             }
         }
@@ -4871,13 +4872,12 @@ public final class SemanticOracle {
                 case DEAL_BODY -> {
                     FunctionExecutionBinding.LoweredBody body =
                         (FunctionExecutionBinding.LoweredBody) sourceBinding;
-                    tasks.put(token.tokenId(), new Task(token, () -> {
+                    registerBodyTaskInstance(token, () -> {
                         Value returned = runOwnedBodyBlock(body.functionId(),
                             body.blockId(), m, leading, capturesOf(sourceValue));
                         return runRecordedDealBodyCell(op, recordedTaskCellOf(op),
                             returned);
-                    }));
-                    readyQueue.add(token.tokenId());
+                    });
                 }
                 case HOST -> {
                     if (sourceBinding
@@ -4927,7 +4927,8 @@ public final class SemanticOracle {
                     SemanticOp entry = externalEntryOpOf(external, true);
                     long calleeTokenId = entry.opId().id();
                     dynamicReferents.put(token.tokenId(), calleeTokenId);
-                    executeAsyncEntry(entry, op.opId(), leading, calleeTokenId);
+                    executeAsyncEntry(entry, op.opId(), leading, calleeTokenId,
+                        token.tokenId());
                 }
             }
         }
@@ -5068,10 +5069,11 @@ public final class SemanticOracle {
 
         /**
          * The callee unit's async EXTERNAL_ENTRY under the triggering caller
-         * op, keyed by the entry's canonical token: the top-level drive and
-         * the dynamic dispatch (
-         * {@code DynamicResolutionKind.EXTERNAL}) resolve the completed task
-         * through that identity.
+         * op, keyed by the entry's canonical token: the top-level drive runs
+         * the entry's own static task, while an awaiting caller (the static
+         * external link and the dynamic dispatch's
+         * {@code DynamicResolutionKind.EXTERNAL}) binds its own activation
+         * instance.
          */
         private void executeAsyncEntry(SemanticOp entry, OpId callerOpId, List<Value> args,
                                        long canonicalTokenId) {
@@ -5080,10 +5082,13 @@ public final class SemanticOracle {
 
         /**
          * One external async entry activation. When the activation belongs
-         * to a caller-side link ({@code awaitingTokenId} non-null), the task
+         * to an awaiting caller ({@code awaitingTokenId} non-null), the task
          * record is a fresh per-activation instance and the starter binds it
          * to the awaiting token; a re-entrant activation therefore never
-         * replaces the live task of its starter.
+         * replaces the live task of its starter. The top-level drive's
+         * activation ({@code awaitingTokenId} null) keeps the entry's
+         * canonical task key, which the drive reads back through its own
+         * identity.
          */
         private void executeAsyncEntry(SemanticOp entry, OpId callerOpId, List<Value> args,
                                        long canonicalTokenId, Long awaitingTokenId) {
@@ -5097,8 +5102,8 @@ public final class SemanticOracle {
                 AsyncTokenOwner.DEAL_BODY_TASK);
             long taskId = canonicalTokenId;
             if (awaitingTokenId != null) {
-                taskId = --entryTaskSequence;
-                externalEntryInstances
+                taskId = --taskInstanceSequence;
+                activationTaskInstances
                     .computeIfAbsent(awaitingTokenId, key -> new ArrayDeque<>())
                     .push(taskId);
             }
@@ -5109,26 +5114,50 @@ public final class SemanticOracle {
         }
 
         /**
-         * The awaiting activation's own entry task instance: the LIFO slot
-         * of the external-link alias token, taken after the drain. An
-         * adapter-over-async token ({@code ADAPTER_INNER}) resolves the
-         * nested source token instead, which is activation-bound exactly
-         * when the nested source is an external entry; a nested source that
-         * owns no per-activation instance (a DEAL body, host operation, or
-         * intrinsic) keeps its static task key.
+         * Registers one local DEAL body task activation: a fresh instance
+         * id (never colliding with an allocated token identity) is bound
+         * to the start token's LIFO slot and the task record lives under
+         * the instance id, so a re-entrant activation of the same source
+         * call site never replaces a live task and the AWAIT takes its own
+         * activation's completion back after the drain. The canonical IR
+         * token identity, owner, and return cell stay unchanged.
          */
-        private long takeExternalEntryInstance(AsyncTokenId awaitedToken) {
+        private void registerBodyTaskInstance(AsyncTokenId token,
+                java.util.function.Supplier<Value> body) {
+            long instanceId = --taskInstanceSequence;
+            activationTaskInstances
+                .computeIfAbsent(token.tokenId(), key -> new ArrayDeque<>())
+                .push(instanceId);
+            tasks.put(instanceId, new Task(token, body));
+            readyQueue.add(instanceId);
+        }
+
+        /**
+         * The awaiting activation's own task instance: the LIFO slot of
+         * the awaited token, taken after the drain. An external-link alias
+         * pairs by its own alias identity; every other token pairs by its
+         * own identity first (a local body task or a dynamic start), then
+         * by its canonical referent (an adapter-over-async
+         * {@code ADAPTER_INNER} alias resolves the nested source token); a
+         * token that owns no per-activation instance (a static host
+         * operation or intrinsic) keeps its static task key.
+         */
+        private long takeActivationInstance(AsyncTokenId awaitedToken) {
             if (awaitedToken instanceof AsyncTokenId.Alias alias
                     && alias.linkKind() == AsyncLinkKind.EXTERNAL_LINK) {
-                ArrayDeque<Long> slot = externalEntryInstances.get(alias.tokenId());
+                ArrayDeque<Long> slot = activationTaskInstances.get(alias.tokenId());
                 if (slot == null || slot.isEmpty()) {
                     throw new IllegalStateException("AWAIT consumes an unbound external "
                         + "token " + awaitedToken + " (producer defect)");
                 }
                 return slot.pop();
             }
+            ArrayDeque<Long> own = activationTaskInstances.get(awaitedToken.tokenId());
+            if (own != null && !own.isEmpty()) {
+                return own.pop();
+            }
             long referent = canonicalReferent(awaitedToken);
-            ArrayDeque<Long> slot = externalEntryInstances.get(referent);
+            ArrayDeque<Long> slot = activationTaskInstances.get(referent);
             if (slot != null && !slot.isEmpty()) {
                 return slot.pop();
             }
@@ -5258,7 +5287,7 @@ public final class SemanticOracle {
             // take their own instances, so the slot's top is this
             // activation's completion.
             drainReadyTasks();
-            long canonicalId = takeExternalEntryInstance(payload.token());
+            long canonicalId = takeActivationInstance(payload.token());
             Task task = tasks.get(canonicalId);
             if (task == null) {
                 throw new IllegalStateException("AWAIT consumes an unbound token "

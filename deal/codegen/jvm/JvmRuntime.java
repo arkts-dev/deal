@@ -1446,7 +1446,12 @@ public final class JvmRuntime {
     /** The scenario host adapter's scripted seam (null outside host drives). */
     public static volatile HostAsync HOST_ASYNC;
 
-    /** Registers one DEAL body task: its future completes on the serial executor at drain. */
+    /**
+     * Registers one DEAL body task: its future completes on the serial
+     * executor at drain. The token key is the caller's own (a leaf
+     * intrinsic, an adapter-over-async runner, or an already allocated
+     * entry instance).
+     */
     public static void startBodyTask(long tokenId, String owner,
                                      java.util.function.Supplier<Object> body) {
         AsyncTask task = new AsyncTask(tokenId, owner, new CompletableFuture<>(), body, null);
@@ -1454,28 +1459,48 @@ public final class JvmRuntime {
         PENDING.add(task);
     }
 
+    /**
+     * Registers one local DEAL body task activation: a fresh instance id
+     * (never colliding with an allocated token identity) is bound to the
+     * start token's LIFO slot and the task record lives under the instance
+     * id, so a re-entrant activation of the same source call site never
+     * replaces a live task and the AWAIT takes its own activation's
+     * completion back after the drain. The canonical IR token identity,
+     * owner, and return cell stay unchanged.
+     */
+    public static void startBodyTaskInstance(long tokenId, String owner,
+                                             java.util.function.Supplier<Object> body) {
+        long instanceId = newEntryTaskInstance();
+        bindEntryTask(tokenId, instanceId);
+        AsyncTask task = new AsyncTask(instanceId, owner, new CompletableFuture<>(),
+            body, null);
+        TASKS.put(instanceId, task);
+        PENDING.add(task);
+    }
+
     // =========================================================================
-    // The per-activation external async entry instances
+    // The per-activation local body and external async entry instances
     // =========================================================================
 
     /**
-     * The per-activation task instances of the external async linkage,
-     * keyed by the awaiting (caller-side) alias token: every entry
-     * activation runs its own task record, so a re-entrant activation (a
-     * recursive export alias or a direct await of an exported declaration)
-     * never replaces the live task of its starter. The slots are LIFO:
-     * every nested activation completes under the drain before its
-     * starter's AWAIT takes its own instance back.
+     * The per-activation task instances of the local DEAL body tasks and
+     * the external async linkage, keyed by the awaited token: every body
+     * start and every entry activation runs its own task record, so a
+     * re-entrant activation (a recursive local await through the same
+     * source call site, a recursive export alias, or a direct await of an
+     * exported declaration) never replaces the live task of its starter.
+     * The slots are LIFO: every nested activation completes under the
+     * drain before its starter's AWAIT takes its own instance back.
      */
     static final Map<Long, ArrayDeque<Long>> ENTRY_INSTANCES = new HashMap<>();
 
     /**
-     * The per-activation entry task instance sequence (negative: an
-     * instance id never collides with an allocated token identity).
+     * The per-activation task instance sequence (negative: an instance id
+     * never collides with an allocated token identity).
      */
     private static long entryTaskSequence = 0;
 
-    /** One fresh task instance for one external async entry activation. */
+    /** One fresh task instance for one activation (a body task or an entry). */
     public static long newEntryTaskInstance() {
         return --entryTaskSequence;
     }
@@ -1499,10 +1524,10 @@ public final class JvmRuntime {
 
     /**
      * The adapter-over-async resolution: an ADAPTER_INNER token's canonical
-     * referent is the nested source token, which is activation-bound
-     * exactly when the nested source is an external entry; a source that
-     * owns no per-activation instance (a DEAL body, host operation, or
-     * intrinsic) keeps its static task key.
+     * referent is the nested source token, which is activation-bound for
+     * every source that owns a per-activation instance (a local DEAL body
+     * or an external entry); a source that owns none (a host operation or
+     * an intrinsic) keeps its static task key.
      */
     public static long takeEntryTaskOr(long tokenId) {
         ArrayDeque<Long> slot = ENTRY_INSTANCES.get(tokenId);
