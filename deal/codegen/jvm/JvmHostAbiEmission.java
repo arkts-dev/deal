@@ -897,7 +897,13 @@ final class JvmHostAbiEmission {
      * kind projection, the parameter and return cells with the pinned
      * E8010 texts, the descriptor-driven value check, the Lua-mirrored
      * inner reason, the load-time presence and defaults helpers, and the
-     * reflective invocation.
+     * reflective invocation. A declared {@code string} position admits the
+     * UTF-16 {@code java.lang.String} carrier and the backend-native raw
+     * UTF-8 {@code byte[]} carrier (decoded strictly); the carrier's closed
+     * encoding defect selects the pinned string-carrier reason
+     * ({@link JvmRuntime#hostStringReason(String)} /
+     * {@link JvmRuntime#hostStringReason(byte[])}), never the carrier's
+     * length.
      */
     private void emitSeams(StringBuilder out) {
         out.append("  // ---- The emitted host boundary-check seam (host-module-abi; "
@@ -930,6 +936,7 @@ final class JvmHostAbiEmission {
         out.append("    if (v == JvmRuntime.MISSING) return \"nil\";\n");
         out.append("    if (v == null) return \"table\";\n");
         out.append("    if (v instanceof java.lang.String) return \"string\";\n");
+        out.append("    if (v instanceof byte[]) return \"string\";\n");
         out.append("    if (v instanceof java.lang.Long || v instanceof java.lang.Integer || v instanceof java.lang.Double) return \"number\";\n");
         out.append("    if (v instanceof java.lang.Boolean) return \"boolean\";\n");
         out.append("    for (java.lang.Class<?> __k : v.getClass().getInterfaces()) { int __n = 0; for (java.lang.reflect.Method __m : __k.getMethods()) { if (java.lang.reflect.Modifier.isAbstract(__m.getModifiers())) __n++; } if (__n >= 1 && !(v instanceof $DealRt.Bytes) && !(v instanceof JvmRuntime.Table) && !(v instanceof JvmRuntime.Array) && !(v instanceof JvmRuntime.ClassInstance) && !(v instanceof JvmRuntime.FunctionValue) && !(v instanceof $DealRt.FnValue)) return \"function\"; }\n");
@@ -954,14 +961,7 @@ final class JvmHostAbiEmission {
         out.append("    return d;\n");
         out.append("  }\n\n");
         out.append("  static java.lang.String __hostStringReason(java.lang.String s) {\n");
-        out.append("    boolean malformed = false;\n");
-        out.append("    for (int i = 0; i < s.length(); i++) {\n");
-        out.append("      char c = s.charAt(i);\n");
-        out.append("      if (java.lang.Character.isHighSurrogate(c) && i + 1 < s.length() && java.lang.Character.isLowSurrogate(s.charAt(i + 1))) { i++; }\n");
-        out.append("      else if (java.lang.Character.isHighSurrogate(c) || java.lang.Character.isLowSurrogate(c)) { malformed = true; break; }\n");
-        out.append("    }\n");
-        out.append("    if (!malformed) return null;\n");
-        out.append("    return s.length() == 1 ? JvmRuntime.stringCarrierReason(true) : JvmRuntime.stringCarrierReason(false);\n");
+        out.append("    return JvmRuntime.hostStringReason(s);\n");
         out.append("  }\n\n");
         out.append("  static java.lang.String __hostInnerMessage(java.lang.String d, "
             + "java.lang.Object v, JvmRuntime.DealError inner) {\n");
@@ -1275,9 +1275,25 @@ final class JvmHostAbiEmission {
     private String elementExtract(Type element, String expression) {
         if (element instanceof Type.Nullable nullable) {
             Type inner = nullable.inner();
-            return "(" + expression + " == null ? null : "
-                + boxedOf(inner, "((java.lang.Number) " + expression + ")", expression)
-                + ")";
+            // The slot expression may itself be a conditional (the
+            // missing-slot read) and its static type is the boxed value
+            // model, so it is parenthesized for the null test and cast to
+            // the declared element carrier for the non-null arm; without
+            // both the emitted declaration would not compile and would
+            // rebind the null test into the wrong branch.
+            String slot = "(" + expression + ")";
+            String boxed = switch (inner) {
+                case Type.Int ignored -> "java.lang.Integer.valueOf(((java.lang.Number) "
+                    + slot + ").intValue())";
+                case Type.Number ignored -> "java.lang.Double.valueOf(((java.lang.Number) "
+                    + slot + ").doubleValue())";
+                case Type.Boolean ignored -> "java.lang.Boolean.valueOf((java.lang.Boolean) "
+                    + slot + ")";
+                case Type.Bytes ignored -> "($DealRt.Bytes) __hostBytesToHost("
+                    + slot + ")";
+                default -> "(" + boxedCarrier(inner) + ") " + slot;
+            };
+            return "(" + slot + " == null ? null : " + boxed + ")";
         }
         return switch (element) {
             case Type.Int ignored -> "((java.lang.Number) (" + expression + ")).intValue()";
@@ -1316,26 +1332,37 @@ final class JvmHostAbiEmission {
         return boxed;
     }
 
-    /** The boxed expression of one primitive inner carrier. */
-    private String boxedOf(Type inner, String numberExpression, String expression) {
-        return switch (inner) {
-            case Type.Int ignored -> "java.lang.Integer.valueOf("
-                + numberExpression + ".intValue())";
-            case Type.Number ignored -> "java.lang.Double.valueOf("
-                + numberExpression + ".doubleValue())";
-            case Type.Boolean ignored -> "java.lang.Boolean.valueOf((java.lang.Boolean) "
-                + expression + ")";
-            default -> expression;
-        };
-    }
-
-    /** The descriptor-driven value check of the parameter/return cells. */
+    /**
+     * The descriptor-driven value check of the parameter/return cells: the
+     * check returns the canonical carrier for the checked position. A
+     * declared array check recurses and returns the same production array
+     * with every element canonically projected (a raw backend-native
+     * string carrier decodes into its UTF-16 carrier), preserving the
+     * array identity. The projection is staged, never applied while the
+     * check walks: the entry point collects every element conversion of
+     * the complete enclosing cell and commits them only after the whole
+     * cell passes, so a failed check mutates nothing — a nested array's
+     * converted slot can never be observed through a retained alias when a
+     * later sibling element rejects the return — while a passing check
+     * lands the conversions back in the same production arrays.
+     */
     private void emitCheckValue(StringBuilder out) {
         out.append("  static java.lang.Object __hostCheckValue(java.lang.String d,"
             + " java.lang.Object v, java.lang.String oFile, int oLine, int oCol) {\n");
+        out.append("    java.util.ArrayList<java.lang.Object[]> __pending = new java.util.ArrayList<>();\n");
+        out.append("    java.lang.Object __checked = __hostCheckPlan(d, v, oFile, oLine, oCol, __pending);\n");
+        out.append("    for (int __u = 0; __u < __pending.size(); __u++) {\n");
+        out.append("      java.lang.Object[] __update = __pending.get(__u);\n");
+        out.append("      ((JvmRuntime.Array) __update[0]).elements.set(((java.lang.Integer) __update[1]).intValue(), __update[2]);\n");
+        out.append("    }\n");
+        out.append("    return __checked;\n");
+        out.append("  }\n\n");
+        out.append("  static java.lang.Object __hostCheckPlan(java.lang.String d,"
+            + " java.lang.Object v, java.lang.String oFile, int oLine, int oCol,"
+            + " java.util.ArrayList<java.lang.Object[]> __pending) {\n");
         out.append("    if (d.startsWith(\"?\")) {\n");
         out.append("      if (v == null) return null;\n");
-        out.append("      return __hostCheckValue(d.substring(1), v, oFile, oLine, oCol);\n");
+        out.append("      return __hostCheckPlan(d.substring(1), v, oFile, oLine, oCol, __pending);\n");
         out.append("    }\n");
         out.append("    if (d.equals(\"null\")) { if (v == null) return null; throw __hostFail(JvmRuntime.kindReason(\"null\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.equals(\"boolean\")) { if (v instanceof java.lang.Boolean) return v; throw __hostFail(JvmRuntime.kindReason(\"boolean\"), d, v, oFile, oLine, oCol); }\n");
@@ -1352,7 +1379,7 @@ final class JvmHostAbiEmission {
         out.append("      throw __hostFail(JvmRuntime.kindReason(\"int\"), d, v, oFile, oLine, oCol);\n");
         out.append("    }\n");
         out.append("    if (d.equals(\"number\")) { if (v instanceof java.lang.Double || v instanceof java.lang.Long) return v; throw __hostFail(JvmRuntime.kindReason(\"number\"), d, v, oFile, oLine, oCol); }\n");
-        out.append("    if (d.equals(\"string\")) { if (v instanceof java.lang.String __s) { java.lang.String __r = __hostStringReason(__s); if (__r != null) throw __hostFail(__r, d, v, oFile, oLine, oCol); return v; } throw __hostFail(JvmRuntime.kindReason(\"string\"), d, v, oFile, oLine, oCol); }\n");
+        out.append("    if (d.equals(\"string\")) { if (v instanceof java.lang.String __s) { java.lang.String __r = __hostStringReason(__s); if (__r != null) throw __hostFail(__r, d, v, oFile, oLine, oCol); return v; } if (v instanceof byte[] __b) { java.lang.String __r = JvmRuntime.hostStringReason(__b); if (__r != null) throw __hostFail(__r, d, v, oFile, oLine, oCol); return new java.lang.String(__b, java.nio.charset.StandardCharsets.UTF_8); } throw __hostFail(JvmRuntime.kindReason(\"string\"), d, v, oFile, oLine, oCol); }\n");
         // The bytes cell admits both representations of one buffer (K6
         // item 13 / H7): the production carrier `JvmRuntime.BytesValue`
         // the DEAL-side parameter cell checks before the host-facing
@@ -1361,7 +1388,7 @@ final class JvmHostAbiEmission {
         // `__hostBytesToDeal` keep an out-and-back buffer one buffer.
         out.append("    if (d.equals(\"bytes\")) { if (v instanceof $DealRt.Bytes || v instanceof JvmRuntime.BytesValue) return v; throw __hostFail(JvmRuntime.kindReason(\"bytes\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.equals(\"table\")) { if (v instanceof JvmRuntime.Table) return v; throw __hostFail(JvmRuntime.kindReason(\"table\"), d, v, oFile, oLine, oCol); }\n");
-        out.append("    if (d.startsWith(\"[\")) { return __hostCheckArray(d, v, oFile, oLine, oCol); }\n");
+        out.append("    if (d.startsWith(\"[\")) { return __hostCheckArrayPlan(d, v, oFile, oLine, oCol, __pending); }\n");
         out.append("    if (d.startsWith(\"(\") || d.startsWith(\"async(\")) {\n");
         out.append("      java.lang.String __carried = null;\n");
         out.append("      if (v instanceof $DealRt.FnValue __f) { __carried = __f.descriptor(); }\n");
@@ -1373,15 +1400,28 @@ final class JvmHostAbiEmission {
         out.append("    if (d.startsWith(\"@\")) { return __hostCheckIdentity(d, v, oFile, oLine, oCol); }\n");
         out.append("    throw __hostFail(JvmRuntime.kindReason(d), d, v, oFile, oLine, oCol);\n");
         out.append("  }\n\n");
-        out.append("  static java.lang.Object __hostCheckArray(java.lang.String d,"
-            + " java.lang.Object v, java.lang.String oFile, int oLine, int oCol) {\n");
+        out.append("  static java.lang.Object __hostCheckArrayPlan(java.lang.String d,"
+            + " java.lang.Object v, java.lang.String oFile, int oLine, int oCol,"
+            + " java.util.ArrayList<java.lang.Object[]> __pending) {\n");
         out.append("    java.lang.String __inner = d.substring(1, d.length() - 1);\n");
         out.append("    if (v instanceof JvmRuntime.Array __arr) {\n");
+        // The element check is also the element projection: a declared
+        // string cell returns the decoded value for the raw UTF-8 byte
+        // carrier, and a nested array cell returns the same array with
+        // its own elements canonically projected. The results are staged
+        // in the pending plan, never committed here: the entry point
+        // applies the complete enclosing cell's plan only after every
+        // element of every level passed, so a partial (nested) success
+        // followed by an outer failure mutates nothing, and a passing
+        // check lands the decoded elements back in the same production
+        // arrays.
+        out.append("      java.util.ArrayList<java.lang.Object> __checked = new java.util.ArrayList<>(__arr.elements.size());\n");
         out.append("      for (int __i = 0; __i < __arr.elements.size(); __i++) {\n");
         out.append("        java.lang.Object __e = __arr.elements.get(__i);\n");
-        out.append("        try { __hostCheckValue(__inner, __e, oFile, oLine, oCol); }\n");
+        out.append("        try { __checked.add(__hostCheckPlan(__inner, __e, oFile, oLine, oCol, __pending)); }\n");
         out.append("        catch (JvmRuntime.DealError __leaf) { throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.ARRAY_ELEMENT_KIND, java.util.Map.of(\"oneBasedIndex\", java.lang.Integer.toString(__i + 1)), oFile + \":\" + oLine + \":\" + oCol, __inner, __hostKind(__e)); }\n");
         out.append("      }\n");
+        out.append("      for (int __i = 0; __i < __checked.size(); __i++) { __pending.add(new java.lang.Object[]{ __arr, java.lang.Integer.valueOf(__i), __checked.get(__i) }); }\n");
         out.append("      return v;\n");
         out.append("    }\n");
         for (Map.Entry<String, String> carrier : declaredArrayCarriers().entrySet()) {

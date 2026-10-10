@@ -7751,14 +7751,37 @@ end
 -- The declared return cell of one host call: the loaded wrapper's own
 -- return rule, projected through the pinned E8010 return template, then
 -- the host-to-DEAL projection of the admitted value (the language-null
--- sentinel and a declared array position's shared array carrier).
-local function __hostToDealArray(v)
+-- sentinel and a declared array position's shared array carrier). The
+-- projection recurses through declared array element positions, so a
+-- nested array the host returned is a usable DEAL array at every level
+-- (the chunk's own carrier mark), never a plain table the ordinary DEAL
+-- boundaries would reject. A language-null position is not an array: both
+-- null sentinels are preserved before any recursion (the deployed
+-- runtime's own sentinel normalizes to the chunk's), so a null nested
+-- array element stays the language null, never an empty array carrier a
+-- host-boundary read would observe as a different value. The recursion
+-- carries an identity-keyed memo through the complete return projection:
+-- each raw host table maps to exactly one output carrier (registered
+-- before its elements are projected, so a self-referential host table
+-- terminates), and a repeated inner array the host returned becomes one
+-- DEAL array observed through every alias (the reference-identity
+-- contract), never two distinct carriers.
+local function __hostToDealArray(memo, desc, v)
+  if v == __NULL or v == __rt.__NULL then return __NULL end
   if type(v) ~= "table" or v.__a then return v end
+  local mapped = memo[v]
+  if mapped ~= nil then return mapped end
+  local body = string.sub(desc, 1, 1) == "?" and string.sub(desc, 2) or desc
+  local inner = string.sub(body, 2, -2)
+  local arrayElement = string.sub(inner, 1, 1) == "["
+    or string.sub(inner, 1, 2) == "?["
   local out = {__a = true, __n = 0, __nK = {}}
+  memo[v] = out
   local n = 0
   for i = 1, #v do
     local element = v[i]
     if element == __rt.__NULL then element = __NULL end
+    if arrayElement then element = __hostToDealArray(memo, inner, element) end
     out[i] = element
     n = i
   end
@@ -7781,7 +7804,7 @@ local function __hostReturnCell(desc, v, origin, nothing)
   end
   if checked == __rt.__NULL then return nil end
   if string.sub(desc, 1, 1) == "[" or string.sub(desc, 1, 2) == "?[" then
-    return __hostToDealArray(checked)
+    return __hostToDealArray({}, desc, checked)
   end
   return checked
 end

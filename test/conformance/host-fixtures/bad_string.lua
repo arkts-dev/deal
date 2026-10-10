@@ -1,6 +1,15 @@
--- Host-module fixture (host-module-abi D6): a host export returning a string
--- with a malformed UTF-8 byte sequence.  DEAL v1.2 string boundary rules
--- require boundary checks to reject invalid encodings.
+-- Host-module fixture (host-module-abi D6): a host surface whose returned
+-- strings exercise the DEAL v1.2 string carrier classes.  The declared
+-- string boundary rejects the malformed and surrogate code point encodings
+-- and admits the valid ones; the raw carrier decodes at scalar and array
+-- element positions (including nested and nullable element positions). The
+-- nullable nested-array export carries one explicit null element, which must
+-- stay the language null, the shared-nested-array export returns the same
+-- inner array twice (one DEAL array observed through both aliases), and the
+-- nested-tail export is rejected at its later element, so its earlier
+-- elements must stay the raw host values.
+
+local rt = require("deal.runtime")
 
 local M = {}
 
@@ -14,6 +23,62 @@ end
 -- (U+D800 as CESU-style bytes ED A0 80) — never a valid scalar value.
 function M.surrogateString()
   return "\xED\xA0\x80"
+end
+
+-- Returns "a" .. U+D800 .. "b" — the surrogate code point encoding is
+-- embedded mid-string, so the reason selection must follow the offending
+-- code point, never the carrier's length.
+function M.embeddedSurrogateString()
+  return "a\xED\xA0\x80b"
+end
+
+-- Returns a scalar-valid string (the valid control).
+function M.validString()
+  return "ok"
+end
+
+-- Returns a declared string[] whose sole element is the valid raw carrier:
+-- the element check must project the decoded string into the production
+-- array so ordinary DEAL reads observe it.
+function M.rawStringArray()
+  return { "ok" }
+end
+
+-- Returns a declared string[][] whose nested element is the valid raw
+-- carrier: the element projection recurses through the nested position.
+function M.rawNestedStringArray()
+  return { { "ok" } }
+end
+
+-- Returns a declared (string | null)[] whose sole element is the valid raw
+-- carrier: the element projection recurses through the nullable position.
+function M.rawNullableStringArray()
+  return { "ok" }
+end
+
+-- Returns a declared (string[] | null)[] carrying one explicit null and one
+-- nested array: the null element must project to the language null (the
+-- deployed runtime's sentinel normalizes to the chunk's own, never an empty
+-- array carrier) and the nested array's element must stay readable.
+function M.rawNullableArrayArray()
+  return { rt.__NULL, { "ok" } }
+end
+
+-- Returns a declared string[][] whose two elements are the same inner host
+-- array: the projection maps the one raw host table to one DEAL array, so a
+-- DEAL identity comparison of the two elements is false and a mutation
+-- through either alias is observed through the other.
+function M.sharedNestedStringArray()
+  local shared = { "ok" }
+  return { shared, shared }
+end
+
+-- Returns a declared string[][] whose second element is not an array: the
+-- declared return is rejected with the element arm, and the retained first
+-- element must stay the raw host value (a Lua string is the raw carrier
+-- here, so a failed return projects nothing).
+function M.badNestedTail()
+  return { { "ok" }, "not an array" }
 end
 
 return M

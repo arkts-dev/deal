@@ -14,6 +14,7 @@ import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FailurePolicyRow;
 import deal.semantic.ir.RuntimeDescriptor;
+import deal.semantic.ir.UnicodeScalars;
 import deal.types.Type;
 import deal.test.IdentityTestFixtures;
 
@@ -1349,6 +1350,23 @@ public class BoundaryExecutorTest {
         expectIllegalArgument(() -> new BoundaryValueView(ActualKind.TABLE, null, null,
                 null, null, true),
             "a decoded-array mark on a non-ARRAY view");
+        expectIllegalArgument(() -> new BoundaryValueView(ActualKind.STRING, null, null,
+                null, null, false, UnicodeScalars.Defect.MALFORMED),
+            "an encoding defect on a non-INVALID_UNICODE view");
+        expectIllegalArgument(() -> new BoundaryValueView(ActualKind.INVALID_UNICODE,
+                null, null, null, null, false, null),
+            "an INVALID_UNICODE view without its closed encoding defect");
+        expectNpe(() -> BoundaryValueView.ofInvalidUnicode(null),
+            "defect must not be null",
+            "an INVALID_UNICODE view with a null defect");
+        check(BoundaryValueView.of(ActualKind.INVALID_UNICODE).unicodeDefect()
+                == UnicodeScalars.Defect.MALFORMED,
+            "the classification-only INVALID_UNICODE factory defaults to the "
+                + "malformed class");
+        check(BoundaryValueView.ofInvalidUnicode(
+                UnicodeScalars.Defect.SURROGATE).unicodeDefect()
+                == UnicodeScalars.Defect.SURROGATE,
+            "the INVALID_UNICODE factory carries the explicit surrogate class");
 
         // The decoded-array mark is ARRAY-only and legal there: a decoded
         // array view carries it, an unmarked array view does not.
