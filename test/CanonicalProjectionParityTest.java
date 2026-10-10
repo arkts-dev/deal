@@ -753,6 +753,82 @@ public class CanonicalProjectionParityTest {
                                 new SemanticOracle.Value.StrValue("not an array")),
                                 RuntimeDescriptor.parseCanonicalText("[string]"),
                                 false));
+                        // The native declared-carrier surface: the invalid
+                        // second element (the same unpaired surrogate the
+                        // scalar export returns), the nested carrier with a
+                        // rejected later element, and the valid
+                        // declared-carrier controls (the shared inner
+                        // carrier at both positions of the declared
+                        // string[][] stays one oracle array).
+                        case "nativeBadStringArray" -> new SyncOutcome.Returned(
+                            new SemanticOracle.Value.ArrayValue(List.of(
+                                new SemanticOracle.Value.StrValue("ok"),
+                                new SemanticOracle.Value.StrValue("\uD800")),
+                                RuntimeDescriptor.String.INSTANCE, false));
+                        case "nativeBadNestedTail" -> new SyncOutcome.Returned(
+                            new SemanticOracle.Value.ArrayValue(List.of(
+                                new SemanticOracle.Value.ArrayValue(List.of(
+                                    new SemanticOracle.Value.StrValue("ok")),
+                                    RuntimeDescriptor.String.INSTANCE, false),
+                                new SemanticOracle.Value.StrValue("not an array")),
+                                RuntimeDescriptor.parseCanonicalText("[string]"),
+                                false));
+                        case "nativeStringArray" -> new SyncOutcome.Returned(
+                            new SemanticOracle.Value.ArrayValue(List.of(
+                                new SemanticOracle.Value.StrValue("ok")),
+                                RuntimeDescriptor.String.INSTANCE, false));
+                        case "nativeNestedStringArray" -> new SyncOutcome.Returned(
+                            new SemanticOracle.Value.ArrayValue(List.of(
+                                new SemanticOracle.Value.ArrayValue(List.of(
+                                    new SemanticOracle.Value.StrValue("ok")),
+                                    RuntimeDescriptor.String.INSTANCE, false)),
+                                RuntimeDescriptor.parseCanonicalText("[string]"),
+                                false));
+                        case "nativeSharedNestedStringArray" -> {
+                            SemanticOracle.Value inner =
+                                new SemanticOracle.Value.ArrayValue(
+                                    new java.util.ArrayList<>(List.of(
+                                        new SemanticOracle.Value.StrValue("ok"))),
+                                    RuntimeDescriptor.String.INSTANCE, false);
+                            yield new SyncOutcome.Returned(
+                                new SemanticOracle.Value.ArrayValue(
+                                    new java.util.ArrayList<>(List.of(inner, inner)),
+                                    RuntimeDescriptor.parseCanonicalText("[string]"),
+                                    false));
+                        }
+                        // The differing-depth carrier reuse: one declared
+                        // string[][][][] value shares an inner array (c)
+                        // between two positions with different descriptor
+                        // depths (c is the root's first element and also
+                        // the sole element of the root's second element e).
+                        // The recursive element check descends the
+                        // descriptor chain at every position and rejects
+                        // the second occurrence under [string] with the
+                        // outermost element arm (index 2), never admitting
+                        // it on the shallower check's result.
+                        case "nativeDifferingDepthStringArray" -> {
+                            SemanticOracle.Value s = new SemanticOracle.Value.ArrayValue(
+                                new java.util.ArrayList<>(List.of(
+                                    new SemanticOracle.Value.StrValue("ok"))),
+                                RuntimeDescriptor.String.INSTANCE, false);
+                            SemanticOracle.Value d = new SemanticOracle.Value.ArrayValue(
+                                new java.util.ArrayList<>(List.of(s)),
+                                RuntimeDescriptor.parseCanonicalText("[string]"),
+                                false);
+                            SemanticOracle.Value c = new SemanticOracle.Value.ArrayValue(
+                                new java.util.ArrayList<>(List.of(d)),
+                                RuntimeDescriptor.parseCanonicalText("[[string]]"),
+                                false);
+                            SemanticOracle.Value e = new SemanticOracle.Value.ArrayValue(
+                                new java.util.ArrayList<>(List.of(c)),
+                                RuntimeDescriptor.parseCanonicalText("[[string]]"),
+                                false);
+                            yield new SyncOutcome.Returned(
+                                new SemanticOracle.Value.ArrayValue(
+                                    new java.util.ArrayList<>(List.of(c, e)),
+                                    RuntimeDescriptor.parseCanonicalText(
+                                        "[[[string]]]"), false));
+                        }
                         default -> throw new IllegalStateException(
                             "the bad_string host seam scripts no export '"
                                 + export + "'");
@@ -1813,6 +1889,101 @@ public class CanonicalProjectionParityTest {
     }
 
     /**
+     * The declared native array-carrier drives (the JVM host's own
+     * {@code $DealRt} wrappers): the invalid second element, the nested
+     * carrier with a rejected later element, and the valid controls. The
+     * generated entry calls the declared export at the fixed call origin
+     * the failure tuples are pinned to.
+     */
+    private static final String HOST_NATIVE_BAD_ARRAY_DRIVER = """
+        import * as host from "host/bad_string"
+
+        export function main(): null {
+          let xs: string[] = host.nativeBadStringArray()
+          return null
+        }
+        """;
+
+    private static final String HOST_NATIVE_BAD_NESTED_TAIL_DRIVER = """
+        import * as host from "host/bad_string"
+
+        export function main(): null {
+          let xs: string[][] = host.nativeBadNestedTail()
+          return null
+        }
+        """;
+
+    private static final String HOST_NATIVE_ARRAY_DRIVER = """
+        import * as host from "host/bad_string"
+
+        export function main(): null {
+          let xs: string[] = host.nativeStringArray()
+          let s: string = xs[0]
+          if (s !== "ok") {
+            throw { code: "PROBE_NATIVE_CARRIER", message: "the declared host array carrier did not land 'ok'" }
+          }
+          return null
+        }
+        """;
+
+    private static final String HOST_NATIVE_NESTED_DRIVER = """
+        import * as host from "host/bad_string"
+
+        export function main(): null {
+          let xs: string[][] = host.nativeNestedStringArray()
+          let s: string = xs[0][0]
+          if (s !== "ok") {
+            throw { code: "PROBE_NATIVE_CARRIER", message: "the nested declared host array carrier did not land 'ok'" }
+          }
+          return null
+        }
+        """;
+
+    private static final String HOST_NATIVE_SHARED_DRIVER = """
+        import * as host from "host/bad_string"
+
+        export function main(): null {
+          let xs: string[][] = host.nativeSharedNestedStringArray()
+          if (xs[0] !== xs[1]) {
+            throw { code: "PROBE_NATIVE_ALIAS", message: "the same native inner carrier became two DEAL arrays" }
+          }
+          xs[0][0] = "changed"
+          let s: string = xs[1][0]
+          if (s !== "changed") {
+            throw { code: "PROBE_NATIVE_ALIAS", message: "the shared native inner carrier did not observe the mutation through both aliases" }
+          }
+          return null
+        }
+        """;
+
+    /**
+     * The differing-depth carrier reuse (the acceptance-review finding):
+     * the declared {@code string[][][][]} return shares one inner carrier
+     * between the root's first element and the sole element of the root's
+     * second element, so the same host value is checked under
+     * {@code [[[string]]]} (where its element chain is valid) and again
+     * under {@code [[string]]} (where the shared element's own elements
+     * must be validated as a {@code string[]} and are not). The call is
+     * evaluated without retaining its result, so only the host return cell
+     * can reject the value: the return must fail with the outermost
+     * element arm as the cell's inner reason — a check that admitted the
+     * deeper occurrence on the shallower materialization (or on an
+     * in-progress conversion) would complete the drive.
+     */
+    private static final String HOST_NATIVE_DIFFERING_DEPTH_DRIVER = """
+        import * as host from "host/bad_string"
+
+        export function main(): null {
+          host.nativeDifferingDepthStringArray()
+          return null
+        }
+        """;
+
+    /** The untouched retained observation of the rejected native nested tail. */
+    private static final String NATIVE_TAIL_RETAINED_SLOTS =
+        "$DealRt$__StringArray|java.lang.String|java.lang.String|alias";
+
+    /**
      * The host string-carrier producers end-to-end (ISSUE-0760): the three
      * invalid encoding classes (the lone surrogate, the embedded surrogate
      * at a mid-string position, and the malformed non-surrogate sequence)
@@ -1854,6 +2025,107 @@ public class CanonicalProjectionParityTest {
     private static Case hostCarrierCase() {
         return new Case(HOST_CARRIER_ANCHOR, "main", Entry.MAIN, List.of(),
             "bad_string", null);
+    }
+
+    /**
+     * The declared native array carriers (the JVM host's own
+     * {@code $DealRt} wrapper classes): a declared {@code string[]}
+     * returned as {@code $DealRt.__StringArray} with an unpaired surrogate
+     * in its second slot fails the element arm like every other element —
+     * the complete tuple from the oracle's host seam, the LuaJIT artifact,
+     * and the JVM artifact — the nested carrier's later non-array element
+     * fails after its earlier nested position was checked while the raw
+     * carrier stays untouched, a carrier shared between two positions at
+     * different descriptor depths is re-validated at every position (so
+     * the deeper occurrence fails at the host call instead of being
+     * admitted on the shallower materialization), and every valid control
+     * lands as a usable DEAL array at the scalar, nested, and
+     * repeated-inner-carrier positions.
+     */
+    private static void testHostNativeArrayCarriers() throws Exception {
+        System.out.println("-- the native declared array carriers: the "
+            + "$DealRt wrapper elements are checked recursively and the valid "
+            + "carriers land as usable DEAL arrays --");
+        safely("the native string[] carrier with an invalid element",
+            () -> driveHostRejectedArray("host.nativeBadStringArray()",
+                HOST_NATIVE_BAD_ARRAY_DRIVER, "[string]", 22, 2, null, null));
+        safely("the native nested carrier with a rejected tail",
+            () -> driveHostRejectedArray("host.nativeBadNestedTail()",
+                HOST_NATIVE_BAD_NESTED_TAIL_DRIVER, "[[string]]", 24, 2,
+                "retainedNativeSlots", NATIVE_TAIL_RETAINED_SLOTS));
+        safely("the native carrier reused at a differing descriptor depth",
+            () -> driveHostRejectedArray(
+                "host.nativeDifferingDepthStringArray()",
+                HOST_NATIVE_DIFFERING_DEPTH_DRIVER, "[[[[string]]]]", 3, 2,
+                null, null));
+        safely("the native string[] carrier valid control", () ->
+            driveHostCarrierSuccess("the native string[] carrier valid control",
+                HOST_NATIVE_ARRAY_DRIVER));
+        safely("the native nested carrier valid control", () ->
+            driveHostCarrierSuccess("the native nested carrier valid control",
+                HOST_NATIVE_NESTED_DRIVER));
+        safely("the native repeated inner carrier", () ->
+            driveHostCarrierSuccess("the native repeated inner carrier",
+                HOST_NATIVE_SHARED_DRIVER));
+    }
+
+    /**
+     * Drives one rejected declared array return whose inner reason is the
+     * element arm: the oracle's host seam, the LuaJIT artifact, and the JVM
+     * artifact each render the complete pinned tuple (the return-cell
+     * composite created by the registry renderer, the outermost element
+     * arm as the render's one-based index, the declared cell descriptor as
+     * expected, the carrier-kind projection as actual, and the call
+     * expression origin), and the three tuples are identical. When the
+     * drive pins a retained observation, the JVM probe reports it after
+     * the rejected return and the expected untouched line is asserted.
+     */
+    private static void driveHostRejectedArray(String label, String driverSource,
+            String descriptor, int column, int oneBasedIndex,
+            String retainedMethod, String retainedExpectation) throws Exception {
+        Compiled compiled = compile(hostCarrierCase(), driverSource);
+        try {
+            String inner = FailureContractRegistry.render(
+                FailureArmId.ARRAY_ELEMENT_KIND,
+                Map.of("oneBasedIndex", Integer.toString(oneBasedIndex)),
+                "string", "string", null).message();
+            BoundaryFailure expected = FailureContractRegistry.render(
+                FailureArmId.HOST_SYNC_RETURN_CELL, Map.of("inner", inner),
+                descriptor, "table", null);
+            Tuple expectedTuple = new Tuple(expected.code().name(),
+                expected.message(), "app.deal", 4, column, descriptor, "table");
+            Tuple oracle = oracleTuple(compiled);
+            checkEq(expectedTuple, oracle, label + " (oracle): the complete "
+                + "failure tuple");
+            Tuple lua = luaArtifact(compiled);
+            checkEq(expectedTuple, lua, label + " (luajit): the complete "
+                + "failure tuple");
+            String entryModule = compiled.checkedProject().entryModule().path();
+            String afterFailure = retainedMethod == null ? ""
+                : "System.out.println(\"SLOTS|\" + "
+                    + JvmBackend.classNameFor("host/bad_string") + "."
+                    + retainedMethod + "());";
+            String jvmOutput = jvmArtifactOutput(compiled, jvmProbe(
+                JvmBackend.classNameFor(entryModule), entryModule, afterFailure));
+            Tuple jvm = jvmOutput == null ? null
+                : parseJvmProbe(jvmOutput, compiled);
+            checkEq(expectedTuple, jvm, label + " (jvm): the complete failure "
+                + "tuple");
+            checkEq(null, firstDifferingField(oracle, lua), label
+                + ": the oracle and the LuaJIT artifact render the identical "
+                + "tuple");
+            checkEq(null, firstDifferingField(oracle, jvm), label
+                + ": the oracle and the JVM artifact render the identical "
+                + "tuple");
+            if (retainedExpectation != null) {
+                check(jvmOutput != null && jvmOutput.contains(
+                        "SLOTS|" + retainedExpectation), label + " (jvm): every "
+                    + "retained slot and the nested array alias are untouched "
+                    + "after the rejected return: " + jvmOutput);
+            }
+        } finally {
+            deleteRecursively(compiled.root());
+        }
     }
 
     /**
@@ -1902,45 +2174,9 @@ public class CanonicalProjectionParityTest {
      * sibling element failed would surface in the observed classes.
      */
     private static void driveHostNestedTail() throws Exception {
-        String label = "host.badNestedTail()";
-        Compiled compiled = compile(hostCarrierCase(),
-            HOST_CARRIER_NESTED_TAIL_DRIVER);
-        try {
-            BoundaryFailure expected = FailureContractRegistry.render(
-                FailureArmId.HOST_SYNC_RETURN_CELL,
-                Map.of("inner", "array element 2 type mismatch"),
-                "[[string]]", "table", null);
-            Tuple expectedTuple = new Tuple(expected.code().name(),
-                expected.message(), "app.deal", 4, 24, "[[string]]", "table");
-            Tuple oracle = oracleTuple(compiled);
-            checkEq(expectedTuple, oracle, label + " (oracle): the complete "
-                + "failure tuple");
-            Tuple lua = luaArtifact(compiled);
-            checkEq(expectedTuple, lua, label + " (luajit): the complete "
-                + "failure tuple");
-            String entryModule = compiled.checkedProject().entryModule().path();
-            String jvmOutput = jvmArtifactOutput(compiled, jvmProbe(
-                JvmBackend.classNameFor(entryModule), entryModule,
-                "System.out.println(\"SLOTS|\" + "
-                    + JvmBackend.classNameFor("host/bad_string")
-                    + ".retainedNestedSlots());"));
-            Tuple jvm = jvmOutput == null ? null
-                : parseJvmProbe(jvmOutput, compiled);
-            checkEq(expectedTuple, jvm, label + " (jvm): the complete failure "
-                + "tuple");
-            checkEq(null, firstDifferingField(oracle, lua), label
-                + ": the oracle and the LuaJIT artifact render the identical "
-                + "tuple");
-            checkEq(null, firstDifferingField(oracle, jvm), label
-                + ": the oracle and the JVM artifact render the identical "
-                + "tuple");
-            check(jvmOutput != null && jvmOutput.contains(
-                    "SLOTS|" + NESTED_TAIL_RETAINED_SLOTS), label + " (jvm): "
-                + "every retained slot and the nested array alias are "
-                + "untouched after the rejected return: " + jvmOutput);
-        } finally {
-            deleteRecursively(compiled.root());
-        }
+        driveHostRejectedArray("host.badNestedTail()",
+            HOST_CARRIER_NESTED_TAIL_DRIVER, "[[string]]", 24, 2,
+            "retainedNestedSlots", NESTED_TAIL_RETAINED_SLOTS);
     }
 
     /**
@@ -3803,6 +4039,7 @@ public class CanonicalProjectionParityTest {
         testInvalidUnicodeBoundaryOriginDrive();
         testHostStringCarrierProducers();
         testHostNestedArrayProjection();
+        testHostNativeArrayCarriers();
         testMissingDeclaredAnnotationFailsClosed();
         testSerializedArmTableIdentity();
         testMarkedArmsAndFieldShapes();

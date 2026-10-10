@@ -7,7 +7,17 @@
 -- stay the language null, the shared-nested-array export returns the same
 -- inner array twice (one DEAL array observed through both aliases), and the
 -- nested-tail export is rejected at its later element, so its earlier
--- elements must stay the raw host values.
+-- elements must stay the raw host values. The native-* exports return the
+-- same declared shapes through the backend-native array carrier (one plain
+-- Lua table here; the JVM host's declared $DealRt wrapper there), so every
+-- valid control must land as a usable DEAL array at every nesting level
+-- and every invalid element must be rejected by the element check. The
+-- nativeDifferingDepthStringArray export shares one inner table between two
+-- positions with different descriptor depths (the same table is checked as
+-- the root's first element and again under the root's second element at one
+-- depth less), so every position must re-validate the elements against its
+-- own descriptor (the return is rejected, never admitted on the shallower
+-- materialization).
 
 local rt = require("deal.runtime")
 
@@ -79,6 +89,61 @@ end
 -- here, so a failed return projects nothing).
 function M.badNestedTail()
   return { { "ok" }, "not an array" }
+end
+
+-- Returns a declared string[] whose second element is the U+D800 surrogate
+-- code point encoding: the raw host array carrier must never stand in for
+-- the element check, so the return is rejected with the element arm and the
+-- pinned host string-carrier reason as its inner message.
+function M.nativeBadStringArray()
+  return { "ok", "\xED\xA0\x80" }
+end
+
+-- Returns a declared string[][] whose first element is a valid nested array
+-- and whose second element is not an array: the recursive element check
+-- rejects the later element after the earlier nested position was checked,
+-- and the earlier raw host value must stay untouched.
+function M.nativeBadNestedTail()
+  return { { "ok" }, "not an array" }
+end
+
+-- Returns a declared string[] through the backend-native array carrier (the
+-- Lua host has one array representation, so this is the same value as the
+-- raw control): the declared element projection must admit it and land the
+-- element so ordinary DEAL reads observe it.
+function M.nativeStringArray()
+  return { "ok" }
+end
+
+-- Returns a declared string[][] whose nested element is a valid array: the
+-- element projection must recurse through the nested position.
+function M.nativeNestedStringArray()
+  return { { "ok" } }
+end
+
+-- Returns a declared string[][] whose two elements are the same inner host
+-- array: the projection maps the one raw host table to one DEAL array, so a
+-- DEAL identity comparison of the two elements is true and a mutation
+-- through either alias is observed through the other.
+function M.nativeSharedNestedStringArray()
+  local shared = { "ok" }
+  return { shared, shared }
+end
+
+-- Returns a declared string[][][][] whose first element (c) is shared: c
+-- is also the sole element of the root's second element (e), so the same
+-- host table is checked under [[[string]]] (where its element d descends to
+-- the valid s) and again under [[string]] (where d must be re-validated as
+-- a string[] and is not). The reference matcher descends the descriptor
+-- chain at every position and rejects the second occurrence with the
+-- element arm; a check that admitted it on the shallower materialization
+-- would accept the value.
+function M.nativeDifferingDepthStringArray()
+  local s = { "ok" }
+  local d = { s }
+  local c = { d }
+  local e = { c }
+  return { c, e }
 end
 
 return M

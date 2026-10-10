@@ -682,6 +682,25 @@ public class BoundaryExecutorTest {
             "(int)->string", "table", Map.of("index", "1"), null,
             "host function parameter signature mismatch");
 
+        // The signature inner reason is the signature arm's own template
+        // instantiated by the registry's one single-scan render: a declared
+        // text containing another placeholder's literal spelling stays
+        // byte-for-byte (the closed descriptor grammar admits a class atom
+        // whose name spells {actual}), never rescanned by a second
+        // substitution pass.
+        expectFail(checkCell(FailurePolicyId.HOST_PARAMETER,
+                RuntimeDescriptor.parseCanonicalText("(@m/{actual})->int"),
+                BoundaryValueView.ofFunction(
+                    (RuntimeDescriptor.Func) RuntimeDescriptor.parseCanonicalText(
+                        "(int)->int")),
+                BoundaryContext.parameter(1)),
+            FailurePolicyId.HOST_PARAMETER, DiagnosticCode.E8010,
+            "parameter 1 type mismatch: function signature mismatch: expected "
+                + "(@m/{actual})->int, got (int)->int",
+            "(@m/{actual})->int", "table", Map.of("index", "1"), null,
+            "host signature inner reason with a placeholder spelling in the "
+                + "declared text");
+
         // An array parameter with a failing element projects the whole array kind.
         expectFail(checkCell(FailurePolicyId.HOST_PARAMETER, NUMBER_ARRAY,
                 BoundaryValueView.ofArray(BoundaryValueView.ofNumber(1),

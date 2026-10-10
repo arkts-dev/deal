@@ -119,7 +119,16 @@ module.exports = {
 // inner array returned at both positions of a declared string[][] (the
 // same DEAL array, so identity holds and a mutation is observed through
 // both aliases), and the rejected nested tail whose retained earlier
-// elements must stay untouched.
+// elements must stay untouched. The native-* exports return the same
+// declared shapes (one JS array here; the JVM host's declared $DealRt
+// wrapper there), so every valid control must land as a usable DEAL
+// array at every nesting level and every invalid element must be
+// rejected by the element check. The nativeDifferingDepthStringArray
+// export shares one inner array between two positions with different
+// descriptor depths (the same array is checked as the root's first
+// element and again under the root's second element at one depth less),
+// so every position must re-validate the elements against its own
+// descriptor.
 module.exports = {
   badString: function () {
     return "a\\uD800b";
@@ -160,6 +169,35 @@ module.exports = {
 
   badNestedTail: function () {
     return [["ok"], "not an array"];
+  },
+
+  nativeBadStringArray: function () {
+    return ["ok", "\\uD800"];
+  },
+
+  nativeBadNestedTail: function () {
+    return [["ok"], "not an array"];
+  },
+
+  nativeStringArray: function () {
+    return ["ok"];
+  },
+
+  nativeNestedStringArray: function () {
+    return [["ok"]];
+  },
+
+  nativeSharedNestedStringArray: function () {
+    var shared = ["ok"];
+    return [shared, shared];
+  },
+
+  nativeDifferingDepthStringArray: function () {
+    var s = ["ok"];
+    var d = [s];
+    var c = [d];
+    var e = [c];
+    return [c, e];
   },
 };
 """),
