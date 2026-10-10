@@ -1076,7 +1076,11 @@ public final class FailureContractRegistry {
      * grammar decoded by the one decoder, or the emitters' internal dialect
      * ({@code array(…)}/… ). The one predicate the arm field shapes and the
      * closed host inner-reason vocabulary share, so an unknown descriptor
-     * text is never admitted by either.
+     * text is never admitted by either. A kind-only spelling ({@code array}/
+     * {@code function}) is not a descriptor: the descriptor fields and the
+     * signature inner reasons admit only real descriptors on every consumer
+     * ({@link #KIND_ONLY_SPELLINGS} stays confined to the descriptor-kind
+     * projection).
      */
     private static boolean isDescriptorSpelling(String value) {
         try {
@@ -1091,16 +1095,20 @@ public final class FailureContractRegistry {
     private static final List<String> DESCRIPTOR_PRIMITIVES = List.of("null", "boolean",
         "int", "number", "string", "table", "bytes");
 
+    /**
+     * The closed kind-only spellings the emitted host ABI's kind rows carry
+     * (a bare {@code array}/{@code function} kind <em>text</em>): the
+     * descriptor-kind projection ({@link #descriptorKindReason}) admits them
+     * so the approved kind reasons survive, while the descriptor vocabulary
+     * ({@link #isDescriptorSpelling}) and the emitted Lua recognizer admit
+     * neither — one descriptor language on every consumer.
+     */
+    private static final Set<String> KIND_ONLY_SPELLINGS = Set.of("array", "function");
+
     /** The emitters' internal descriptor dialect ({@code array(…)} etc.). */
     private static boolean isDialectDescriptorText(String text) {
         if (text == null || text.isEmpty()) {
             return false;
-        }
-        // The closed kind tokens the emitted host ABI's kind rows carry
-        // ({@code array}/{@code function} complete the primitives): a bare
-        // kind token is a kind text, never a fabricated descriptor.
-        if (KIND_TOKENS.contains(text) && !"class".equals(text)) {
-            return true;
         }
         return dialectDescriptorEnd(text, 0) == text.length();
     }
@@ -1128,9 +1136,21 @@ public final class FailureContractRegistry {
                 ? inner + 1 : -1;
         }
         if (text.startsWith("nullable(", start)) {
-            int inner = dialectDescriptorEnd(text, start + "nullable(".length());
-            return inner >= 0 && inner < text.length() && text.charAt(inner) == ')'
-                ? inner + 1 : -1;
+            int innerStart = start + "nullable(".length();
+            int inner = dialectDescriptorEnd(text, innerStart);
+            if (inner < 0 || inner >= text.length() || text.charAt(inner) != ')') {
+                return -1;
+            }
+            // The pinned nullable-inner invariant (spec:2283;
+            // RuntimeDescriptor.Nullable): the inner descriptor is neither
+            // the null descriptor nor another nullable (flatten at
+            // construction), so the dialect spelling admits exactly the
+            // forms the canonical decoder admits.
+            String innerText = text.substring(innerStart, inner);
+            if ("null".equals(innerText) || innerText.startsWith("nullable(")) {
+                return -1;
+            }
+            return inner + 1;
         }
         if (text.startsWith("function(", start)) {
             int parameters = dialectParametersEnd(text, start + "function(".length());
@@ -1248,10 +1268,11 @@ public final class FailureContractRegistry {
      * (P2 item 3): the typed-boundary kind arm's own text with the text's
      * closed kind. The text must be a closed descriptor spelling — the
      * canonical grammar decoded by the one decoder, or the emitters'
-     * internal dialect ({@code array(…)}/… ) — and its kind must be one of
-     * the closed typed-boundary kind texts: an unknown descriptor is a
-     * fail-closed producer defect, so a host inner reason is never derived
-     * from an unvalidated string.
+     * internal dialect ({@code array(…)}/… ) and the emitted host ABI's two
+     * kind-only texts ({@code array}/{@code function}) — and its kind must
+     * be one of the closed typed-boundary kind texts: an unknown descriptor
+     * is a fail-closed producer defect, so a host inner reason is never
+     * derived from an unvalidated string.
      *
      */
     public static String descriptorKindReason(String descriptorText) {
@@ -1261,7 +1282,8 @@ public final class FailureContractRegistry {
             kindText = FailureProjections.kindText(
                 RuntimeDescriptor.parseCanonicalText(descriptorText));
         } catch (RuntimeException canonicalDecodeFailure) {
-            if (!isDialectDescriptorText(descriptorText)) {
+            if (!isDialectDescriptorText(descriptorText)
+                    && !KIND_ONLY_SPELLINGS.contains(descriptorText)) {
                 throw new BoundaryExecutor.Defect("the host inner-reason render supplied "
                     + "\"" + descriptorText + "\", which is not a closed descriptor "
                     + "text (a producer defect; no inner reason is composed from it)");

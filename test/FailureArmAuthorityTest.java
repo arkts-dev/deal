@@ -107,6 +107,8 @@ public class FailureArmAuthorityTest {
         testTypedBoundaryClassSpellingNegatives();
         testForbiddenRenderScopesAndInnerReasons();
         testDescriptorAndClassAtomVocabularyDepth();
+        testNullableInnerInvariant();
+        testKindOnlySpellingVocabulary();
         testHostInnerReasonDescriptorValidation();
         testEmittedParameterContract();
         testNegativeSingleSourceControl();
@@ -2256,6 +2258,317 @@ public class FailureArmAuthorityTest {
             rows.get(16),
             "the Lua template renderer keeps the zero-parameter pass-through (the "
                 + "control)");
+    }
+
+    /**
+     * The pinned nullable-inner invariant ({@code docs/spec-v1.2.md:2283};
+     * {@code RuntimeDescriptor.Nullable}) holds in both descriptor
+     * spellings: {@code ?null} / {@code ??inner} and the dialect
+     * {@code nullable(null)} / {@code nullable(nullable(…))} fail closed at
+     * every descriptor position — both signature sides, the nested
+     * parameter/result positions, and the arm's own descriptor fields — on
+     * the registry render, its row-addressed entries, the JVM arm render,
+     * the descriptor-kind projection, and the emitted Lua prelude, while the
+     * valid nullable forms ({@code ?int}, {@code [?int]},
+     * {@code ?(int)->int}, {@code nullable(int)},
+     * {@code nullable(array(nullable(int)))}) stay green.
+     */
+    static void testNullableInnerInvariant() throws Exception {
+        System.out.println("-- the nullable-inner invariant (both descriptor "
+            + "spellings) --");
+        // The canonical violations fail closed on both signature sides and
+        // in every nested position.
+        for (String inner : List.of(
+                "function signature mismatch: expected ?null, got (int)->int",
+                "function signature mismatch: expected (int)->int, got ?null",
+                "function signature mismatch: expected ??int, got (int)->int",
+                "function signature mismatch: expected [?null], got [int]",
+                "function signature mismatch: expected (??int)->int, got (int)->int",
+                "function signature mismatch: expected (int)->int, got [?null]")) {
+            expectDefect(() -> FailureContractRegistry.render(
+                FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", inner), "int", "number", null),
+                "the registry rejects the canonical nullable-inner violation: " + inner);
+        }
+        // The dialect equivalents fail closed identically.
+        for (String inner : List.of(
+                "function signature mismatch: expected nullable(null), got (int)->int",
+                "function signature mismatch: expected nullable(nullable(int)), got "
+                    + "(int)->int",
+                "function signature mismatch: expected array(nullable(null)), got "
+                    + "array(int)",
+                "function signature mismatch: expected "
+                    + "function(nullable(nullable(int));int), got function(int;int)",
+                "function signature mismatch: expected (int)->int, got nullable(null)")) {
+            expectDefect(() -> FailureContractRegistry.render(
+                FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", inner), "int", "number", null),
+                "the registry rejects the dialect nullable-inner violation: " + inner);
+        }
+        // The row-addressed entries enforce the same contract.
+        expectDefect(() -> BoundaryFailure.fromRow(FailureContractRegistry.row(
+            FailurePolicyId.HOST_PARAMETER), 0, "int", "number",
+            new LinkedHashMap<>(Map.of("index", "1", "inner",
+                "function signature mismatch: expected ?null, got (int)->int")), null),
+            "the row-addressed render rejects the canonical nullable-inner violation");
+        expectDefect(() -> FailureContractRegistry.renderAtTemplate(
+            FailurePolicyId.HOST_PARAMETER, 0, "int", "number",
+            new LinkedHashMap<>(Map.of("index", "1", "inner",
+                "function signature mismatch: expected nullable(null), got "
+                    + "(int)->int")), null),
+            "the template-position render rejects the dialect nullable-inner "
+                + "violation");
+        // The arm's own descriptor fields admit no invalid nullable either.
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.HOST_PARAMETER_CELL, Map.of("index", "1", "inner",
+                "expected int"), "?null", "number", null),
+            "the descriptor field rejects the canonical ?null spelling");
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.HOST_PARAMETER_CELL, Map.of("index", "1", "inner",
+                "expected int"), "nullable(null)", "number", null),
+            "the descriptor field rejects the dialect nullable(null) spelling");
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.FUNCTION_SIGNATURE_MISMATCH, Map.of("expected", "??int",
+                "actual", "(int)->int"), "??int", "(int)->int", null),
+            "the declared-signature field rejects the ??int spelling");
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.FUNCTION_SIGNATURE_MISMATCH, Map.of("expected", "(int)->int",
+                "actual", "nullable(nullable(int))"), "(int)->int",
+            "nullable(nullable(int))", null),
+            "the carried-signature field rejects the dialect nullable(nullable(int)) "
+                + "spelling");
+        // The valid nullable forms stay green (the controls).
+        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
+                + "?int, got (int)->int",
+            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", "function signature mismatch: "
+                    + "expected ?int, got (int)->int"), "?int", "number",
+                null).message(),
+            "the canonical ?int signature passes through (the control)");
+        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
+                + "[?int], got [int]",
+            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", "function signature mismatch: "
+                    + "expected [?int], got [int]"), "[?int]", "number", null).message(),
+            "the canonical [?int] element passes through (the control)");
+        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
+                + "?(int)->int, got (int)->int",
+            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", "function signature mismatch: "
+                    + "expected ?(int)->int, got (int)->int"), "?(int)->int", "number",
+                null).message(),
+            "the canonical nullable function passes through (the control)");
+        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
+                + "nullable(int), got (int)->int",
+            BoundaryFailure.fromRow(FailureContractRegistry.row(
+                    FailurePolicyId.HOST_PARAMETER), 0, "int", "number",
+                new LinkedHashMap<>(Map.of("index", "1", "inner", "function "
+                    + "signature mismatch: expected nullable(int), got "
+                    + "(int)->int")), null).message(),
+            "the dialect nullable(int) passes through the row-addressed render "
+                + "(the control)");
+        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
+                + "nullable(array(nullable(int))), got array(int)",
+            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", "function signature mismatch: "
+                    + "expected nullable(array(nullable(int))), got array(int)"),
+                "nullable(array(nullable(int)))", "number", null).message(),
+            "the nested dialect nullable passes through (the control)");
+
+        // The JVM runtime's arm render (it delegates to the same registry)
+        // and the descriptor-kind projection.
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
+            Map.of("index", "1", "inner", "function signature mismatch: expected "
+                + "?null, got (int)->int"), "-", "int", "number"),
+            "the JVM arm render rejects the canonical nullable-inner violation");
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
+            Map.of("index", "1", "inner", "function signature mismatch: expected "
+                + "nullable(nullable(int)), got (int)->int"), "-", "int", "number"),
+            "the JVM arm render rejects the dialect nullable-inner violation");
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.kindReason("nullable(null)"),
+            "the descriptor-kind projection rejects the nullable(null) spelling");
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.kindReason("??int"),
+            "the descriptor-kind projection rejects the ??int spelling");
+        checkEq("expected array",
+            deal.codegen.jvm.JvmRuntime.kindReason("nullable(array(nullable(int)))"),
+            "the nested dialect nullable projects its kind (the control)");
+        checkEq("expected int", deal.codegen.jvm.JvmRuntime.kindReason("?int"),
+            "the canonical nullable projects its inner kind (the control)");
+
+        // The emitted Lua prelude, under real luajit: the same negatives and
+        // controls on the arm renderer.
+        List<String> rows = runPreludeProbe("""
+            local cases = {
+              {"canonical-null", "function signature mismatch: expected ?null, got (int)->int"},
+              {"canonical-null-actual", "function signature mismatch: expected (int)->int, got ?null"},
+              {"canonical-double", "function signature mismatch: expected ??int, got (int)->int"},
+              {"canonical-array-null", "function signature mismatch: expected [?null], got [int]"},
+              {"canonical-param-double", "function signature mismatch: expected (??int)->int, got (int)->int"},
+              {"dialect-null", "function signature mismatch: expected nullable(null), got (int)->int"},
+              {"dialect-double", "function signature mismatch: expected nullable(nullable(int)), got (int)->int"},
+              {"dialect-array-null", "function signature mismatch: expected array(nullable(null)), got array(int)"},
+              {"dialect-fn-double", "function signature mismatch: expected function(nullable(nullable(int));int), got function(int;int)"},
+              {"valid-int", "function signature mismatch: expected ?int, got (int)->int"},
+              {"valid-array", "function signature mismatch: expected [?int], got [int]"},
+              {"valid-nullable-fn", "function signature mismatch: expected ?(int)->int, got (int)->int"},
+              {"valid-dialect-int", "function signature mismatch: expected nullable(int), got (int)->int"},
+              {"valid-dialect-nested", "function signature mismatch: expected nullable(array(nullable(int))), got array(int)"},
+            }
+            for _, case in ipairs(cases) do
+              local ok, value = pcall(__arm, "HOST_PARAMETER_CELL",
+                {index = "1", inner = case[2]}, "-", "int", "number")
+              print(case[1] .. "|" .. tostring(ok) .. "|" .. (ok and value.m or ""))
+            end
+            """, "nullable-invariant-probe", 14);
+        checkEq("canonical-null|false|", rows.get(0),
+            "the Lua arm renderer rejects the canonical ?null inner");
+        checkEq("canonical-null-actual|false|", rows.get(1),
+            "the Lua arm renderer rejects the canonical ?null actual side");
+        checkEq("canonical-double|false|", rows.get(2),
+            "the Lua arm renderer rejects the canonical ??int inner");
+        checkEq("canonical-array-null|false|", rows.get(3),
+            "the Lua arm renderer rejects the canonical [?null] element");
+        checkEq("canonical-param-double|false|", rows.get(4),
+            "the Lua arm renderer rejects the canonical (??int)->int parameter");
+        checkEq("dialect-null|false|", rows.get(5),
+            "the Lua arm renderer rejects the dialect nullable(null) inner");
+        checkEq("dialect-double|false|", rows.get(6),
+            "the Lua arm renderer rejects the dialect nullable(nullable(int)) inner");
+        checkEq("dialect-array-null|false|", rows.get(7),
+            "the Lua arm renderer rejects the dialect array(nullable(null)) element");
+        checkEq("dialect-fn-double|false|", rows.get(8),
+            "the Lua arm renderer rejects the dialect nullable(nullable(int)) "
+                + "parameter");
+        checkEq("valid-int|true|parameter 1 type mismatch: function signature mismatch: "
+                + "expected ?int, got (int)->int", rows.get(9),
+            "the Lua arm renderer keeps the canonical ?int signature (the control)");
+        checkEq("valid-array|true|parameter 1 type mismatch: function signature "
+                + "mismatch: expected [?int], got [int]", rows.get(10),
+            "the Lua arm renderer keeps the canonical [?int] element (the control)");
+        checkEq("valid-nullable-fn|true|parameter 1 type mismatch: function signature "
+                + "mismatch: expected ?(int)->int, got (int)->int", rows.get(11),
+            "the Lua arm renderer keeps the canonical nullable function (the control)");
+        checkEq("valid-dialect-int|true|parameter 1 type mismatch: function signature "
+                + "mismatch: expected nullable(int), got (int)->int", rows.get(12),
+            "the Lua arm renderer keeps the dialect nullable(int) (the control)");
+        checkEq("valid-dialect-nested|true|parameter 1 type mismatch: function "
+                + "signature mismatch: expected nullable(array(nullable(int))), got "
+                + "array(int)", rows.get(13),
+            "the Lua arm renderer keeps the nested dialect nullable (the control)");
+    }
+
+    /**
+     * One descriptor vocabulary on every consumer: a kind-only spelling
+     * ({@code array} / {@code function}) is a kind <em>text</em>, never a
+     * descriptor text, so it fails closed in the signature/descriptor
+     * fields and the signature inner reasons of the registry render, the
+     * row-addressed entries, the JVM runtime, and the emitted Lua prelude;
+     * the approved kind reasons ({@code expected array}, {@code expected
+     * function}) and the descriptor-kind projection keep their texts, so the
+     * emitted host ABI's kind rows stay green while no consumer admits a
+     * vocabulary the others reject.
+     */
+    static void testKindOnlySpellingVocabulary() throws Exception {
+        System.out.println("-- the kind-only spelling boundary --");
+        for (String inner : List.of(
+                "function signature mismatch: expected array, got (int)->int",
+                "function signature mismatch: expected function, got (int)->int",
+                "function signature mismatch: expected (int)->int, got array",
+                "function signature mismatch: expected (int)->int, got function")) {
+            expectDefect(() -> FailureContractRegistry.render(
+                FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", inner), "int", "number", null),
+                "the registry rejects the kind-only signature text: " + inner);
+        }
+        // The arm's own descriptor fields admit no kind-only spelling either.
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.FUNCTION_SIGNATURE_MISMATCH,
+            Map.of("expected", "array", "actual", "(int)->int"), "array",
+            "(int)->int", null),
+            "the declared-signature field rejects the bare array kind text");
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.FUNCTION_SIGNATURE_MISMATCH,
+            Map.of("expected", "(int)->int", "actual", "function"), "(int)->int",
+            "function", null),
+            "the carried-signature field rejects the bare function kind text");
+        expectDefect(() -> BoundaryFailure.fromRow(FailureContractRegistry.row(
+            FailurePolicyId.HOST_PARAMETER), 0, "int", "number",
+            new LinkedHashMap<>(Map.of("index", "1", "inner",
+                "function signature mismatch: expected array, got (int)->int")), null),
+            "the row-addressed render rejects the kind-only signature text");
+        // The approved kind reasons stay green: the kind arm's own text on
+        // every consumer, and the descriptor-kind projection's kind-only
+        // operands.
+        checkEq("parameter 1 type mismatch: expected array",
+            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", "expected array"), "[int]",
+                "number", null).message(),
+            "the registry keeps the array kind reason (the control)");
+        checkEq("parameter 1 type mismatch: expected function",
+            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", "expected function"), "(int)->int",
+                "number", null).message(),
+            "the registry keeps the function kind reason (the control)");
+        checkEq("expected array", deal.codegen.jvm.JvmRuntime.kindReason("array"),
+            "the descriptor-kind projection keeps the host ABI's bare array kind "
+                + "text (the control)");
+        checkEq("expected function",
+            deal.codegen.jvm.JvmRuntime.kindReason("function"),
+            "the descriptor-kind projection keeps the host ABI's bare function kind "
+                + "text (the control)");
+        // The JVM runtime's arm render (it delegates to the same registry).
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
+            Map.of("index", "1", "inner", "function signature mismatch: expected "
+                + "array, got (int)->int"), "-", "int", "number"),
+            "the JVM arm render rejects the kind-only array signature text");
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
+            Map.of("index", "1", "inner", "function signature mismatch: expected "
+                + "(int)->int, got function"), "-", "int", "number"),
+            "the JVM arm render rejects the kind-only function signature text");
+        checkEq("parameter 1 type mismatch: expected function",
+            deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", "expected function"), "-",
+                "(int)->int", "number").msg,
+            "the JVM arm render keeps the function kind reason (the control)");
+        // The emitted Lua prelude, under real luajit.
+        List<String> rows = runPreludeProbe("""
+            local negatives = {
+              {"sig-array", "function signature mismatch: expected array, got (int)->int"},
+              {"sig-function", "function signature mismatch: expected function, got (int)->int"},
+              {"sig-array-actual", "function signature mismatch: expected (int)->int, got array"},
+              {"sig-function-actual", "function signature mismatch: expected (int)->int, got function"},
+            }
+            for _, case in ipairs(negatives) do
+              local ok = pcall(__arm, "HOST_PARAMETER_CELL",
+                {index = "1", inner = case[2]}, "-", "int", "number")
+              print(case[1] .. "|" .. tostring(ok))
+            end
+            local ok, value = pcall(__arm, "HOST_PARAMETER_CELL",
+              {index = "1", inner = "expected array"}, "-", "[int]", "number")
+            print("kind-array|" .. tostring(ok) .. "|" .. (ok and value.m or ""))
+            ok, value = pcall(__arm, "HOST_PARAMETER_CELL",
+              {index = "1", inner = "expected function"}, "-", "(int)->int", "number")
+            print("kind-function|" .. tostring(ok) .. "|" .. (ok and value.m or ""))
+            ok, value = pcall(__arm, "TYPED_BOUNDARY_KIND", {kind = "array"}, "-",
+              "array", "string")
+            print("kind-arm|" .. tostring(ok) .. "|" .. (ok and value.m or ""))
+            """, "kind-only-vocabulary-probe", 7);
+        checkEq("sig-array|false", rows.get(0),
+            "the Lua arm renderer rejects the kind-only array signature text");
+        checkEq("sig-function|false", rows.get(1),
+            "the Lua arm renderer rejects the kind-only function signature text");
+        checkEq("sig-array-actual|false", rows.get(2),
+            "the Lua arm renderer rejects the kind-only array actual side");
+        checkEq("sig-function-actual|false", rows.get(3),
+            "the Lua arm renderer rejects the kind-only function actual side");
+        checkEq("kind-array|true|parameter 1 type mismatch: expected array",
+            rows.get(4),
+            "the Lua arm renderer keeps the array kind reason (the control)");
+        checkEq("kind-function|true|parameter 1 type mismatch: expected function",
+            rows.get(5),
+            "the Lua arm renderer keeps the function kind reason (the control)");
+        checkEq("kind-arm|true|expected array", rows.get(6),
+            "the Lua arm renderer keeps the bare array kind arm (the control)");
     }
 
     // =========================================================================

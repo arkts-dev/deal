@@ -8624,7 +8624,17 @@ __canonicalDesc = function(s, i)
     if inner == nil or string.sub(s, inner, inner) ~= "]" then return nil end
     return inner + 1
   end
-  if c == "?" then return __canonicalDesc(s, i + 1) end
+  if c == "?" then
+    local inner = __canonicalDesc(s, i + 1)
+    if inner == nil then return nil end
+    -- The pinned nullable-inner invariant (spec:2283; the one decoder's
+    -- Nullable): the inner descriptor is neither null nor another nullable
+    -- (flatten at construction), so '?null' and '??inner' are outside the
+    -- canonical grammar.
+    local innerText = string.sub(s, i + 1, inner - 1)
+    if innerText == "null" or string.sub(innerText, 1, 1) == "?" then return nil end
+    return inner
+  end
   if c == "@" then return __classAtomEnd(s, i, false) end
   if string.sub(s, i, i + 5) == "async(" then
     local close = __canonicalParams(s, i + 6)
@@ -8691,6 +8701,12 @@ __dialectDesc = function(s, i)
   if string.sub(s, i, i + 8) == "nullable(" then
     local inner = __dialectDesc(s, i + 9)
     if inner == nil or string.sub(s, inner, inner) ~= ")" then return nil end
+    -- The pinned nullable-inner invariant (spec:2283): the inner descriptor
+    -- is neither null nor another nullable, exactly like the canonical
+    -- decoder (RuntimeDescriptor.Nullable), so the dialect spelling admits
+    -- no form the canonical grammar rejects.
+    local innerText = string.sub(s, i + 9, inner - 1)
+    if innerText == "null" or string.sub(innerText, 1, 9) == "nullable(" then return nil end
     return inner + 1
   end
   if string.sub(s, i, i + 8) == "function(" then
