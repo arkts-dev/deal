@@ -5236,20 +5236,22 @@ public final class LuaSemanticEmitter {
         /**
          * The published {@code f} projection of one export (the
          * retained-caller ABI). A sync export publishes its unwrapped
-         * closure. An exported async declaration publishes a wrapper
-         * that starts the declaration's own async operation: the
-         * reserved {@code EXTERNAL_ENTRY} activation (the same dispatch
-         * key every in-project async link uses) driven to completion
-         * through the deployed runtime's {@code async_start}, so the
-         * carried sig {@code async()->R} and the returned value agree
-         * with the runtime half's host contract — a raw body call would
-         * return the completion value of a synchronous execution and
-         * the host half would reject it as a non-operation. The
-         * activation's completion is projected into the deployed
-         * runtime's own representation ({@link
+         * closure. An exported async declaration publishes a variadic
+         * wrapper that captures its call arguments and forwards them
+         * with their exact count into the declaration's own async
+         * operation (the published callable ABI keeps delivering the
+         * declared parameters): the reserved {@code EXTERNAL_ENTRY}
+         * activation (the same dispatch key every in-project async link
+         * uses) is driven to completion through the deployed runtime's
+         * {@code async_start}, so the carried sig {@code async()->R} and
+         * the returned value agree with the runtime half's host contract
+         * — a raw body call would return the completion value of a
+         * synchronous execution and the host half would reject it as a
+         * non-operation. The activation's completion is projected into the
+         * deployed runtime's own representation ({@link
          * #ASYNC_EXPORT_COMPLETION_PRELUDE}) before the runtime half's
-         * canonical matcher and the driver's encoder observe it. The
-         * runtime is required lazily, inside the wrapper, so a chunk
+         * canonical matcher and the chunk-published encoder observe it.
+         * The runtime is required lazily, inside the wrapper, so a chunk
          * that only carries the export surface keeps loading without a
          * deployed runtime.
          */
@@ -5260,11 +5262,12 @@ public final class LuaSemanticEmitter {
                     || asyncExportEntry(payload.module(), payload.name()) == null) {
                 return "__unfn(" + slot(payload.value()) + ")";
             }
-            return "function() local __rtAsync = require(\"deal.runtime\");"
+            return "function(...) local __rtAsync = require(\"deal.runtime\");"
+                + " local __en = select(\"#\", ...); local __ea = {...};"
                 + " return __rtAsync.async_start(function() return"
                 + " __asyncExportCompletion(__rtAsync, __asyncEntries["
                 + luaString(payload.module().path() + "#" + payload.name())
-                + "](nil, true)) end) end";
+                + "](nil, true, unpack(__ea, 1, __en))) end) end";
         }
 
         /**
@@ -10035,37 +10038,82 @@ end
     private static final String ASYNC_EXPORT_COMPLETION_PRELUDE = """
 -- The completion projection of the published async-export wrapper: the
 -- deployed runtime's invoke_async_export validates the completion with the
--- runtime's canonical matcher and the driver encodes the checked value
--- with std/json, so the wrapper hands over the ABI representation — the
--- language null as the runtime's own __NULL sentinel, an array carrier as
--- its plain 1-based element table, and a table carrier as its plain field
--- table (the presence map, the first-insertion order list, and the slot
--- marks stripped). Nested containers and null slots project recursively;
--- scalars, bytes, function carriers, and every other value pass through
--- unchanged, so the driver's representation-failure classification keeps
+-- runtime's canonical matcher, so the wrapper hands over the ABI
+-- representation — the language null as the runtime's own __NULL
+-- sentinel, a numeric read carrier as the number it carries, and the
+-- shared containers as the same carriers (the array carrier keeps its
+-- __n length, the table carrier its first-insertion order, and both keep
+-- their number-slot marks, so the encoder spells each slot by its own
+-- variant). The copy is graph-preserving: one projected table per source
+-- table, so a shared reference stays shared and a cyclic completion
+-- reaches the encoder's cycle guard instead of exhausting the Lua stack.
+-- Scalars, bytes, function carriers, class instances, and every other
+-- value pass through unchanged, so the shared encoder's rejection keeps
 -- its authority over the non-encodable surface.
-local function __asyncExportCompletion(__rtAsync, v)
-  if v == nil or v == __NULL or v == __MISSING then return __rtAsync.__NULL end
+local function __asyncExportCompletion(__rtAsync, v, __seen)
+  if v == nil or v == __NULL or v == __MISSING or v == __rtAsync.__NULL
+      or v == __rtAsync.__MISSING then
+    return __rtAsync.__NULL
+  end
   if type(v) ~= "table" then return v end
+  if v.__jn then return v.d end
+  local seen = __seen
+  if seen == nil then seen = {} end
+  local projected = seen[v]
+  if projected ~= nil then return projected end
   if v.__a then
-    local out = {}
+    local out = {__a = true, __n = v.__n}
+    seen[v] = out
+    local marks = v.__nK
+    if type(marks) == "table" then out.__nK = {} end
     for i = 1, v.__n do
-      out[i] = __asyncExportCompletion(__rtAsync, v[i])
+      out[i] = __asyncExportCompletion(__rtAsync, v[i], seen)
+      if out.__nK ~= nil and marks[i] == true then out.__nK[i] = true end
     end
     return out
   end
   if v.__t then
-    local out = {}
+    local out = {__t = true, __keys = {}, __order = {}}
+    seen[v] = out
+    local marks = v.__nK
+    if type(marks) == "table" then out.__nK = {} end
     local order = v.__order
     if type(order) == "table" then
       for i = 1, #order do
         local key = order[i]
-        out[key] = __asyncExportCompletion(__rtAsync, v[key])
+        out[key] = __asyncExportCompletion(__rtAsync, v[key], seen)
+        out.__keys[key] = true
+        out.__order[i] = key
+        if out.__nK ~= nil and marks ~= nil and marks[key] == true then
+          out.__nK[key] = true
+        end
       end
     end
     return out
   end
   return v
+end
+-- The chunk-published completion encoder: the entry artifact's own shared
+-- JSON text walk — the JSON_STRINGIFY stdlib row, the one JSON algorithm
+-- of the emitted value model (the array carrier's __n length keeps an
+-- empty array's JSON array shape at every depth, the table carrier's
+-- first-insertion order stands, and the walker's cycle guard and closed
+-- JSON_STRINGIFY_UNSUPPORTED rejections carry the representation-
+-- failure surface). It is a chunk-global closure over the chunk's own
+-- locals (like the async machine's helper set) rather than a new
+-- chunk-level local, because the emitted module walk spends nearly the
+-- whole 200-local budget; the dedicated kind label keeps the failure
+-- event well-formed when a trace chunk ever calls it. The deployed
+-- runtime's own null sentinel is bound on first use, so the chunk still
+-- loads without a deployed runtime (like the wrapper's own lazy
+-- require).
+__dealAsyncExportEncode = function(v)
+  if __rtNull == nil then __rtNull = require("deal.runtime").__NULL end
+  -- The "-" op-context tokens are the absent-op spelling: the completion
+  -- encoder runs outside any emitted op, and the production chunk's __ev
+  -- is the no-op event sink (a trace chunk's event line stays
+  -- well-formed rather than carrying nil fields).
+  return __stdlib("JSON_STRINGIFY", "JSON_STRINGIFY", "-", "-", "-", "-", v)
 end
 """;
 
@@ -10876,7 +10924,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     -- position, a __jn carrier, or a slot no shared write path wrote)
     -- the int spelling stands, exactly the JSON_PARSE carrier split.
     sfValue = function(v, isNumber)
-      if v == nil then out[#out + 1] = "null"; return end
+      if v == nil or v == __rtNull then out[#out + 1] = "null"; return end
       if v == __MISSING then sfFail(v); return end
       local t = type(v)
       if t == "boolean" then

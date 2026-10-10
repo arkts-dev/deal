@@ -29,17 +29,22 @@ import java.util.stream.Stream;
  * <p>Proven on both targets: a plain async export completing 7; a null
  * completion; an {@code int[]} completion encoded as a JSON array; a
  * plain-object completion encoded as a JSON object (no carrier metadata);
- * a nested object completion; a bytes completion classified as a
- * representation failure; a delayed host async completion awaited by the
- * export; a typed completion rejection at the await site (E8001, message
- * unchanged); a DEAL error raised by the async operation and by
- * {@code main()} (code/message/location unchanged on both targets); the
- * shared DEAL-error envelope projection (carried origin with integer
- * line/column, absent origin omitted); and module initialization plus
- * {@code main()} running exactly once per invocation (the host probe
- * counts the host load and the {@code main} touch). The JVM lane compiles
- * the emitted source with {@code javac} and asserts the reserved
- * {@code <Entry>$$AsyncExportHost} launcher class file exists.</p>
+ * a nested object completion; scalar and nested numeric reads (the shared
+ * emitter's numeric carrier unwraps to its number); empty, nested empty,
+ * and object-field empty arrays (the JSON array shape survives every
+ * depth); shared references that encode at every position and cyclic
+ * completions that are value-representation failures; a bytes completion
+ * classified as a representation failure; a delayed host async completion
+ * awaited by the export; a typed completion rejection at the await site
+ * (E8001, message unchanged); a DEAL error raised by the async operation
+ * and by {@code main()} (code/message/location unchanged on both targets);
+ * the shared DEAL-error envelope projection (carried origin with integer
+ * line/column, absent origin omitted); the parameterized published
+ * wrapper forwarding {@code run.f(7)} into the async entry; and module
+ * initialization plus {@code main()} running exactly once per invocation
+ * (the host probe counts the host load and the {@code main} touch). The
+ * JVM lane compiles the emitted source with {@code javac} and asserts the
+ * reserved {@code <Entry>$$AsyncExportHost} launcher class file exists.</p>
  */
 public class AsyncExportInvokerProductionTest {
 
@@ -143,6 +148,133 @@ public class AsyncExportInvokerProductionTest {
         export async function run(): bytes {
           let b: bytes = bytes(0);
           return b;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The scalar numeric read: the member read materializes the shared
+     * emitter's numeric carrier, so the completion must reach the runtime
+     * as the number it carries, never as the carrier table
+     * (ISSUE-0749 review cycle 2, finding 1).
+     */
+    private static final String NUMBER_READ_SOURCE = """
+        export async function run(): number {
+          let t: table = { v: 7.5 };
+          let v: number = t.v;
+          return v;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /** The nested numeric read: array elements carry read carriers too. */
+    private static final String NESTED_NUMBER_READ_SOURCE = """
+        export async function run(): number[] {
+          let t: table = { v: 7.5 };
+          let v: number = t.v;
+          return [v, 8.25];
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /** The int-variant read carrier unwraps to its integral number. */
+    private static final String INT_READ_SOURCE = """
+        export async function run(): int {
+          let t: table = { v: 7 };
+          let v: int = t.v;
+          return v;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The empty-array boundary: the zero-length array carrier must keep
+     * the JSON array shape, not degrade to an empty JSON object
+     * (ISSUE-0749 review cycle 2, finding 2).
+     */
+    private static final String EMPTY_ARRAY_SOURCE = """
+        export async function run(): int[] {
+          return [];
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /** Nested empty arrays keep the JSON array shape at every depth. */
+    private static final String NESTED_EMPTY_ARRAY_SOURCE = """
+        export async function run(): int[][] {
+          let xs: int[][] = [[], [7]];
+          return xs;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /** An empty array inside an object field keeps the JSON array shape. */
+    private static final String EMPTY_ARRAY_FIELD_SOURCE = """
+        export async function run(): table {
+          let xs: int[] = [];
+          return { a: 7, xs: xs, n: null };
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /** A shared reference: repeated identities encode at every position. */
+    private static final String SHARED_REFERENCE_SOURCE = """
+        export async function run(): table {
+          let t: table = { v: 7 };
+          return { a: t, b: t };
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The cyclic completion: the encoder's cycle rejection is a value
+     * representation failure, never a stack overflow misclassified as an
+     * infrastructure failure (ISSUE-0749 review cycle 2, finding 3).
+     */
+    private static final String CYCLIC_COMPLETION_SOURCE = """
+        export async function run(): table {
+          let t: table = { v: 7 };
+          t.self = t;
+          return t;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The parameterized published wrapper: the retained-caller ABI's
+     * {@code run.f(7)} must forward its declared argument into the async
+     * entry (ISSUE-0749 review cycle 2, finding 4).
+     */
+    private static final String PARAMETERIZED_SOURCE = """
+        export async function run(x: int): int {
+          return x;
         }
 
         export function main(): null {
@@ -360,11 +492,15 @@ public class AsyncExportInvokerProductionTest {
 
         testValueSevenBothTargets();
         testNullAndContainerCompletionsBothTargets();
+        testNumericReadCompletionsBothTargets();
+        testEmptyArrayCompletionsBothTargets();
+        testGraphCompletionsBothTargets();
         testRepresentationFailureBothTargets();
         testDelayedHostCompletionBothTargets();
         testTypedCompletionRejectionBothTargets();
         testUnchangedErrorFieldsBothTargets();
         testInitializationAndMainOnceBothTargets();
+        testParameterizedPublishedWrapper();
         testDealErrorEnvelopeProjection();
         testSharedProtocolAndPackagedRuntime();
 
@@ -395,6 +531,197 @@ public class AsyncExportInvokerProductionTest {
             } finally {
                 deleteRecursively(project.root());
             }
+        }
+    }
+
+    /**
+     * The numeric read carrier bridge (ISSUE-0749 review cycle 2, finding
+     * 1): a member read materializes the shared emitter's numeric carrier;
+     * the projection unwraps it to the number at the top level and at
+     * every nested leaf, so a valid numeric completion reaches the runtime
+     * matcher and encodes as its number text.
+     */
+    private static void testNumericReadCompletionsBothTargets() throws Exception {
+        System.out.println("-- numeric read carriers unwrap to their numbers on both"
+            + " targets");
+        for (String backend : List.of("luajit", "jvm")) {
+            Project scalar = compile("number-read-" + backend, backend,
+                String.format(PLAIN_MANIFEST, backend), NUMBER_READ_SOURCE, null,
+                null);
+            try {
+                Object result = invoke(scalar, "run", "number");
+                checkEq(valueResult(backend, "number", "7.5"), result,
+                    backend + ": a number read completes its number, never the"
+                        + " carrier: " + result);
+                assertNoInternalKeys(backend, valueJson(result));
+            } finally {
+                deleteRecursively(scalar.root());
+            }
+            Project nested = compile("number-read-nested-" + backend, backend,
+                String.format(PLAIN_MANIFEST, backend), NESTED_NUMBER_READ_SOURCE,
+                null, null);
+            try {
+                Object result = invoke(nested, "run", "[number]");
+                checkEq(valueResult(backend, "[number]", "[7.5,8.25]"), result,
+                    backend + ": a nested number read completes its numbers: "
+                        + result);
+                assertNoInternalKeys(backend, valueJson(result));
+            } finally {
+                deleteRecursively(nested.root());
+            }
+            Project intRead = compile("int-read-" + backend, backend,
+                String.format(PLAIN_MANIFEST, backend), INT_READ_SOURCE, null,
+                null);
+            try {
+                Object result = invoke(intRead, "run", "int");
+                checkEq(valueResult(backend, "int", "7"), result,
+                    backend + ": an int read completes its integral number: "
+                        + result);
+            } finally {
+                deleteRecursively(intRead.root());
+            }
+        }
+    }
+
+    /**
+     * The empty-array boundary (ISSUE-0749 review cycle 2, finding 2): an
+     * array carrier keeps the JSON array shape at every depth — a
+     * zero-length array is {@code []}, never the empty object {@code {}}
+     * the maxIdx-only array detection produced.
+     */
+    private static void testEmptyArrayCompletionsBothTargets() throws Exception {
+        System.out.println("-- empty and nested empty arrays keep the JSON array shape");
+        for (String backend : List.of("luajit", "jvm")) {
+            Project empty = compile("empty-array-" + backend, backend,
+                String.format(PLAIN_MANIFEST, backend), EMPTY_ARRAY_SOURCE, null,
+                null);
+            try {
+                Object result = invoke(empty, "run", "[int]");
+                checkEq(valueResult(backend, "[int]", "[]"), result,
+                    backend + ": an empty int[] completion stays a JSON array: "
+                        + result);
+            } finally {
+                deleteRecursively(empty.root());
+            }
+            Project nested = compile("nested-empty-array-" + backend, backend,
+                String.format(PLAIN_MANIFEST, backend), NESTED_EMPTY_ARRAY_SOURCE,
+                null, null);
+            try {
+                Object result = invoke(nested, "run", "[[int]]");
+                checkEq(valueResult(backend, "[[int]]", "[[],[7]]"), result,
+                    backend + ": a nested empty array keeps its shape at every"
+                        + " depth: " + result);
+            } finally {
+                deleteRecursively(nested.root());
+            }
+            Project field = compile("empty-array-field-" + backend, backend,
+                String.format(PLAIN_MANIFEST, backend), EMPTY_ARRAY_FIELD_SOURCE,
+                null, null);
+            try {
+                Object result = invoke(field, "run", "table");
+                String json = valueJson(result);
+                check(json != null && json.contains("\"xs\":[]"),
+                    backend + ": an empty array field stays a JSON array: " + json);
+                check(json != null && json.contains("\"n\":null"),
+                    backend + ": the null field beside it stays JSON null: " + json);
+                assertNoInternalKeys(backend, json);
+            } finally {
+                deleteRecursively(field.root());
+            }
+        }
+    }
+
+    /**
+     * The graph-aware projection (ISSUE-0749 review cycle 2, finding 3): a
+     * value with a shared reference encodes at every position (the memoized
+     * copy preserves identity), and a cyclic value reaches the encoder's
+     * cycle rejection — a value-representation failure on both targets,
+     * never a stack overflow misread as an infrastructure failure.
+     */
+    private static void testGraphCompletionsBothTargets() throws Exception {
+        System.out.println("-- shared references encode; cycles are representation"
+            + " failures");
+        for (String backend : List.of("luajit", "jvm")) {
+            Project shared = compile("shared-reference-" + backend, backend,
+                String.format(PLAIN_MANIFEST, backend), SHARED_REFERENCE_SOURCE,
+                null, null);
+            try {
+                Object result = invoke(shared, "run", "table");
+                checkEq(valueResult(backend, "table",
+                        "{\"a\":{\"v\":7},\"b\":{\"v\":7}}"), result,
+                    backend + ": a shared reference encodes at every position: "
+                        + result);
+                assertNoInternalKeys(backend, valueJson(result));
+            } finally {
+                deleteRecursively(shared.root());
+            }
+            Project cyclic = compile("cyclic-completion-" + backend, backend,
+                String.format(PLAIN_MANIFEST, backend), CYCLIC_COMPLETION_SOURCE,
+                null, null);
+            try {
+                invoke(cyclic, "run", "table");
+                check(false, backend + ": a cyclic completion is a hard failure,"
+                    + " never a value");
+            } catch (LuaJitAsyncExportInvocationException
+                    | JvmAsyncExportInvocationException failure) {
+                check(failure.getMessage() != null
+                        && failure.getMessage().startsWith(
+                            "value-representation failure")
+                        && failure.getMessage().contains(
+                            "unsupported type for JSON encoding: table"),
+                    backend + ": the cycle rejection is the pinned"
+                        + " representation failure: " + failure.getMessage());
+            } finally {
+                deleteRecursively(cyclic.root());
+            }
+        }
+    }
+
+    /**
+     * The parameterized published wrapper (ISSUE-0749 review cycle 2,
+     * finding 4): the retained-caller ABI's {@code run.f(7)} forwards its
+     * declared argument into the declaration's async entry (the operation
+     * completes the checked 7), and a missing argument still reaches the
+     * body's parameter boundary as the pinned E8001 rejection — the
+     * published callable never drops or invents arguments. The probe runs
+     * the compiled chunk under real LuaJIT through its published surface;
+     * the JVM's published surface is the Java export table (the analogous
+     * retained-caller path already forwards its arguments).
+     */
+    private static void testParameterizedPublishedWrapper() throws Exception {
+        System.out.println("-- the parameterized published wrapper forwards its"
+            + " arguments");
+        Project project = compile("published-wrapper-luajit", "luajit",
+            String.format(PLAIN_MANIFEST, "luajit"), PARAMETERIZED_SOURCE, null,
+            null);
+        try {
+            writeFile(project.root(), "probe.lua", """
+                package.path = "./out/?.lua;./out/std/?.lua;" .. package.path
+                local rt = require("deal.runtime")
+                local exports = dofile("out/main.lua")
+                local handle = exports.run.f(7)
+                assert(type(handle) == "table" and handle.__kind == "async",
+                  "the published parameterized export produces an operation: "
+                    .. tostring(handle))
+                rt.async_step(handle)
+                local checked = rt.check_canonical_type("int", handle.__result)
+                assert(checked == 7, "the forwarded argument completes 7, got "
+                    .. tostring(checked))
+                local ok, err = pcall(exports.run.f)
+                assert(not ok and type(err) == "table" and err.code == "E8001",
+                  "a missing argument stays the parameter boundary rejection")
+                print("PUBLISHED:" .. tostring(checked))
+                """);
+            ProcessOutcome outcome = runProcess(
+                List.of("luajit", "probe.lua"), project.root());
+            checkEq(0, outcome.exitCode(),
+                "luajit: the parameterized published-wrapper probe exits 0: "
+                    + outcome.output());
+            check(outcome.stdout().contains("PUBLISHED:7"),
+                "luajit: run.f(7) forwards its argument and completes 7: "
+                    + outcome.stdout());
+        } finally {
+            deleteRecursively(project.root());
         }
     }
 

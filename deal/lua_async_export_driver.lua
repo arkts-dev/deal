@@ -37,9 +37,16 @@
 --     maps to the runtime's pinned host-failure reason, never a
 --     driver-side hard failure.
 --   * the checked completion is encoded as JSON text over the
---     JSON-encodable surface (D7): tables via json.stringify.f(value);
---     scalars via json.stringify.f({value}) with the surrounding array
---     brackets stripped; __NULL encodes null; numbers encode %.17g.
+--     JSON-encodable surface (D7) by the entry artifact's own shared value
+--     walk, which the chunk publishes as __dealAsyncExportEncode with
+--     the async-export wrapper: array carriers keep their JSON array
+--     shape at every depth (an empty array included), table carriers
+--     keep their insertion order, the language null renders null, and
+--     the walker's closed rejections (bytes, function carriers, class
+--     instances, cycles, non-finite numbers) are the representation
+--     failures. The committed std/json remains the envelope emitter, so
+--     the artifact's value algorithm never diverges from its own JSON
+--     surface.
 --   * exactly one stdout line DEAL_ASYNC_EXPORT_RESULT:<json> is emitted
 --     as the last write of the process (D6); exit 0 for value /
 --     deal-error / host-failure, exit 1 for representation-failure /
@@ -138,27 +145,17 @@ local entryArtifact = arg[1]
 local exportName = arg[3]
 local returnDescriptor = arg[4]
 
---- Completion encoding (D7). Any error raised here — including the
--- DEAL-shaped E8001 errors the encoder raises for bytes/cdata, function
--- wrappers, and unsupported types — is classified representation-failure
--- by the phase gate in the handler below, never a DEAL code.
+--- Completion encoding (D7): the entry artifact's own shared JSON text
+-- walk (`__dealAsyncExportEncode`, the chunk's JSON_STRINGIFY algorithm
+-- over the shared value model — array carriers keep their JSON array
+-- shape at every depth, table carriers their insertion order, a cycle is
+-- the walker's cycle rejection, and every non-encodable value is the
+-- walker's closed JSON_STRINGIFY_UNSUPPORTED rejection). Any error
+-- raised here — the DEAL-shaped arm carriers included — is classified
+-- representation-failure by the phase gate in the handler below, never a
+-- DEAL code.
 local function encode_completion(value)
-  if json == nil then
-    error({ message = "JSON envelope emitter unavailable" }, 0)
-  end
-  if type(value) == "table" then
-    return json.stringify.f(value)
-  end
-  -- Scalar path: wrap in a one-element array and strip the surrounding
-  -- brackets, leaving the exact encoded text (D7).
-  local wrapped = json.stringify.f({ value })
-  if type(wrapped) ~= "string" or #wrapped < 2
-      or string.sub(wrapped, 1, 1) ~= "["
-      or string.sub(wrapped, -1) ~= "]" then
-    error({ message =
-        "scalar completion encoding produced a malformed array frame" }, 0)
-  end
-  return string.sub(wrapped, 2, -2)
+  return __dealAsyncExportEncode(value)
 end
 
 -- One protected execution: runtime require, exactly one dofile of the
@@ -191,6 +188,14 @@ local ok, payload = xpcall(function()
   end
   local value = __rt.invoke_async_export(exports, exportName,
       returnDescriptor)
+  -- The shared completion encoder the entry artifact publishes: it is
+  -- co-emitted with the async-export wrapper, so a value without it is a
+  -- non-production artifact — the phase stays "execute", so the hard
+  -- failure classifies infrastructure, never a value-representation
+  -- mismatch.
+  if type(__dealAsyncExportEncode) ~= "function" then
+    error("the entry artifact publishes no shared value walk", 0)
+  end
   phase = "encode"
   return encode_completion(value)
 end, function(e)
@@ -204,10 +209,19 @@ end
 
 -- Error classification (D8), in the pinned order.
 if phase == "encode" then
+  -- Both encoder failure shapes: the deployed std/json member carries
+  -- `message` (__rt._err), while the artifact's closed failure arms
+  -- carry the rendered message in `m` (__failExpr). The reason is the
+  -- rendered text either way.
+  local reason = nil
+  if type(payload) == "table" then
+    if payload.message ~= nil then reason = payload.message end
+    if reason == nil then reason = payload.m end
+  end
+  if reason == nil then reason = payload end
   emit({
     status = "representation-failure",
-    reason = (type(payload) == "table" and payload.message ~= nil)
-        and tostring(payload.message) or tostring(payload),
+    reason = tostring(reason),
   }, 1)
 elseif type(payload) == "table"
     and payload.__hostInvocationFailure == true then
