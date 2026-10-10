@@ -36,6 +36,7 @@ import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.OpId;
+import deal.semantic.ir.ScalarValue;
 import deal.semantic.ir.SemanticIdAllocator;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
@@ -2010,6 +2011,220 @@ public class CompositeTerminatorAnalysisTest {
         }
     }
 
+    /**
+     * One all-throw for-let program of the emitter-closure drive: its
+     * display name, whether the loop's test is omitted (the synthetic
+     * {@code CONST true} row), and its source.
+     */
+    private record AllThrowForLetProgram(String name, boolean omittedTest,
+                                         String source) {
+    }
+
+    /**
+     * The all-throw for-let programs: the omitted test's synthetic
+     * {@code CONST true} makes the loop literal-true, its body exits only
+     * by throw, and the exception unwinds the loop — the exact combination
+     * the closed terminator contract admits and ISSUE-0763's remediation
+     * must verify on the oracle and both real artifacts. The explicit
+     * {@code true} row drives the same unwind (the review observed the
+     * missing LOOP terminal on that condition too, so the emitter-side
+     * closure is not special to the omitted test). The driver's {@code main}
+     * body *is* the loop, so the throw terminates it.
+     */
+    private static final List<AllThrowForLetProgram> ALL_THROW_FOR_LET_PROGRAMS =
+        List.of(
+            new AllThrowForLetProgram(
+                "the all-throw omitted-test for-let", true, """
+                export function main(): null {
+                  for (let i: int = 0; ; i = i + 1) {
+                    throw { code: "THROW_ONLY", message: "throw only" }
+                  }
+                }
+                """),
+            new AllThrowForLetProgram(
+                "the all-throw explicit-true for-let", false, """
+                export function main(): null {
+                  for (let i: int = 0; true; i = i + 1) {
+                    throw { code: "THROW_ONLY", message: "throw only" }
+                  }
+                }
+                """));
+
+    /**
+     * The all-throw for-let bodies on the real toolchains: the public build
+     * compiles each terminated body with no implicit trailing null return,
+     * and the oracle and both shared artifacts agree event-for-event on the
+     * pinned failure — including the LOOP's own FAILURE terminal, which the
+     * error publishes as it unwinds the loop (the trace protocol's exactly-
+     * one-terminal-per-START rule). A terminal-only comparison would hide
+     * the closure event, and a trace comparison that dropped it would accept
+     * an artifact leaving the loop's START unterminated, so the LOOP FAILURE
+     * is asserted directly, immediately after the THROW FAILURE.
+     */
+    static void testAllThrowForLetParity() throws Exception {
+        System.out.println("-- the all-throw for-let bodies through the oracle "
+            + "and both shared artifacts (the real toolchains) --");
+        for (AllThrowForLetProgram program : ALL_THROW_FOR_LET_PROGRAMS) {
+            driveAllThrowForLet(program);
+        }
+    }
+
+    /** One all-throw for-let program through the oracle and both artifacts. */
+    private static void driveAllThrowForLet(AllThrowForLetProgram program)
+            throws Exception {
+        Path root = Files.createTempDirectory("all-throw-for-let-parity-");
+        try {
+            write(root, "src/app.deal", program.source());
+            // The public build admits the terminated body (the acceptance
+            // shape the ISSUE-0717 no-fall-off rule leaves in scope): the
+            // one lowering reports zero diagnostics.
+            Lowered lowered = lowerProjectRoot(root, "src/app.deal",
+                productionInvocation());
+            if (lowered == null) {
+                return;
+            }
+            List<BlockId> bodies = lowered.declaredBodyBlocks();
+            checkEq(1, bodies.size(), program.name() + " carries the entry main "
+                + "body alone");
+            check(lowered.implicitReturns().isEmpty(), program.name() + " keeps no "
+                + "implicit trailing null return");
+            if (bodies.size() != 1) {
+                return;
+            }
+            List<SemanticOp> bodyOps = lowered.blockOps(bodies.get(0));
+            SemanticOp loop = null;
+            for (SemanticOp op : bodyOps) {
+                if (op.kind() == SemanticOpKind.LOOP) {
+                    loop = op;
+                }
+            }
+            check(loop != null && !bodyOps.isEmpty()
+                    && bodyOps.get(bodyOps.size() - 1).equals(loop),
+                program.name() + " ends with its literal-true LOOP and no "
+                    + "trailing statement (op kinds "
+                    + kindsOf(lowered, bodies.get(0)) + ")");
+            if (loop != null
+                    && loop.payload() instanceof KindPayload.LoopPayload payload) {
+                SemanticOp conditionProducer = null;
+                for (OpId member : lowered.table().blockOps().get(payload.initBlock())) {
+                    SemanticOp op = lowered.op(member);
+                    if (op != null && payload.condition().equals(op.result())) {
+                        conditionProducer = op;
+                    }
+                }
+                // The omitted test is the synthetic CONST true of the init
+                // block; the explicit true row produces the source literal
+                // (the same one-CONST condition production).
+                SourceOriginKind expectedOrigin = program.omittedTest()
+                    ? SourceOriginKind.SYNTHETIC : SourceOriginKind.USER;
+                check(conditionProducer != null
+                        && conditionProducer.kind() == SemanticOpKind.CONST
+                        && conditionProducer.origin().kind() == expectedOrigin
+                        && conditionProducer.payload() instanceof KindPayload.ConstPayload constant
+                        && constant.value() instanceof ScalarValue.Boolean bool
+                        && bool.value(),
+                    program.name() + " carries the literal true condition of its "
+                        + "init block (expected origin " + expectedOrigin + ")");
+                int bodyThrows = 0;
+                boolean bodyReturn = false;
+                for (SemanticOp op : lowered.blockOps(payload.bodyBlock())) {
+                    if (op.kind() == SemanticOpKind.THROW) {
+                        bodyThrows++;
+                    }
+                    if (op.kind() == SemanticOpKind.RETURN) {
+                        bodyReturn = true;
+                    }
+                }
+                checkEq(1, bodyThrows, program.name() + " body carries its "
+                    + "THROW");
+                check(!bodyReturn, program.name() + " body carries no RETURN op");
+            }
+            // The throw's own origin (line 3, column 5 of the source): the
+            // pinned failure tuple of all three consumers.
+            String originText = root.resolve("src/app.deal").toAbsolutePath()
+                + ":3:5";
+            Path workspace = Files.createTempDirectory("all-throw-for-let-ws-");
+            try {
+                SemanticDifferentialHarness.Verdict verdict =
+                    SemanticDifferentialHarness.runProject(lowered.project(),
+                        lowered.tables(), lowered.registries(),
+                        SemanticDifferentialHarness.Expectation.failure(
+                            program.name(), List.of(),
+                            "THROW_ONLY", originText), workspace);
+                check(verdict.pass(), "the oracle and both shared artifacts agree "
+                    + "event-for-event on " + program.name() + " (the "
+                    + "LOOP's FAILURE terminal included): " + verdict.failures());
+                checkEq(3, verdict.runs().size(), "the drive produced the exact "
+                    + "three consumers: " + verdict.failures());
+                for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+                    check(run.terminal()
+                            instanceof SemanticRuntimeModel.Terminal.DealFailure,
+                        run.consumer() + " fails with the thrown error: "
+                            + run.terminal());
+                    if (run.terminal() instanceof
+                            SemanticRuntimeModel.Terminal.DealFailure failure) {
+                        checkEq("THROW_ONLY", failure.error().code(), run.consumer()
+                            + " carries the pinned failure code");
+                        checkEq("throw only", failure.error().message(), run.consumer()
+                            + " carries the pinned failure message");
+                        checkEq(originText, failure.error().origin(), run.consumer()
+                            + " carries the pinned throw origin");
+                        checkEq(null, failure.error().expected(), run.consumer()
+                            + " carries the pinned null expected token");
+                        checkEq(null, failure.error().actual(), run.consumer()
+                            + " carries the pinned null actual token");
+                    }
+                    int loopStarts = 0;
+                    int loopFailures = 0;
+                    int loopSuccesses = 0;
+                    int throwFailures = 0;
+                    int loopFailureIndex = -1;
+                    int throwFailureIndex = -1;
+                    List<SemanticRuntimeModel.TraceEvent> trace = run.trace();
+                    for (int i = 0; i < trace.size(); i++) {
+                        SemanticRuntimeModel.TraceEvent event = trace.get(i);
+                        if (event.kind() == SemanticOpKind.LOOP) {
+                            if (event.phase() == SemanticRuntimeModel.Phase.START) {
+                                loopStarts++;
+                            } else if (event.phase()
+                                    == SemanticRuntimeModel.Phase.FAILURE) {
+                                loopFailures++;
+                                loopFailureIndex = i;
+                            } else {
+                                loopSuccesses++;
+                            }
+                        }
+                        if (event.kind() == SemanticOpKind.THROW
+                                && event.phase()
+                                    == SemanticRuntimeModel.Phase.FAILURE) {
+                            throwFailures++;
+                            throwFailureIndex = i;
+                        }
+                    }
+                    checkEq(1, loopStarts, run.consumer() + " starts the "
+                        + program.name() + " LOOP exactly once");
+                    checkEq(1, loopFailures, run.consumer() + " publishes the "
+                        + "LOOP's own FAILURE terminal as the error unwinds it "
+                        + "(never an unterminated START)");
+                    checkEq(0, loopSuccesses, run.consumer() + " never completes "
+                        + "the all-throw LOOP normally");
+                    checkEq(1, throwFailures, run.consumer() + " publishes the "
+                        + "THROW's FAILURE terminal exactly once");
+                    check(throwFailureIndex >= 0 && loopFailureIndex >= 0
+                            && loopFailureIndex == throwFailureIndex + 1,
+                        run.consumer() + " publishes the LOOP FAILURE immediately "
+                            + "after the THROW FAILURE (the unwind order; throw "
+                            + "index " + throwFailureIndex + ", loop index "
+                            + loopFailureIndex + ")");
+                }
+            } finally {
+                deleteRecursively(workspace);
+            }
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
     private static void driveDifferentialFixtures(List<Fixture> fixtures) throws Exception {
         for (Fixture fixture : fixtures) {
             Path root = Files.createTempDirectory("composite-terminator-matrix-");
@@ -2262,6 +2477,7 @@ public class CompositeTerminatorAnalysisTest {
         testDifferentialMatrix();
         testResidualAcceptanceParity();
         testPartialTransferProductionParity();
+        testAllThrowForLetParity();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

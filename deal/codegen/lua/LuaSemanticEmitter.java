@@ -8424,6 +8424,18 @@ local function __errtext(e)
   end
   return "E9999;"..__esc(tostring(e))..";-;-;-;-;-"
 end
+-- The open-operation stack of the error unwind (the trace protocol's
+-- exactly-one-terminal-per-START rule): every START records its event
+-- fields, every terminal closes the newest record of its own op, and a
+-- FAILURE additionally closes the still-open structure ops with no
+-- failure arm of their own (BRANCH, LOOP, FOR_EACH) directly under the
+-- failing op's record, innermost first, so an error escaping them
+-- publishes each one's FAILURE terminal with the propagating error — the
+-- oracle's enclosing-op unwind. A protected op (one whose own arm
+-- publishes its terminal) stops the closure; its arm publishes its own.
+-- The stack is a chunk-global like the rest of the run state, so the
+-- prelude spends no main-chunk local on it (the LuaJIT 200-local bound).
+__openOps = __openOps or {}
 local function __ev(op, phase, kind, digest, parent, inputs, output, errtext)
   local parts = {__seq, __module, op, phase, kind, digest, parent}
   if inputs then
@@ -8435,6 +8447,32 @@ local function __ev(op, phase, kind, digest, parent, inputs, output, errtext)
   io.stderr:write(line.."\\n")
   io.stderr:flush()
   __seq = __seq + 1
+  if phase == "START" then
+    __openOps[#__openOps + 1] = {op = op, kind = kind, digest = digest,
+                                 parent = parent, module = __module}
+    return
+  end
+  for i = #__openOps, 1, -1 do
+    if __openOps[i].op == op then
+      table.remove(__openOps, i)
+      break
+    end
+  end
+  if phase == "FAILURE" then
+    while #__openOps > 0 do
+      local record = __openOps[#__openOps]
+      if record.kind ~= "BRANCH" and record.kind ~= "LOOP"
+          and record.kind ~= "FOR_EACH" then break end
+      table.remove(__openOps)
+      local closed = {__seq, record.module, record.op, "FAILURE", record.kind,
+                      record.digest, record.parent}
+      local closedLine = "T|"..table.concat(closed, "|")
+      if errtext then closedLine = closedLine.."|!"..errtext end
+      io.stderr:write(closedLine.."\\n")
+      io.stderr:flush()
+      __seq = __seq + 1
+    end
+  end
 end
 -- The raw read atom of the OPTIONAL_READ envelope: the value's actual
 -- runtime kind — missing → "missing", null → "null", else the actual

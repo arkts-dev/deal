@@ -662,6 +662,56 @@ public final class JvmRuntime {
         if (!traceEnabled) {
             return;
         }
+        emitLine(module, op, phase, kind, digest, parent, inputs, output, errtext);
+        if (phase.equals("START")) {
+            OPEN_OPS.add(new OpenOp(module, op, kind, digest, parent));
+            return;
+        }
+        for (int i = OPEN_OPS.size() - 1; i >= 0; i--) {
+            if (OPEN_OPS.get(i).op().equals(op)) {
+                OPEN_OPS.remove(i);
+                break;
+            }
+        }
+        if (phase.equals("FAILURE")) {
+            closeUnprotectedStructures(errtext);
+        }
+    }
+
+    /**
+     * The open-operation stack of the error unwind (the trace protocol's
+     * exactly-one-terminal-per-START rule): every START records its event
+     * fields, every terminal closes the newest record of its own op, and a
+     * FAILURE additionally closes the still-open structure ops with no
+     * failure arm of their own (BRANCH, LOOP, FOR_EACH) directly under the
+     * failing op's record, innermost first, so an error escaping them
+     * publishes each one's FAILURE terminal with the propagating error —
+     * the oracle's enclosing-op unwind. A protected op (one whose own arm
+     * publishes its terminal) stops the closure; its arm publishes its own.
+     */
+    private record OpenOp(String module, String op, String kind, String digest,
+                          String parent) {
+    }
+
+    private static final List<OpenOp> OPEN_OPS = new ArrayList<>();
+
+    private static void closeUnprotectedStructures(String errtext) {
+        while (!OPEN_OPS.isEmpty()) {
+            OpenOp record = OPEN_OPS.get(OPEN_OPS.size() - 1);
+            if (!record.kind().equals("BRANCH") && !record.kind().equals("LOOP")
+                    && !record.kind().equals("FOR_EACH")) {
+                return;
+            }
+            OPEN_OPS.remove(OPEN_OPS.size() - 1);
+            emitLine(record.module(), record.op(), "FAILURE", record.kind(),
+                record.digest(), record.parent(), null, null, errtext);
+        }
+    }
+
+    /** One protocol trace line (the shared renderer of {@link #ev}). */
+    private static void emitLine(String module, String op, String phase, String kind,
+                                 String digest, String parent, List<String> inputs,
+                                 String output, String errtext) {
         StringBuilder line = new StringBuilder();
         line.append("T|").append(seq++).append('|').append(module).append('|').append(op)
             .append('|').append(phase).append('|').append(kind).append('|').append(digest)
