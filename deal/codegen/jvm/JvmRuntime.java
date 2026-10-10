@@ -3179,10 +3179,14 @@ public final class JvmRuntime {
      * The trailing {@code file:line:column} origin text the emitted
      * artifact threads into every {@link DealError} (the emitter's
      * {@code originOf} form; the same text the LuaJIT lane's closed
-     * failure carrier holds in its {@code o} field).
+     * failure carrier holds in its {@code o} field). The pattern is
+     * DOTALL: a source path is an arbitrary legal filesystem name, so a
+     * line terminator inside it must not defeat the coordinate split (the
+     * greedy {@code (.*)} still takes the trailing pair).
      */
     private static final java.util.regex.Pattern ASYNC_EXPORT_ERROR_ORIGIN =
-        java.util.regex.Pattern.compile("^(.*):(\\d+):(\\d+)$");
+        java.util.regex.Pattern.compile("^(.*):(\\d+):(\\d+)$",
+            java.util.regex.Pattern.DOTALL);
 
     /**
      * One registry row of the reserved async-export host surface (the

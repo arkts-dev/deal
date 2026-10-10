@@ -708,6 +708,21 @@ public class AsyncExportInvokerProductionTest {
         """;
 
     /**
+     * The user-raised DEAL error of the line-terminator source-path
+     * regression: the thrown error's message carries a line terminator
+     * of its own, and the error's origin is the throw at 2:3.
+     */
+    private static final String USER_ERROR_SOURCE = """
+        export async function run(): int {
+          throw { code: "E_USER", message: "unchanged\\nmessage" };
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
      * The once-counting probe: the host implementation counts its own
      * module load and every {@code touchMain} call, and the async export
      * completes the encoded counter ({@code load * 100 + main * 10}), so
@@ -803,6 +818,7 @@ public class AsyncExportInvokerProductionTest {
         testDelayedHostCompletionBothTargets();
         testTypedCompletionRejectionBothTargets();
         testUnchangedErrorFieldsBothTargets();
+        testLineTerminatorSourcePathBothTargets();
         testInitializationAndMainOnceBothTargets();
         testParameterizedPublishedWrapper();
         testDealErrorEnvelopeProjection();
@@ -1432,6 +1448,36 @@ public class AsyncExportInvokerProductionTest {
     }
 
     /**
+     * A source path that legally contains a line terminator: the carried
+     * {@code file:line:column} origin still projects the exact file, line,
+     * and column on both targets (the LuaJIT pattern already matched such
+     * a path; the JVM origin regex did not).
+     */
+    private static void testLineTerminatorSourcePathBothTargets() throws Exception {
+        System.out.println("-- a line terminator in the source path keeps the"
+            + " exact coordinates");
+        for (String backend : List.of("luajit", "jvm")) {
+            Path parent = Files.createTempDirectory("async-export-folded-path-");
+            Path root = parent.resolve("proj\nect");
+            Files.createDirectories(root);
+            try {
+                Project project = compileAt(root, "newline-path-" + backend, backend,
+                    String.format(PLAIN_MANIFEST, backend), USER_ERROR_SOURCE,
+                    null, null);
+                Object result = invoke(project, "run", "int");
+                checkEq("E_USER", errorCode(result),
+                    backend + ": the user error keeps its code: " + result);
+                checkEq("unchanged\nmessage", errorMessage(result),
+                    backend + ": the user error keeps its newline-bearing message: "
+                        + result);
+                assertLocation(backend, result, root.resolve("src/main.deal"), 2, 3);
+            } finally {
+                deleteRecursively(parent);
+            }
+        }
+    }
+
+    /**
      * The exact carried source location on both targets: the runtime
      * error's own {@code file:line:column} origin, projected through the
      * shared DEAL-error envelope (ISSUE-0749 review cycle 1, finding 3).
@@ -1465,6 +1511,14 @@ public class AsyncExportInvokerProductionTest {
             JvmRuntime.asyncExportDealErrorEnvelope("E8005",
                 "integer division by zero", "/abs/src/main.deal:4:16"),
             "a carried file:line:column origin projects with integer line/column");
+        checkEq(prefix + "{\"status\":\"deal-error\",\"code\":\"E_USER\","
+                + "\"message\":\"unchanged\\nmessage\","
+                + "\"file\":\"/abs/pro\\nject/src/main.deal\",\"line\":2,"
+                + "\"column\":3}",
+            JvmRuntime.asyncExportDealErrorEnvelope("E_USER", "unchanged\nmessage",
+                "/abs/pro\nject/src/main.deal:2:3"),
+            "an origin whose file text contains a line terminator still splits"
+                + " into file, line, and column");
         AsyncExportEnvelope.Envelope decoded = AsyncExportEnvelope.decodeEnvelope(
             JvmRuntime.asyncExportDealErrorEnvelope("E8005",
                 "integer division by zero", "/abs/src/main.deal:4:16")
@@ -1598,7 +1652,18 @@ public class AsyncExportInvokerProductionTest {
     private static Project compile(String name, String backend, String manifest,
             String mainSource, String declarationSource, String hostSource)
             throws Exception {
-        Path root = Files.createTempDirectory("async-export-" + name + "-");
+        return compileAt(Files.createTempDirectory("async-export-" + name + "-"),
+            name, backend, manifest, mainSource, declarationSource, hostSource);
+    }
+
+    /**
+     * The same public compile drive against a caller-supplied project
+     * root (the line-terminator source-path regression needs a legal
+     * filesystem name outside the fixed temp prefix).
+     */
+    private static Project compileAt(Path root, String name, String backend,
+            String manifest, String mainSource, String declarationSource,
+            String hostSource) throws Exception {
         writeFile(root, "deal.json", manifest);
         writeFile(root, "src/main.deal", mainSource);
         if (declarationSource != null) {

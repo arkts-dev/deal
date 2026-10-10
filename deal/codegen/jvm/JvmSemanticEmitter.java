@@ -654,13 +654,15 @@ public final class JvmSemanticEmitter {
                 out.append("      System.err.println(\"R|failure|\" + JvmRuntime.errtext(e));\n");
                 out.append("      System.err.flush();\n");
                 out.append("    }\n");
-            } else {
-                // Production terminal: a DEAL failure publishes the
-                // retained DEAL_ERROR_CODE line on stdout and exits 1;
-                // the reserved async-export host mode publishes the
-                // shared deal-error envelope — the carried source origin
-                // included (file plus integer line/column) — instead (the
-                // invoker's child-process contract).
+            } else if (entryModule) {
+                // Entry-module production terminal: a DEAL failure
+                // publishes the retained DEAL_ERROR_CODE line on stdout
+                // and exits 1; the reserved async-export host mode
+                // publishes the shared deal-error envelope — the carried
+                // source origin included (file plus integer line/column)
+                // — instead (the invoker's child-process contract). The
+                // host surface exists only for the entry module, so a
+                // non-entry emission never references it.
                 out.append("    boolean __hostInvocation = args.length > 0 && ")
                     .append(javaString(JvmNames.ASYNC_EXPORT_HOST_ARG))
                     .append(".equals(args[0]);\n");
@@ -682,6 +684,17 @@ public final class JvmSemanticEmitter {
                 out.append("          ? $asyncExportHost(args[1], args[2])\n");
                 out.append("          : JvmRuntime.asyncExportEnvelope(\"infrastructure-failure\", \"reason\", \"invalid async-export host argv: expected [marker, exportName, returnDescriptor]\"));\n");
                 out.append("      System.out.flush();\n");
+                out.append("    }\n");
+            } else {
+                // Non-entry module: the retained plain production
+                // terminal (no host surface is emitted for a non-entry
+                // module, so main must not reference one).
+                out.append("    try {\n");
+                out.append("      dealMain();\n");
+                out.append("    } catch (JvmRuntime.DealError e) {\n");
+                out.append("      System.out.println(\"DEAL_ERROR_CODE: \" + e.code);\n");
+                out.append("      System.out.flush();\n");
+                out.append("      System.exit(1);\n");
                 out.append("    }\n");
             }
             out.append("  }\n");
