@@ -5251,9 +5251,15 @@ public final class LuaSemanticEmitter {
          * deployed runtime's own representation ({@link
          * #ASYNC_EXPORT_COMPLETION_PRELUDE}) before the runtime half's
          * canonical matcher and the chunk-published encoder observe it.
-         * The runtime is required lazily, inside the wrapper, so a chunk
-         * that only carries the export surface keeps loading without a
-         * deployed runtime.
+         * The declaration's declared scalar-number return is passed along
+         * with the completion: the projection hands the encoder the
+         * completion's own numeric variant (a numeric carrier's kind, the
+         * declared {@code number} type for a plain number), so a scalar
+         * number completion spells through the shared walker's canonical
+         * decimal like the JVM sibling's boxed double, never through the
+         * lossy default. The runtime is required lazily, inside the
+         * wrapper, so a chunk that only carries the export surface keeps
+         * loading without a deployed runtime.
          */
         private String exportCallable(SemanticOp op,
                 KindPayload.ExportPublishPayload payload) {
@@ -5267,7 +5273,27 @@ public final class LuaSemanticEmitter {
                 + " return __rtAsync.async_start(function() return"
                 + " __asyncExportCompletion(__rtAsync, __asyncEntries["
                 + luaString(payload.module().path() + "#" + payload.name())
-                + "](nil, true, unpack(__ea, 1, __en))) end) end";
+                + "](nil, true, unpack(__ea, 1, __en)), "
+                + (numberScalarReturn(func.returnType()) ? "true" : "false")
+                + ") end) end";
+        }
+
+        /**
+         * Whether the declaration's async return type is the {@code
+         * number} scalar (optionally nullable). A plain number completion
+         * of such a declaration carries the shared value model's number
+         * variant, so the completion encoder spells it through the
+         * walker's canonical decimal text — the JVM sibling's {@code
+         * Double} text — never through the default {@code tostring}
+         * spelling (a lossy {@code %.14g} for a top-level scalar). An
+         * {@code int} return keeps the integer spelling, and a container
+         * return carries its own per-slot variant marks.
+         */
+        private static boolean numberScalarReturn(RuntimeDescriptor descriptor) {
+            RuntimeDescriptor inner = descriptor
+                    instanceof RuntimeDescriptor.Nullable nullable
+                ? nullable.inner() : descriptor;
+            return inner == RuntimeDescriptor.Number.INSTANCE;
         }
 
         /**
@@ -10049,14 +10075,32 @@ end
 -- reaches the encoder's cycle guard instead of exhausting the Lua stack.
 -- Scalars, bytes, function carriers, class instances, and every other
 -- value pass through unchanged, so the shared encoder's rejection keeps
--- its authority over the non-encodable surface.
-local function __asyncExportCompletion(__rtAsync, v, __seen)
+-- its authority over the non-encodable surface. The projection also
+-- records the top-level scalar number's own variant in the
+-- __dealAsyncExportVariant chunk global: a numeric carrier's kind, or
+-- the declaration's declared number type for a plain number (the
+-- wrapper passes __declaredNumber), so the encoder spells a top-level
+-- scalar number exactly like the shared walker's marked slots — the JVM
+-- sibling's boxed-double text — and leaves an int completion integral.
+local function __asyncExportCompletion(__rtAsync, v, __declaredNumber, __seen)
+  local __top = __seen == nil
+  if __top then __dealAsyncExportVariant = nil end
   if v == nil or v == __NULL or v == __MISSING or v == __rtAsync.__NULL
       or v == __rtAsync.__MISSING then
     return __rtAsync.__NULL
   end
-  if type(v) ~= "table" then return v end
-  if v.__jn then return v.d end
+  if type(v) ~= "table" then
+    if __top and __declaredNumber and type(v) == "number" then
+      __dealAsyncExportVariant = "number"
+    end
+    return v
+  end
+  if v.__jn then
+    if __top then
+      __dealAsyncExportVariant = v.k == "number" and "number" or "int"
+    end
+    return v.d
+  end
   local seen = __seen
   if seen == nil then seen = {} end
   local projected = seen[v]
@@ -10067,7 +10111,7 @@ local function __asyncExportCompletion(__rtAsync, v, __seen)
     local marks = v.__nK
     if type(marks) == "table" then out.__nK = {} end
     for i = 1, v.__n do
-      out[i] = __asyncExportCompletion(__rtAsync, v[i], seen)
+      out[i] = __asyncExportCompletion(__rtAsync, v[i], nil, seen)
       if out.__nK ~= nil and marks[i] == true then out.__nK[i] = true end
     end
     return out
@@ -10081,7 +10125,7 @@ local function __asyncExportCompletion(__rtAsync, v, __seen)
     if type(order) == "table" then
       for i = 1, #order do
         local key = order[i]
-        out[key] = __asyncExportCompletion(__rtAsync, v[key], seen)
+        out[key] = __asyncExportCompletion(__rtAsync, v[key], nil, seen)
         out.__keys[key] = true
         out.__order[i] = key
         if out.__nK ~= nil and marks ~= nil and marks[key] == true then
@@ -10109,6 +10153,18 @@ end
 -- require).
 __dealAsyncExportEncode = function(v)
   if __rtNull == nil then __rtNull = require("deal.runtime").__NULL end
+  -- A top-level scalar number whose recorded variant is the number
+  -- variant goes through the walker as a one-element marked array whose
+  -- JSON frame is then stripped: the walker's own canonical decimal
+  -- spelling (the marked-slot and JVM boxed-double text, never the
+  -- default tostring's lossy %.14g) and its non-finite rejection both
+  -- stay in force. An int-variant or unrecorded scalar, and every
+  -- container, keep the direct walk over their own variant marks.
+  if __dealAsyncExportVariant == "number" and type(v) == "number" then
+    return string.sub(__stdlib("JSON_STRINGIFY", "JSON_STRINGIFY",
+        "-", "-", "-", "-",
+        {__a = true, __n = 1, [1] = v, __nK = {[1] = true}}), 2, -2)
+  end
   -- The "-" op-context tokens are the absent-op spelling: the completion
   -- encoder runs outside any emitted op, and the production chunk's __ev
   -- is the no-op event sink (a trace chunk's event line stays

@@ -30,21 +30,25 @@ import java.util.stream.Stream;
  * completion; an {@code int[]} completion encoded as a JSON array; a
  * plain-object completion encoded as a JSON object (no carrier metadata);
  * a nested object completion; scalar and nested numeric reads (the shared
- * emitter's numeric carrier unwraps to its number); empty, nested empty,
+ * emitter's numeric carrier unwraps to its number, whose JSON text is the
+ * shared walker's canonical spelling — the JVM sibling's boxed-double
+ * text at the integral-value, precision, and exponent boundaries; an
+ * int-variant read keeps the integer spelling); empty, nested empty,
  * and object-field empty arrays (the JSON array shape survives every
  * depth); shared references that encode at every position and cyclic
  * completions that are value-representation failures; a bytes completion
- * classified as a representation failure; a delayed host async completion
- * awaited by the export; a typed completion rejection at the await site
- * (E8001, message unchanged); a DEAL error raised by the async operation
- * and by {@code main()} (code/message/location unchanged on both targets);
- * the shared DEAL-error envelope projection (carried origin with integer
- * line/column, absent origin omitted); the parameterized published
- * wrapper forwarding {@code run.f(7)} into the async entry; and module
- * initialization plus {@code main()} running exactly once per invocation
- * (the host probe counts the host load and the {@code main} touch). The
- * JVM lane compiles the emitted source with {@code javac} and asserts the
- * reserved {@code <Entry>$$AsyncExportHost} launcher class file exists.</p>
+ * and a non-finite number classified as representation failures; a
+ * delayed host async completion awaited by the export; a typed completion
+ * rejection at the await site (E8001, message unchanged); a DEAL error
+ * raised by the async operation and by {@code main()} (code/message/
+ * location unchanged on both targets); the shared DEAL-error envelope
+ * projection (carried origin with integer line/column, absent origin
+ * omitted); the parameterized published wrapper forwarding {@code
+ * run.f(7)} into the async entry; and module initialization plus {@code
+ * main()} running exactly once per invocation (the host probe counts the
+ * host load and the {@code main} touch). The JVM lane compiles the
+ * emitted source with {@code javac} and asserts the reserved {@code
+ * <Entry>$$AsyncExportHost} launcher class file exists.</p>
  */
 public class AsyncExportInvokerProductionTest {
 
@@ -192,6 +196,86 @@ public class AsyncExportInvokerProductionTest {
           let t: table = { v: 7 };
           let v: int = t.v;
           return v;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The integral arithmetic result of a declared {@code number} return:
+     * the top-level scalar carries the number variant, so its JSON text is
+     * the canonical decimal spelling (the JVM sibling's boxed-double text,
+     * {@code "5.0"}), never the default {@code tostring}'s integral
+     * spelling.
+     */
+    private static final String NUMBER_ARITHMETIC_SOURCE = """
+        export async function run(): number {
+          return 2.5 * 2.0;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The precision boundary of the number text: the default {@code
+     * tostring} spelling is a lossy {@code %.14g}, so a number read must
+     * keep the shared walker's canonical shortest-round-trip text.
+     */
+    private static final String NUMBER_PRECISION_SOURCE = """
+        export async function run(): number {
+          let t: table = { v: 0.30000000000000004 };
+          let v: number = t.v;
+          return v;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /** The magnitude boundary of the number text (exponent spelling). */
+    private static final String NUMBER_MAGNITUDE_SOURCE = """
+        export async function run(): number {
+          let t: table = { v: 1e17 };
+          let v: number = t.v;
+          return v;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The int-variant control under a declared {@code number} return: the
+     * read carrier's own variant wins, so the text stays the integer
+     * spelling the JVM sibling's boxed long emits.
+     */
+    private static final String NUMBER_INT_VARIANT_SOURCE = """
+        export async function run(): number {
+          let t: table = { v: 7 };
+          let v: number = t.v;
+          return v;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The non-finite number boundary: the completion passes the canonical
+     * matcher and the encoder's own finite check rejects it — a
+     * representation failure with the pinned message, never a value.
+     */
+    private static final String INFINITE_NUMBER_SOURCE = """
+        export async function run(): number {
+          let n: number = 1e300 * 1e300;
+          return n;
         }
 
         export function main(): null {
@@ -580,6 +664,37 @@ public class AsyncExportInvokerProductionTest {
             } finally {
                 deleteRecursively(intRead.root());
             }
+            checkNumberCompletion(backend, "number-arithmetic",
+                NUMBER_ARITHMETIC_SOURCE, "number", "5.0");
+            checkNumberCompletion(backend, "number-precision",
+                NUMBER_PRECISION_SOURCE, "number", "0.30000000000000004");
+            checkNumberCompletion(backend, "number-magnitude",
+                NUMBER_MAGNITUDE_SOURCE, "number", "1.0E17");
+            checkNumberCompletion(backend, "number-int-variant",
+                NUMBER_INT_VARIANT_SOURCE, "number", "7");
+        }
+    }
+
+    /**
+     * One scalar number completion through the public invoker: the text
+     * must be the shared value model's own spelling of the completion's
+     * variant (the JVM sibling's boxed-double/long text), never the
+     * default {@code tostring}'s lossy {@code %.14g} for a top-level
+     * scalar.
+     */
+    private static void checkNumberCompletion(String backend, String name,
+            String source, String descriptor, String expectedJson)
+            throws Exception {
+        Project project = compile(name + "-" + backend, backend,
+            String.format(PLAIN_MANIFEST, backend), source, null, null);
+        try {
+            Object result = invoke(project, "run", descriptor);
+            checkEq(valueResult(backend, descriptor, expectedJson), result,
+                backend + ": " + name + " completes " + expectedJson + ": "
+                    + result);
+            assertNoInternalKeys(backend, valueJson(result));
+        } finally {
+            deleteRecursively(project.root());
         }
     }
 
@@ -800,31 +915,42 @@ public class AsyncExportInvokerProductionTest {
      * (ISSUE-0749 review cycle 1, finding 2): a bytes completion passes
      * the canonical matcher (the declared bytes surface) and the encoding
      * step rejects it on both targets — a hard failure, never a DEAL code
-     * and never a value.
+     * and never a value. The non-finite number boundary is the same
+     * status through the encoder's own finite check.
      */
     private static void testRepresentationFailureBothTargets() throws Exception {
-        System.out.println("-- a bytes completion is a representation failure on both"
-            + " targets");
+        System.out.println("-- bytes and non-finite completions are representation"
+            + " failures on both targets");
         for (String backend : List.of("luajit", "jvm")) {
-            Project project = compile("bytes-completion-" + backend, backend,
-                String.format(PLAIN_MANIFEST, backend), BYTES_COMPLETION_SOURCE,
-                null, null);
-            try {
-                invoke(project, "run", "bytes");
-                check(false, backend + ": a bytes completion is a hard failure, never"
-                    + " a value");
-            } catch (LuaJitAsyncExportInvocationException
-                    | JvmAsyncExportInvocationException failure) {
-                check(failure.getMessage() != null
-                        && failure.getMessage().startsWith(
-                            "value-representation failure")
-                        && failure.getMessage().contains(
-                            "unsupported type for JSON encoding: bytes"),
-                    backend + ": the representation failure carries the pinned"
-                        + " encoder rejection: " + failure.getMessage());
-            } finally {
-                deleteRecursively(project.root());
-            }
+            assertRepresentationFailure(backend, "bytes-completion",
+                BYTES_COMPLETION_SOURCE, "bytes",
+                "unsupported type for JSON encoding: bytes");
+            assertRepresentationFailure(backend, "infinite-number",
+                INFINITE_NUMBER_SOURCE, "number",
+                "unsupported type for JSON encoding: number");
+        }
+    }
+
+    /** One completion the encoder must reject as a value-representation failure. */
+    private static void assertRepresentationFailure(String backend, String name,
+            String source, String descriptor, String pinnedReason)
+            throws Exception {
+        Project project = compile(name + "-" + backend, backend,
+            String.format(PLAIN_MANIFEST, backend), source, null, null);
+        try {
+            invoke(project, "run", descriptor);
+            check(false, backend + ": " + name + " is a hard failure, never"
+                + " a value");
+        } catch (LuaJitAsyncExportInvocationException
+                | JvmAsyncExportInvocationException failure) {
+            check(failure.getMessage() != null
+                    && failure.getMessage().startsWith(
+                        "value-representation failure")
+                    && failure.getMessage().contains(pinnedReason),
+                backend + ": the representation failure carries the pinned"
+                    + " encoder rejection: " + failure.getMessage());
+        } finally {
+            deleteRecursively(project.root());
         }
     }
 
