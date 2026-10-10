@@ -5,6 +5,7 @@ import deal.codegen.SemanticEmitterShared;
 import deal.semantic.HostDeclarationSurface;
 import deal.semantic.StdlibFunctionCatalog;
 import deal.semantic.ir.AdaptSourceRef;
+import deal.semantic.ir.AsyncLinkKind;
 import deal.semantic.ir.AsyncTokenId;
 import deal.semantic.ir.AsyncTokenOwner;
 import deal.semantic.ir.BindingCellKind;
@@ -6556,23 +6557,28 @@ public final class JvmSemanticEmitter {
                 throw new IllegalStateException("ASYNC_START(EXTERNAL) without "
                     + "its ExternalAsyncLink (producer defect)");
             }
+            // The entry returns this activation's own task instance and the
+            // awaiting token binds it, so a re-entrant activation resolves
+            // its own completion (never the nested activation's).
             if (projectSession) {
                 // The one production class carries the entry method: the
                 // reference resolves locally (and fails closed when the
                 // link names no emitted entry).
                 resolveExternalAsyncEntry(op, link);
-                out.append(indent(indent)).append("ae")
+                out.append(indent(indent)).append("JvmRuntime.bindEntryTask(")
+                    .append(token.tokenId()).append("L, (Long) ae")
                     .append(link.calleeTokenId().tokenId()).append("(")
                     .append(javaString(opKey(op.opId())))
                     .append(", false, new Object[]{")
-                    .append(String.join(", ", args)).append("});\n");
+                    .append(String.join(", ", args)).append("}));\n");
             } else {
-                out.append(indent(indent))
+                out.append(indent(indent)).append("JvmRuntime.bindEntryTask(")
+                    .append(token.tokenId()).append("L, (Long) ")
                     .append(sharedClassName(link.calleeModuleId().path()))
                     .append(".ae").append(link.calleeTokenId().tokenId()).append("(")
                     .append(javaString(opKey(op.opId())))
                     .append(", false, new Object[]{")
-                    .append(String.join(", ", args)).append("});\n");
+                    .append(String.join(", ", args)).append("}));\n");
             }
         }
 
@@ -6593,6 +6599,21 @@ public final class JvmSemanticEmitter {
         private void emitAwait(SemanticOp op, int indent) {
             KindPayload.AwaitPayload payload = (KindPayload.AwaitPayload) op.payload();
             long canonicalId = canonicalReferent(payload.token());
+            boolean externalLink = payload.token() instanceof AsyncTokenId.Alias alias
+                && alias.linkKind() == AsyncLinkKind.EXTERNAL_LINK;
+            // The activation's own task instance is taken after the drain:
+            // the nested activations the drain runs (an adapter-over-async
+            // source starts its nested entry inside the adapter task) push
+            // and take their own instances, so the slot's top is this
+            // activation's completion. An external-link token pairs by its
+            // own alias identity; every other token pairs by its canonical
+            // referent (entering the slot only when the referent is an
+            // external entry nested under an adapter).
+            String awaitCall = "JvmRuntime.awaitEntryTask("
+                + (externalLink
+                    ? payload.token().tokenId() + "L, true, "
+                    : canonicalId + "L, false, ")
+                + javaString(originOf(op)) + ")";
             SemanticOp boundary = opsById.get(payload.completionBoundaryOpId());
             KindPayload.BoundaryPayload boundaryPayload =
                 (KindPayload.BoundaryPayload) boundary.payload();
@@ -6602,9 +6623,7 @@ public final class JvmSemanticEmitter {
                 .append(";\n");
             out.append(indent(indent)).append("try {\n");
             out.append(indent(indent + 1)).append(awaited)
-                .append(" = JvmRuntime.awaitTask(")
-                .append(canonicalId).append(", ").append(javaString(originOf(op)))
-                .append(");\n");
+                .append(" = ").append(awaitCall).append(";\n");
             out.append(indent(indent)).append("} catch (JvmRuntime.DealError __e) {\n");
             emitFailureEvent(op.opId(), op.kind().name(), op, "JvmRuntime.errtext(__e)",
                 indent + 1);
@@ -6676,8 +6695,13 @@ public final class JvmSemanticEmitter {
                     .append(javaString(op.contract().canonicalDigest()))
                     .append(", __parent, List.of(), null, null);\n");
             }
-            out.append(indent(indent + 1)).append("JvmRuntime.startBodyTask(")
-                .append(op.opId().id()).append(", \"DEAL_BODY_TASK\", () -> {\n");
+            // Every activation runs its own task instance: the
+            // declaration's static entry token is never a replaceable task
+            // slot, so a re-entrant activation keeps the starter's task.
+            out.append(indent(indent + 1)).append("long __tk = ")
+                .append("JvmRuntime.newEntryTaskInstance();\n");
+            out.append(indent(indent + 1)).append("JvmRuntime.startBodyTask(__tk")
+                .append(", \"DEAL_BODY_TASK\", () -> {\n");
             out.append(indent(indent + 2)).append("String __prevM = "
                 + "JvmRuntime.currentModule();\n");
             out.append(indent(indent + 2)).append("String __prevModule = MODULE;\n");
@@ -6707,11 +6731,11 @@ public final class JvmSemanticEmitter {
                     .append(":DEAL_BODY_TASK\", null);\n");
             }
             out.append(indent(indent + 1)).append("if (__drive) {\n");
-            out.append(indent(indent + 2)).append("return JvmRuntime.awaitTask(")
-                .append(op.opId().id()).append(", ")
+            out.append(indent(indent + 2)).append("return JvmRuntime.awaitTask(__tk, ")
                 .append(javaString(originOf(op))).append(");\n");
             out.append(indent(indent + 1)).append("}\n");
-            out.append(indent(indent + 1)).append("return null;\n");
+            // The link caller receives this activation's own task instance.
+            out.append(indent(indent + 1)).append("return __tk;\n");
             out.append(indent(indent)).append("}\n");
         }
 

@@ -811,6 +811,21 @@ public final class SemanticOracle {
         final Map<Long, String> hostOperations = new LinkedHashMap<>();
 
         final Map<Long, Long> dynamicReferents = new LinkedHashMap<>();
+        /**
+         * The per-activation task instances of the external async linkage,
+         * keyed by the awaiting (caller-side) alias token: every entry
+         * activation runs its own task record, so a re-entrant activation
+         * (a recursive alias or a direct await of an exported declaration)
+         * never replaces a live task. The slots are LIFO: every nested
+         * activation completes under the drain before its starter's AWAIT
+         * takes its own instance back.
+         */
+        final Map<Long, ArrayDeque<Long>> externalEntryInstances = new HashMap<>();
+        /**
+         * The per-activation entry task instance sequence (negative: an
+         * instance id never collides with an allocated token identity).
+         */
+        long entryTaskSequence = 0;
         /** The heap function value → resolved execution binding index. */
         final IdentityHashMap<Value, FunctionExecutionBinding> bindingsByValue =
             new IdentityHashMap<>();
@@ -4699,7 +4714,8 @@ public final class SemanticOracle {
                     long calleeTokenId =
                         payload.externalAsyncLink().calleeTokenId().tokenId();
                     SemanticOp entry = opOf(new OpId(external.moduleId(), calleeTokenId));
-                    executeAsyncEntry(entry, op.opId(), checkedArgs, calleeTokenId);
+                    executeAsyncEntry(entry, op.opId(), checkedArgs, calleeTokenId,
+                        token.tokenId());
                 }
                 case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
 
@@ -4985,9 +5001,27 @@ public final class SemanticOracle {
                 + "source ASYNC_START (producer defect)");
         }
 
-        /** The callee unit's async EXTERNAL_ENTRY under the triggering caller op. */
+        /**
+         * The callee unit's async EXTERNAL_ENTRY under the triggering caller
+         * op, keyed by the entry's canonical token: the top-level drive and
+         * the dynamic dispatch (
+         * {@code DynamicResolutionKind.EXTERNAL}) resolve the completed task
+         * through that identity.
+         */
         private void executeAsyncEntry(SemanticOp entry, OpId callerOpId, List<Value> args,
                                        long canonicalTokenId) {
+            executeAsyncEntry(entry, callerOpId, args, canonicalTokenId, null);
+        }
+
+        /**
+         * One external async entry activation. When the activation belongs
+         * to a caller-side link ({@code awaitingTokenId} non-null), the task
+         * record is a fresh per-activation instance and the starter binds it
+         * to the awaiting token; a re-entrant activation therefore never
+         * replaces the live task of its starter.
+         */
+        private void executeAsyncEntry(SemanticOp entry, OpId callerOpId, List<Value> args,
+                                       long canonicalTokenId, Long awaitingTokenId) {
             KindPayload.ExternalEntryPayload entryPayload =
                 (KindPayload.ExternalEntryPayload) entry.payload();
             if (!entryPayload.async()) {
@@ -4996,10 +5030,44 @@ public final class SemanticOracle {
             }
             AsyncTokenId token = new AsyncTokenId.Canonical(canonicalTokenId,
                 AsyncTokenOwner.DEAL_BODY_TASK);
+            long taskId = canonicalTokenId;
+            if (awaitingTokenId != null) {
+                taskId = --entryTaskSequence;
+                externalEntryInstances
+                    .computeIfAbsent(awaitingTokenId, key -> new ArrayDeque<>())
+                    .push(taskId);
+            }
             emitStartParented(entry, callerOpId, List.of());
-            tasks.put(canonicalTokenId, new Task(token, () -> runEntryTask(entry, args)));
-            readyQueue.add(canonicalTokenId);
+            tasks.put(taskId, new Task(token, () -> runEntryTask(entry, args)));
+            readyQueue.add(taskId);
             emitSuccessParented(entry, callerOpId, tokenAtom(token));
+        }
+
+        /**
+         * The awaiting activation's own entry task instance: the LIFO slot
+         * of the external-link alias token, taken after the drain. An
+         * adapter-over-async token ({@code ADAPTER_INNER}) resolves the
+         * nested source token instead, which is activation-bound exactly
+         * when the nested source is an external entry; a nested source that
+         * owns no per-activation instance (a DEAL body, host operation, or
+         * intrinsic) keeps its static task key.
+         */
+        private long takeExternalEntryInstance(AsyncTokenId awaitedToken) {
+            if (awaitedToken instanceof AsyncTokenId.Alias alias
+                    && alias.linkKind() == AsyncLinkKind.EXTERNAL_LINK) {
+                ArrayDeque<Long> slot = externalEntryInstances.get(alias.tokenId());
+                if (slot == null || slot.isEmpty()) {
+                    throw new IllegalStateException("AWAIT consumes an unbound external "
+                        + "token " + awaitedToken + " (producer defect)");
+                }
+                return slot.pop();
+            }
+            long referent = canonicalReferent(awaitedToken);
+            ArrayDeque<Long> slot = externalEntryInstances.get(referent);
+            if (slot != null && !slot.isEmpty()) {
+                return slot.pop();
+            }
+            return referent;
         }
 
         /** One async entry body task (the callee unit's canonical token task). */
@@ -5119,8 +5187,13 @@ public final class SemanticOracle {
          */
         private String executeAwait(SemanticOp op) {
             KindPayload.AwaitPayload payload = (KindPayload.AwaitPayload) op.payload();
+            // The activation pairing is taken after the drain: the nested
+            // activations the drain runs (an adapter-over-async source
+            // starts its nested entry inside the adapter task) push and
+            // take their own instances, so the slot's top is this
+            // activation's completion.
             drainReadyTasks();
-            long canonicalId = canonicalReferent(payload.token());
+            long canonicalId = takeExternalEntryInstance(payload.token());
             Task task = tasks.get(canonicalId);
             if (task == null) {
                 throw new IllegalStateException("AWAIT consumes an unbound token "
