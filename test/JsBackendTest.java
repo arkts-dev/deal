@@ -164,6 +164,7 @@ public class JsBackendTest {
             testBackendSelectionNames();
             testDealJsonBackendAcceptance();
             testCliDefaultOutputBuildJs();
+            testElseIfChainWithoutFinalElse();
             testOrchestratorDeploymentCopies();
             testNoPartialArtifactOnRejection();
         } finally {
@@ -5005,6 +5006,178 @@ public class JsBackendTest {
             check(!output.contains("E2010") && !output.contains("E6000"),
                 "no E2010/E6000 for the production js manifest backend: "
                     + output);
+        } finally {
+            deleteDir(projectDir);
+        }
+    }
+
+    /**
+     * The GitHub #7 report's exact source: the public CLI case. The
+     * absent-terminal-else chain must select the later branch, so the
+     * artifact's entry shim prints "pick ok" and exits 0.
+     */
+    private static final String ELSE_IF_REPRODUCER = """
+        import * as console from "std/console";
+        function pick(n: int): int {
+          let r: int = 0;
+          if (n === 1) { r = 10; }
+          else if (n === 2) { r = 20; }
+          return r;
+        }
+        export function main(): null {
+          if (pick(2) === 20) { console.log("pick ok"); }
+          return null;
+        }
+        """;
+
+    /**
+     * The reusable GitHub #7 regression subject: a two-arm else-if
+     * chain whose terminal else is absent ({@code terminalElse} false)
+     * or present. The exported zero-arity drivers expose the
+     * first-branch (10), later-branch (20) and unmatched (0 without the
+     * terminal else, 30 with it) results to the artifact runner, so the
+     * migrated semantic-IR route can drive the same subject after it
+     * replaces this AST route.
+     */
+    private static String elseIfChainSubject(boolean terminalElse) {
+        String elseClause = terminalElse ? "  else { r = 30; }\n" : "";
+        return """
+            function pick(n: int): int {
+              let r: int = 0;
+              if (n === 1) { r = 10; }
+              else if (n === 2) { r = 20; }
+            %s  return r;
+            }
+            export function firstBranch(): int { return pick(1); }
+            export function laterBranch(): int { return pick(2); }
+            export function unmatchedBranch(): int { return pick(3); }
+            """.formatted(elseClause);
+    }
+
+    /**
+     * GitHub #7: an else-if chain whose terminal else is absent is valid
+     * language syntax and must emit a closed chain that selects the
+     * matching branch and leaves the value unchanged when no branch
+     * matches. The branch matrix and the final-else control run through
+     * the real frontend → JsBackend → node chain; the public
+     * release-owned path compiles the issue's exact project with zero
+     * diagnostics and executes the published CommonJS artifact under
+     * the real node binary.
+     */
+    private static void testElseIfChainWithoutFinalElse() throws Exception {
+        System.out.println("-- Node: else-if chains with an absent terminal else"
+            + " (GitHub #7) --");
+
+        if (nodeAvailable) {
+            NodeResult noTerminalElse = runDealNode(elseIfChainSubject(false),
+                "else-if-no-final-else");
+            check(noTerminalElse.exitCode() == 0
+                    && noTerminalElse.output().equals("10\n20\n0"),
+                "the absent-terminal-else chain returns the first branch"
+                    + " (10), the later branch (20) and the unchanged value"
+                    + " (0) when no branch matches: exit "
+                    + noTerminalElse.exitCode() + ", output '"
+                    + noTerminalElse.output() + "'");
+
+            NodeResult terminalElse = runDealNode(elseIfChainSubject(true),
+                "else-if-final-else-control");
+            check(terminalElse.exitCode() == 0
+                    && terminalElse.output().equals("10\n20\n30"),
+                "the final-else control keeps first 10, later 20 and the"
+                    + " terminal-else unmatched result 30: exit "
+                    + terminalElse.exitCode() + ", output '"
+                    + terminalElse.output() + "'");
+        } else {
+            skipNode("else-if chain branch matrix");
+        }
+
+        Path projectDir = Files.createTempDirectory("deal_js_elseif_test_");
+        try {
+            Files.writeString(projectDir.resolve("deal.json"), """
+                {
+                  "languageVersion": "1.2",
+                  "stdlib": "1.2",
+                  "moduleRoots": ["src"],
+                  "backend": "js",
+                  "output": "build/js",
+                  "dependencies": {},
+                  "externals": {}
+                }
+                """, StandardCharsets.UTF_8);
+            Files.createDirectories(projectDir.resolve("src"));
+            Path entry = projectDir.resolve("src/main.deal");
+            Files.writeString(entry, ELSE_IF_REPRODUCER,
+                StandardCharsets.UTF_8);
+            Path diagnosticsJson = projectDir.resolve("diagnostics.json");
+
+            // The public release-owned CLI surface: the release-owned
+            // invocation and the whole-project publication, with the
+            // source-map sidecars enabled on the same run.
+            Path buildDir = Path.of("build").toAbsolutePath().normalize();
+            Process process = new ProcessBuilder(
+                "java", "-ea", "-cp", buildDir.toString(), "deal.Main",
+                "compile", entry.toString(), "--source-map",
+                "--diagnostics-json", diagnosticsJson.toString())
+                .directory(Path.of("").toAbsolutePath().normalize().toFile())
+                .redirectErrorStream(true)
+                .start();
+            String output;
+            try (InputStream in = process.getInputStream()) {
+                output = new String(in.readAllBytes(),
+                    StandardCharsets.UTF_8);
+            }
+            if (!process.waitFor(120, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                check(false, "else-if CLI subprocess timed out");
+                return;
+            }
+            check(process.exitValue() == 0,
+                "the public CLI compile of the GitHub #7 project exits 0: "
+                    + output);
+            check(Files.isRegularFile(diagnosticsJson),
+                "the public compile writes the structured diagnostics"
+                    + " document");
+            if (Files.isRegularFile(diagnosticsJson)) {
+                String diag = Files.readString(diagnosticsJson);
+                check(diag.contains("\"version\": 1")
+                        && diag.contains("\"diagnostics\": []"),
+                    "the public compile succeeds with zero diagnostics: "
+                        + diag);
+            }
+
+            Path outputRoot = projectDir.resolve("build/js");
+            Path artifact = outputRoot.resolve("main.js");
+            check(Files.isRegularFile(artifact),
+                "the published artifact build/js/main.js exists");
+            check(Files.isRegularFile(outputRoot.resolve("deal/runtime.js")),
+                "the published output deploys deal/runtime.js");
+
+            Path sidecar = outputRoot.resolve("main.deal.map.json");
+            check(Files.isRegularFile(sidecar),
+                "the --source-map sidecar is written for the chain module");
+            if (Files.isRegularFile(sidecar)) {
+                String json = Files.readString(sidecar);
+                check(json.contains("\"version\": 1")
+                        && json.contains("\"source\": \"src/main.deal\"")
+                        && json.contains(
+                            "\"generated\": \"build/js/main.js\""),
+                    "the sidecar keeps the spec version and the project-"
+                        + "relative source/generated paths: " + json);
+                check(json.contains("\"sourceLine\": 5"),
+                    "the sidecar maps the later branch's source line 5: "
+                        + json);
+            }
+
+            if (nodeAvailable && Files.isRegularFile(artifact)) {
+                NodeResult run = runNodeScript(outputRoot, "main.js");
+                check(run.exitCode() == 0 && run.output().equals("pick ok"),
+                    "the published CommonJS artifact runs under the real"
+                        + " node binary, prints \"pick ok\" and exits 0:"
+                        + " exit " + run.exitCode() + ", output '"
+                        + run.output() + "'");
+            } else {
+                skipNode("GitHub #7 published artifact");
+            }
         } finally {
             deleteDir(projectDir);
         }

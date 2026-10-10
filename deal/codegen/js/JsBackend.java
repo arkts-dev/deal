@@ -2248,9 +2248,16 @@ public final class JsBackend {
 
     /**
      * The else-if / else chain: each {@code else if} condition crosses
-     * the boolean boundary; the chain closes exactly once.
+     * the boolean boundary; the chain closes exactly once. The terminal
+     * else is optional language syntax, so an absent terminal else
+     * closes the last branch's brace and leaves the values untouched
+     * when no branch matches.
      */
     private void emitElseChain(IfStatement node) {
+        if (node.elseBranch().isEmpty()) {
+            line("}");
+            return;
+        }
         switch (node.elseBranch().get()) {
             case Either.Left<IfStatement, Block> left -> {
                 IfStatement elseIf = left.value();
