@@ -32,8 +32,10 @@ import java.util.Objects;
  *
  * <p>The outcome mapping is the shared three-variant contract:
  * {@code value} → {@link Result.Value}, {@code deal-error} →
- * {@link Result.DealError} (the JVM emitted errors carry no source
- * location, so the location fields stay null), {@code host-failure} →
+ * {@link Result.DealError} (the emitted host surface preserves the carried
+ * source origin — file plus line/column — so the location fields are the
+ * error's own and stay {@code null} only for a genuinely absent origin),
+ * {@code host-failure} →
  * {@link Result.HostFailure}; representation/infrastructure failures, a
  * missing or malformed envelope, and unknown statuses throw
  * {@link JvmAsyncExportInvocationException} with the captured output.</p>
@@ -93,8 +95,9 @@ public class JvmAsyncExportInvoker {
         /**
          * A DEAL Error raised by module initialization, {@code main()},
          * the operation, or the completion matcher — propagated with code
-         * and message unchanged. The JVM emitted errors carry no source
-         * location, so the location fields stay {@code null}.
+         * and message unchanged, and with the carried source location
+         * projected into the location fields (absent fields are
+         * {@code null}).
          */
         record DealError(String code, String message, String file,
                          Integer line, Integer column) implements Result {

@@ -3176,6 +3176,15 @@ public final class JvmRuntime {
         deal.codegen.AsyncExportEnvelope.RESULT_PREFIX;
 
     /**
+     * The trailing {@code file:line:column} origin text the emitted
+     * artifact threads into every {@link DealError} (the emitter's
+     * {@code originOf} form; the same text the LuaJIT lane's closed
+     * failure carrier holds in its {@code o} field).
+     */
+    private static final java.util.regex.Pattern ASYNC_EXPORT_ERROR_ORIGIN =
+        java.util.regex.Pattern.compile("^(.*):(\\d+):(\\d+)$");
+
+    /**
      * One registry row of the reserved async-export host surface (the
      * emitted entry class's declared exports): the export name, the
      * declaration's canonical spec text, the row kind ({@code "f"} for a
@@ -3279,6 +3288,40 @@ public final class JvmRuntime {
             appendJsonString(sb, String.valueOf(fields[i]));
             sb.append(':');
             appendJsonString(sb, String.valueOf(fields[i + 1]));
+        }
+        return sb.append('}').toString();
+    }
+
+    /**
+     * The {@code deal-error} envelope line of one propagated DEAL error
+     * (the shared protocol's one projection of a {@link DealError}): the
+     * runtime half's field set with the carried source origin preserved —
+     * the origin text's {@code file:line:column} split into the envelope's
+     * {@code file} string and the {@code line}/{@code column} JSON
+     * integers, so a production caller can locate the operation, await,
+     * or {@code main} failure. The location fields are omitted only for a
+     * genuinely absent origin ({@code null} or the emitter's {@code "-"}
+     * absence marker); an origin that does not carry the trailing
+     * line/column pair still projects its file text, never nothing.
+     */
+    public static String asyncExportDealErrorEnvelope(String code, String message,
+                                                      String origin) {
+        StringBuilder sb = new StringBuilder(ASYNC_EXPORT_RESULT_PREFIX);
+        sb.append("{\"status\":\"deal-error\",\"code\":");
+        appendJsonString(sb, String.valueOf(code));
+        sb.append(",\"message\":");
+        appendJsonString(sb, String.valueOf(message));
+        if (origin != null && !origin.isEmpty() && !"-".equals(origin)) {
+            java.util.regex.Matcher parsed = ASYNC_EXPORT_ERROR_ORIGIN.matcher(origin);
+            if (parsed.matches()) {
+                sb.append(",\"file\":");
+                appendJsonString(sb, parsed.group(1));
+                sb.append(",\"line\":").append(parsed.group(2));
+                sb.append(",\"column\":").append(parsed.group(3));
+            } else {
+                sb.append(",\"file\":");
+                appendJsonString(sb, origin);
+            }
         }
         return sb.append('}').toString();
     }

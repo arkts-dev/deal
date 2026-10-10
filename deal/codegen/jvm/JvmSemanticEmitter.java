@@ -658,8 +658,9 @@ public final class JvmSemanticEmitter {
                 // Production terminal: a DEAL failure publishes the
                 // retained DEAL_ERROR_CODE line on stdout and exits 1;
                 // the reserved async-export host mode publishes the
-                // shared deal-error envelope instead (the invoker's
-                // child-process contract).
+                // shared deal-error envelope — the carried source origin
+                // included (file plus integer line/column) — instead (the
+                // invoker's child-process contract).
                 out.append("    boolean __hostInvocation = args.length > 0 && ")
                     .append(javaString(JvmNames.ASYNC_EXPORT_HOST_ARG))
                     .append(".equals(args[0]);\n");
@@ -667,7 +668,7 @@ public final class JvmSemanticEmitter {
                 out.append("      dealMain();\n");
                 out.append("    } catch (JvmRuntime.DealError e) {\n");
                 out.append("      if (__hostInvocation) {\n");
-                out.append("        System.out.println(JvmRuntime.asyncExportEnvelope(\"deal-error\", \"code\", e.code, \"message\", e.msg));\n");
+                out.append("        System.out.println(JvmRuntime.asyncExportDealErrorEnvelope(e.code, e.msg, e.origin));\n");
                 out.append("        System.out.flush();\n");
                 out.append("        return;\n");
                 out.append("      }\n");
@@ -6918,7 +6919,7 @@ public final class JvmSemanticEmitter {
             out.append("      }\n");
             out.append("      return JvmRuntime.asyncExportEnvelope(\"value\", \"descriptor\", returnDescriptor, \"value\", valueJson);\n");
             out.append("    } catch (JvmRuntime.DealError e) {\n");
-            out.append("      return JvmRuntime.asyncExportEnvelope(\"deal-error\", \"code\", e.code, \"message\", e.msg);\n");
+            out.append("      return JvmRuntime.asyncExportDealErrorEnvelope(e.code, e.msg, e.origin);\n");
             out.append("    } catch (Throwable t) {\n");
             out.append("      return JvmRuntime.asyncExportEnvelope(\"infrastructure-failure\", \"reason\", t.getMessage() == null ? String.valueOf(t) : t.getMessage());\n");
             out.append("    }\n");

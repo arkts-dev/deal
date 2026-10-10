@@ -569,6 +569,14 @@ public final class LuaSemanticEmitter {
             out.append(preludeWithArms());
             out.append(PRELUDE_ASYNC);
             out.append(JSON_PRELUDE);
+            if (carriesAsyncExportWrapper()) {
+                // The published async-export wrapper projects the
+                // declaration's completion into the deployed runtime's
+                // representation before the runtime half validates and the
+                // driver encodes it; the helper is emitted exactly when
+                // such a wrapper exists.
+                out.append(ASYNC_EXPORT_COMPLETION_PRELUDE);
+            }
             if (!trace) {
                 // Production: the event helpers are no-ops.
                 out.append("__ev = function() end\n");
@@ -5236,10 +5244,14 @@ public final class LuaSemanticEmitter {
          * carried sig {@code async()->R} and the returned value agree
          * with the runtime half's host contract — a raw body call would
          * return the completion value of a synchronous execution and
-         * the host half would reject it as a non-operation. The runtime
-         * is required lazily, inside the wrapper, so a chunk that only
-         * carries the export surface keeps loading without a deployed
-         * runtime.
+         * the host half would reject it as a non-operation. The
+         * activation's completion is projected into the deployed
+         * runtime's own representation ({@link
+         * #ASYNC_EXPORT_COMPLETION_PRELUDE}) before the runtime half's
+         * canonical matcher and the driver's encoder observe it. The
+         * runtime is required lazily, inside the wrapper, so a chunk
+         * that only carries the export surface keeps loading without a
+         * deployed runtime.
          */
         private String exportCallable(SemanticOp op,
                 KindPayload.ExportPublishPayload payload) {
@@ -5249,9 +5261,35 @@ public final class LuaSemanticEmitter {
                 return "__unfn(" + slot(payload.value()) + ")";
             }
             return "function() local __rtAsync = require(\"deal.runtime\");"
-                + " return __rtAsync.async_start(function() return "
-                + "__asyncEntries[" + luaString(payload.module().path() + "#"
-                    + payload.name()) + "](nil, true) end) end";
+                + " return __rtAsync.async_start(function() return"
+                + " __asyncExportCompletion(__rtAsync, __asyncEntries["
+                + luaString(payload.module().path() + "#" + payload.name())
+                + "](nil, true)) end) end";
+        }
+
+        /**
+         * Whether the emitted chunk publishes at least one async-export
+         * wrapper: an exported async declaration carrying its recorded
+         * async {@code EXTERNAL_ENTRY}. The wrapper's completion
+         * projection helper is emitted exactly when one exists.
+         */
+        private boolean carriesAsyncExportWrapper() {
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                for (SemanticOp candidate : moduleUnit.ops()) {
+                    if (candidate.kind() != SemanticOpKind.EXPORT_PUBLISH) {
+                        continue;
+                    }
+                    KindPayload.ExportPublishPayload payload =
+                        (KindPayload.ExportPublishPayload) candidate.payload();
+                    if (payload.descriptor() instanceof RuntimeDescriptor.Func func
+                            && func.isAsync()
+                            && asyncExportEntry(payload.module(), payload.name())
+                                != null) {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         /**
@@ -9986,6 +10024,48 @@ local function __adaptInvoke(w, origin, ...)
   if __switched then __module = __savedModule end
   if not __okA then error(__vA, 0) end
   return __vA
+end
+""";
+
+    /**
+     * The async-export completion projection (the chunk-to-deployed-runtime
+     * representation bridge of the published wrapper). Emitted exactly
+     * when the chunk publishes at least one async-export wrapper.
+     */
+    private static final String ASYNC_EXPORT_COMPLETION_PRELUDE = """
+-- The completion projection of the published async-export wrapper: the
+-- deployed runtime's invoke_async_export validates the completion with the
+-- runtime's canonical matcher and the driver encodes the checked value
+-- with std/json, so the wrapper hands over the ABI representation — the
+-- language null as the runtime's own __NULL sentinel, an array carrier as
+-- its plain 1-based element table, and a table carrier as its plain field
+-- table (the presence map, the first-insertion order list, and the slot
+-- marks stripped). Nested containers and null slots project recursively;
+-- scalars, bytes, function carriers, and every other value pass through
+-- unchanged, so the driver's representation-failure classification keeps
+-- its authority over the non-encodable surface.
+local function __asyncExportCompletion(__rtAsync, v)
+  if v == nil or v == __NULL or v == __MISSING then return __rtAsync.__NULL end
+  if type(v) ~= "table" then return v end
+  if v.__a then
+    local out = {}
+    for i = 1, v.__n do
+      out[i] = __asyncExportCompletion(__rtAsync, v[i])
+    end
+    return out
+  end
+  if v.__t then
+    local out = {}
+    local order = v.__order
+    if type(order) == "table" then
+      for i = 1, #order do
+        local key = order[i]
+        out[key] = __asyncExportCompletion(__rtAsync, v[key])
+      end
+    end
+    return out
+  end
+  return v
 end
 """;
 
