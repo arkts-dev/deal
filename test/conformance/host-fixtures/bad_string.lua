@@ -2,7 +2,12 @@
 -- strings exercise the DEAL v1.2 string carrier classes.  The declared
 -- string boundary rejects the malformed and surrogate code point encodings
 -- and admits the valid ones; the raw carrier decodes at scalar and array
--- element positions (including nested and nullable element positions).
+-- element positions (including nested and nullable element positions). The
+-- nullable nested-array export carries one explicit null element, which must
+-- stay the language null, and the nested-tail export is rejected at its
+-- later element, so its earlier elements must stay the raw host values.
+
+local rt = require("deal.runtime")
 
 local M = {}
 
@@ -47,6 +52,22 @@ end
 -- carrier: the element projection recurses through the nullable position.
 function M.rawNullableStringArray()
   return { "ok" }
+end
+
+-- Returns a declared (string[] | null)[] carrying one explicit null and one
+-- nested array: the null element must project to the language null (the
+-- deployed runtime's sentinel normalizes to the chunk's own, never an empty
+-- array carrier) and the nested array's element must stay readable.
+function M.rawNullableArrayArray()
+  return { rt.__NULL, { "ok" } }
+end
+
+-- Returns a declared string[][] whose second element is not an array: the
+-- declared return is rejected with the element arm, and the retained first
+-- element must stay the raw host value (a Lua string is the raw carrier
+-- here, so a failed return projects nothing).
+function M.badNestedTail()
+  return { { "ok" }, "not an array" }
 end
 
 return M

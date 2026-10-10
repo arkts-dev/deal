@@ -1338,14 +1338,31 @@ final class JvmHostAbiEmission {
      * declared array check recurses and returns the same production array
      * with every element canonically projected (a raw backend-native
      * string carrier decodes into its UTF-16 carrier), preserving the
-     * array identity and mutating nothing when an element fails.
+     * array identity. The projection is staged, never applied while the
+     * check walks: the entry point collects every element conversion of
+     * the complete enclosing cell and commits them only after the whole
+     * cell passes, so a failed check mutates nothing — a nested array's
+     * converted slot can never be observed through a retained alias when a
+     * later sibling element rejects the return — while a passing check
+     * lands the conversions back in the same production arrays.
      */
     private void emitCheckValue(StringBuilder out) {
         out.append("  static java.lang.Object __hostCheckValue(java.lang.String d,"
             + " java.lang.Object v, java.lang.String oFile, int oLine, int oCol) {\n");
+        out.append("    java.util.ArrayList<java.lang.Object[]> __pending = new java.util.ArrayList<>();\n");
+        out.append("    java.lang.Object __checked = __hostCheckPlan(d, v, oFile, oLine, oCol, __pending);\n");
+        out.append("    for (int __u = 0; __u < __pending.size(); __u++) {\n");
+        out.append("      java.lang.Object[] __update = __pending.get(__u);\n");
+        out.append("      ((JvmRuntime.Array) __update[0]).elements.set(((java.lang.Integer) __update[1]).intValue(), __update[2]);\n");
+        out.append("    }\n");
+        out.append("    return __checked;\n");
+        out.append("  }\n\n");
+        out.append("  static java.lang.Object __hostCheckPlan(java.lang.String d,"
+            + " java.lang.Object v, java.lang.String oFile, int oLine, int oCol,"
+            + " java.util.ArrayList<java.lang.Object[]> __pending) {\n");
         out.append("    if (d.startsWith(\"?\")) {\n");
         out.append("      if (v == null) return null;\n");
-        out.append("      return __hostCheckValue(d.substring(1), v, oFile, oLine, oCol);\n");
+        out.append("      return __hostCheckPlan(d.substring(1), v, oFile, oLine, oCol, __pending);\n");
         out.append("    }\n");
         out.append("    if (d.equals(\"null\")) { if (v == null) return null; throw __hostFail(JvmRuntime.kindReason(\"null\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.equals(\"boolean\")) { if (v instanceof java.lang.Boolean) return v; throw __hostFail(JvmRuntime.kindReason(\"boolean\"), d, v, oFile, oLine, oCol); }\n");
@@ -1371,7 +1388,7 @@ final class JvmHostAbiEmission {
         // `__hostBytesToDeal` keep an out-and-back buffer one buffer.
         out.append("    if (d.equals(\"bytes\")) { if (v instanceof $DealRt.Bytes || v instanceof JvmRuntime.BytesValue) return v; throw __hostFail(JvmRuntime.kindReason(\"bytes\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.equals(\"table\")) { if (v instanceof JvmRuntime.Table) return v; throw __hostFail(JvmRuntime.kindReason(\"table\"), d, v, oFile, oLine, oCol); }\n");
-        out.append("    if (d.startsWith(\"[\")) { return __hostCheckArray(d, v, oFile, oLine, oCol); }\n");
+        out.append("    if (d.startsWith(\"[\")) { return __hostCheckArrayPlan(d, v, oFile, oLine, oCol, __pending); }\n");
         out.append("    if (d.startsWith(\"(\") || d.startsWith(\"async(\")) {\n");
         out.append("      java.lang.String __carried = null;\n");
         out.append("      if (v instanceof $DealRt.FnValue __f) { __carried = __f.descriptor(); }\n");
@@ -1383,25 +1400,28 @@ final class JvmHostAbiEmission {
         out.append("    if (d.startsWith(\"@\")) { return __hostCheckIdentity(d, v, oFile, oLine, oCol); }\n");
         out.append("    throw __hostFail(JvmRuntime.kindReason(d), d, v, oFile, oLine, oCol);\n");
         out.append("  }\n\n");
-        out.append("  static java.lang.Object __hostCheckArray(java.lang.String d,"
-            + " java.lang.Object v, java.lang.String oFile, int oLine, int oCol) {\n");
+        out.append("  static java.lang.Object __hostCheckArrayPlan(java.lang.String d,"
+            + " java.lang.Object v, java.lang.String oFile, int oLine, int oCol,"
+            + " java.util.ArrayList<java.lang.Object[]> __pending) {\n");
         out.append("    java.lang.String __inner = d.substring(1, d.length() - 1);\n");
         out.append("    if (v instanceof JvmRuntime.Array __arr) {\n");
         // The element check is also the element projection: a declared
         // string cell returns the decoded value for the raw UTF-8 byte
         // carrier, and a nested array cell returns the same array with
-        // its own elements canonically projected. The checked results
-        // land back in the production array after every element passes
-        // (array identity and the failure state are preserved: a failed
-        // check mutates nothing), so a value admitted here is usable by
-        // ordinary DEAL reads at the same array identity.
+        // its own elements canonically projected. The results are staged
+        // in the pending plan, never committed here: the entry point
+        // applies the complete enclosing cell's plan only after every
+        // element of every level passed, so a partial (nested) success
+        // followed by an outer failure mutates nothing, and a passing
+        // check lands the decoded elements back in the same production
+        // arrays.
         out.append("      java.util.ArrayList<java.lang.Object> __checked = new java.util.ArrayList<>(__arr.elements.size());\n");
         out.append("      for (int __i = 0; __i < __arr.elements.size(); __i++) {\n");
         out.append("        java.lang.Object __e = __arr.elements.get(__i);\n");
-        out.append("        try { __checked.add(__hostCheckValue(__inner, __e, oFile, oLine, oCol)); }\n");
+        out.append("        try { __checked.add(__hostCheckPlan(__inner, __e, oFile, oLine, oCol, __pending)); }\n");
         out.append("        catch (JvmRuntime.DealError __leaf) { throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.ARRAY_ELEMENT_KIND, java.util.Map.of(\"oneBasedIndex\", java.lang.Integer.toString(__i + 1)), oFile + \":\" + oLine + \":\" + oCol, __inner, __hostKind(__e)); }\n");
         out.append("      }\n");
-        out.append("      for (int __i = 0; __i < __checked.size(); __i++) { __arr.elements.set(__i, __checked.get(__i)); }\n");
+        out.append("      for (int __i = 0; __i < __checked.size(); __i++) { __pending.add(new java.lang.Object[]{ __arr, java.lang.Integer.valueOf(__i), __checked.get(__i) }); }\n");
         out.append("      return v;\n");
         out.append("    }\n");
         for (Map.Entry<String, String> carrier : declaredArrayCarriers().entrySet()) {

@@ -98,8 +98,12 @@ import java.util.stream.Stream;
  *       valid) through a generated host-importing entry: every invalid
  *       class renders the complete pinned tuple on all three consumers, and
  *       every valid control's decoded value (the raw UTF-8 byte carrier at
- *       scalar, array, nested-array, and nullable-element positions) is
- *       consumed by the entry body.</li>
+ *       scalar, array, nested-array, nullable-element, and nullable
+ *       nested-array positions) is consumed by the entry body. A declared
+ *       nested tail that fails at a later element renders the element
+ *       composite on all three consumers, and the JVM probe observes that
+ *       the rejected return left every retained slot and the nested array
+ *       alias untouched.</li>
  *   <li><b>The closed arm table's renderer identity.</b> Every declared
  *       arm renders its own template with the same named parameters,
  *       expected token, and actual token from the registry renderer, the
@@ -709,6 +713,27 @@ public class CanonicalProjectionParityTest {
                             new SemanticOracle.Value.ArrayValue(List.of(
                                 new SemanticOracle.Value.StrValue("ok")),
                                 RuntimeDescriptor.parseCanonicalText("?string"),
+                                false));
+                        // The nullable nested-array position: the explicit
+                        // null element and the decoded array sibling.
+                        case "rawNullableArrayArray" -> new SyncOutcome.Returned(
+                            new SemanticOracle.Value.ArrayValue(List.of(
+                                SemanticOracle.Value.NullValue.INSTANCE,
+                                new SemanticOracle.Value.ArrayValue(List.of(
+                                    new SemanticOracle.Value.StrValue("ok")),
+                                    RuntimeDescriptor.String.INSTANCE, false)),
+                                RuntimeDescriptor.parseCanonicalText("?[string]"),
+                                false));
+                        // The rejected nested tail: element 2 is not the
+                        // declared nested array, so the return fails the
+                        // element arm after element 1 was checked.
+                        case "badNestedTail" -> new SyncOutcome.Returned(
+                            new SemanticOracle.Value.ArrayValue(List.of(
+                                new SemanticOracle.Value.ArrayValue(List.of(
+                                    new SemanticOracle.Value.StrValue("ok")),
+                                    RuntimeDescriptor.String.INSTANCE, false),
+                                new SemanticOracle.Value.StrValue("not an array")),
+                                RuntimeDescriptor.parseCanonicalText("[string]"),
                                 false));
                         default -> throw new IllegalStateException(
                             "the bad_string host seam scripts no export '"
@@ -1678,6 +1703,68 @@ public class CanonicalProjectionParityTest {
         }
         """;
 
+    /** The nullable nested-array element control (ISSUE-0760 cycle 2). */
+    private static final String HOST_CARRIER_NULLABLE_ARRAY_DRIVER = """
+        import * as host from "host/bad_string"
+
+        export function main(): null {
+          let xs: (string[] | null)[] = host.rawNullableArrayArray()
+          let first: string[] | null = xs[0]
+          if (first !== null) {
+            throw { code: "PROBE_NULLABLE_ARRAY", message: "the null nested array element decoded to a non-null value" }
+          }
+          let second: string[] | null = xs[1]
+          if (second !== null) {
+            let s: string = second[0]
+            if (s !== "ok") {
+              throw { code: "PROBE_NULLABLE_ARRAY", message: "the nested raw host string element did not decode to 'ok'" }
+            }
+            return null
+          }
+          throw { code: "PROBE_NULLABLE_ARRAY", message: "the non-null nested array element decoded to null" }
+        }
+        """;
+
+    /**
+     * The rejected nested tail (ISSUE-0760 cycle 2, finding 2): the
+     * declared {@code string[][]} return carries one checked nested array
+     * followed by a non-array element, so the return fails the element arm
+     * after a nested conversion was computed. The complete composite tuple
+     * is asserted on all three consumers, and the JVM probe observes the
+     * retained slots and the array alias after the rejection.
+     */
+    private static final String HOST_CARRIER_NESTED_TAIL_DRIVER = """
+        import * as host from "host/bad_string"
+
+        export function main(): null {
+          let xs: string[][] = host.badNestedTail()
+          let s: string = xs[0][0]
+          return null
+        }
+        """;
+
+    /** The untouched retained observation of the rejected nested tail. */
+    private static final String NESTED_TAIL_RETAINED_SLOTS =
+        "deal.codegen.jvm.JvmRuntime$Array|[B|java.lang.String|alias";
+
+    /**
+     * The host nested-array projection (ISSUE-0760 cycle 2): a nullable
+     * nested-array element stays the language null while its non-null
+     * sibling decodes (all three consumers), and a later element's
+     * rejection leaves every retained slot and the array alias of the
+     * failed return untouched.
+     */
+    private static void testHostNestedArrayProjection() throws Exception {
+        System.out.println("-- the host nested-array projection: the nullable "
+            + "element stays null and the rejected nested tail mutates nothing "
+            + "--");
+        safely("the nullable nested-array element control", () ->
+            driveHostCarrierSuccess("the nullable nested-array element control",
+                HOST_CARRIER_NULLABLE_ARRAY_DRIVER));
+        safely("the rejected nested tail",
+            CanonicalProjectionParityTest::driveHostNestedTail);
+    }
+
     /**
      * The host string-carrier producers end-to-end (ISSUE-0760): the three
      * invalid encoding classes (the lone surrogate, the embedded surrogate
@@ -1753,6 +1840,57 @@ public class CanonicalProjectionParityTest {
                 + ": the oracle and the LuaJIT artifact render the identical tuple");
             checkEq(null, firstDifferingField(oracle, jvm), label
                 + ": the oracle and the JVM artifact render the identical tuple");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /**
+     * Drives the rejected nested tail: the oracle's host seam and the
+     * LuaJIT artifact render the complete composite tuple (the element arm
+     * as the return cell's inner reason at the call origin), and the JVM
+     * artifact renders the same tuple through the retained-observation
+     * probe, which also reports every retained slot and the nested array
+     * alias untouched — a nested projection committed before the later
+     * sibling element failed would surface in the observed classes.
+     */
+    private static void driveHostNestedTail() throws Exception {
+        String label = "host.badNestedTail()";
+        Compiled compiled = compile(hostCarrierCase(),
+            HOST_CARRIER_NESTED_TAIL_DRIVER);
+        try {
+            BoundaryFailure expected = FailureContractRegistry.render(
+                FailureArmId.HOST_SYNC_RETURN_CELL,
+                Map.of("inner", "array element 2 type mismatch"),
+                "[[string]]", "table", null);
+            Tuple expectedTuple = new Tuple(expected.code().name(),
+                expected.message(), "app.deal", 4, 24, "[[string]]", "table");
+            Tuple oracle = oracleTuple(compiled);
+            checkEq(expectedTuple, oracle, label + " (oracle): the complete "
+                + "failure tuple");
+            Tuple lua = luaArtifact(compiled);
+            checkEq(expectedTuple, lua, label + " (luajit): the complete "
+                + "failure tuple");
+            String entryModule = compiled.checkedProject().entryModule().path();
+            String jvmOutput = jvmArtifactOutput(compiled, jvmProbe(
+                JvmBackend.classNameFor(entryModule), entryModule,
+                "System.out.println(\"SLOTS|\" + "
+                    + JvmBackend.classNameFor("host/bad_string")
+                    + ".retainedNestedSlots());"));
+            Tuple jvm = jvmOutput == null ? null
+                : parseJvmProbe(jvmOutput, compiled);
+            checkEq(expectedTuple, jvm, label + " (jvm): the complete failure "
+                + "tuple");
+            checkEq(null, firstDifferingField(oracle, lua), label
+                + ": the oracle and the LuaJIT artifact render the identical "
+                + "tuple");
+            checkEq(null, firstDifferingField(oracle, jvm), label
+                + ": the oracle and the JVM artifact render the identical "
+                + "tuple");
+            check(jvmOutput != null && jvmOutput.contains(
+                    "SLOTS|" + NESTED_TAIL_RETAINED_SLOTS), label + " (jvm): "
+                + "every retained slot and the nested array alias are "
+                + "untouched after the rejected return: " + jvmOutput);
         } finally {
             deleteRecursively(compiled.root());
         }
@@ -2063,10 +2201,25 @@ public class CanonicalProjectionParityTest {
 
     /**
      * Runs the JVM production artifact under {@code javac} plus {@code java}
-     * and returns the probe's raw output, or {@code null} when the artifact
-     * did not compile (the failed check is already recorded).
+     * and returns the standard deferred-entry probe's raw output, or
+     * {@code null} when the artifact did not compile (the failed check is
+     * already recorded).
      */
     private static String jvmArtifactOutput(Compiled compiled) throws Exception {
+        String entryModule = compiled.checkedProject().entryModule().path();
+        return jvmArtifactOutput(compiled,
+            jvmProbe(JvmBackend.classNameFor(entryModule), entryModule, ""));
+    }
+
+    /**
+     * Runs the JVM production artifact with the given {@code Probe.java}
+     * source (the standard deferred-entry probe, or a case-specific
+     * observation probe) and returns the probe's raw output, or
+     * {@code null} when the artifact did not compile (the failed check is
+     * already recorded).
+     */
+    private static String jvmArtifactOutput(Compiled compiled, String probeSource)
+            throws Exception {
         Path out = compiled.root().resolve("out-jvm");
         deal.module.ProductionProjectEmission.Result result = emit(compiled,
             Backend.JVM, out);
@@ -2074,8 +2227,8 @@ public class CanonicalProjectionParityTest {
             compiled.checkedProject().entryModule().path());
         Path classes = compiled.root().resolve("classes");
         Files.createDirectories(classes);
-        Files.writeString(out.resolve("Probe.java"), jvmProbe(className,
-            compiled.checkedProject().entryModule().path()), StandardCharsets.UTF_8);
+        Files.writeString(out.resolve("Probe.java"), probeSource,
+            StandardCharsets.UTF_8);
         String classpath = absoluteClasspath();
         List<String> javacArgs = new ArrayList<>(List.of("javac", "--release", "25",
             "-proc:none", "-cp", classpath, "-d", classes.toString()));
@@ -2140,7 +2293,13 @@ public class CanonicalProjectionParityTest {
                 + output);
     }
 
-    private static String jvmProbe(String className, String entryModulePath) {
+    /**
+     * The deferred-entry JVM probe source. {@code afterFailure} is an extra
+     * statement executed after a failed entry (the case-specific retained
+     * observation), or the empty string for the plain probe.
+     */
+    private static String jvmProbe(String className, String entryModulePath,
+            String afterFailure) {
         return """
             final class Probe {
               public static void main(String[] args) {
@@ -2148,6 +2307,7 @@ public class CanonicalProjectionParityTest {
                   %s.dealMain();
                 } catch (Throwable t) {
                   report(t);
+                  %s
                   return;
                 }
                 deal.codegen.jvm.JvmRuntime.Table surface =
@@ -2200,7 +2360,7 @@ public class CanonicalProjectionParityTest {
                 return null;
               }
             }
-            """.formatted(className, className, entryModulePath);
+            """.formatted(className, afterFailure, className, entryModulePath);
     }
 
     private static Tuple parseJvmProbe(String output, Compiled compiled) {
@@ -3595,6 +3755,7 @@ public class CanonicalProjectionParityTest {
         testCallbackEntrySlot();
         testInvalidUnicodeBoundaryOriginDrive();
         testHostStringCarrierProducers();
+        testHostNestedArrayProjection();
         testMissingDeclaredAnnotationFailsClosed();
         testSerializedArmTableIdentity();
         testMarkedArmsAndFieldShapes();

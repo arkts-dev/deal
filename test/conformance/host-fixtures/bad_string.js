@@ -7,7 +7,10 @@
 // must reject both classes with E8010 and select the pinned reason from
 // the offending code point (the embedded surrogate included). The valid
 // exports exercise the admitted carriers at scalar and array element
-// positions (the raw carrier decodes to the same "ok" string).
+// positions (the raw carrier decodes to the same "ok" string), the
+// nullable nested-array element that must stay the language null, and
+// the rejected nested tail whose retained earlier elements must stay
+// untouched.
 module.exports = {
   badString: function () {
     return "a\uD800b";
@@ -35,5 +38,13 @@ module.exports = {
 
   rawNullableStringArray: function () {
     return ["ok"];
+  },
+
+  rawNullableArrayArray: function () {
+    return [null, ["ok"]];
+  },
+
+  badNestedTail: function () {
+    return [["ok"], "not an array"];
   },
 };

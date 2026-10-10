@@ -7705,8 +7705,13 @@ end
 -- projection recurses through declared array element positions, so a
 -- nested array the host returned is a usable DEAL array at every level
 -- (the chunk's own carrier mark), never a plain table the ordinary DEAL
--- boundaries would reject.
+-- boundaries would reject. A language-null position is not an array: both
+-- null sentinels are preserved before any recursion (the deployed
+-- runtime's own sentinel normalizes to the chunk's), so a null nested
+-- array element stays the language null, never an empty array carrier a
+-- host-boundary read would observe as a different value.
 local function __hostToDealArray(desc, v)
+  if v == __NULL or v == __rt.__NULL then return __NULL end
   if type(v) ~= "table" or v.__a then return v end
   local body = string.sub(desc, 1, 1) == "?" and string.sub(desc, 2) or desc
   local inner = string.sub(body, 2, -2)
