@@ -73,6 +73,16 @@ public final class ControlFlowValidator {
     // =========================================================================
 
     private static Optional<CompilerDiagnostic> fail(Context ctx, String rule, String what) {
+        return fail(ctx, rule, what, null);
+    }
+
+    /**
+     * One failing rule naming an offending op: the E6005 diagnostic carries
+     * that op's own source origin as its range (never a guessed anchor); a
+     * rule with no offending op keeps the canonical synthetic range.
+     */
+    private static Optional<CompilerDiagnostic> fail(Context ctx, String rule, String what,
+                                                     SemanticOp op) {
         LoweringFailureDetail detail = new LoweringFailureDetail(
             ctx.unit.moduleId().path(),
             SemanticCapability.EVALUATION_ORDER,
@@ -80,7 +90,9 @@ public final class ControlFlowValidator {
             ctx.unit.semanticProfile(),
             LoweredModuleUnit.FORMAT_VERSION,
             "ControlFlowValidator " + rule + " (" + what + ")");
-        return Optional.of(FailureContractRegistry.e6005(detail));
+        return Optional.of(op == null
+            ? FailureContractRegistry.e6005(detail)
+            : FailureContractRegistry.e6005(detail, op.origin().span().range()));
     }
 
     // =========================================================================
@@ -424,13 +436,15 @@ public final class ControlFlowValidator {
             for (BlockId block : ctx.controlPositions.get(op.opId())) {
                 if (!ctx.table.blockOps().containsKey(block)) {
                     return fail(ctx, CONTROL_BLOCK_TREE, "payload of op " + op.opId()
-                        + " references block " + block + " which is not a block of the table");
+                        + " references block " + block + " which is not a block of the table",
+                        op);
                 }
             }
             for (BlockId block : ctx.foreignPositions.get(op.opId())) {
                 if (!ctx.table.blockOps().containsKey(block)) {
                     return fail(ctx, CONTROL_BLOCK_TREE, "payload of op " + op.opId()
-                        + " references block " + block + " which is not a block of the table");
+                        + " references block " + block + " which is not a block of the table",
+                        op);
                 }
             }
         }
@@ -440,11 +454,13 @@ public final class ControlFlowValidator {
             for (BlockId child : ctx.controlPositions.get(op.opId())) {
                 if (!ctx.table.opBlocks().containsKey(op.opId())) {
                     return fail(ctx, CONTROL_BLOCK_TREE, "control structure op " + op.opId()
-                        + " referencing child block " + child + " is not a member of any block");
+                        + " referencing child block " + child + " is not a member of any block",
+                        op);
                 }
                 if (ctx.roots.contains(child)) {
                     return fail(ctx, CONTROL_BLOCK_TREE, "root block " + child
-                        + " is referenced by a control payload position of op " + op.opId());
+                        + " is referenced by a control payload position of op " + op.opId(),
+                        op);
                 }
                 Integer count = ctx.referenceCount.get(child);
                 if (count != null) {
@@ -465,7 +481,7 @@ public final class ControlFlowValidator {
                     + " is a member of no block (every op of a lowered function must"
                     + " belong to exactly one block; only the module-level kinds"
                     + " MODULE_INIT|EXTERNAL_ENTRY|CLASS_FACTORY|CALLBACK_INVOKE|ENTRY_INVOKE"
-                    + " may be absent from the table)");
+                    + " may be absent from the table)", op);
             }
         }
 
@@ -546,7 +562,7 @@ public final class ControlFlowValidator {
         if (target == null || (target.kind() != SemanticOpKind.LOOP
                 && target.kind() != SemanticOpKind.FOR_EACH)) {
             return fail(ctx, CONTROL_EXIT, "transfer op " + op.opId() + " targets " + loopId
-                + ", which is not a LOOP or FOR_EACH op of the unit");
+                + ", which is not a LOOP or FOR_EACH op of the unit", op);
         }
         BlockId block = ctx.table.opBlocks().get(op.opId());
         boolean enclosed = false;
@@ -561,7 +577,7 @@ public final class ControlFlowValidator {
         if (!enclosed) {
             return fail(ctx, CONTROL_EXIT, "transfer op " + op.opId() + " targets loop " + loopId
                 + ", which does not enclose its block"
-                + (block == null ? " (the op is a member of no block)" : " " + block));
+                + (block == null ? " (the op is a member of no block)" : " " + block), op);
         }
         return Optional.empty();
     }
@@ -571,18 +587,18 @@ public final class ControlFlowValidator {
         LoweredFunction lowered = ctx.unit.functions().get(function);
         if (lowered == null) {
             return fail(ctx, CONTROL_EXIT, "RETURN op " + op.opId() + " names function " + function
-                + ", which is not a function of the unit");
+                + ", which is not a function of the unit", op);
         }
         BlockId block = ctx.table.opBlocks().get(op.opId());
         if (block == null) {
             return fail(ctx, CONTROL_EXIT, "RETURN op " + op.opId()
-                + " is a member of no block and therefore has no containing function");
+                + " is a member of no block and therefore has no containing function", op);
         }
         BlockId terminal = ctx.terminalOf(block);
         if (!terminal.equals(lowered.body())) {
             return fail(ctx, CONTROL_EXIT, "RETURN op " + op.opId() + " names function " + function
                 + " (body " + lowered.body() + ") but its block " + block
-                + " belongs to the block tree rooted at " + terminal);
+                + " belongs to the block tree rooted at " + terminal, op);
         }
         return Optional.empty();
     }

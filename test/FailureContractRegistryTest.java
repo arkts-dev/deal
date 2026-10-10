@@ -375,6 +375,25 @@ public class FailureContractRegistryTest {
                 + "not a source span)");
         check(diagnostic.notes().isEmpty(), "no notes attached");
 
+        // The range-aware E6005 factory (ISSUE-0750): a producer that
+        // identifies the offending file/span supplies it, and the
+        // diagnostic keeps the same code, severity, and registry-owned
+        // message — only the range changes.
+        DiagnosticRange offending = new DiagnosticRange("src/main.deal",
+            3, 26, 3, 27, 74, 75, 1, RangeOrigin.SOURCE);
+        CompilerDiagnostic ranged = FailureContractRegistry.e6005(detail, offending);
+        check(pinnedMessage.equals(ranged.message()),
+            "the ranged E6005 keeps the registry-instantiated message");
+        check("E6005".equals(ranged.code()) && ranged.diagnosticCode() == DiagnosticCode.E6005
+                && "error".equals(ranged.severity()),
+            "the ranged E6005 keeps code, diagnosticCode, and severity");
+        check(offending.equals(ranged.range()),
+            "the ranged E6005 carries the producer-identified offending range; got "
+                + ranged.range());
+        expectThrows(NullPointerException.class,
+            () -> FailureContractRegistry.e6005(detail, null),
+            "a null offending range fails closed");
+
         // Fail closed: null detail or a null detail field never renders.
         expectThrows(NullPointerException.class,
             () -> FailureContractRegistry.e6005(null), "e6005(null) fails closed");

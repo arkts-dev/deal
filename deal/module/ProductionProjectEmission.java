@@ -352,13 +352,19 @@ public final class ProductionProjectEmission {
             String entryModulePath, IllegalStateException gap,
             CompilerInvocation invocation) {
         if (gap instanceof LuaSemanticEmitter.FfiProviderGap providerGap) {
-            return FailureContractRegistry.e6005(new LoweringFailureDetail(
+            LoweringFailureDetail detail = new LoweringFailureDetail(
                 providerGap.consumingModulePath(), SemanticCapability.MODULES,
                 SHARED_EMITTER_COVERAGE, invocation.semanticProfile(),
                 LoweredModuleUnit.FORMAT_VERSION,
                 "ProductionProjectEmission " + SHARED_EMITTER_COVERAGE + " "
                     + FFI_PROVIDER_GAP + " (" + providerGap.getMessage()
-                    + ")"));
+                    + ")");
+            // The provider gap identifies the extern-C import statement's
+            // own origin; the E6005 carries it instead of the empty-file
+            // synthetic anchor.
+            return providerGap.offendingRange() == null
+                ? FailureContractRegistry.e6005(detail)
+                : FailureContractRegistry.e6005(detail, providerGap.offendingRange());
         }
         return FailureContractRegistry.e6005(new LoweringFailureDetail(
             entryModulePath, SemanticCapability.MODULES, SHARED_EMITTER_COVERAGE,

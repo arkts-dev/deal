@@ -2,8 +2,13 @@ package deal.test;
 
 import deal.checker.BuiltinErrorDeclaration;
 import deal.codegen.Backend;
+import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
 import deal.distribution.DistributionHome;
+import deal.ffi.FfiForwardBindings;
 import deal.ffi.FfiGeneratedModule;
+import deal.ffi.FfiImportedFunctionReference;
 import deal.identity.CanonicalModuleIdentity;
 import deal.module.CompilationOrchestrator;
 import deal.module.ProductionProjectEmission;
@@ -890,6 +895,109 @@ public class ProductionProjectEmissionTest {
         }
     }
 
+    /**
+     * The preserved emission origin (ISSUE-0750): an extern-C declaration
+     * whose carried forward bindings name a provider module the artifact
+     * does not publish fails the emission closed with one E6005
+     * {@code SHARED_EMITTER_COVERAGE} {@code FFI_PROVIDER_GAP} whose range
+     * is the extern-C import statement's own SOURCE span — the identifiable
+     * offending origin of the emission failure, never the empty-file
+     * synthetic anchor — and stages nothing.
+     */
+    private static void testFfiProviderGapOrigin() throws Exception {
+        System.out.println("-- the emission provider gap carries the "
+            + "extern-C import statement's own origin --");
+
+        Fixture externC = externCFixture();
+        try {
+            FfiGeneratedModule original =
+                externC.externCModules().get(NATIVE_MATH);
+            check(original != null,
+                "the extern-C fixture carries its generated module");
+            if (original == null) {
+                return;
+            }
+            FfiForwardBindings bindings = original.bindings();
+            FfiImportedFunctionReference gap = new FfiImportedFunctionReference(
+                "gap", "gapExport", "gap.provider", "() -> int",
+                "gap-digest", bindings.importedFunctions().size(),
+                DiagnosticRange.synthetic("gap.provider.d.deal"));
+            FfiForwardBindings doctoredBindings = new FfiForwardBindings(
+                bindings.moduleKey(), bindings.state(), bindings.cells(),
+                java.util.stream.Stream.concat(
+                        bindings.importedFunctions().stream(),
+                        java.util.stream.Stream.of(gap)).toList(),
+                bindings.importedClassPlans());
+            FfiGeneratedModule doctored = new FfiGeneratedModule(
+                original.modulePath(), original.descriptor(),
+                original.cdefBundle(), original.plans(), doctoredBindings);
+            Map<ModuleId, FfiGeneratedModule> doctoredModules =
+                new LinkedHashMap<>(externC.externCModules());
+            doctoredModules.put(NATIVE_MATH, doctored);
+            Fixture doctoredFixture = new Fixture(externC.root(),
+                externC.checkedProject(), externC.index(), externC.manifests(),
+                externC.surface(), doctoredModules,
+                externC.declarationIdentities(), externC.distributionHome());
+
+            Path out = externC.root().resolve("out-provider-gap");
+            PublicationStager stager = PublicationStager.forRoot(out);
+            try {
+                ProductionProjectEmission.Result result =
+                    emit(doctoredFixture, Backend.LUAJIT, stager, false);
+                check(!result.emitted(),
+                    "the provider gap fails the emission closed");
+                checkEq(1, result.diagnostics().size(),
+                    "exactly one E6005 diagnostic: " + result.diagnostics());
+                if (result.diagnostics().size() == 1) {
+                    CompilerDiagnostic diagnostic = result.firstDiagnostic();
+                    checkEq("E6005", diagnostic.code(),
+                        "the provider gap is E6005");
+                    check(diagnostic.message().contains(
+                            ProductionProjectEmission.SHARED_EMITTER_COVERAGE)
+                            && diagnostic.message().contains(
+                                ProductionProjectEmission.FFI_PROVIDER_GAP)
+                            && diagnostic.message().contains(
+                                "'" + EXTERN_C_SPECIFIER + "'")
+                            && diagnostic.message().contains(
+                                "gap.provider"),
+                        "the E6005 message is the unchanged provider-gap text: "
+                            + diagnostic.message());
+                    check(diagnostic.range().origin() == RangeOrigin.SOURCE,
+                        "the E6005 range is SOURCE, got "
+                            + diagnostic.range().origin());
+                    String entry = externC.root().resolve("src/app.deal")
+                        .toAbsolutePath().normalize().toString();
+                    checkEq(entry, diagnostic.range().file(),
+                        "the E6005 range names the consuming entry file");
+                    checkEq(1, diagnostic.range().startLine(),
+                        "the E6005 range starts at the import statement's line");
+                    checkEq(1, diagnostic.range().startColumn(),
+                        "the E6005 range starts at the import statement's "
+                            + "column");
+                    // The frontend's import-declaration span runs to the
+                    // token after the statement (the import carries no
+                    // trailing semicolon); the range preserves that
+                    // recorded span exactly.
+                    checkEq(3, diagnostic.range().endLine(),
+                        "the E6005 range ends at the recorded import span end");
+                    checkEq(7, diagnostic.range().endColumn(),
+                        "the E6005 range ends at the recorded import span end "
+                            + "column");
+                    checkEq(45, diagnostic.range().scalarLength(),
+                        "the E6005 range covers the recorded import span, got "
+                            + diagnostic.range());
+                }
+                check(stager.stagedSet().relativePaths().isEmpty(),
+                    "the provider gap stages nothing: "
+                        + stager.stagedSet().relativePaths());
+            } finally {
+                stager.discard();
+            }
+        } finally {
+            deleteRecursively(externC.root());
+        }
+    }
+
     private static void testCrossModuleAsyncEmission(Fixture cross, Fixture same)
             throws Exception {
         System.out.println("-- the cross-module async call emits through the "
@@ -1484,6 +1592,7 @@ public class ProductionProjectEmissionTest {
             failing = adapterSourceFixture();
             testAtomicFailures(failing);
             testHostImportGuard();
+            testFfiProviderGapOrigin();
             cross = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
             same = asyncFixture(ASYNC_LIB_SOURCE, SAME_ASYNC_APP_SOURCE);
             testCrossModuleAsyncEmission(cross, same);

@@ -13,6 +13,7 @@ import deal.codegen.jvm.JvmBackend;
 import deal.codegen.jvm.JvmNames;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
 import deal.module.CompilationOrchestrator;
@@ -801,6 +802,34 @@ public class ProductionDispatchTest {
           return null
         }
         """;
+
+    /**
+     * The CLASS_DEFAULT_CAPTURE seed (ISSUE-0750): the local class's
+     * default references the enclosing function's {@code x}, which the
+     * detached CLASS_DEFAULT block cannot capture; the lowering fails
+     * closed at that reference (line 3, column 26 = the {@code x} of
+     * {@code n: int = x;}).
+     */
+    private static final String DEFAULT_CAPTURE_SOURCE =
+        "export function main(): null {\n"
+            + "  let x: int = 3;\n"
+            + "  class Local { n: int = x; }\n"
+            + "  let c: Local = {};\n"
+            + "  return null;\n"
+            + "}\n";
+
+    /**
+     * The duplicate-class CONSTRUCT_UNLOWERED seed (ISSUE-0750): the inner
+     * block's {@code A} collides with the module-level layout (the checker
+     * admits the shadowing declaration), so the lowering fails closed at
+     * the duplicate declaration (line 3, columns 5-27).
+     */
+    private static final String DUPLICATE_CLASS_SOURCE =
+        "class A { n: int = 7; }\n"
+            + "export function main(): null {\n"
+            + "  { class A { n: int = 9; } }\n"
+            + "  return null;\n"
+            + "}\n";
 
     /** The cross-module async library. */
     private static final String ASYNC_LIB_SOURCE = """
@@ -2956,6 +2985,96 @@ public class ProductionDispatchTest {
         }
     }
 
+    /**
+     * The preserved-origin public-compilation drives (ISSUE-0750): the two
+     * canonical fail-closed lowering defects whose producer identifies the
+     * offending construct — the default-block capture reference and the
+     * duplicate class declaration — carry that construct's own exact
+     * file/span in the one E6005, with the registry-owned message and the
+     * fail-closed staging behavior unchanged. The genuinely originless
+     * control is the profile-guard row
+     * ({@link #checkLegacyFailClosedRow}); the release-owned CLI leg proves
+     * the same anchor on the public compile surface.
+     */
+    private static void testPreservedLoweringOrigins() throws Exception {
+        System.out.println("-- preserved lowering origins: the offending "
+            + "construct's exact span, the unchanged message, the "
+            + "fail-closed compile --");
+
+        checkPreservedLoweringOrigin("default-block capture",
+            DEFAULT_CAPTURE_SOURCE, SemanticLowerer.CLASS_DEFAULT_CAPTURE,
+            "default-block free reference 'x'", 3, 26, 27, 1);
+        checkPreservedLoweringOrigin("duplicate class declaration",
+            DUPLICATE_CLASS_SOURCE, SemanticLowerer.CONSTRUCT_UNLOWERED,
+            "duplicate class declaration 'A'", 3, 5, 28, 23);
+    }
+
+    /**
+     * One preserved-origin drive: the orchestrator compile and the
+     * release-owned CLI compile of the fixture both fail closed with
+     * exactly one E6005 whose range is the offending construct's own
+     * SOURCE span (file, start/end position, scalar length), and neither
+     * stages an artifact.
+     */
+    private static void checkPreservedLoweringOrigin(String name, String source,
+            String expectedRule, String expectedText, int startLine,
+            int startColumn, int endColumn, int scalarLength) throws Exception {
+        Path project = Files.createTempDirectory("production-dispatch-origin-");
+        try {
+            write(project, "deal.json", DEAL_JSON_LUA);
+            write(project, "src/main.deal", source);
+            Path entry = project.resolve("src/main.deal").toAbsolutePath()
+                .normalize();
+            ArmCompile arm = compileWithInvocation(project, "src/main.deal",
+                productionInvocation());
+            check(!arm.success(), name + ": the compile fails closed");
+            List<CompilerDiagnostic> errors = arm.orchestrator().diagnostics()
+                .stream().filter(d -> "error".equals(d.severity())).toList();
+            checkEq(1, errors.size(), name + ": exactly one error diagnostic: "
+                + arm.orchestrator().diagnostics());
+            if (errors.size() == 1) {
+                CompilerDiagnostic diagnostic = errors.get(0);
+                checkEq("E6005", diagnostic.code(),
+                    name + ": the failure is E6005");
+                check(diagnostic.message().contains(expectedRule)
+                        && diagnostic.message().contains(expectedText),
+                    name + ": the E6005 message is the unchanged registry text: "
+                        + diagnostic.message());
+                check(diagnostic.range().origin() == RangeOrigin.SOURCE,
+                    name + ": the E6005 range is SOURCE, got "
+                        + diagnostic.range().origin());
+                checkEq(entry.toString(), diagnostic.range().file(),
+                    name + ": the E6005 range names the offending file");
+                checkEq(startLine, diagnostic.range().startLine(),
+                    name + ": the E6005 range starts at the offending line");
+                checkEq(startColumn, diagnostic.range().startColumn(),
+                    name + ": the E6005 range starts at the offending column");
+                checkEq(startLine, diagnostic.range().endLine(),
+                    name + ": the E6005 range ends on the offending line");
+                checkEq(endColumn, diagnostic.range().endColumn(),
+                    name + ": the E6005 range ends after the offending construct");
+                checkEq(scalarLength, diagnostic.range().scalarLength(),
+                    name + ": the E6005 range covers exactly the offending "
+                        + "construct");
+            }
+            check(!Files.exists(project.resolve("out")),
+                name + ": the orchestrator compile stages no artifact");
+
+            ProjectOutcome cli = productionCompile(project, "src/main.deal",
+                "out");
+            check(cli.exitCode() != 0,
+                name + ": the release-owned CLI compile fails closed");
+            check(cli.stderr().contains(entry + ":" + startLine + ":"
+                    + startColumn + "-" + startLine + ":" + endColumn),
+                name + ": the CLI reports the offending construct's exact "
+                    + "anchor: " + cli.stderr());
+            check(!Files.exists(project.resolve("out")),
+                name + ": the CLI failure stages no artifact");
+        } finally {
+            deleteRecursively(project);
+        }
+    }
+
     private static void checkLaterSliceConstruct(String name,
             Map<String, String> sources, String expectedRule) throws Exception {
         Path project = Files.createTempDirectory("production-dispatch-slice-");
@@ -4309,6 +4428,15 @@ public class ProductionDispatchTest {
                 name + ": the one failure is E6005 "
                     + SemanticLowerer.LOWER_LEGACY_PROFILE_REJECTED + ": "
                     + errors.get(0).message());
+            // The genuinely originless control (ISSUE-0750): the profile
+            // guard rejects an invocation whole, so no offending source
+            // construct exists and the E6005 keeps the canonical
+            // synthetic empty-file range — never a guessed anchor.
+            check(errors.get(0).range().origin() == RangeOrigin.SYNTHETIC
+                    && errors.get(0).range().isCanonicalSynthetic()
+                    && errors.get(0).range().file().isEmpty(),
+                name + ": the originless profile rejection keeps the canonical "
+                    + "synthetic empty-file range, got " + errors.get(0).range());
         }
         checkEq(0, arm.orchestrator().semanticEmissionCount(),
             name + ": the fail-closed lowering records no project emission");
@@ -5691,6 +5819,7 @@ public class ProductionDispatchTest {
         } finally {
             deleteRecursively(sync);
         }
+        testPreservedLoweringOrigins();
         testFailClosedFamilies();
         testSourceMapDisposition();
         testSourceMapUnsafeSourcePathText();

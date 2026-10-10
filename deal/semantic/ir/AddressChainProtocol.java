@@ -1225,6 +1225,7 @@ public final class AddressChainProtocol {
             unit.formatVersion(),
             "AddressChainProtocol " + rule + " (op " + op.opId() + " at "
                 + op.origin().span() + ": " + reason + ")");
-        return Optional.of(FailureContractRegistry.e6005(detail));
+        return Optional.of(FailureContractRegistry.e6005(detail,
+            op.origin().span().range()));
     }
 }

@@ -2,6 +2,7 @@ package deal.test;
 
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.diagnostics.RangeOrigin;
 import deal.semantic.ControlFlowValidator;
 import deal.semantic.ir.AnchorId;
 import deal.semantic.ir.AssignTargetKind;
@@ -132,6 +133,17 @@ public class ControlFlowValidatorTest {
         String digest = ContractSnapshotCanonicalizer.digest(contract);
         contract = contractFor(kind, payload, resultType, List.of(), policy, digest);
         return new SemanticOp(id, kind, origin(parent), result, resultType, List.of(), List.of(),
+            payload, policy, contract);
+    }
+
+    /** One op with an explicit source origin (the range drives the assertion). */
+    private static SemanticOp opWithOrigin(OpId id, SemanticOpKind kind, KindPayload payload,
+            OpResultType resultType, FailurePolicyId policy, SourceOrigin origin) {
+        OperationContractSnapshot contract =
+            contractFor(kind, payload, resultType, List.of(), policy, "placeholder");
+        String digest = ContractSnapshotCanonicalizer.digest(contract);
+        contract = contractFor(kind, payload, resultType, List.of(), policy, digest);
+        return new SemanticOp(id, kind, origin, null, resultType, List.of(), List.of(),
             payload, policy, contract);
     }
 
@@ -911,6 +923,52 @@ public class ControlFlowValidatorTest {
      * block tree, and every other unattached RETURN keeps the completeness and
      * exit rules.
      */
+    /**
+     * The preserved offending-origin rule (ISSUE-0750): a failing rule that
+     * names an offending op carries that op's own source origin as the E6005
+     * range — a SOURCE range with the op's exact file and positions — never
+     * the empty-file synthetic anchor.
+     */
+    private static void testFailingRuleCarriesTheOffendingOpOrigin() {
+        System.out.println("-- the failing rule names the offending op: its own "
+            + "source origin is the E6005 range --");
+
+        SourceOrigin source = new SourceOrigin("test.deal",
+            new SourceSpan("test.deal", 2, 3, 2, 7, 10, 15),
+            SourceOriginKind.USER, new AnchorId(1), null);
+        SemanticOp branch = opWithOrigin(nextOpId(), SemanticOpKind.BRANCH,
+            new KindPayload.BranchPayload(ControlSelector.IF, nextValue(), b(77), null),
+            null, FailurePolicyId.NO_DEAL_FAILURE, source);
+        SemanticOp constant = constInt();
+        LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)),
+            List.of(constant, branch));
+        StructuredBodyTable table = tableOf(Map.ofEntries(
+            Map.entry(INIT, List.<SemanticOp>of()),
+            Map.entry(B0, List.of(constant, branch))));
+        Optional<CompilerDiagnostic> diagnostic = ControlFlowValidator.validate(unit, table);
+        assertE6005(diagnostic, ControlFlowValidator.CONTROL_BLOCK_TREE,
+            "references block BlockId(77) which is not a block of the table");
+        if (diagnostic.isEmpty()) {
+            return;
+        }
+        CompilerDiagnostic d = diagnostic.get();
+        check(d.range().origin() == RangeOrigin.SOURCE,
+            "the E6005 range is SOURCE, got " + d.range().origin());
+        checkEq("test.deal", d.range().file(), "the E6005 range file");
+        checkEq(2, d.range().startLine(), "the E6005 range start line");
+        checkEq(3, d.range().startColumn(), "the E6005 range start column");
+        checkEq(2, d.range().endLine(), "the E6005 range end line");
+        checkEq(8, d.range().endColumn(), "the E6005 range end column");
+        checkEq(5, d.range().scalarLength(), "the E6005 range scalar length");
+        checkEq(10, d.range().startScalarOffset(), "the E6005 range start offset");
+        checkEq(15, d.range().endScalarOffset(), "the E6005 range end offset");
+    }
+
+    private static void checkEq(Object expected, Object actual, String message) {
+        check(java.util.Objects.equals(expected, actual),
+            message + " (expected " + expected + ", got " + actual + ")");
+    }
+
     private static void testCallOwnedReturnRecords() {
         System.out.println("-- Call-owned return records: the dynamic invocation's "
             + "record is admitted outside the block tree --");
@@ -1134,6 +1192,7 @@ public class ControlFlowValidatorTest {
         testPositives();
         testNegatives();
         testCallOwnedReturnRecords();
+        testFailingRuleCarriesTheOffendingOpOrigin();
         testDeterminismAndPurity();
         testNullArgs();
 

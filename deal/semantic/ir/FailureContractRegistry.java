@@ -1678,7 +1678,8 @@ public final class FailureContractRegistry {
 
     /**
      * Builds the E6005 diagnostic for a submitted detail record — the only
-     * sanctioned E6005 construction surface. The diagnostic carries code
+     * sanctioned E6005 construction surface for a failure whose producer
+     * identifies no offending source span. The diagnostic carries code
      * {@code E6005} ({@link DiagnosticCode.Phase#BACKEND_LOWERING}),
      * error severity, the instantiated message carrying the detail, and
      * the canonical synthetic range (the detail carries a producer name,
@@ -1686,7 +1687,25 @@ public final class FailureContractRegistry {
      *
      */
     public static CompilerDiagnostic e6005(LoweringFailureDetail detail) {
+        return e6005(detail, DiagnosticRange.synthetic(""));
+    }
+
+    /**
+     * Builds the E6005 diagnostic for a submitted detail record with the
+     * offending source range its producer identified. The producer owns
+     * the identification: a range is supplied exactly when the failing
+     * construct's own file/span is known (never a guessed anchor), and a
+     * producer without one uses {@link #e6005(LoweringFailureDetail)} so
+     * the canonical synthetic range is preserved. The range is not part
+     * of the instantiated message; the diagnostic's code, severity, and
+     * message stay the registry-owned ones.
+     *
+     */
+    public static CompilerDiagnostic e6005(LoweringFailureDetail detail,
+                                           DiagnosticRange offendingRange) {
+        Objects.requireNonNull(detail, "detail must not be null");
+        Objects.requireNonNull(offendingRange, "offendingRange must not be null");
         return CompilerDiagnostic.error(DiagnosticCode.E6005, instantiateMessage(detail),
-            DiagnosticRange.synthetic(""));
+            offendingRange);
     }
 }

@@ -2,6 +2,7 @@ package deal.codegen.lua;
 
 import deal.codegen.EmitterSessionBase;
 import deal.codegen.SourceMapRecorder;
+import deal.diagnostics.DiagnosticRange;
 import deal.ffi.FfiGeneratedModule;
 import deal.ffi.FfiFunctionDescriptor;
 import deal.ffi.FfiImportedClassPlanReference;
@@ -216,8 +217,9 @@ public final class LuaSemanticEmitter {
      * and {@link #consumingModulePath()} is the module whose
      * {@code MODULE_IMPORT} carries the extern-C import. The production arm
      * maps this signal to exactly one E6005 {@code SHARED_EMITTER_COVERAGE}
-     * whose detail names the consuming module and those facts; the emitter
-     * never renders a bare generic gap for it.
+     * whose detail names the consuming module and those facts and whose
+     * range is the import statement's own origin (the identifiable
+     * offending span), never a bare generic gap.
      */
     public static final class FfiProviderGap extends IllegalStateException {
         private static final long serialVersionUID = 1L;
@@ -225,15 +227,33 @@ public final class LuaSemanticEmitter {
         /** The module whose MODULE_IMPORT carries the extern-C import. */
         private final String consumingModulePath;
 
+        /** The extern-C import statement's offending source range. */
+        private final DiagnosticRange offendingRange;
+
         FfiProviderGap(String consumingModulePath, String detail) {
+            this(consumingModulePath, detail, null);
+        }
+
+        FfiProviderGap(String consumingModulePath, String detail,
+                       DiagnosticRange offendingRange) {
             super(detail);
             this.consumingModulePath = Objects.requireNonNull(
                 consumingModulePath, "consumingModulePath must not be null");
+            this.offendingRange = offendingRange;
         }
 
         /** The consuming (emitting) module of the extern-C import. */
         public String consumingModulePath() {
             return consumingModulePath;
+        }
+
+        /**
+         * The extern-C import statement's offending source range, or
+         * {@code null} when the gap names no import op (the canonical
+         * synthetic range stays the E6005's own).
+         */
+        public DiagnosticRange offendingRange() {
+            return offendingRange;
         }
     }
 
@@ -6616,7 +6636,8 @@ public final class LuaSemanticEmitter {
                         + " provider is neither a session unit of the"
                         + " lowered closure nor a covered declaration"
                         + " module whose load the emission already emitted"
-                        + " (a provider gap — a producer defect)");
+                        + " (a provider gap — a producer defect)",
+                        op.origin().span().range());
                 }
                 out.append("local ").append(importPrefix)
                     .append(provider.importAlias())
@@ -6723,7 +6744,8 @@ public final class LuaSemanticEmitter {
                     + importAlias + "' to two provider modules ('" + bound
                     + "' and '" + importedModulePath + "'): one import"
                     + " alias resolves exactly one provider module (a"
-                    + " provider gap — a producer defect)");
+                    + " provider gap — a producer defect)",
+                    op.origin().span().range());
             }
         }
 

@@ -48,6 +48,7 @@ import deal.checker.CheckResult;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticRange;
 import deal.ffi.FfiGeneratedModule;
 import deal.identity.CanonicalModuleIdentity;
 import deal.semantic.ir.AdaptSourceRef;
@@ -561,14 +562,32 @@ public final class SemanticLowerer {
         /** The human-readable construct description (pinned in the diagnostic's origin). */
         private final String construct;
 
+        /**
+         * The offending construct's own source span, or {@code null} when
+         * the defect names a producer fact rather than one source construct
+         * (a genuinely originless failure keeps the canonical synthetic
+         * E6005 range).
+         */
+        private final Span span;
+
         public ConstructUnlowered(String construct) {
+            this(construct, null);
+        }
+
+        public ConstructUnlowered(String construct, Span span) {
             super("a construct without a lowering arm reached this stage: " + construct);
             this.construct = Objects.requireNonNull(construct, "construct must not be null");
+            this.span = span;
         }
 
         /** The construct description carried into the E6005 origin. */
         public String construct() {
             return construct;
+        }
+
+        /** The offending construct's own span, or {@code null}. */
+        public Span span() {
+            return span;
         }
     }
 
@@ -579,18 +598,34 @@ public final class SemanticLowerer {
         /** The referenced enclosing-region name carried into the E6005 origin. */
         private final String name;
 
+        /**
+         * The offending reference's own source span, or {@code null} when
+         * the defect names a producer fact rather than one source construct.
+         */
+        private final Span span;
+
         public ClassDefaultCapture(String name) {
+            this(name, null);
+        }
+
+        public ClassDefaultCapture(String name, Span span) {
             super("default-block free reference '" + name
                 + "' resolves to an enclosing-region binding (a detached "
                 + "CLASS_DEFAULT block admits only block-internal allocations and "
                 + "module-level bindings resolved through the module-init block; the "
                 + "closed payload records no captures)");
             this.name = Objects.requireNonNull(name, "name must not be null");
+            this.span = span;
         }
 
         /** The referenced enclosing-region name carried into the E6005 origin. */
         public String name() {
             return name;
+        }
+
+        /** The offending reference's own span, or {@code null}. */
+        public Span span() {
+            return span;
         }
     }
 
@@ -601,16 +636,32 @@ public final class SemanticLowerer {
         /** The imported class identity carried into the E6005 origin. */
         private final String classId;
 
+        /**
+         * The offending literal's own source span, or {@code null} when the
+         * defect names a producer fact rather than one source construct.
+         */
+        private final Span span;
+
         public RetainedAbiDeferred(String classId) {
+            this(classId, null);
+        }
+
+        public RetainedAbiDeferred(String classId, Span span) {
             super("class-typed literal of imported class " + classId
                 + " whose owner carries no shared factory facts (the "
                 + "RETAINED_ABI derivation is E10's, ISSUE-0239)");
             this.classId = Objects.requireNonNull(classId, "classId must not be null");
+            this.span = span;
         }
 
         /** The imported class identity carried into the E6005 origin. */
         public String classId() {
             return classId;
+        }
+
+        /** The offending literal's own span, or {@code null}. */
+        public Span span() {
+            return span;
         }
     }
 
@@ -621,18 +672,67 @@ public final class SemanticLowerer {
         /** The out-of-range literal value carried into the E6005 origin. */
         private final long value;
 
+        /**
+         * The offending literal's own source span, or {@code null} when the
+         * defect names a producer fact rather than one source construct.
+         */
+        private final Span span;
+
         public IntLiteralOutOfRange(long value) {
+            this(value, null);
+        }
+
+        public IntLiteralOutOfRange(long value, Span span) {
             super("int literal " + value
                 + " outside signed32 [-2147483648, 2147483647] (the E1036 "
                 + "signed32 literal gate is ISSUE-0111's frontend item; this "
                 + "stage fails closed, never truncates)");
             this.value = value;
+            this.span = span;
         }
 
         /** The out-of-range literal value carried into the E6005 origin. */
         public long value() {
             return value;
         }
+
+        /** The offending literal's own span, or {@code null}. */
+        public Span span() {
+            return span;
+        }
+    }
+
+    /**
+     * The offending source range of one lowering defect, or {@code null}
+     * when the defect names a producer fact rather than one source construct
+     * (a guessed anchor is never manufactured).
+     */
+    private static DiagnosticRange offendingRange(RuntimeException defect) {
+        Span span = switch (defect) {
+            case ConstructUnlowered unlowered -> unlowered.span();
+            case ClassDefaultCapture capture -> capture.span();
+            case RetainedAbiDeferred deferred -> deferred.span();
+            case IntLiteralOutOfRange outOfRange -> outOfRange.span();
+            default -> null;
+        };
+        return span == null ? null : span.range();
+    }
+
+    /**
+     * The E6005 diagnostic of one lowering defect: the registry-owned message
+     * plus the defect's own offending source range when the defect identifies
+     * one (never an invented anchor), else the canonical synthetic range. The
+     * detail payload is exactly {@link #loweringFailureDetail}'s.
+     */
+    public static CompilerDiagnostic loweringFailure(ModuleId module,
+                                                     RuntimeException defect) {
+        Objects.requireNonNull(module, "module must not be null");
+        Objects.requireNonNull(defect, "defect must not be null");
+        LoweringFailureDetail detail = loweringFailureDetail(module, defect);
+        DiagnosticRange range = offendingRange(defect);
+        return range == null
+            ? FailureContractRegistry.e6005(detail)
+            : FailureContractRegistry.e6005(detail, range);
     }
 
     public static LoweringFailureDetail loweringFailureDetail(ModuleId module,
@@ -844,16 +944,13 @@ public final class SemanticLowerer {
             lowerer.lowerStatements(module.ast().statements());
         } catch (ConstructUnlowered unlowered) {
             return new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), unlowered))));
+                List.of(loweringFailure(module.moduleId(), unlowered)));
         } catch (IntLiteralOutOfRange outOfRange) {
             return new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), outOfRange))));
+                List.of(loweringFailure(module.moduleId(), outOfRange)));
         } catch (ContainerPayloadDescriptors.Defect defect) {
             return new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), defect))));
+                List.of(loweringFailure(module.moduleId(), defect)));
         }
         LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
@@ -887,18 +984,15 @@ public final class SemanticLowerer {
             lowerer.lowerBindingModule(module.ast().statements());
         } catch (ConstructUnlowered unlowered) {
             return new BindingCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), unlowered)))),
+                List.of(loweringFailure(module.moduleId(), unlowered))),
                 lowerer.bindingFacts());
         } catch (IntLiteralOutOfRange outOfRange) {
             return new BindingCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), outOfRange)))),
+                List.of(loweringFailure(module.moduleId(), outOfRange))),
                 lowerer.bindingFacts());
         } catch (ContainerPayloadDescriptors.Defect defect) {
             return new BindingCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), defect)))),
+                List.of(loweringFailure(module.moduleId(), defect))),
                 lowerer.bindingFacts());
         } catch (ComparisonSelectorLowering.Defect defect) {
             return new BindingCoreResult(new LoweringResult(null, null,
@@ -944,16 +1038,13 @@ public final class SemanticLowerer {
             lowerer.finalizeCellKinds();
         } catch (ConstructUnlowered unlowered) {
             return new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), unlowered))));
+                List.of(loweringFailure(module.moduleId(), unlowered)));
         } catch (IntLiteralOutOfRange outOfRange) {
             return new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), outOfRange))));
+                List.of(loweringFailure(module.moduleId(), outOfRange)));
         } catch (ContainerPayloadDescriptors.Defect defect) {
             return new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), defect))));
+                List.of(loweringFailure(module.moduleId(), defect)));
         } catch (ComparisonSelectorLowering.Defect defect) {
             return new LoweringResult(null, null,
                 List.of(ComparisonSelectorLowering.e6005(module.moduleId(), defect)));
@@ -996,18 +1087,15 @@ public final class SemanticLowerer {
             lowerer.finalizeCellKinds();
         } catch (ConstructUnlowered unlowered) {
             return new FullProgramE7Result(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), unlowered)))),
+                List.of(loweringFailure(module.moduleId(), unlowered))),
                 Map.of(), Map.of());
         } catch (IntLiteralOutOfRange outOfRange) {
             return new FullProgramE7Result(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), outOfRange)))),
+                List.of(loweringFailure(module.moduleId(), outOfRange))),
                 Map.of(), Map.of());
         } catch (ContainerPayloadDescriptors.Defect defect) {
             return new FullProgramE7Result(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), defect)))),
+                List.of(loweringFailure(module.moduleId(), defect))),
                 Map.of(), Map.of());
         } catch (ComparisonSelectorLowering.Defect defect) {
             return new FullProgramE7Result(new LoweringResult(null, null,
@@ -1327,23 +1415,23 @@ public final class SemanticLowerer {
         try {
             lowerer.lowerProjectModule(module.ast().statements());
         } catch (ConstructUnlowered unlowered) {
-            return LoweredProjectModule.failure(List.of(FailureContractRegistry.e6005(
-                loweringFailureDetail(module.moduleId(), unlowered))));
+            return LoweredProjectModule.failure(List.of(
+                loweringFailure(module.moduleId(), unlowered)));
         } catch (IntLiteralOutOfRange outOfRange) {
-            return LoweredProjectModule.failure(List.of(FailureContractRegistry.e6005(
-                loweringFailureDetail(module.moduleId(), outOfRange))));
+            return LoweredProjectModule.failure(List.of(
+                loweringFailure(module.moduleId(), outOfRange)));
         } catch (ContainerPayloadDescriptors.Defect defect) {
-            return LoweredProjectModule.failure(List.of(FailureContractRegistry.e6005(
-                loweringFailureDetail(module.moduleId(), defect))));
+            return LoweredProjectModule.failure(List.of(
+                loweringFailure(module.moduleId(), defect)));
         } catch (ComparisonSelectorLowering.Defect defect) {
             return LoweredProjectModule.failure(List.of(
                 ComparisonSelectorLowering.e6005(module.moduleId(), defect)));
         } catch (ClassDefaultCapture capture) {
-            return LoweredProjectModule.failure(List.of(FailureContractRegistry.e6005(
-                loweringFailureDetail(module.moduleId(), capture))));
+            return LoweredProjectModule.failure(List.of(
+                loweringFailure(module.moduleId(), capture)));
         } catch (RetainedAbiDeferred deferred) {
-            return LoweredProjectModule.failure(List.of(FailureContractRegistry.e6005(
-                loweringFailureDetail(module.moduleId(), deferred))));
+            return LoweredProjectModule.failure(List.of(
+                loweringFailure(module.moduleId(), deferred)));
         }
         LoweredModuleUnit unit = lowerer.buildUnit(manifest.constructCoverage(),
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
@@ -1582,18 +1670,15 @@ public final class SemanticLowerer {
             lowerer.lowerBindingModule(module.ast().statements());
         } catch (ConstructUnlowered unlowered) {
             return new ClosureCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), unlowered)))),
+                List.of(loweringFailure(module.moduleId(), unlowered))),
                 lowerer.bindingFacts(), lowerer.closureFacts());
         } catch (IntLiteralOutOfRange outOfRange) {
             return new ClosureCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), outOfRange)))),
+                List.of(loweringFailure(module.moduleId(), outOfRange))),
                 lowerer.bindingFacts(), lowerer.closureFacts());
         } catch (ContainerPayloadDescriptors.Defect defect) {
             return new ClosureCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), defect)))),
+                List.of(loweringFailure(module.moduleId(), defect))),
                 lowerer.bindingFacts(), lowerer.closureFacts());
         } catch (ComparisonSelectorLowering.Defect defect) {
             return new ClosureCoreResult(new LoweringResult(null, null,
@@ -1653,18 +1738,15 @@ public final class SemanticLowerer {
             lowerer.lowerGroupModule(module.ast().statements());
         } catch (ConstructUnlowered unlowered) {
             return new GroupCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), unlowered)))),
+                List.of(loweringFailure(module.moduleId(), unlowered))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts());
         } catch (IntLiteralOutOfRange outOfRange) {
             return new GroupCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), outOfRange)))),
+                List.of(loweringFailure(module.moduleId(), outOfRange))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts());
         } catch (ContainerPayloadDescriptors.Defect defect) {
             return new GroupCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), defect)))),
+                List.of(loweringFailure(module.moduleId(), defect))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts());
         } catch (ComparisonSelectorLowering.Defect defect) {
             return new GroupCoreResult(new LoweringResult(null, null,
@@ -1724,20 +1806,17 @@ public final class SemanticLowerer {
             lowerer.lowerGroupModule(module.ast().statements());
         } catch (ConstructUnlowered unlowered) {
             return new ImmutabilityCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), unlowered)))),
+                List.of(loweringFailure(module.moduleId(), unlowered))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
                 lowerer.proofFacts());
         } catch (IntLiteralOutOfRange outOfRange) {
             return new ImmutabilityCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), outOfRange)))),
+                List.of(loweringFailure(module.moduleId(), outOfRange))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
                 lowerer.proofFacts());
         } catch (ContainerPayloadDescriptors.Defect defect) {
             return new ImmutabilityCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), defect)))),
+                List.of(loweringFailure(module.moduleId(), defect))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
                 lowerer.proofFacts());
         } catch (ComparisonSelectorLowering.Defect defect) {
@@ -1804,20 +1883,17 @@ public final class SemanticLowerer {
             lowerer.lowerGroupModule(module.ast().statements());
         } catch (ConstructUnlowered unlowered) {
             return new CreationRuleCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), unlowered)))),
+                List.of(loweringFailure(module.moduleId(), unlowered))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
                 lowerer.proofFacts(), lowerer.creationRuleFacts());
         } catch (IntLiteralOutOfRange outOfRange) {
             return new CreationRuleCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), outOfRange)))),
+                List.of(loweringFailure(module.moduleId(), outOfRange))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
                 lowerer.proofFacts(), lowerer.creationRuleFacts());
         } catch (ContainerPayloadDescriptors.Defect defect) {
             return new CreationRuleCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), defect)))),
+                List.of(loweringFailure(module.moduleId(), defect))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
                 lowerer.proofFacts(), lowerer.creationRuleFacts());
         } catch (ComparisonSelectorLowering.Defect defect) {
@@ -1885,20 +1961,17 @@ public final class SemanticLowerer {
             lowerer.lowerGroupModule(module.ast().statements());
         } catch (ConstructUnlowered unlowered) {
             return new ShapeMapCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), unlowered)))),
+                List.of(loweringFailure(module.moduleId(), unlowered))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
                 lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
         } catch (IntLiteralOutOfRange outOfRange) {
             return new ShapeMapCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), outOfRange)))),
+                List.of(loweringFailure(module.moduleId(), outOfRange))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
                 lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
         } catch (ContainerPayloadDescriptors.Defect defect) {
             return new ShapeMapCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), defect)))),
+                List.of(loweringFailure(module.moduleId(), defect))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
                 lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
         } catch (ComparisonSelectorLowering.Defect defect) {
@@ -1966,20 +2039,17 @@ public final class SemanticLowerer {
             lowerer.lowerGroupModule(module.ast().statements());
         } catch (ConstructUnlowered unlowered) {
             return new ValidationCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), unlowered)))),
+                List.of(loweringFailure(module.moduleId(), unlowered))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
                 lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
         } catch (IntLiteralOutOfRange outOfRange) {
             return new ValidationCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), outOfRange)))),
+                List.of(loweringFailure(module.moduleId(), outOfRange))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
                 lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
         } catch (ContainerPayloadDescriptors.Defect defect) {
             return new ValidationCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), defect)))),
+                List.of(loweringFailure(module.moduleId(), defect))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
                 lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
         } catch (ComparisonSelectorLowering.Defect defect) {
@@ -2077,20 +2147,17 @@ public final class SemanticLowerer {
             lowerer.lowerGroupModule(module.ast().statements());
         } catch (ConstructUnlowered unlowered) {
             return new ClassDeclarationCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), unlowered)))),
+                List.of(loweringFailure(module.moduleId(), unlowered))),
                 new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
                 new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
         } catch (IntLiteralOutOfRange outOfRange) {
             return new ClassDeclarationCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), outOfRange)))),
+                List.of(loweringFailure(module.moduleId(), outOfRange))),
                 new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
                 new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
         } catch (ContainerPayloadDescriptors.Defect defect) {
             return new ClassDeclarationCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), defect)))),
+                List.of(loweringFailure(module.moduleId(), defect))),
                 new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
                 new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
         } catch (ComparisonSelectorLowering.Defect defect) {
@@ -2100,14 +2167,12 @@ public final class SemanticLowerer {
                 new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
         } catch (ClassDefaultCapture capture) {
             return new ClassDeclarationCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), capture)))),
+                List.of(loweringFailure(module.moduleId(), capture))),
                 new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
                 new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
         } catch (RetainedAbiDeferred deferred) {
             return new ClassDeclarationCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    loweringFailureDetail(module.moduleId(), deferred)))),
+                List.of(loweringFailure(module.moduleId(), deferred))),
                 new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
                 new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
         }
@@ -3827,7 +3892,8 @@ public final class SemanticLowerer {
                         throw new ConstructUnlowered("the @jsonable class '"
                             + classDeclaration.name() + "' has no checked " + name
                             + " function symbol (the checker defines the synthetic"
-                            + " symbols for every @jsonable class — a fact defect)");
+                            + " symbols for every @jsonable class — a fact defect)",
+                                classDeclaration.span());
                     }
                     RuntimeDescriptor.Func signature = (RuntimeDescriptor.Func)
                         ContainerPayloadDescriptors.resultDescriptorOf(
@@ -3973,7 +4039,8 @@ public final class SemanticLowerer {
                 case Block block -> lowerBindingBlock(block);
                 case ClassDeclaration classDeclaration -> {
                     if (!classCore) {
-                        throw new ConstructUnlowered(describeStatement(statement));
+                        throw new ConstructUnlowered(describeStatement(statement),
+                            statement.span());
                     }
                     lowerClassDeclaration(classDeclaration, false);
                 }
@@ -3981,17 +4048,20 @@ public final class SemanticLowerer {
                     if (!(classCore
                             && exportDeclaration.declaration()
                                 instanceof ClassDeclaration classDeclaration)) {
-                        throw new ConstructUnlowered(describeStatement(statement));
+                        throw new ConstructUnlowered(describeStatement(statement),
+                            statement.span());
                     }
                     lowerClassDeclaration(classDeclaration, true);
                 }
                 case deal.ast.DeleteStatement delete -> {
                     if (!classCore) {
-                        throw new ConstructUnlowered(describeStatement(statement));
+                        throw new ConstructUnlowered(describeStatement(statement),
+                            statement.span());
                     }
                     lowerDelete(delete);
                 }
-                default -> throw new ConstructUnlowered(describeStatement(statement));
+                default -> throw new ConstructUnlowered(describeStatement(statement),
+                    statement.span());
             }
         }
 
@@ -4008,7 +4078,8 @@ public final class SemanticLowerer {
             if (!(statement.expr() instanceof AssignmentExpr)) {
                 throw new ConstructUnlowered("expression statement "
                     + describeExpression(statement.expr()) + " (DISCARD is E5's, "
-                    + "ISSUE-0234; the binding walk admits assignment statements only)");
+                    + "ISSUE-0234; the binding walk admits assignment statements only)",
+                        statement.span());
             }
             if (classCore) {
                 // The class window's expression-statement arm (C-D8): the
@@ -4032,7 +4103,8 @@ public final class SemanticLowerer {
             if (classLayouts.containsKey(classId)) {
                 throw new ConstructUnlowered("duplicate class declaration '"
                     + declaration.name() + "' (the checker rejects duplicate class names; "
-                    + "a second layout for " + classId + " is a fact defect)");
+                    + "a second layout for " + classId + " is a fact defect)",
+                    declaration.span());
             }
 
             List<deal.semantic.ir.ClassLayout.FieldLayout> fields = new ArrayList<>();
@@ -4045,7 +4117,8 @@ public final class SemanticLowerer {
                 } catch (DescriptorService.Defect defect) {
                     throw new ConstructUnlowered("class field '" + declaration.name()
                         + "." + field.name() + "' of unrepresentable checked type "
-                        + typeName(fieldType) + " (" + defect.getMessage() + ")");
+                        + typeName(fieldType) + " (" + defect.getMessage() + ")",
+                        field.span());
                 }
                 fields.add(new deal.semantic.ir.ClassLayout.FieldLayout(field.name(),
                     descriptor, !field.optional(), DefaultOwner.LOCAL));
@@ -4130,7 +4203,7 @@ public final class SemanticLowerer {
             if (interfaceEntry == null) {
                 throw new ConstructUnlowered("exported class " + classId
                     + " has no interface index entry (the index build derives one "
-                    + "ClassInterface per exported class — a fact defect)");
+                    + "ClassInterface per exported class — a fact defect)", declaration.span());
             }
             OpId callerOpRef = ids.nextOpId(module, nextOrdinal++, 0);
             ValueId result = ids.nextValueId(module, nextOrdinal++, 0);
@@ -4167,7 +4240,7 @@ public final class SemanticLowerer {
                 throw new ConstructUnlowered("the @jsonable class '"
                     + declaration.name() + "' has no checked C$fromJson/C$toJson "
                     + "function symbols (the checker defines the synthetic symbols for "
-                    + "every @jsonable class — a fact defect)");
+                    + "every @jsonable class — a fact defect)", declaration.span());
             }
             RuntimeDescriptor.Func fromSignature = (RuntimeDescriptor.Func)
                 ContainerPayloadDescriptors.resultDescriptorOf(fromFunction.funcType());
@@ -4365,7 +4438,7 @@ public final class SemanticLowerer {
             if (!(type instanceof Type.Class classType)) {
                 throw new ConstructUnlowered("class literal of non-class checked type "
                     + typeName(type) + " (a class-typed ObjectLiteralExpr must carry a "
-                    + "Type.Class fact)");
+                    + "Type.Class fact)", literal.span());
             }
             ClassId classId = new ClassId(
                 DescriptorService.semanticModulePath(classType.identity()), classType.name());
@@ -4386,7 +4459,7 @@ public final class SemanticLowerer {
                     ClassRegistrationSeeds.ClassRegistration seed =
                         registrationSeeds.registrationFor(classId);
                     if (seed == null) {
-                        throw new RetainedAbiDeferred(classId.text());
+                        throw new RetainedAbiDeferred(classId.text(), literal.span());
                     }
 
                     layout = seed.layout();
@@ -4433,7 +4506,7 @@ public final class SemanticLowerer {
                                 + field.name() + "' of imported class " + classId
                                 + " without a declared default (the checker's E4001 "
                                 + "rejects the shape — a fact defect, never an invented "
-                                + "default)");
+                                + "default)", literal.span());
                         }
                         SemanticOp child = buildFieldBoundary(
                             BoundaryKind.CLASS_DEFAULT_FIELD, field.descriptor(),
@@ -4485,7 +4558,7 @@ public final class SemanticLowerer {
             if (!(symbol instanceof Symbol.ClassSymbol classSymbol)) {
                 throw new ConstructUnlowered("class declaration '"
                     + declaration.name() + "' has no checked ClassSymbol (a missing "
-                    + "checker fact is a producer defect)");
+                    + "checker fact is a producer defect)", declaration.span());
             }
             return new ClassId(
                 DescriptorService.semanticModulePath(classSymbol.identity()),
@@ -4563,7 +4636,7 @@ public final class SemanticLowerer {
                     }
                     throw new ConstructUnlowered("class-field type annotation names unknown "
                         + "type '" + name + "' (a checked module cannot reach this arm — "
-                        + "a fact defect, never an invented type)");
+                        + "a fact defect, never an invented type)", named.span());
                 }
             };
         }
@@ -4574,13 +4647,13 @@ public final class SemanticLowerer {
             if (!(symbol instanceof Symbol.ModuleSymbol moduleSymbol)) {
                 throw new ConstructUnlowered("class-field type annotation qualifies unknown "
                     + "module '" + qualified.moduleName() + "' (a checked module cannot "
-                    + "reach this arm — a fact defect)");
+                    + "reach this arm — a fact defect)", qualified.span());
             }
             Type exportType = moduleSymbol.exports().get(qualified.typeName());
             if (exportType == null) {
                 throw new ConstructUnlowered("class-field type annotation names unknown "
                     + "export '" + qualified.typeName() + "' of module '"
-                    + qualified.moduleName() + "' (a fact defect)");
+                    + qualified.moduleName() + "' (a fact defect)", qualified.span());
             }
             return exportType;
         }
@@ -4741,7 +4814,7 @@ public final class SemanticLowerer {
                 throw new ConstructUnlowered("the SHARED_CELL source '"
                     + identifier.name() + "' is not a declared binding of the "
                     + "walk's environment (B7: a binding source resolves its "
-                    + "dominant incarnation at the adaptation position)");
+                    + "dominant incarnation at the adaptation position)", identifier.span());
             }
             // The B2 capture arm: the SharedCell source reference makes
             // the incarnation a shared cell (its cell is read per
@@ -5318,7 +5391,7 @@ public final class SemanticLowerer {
                                         + function.name()
                                         + "' body is not terminated and its return type is "
                                         + "not null (the carrier slice lowers the pinned "
-                                        + "implicit null return only)");
+                                        + "implicit null return only)", function.span());
                                 }
                                 lowerImplicitReturn(reservedContext, function.body().span());
                             }
@@ -5491,7 +5564,7 @@ public final class SemanticLowerer {
                                         instanceof RuntimeDescriptor.Null)) {
                                     throw new ConstructUnlowered("group member '"
                                         + member.name() + "' body is not terminated"
-                                        + " and its return type is not null");
+                                        + " and its return type is not null", member.span());
                                 }
                                 lowerImplicitReturn(reservedContext,
                                     member.body().span());
@@ -5605,7 +5678,7 @@ public final class SemanticLowerer {
             }
             throw new ConstructUnlowered("function declaration '" + function.name()
                 + "' without a checked FunctionSymbol fact (a missing checker fact is a "
-                + "producer defect)");
+                + "producer defect)", function.span());
         }
 
         private void lowerBindingForLet(ForStatement statement) {
@@ -5613,14 +5686,14 @@ public final class SemanticLowerer {
                     || !(statement.init().get() instanceof ForInit.VarDecl varDecl)) {
                 throw new ConstructUnlowered("for statement without a let initializer "
                     + "(the binding-core child lowers exactly the for-let shape; a "
-                    + "non-let for is the control-flow epic's)");
+                    + "non-let for is the control-flow epic's)", statement.span());
             }
             if (statement.update().isPresent()
                     && !(statement.update().get() instanceof AssignmentExpr)) {
                 throw new ConstructUnlowered("for-let update expression "
                     + statement.update().get().getClass().getSimpleName()
                     + " (the pinned shape is the assignment chain in the update block; "
-                    + "another update shape is outside this child's window)");
+                    + "another update shape is outside this child's window)", statement.span());
             }
             VariableDeclaration decl = varDecl.decl();
             BindingId counter = ids.nextBindingId(module, nextOrdinal++, 0);
@@ -5630,7 +5703,7 @@ public final class SemanticLowerer {
                         instanceof RuntimeDescriptor.Func) {
                 throw new ConstructUnlowered("function-typed for-let counter (the "
                     + "per-iteration carry load's function identity is the registry "
-                    + "child's resolution, B5)");
+                    + "child's resolution, B5)", statement.span());
             }
             BlockId initBlock = allocateBlock();
             BlockId bodyBlock = allocateBlock();
@@ -5770,11 +5843,12 @@ public final class SemanticLowerer {
             if (iterableType instanceof Type.Array) {
                 throw new ConstructUnlowered("array for-of (FOR_EACH(ARRAY_VALUES) is E5's, "
                     + "ISSUE-0234; an array-typed iterable reaching the binding-core walk "
-                    + "fails hard)");
+                    + "fails hard)", statement.span());
             }
             if (!(iterableType instanceof Type.String)) {
                 throw new ConstructUnlowered("for-of over a non-string, non-array iterable "
-                    + typeName(iterableType) + " (this child lowers string iterables only)");
+                    + typeName(iterableType) + " (this child lowers string iterables only)",
+                        statement.span());
             }
             ValueId iterable = lowerExpression(statement.iterable());
             BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
@@ -6536,7 +6610,7 @@ public final class SemanticLowerer {
                     if (closureCore) {
                         yield lowerClosureExpr(functionExpr, slot);
                     }
-                    throw new ConstructUnlowered(describeExpression(expr));
+                    throw new ConstructUnlowered(describeExpression(expr), expr.span());
                 }
                 case ArrayLiteralExpr array -> lowerArrayNew(array, slot);
                 case ObjectLiteralExpr object -> lowerTableNew(object, slot);
@@ -6549,17 +6623,17 @@ public final class SemanticLowerer {
                     if (e7Calls) {
                         yield lowerAwaitExpression(awaitExpression, slot);
                     }
-                    throw new ConstructUnlowered(describeExpression(expr));
+                    throw new ConstructUnlowered(describeExpression(expr), expr.span());
                 }
                 case IndexExpr index -> lowerIndexRead(index, slot);
                 case AssignmentExpr assignment -> lowerAssignment(assignment, slot);
                 case HasExpr has -> {
                     if (!classCore) {
-                        throw new ConstructUnlowered(describeExpression(expr));
+                        throw new ConstructUnlowered(describeExpression(expr), expr.span());
                     }
                     yield lowerHasField(has, slot);
                 }
-                default -> throw new ConstructUnlowered(describeExpression(expr));
+                default -> throw new ConstructUnlowered(describeExpression(expr), expr.span());
             };
         }
 
@@ -6581,7 +6655,7 @@ public final class SemanticLowerer {
             if (!(iterableType instanceof Type.String)) {
                 throw new ConstructUnlowered("for-of over a non-string, non-array iterable "
                     + typeName(iterableType) + " (this stage lowers string and array "
-                    + "iterables only)");
+                    + "iterables only)", stmt.span());
             }
             BlockId bodyBlock = allocateBlock();
             ValueId iterable = lowerExpression(stmt.iterable());
@@ -6758,7 +6832,7 @@ public final class SemanticLowerer {
                 throw new ConstructUnlowered("assignment target '" + access.field()
                     + "' on " + typeName(objectType) + " (no closed A-D9 chain shape for "
                     + "this receiver: module members are E10's, array/bytes members carry "
-                    + "no write shape)");
+                    + "no write shape)", access.span());
             }
             if (target instanceof IndexExpr index) {
                 Type containerType = checkedType(index.array());
@@ -6773,10 +6847,11 @@ public final class SemanticLowerer {
                 }
                 throw new ConstructUnlowered("assignment target index on "
                     + typeName(containerType) + " (no closed A-D9 chain shape for this "
-                    + "container)");
+                    + "container)", index.span());
             }
             throw new ConstructUnlowered("assignment target "
-                + target.getClass().getSimpleName() + " (no closed A-D9 chain shape)");
+                + target.getClass().getSimpleName() + " (no closed A-D9 chain shape)",
+                    target.span());
         }
 
         /**
@@ -6803,7 +6878,7 @@ public final class SemanticLowerer {
                 throw new ConstructUnlowered("delete target '" + access.field() + "' on "
                     + typeName(objectType) + " (no closed A-D9 delete shape for this "
                     + "receiver: module members are E10's, array/bytes members carry no "
-                    + "delete shape)");
+                    + "delete shape)", access.span());
             }
             if (target instanceof IndexExpr index) {
                 Type containerType = checkedType(index.array());
@@ -6817,10 +6892,10 @@ public final class SemanticLowerer {
                 }
                 throw new ConstructUnlowered("delete target index on " + typeName(containerType)
                     + " (no closed A-D9 delete shape for this container: bytes indexing is "
-                    + "ISSUE-0158's)");
+                    + "ISSUE-0158's)", index.span());
             }
             throw new ConstructUnlowered("delete target " + target.getClass().getSimpleName()
-                + " (no closed A-D9 delete shape)");
+                + " (no closed A-D9 delete shape)", target.span());
         }
 
         private ValueId lowerVariableAssign(AssignmentExpr assignment, IdentifierExpr target) {
@@ -6859,7 +6934,7 @@ public final class SemanticLowerer {
                 throw new ConstructUnlowered("assignment target '" + target.name()
                     + "' is not a variable binding in this stage's window (binding "
                     + "allocation is E6's; only loop bindings and declared variables "
-                    + "carry a store identity here)");
+                    + "carry a store identity here)", target.span());
             }
             return emitVariableAssignChain(assignment, target, binding, generation, slot);
         }
@@ -6881,7 +6956,7 @@ public final class SemanticLowerer {
             if (resolution == null) {
                 throw new ConstructUnlowered("assignment target '" + target.name()
                     + "' is not a declared binding of the closure walk's environment "
-                    + "(module members are E10's)");
+                    + "(module members are E10's)", target.span());
             }
             maybeRegisterCapture(target.name(), resolution);
             ValueId value = emitVariableAssignChain(assignment, target,
@@ -7113,7 +7188,7 @@ public final class SemanticLowerer {
                     && checks.symbolTable().resolve(identifier.name())
                         instanceof Symbol.ModuleSymbol) {
                 throw new ConstructUnlowered("module member assignment '" + identifier.name()
-                    + "." + access.field() + "' (EXPORT_* is E10's)");
+                    + "." + access.field() + "' (EXPORT_* is E10's)", access.span());
             }
             RuntimeDescriptor targetDescriptor =
                 ContainerPayloadDescriptors.resultDescriptorOf(checkedType(access));
@@ -7164,7 +7239,7 @@ public final class SemanticLowerer {
                 throw new ConstructUnlowered("table index assignment key of checked type "
                     + typeName(checkedType(index.index())) + " (A-D10's E3018 checker gate "
                     + "pins every table index write key to static string — a non-string "
-                    + "key reaching lowering is a producer defect)");
+                    + "key reaching lowering is a producer defect)", index.span());
             }
             RuntimeDescriptor targetDescriptor =
                 ContainerPayloadDescriptors.resultDescriptorOf(checkedType(index));
@@ -7397,7 +7472,8 @@ public final class SemanticLowerer {
                     throw new ConstructUnlowered("class field write '" + access.field()
                         + "' on " + classId + " without a local layout (the declared field "
                         + "descriptor comes from the unit's classLayouts; an imported "
-                        + "class's field write is outside this epic's unit-level window)");
+                        + "class's field write is outside this epic's unit-level window)",
+                            access.span());
                 }
                 deal.semantic.ir.ClassLayout.FieldLayout fieldLayout = null;
                 for (deal.semantic.ir.ClassLayout.FieldLayout candidate : layout.fields()) {
@@ -7409,7 +7485,7 @@ public final class SemanticLowerer {
                 if (fieldLayout == null) {
                     throw new ConstructUnlowered("class field write '" + access.field()
                         + "' on " + classId + " names an undeclared field (the checker "
-                        + "admits declared fields only — a fact defect)");
+                        + "admits declared fields only — a fact defect)", access.span());
                 }
                 declaredDescriptor = fieldLayout.descriptor();
                 try {
@@ -7417,7 +7493,7 @@ public final class SemanticLowerer {
                 } catch (DescriptorService.Defect defect) {
                     throw new ConstructUnlowered("class field write '" + access.field()
                         + "' on " + classId + " of unrepresentable receiver type ("
-                        + defect.getMessage() + ")");
+                        + defect.getMessage() + ")", access.span());
                 }
             }
             OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
@@ -7475,7 +7551,7 @@ public final class SemanticLowerer {
                     && checks.symbolTable().resolve(identifier.name())
                         instanceof Symbol.ModuleSymbol) {
                 throw new ConstructUnlowered("module member delete '" + identifier.name()
-                    + "." + access.field() + "' (EXPORT_* is E10's)");
+                    + "." + access.field() + "' (EXPORT_* is E10's)", access.span());
             }
             OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
             chainParents.push(chainOpId);
@@ -7512,7 +7588,7 @@ public final class SemanticLowerer {
                 throw new ConstructUnlowered("table index delete key of checked type "
                     + typeName(checkedType(index.index())) + " (A-D10's E3018 checker gate "
                     + "pins every table index delete key to static string — a non-string "
-                    + "key reaching lowering is a producer defect)");
+                    + "key reaching lowering is a producer defect)", index.span());
             }
             OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
             chainParents.push(chainOpId);
@@ -7618,7 +7694,7 @@ public final class SemanticLowerer {
                 } catch (DescriptorService.Defect defect) {
                     throw new ConstructUnlowered("class field delete '" + access.field()
                         + "' on " + classId + " of unrepresentable receiver type ("
-                        + defect.getMessage() + ")");
+                        + defect.getMessage() + ")", access.span());
                 }
             }
             OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
@@ -7948,7 +8024,7 @@ public final class SemanticLowerer {
                 throw new ConstructUnlowered("stdlib call " + function + " ("
                     + entry.modulePath() + "." + field + ") with " + args.size()
                     + " arguments for " + parameterDescriptors.size()
-                    + " declared parameters (the checker admits exact arity only)");
+                    + " declared parameters (the checker admits exact arity only)", call.span());
             }
             RuntimeDescriptor resultType = entry.returnDescriptor();
             ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
@@ -8038,7 +8114,7 @@ public final class SemanticLowerer {
                         throw new ConstructUnlowered("callee '" + identifier.name()
                             + "' is not a declared function binding of the carrier slice "
                             + "(function-typed parameters/loads and imported functions are "
-                            + "E7's registry resolution)");
+                            + "E7's registry resolution)", identifier.span());
                     }
                     return lowerUserCallBinding(call, slot, identifier);
                 }
@@ -8069,7 +8145,7 @@ public final class SemanticLowerer {
                 throw new ConstructUnlowered("call callee shape "
                     + call.callee().getClass().getSimpleName()
                     + " (the carrier slice lowers direct calls of declared function "
-                    + "bindings; indirect/host/external/async calls are E7's)");
+                    + "bindings; indirect/host/external/async calls are E7's)", call.span());
             }
             if (call.callee() instanceof MemberAccessExpr access
                     && access.object() instanceof IdentifierExpr alias
@@ -8175,7 +8251,7 @@ public final class SemanticLowerer {
             if (entryInvocation && entryExportName == null) {
                 throw new ConstructUnlowered("the exported entry invocation of '"
                     + calleeName + "' has no recorded module export name"
-                    + " (producer defect)");
+                    + " (producer defect)", call.span());
             }
             // The first call site reuses the function's reserved
             // canonical call-site identity (the RETURN ops' enclosing
@@ -8198,7 +8274,7 @@ public final class SemanticLowerer {
                 throw new ConstructUnlowered("call of '" + calleeName
                     + "' with " + args.size() + " arguments for "
                     + context.signature.paramTypes().size()
-                    + " parameters (the checker admits exact arity only)");
+                    + " parameters (the checker admits exact arity only)", call.span());
             }
             RuntimeDescriptor resultType = context.signature.returnType();
             ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
@@ -8291,7 +8367,8 @@ public final class SemanticLowerer {
             if (binding == null) {
                 throw new ConstructUnlowered("callee '" + identifier.name()
                     + "' identity " + calleeValue
-                    + " has no registered FunctionExecutionBinding (producer defect)");
+                    + " has no registered FunctionExecutionBinding (producer defect)",
+                        identifier.span());
             }
             if (binding instanceof FunctionExecutionBinding.DynamicFunctionValue) {
 
@@ -8391,7 +8468,7 @@ public final class SemanticLowerer {
             if (signature.isAsync()) {
                 throw new ConstructUnlowered("call of async callee '" + calleeName
                     + "' outside await (the checker's E3014 pins the shape; the await "
-                    + "arm owns async starts)");
+                    + "arm owns async starts)", call.span());
             }
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
@@ -8403,7 +8480,7 @@ public final class SemanticLowerer {
             if (args.size() != signature.paramTypes().size()) {
                 throw new ConstructUnlowered("call of '" + calleeName + "' with "
                     + args.size() + " arguments for " + signature.paramTypes().size()
-                    + " parameters (the checker admits exact arity only)");
+                    + " parameters (the checker admits exact arity only)", call.span());
             }
             RuntimeDescriptor resultType = signature.returnType();
             ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
@@ -8517,7 +8594,7 @@ public final class SemanticLowerer {
                     || !(ContainerPayloadDescriptors.resultDescriptorOf(funcType)
                         instanceof RuntimeDescriptor.Func signature)) {
                 throw new ConstructUnlowered(site + " without a function-typed checked "
-                    + "descriptor (the checker admits function-typed callees only)");
+                    + "descriptor (the checker admits function-typed callees only)", callee.span());
             }
             return signature;
         }
@@ -8667,12 +8744,13 @@ public final class SemanticLowerer {
                     || !(ContainerPayloadDescriptors.resultDescriptorOf(funcType)
                         instanceof RuntimeDescriptor.Func signature)) {
                 throw new ConstructUnlowered("call of '" + calleeName
-                    + "' without a function-typed checked descriptor (producer defect)");
+                    + "' without a function-typed checked descriptor (producer defect)",
+                        call.span());
             }
             if (signature.isAsync()) {
                 throw new ConstructUnlowered("call of async callee '" + calleeName
                     + "' outside await (the checker's E3014 pins the shape; the await "
-                    + "arm owns async starts)");
+                    + "arm owns async starts)", call.span());
             }
             if (binding instanceof FunctionExecutionBinding.LoweredBody body) {
                 FunctionContext entryContext =
@@ -8716,7 +8794,7 @@ public final class SemanticLowerer {
             if (args.size() != expectedParams) {
                 throw new ConstructUnlowered("call of '" + calleeName + "' with "
                     + args.size() + " arguments for " + expectedParams
-                    + " parameters (the checker admits exact arity only)");
+                    + " parameters (the checker admits exact arity only)", call.span());
             }
             RuntimeDescriptor resultType = signature.returnType();
             ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
@@ -8849,7 +8927,8 @@ public final class SemanticLowerer {
                     if (source == null) {
                         throw new ConstructUnlowered("adapter invocation of '" + calleeName
                             + "' whose source identity is not statically fixed "
-                            + "(REEVALUATE_THUNK call-result sources are ISSUE-0531's)");
+                            + "(REEVALUATE_THUNK call-result sources are ISSUE-0531's)",
+                                call.span());
                     }
                     switch (source) {
                         case FunctionExecutionBinding.LoweredBody body -> {
@@ -8917,7 +8996,7 @@ public final class SemanticLowerer {
                         case FunctionExecutionBinding.AdapterBinding nested ->
                             throw new ConstructUnlowered("nested adapter source of '"
                                 + calleeName + "' (adapter-of-adapter invocation is "
-                                + "ISSUE-0531's)");
+                                + "ISSUE-0531's)", call.span());
                     }
                 }
                 case FunctionExecutionBinding.HostFunction host -> {
@@ -9044,14 +9123,14 @@ public final class SemanticLowerer {
             if (!(aliasSymbol instanceof Symbol.ModuleSymbol moduleSymbol)) {
                 throw new ConstructUnlowered("member read '" + alias.name() + "."
                     + access.field() + "' has a non-module base '" + alias.name()
-                    + "' (module member reads are EXPORT_READ shapes)");
+                    + "' (module member reads are EXPORT_READ shapes)", access.span());
             }
             ResolvedImport importFact = importByAlias(alias.name());
             if (importFact == null) {
                 throw new ConstructUnlowered("import alias '" + alias.name()
                     + "' of '" + alias.name() + "." + access.field()
                     + "' without a resolved import fact (a missing checker fact is a "
-                    + "producer defect)");
+                    + "producer defect)", access.span());
             }
             // The declared-export guard (G3): the member name must be a key
             // of the resolved alias's checker module symbol. The project
@@ -9063,7 +9142,7 @@ public final class SemanticLowerer {
                     + importFact.resolvedModuleId().path()
                     + "' (the resolved alias's checker module symbol carries the "
                     + "declared-export facts; an undeclared member never lowers to an "
-                    + "EXPORT_READ)");
+                    + "EXPORT_READ)", access.span());
             }
             RuntimeDescriptor checked = ContainerPayloadDescriptors
                 .resultDescriptorOf(checkedType(access));
@@ -9076,7 +9155,7 @@ public final class SemanticLowerer {
                     + importFact.resolvedModuleId().path()
                     + "' is a class-descriptor read (a class used as a value is "
                     + "outside the closed runtime value domain; the read never emits "
-                    + "and never registers)");
+                    + "and never registers)", access.span());
             }
             RuntimeDescriptor descriptor;
             switch (importFact.kind()) {
@@ -9097,7 +9176,8 @@ public final class SemanticLowerer {
                             + checked.canonicalSpecText() + " but the closed stdlib "
                             + "catalog row for '" + importFact.resolvedModuleId().path()
                             + "' declares " + descriptor.canonicalSpecText()
-                            + " (the row's declared descriptor is the EXPORT_READ's own)");
+                            + " (the row's declared descriptor is the EXPORT_READ's own)",
+                                access.span());
                     }
                 }
                 default -> throw new ConstructUnlowered("import kind "
@@ -9106,7 +9186,7 @@ public final class SemanticLowerer {
                     + importFact.resolvedModuleId().path()
                     + "' has no import-member read arm (the closed produced set is "
                     + "IMPLEMENTATION/STDLIB/HOST; the parent-pinned DECLARATION "
-                    + "kind has no producer)");
+                    + "kind has no producer)", access.span());
             }
             FunctionBindingRegistry.FunctionValueImportFacts facts = null;
             if (descriptor instanceof RuntimeDescriptor.Func functionDescriptor) {
@@ -9122,14 +9202,15 @@ public final class SemanticLowerer {
                                 + importFact.resolvedModuleId().path()
                                 + "' (the realized drive installs the session's "
                                 + "resolved import facts and callee-route facts; a "
-                                + "route-less carrier session fails closed)");
+                                + "route-less carrier session fails closed)", access.span());
                         }
                         yield new FunctionBindingRegistry.FunctionValueImportFacts(null,
                             importFact.resolvedModuleId(), access.field(),
                             functionDescriptor);
                     }
                     default -> throw new ConstructUnlowered("import kind "
-                        + importFact.kind() + " has no import-member registration arm");
+                        + importFact.kind() + " has no import-member registration arm",
+                            access.span());
                 };
             }
             ValueId exportValue = slot != null ? slot
@@ -9171,7 +9252,7 @@ public final class SemanticLowerer {
                     || materialization.binding() == null) {
                 throw new ConstructUnlowered("import call callee '" + alias.name()
                     + "." + access.field() + "' is not a function-typed export (the "
-                    + "checker admits function-typed call callees only)");
+                    + "checker admits function-typed call callees only)", access.span());
             }
             return lowerImportCall(call, slot, materialization.binding(), descriptor);
         }
@@ -9193,7 +9274,8 @@ public final class SemanticLowerer {
                                         RuntimeDescriptor.Func descriptor) {
             if (descriptor.isAsync()) {
                 throw new ConstructUnlowered("async import call outside await (the "
-                    + "checker's E3014 pins the shape; the await arm owns async starts)");
+                    + "checker's E3014 pins the shape; the await arm owns async starts)",
+                        call.span());
             }
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
@@ -9205,7 +9287,7 @@ public final class SemanticLowerer {
             if (args.size() != descriptor.paramTypes().size()) {
                 throw new ConstructUnlowered("import call with " + args.size()
                     + " arguments for " + descriptor.paramTypes().size()
-                    + " parameters (the checker admits exact arity only)");
+                    + " parameters (the checker admits exact arity only)", call.span());
             }
             RuntimeDescriptor resultType = descriptor.returnType();
             ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
@@ -9296,7 +9378,7 @@ public final class SemanticLowerer {
             if (!(awaitExpression.callee() instanceof CallExpr call)) {
                 throw new ConstructUnlowered("await callee shape "
                     + awaitExpression.callee().getClass().getSimpleName()
-                    + " (the parser's E1042 pins await over a call)");
+                    + " (the parser's E1042 pins await over a call)", awaitExpression.span());
             }
             return lowerAwaitCall(call, slot, awaitExpression.span());
         }
@@ -9343,7 +9425,8 @@ public final class SemanticLowerer {
                 if (binding == null) {
                     throw new ConstructUnlowered("await callee '" + identifier.name()
                         + "' identity " + calleeValue
-                        + " has no registered FunctionExecutionBinding (producer defect)");
+                        + " has no registered FunctionExecutionBinding (producer defect)",
+                            identifier.span());
                 }
                 if (binding instanceof FunctionExecutionBinding.DynamicFunctionValue) {
                     // The producer rule's callee in await position: the
@@ -9388,7 +9471,7 @@ public final class SemanticLowerer {
                         || materialization.binding() == null) {
                     throw new ConstructUnlowered("await callee '" + alias.name()
                         + "." + access.field() + "' is not a function-typed export (the "
-                        + "checker admits function-typed callees only)");
+                        + "checker admits function-typed callees only)", access.span());
                 }
                 return lowerAsyncStart(call, slot, awaitSpan, materialization.binding(),
                     false);
@@ -9423,7 +9506,7 @@ public final class SemanticLowerer {
                 "await of '" + calleeName + "'");
             if (!signature.isAsync()) {
                 throw new ConstructUnlowered("await of non-async callee '" + calleeName
-                    + "' (the checker's E3013 pins the shape)");
+                    + "' (the checker's E3013 pins the shape)", call.span());
             }
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
@@ -9435,7 +9518,7 @@ public final class SemanticLowerer {
             if (args.size() != signature.paramTypes().size()) {
                 throw new ConstructUnlowered("async call of '" + calleeName + "' with "
                     + args.size() + " arguments for " + signature.paramTypes().size()
-                    + " parameters (the checker admits exact arity only)");
+                    + " parameters (the checker admits exact arity only)", call.span());
             }
             RuntimeDescriptor completion = signature.returnType();
             ValueId awaitResult = slot != null ? slot
@@ -9488,7 +9571,8 @@ public final class SemanticLowerer {
                                            FunctionContext context) {
             if (!context.signature.isAsync()) {
                 throw new ConstructUnlowered("await of non-async function '"
-                    + identifier.name() + "' (the checker's E3013 pins the shape)");
+                    + identifier.name() + "' (the checker's E3013 pins the shape)",
+                        identifier.span());
             }
             String entryExportName = moduleEntryExportName(context);
             if (entryExportName != null) {
@@ -9550,7 +9634,7 @@ public final class SemanticLowerer {
                 throw new ConstructUnlowered("async call of the exported '"
                     + exportName + "' with " + args.size() + " arguments for "
                     + signature.paramTypes().size()
-                    + " parameters (the checker admits exact arity only)");
+                    + " parameters (the checker admits exact arity only)", call.span());
             }
             RuntimeDescriptor completion = signature.returnType();
             ValueId awaitResult = slot != null ? slot
@@ -9608,14 +9692,15 @@ public final class SemanticLowerer {
             if (binding == null) {
                 throw new ConstructUnlowered("await callee '" + identifier.name()
                     + "' identity " + calleeValue
-                    + " has no registered FunctionExecutionBinding (producer defect)");
+                    + " has no registered FunctionExecutionBinding (producer defect)",
+                        identifier.span());
             }
             if (!(binding instanceof FunctionExecutionBinding.LoweredBody)) {
                 throw new ConstructUnlowered("await callee '" + identifier.name()
                     + "' identity " + calleeValue + " resolves the static class "
                     + binding.getClass().getSimpleName()
                     + " instead of the declaration's published body carrier "
-                    + "(producer defect)");
+                    + "(producer defect)", identifier.span());
             }
             return lowerAsyncStart(call, slot, awaitSpan, binding, false, calleeValue);
         }
@@ -9652,7 +9737,7 @@ public final class SemanticLowerer {
                 throw new ConstructUnlowered("the value-carried async start of '"
                     + describeDynamicCallee(call.callee()) + "' resolves the static class "
                     + binding.getClass().getSimpleName()
-                    + " instead of a declared body carrier (producer defect)");
+                    + " instead of a declared body carrier (producer defect)", call.span());
             }
             if (binding instanceof FunctionExecutionBinding.LoweredBody body) {
                 FunctionContext entryContext =
@@ -9697,7 +9782,7 @@ public final class SemanticLowerer {
                     if (context == null) {
                         throw new ConstructUnlowered("the async body binding's function "
                             + body.functionId().id()
-                            + " has no lowering context (producer defect)");
+                            + " has no lowering context (producer defect)", call.span());
                     }
                     context.assignShape(InvocationShape.SOURCE_ASYNC, context.callSiteOpId);
                     source = AsyncStartSource.DEAL_BODY;
@@ -9711,7 +9796,7 @@ public final class SemanticLowerer {
                     if (args.size() != context.signature.paramTypes().size()) {
                         throw new ConstructUnlowered("async call with " + args.size()
                             + " arguments for " + context.signature.paramTypes().size()
-                            + " parameters (the checker admits exact arity only)");
+                            + " parameters (the checker admits exact arity only)", call.span());
                     }
                     for (int i = 0; i < args.size(); i++) {
                         SemanticOp boundary = buildChildBoundary(
@@ -9733,7 +9818,7 @@ public final class SemanticLowerer {
                     if (args.size() != host.descriptor().paramTypes().size()) {
                         throw new ConstructUnlowered("async host call with " + args.size()
                             + " arguments for " + host.descriptor().paramTypes().size()
-                            + " parameters (the checker admits exact arity only)");
+                            + " parameters (the checker admits exact arity only)", call.span());
                     }
                     hostParameterBoundaries(host.descriptor(), args, call, startOpId,
                         parameterBoundaryOps, parameterBoundaryIds);
@@ -9750,7 +9835,7 @@ public final class SemanticLowerer {
                         throw new ConstructUnlowered("async host-value call with "
                             + args.size() + " arguments for "
                             + hostValue.descriptor().paramTypes().size()
-                            + " parameters (the checker admits exact arity only)");
+                            + " parameters (the checker admits exact arity only)", call.span());
                     }
                     hostParameterBoundaries(hostValue.descriptor(), args, call, startOpId,
                         parameterBoundaryOps, parameterBoundaryIds);
@@ -9763,7 +9848,7 @@ public final class SemanticLowerer {
                     if (entryOp == null) {
                         throw new ConstructUnlowered("the async external call of '"
                             + external.moduleId() + "'." + external.exportName()
-                            + " has no recorded EXTERNAL_ENTRY in the callee unit");
+                            + " has no recorded EXTERNAL_ENTRY in the callee unit", call.span());
                     }
                     AsyncTokenId calleeToken = new AsyncTokenId.Canonical(entryOp.id(),
                         AsyncTokenOwner.DEAL_BODY_TASK);
@@ -9776,7 +9861,7 @@ public final class SemanticLowerer {
                         throw new ConstructUnlowered("async external call with "
                             + args.size() + " arguments for "
                             + external.descriptor().paramTypes().size()
-                            + " parameters (the checker admits exact arity only)");
+                            + " parameters (the checker admits exact arity only)", call.span());
                     }
                     for (int i = 0; i < args.size(); i++) {
                         // The cross-module declared callee's own parameter
@@ -9797,7 +9882,7 @@ public final class SemanticLowerer {
                 }
                 case FunctionExecutionBinding.AdapterBinding adapter ->
                     throw new ConstructUnlowered("adapter-over-async lower via "
-                        + "lowerAdapterOverAsync (producer defect)");
+                        + "lowerAdapterOverAsync (producer defect)", call.span());
                 case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
 
                     source = AsyncStartSource.DEAL_BODY;
@@ -9810,7 +9895,7 @@ public final class SemanticLowerer {
                             + args.size() + " arguments for the '" + intrinsic.kind()
                             + "' intrinsic's "
                             + intrinsic.descriptor().paramTypes().size()
-                            + " declared parameter(s) (producer defect)");
+                            + " declared parameter(s) (producer defect)", call.span());
                     }
                     for (int i = 0; i < args.size(); i++) {
                         SemanticOp boundary = buildChildBoundary(
@@ -9867,7 +9952,7 @@ public final class SemanticLowerer {
             if (source == null) {
                 throw new ConstructUnlowered("adapter-over-async of '" + calleeName
                     + "' whose source identity is not statically fixed "
-                    + "(REEVALUATE_THUNK call-result sources are ISSUE-0531's)");
+                    + "(REEVALUATE_THUNK call-result sources are ISSUE-0531's)", call.span());
             }
             RuntimeDescriptor.Func target = adapter.targetSignature();
             RuntimeDescriptor.Func sourceSignature = adapter.sourceSignature();
@@ -9882,7 +9967,7 @@ public final class SemanticLowerer {
                 throw new ConstructUnlowered("adapter-over-async call of '" + calleeName
                     + "' with " + args.size() + " arguments for "
                     + target.paramTypes().size()
-                    + " target parameters (the checker admits exact arity only)");
+                    + " target parameters (the checker admits exact arity only)", call.span());
             }
             int m = sourceSignature.paramTypes().size();
             OpId outerOpId = ids.nextOpId(module, nextOrdinal++, 0);
@@ -9913,7 +9998,7 @@ public final class SemanticLowerer {
                     FunctionContext context = contextsByFunctionId.get(body.functionId());
                     if (context == null) {
                         throw new ConstructUnlowered("the adapter's body-source binding "
-                            + "has no lowering context (producer defect)");
+                            + "has no lowering context (producer defect)", call.span());
                     }
                     String entryExportName = moduleEntryExportName(context);
                     if (entryExportName == null) {
@@ -9992,7 +10077,7 @@ public final class SemanticLowerer {
                     if (entryOp == null) {
                         throw new ConstructUnlowered("the adapter's async external source '"
                             + external.moduleId() + "'." + external.exportName()
-                            + " has no recorded EXTERNAL_ENTRY in the callee unit");
+                            + " has no recorded EXTERNAL_ENTRY in the callee unit", call.span());
                     }
                     AsyncTokenId calleeToken = new AsyncTokenId.Canonical(entryOp.id(),
                         AsyncTokenOwner.DEAL_BODY_TASK);
@@ -10005,7 +10090,7 @@ public final class SemanticLowerer {
                 }
                 case FunctionExecutionBinding.AdapterBinding nestedAdapter ->
                     throw new ConstructUnlowered("nested adapter source of '" + calleeName
-                        + "' (adapter-of-adapter invocation is ISSUE-0531's)");
+                        + "' (adapter-of-adapter invocation is ISSUE-0531's)", call.span());
                 case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
 
                     if (sourceSignature.paramTypes().size()
@@ -10016,7 +10101,7 @@ public final class SemanticLowerer {
                             + " source parameter(s) for the '" + intrinsic.kind()
                             + "' intrinsic's "
                             + intrinsic.descriptor().paramTypes().size()
-                            + " declared parameter(s) (producer defect)");
+                            + " declared parameter(s) (producer defect)", call.span());
                     }
                     nestedOpId = ids.nextOpId(module, nextOrdinal++, 0);
                     nestedSource = AsyncStartSource.DEAL_BODY;
@@ -10112,7 +10197,8 @@ public final class SemanticLowerer {
         private void lowerReturn(ReturnStatement statement) {
             FunctionContext context = functionStack.peek();
             if (context == null) {
-                throw new ConstructUnlowered("return statement outside a function body");
+                throw new ConstructUnlowered("return statement outside a function body",
+                    statement.span());
             }
             ValueId value;
             if (statement.expr().isPresent()) {
@@ -10120,7 +10206,7 @@ public final class SemanticLowerer {
             } else {
                 if (!(context.signature.returnType() instanceof RuntimeDescriptor.Null)) {
                     throw new ConstructUnlowered("bare return in a function whose return "
-                        + "type is not null (the checker requires the value)");
+                        + "type is not null (the checker requires the value)", statement.span());
                 }
                 value = emitValueOp(SemanticOpKind.CONST,
                     new KindPayload.ConstPayload(ScalarValue.Null.INSTANCE),
@@ -10231,14 +10317,16 @@ public final class SemanticLowerer {
                 }
                 if (statement instanceof ClassDeclaration classDeclaration) {
                     if (!classCore) {
-                        throw new ConstructUnlowered(describeStatement(statement));
+                        throw new ConstructUnlowered(describeStatement(statement),
+                            statement.span());
                     }
                     lowerClassDeclaration(classDeclaration, false);
                     continue;
                 }
                 if (statement instanceof ExportDeclaration exportDeclaration) {
                     if (!e7Calls) {
-                        throw new ConstructUnlowered(describeStatement(statement));
+                        throw new ConstructUnlowered(describeStatement(statement),
+                            statement.span());
                     }
                     // The E7 surface unwraps exported function
                     // declarations (the declaration walks like any
@@ -10258,7 +10346,7 @@ public final class SemanticLowerer {
                             instanceof ClassDeclaration exportedClass) {
                         if (!classCore) {
                             throw new ConstructUnlowered(
-                                describeStatement(statement));
+                                describeStatement(statement), statement.span());
                         }
                         lowerClassDeclaration(exportedClass, true);
                     }
@@ -10278,13 +10366,13 @@ public final class SemanticLowerer {
                     if (importFact == null) {
                         throw new ConstructUnlowered("import '" + importDeclaration.alias()
                             + "' without a resolved import fact (a missing checker fact "
-                            + "is a producer defect)");
+                            + "is a producer defect)", importDeclaration.span());
                     }
                     BindingId aliasCell = importAliasCells.get(importDeclaration.alias());
                     if (aliasCell == null) {
                         throw new ConstructUnlowered("import '" + importDeclaration.alias()
                             + "' without a hoisted alias cell (a missing hoist fact "
-                            + "is a producer defect)");
+                            + "is a producer defect)", importDeclaration.span());
                     }
                     emitNullOp(SemanticOpKind.MODULE_IMPORT,
                         new KindPayload.ModuleImportPayload(importFact.modulePath(),
@@ -10361,7 +10449,7 @@ public final class SemanticLowerer {
                     lowerDiscard(expressionStatement);
                     continue;
                 }
-                throw new ConstructUnlowered(describeStatement(statement));
+                throw new ConstructUnlowered(describeStatement(statement), statement.span());
             }
         }
 
@@ -10852,7 +10940,7 @@ public final class SemanticLowerer {
                     lowerDiscard(expressionStatement);
                     continue;
                 }
-                throw new ConstructUnlowered(describeStatement(statement));
+                throw new ConstructUnlowered(describeStatement(statement), statement.span());
             }
         }
 
@@ -11042,7 +11130,7 @@ public final class SemanticLowerer {
                         }
                         case ForInit.VarDecl decl -> throw new ConstructUnlowered(
                             "for-loop let-declared initializer (BINDING_ALLOC is E6's, "
-                                + "ISSUE-0235)");
+                                + "ISSUE-0235)", statement.span());
                     }
                 });
                 if (statement.condition().isPresent()) {
@@ -11178,7 +11266,7 @@ public final class SemanticLowerer {
             if (target == null) {
                 throw new ConstructUnlowered("break without an enclosing loop target (the "
                     + "checker's E2000 pins source-level loop placement — a missing "
-                    + "checker fact is a producer defect)");
+                    + "checker fact is a producer defect)", statement.span());
             }
             emitNullOp(SemanticOpKind.BREAK,
                 new KindPayload.BreakPayload(target), statement.span(),
@@ -11201,7 +11289,7 @@ public final class SemanticLowerer {
             if (target == null) {
                 throw new ConstructUnlowered("continue without an enclosing loop target (the "
                     + "checker's E2000 pins source-level loop placement — a missing "
-                    + "checker fact is a producer defect)");
+                    + "checker fact is a producer defect)", statement.span());
             }
             emitNullOp(SemanticOpKind.CONTINUE,
                 new KindPayload.ContinuePayload(target), statement.span(),
@@ -11240,7 +11328,7 @@ public final class SemanticLowerer {
                 case LiteralValue.IntLiteral integer -> {
                     long value = integer.value();
                     if (value < -2147483648L || value > 2147483647L) {
-                        throw new IntLiteralOutOfRange(value);
+                        throw new IntLiteralOutOfRange(value, literal.span());
                     }
                     yield new ScalarValue.Int((int) value);
                 }
@@ -11313,13 +11401,13 @@ public final class SemanticLowerer {
                 if (resolution == null) {
                     throw new ConstructUnlowered("identifier '" + identifier.name()
                         + "' is not a declared binding of the class walk's "
-                        + "environment (class/module members are E9's/E10's)");
+                        + "environment (class/module members are E9's/E10's)", identifier.span());
                 }
                 BlockId producing = resolution.entry().incarnation().scope();
                 if (!producing.equals(moduleInitBlock)
                         && !producing.equals(context.block())
                         && !context.internalBlocks().contains(producing)) {
-                    throw new ClassDefaultCapture(identifier.name());
+                    throw new ClassDefaultCapture(identifier.name(), identifier.span());
                 }
                 if (captureCollectors.size() <= context.entryCaptureDepth()) {
 
@@ -11338,7 +11426,7 @@ public final class SemanticLowerer {
                 if (resolution == null) {
                     throw new ConstructUnlowered("identifier '" + identifier.name()
                         + "' is not a declared binding of the closure walk's environment "
-                        + "(class/module members are E9's/E10's)");
+                        + "(class/module members are E9's/E10's)", identifier.span());
                 }
                 maybeRegisterCapture(identifier.name(), resolution);
                 return emitResolvedLoad(identifier, type, resolution.entry());
@@ -11356,7 +11444,8 @@ public final class SemanticLowerer {
             throw new ConstructUnlowered("identifier '" + identifier.name()
                 + "' is not a load of an enclosing for-of loop binding or catch "
                 + "binding in this stage's window (binding allocation, non-loop "
-                + "loads, and generation increments/stores are E6's, ISSUE-0235)");
+                + "loads, and generation increments/stores are E6's, ISSUE-0235)",
+                    identifier.span());
         }
 
         private ValueId emitResolvedLoad(IdentifierExpr identifier, Type type,
@@ -11476,7 +11565,7 @@ public final class SemanticLowerer {
             if (!(checkedFunctionType instanceof Type.Func)) {
                 throw new ConstructUnlowered("function expression of non-function checked "
                     + "type " + typeName(checkedFunctionType) + " (a checked FunctionExpr "
-                    + "must be function-typed)");
+                    + "must be function-typed)", functionExpr.span());
             }
             RuntimeDescriptor.Func signature = (RuntimeDescriptor.Func)
                 ContainerPayloadDescriptors.resultDescriptorOf(checkedFunctionType);
@@ -11518,7 +11607,7 @@ public final class SemanticLowerer {
                                 throw new ConstructUnlowered("closure body is not "
                                     + "terminated and its return type is not null "
                                     + "(the E7 slice lowers the pinned implicit null "
-                                    + "return only)");
+                                    + "return only)", functionExpr.span());
                             }
                             lowerImplicitReturn(reservedClosureContext,
                                 functionExpr.body().span());
@@ -11551,7 +11640,8 @@ public final class SemanticLowerer {
             Type type = checkedType(literal);
             if (!(type instanceof Type.Array arrayType)) {
                 throw new ConstructUnlowered("array literal of non-array checked type "
-                    + typeName(type) + " (a checked ArrayLiteralExpr must be array-typed)");
+                    + typeName(type) + " (a checked ArrayLiteralExpr must be array-typed)",
+                        literal.span());
             }
             RuntimeDescriptor elementDescriptor =
                 containerElementDescriptor(arrayType.element());
@@ -11611,14 +11701,14 @@ public final class SemanticLowerer {
                     throw new ConstructUnlowered("class-typed object literal "
                         + DescriptorService.semanticModulePath(classType.identity())
                         + "/" + classType.name()
-                        + " (class construction and CLASS_NEW are E9's)");
+                        + " (class construction and CLASS_NEW are E9's)", literal.span());
                 }
                 return lowerClassLiteral(literal, slot);
             }
             if (!(type instanceof Type.Table)) {
                 throw new ConstructUnlowered("object literal of non-table, non-class checked "
                     + "type " + typeName(type) + " (a checked ObjectLiteralExpr must be "
-                    + "table- or class-typed)");
+                    + "table- or class-typed)", literal.span());
             }
             List<KindPayload.TableEntry> entries = new ArrayList<>();
             for (Property property : literal.properties()) {
@@ -11700,7 +11790,7 @@ public final class SemanticLowerer {
             if (!(objectType instanceof Type.Array)) {
                 throw new ConstructUnlowered("index read on " + typeName(objectType)
                     + " (the carrier slice lowers array index reads; table index reads "
-                    + "are E2's)");
+                    + "are E2's)", index.span());
             }
             RuntimeDescriptor resultType =
                 ContainerPayloadDescriptors.resultDescriptorOf(checkedType(index));
@@ -11779,7 +11869,7 @@ public final class SemanticLowerer {
                     throw new ConstructUnlowered("class member access "
                         + DescriptorService.semanticModulePath(classType.identity())
                         + "/" + classType.name() + "." + access.field()
-                        + " (FIELD_READ is E9's)");
+                        + " (FIELD_READ is E9's)", access.span());
                 }
                 return lowerFieldRead(access, classType, slot);
             }
@@ -11797,11 +11887,11 @@ public final class SemanticLowerer {
                 }
                 throw new ConstructUnlowered("member access '" + access.field()
                     + "' on bytes (the checker admits .length only; a bytes member "
-                    + "access reaching an E5 arm fails hard)");
+                    + "access reaching an E5 arm fails hard)", access.span());
             }
             throw new ConstructUnlowered("member access '" + access.field() + "' on "
                 + typeName(objectType) + " (no member-access arm for this receiver shape "
-                + "in this stage's window)");
+                + "in this stage's window)", access.span());
         }
 
         private boolean isModuleSymbol(String name) {
@@ -11819,7 +11909,7 @@ public final class SemanticLowerer {
             } catch (DescriptorService.Defect defect) {
                 throw new ConstructUnlowered("class member access "
                     + classId + "." + access.field() + " on an unrepresentable receiver "
-                    + "type (" + defect.getMessage() + ")");
+                    + "type (" + defect.getMessage() + ")", access.span());
             }
             RuntimeDescriptor resultDescriptor =
                 ContainerPayloadDescriptors.resultDescriptorOf(checkedType(access));
@@ -12136,7 +12226,7 @@ public final class SemanticLowerer {
                 + " of checked type " + typeName(type)
                 + " (comparison selectors are the comparison producer "
                 + "ComparisonSelectorLowering's; string + lowers to "
-                + "STRING_CONCAT, never BINARY)");
+                + "STRING_CONCAT, never BINARY)", binary.span());
         }
 
         /** True iff the operator is one of the six comparison operators (B-D3). */
@@ -12202,7 +12292,7 @@ public final class SemanticLowerer {
                     || !(checkedType(binary.right()) instanceof Type.Boolean)) {
                 throw new ConstructUnlowered("logical operator " + binary.op()
                     + " over a non-boolean checked operand (the checker pins boolean "
-                    + "operands — a missing checker fact is a producer defect)");
+                    + "operands — a missing checker fact is a producer defect)", binary.span());
             }
             ControlSelector selector = binary.op() == BinaryOp.AND
                 ? ControlSelector.LOGICAL_AND : ControlSelector.LOGICAL_OR;
@@ -12279,7 +12369,8 @@ public final class SemanticLowerer {
                     case MOD -> BinarySelector.INT32_MOD_TRUNC;
                     case POW -> BinarySelector.INT32_POW;
                     default -> throw new ConstructUnlowered("arithmetic operator "
-                        + binary.op() + " outside the I3 int32 rows (producer defect)");
+                        + binary.op() + " outside the I3 int32 rows (producer defect)",
+                            binary.span());
                 };
             } else if (leftType instanceof Type.Number) {
                 selector = switch (binary.op()) {
@@ -12290,12 +12381,14 @@ public final class SemanticLowerer {
                     case MOD -> BinarySelector.NUMBER_MOD_FLOOR;
                     case POW -> BinarySelector.NUMBER_POW_IEEE;
                     default -> throw new ConstructUnlowered("arithmetic operator "
-                        + binary.op() + " outside the I3 number rows (producer defect)");
+                        + binary.op() + " outside the I3 number rows (producer defect)",
+                            binary.span());
                 };
             } else {
                 throw new ConstructUnlowered("arithmetic binary " + binary.op()
                     + " over non-int/number checked operand " + typeName(leftType)
-                    + " (a checked arithmetic expression must be int- or number-typed)");
+                    + " (a checked arithmetic expression must be int- or number-typed)",
+                        binary.span());
             }
             ValueId left = lowerExpression(binary.left());
             ValueId right = lowerExpression(binary.right());
@@ -12329,7 +12422,7 @@ public final class SemanticLowerer {
                     if (!(operandType instanceof Type.Boolean)) {
                         throw new ConstructUnlowered("unary '!' over non-boolean checked "
                             + "operand " + typeName(operandType)
-                            + " (a missing checker fact is a producer defect)");
+                            + " (a missing checker fact is a producer defect)", unary.span());
                     }
                     selector = UnarySelector.BOOL_NOT;
                 }
@@ -12341,11 +12434,11 @@ public final class SemanticLowerer {
                     } else {
                         throw new ConstructUnlowered("unary '-' over non-int/number checked "
                             + "operand " + typeName(operandType)
-                            + " (a missing checker fact is a producer defect)");
+                            + " (a missing checker fact is a producer defect)", unary.span());
                     }
                 }
                 default -> throw new ConstructUnlowered("unary operator " + unary.op()
-                    + " outside the closed UnarySelector rows (producer defect)");
+                    + " outside the closed UnarySelector rows (producer defect)", unary.span());
             }
             ValueId operand = lowerExpression(unary.expr());
             return emitOperandOp(SemanticOpKind.UNARY,
@@ -12414,7 +12507,7 @@ public final class SemanticLowerer {
             }
             throw new ConstructUnlowered("call expression (only the int()/number() "
                 + "conversion and bytes() allocation intrinsic calls lower to "
-                + "INTRINSIC_CALL; the CALL machinery is the calls slice's)");
+                + "INTRINSIC_CALL; the CALL machinery is the calls slice's)", call.span());
         }
 
         /**
@@ -12480,7 +12573,8 @@ public final class SemanticLowerer {
                             || !(literal.value() instanceof LiteralValue.StringLiteral text)) {
                         throw new ConstructUnlowered("template literal part at index " + i
                             + " is not a literal string fragment (the parser alternates "
-                            + "literal strings and interpolations — a parser defect)");
+                            + "literal strings and interpolations — a parser defect)",
+                            part.span());
                     }
                     fragments.add(lowerConst(literal));
                 } else {
@@ -12508,7 +12602,7 @@ public final class SemanticLowerer {
             if (type == null) {
                 throw new ConstructUnlowered(expr.getClass().getSimpleName()
                     + " without a checked type (a missing checker fact is a producer "
-                    + "defect — never an invented op)");
+                    + "defect — never an invented op)", expr.span());
             }
             return type;
         }
