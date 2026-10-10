@@ -8547,50 +8547,170 @@ local __completionTokens = {["nil"] = true, ["null"] = true, ["boolean"] = true,
   ["infinity"] = true}
 local __carrierTokens = {["nil"] = true, ["table"] = true, ["boolean"] = true,
   ["number"] = true, ["string"] = true, ["bytes"] = true, ["function"] = true}
-local __descriptorPrimitives = {["null"] = true, ["boolean"] = true, ["int"] = true,
-  ["number"] = true, ["string"] = true, ["table"] = true, ["bytes"] = true}
+-- The closed descriptor recognizers — the canonical grammar the one
+-- decoder consumes and the emitters' internal dialect — built once in a
+-- private scope so the chunk's own local-variable budget is untouched.
+local __isClassAtom, __isDescriptorText = (function()
+local __descriptorPrimitives = {"null", "boolean", "int", "number", "string",
+  "table", "bytes"}
+-- One class-atom segment: '@' plus text up to ')' / ']' / ',' (the canonical
+-- decoder's own stop set; the dialect function's ';' separator also
+-- terminates a class atom in a dialect parameter list) or the end of the
+-- text. The segment must contain a '/' and its final segment must be
+-- non-empty: the pinned builtin @/Error keeps its empty module path.
+local function __classAtomEnd(s, i, dialect)
+  local j = i + 1
+  while j <= #s do
+    local c = string.sub(s, j, j)
+    if c == ")" or c == "]" or c == "," or (dialect and c == ";") then break end
+    j = j + 1
+  end
+  local segment = string.sub(s, i + 1, j - 1)
+  if string.find(segment, "/", 1, true) == nil then return nil end
+  if string.sub(segment, -1) == "/" then return nil end
+  return j
+end
+-- A canonical class atom (@modulePath/ClassName, complete consumption): the
+-- canonical decoder's class scan ends at ')' / ']' / ',' or the text's own
+-- end, so a standalone operand containing a terminator leaves trailing
+-- content the one decoder rejects.
 local function __isClassAtom(s)
   if type(s) ~= "string" or string.sub(s, 1, 1) ~= "@" then return false end
-  if string.find(s, "/", 1, true) == nil then return false end
-  return string.find(s, "[%s{}]") == nil
+  return __classAtomEnd(s, 1, false) == #s + 1
 end
--- A descriptor text: the canonical grammar and the prelude's own internal
--- dialect (array(inner)/nullable(inner)/function(params;result)).
+-- One canonical primitive: the fixed spelling followed by the end of the
+-- text or one of the canonical delimiters ')' / ']' / ','.
+local function __canonicalPrimitiveEnd(s, i)
+  for _, name in ipairs(__descriptorPrimitives) do
+    local n = #name
+    if string.sub(s, i, i + n - 1) == name then
+      local after = string.sub(s, i + n, i + n)
+      if after == "" or after == ")" or after == "]" or after == "," then
+        return i + n
+      end
+    end
+  end
+  return nil
+end
+local __canonicalDesc
+-- The canonical parameter list: empty, or one descriptor per comma-separated
+-- position; returns the index of the closing ')' or nil.
+local function __canonicalParams(s, i)
+  if string.sub(s, i, i) == ")" then return i end
+  while true do
+    local ending = __canonicalDesc(s, i)
+    if ending == nil then return nil end
+    local c = string.sub(s, ending, ending)
+    if c == "," then
+      i = ending + 1
+    elseif c == ")" then
+      return ending
+    else
+      return nil
+    end
+  end
+end
+-- One canonical descriptor (the one decoder's grammar:
+-- null|boolean|int|number|string|table|bytes|@modulePath/ClassName|[inner]|
+-- ?inner|(params)->result|async(params)->result); returns the index just past
+-- it, or nil. Every nested position is parsed and the whole text must be
+-- consumed, so a foreign or malformed parameter/result text is never
+-- admitted.
+__canonicalDesc = function(s, i)
+  local c = string.sub(s, i, i)
+  if c == "" then return nil end
+  if c == "[" then
+    local inner = __canonicalDesc(s, i + 1)
+    if inner == nil or string.sub(s, inner, inner) ~= "]" then return nil end
+    return inner + 1
+  end
+  if c == "?" then return __canonicalDesc(s, i + 1) end
+  if c == "@" then return __classAtomEnd(s, i, false) end
+  if string.sub(s, i, i + 5) == "async(" then
+    local close = __canonicalParams(s, i + 6)
+    if close == nil or string.sub(s, close + 1, close + 2) ~= "->" then
+      return nil
+    end
+    return __canonicalDesc(s, close + 3)
+  end
+  if c == "(" then
+    local close = __canonicalParams(s, i + 1)
+    if close == nil or string.sub(s, close + 1, close + 2) ~= "->" then
+      return nil
+    end
+    return __canonicalDesc(s, close + 3)
+  end
+  return __canonicalPrimitiveEnd(s, i)
+end
+-- One dialect primitive: the fixed spelling followed by the end of the text
+-- or one of the dialect delimiters ')' / ',' / ';'.
+local function __dialectPrimitiveEnd(s, i)
+  for _, name in ipairs(__descriptorPrimitives) do
+    local n = #name
+    if string.sub(s, i, i + n - 1) == name then
+      local after = string.sub(s, i + n, i + n)
+      if after == "" or after == ")" or after == "," or after == ";" then
+        return i + n
+      end
+    end
+  end
+  return nil
+end
+local __dialectDesc
+-- The dialect function's parameter list: the empty list (function(;result),
+-- the zero-parameter spelling the emitters produce) or one descriptor per
+-- comma-separated position; returns the index of the ';' separator or nil.
+local function __dialectParams(s, i)
+  if string.sub(s, i, i) == ";" then return i end
+  while true do
+    local ending = __dialectDesc(s, i)
+    if ending == nil then return nil end
+    local c = string.sub(s, ending, ending)
+    if c == "," then
+      i = ending + 1
+    elseif c == ";" then
+      return ending
+    else
+      return nil
+    end
+  end
+end
+-- One internal-dialect descriptor (array(inner)|nullable(inner)|
+-- function(params;result) over the primitives and the class atoms); returns
+-- the index just past it, or nil. Every nested position is parsed, so a
+-- malformed parameter or result text is never skipped.
+__dialectDesc = function(s, i)
+  local c = string.sub(s, i, i)
+  if c == "" then return nil end
+  if c == "@" then return __classAtomEnd(s, i, true) end
+  if string.sub(s, i, i + 5) == "array(" then
+    local inner = __dialectDesc(s, i + 6)
+    if inner == nil or string.sub(s, inner, inner) ~= ")" then return nil end
+    return inner + 1
+  end
+  if string.sub(s, i, i + 8) == "nullable(" then
+    local inner = __dialectDesc(s, i + 9)
+    if inner == nil or string.sub(s, inner, inner) ~= ")" then return nil end
+    return inner + 1
+  end
+  if string.sub(s, i, i + 8) == "function(" then
+    local parameters = __dialectParams(s, i + 9)
+    if parameters == nil then return nil end
+    local result = __dialectDesc(s, parameters + 1)
+    if result == nil or string.sub(s, result, result) ~= ")" then return nil end
+    return result + 1
+  end
+  return __dialectPrimitiveEnd(s, i)
+end
+-- A descriptor text: the canonical grammar the one decoder consumes, or the
+-- emitters' internal dialect; both spellings nest and the whole text must be
+-- consumed, so a foreign or truncated text is never admitted.
 local function __isDescriptorText(s)
   if type(s) ~= "string" or s == "" then return false end
-  if __descriptorPrimitives[s] then return true end
-  local first = string.sub(s, 1, 1)
-  if first == "@" then return __isClassAtom(s) end
-  if first == "?" then return __isDescriptorText(string.sub(s, 2)) end
-  if first == "[" then
-    return string.sub(s, -1) == "]" and #s > 2
-      and __isDescriptorText(string.sub(s, 2, -2))
-  end
-  if first == "(" then
-    local arrow = string.find(s, "%)%-%>", 1)
-    return arrow ~= nil and __isDescriptorText(string.sub(s, arrow + 3))
-  end
-  if string.sub(s, 1, 6) == "async(" then
-    local arrow = string.find(s, "%)%-%>", 1)
-    return arrow ~= nil and __isDescriptorText(string.sub(s, arrow + 3))
-  end
-  if string.sub(s, 1, 7) == "array(" and string.sub(s, -1) == ")" then
-    return __isDescriptorText(string.sub(s, 7, -2))
-  end
-  if string.sub(s, 1, 10) == "nullable(" and string.sub(s, -1) == ")" then
-    return __isDescriptorText(string.sub(s, 11, -2))
-  end
-  if string.sub(s, 1, 10) == "function(" and string.sub(s, -1) == ")" then
-    local inner = string.sub(s, 10, -2)
-    local semi = 0
-    for i = #inner, 1, -1 do
-      if string.sub(inner, i, i) == ";" then semi = i break end
-    end
-    return semi >= 1 and semi < #inner
-      and __isDescriptorText(string.sub(inner, semi + 1))
-  end
-  return false
+  return __canonicalDesc(s, 1) == #s + 1 or __dialectDesc(s, 1) == #s + 1
 end
+return __isClassAtom, __isDescriptorText
+end)()
 -- The closed host inner-reason vocabulary (P2 item 3): the texts the
 -- declared inner-reason arms produce — the typed-boundary kind text, the
 -- int refinement, the signed32 range, the two host string-carrier texts,

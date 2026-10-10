@@ -106,6 +106,7 @@ public class FailureArmAuthorityTest {
         testDeclaredFieldShapeNegatives();
         testTypedBoundaryClassSpellingNegatives();
         testForbiddenRenderScopesAndInnerReasons();
+        testDescriptorAndClassAtomVocabularyDepth();
         testHostInnerReasonDescriptorValidation();
         testEmittedParameterContract();
         testNegativeSingleSourceControl();
@@ -1986,6 +1987,275 @@ public class FailureArmAuthorityTest {
         checkEq("range-control|true|return value 1 type mismatch: int out of safe "
                 + "range", rows.get(5),
             "the Lua arm renderer keeps the signed32-range pass-through (the control)");
+    }
+
+    // =========================================================================
+    // 12d. The nested descriptor vocabulary and the canonical class atoms
+    // =========================================================================
+
+    /**
+     * The descriptor recognizer parses every nested position of both
+     * spellings: a malformed parameter or result text — the canonical
+     * composite's own parameters included — fails closed on every consumer,
+     * while the nested canonical composite, the internal
+     * {@code function(params;result)} spelling (the zero-parameter
+     * {@code function(;int)} form included), and the canonical class atoms
+     * stay green. The identical drives cover the registry's arm render and
+     * its row-addressed {@code renderAtTemplate}/{@code fromRow} entries,
+     * the JVM runtime arm render (through the registry), and the emitted Lua
+     * prelude's {@code __arm}/{@code __renderTemplate}, with both signature
+     * sides and the empty-final-segment identity negative covered.
+     */
+    static void testDescriptorAndClassAtomVocabularyDepth() throws Exception {
+        System.out.println("-- the nested descriptor vocabulary and the class atoms --");
+        // The malformed signature texts fail closed at the registry's arm
+        // render, on both signature sides.
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.HOST_PARAMETER_CELL, Map.of("index", "1", "inner",
+                "function signature mismatch: expected (bogus)->int, got (int)->int"),
+            "int", "number", null),
+            "a malformed expected-side canonical parameter fails closed");
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.HOST_PARAMETER_CELL, Map.of("index", "1", "inner",
+                "function signature mismatch: expected (int)->int, got (bogus)->int"),
+            "int", "number", null),
+            "a malformed actual-side canonical parameter fails closed");
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.HOST_PARAMETER_CELL, Map.of("index", "1", "inner",
+                "function signature mismatch: expected function(bogus;int), got "
+                    + "function(int;int)"), "int", "number", null),
+            "a malformed internal-dialect parameter fails closed");
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.HOST_PARAMETER_CELL, Map.of("index", "1", "inner",
+                "function signature mismatch: expected function(int;int), got "
+                    + "function(int;bogus)"), "int", "number", null),
+            "a malformed internal-dialect result fails closed");
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.HOST_PARAMETER_CELL, Map.of("index", "1", "inner",
+                "function signature mismatch: expected (int,(bogus)->int)->int, got "
+                    + "(int)->int"), "int", "number", null),
+            "a malformed parameter inside a nested canonical composite fails closed");
+        // The row-addressed entries enforce the same contract.
+        expectDefect(() -> BoundaryFailure.fromRow(FailureContractRegistry.row(
+            FailurePolicyId.HOST_PARAMETER), 0, "int", "number",
+            new LinkedHashMap<>(Map.of("index", "1", "inner", "function "
+                + "signature mismatch: expected function(bogus;int), got "
+                + "function(int;int)")), null),
+            "the row-addressed render rejects the malformed dialect parameter");
+        expectDefect(() -> FailureContractRegistry.renderAtTemplate(
+            FailurePolicyId.HOST_PARAMETER, 0, "int", "number",
+            new LinkedHashMap<>(Map.of("index", "1", "inner", "function "
+                + "signature mismatch: expected (bogus)->int, got (int)->int")), null),
+            "the direct template-position render rejects the malformed canonical "
+                + "parameter");
+        // The nested canonical composite and the internal spelling stay
+        // green (the controls).
+        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
+                + "(()->int)->int, got (int)->int",
+            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", "function signature mismatch: "
+                    + "expected (()->int)->int, got (int)->int"), "int", "number",
+                null).message(),
+            "the nested canonical composite stays green (the control)");
+        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
+                + "(int,(string)->int)->int, got (int)->int",
+            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", "function signature mismatch: "
+                    + "expected (int,(string)->int)->int, got (int)->int"), "int",
+                "number", null).message(),
+            "the nested canonical parameter list stays green (the control)");
+        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
+                + "function(int;int), got function(int;int)",
+            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", "function signature mismatch: "
+                    + "expected function(int;int), got function(int;int)"), "int",
+                "number", null).message(),
+            "the internal function spelling stays green (the control)");
+        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
+                + "(int)->int, got (()->int)->int",
+            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", "function signature mismatch: "
+                    + "expected (int)->int, got (()->int)->int"), "int", "number",
+                null).message(),
+            "the nested canonical composite stays green on the actual side (the "
+                + "control)");
+        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
+                + "function(int;int), got function(;int)",
+            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", "function signature mismatch: "
+                    + "expected function(int;int), got function(;int)"), "int",
+                "number", null).message(),
+            "the zero-parameter spelling stays green on the actual side (the "
+                + "control)");
+        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
+                + "function(;int), got function(int;int)",
+            BoundaryFailure.fromRow(FailureContractRegistry.row(
+                    FailurePolicyId.HOST_PARAMETER), 0, "int", "number",
+                new LinkedHashMap<>(Map.of("index", "1", "inner", "function "
+                    + "signature mismatch: expected function(;int), got "
+                    + "function(int;int)")), null).message(),
+            "the zero-parameter internal spelling passes through the row-addressed "
+                + "render (the control)");
+        checkEq("expected function", deal.codegen.jvm.JvmRuntime.kindReason(
+                "function(;int)"),
+            "the zero-parameter dialect descriptor projects its kind (the control)");
+        checkEq("expected class instance", deal.codegen.jvm.JvmRuntime.kindReason(
+                "nullable(@src/A)"),
+            "the dialect nullable class atom projects the class kind (the control)");
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.kindReason(
+                "function(bogus;int)"),
+            "the descriptor-kind reason rejects a malformed dialect parameter");
+
+        // The malformed identity operands fail closed and the canonical
+        // atoms stay green.
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.HOST_PARAMETER_CELL, Map.of("index", "1", "inner",
+                "expected instance of @src/, got @src/B"), "@src/A", "table", null),
+            "the empty expected-side identity segment fails closed");
+        expectDefect(() -> FailureContractRegistry.render(
+            FailureArmId.HOST_PARAMETER_CELL, Map.of("index", "1", "inner",
+                "expected instance of @src/A, got @src/"), "@src/A", "table", null),
+            "the empty carried identity segment fails closed");
+        expectDefect(() -> BoundaryFailure.fromRow(FailureContractRegistry.row(
+            FailurePolicyId.HOST_PARAMETER), 0, "@src/A", "table",
+            new LinkedHashMap<>(Map.of("index", "1", "inner",
+                "expected instance of @src/, got @src/B")), null),
+            "the row-addressed render rejects the empty identity segment");
+        checkEq("parameter 1 type mismatch: expected instance of @/Error, got @src/B",
+            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner",
+                    "expected instance of @/Error, got @src/B"), "@/Error", "table",
+                null).message(),
+            "the pinned builtin identity atom stays green (the control)");
+        checkEq("parameter 1 type mismatch: expected instance of @src/A, got @src/B",
+            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner",
+                    "expected instance of @src/A, got @src/B"), "@src/A", "table",
+                null).message(),
+            "the canonical identity composite stays green (the control)");
+
+        // The JVM runtime's arm render (it delegates to the same registry).
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
+            Map.of("index", "1", "inner", "function signature mismatch: expected "
+                + "function(bogus;int), got function(int;int)"), "-", "int",
+            "number"),
+            "the JVM arm render rejects the malformed dialect parameter");
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
+            Map.of("index", "1", "inner", "expected instance of @src/, got @src/B"),
+            "-", "@src/A", "table"),
+            "the JVM arm render rejects the empty identity segment");
+        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
+                + "(()->int)->int, got (int)->int",
+            deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", "function signature mismatch: "
+                    + "expected (()->int)->int, got (int)->int"), "-", "int",
+                "number").msg,
+            "the JVM arm render keeps the nested canonical composite (the control)");
+        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
+                + "function(;int), got function(int;int)",
+            deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", "function signature mismatch: "
+                    + "expected function(;int), got function(int;int)"), "-", "int",
+                "number").msg,
+            "the JVM arm render keeps the zero-parameter pass-through (the control)");
+        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
+                + "function(int;int), got function(;int)",
+            deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", "function signature mismatch: "
+                    + "expected function(int;int), got function(;int)"), "-", "int",
+                "number").msg,
+            "the JVM arm render keeps the zero-parameter actual side (the control)");
+
+        // The emitted Lua prelude, under real luajit: the same negatives and
+        // controls on the arm renderer and the raw template renderer.
+        List<String> rows = runPreludeProbe("""
+            local cases = {
+              {"sig-malformed-expected", "function signature mismatch: expected (bogus)->int, got (int)->int"},
+              {"sig-malformed-actual", "function signature mismatch: expected (int)->int, got (bogus)->int"},
+              {"sig-dialect-malformed-param", "function signature mismatch: expected function(bogus;int), got function(int;int)"},
+              {"sig-dialect-malformed-result", "function signature mismatch: expected function(int;int), got function(int;bogus)"},
+              {"sig-nested-composite", "function signature mismatch: expected (()->int)->int, got (int)->int"},
+              {"sig-nested-params", "function signature mismatch: expected (int,(string)->int)->int, got (int)->int"},
+              {"sig-dialect", "function signature mismatch: expected function(int;int), got function(int;int)"},
+              {"sig-dialect-zero", "function signature mismatch: expected function(;int), got function(int;int)"},
+              {"sig-dialect-nested", "function signature mismatch: expected function(function(int;int);function(int;int)), got function(int;int)"},
+              {"identity-empty-expected", "expected instance of @src/, got @src/B"},
+              {"identity-empty-carried", "expected instance of @src/A, got @src/"},
+              {"identity-builtin", "expected instance of @/Error, got @src/B"},
+              {"identity-canonical", "expected instance of @src/A, got @src/B"},
+              {"sig-nested-actual", "function signature mismatch: expected (int)->int, got (()->int)->int"},
+              {"sig-dialect-zero-actual", "function signature mismatch: expected function(int;int), got function(;int)"},
+            }
+            for _, case in ipairs(cases) do
+              local ok, value = pcall(__arm, "HOST_PARAMETER_CELL",
+                {index = "1", inner = case[2]}, "-", "int", "number")
+              print(case[1] .. "|" .. tostring(ok) .. "|" .. (ok and value.m or ""))
+            end
+            local ok, value = pcall(__renderTemplate, "HOST_PARAMETER_CELL",
+              {index = "1", inner = "function signature mismatch: expected function(bogus;int), got function(int;int)"})
+            print("template-malformed|" .. tostring(ok) .. "|")
+            ok, value = pcall(__renderTemplate, "HOST_PARAMETER_CELL",
+              {index = "1", inner = "function signature mismatch: expected function(;int), got function(int;int)"})
+            print("template-zero|" .. tostring(ok) .. "|" .. (ok and value or ""))
+            """, "descriptor-depth-probe", 17);
+        checkEq("sig-malformed-expected|false|", rows.get(0),
+            "the Lua arm renderer rejects the malformed expected-side parameter");
+        checkEq("sig-malformed-actual|false|", rows.get(1),
+            "the Lua arm renderer rejects the malformed actual-side parameter");
+        checkEq("sig-dialect-malformed-param|false|", rows.get(2),
+            "the Lua arm renderer rejects the malformed dialect parameter");
+        checkEq("sig-dialect-malformed-result|false|", rows.get(3),
+            "the Lua arm renderer rejects the malformed dialect result");
+        checkEq("sig-nested-composite|true|parameter 1 type mismatch: function "
+                + "signature mismatch: expected (()->int)->int, got (int)->int",
+            rows.get(4),
+            "the Lua arm renderer keeps the nested canonical composite (the control)");
+        checkEq("sig-nested-params|true|parameter 1 type mismatch: function "
+                + "signature mismatch: expected (int,(string)->int)->int, got "
+                + "(int)->int", rows.get(5),
+            "the Lua arm renderer keeps the nested canonical parameter list (the "
+                + "control)");
+        checkEq("sig-dialect|true|parameter 1 type mismatch: function signature "
+                + "mismatch: expected function(int;int), got function(int;int)",
+            rows.get(6),
+            "the Lua arm renderer keeps the internal function spelling (the control)");
+        checkEq("sig-dialect-zero|true|parameter 1 type mismatch: function signature "
+                + "mismatch: expected function(;int), got function(int;int)",
+            rows.get(7),
+            "the Lua arm renderer keeps the zero-parameter spelling (the control)");
+        checkEq("sig-dialect-nested|true|parameter 1 type mismatch: function "
+                + "signature mismatch: expected "
+                + "function(function(int;int);function(int;int)), got "
+                + "function(int;int)", rows.get(8),
+            "the Lua arm renderer keeps the nested dialect spelling (the control)");
+        checkEq("identity-empty-expected|false|", rows.get(9),
+            "the Lua arm renderer rejects the empty expected-side identity segment");
+        checkEq("identity-empty-carried|false|", rows.get(10),
+            "the Lua arm renderer rejects the empty carried identity segment");
+        checkEq("identity-builtin|true|parameter 1 type mismatch: expected "
+                + "instance of @/Error, got @src/B", rows.get(11),
+            "the Lua arm renderer keeps the builtin identity atom (the control)");
+        checkEq("identity-canonical|true|parameter 1 type mismatch: expected "
+                + "instance of @src/A, got @src/B", rows.get(12),
+            "the Lua arm renderer keeps the canonical identity composite (the "
+                + "control)");
+        checkEq("sig-nested-actual|true|parameter 1 type mismatch: function "
+                + "signature mismatch: expected (int)->int, got (()->int)->int",
+            rows.get(13),
+            "the Lua arm renderer keeps the nested composite on the actual side "
+                + "(the control)");
+        checkEq("sig-dialect-zero-actual|true|parameter 1 type mismatch: function "
+                + "signature mismatch: expected function(int;int), got "
+                + "function(;int)", rows.get(14),
+            "the Lua arm renderer keeps the zero-parameter spelling on the actual "
+                + "side (the control)");
+        checkEq("template-malformed|false|", rows.get(15),
+            "the Lua template renderer rejects the malformed dialect parameter");
+        checkEq("template-zero|true|parameter 1 type mismatch: function signature "
+                + "mismatch: expected function(;int), got function(int;int)",
+            rows.get(16),
+            "the Lua template renderer keeps the zero-parameter pass-through (the "
+                + "control)");
     }
 
     // =========================================================================

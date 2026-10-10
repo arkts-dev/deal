@@ -1087,30 +1087,125 @@ public final class FailureContractRegistry {
         }
     }
 
+    /** The closed scalar spellings shared by both descriptor dialects. */
+    private static final List<String> DESCRIPTOR_PRIMITIVES = List.of("null", "boolean",
+        "int", "number", "string", "table", "bytes");
+
     /** The emitters' internal descriptor dialect ({@code array(…)} etc.). */
     private static boolean isDialectDescriptorText(String text) {
+        if (text == null || text.isEmpty()) {
+            return false;
+        }
+        // The closed kind tokens the emitted host ABI's kind rows carry
+        // ({@code array}/{@code function} complete the primitives): a bare
+        // kind token is a kind text, never a fabricated descriptor.
         if (KIND_TOKENS.contains(text) && !"class".equals(text)) {
             return true;
         }
-        if (text.startsWith("?")) {
-            return isDialectDescriptorText(text.substring(1));
+        return dialectDescriptorEnd(text, 0) == text.length();
+    }
+
+    /**
+     * Parses one emitters'-dialect descriptor at {@code start}: the closed
+     * {@code array(inner)}, {@code nullable(inner)}, and
+     * {@code function(params;result)} forms over the primitives and the
+     * canonical class atoms. Every nested position — each comma-separated
+     * parameter and the result — is parsed completely and the whole text must
+     * be consumed, so a foreign or malformed parameter text is never skipped.
+     * Returns the index just past the descriptor, or {@code -1}.
+     */
+    private static int dialectDescriptorEnd(String text, int start) {
+        if (start >= text.length()) {
+            return -1;
         }
-        if (text.startsWith("[") && text.endsWith("]") && text.length() > 2) {
-            return isDialectDescriptorText(text.substring(1, text.length() - 1));
+        char c = text.charAt(start);
+        if (c == '@') {
+            return dialectClassAtomEnd(text, start);
         }
-        if (text.startsWith("array(") && text.endsWith(")") && text.length() > 7) {
-            return isDialectDescriptorText(text.substring(6, text.length() - 1));
+        if (text.startsWith("array(", start)) {
+            int inner = dialectDescriptorEnd(text, start + "array(".length());
+            return inner >= 0 && inner < text.length() && text.charAt(inner) == ')'
+                ? inner + 1 : -1;
         }
-        if (text.startsWith("nullable(") && text.endsWith(")") && text.length() > 10) {
-            return isDialectDescriptorText(text.substring(9, text.length() - 1));
+        if (text.startsWith("nullable(", start)) {
+            int inner = dialectDescriptorEnd(text, start + "nullable(".length());
+            return inner >= 0 && inner < text.length() && text.charAt(inner) == ')'
+                ? inner + 1 : -1;
         }
-        if (text.startsWith("function(") && text.endsWith(")") && text.length() > 10) {
-            String inner = text.substring(9, text.length() - 1);
-            int separator = inner.lastIndexOf(';');
-            return separator > 0 && separator + 1 < inner.length()
-                && isDialectDescriptorText(inner.substring(separator + 1));
+        if (text.startsWith("function(", start)) {
+            int parameters = dialectParametersEnd(text, start + "function(".length());
+            if (parameters < 0) {
+                return -1;
+            }
+            int result = dialectDescriptorEnd(text, parameters + 1);
+            return result >= 0 && result < text.length() && text.charAt(result) == ')'
+                ? result + 1 : -1;
         }
-        return false;
+        return dialectPrimitiveEnd(text, start);
+    }
+
+    /**
+     * The {@code ;} separating one dialect function's parameter list from its
+     * result: the empty list ({@code function(;int)} — the zero-parameter
+     * spelling {@code SemanticEmitterShared.descriptorText} emits) or one
+     * closed dialect descriptor at every comma-separated position. Returns
+     * the separator's index, or {@code -1} for a malformed list.
+     */
+    private static int dialectParametersEnd(String text, int start) {
+        if (start < text.length() && text.charAt(start) == ';') {
+            return start;
+        }
+        int cursor = start;
+        while (true) {
+            int end = dialectDescriptorEnd(text, cursor);
+            if (end < 0 || end >= text.length()) {
+                return -1;
+            }
+            char delimiter = text.charAt(end);
+            if (delimiter == ',') {
+                cursor = end + 1;
+                continue;
+            }
+            return delimiter == ';' ? end : -1;
+        }
+    }
+
+    /** One dialect primitive followed by a dialect delimiter or the end. */
+    private static int dialectPrimitiveEnd(String text, int start) {
+        for (String primitive : DESCRIPTOR_PRIMITIVES) {
+            int end = start + primitive.length();
+            if (text.startsWith(primitive, start) && (end == text.length()
+                    || text.charAt(end) == ')' || text.charAt(end) == ','
+                    || text.charAt(end) == ';')) {
+                return end;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * One dialect class atom {@code @modulePath/ClassName}: the segment ends
+     * at the dialect delimiters ({@code )}, {@code ]}, {@code ,}, or the
+     * {@code ;} of a dialect parameter list) or the end of the text, a
+     * {@code /} must appear, and the final {@code /}-separated segment must
+     * be non-empty (the pinned builtin {@code @/Error} keeps its empty module
+     * path). Returns the index just past the segment, or {@code -1}.
+     */
+    private static int dialectClassAtomEnd(String text, int start) {
+        int end = start + 1;
+        while (end < text.length()) {
+            char c = text.charAt(end);
+            if (c == ')' || c == ']' || c == ',' || c == ';') {
+                break;
+            }
+            end++;
+        }
+        String segment = text.substring(start + 1, end);
+        int slash = segment.lastIndexOf('/');
+        if (slash < 0 || slash == segment.length() - 1) {
+            return -1;
+        }
+        return end;
     }
 
     /** The parameter whose declared source is {@code source}, or {@code null}. */
@@ -1185,6 +1280,9 @@ public final class FailureContractRegistry {
 
     /** The closed kind text of one emitters'-dialect descriptor text. */
     private static String dialectKindText(String text) {
+        if (text.startsWith("@")) {
+            return "class instance";
+        }
         if (text.startsWith("?")) {
             return dialectKindText(text.substring(1));
         }
