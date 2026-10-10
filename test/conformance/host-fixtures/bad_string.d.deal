@@ -9,6 +9,15 @@
 // returned twice stays one DEAL array). The nested-tail export
 // returns a declared string[][] whose later element is not an array, so the
 // return is rejected and the retained earlier slots must stay untouched.
+// The native-* exports return the same declared shapes through the JVM
+// host's own declared `$DealRt` array carriers (the Lua/JS hosts return the
+// analogous plain array), so the declared-array check must validate the
+// carrier elements recursively instead of admitting the carrier's Java
+// storage: nativeBadStringArray's second element is an unpaired surrogate,
+// nativeBadNestedTail's later element is not an array while its earlier
+// nested carrier is valid, and the valid controls must land as usable DEAL
+// arrays (including one inner carrier returned at both positions of a
+// declared string[][], which stays one DEAL array).
 
 export function badString(): string;
 export function surrogateString(): string;
@@ -20,3 +29,8 @@ export function rawNullableStringArray(): (string | null)[];
 export function rawNullableArrayArray(): (string[] | null)[];
 export function sharedNestedStringArray(): string[][];
 export function badNestedTail(): string[][];
+export function nativeBadStringArray(): string[];
+export function nativeBadNestedTail(): string[][];
+export function nativeStringArray(): string[];
+export function nativeNestedStringArray(): string[][];
+export function nativeSharedNestedStringArray(): string[][];

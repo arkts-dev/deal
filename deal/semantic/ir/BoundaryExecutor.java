@@ -232,15 +232,29 @@ public final class BoundaryExecutor {
             case INVALID_UNICODE -> FailureProjections.stringCarrierReason(
                 view.unicodeDefect() == UnicodeScalars.Defect.SURROGATE);
             case CLASS_IDENTITY -> renderIdentity(fail).message();
-            case SIG_MISMATCH -> {
-                FailureArm arm = FailureContractRegistry.arm(
-                    FailureArmId.FUNCTION_SIGNATURE_MISMATCH);
-                yield arm.template()
-                    .replace("{expected}", fail.descriptor().canonicalSpecText())
-                    .replace("{actual}", fail.actualToken());
-            }
+            case SIG_MISMATCH -> renderSignatureFailure(fail).message();
             case ELEMENT -> FailureProjections.elementReason(fail.elementIndex());
         };
+    }
+
+    /**
+     * One failing carried signature rendered by the signature arm's own
+     * declared template through the registry's one canonical
+     * instantiation: the inner-reason vocabulary's function-signature
+     * entry (the host {@code {inner}} composites and the E8003 leaf cause)
+     * and the top-level signature projection are the same render, never a
+     * consumer-side substitution chain whose second pass would rescan the
+     * text the first one inserted.
+     */
+    private static BoundaryFailure renderSignatureFailure(CoreFail fail) {
+        FailureArm arm = FailureContractRegistry.arm(
+            FailureArmId.FUNCTION_SIGNATURE_MISMATCH);
+        Map<String, String> parameters = new LinkedHashMap<>();
+        parameters.put("expected", fail.descriptor().canonicalSpecText());
+        parameters.put("actual", fail.actualToken());
+        return FailureContractRegistry.render(FailureArmId.FUNCTION_SIGNATURE_MISMATCH,
+            parameters, FailureProjections.expectedFor(arm, fail.descriptor(), null),
+            FailureProjections.actualFor(arm, null, null, null, fail.actualToken(), null), null);
     }
 
     /**
@@ -762,8 +776,10 @@ public final class BoundaryExecutor {
 
     /** The signature arm: the declared canonical text beside the carried text. */
     private static BoundaryFailure renderSignature(Projection projection, CoreFail fail) {
-        FailureArmId armId = projection.signatureArm() != null
-            ? projection.signatureArm() : projection.kindArm();
+        if (projection.signatureArm() != null) {
+            return renderSignatureFailure(fail);
+        }
+        FailureArmId armId = projection.kindArm();
         FailureArm arm = FailureContractRegistry.arm(armId);
         Map<String, String> parameters = new LinkedHashMap<>();
         parameters.put("expected", fail.descriptor().canonicalSpecText());
