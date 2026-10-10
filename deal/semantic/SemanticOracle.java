@@ -1489,10 +1489,48 @@ public final class SemanticOracle {
                 }
             }
             if (initOp == null) {
+                prepareModuleLevelGroupCells(moduleUnit);
                 runBlock(moduleUnit.moduleInit().initBlock());
                 return;
             }
+            prepareModuleLevelGroupCells(moduleUnit);
             execute(initOp);
+        }
+
+        /**
+         * The module-init-top group cells: every module-level recursive
+         * group's member cell exists before any module-init op executes,
+         * so an earlier declaration's closure captures the cell by
+         * identity even when the publishing group op runs later in the
+         * same module init (the declaration-order-independent forward
+         * reference: docs/spec-v1.2.md:1217-1221, C1 body coverage). The
+         * group op's publication phase still writes the member closures
+         * into these pre-created cells in one ordered sequence (phase 0's
+         * create-or-reuse finds them already present). A nested group's
+         * cells are still created per execution by its own op (the
+         * escaped-group instance identity).
+         */
+        private void prepareModuleLevelGroupCells(LoweredModuleUnit moduleUnit) {
+            UnitState moduleState = units.get(moduleUnit.moduleId());
+            if (moduleState == null) {
+                return;
+            }
+            BlockId initBlock = moduleUnit.moduleInit().initBlock();
+            for (SemanticOp op : moduleUnit.ops()) {
+                if (op.kind() != SemanticOpKind.RECURSIVE_GROUP_INIT
+                        || !(op.payload()
+                            instanceof KindPayload.RecursiveGroupInitPayload group)) {
+                    continue;
+                }
+                if (!initBlock.equals(moduleState.table.opBlocks().get(op.opId()))) {
+                    // A nested group: its cells belong to the invocation
+                    // that executes the op.
+                    continue;
+                }
+                for (BindingId binding : group.bindings()) {
+                    cellOf(binding, 0, true);
+                }
+            }
         }
 
         // -- control flow ------------------------------------------------------------

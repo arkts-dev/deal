@@ -761,6 +761,7 @@ public final class LuaSemanticEmitter {
                     .append(luaString(moduleUnit.moduleId().path())).append("\n");
                 SemanticOp moduleInitOp = moduleInitOpOf(moduleUnit);
                 if (moduleInitOp == null) {
+                    emitModuleLevelGroupCells(moduleUnit);
                     emitBlockOps(moduleUnit.moduleInit().initBlock());
                 } else {
                     emitModuleInit(moduleInitOp);
@@ -2597,8 +2598,16 @@ public final class LuaSemanticEmitter {
             KindPayload.RecursiveGroupInitPayload payload =
                 (KindPayload.RecursiveGroupInitPayload) op.payload();
             emitStart(op);
-            for (BindingId binding : payload.bindings()) {
-                out.append(cell(binding, 0)).append(" = {}\n");
+            if (!isModuleLevelGroup(op)) {
+                // A nested group creates its member cells per execution
+                // (the escaped-group instance identity). A module-level
+                // group's cells were already created at module-init top
+                // ({@link #emitModuleLevelGroupCells}), so an earlier
+                // declaration's closure captures the identical cell even
+                // though this publication op runs later.
+                for (BindingId binding : payload.bindings()) {
+                    out.append(cell(binding, 0)).append(" = {}\n");
+                }
             }
             for (int i = 0; i < payload.functions().size(); i++) {
                 FunctionId functionId = payload.functions().get(i);
@@ -2633,6 +2642,46 @@ public final class LuaSemanticEmitter {
         /** One member identity temporary of the group op (S-table held). */
         private String groupTemp(SemanticOp op, int member) {
             return "S.__gv" + op.opId().id() + "_" + member;
+        }
+
+        /**
+         * Whether one {@code RECURSIVE_GROUP_INIT} op is module-level: the
+         * op is a member of its own module's init block (a nested group's
+         * op is a member of the declaring function's block).
+         */
+        private boolean isModuleLevelGroup(SemanticOp op) {
+            if (op.kind() != SemanticOpKind.RECURSIVE_GROUP_INIT) {
+                return false;
+            }
+            LoweredModuleUnit owner = units.get(op.opId().module());
+            return owner != null
+                && owner.moduleInit().initBlock().equals(opBlock.get(op.opId()));
+        }
+
+        /**
+         * The module-init-top group cells (B4): every module-level
+         * recursive group's member cell is created before any module-init
+         * op executes, so an earlier declaration's closure captures the
+         * cell by identity even when the publishing group op runs later
+         * in the same module init — the declaration-order-independent
+         * forward reference of docs/spec-v1.2.md:1217-1221 and C1's body
+         * coverage. A nested group's cells are still created per
+         * execution by its own op ({@link #emitRecursiveGroupInit}).
+         */
+        private void emitModuleLevelGroupCells(LoweredModuleUnit moduleUnit) {
+            if (moduleUnit == null) {
+                return;
+            }
+            for (SemanticOp op : moduleUnit.ops()) {
+                if (!isModuleLevelGroup(op)) {
+                    continue;
+                }
+                KindPayload.RecursiveGroupInitPayload group =
+                    (KindPayload.RecursiveGroupInitPayload) op.payload();
+                for (BindingId binding : group.bindings()) {
+                    out.append(cell(binding, 0)).append(" = {}\n");
+                }
+            }
         }
 
         private void emitAssign(SemanticOp op) {
@@ -6395,6 +6444,7 @@ public final class LuaSemanticEmitter {
             out.append(stateKey).append(" = \"INITIALIZING\"\n");
             emitStart(op);
             out.append("local __initOk, __initErr = pcall(function()\n");
+            emitModuleLevelGroupCells(units.get(payload.module()));
             emitBlockOps(payload.initBlock());
             out.append("end)\n");
             out.append("if not __initOk then\n");

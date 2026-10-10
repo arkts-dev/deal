@@ -3655,6 +3655,22 @@ public final class SemanticLowerer {
                         moduleFunctionContexts.put(function.name(), context);
                         contextsByBindingId.put(binding, context);
                         contextsByFunctionId.put(functionId, context);
+                        if (closureCore && grouped) {
+                            // The pending-capture fact (B1/B3) registers for
+                            // every module-level group member before any
+                            // group body walk: a reference to a member whose
+                            // own group walk has not opened yet is
+                            // value-carried through the member's published
+                            // carrier, so an earlier group's alias of a
+                            // later group's member never re-resolves an
+                            // unresolved creation-site incarnation at the
+                            // call site. The module-init-top group cells
+                            // (the emitters' and the oracle's pre-published
+                            // member cells) make the captured cell
+                            // identities exist before any module-init op
+                            // runs.
+                            bodiesPendingCaptures.add(functionId);
+                        }
                     }
                     if (closureCore) {
                         // The function-allocation identity of the hoisted
@@ -8322,14 +8338,11 @@ public final class SemanticLowerer {
                 return true;
             }
             LoweredFunction function = functions.get(context.functionId);
-            // A body whose walk has not started yet is a forward module-level
-            // reference: a module-level declaration's captures are
-            // single-incarnation module-init cells, so the call-site
-            // reconstruction is exact there (the hoist registration still
-            // resolves the declaration's identity before its own declaration
-            // arm walks). A final capture-carrying record is the nested case
-            // the carrier exists for; a capture-free record rebuilds
-            // identically at every site.
+            // The pending-capture fact above covers every module-level group
+            // member before any group body walk and every member of a group
+            // whose walk is open; a finished capture-carrying record is the
+            // carrier case the value-carried invocation exists for, and a
+            // capture-free record rebuilds identically at every site.
             return function != null && !function.captures().isEmpty();
         }
 

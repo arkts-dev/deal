@@ -709,6 +709,7 @@ public final class JvmSemanticEmitter {
                 if (moduleInitOp == null) {
                     // A hand-built unit without the lowerer-produced op runs
                     // the bare init block, exactly the pre-envelope behavior.
+                    emitModuleLevelGroupCells(moduleUnit, indent);
                     emitBlockOps(moduleUnit.moduleInit().initBlock(), indent);
                 } else {
                     emitModuleInit(moduleInitOp, indent);
@@ -727,6 +728,7 @@ public final class JvmSemanticEmitter {
                 .append(moduleText).append(");\n");
             emitStart(op, indent + 1);
             out.append(indent(indent + 1)).append("try {\n");
+            emitModuleLevelGroupCells(units.get(payload.module()), indent + 2);
             emitBlockOps(payload.initBlock(), indent + 2);
             out.append(indent(indent + 2)).append("JvmRuntime.moduleInitComplete(")
                 .append(moduleText).append(");\n");
@@ -2801,9 +2803,17 @@ public final class JvmSemanticEmitter {
             KindPayload.RecursiveGroupInitPayload payload =
                 (KindPayload.RecursiveGroupInitPayload) op.payload();
             emitStart(op, indent);
-            for (BindingId binding : payload.bindings()) {
-                out.append(indent(indent)).append(cell(binding, 0))
-                    .append(" = new Object[1];\n");
+            if (!isModuleLevelGroup(op)) {
+                // A nested group creates its member cells per execution
+                // (the escaped-group instance identity). A module-level
+                // group's cells were already created at module-init top
+                // ({@link #emitModuleLevelGroupCells}), so an earlier
+                // declaration's closure captures the identical cell even
+                // though this publication op runs later.
+                for (BindingId binding : payload.bindings()) {
+                    out.append(indent(indent)).append(cell(binding, 0))
+                        .append(" = new Object[1];\n");
+                }
             }
             for (int i = 0; i < payload.functions().size(); i++) {
                 FunctionId functionId = payload.functions().get(i);
@@ -2835,6 +2845,47 @@ public final class JvmSemanticEmitter {
         /** One member identity local of the group op (per-op unique). */
         private String groupTemp(SemanticOp op, int member) {
             return "__gv" + op.opId().id() + "_" + member;
+        }
+
+        /**
+         * Whether one {@code RECURSIVE_GROUP_INIT} op is module-level: the
+         * op is a member of its own module's init block (a nested group's
+         * op is a member of the declaring function's block).
+         */
+        private boolean isModuleLevelGroup(SemanticOp op) {
+            if (op.kind() != SemanticOpKind.RECURSIVE_GROUP_INIT) {
+                return false;
+            }
+            LoweredModuleUnit owner = units.get(op.opId().module());
+            return owner != null
+                && owner.moduleInit().initBlock().equals(opBlock.get(op.opId()));
+        }
+
+        /**
+         * The module-init-top group cells (B4): every module-level
+         * recursive group's member cell is created before any module-init
+         * op executes, so an earlier declaration's closure captures the
+         * cell by identity even when the publishing group op runs later
+         * in the same module init — the declaration-order-independent
+         * forward reference of docs/spec-v1.2.md:1217-1221 and C1's body
+         * coverage. A nested group's cells are still created per
+         * execution by its own op ({@link #emitRecursiveGroupInit}).
+         */
+        private void emitModuleLevelGroupCells(LoweredModuleUnit moduleUnit, int indent) {
+            if (moduleUnit == null) {
+                return;
+            }
+            for (SemanticOp op : moduleUnit.ops()) {
+                if (!isModuleLevelGroup(op)) {
+                    continue;
+                }
+                KindPayload.RecursiveGroupInitPayload group =
+                    (KindPayload.RecursiveGroupInitPayload) op.payload();
+                for (BindingId binding : group.bindings()) {
+                    out.append(indent(indent)).append(cell(binding, 0))
+                        .append(" = new Object[1];\n");
+                }
+            }
         }
 
         private void emitAssign(SemanticOp op, int indent) {

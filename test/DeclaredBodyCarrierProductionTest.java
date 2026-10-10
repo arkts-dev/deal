@@ -90,7 +90,15 @@ import java.util.stream.Stream;
  * declaration — realizes that entry over the shared body, preserving the
  * declaration's body identity and single return cell; the closed two-shape
  * guard stays in force and the reservation is never re-shaped into a source
- * call or source async start.</p>
+ * call or source async start. The same resolution must hold across two
+ * separate module recursive groups in either declaration order: every
+ * module-level group member's execution binding and pending-capture fact
+ * register at the hoist, before any group body walk, and every module-level
+ * group's member cell is created at module-init top (the oracle prepares it
+ * when the module init starts; both project emitters create it before any
+ * module-init op executes), so an earlier group's closure captures the very
+ * cell the later group's publication writes into. A nested group still
+ * creates its member cells per execution.</p>
  *
  * <p>The third integration gap — the activation state of the exported-entry
  * realization: every activation of an exported async declaration aliased
@@ -950,13 +958,334 @@ public class DeclaredBodyCarrierProductionTest {
         List.of("declared-body-forward-alias-exported-adapter-async-reverse-ok"),
         "drive", "int:10", true);
 
+    /**
+     * The forward alias across two separate module recursive groups, sync:
+     * {@code f}/{@code g} and {@code h}/{@code j} are two distinct
+     * module-level SCCs and the earlier group's {@code f} aliases the
+     * later-declared {@code h} through an ordinary function value. The
+     * module-level execution registration reserves every hoisted member
+     * before any group body walk, so the alias resolves the later group's
+     * member regardless of the groups' declaration order. The runtime
+     * counterpart is the module-init-top group cell: {@code f}'s factory
+     * captures {@code h}'s member cell before the later group's publication
+     * op runs, so the cell must already exist at module-init top or the
+     * staged artifacts fail with a nil cell (LuaJIT {@code attempt to
+     * index upvalue ... (a nil value)}, JVM {@code Cannot load from object
+     * array}). The program's single source invocation is the alias.
+     */
+    private static final Case MODULE_GROUP_FORWARD_ALIAS = new Case(
+        "module-group-forward-alias",
+        """
+        import * as console from "std/console"
+
+        export function main(): null {
+          if (f(1) === 42) {
+            console.log("declared-body-module-group-forward-alias-ok");
+          } else {
+            console.log("declared-body-module-group-forward-alias-bad");
+          }
+          return null;
+        }
+
+        function f(n: int): int {
+          let alias: (n: int) => int = h;
+          if (n <= 0) {
+            return alias(0);
+          }
+          return g(n - 1);
+        }
+
+        function g(n: int): int {
+          return f(n);
+        }
+
+        function h(n: int): int {
+          if (n <= 0) {
+            return 42;
+          }
+          return j(n - 1);
+        }
+
+        function j(n: int): int {
+          return h(n);
+        }
+        """,
+        List.of("declared-body-module-group-forward-alias-ok"),
+        null, "null", 1, 0, true);
+
+    /**
+     * The group-carrier production drive: the same two-group forward
+     * program, but {@code main} invokes the earlier group's member
+     * {@code f} through an ordinary function value, so the staged
+     * artifacts invoke {@code f}'s group-published carrier. That carrier
+     * captures {@code h}'s member cell at the earlier group's creation
+     * time, before the later group's op runs — the module-init-top cell
+     * creation is what makes the captured cell the one the later op
+     * publishes into.
+     */
+    private static final Case MODULE_GROUP_FORWARD_CARRIER_ALIAS = new Case(
+        "module-group-forward-carrier-alias",
+        """
+        import * as console from "std/console"
+
+        export function main(): null {
+          let drive: (n: int) => int = f;
+          if (drive(1) === 42) {
+            console.log("declared-body-module-group-forward-carrier-alias-ok");
+          } else {
+            console.log("declared-body-module-group-forward-carrier-alias-bad");
+          }
+          return null;
+        }
+
+        function f(n: int): int {
+          let alias: (n: int) => int = h;
+          if (n <= 0) {
+            return alias(0);
+          }
+          return g(n - 1);
+        }
+
+        function g(n: int): int {
+          return f(n);
+        }
+
+        function h(n: int): int {
+          if (n <= 0) {
+            return 42;
+          }
+          return j(n - 1);
+        }
+
+        function j(n: int): int {
+          return h(n);
+        }
+        """,
+        List.of("declared-body-module-group-forward-carrier-alias-ok"),
+        null, "null", 2, 0, true);
+
+    /**
+     * The reverse declaration order of {@link #MODULE_GROUP_FORWARD_ALIAS}:
+     * the referenced {@code h}/{@code j} group is declared before its
+     * caller's {@code f}/{@code g} group, so execution registration and
+     * cell identity must not depend on the groups' declaration order.
+     */
+    private static final Case MODULE_GROUP_REVERSE_ALIAS = new Case(
+        "module-group-reverse-alias",
+        """
+        import * as console from "std/console"
+
+        export function main(): null {
+          if (f(1) === 42) {
+            console.log("declared-body-module-group-reverse-alias-ok");
+          } else {
+            console.log("declared-body-module-group-reverse-alias-bad");
+          }
+          return null;
+        }
+
+        function h(n: int): int {
+          if (n <= 0) {
+            return 42;
+          }
+          return j(n - 1);
+        }
+
+        function j(n: int): int {
+          return h(n);
+        }
+
+        function f(n: int): int {
+          let alias: (n: int) => int = h;
+          if (n <= 0) {
+            return alias(0);
+          }
+          return g(n - 1);
+        }
+
+        function g(n: int): int {
+          return f(n);
+        }
+        """,
+        List.of("declared-body-module-group-reverse-alias-ok"),
+        null, "null", 1, 0, true);
+
+    /** The awaited twin of {@link #MODULE_GROUP_FORWARD_ALIAS}. */
+    private static final Case MODULE_GROUP_FORWARD_ALIAS_ASYNC = new Case(
+        "module-group-forward-alias-async",
+        """
+        import * as console from "std/console"
+
+        export async function drive(): int {
+          let v: int = await f(1);
+          if (v === 42) {
+            console.log("declared-body-module-group-forward-alias-async-ok");
+          } else {
+            console.log("declared-body-module-group-forward-alias-async-bad");
+          }
+          return v;
+        }
+
+        export function main(): null {
+          return null;
+        }
+
+        async function f(n: int): int {
+          let alias: async (n: int) => int = h;
+          if (n <= 0) {
+            return await alias(0);
+          }
+          return await g(n - 1);
+        }
+
+        async function g(n: int): int {
+          return await f(n);
+        }
+
+        async function h(n: int): int {
+          if (n <= 0) {
+            return 42;
+          }
+          return await j(n - 1);
+        }
+
+        async function j(n: int): int {
+          return await h(n);
+        }
+        """,
+        List.of("declared-body-module-group-forward-alias-async-ok"),
+        "drive", "int:42", 1, 0, true);
+
+    /** The reverse declaration order of {@link #MODULE_GROUP_FORWARD_ALIAS_ASYNC}. */
+    private static final Case MODULE_GROUP_REVERSE_ALIAS_ASYNC = new Case(
+        "module-group-reverse-alias-async",
+        """
+        import * as console from "std/console"
+
+        export async function drive(): int {
+          let v: int = await f(1);
+          if (v === 42) {
+            console.log("declared-body-module-group-reverse-alias-async-ok");
+          } else {
+            console.log("declared-body-module-group-reverse-alias-async-bad");
+          }
+          return v;
+        }
+
+        export function main(): null {
+          return null;
+        }
+
+        async function h(n: int): int {
+          if (n <= 0) {
+            return 42;
+          }
+          return await j(n - 1);
+        }
+
+        async function j(n: int): int {
+          return await h(n);
+        }
+
+        async function f(n: int): int {
+          let alias: async (n: int) => int = h;
+          if (n <= 0) {
+            return await alias(0);
+          }
+          return await g(n - 1);
+        }
+
+        async function g(n: int): int {
+          return await f(n);
+        }
+        """,
+        List.of("declared-body-module-group-reverse-alias-async-ok"),
+        "drive", "int:42", 1, 0, true);
+
+    /**
+     * The reverse declaration order of {@link #FORWARD_ALIAS_EXPORTED}: the
+     * exported target is declared before its value-carried caller, so the
+     * same-module entry realization must not depend on the declaration
+     * order either.
+     */
+    private static final Case FORWARD_ALIAS_EXPORTED_REVERSE = new Case(
+        "forward-alias-exported-reverse",
+        """
+        import * as console from "std/console"
+
+        export function f(n: int): int {
+          return n;
+        }
+
+        export function main(): null {
+          let v: int = g();
+          if (v === 5) {
+            console.log("declared-body-forward-alias-exported-reverse-ok");
+          } else {
+            console.log("declared-body-forward-alias-exported-reverse-bad");
+          }
+          return null;
+        }
+
+        function g(): int {
+          let alias: (n: int) => int = f;
+          return alias(5);
+        }
+        """,
+        List.of("declared-body-forward-alias-exported-reverse-ok"), null, "null",
+        0, 1);
+
+    /**
+     * The reverse declaration order of {@link #FORWARD_ALIAS_EXPORTED_ASYNC}:
+     * the exported async target is declared before its awaited value-carried
+     * caller.
+     */
+    private static final Case FORWARD_ALIAS_EXPORTED_ASYNC_REVERSE = new Case(
+        "forward-alias-exported-async-reverse",
+        """
+        import * as console from "std/console"
+
+        export async function f(): int {
+          return await helper();
+        }
+
+        async function helper(): int {
+          return 5;
+        }
+
+        async function g(): int {
+          let alias: async () => int = f;
+          return await alias();
+        }
+
+        export function main(): null {
+          return null;
+        }
+
+        export async function drive(): int {
+          let v: int = await g();
+          if (v === 5) {
+            console.log("declared-body-forward-alias-exported-async-reverse-ok");
+          } else {
+            console.log("declared-body-forward-alias-exported-async-reverse-bad");
+          }
+          return v;
+        }
+        """,
+        List.of("declared-body-forward-alias-exported-async-reverse-ok"),
+        "drive", "int:5", 0, 1);
+
     private static final List<Case> CASES = List.of(
         ACYCLIC_SIBLING, TWO_ESCAPED_INSTANCES, ACYCLIC_SIBLING_ASYNC,
         TWO_ESCAPED_INSTANCES_ASYNC, FORWARD_ALIAS, FORWARD_ALIAS_ASYNC,
         FORWARD_ALIAS_EXPORTED, FORWARD_ALIAS_EXPORTED_ASYNC,
+        FORWARD_ALIAS_EXPORTED_REVERSE, FORWARD_ALIAS_EXPORTED_ASYNC_REVERSE,
         EXPORTED_DIRECT_AWAIT_ASYNC, FORWARD_ALIAS_EXPORTED_ASYNC_RECURSIVE,
         EXPORTED_DIRECT_AWAIT_ASYNC_RECURSIVE, EXPORTED_RECURSIVE_ENCLOSING_STATE,
         FORWARD_ALIAS_EXPORTED_ASYNC_DEEP,
+        MODULE_GROUP_FORWARD_ALIAS, MODULE_GROUP_FORWARD_CARRIER_ALIAS,
+        MODULE_GROUP_REVERSE_ALIAS, MODULE_GROUP_FORWARD_ALIAS_ASYNC,
+        MODULE_GROUP_REVERSE_ALIAS_ASYNC,
         FORWARD_ALIAS_EXPORTED_ADAPTER, FORWARD_ALIAS_EXPORTED_ADAPTER_REVERSE,
         FORWARD_ALIAS_EXPORTED_ADAPTER_ASYNC,
         FORWARD_ALIAS_EXPORTED_ADAPTER_ASYNC_REVERSE,
@@ -1153,6 +1482,7 @@ public class DeclaredBodyCarrierProductionTest {
 
         Map<FunctionId, Integer> closureNews = new LinkedHashMap<>();
         Map<Long, SemanticOp> closureByResult = new LinkedHashMap<>();
+        Map<Long, FunctionId> groupMemberIdentities = new LinkedHashMap<>();
         Map<FunctionId, OpId> returnBoundaries = new LinkedHashMap<>();
         Map<String, SemanticOp> recordedEntries = new LinkedHashMap<>();
         Map<FunctionId, List<KindPayload.ReturnPayload>> returnsByFunction =
@@ -1164,6 +1494,27 @@ public class DeclaredBodyCarrierProductionTest {
                 closureNews.merge(closure.function(), 1, Integer::sum);
                 if (op.result() instanceof ValueId value) {
                     closureByResult.put(value.id(), op);
+                }
+            }
+            if (op.kind() == SemanticOpKind.RECURSIVE_GROUP_INIT
+                    && op.payload()
+                        instanceof KindPayload.RecursiveGroupInitPayload group) {
+                // The group-published member identities: a module-level
+                // group member has no CLOSURE_NEW of its own — the
+                // RECURSIVE_GROUP_INIT publication writes the member's
+                // pre-assigned allocation identity into the member cell,
+                // and the registration of that identity is the member's
+                // own LoweredBody.
+                for (FunctionId member : group.functions()) {
+                    for (Map.Entry<FunctionAllocationIdentity,
+                            FunctionExecutionBinding> entry
+                            : unit.functionBindings().entrySet()) {
+                        if (entry.getValue()
+                                instanceof FunctionExecutionBinding.LoweredBody body
+                                && body.functionId().equals(member)) {
+                            groupMemberIdentities.put(entry.getKey().id(), member);
+                        }
+                    }
                 }
             }
             if (op.kind() == SemanticOpKind.RETURN
@@ -1279,11 +1630,15 @@ public class DeclaredBodyCarrierProductionTest {
                     + "; got " + invocationBoundary);
             if (callee instanceof KindPayload.CallCallee.Indirect indirect) {
                 carrierInvocations++;
-                check(closureByResult.containsKey(indirect.callee().id()), testCase.name()
+                FunctionId memberIdentity =
+                    groupMemberIdentities.get(indirect.callee().id());
+                check(closureByResult.containsKey(indirect.callee().id())
+                        || memberIdentity != null, testCase.name()
                     + ": the carrier invocation " + op.opId() + " reads the "
                     + "declaration's own closure identity " + indirect.callee()
-                    + " (the published CLOSURE_NEW result); got a value outside the "
-                    + "unit's closure identities");
+                    + " (the published CLOSURE_NEW result or the group-published"
+                    + " member identity); got a value outside the unit's closure"
+                    + " identities");
             } else if (target != null && !target.captures().isEmpty()
                     && !entryDelegated.contains(body.functionId())
                     && !moduleStableCaptures(unit, target)) {
