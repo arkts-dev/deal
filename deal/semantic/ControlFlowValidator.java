@@ -384,7 +384,7 @@ public final class ControlFlowValidator {
                 if (first != null) {
                     return fail(ctx, CONTROL_BLOCK_TREE, "op " + op
                         + " is a member of more than one block (or listed twice in one block): "
-                        + first + " and " + entry.getKey());
+                        + first + " and " + entry.getKey(), ctx.unitOps.get(op));
                 }
                 seen.put(op, entry.getKey());
             }
@@ -396,19 +396,22 @@ public final class ControlFlowValidator {
                 BlockId inverse = ctx.table.opBlocks().get(op);
                 if (inverse == null) {
                     return fail(ctx, CONTROL_BLOCK_TREE, "op " + op + " is listed in block "
-                        + entry.getKey() + " but has no inverse membership entry");
+                        + entry.getKey() + " but has no inverse membership entry",
+                        ctx.unitOps.get(op));
                 }
                 if (!inverse.equals(entry.getKey())) {
                     return fail(ctx, CONTROL_BLOCK_TREE, "inverse-map conflict: op " + op
                         + " is listed in block " + entry.getKey()
-                        + " but its inverse entry maps it to block " + inverse);
+                        + " but its inverse entry maps it to block " + inverse,
+                        ctx.unitOps.get(op));
                 }
             }
         }
         for (Map.Entry<OpId, BlockId> entry : ctx.table.opBlocks().entrySet()) {
             if (!seen.containsKey(entry.getKey())) {
                 return fail(ctx, CONTROL_BLOCK_TREE, "inverse-map conflict: op " + entry.getKey()
-                    + " maps to block " + entry.getValue() + " but is listed in no block");
+                    + " maps to block " + entry.getValue() + " but is listed in no block",
+                    ctx.unitOps.get(entry.getKey()));
             }
         }
 

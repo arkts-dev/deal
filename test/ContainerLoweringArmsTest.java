@@ -47,6 +47,7 @@ import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.diagnostics.RangeOrigin;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
 import deal.parser.ParseResult;
@@ -1685,6 +1686,97 @@ public class ContainerLoweringArmsTest {
         }
     }
 
+    /**
+     * The preserved catalog-miss origin (ISSUE-0750): a STDLIB-kind
+     * import-member read whose member is outside the closed catalog fails
+     * closed with the unchanged CONSTRUCT_UNLOWERED message, and the shared
+     * lowering failure carries the offending access's own SOURCE span —
+     * never the empty-file synthetic anchor — while a defect that identifies
+     * no source construct keeps the canonical synthetic range. The hard
+     * failure produces no ops.
+     */
+    static void testImportMemberCatalogMissOrigin() {
+        System.out.println("-- the stdlib catalog miss preserves the offending "
+            + "member read's own origin --");
+
+        StubModuleResolver resolver = new StubModuleResolver();
+        resolver.register("std/string",
+            Map.of("unknown", new Type.Func(List.of(), Type.String.INSTANCE)));
+        CheckedSlice moduleAccess = checkSlice("""
+            import * as str from "std/string"
+            function f(): () => string {
+              return str.unknown
+            }
+            """, resolver);
+        if (moduleAccess == null) {
+            return;
+        }
+        MemberAccessExpr access = first(moduleAccess.program(), MemberAccessExpr.class);
+        check(access != null && "unknown".equals(access.field()),
+            "the slice carries the catalog-missing member read");
+        if (access == null) {
+            return;
+        }
+        SemanticLowerer.ModuleLowerer lowerer = lowerer(moduleAccess.checks());
+        lowerer.setModuleImports(List.of(new ResolvedImport("str", "std/string",
+            new ModuleId("std.string"), ExternalModuleKind.STDLIB)));
+        SemanticLowerer.ConstructUnlowered defect = null;
+        try {
+            lowerer.lowerExpression(access);
+        } catch (SemanticLowerer.ConstructUnlowered unlowered) {
+            defect = unlowered;
+        }
+        check(defect != null, "the catalog-miss member read fails closed with "
+            + "ConstructUnlowered");
+        if (defect == null) {
+            return;
+        }
+        check(defect.getMessage().contains("is outside the closed stdlib catalog"),
+            "the failure is the catalog-miss arm: " + defect.getMessage());
+        check(access.span().equals(defect.span()),
+            "the defect carries the offending access's own span: " + defect.span()
+                + " != " + access.span());
+        check(lowerer.ops().isEmpty(),
+            "the catalog miss produces no ops (hard failure, never a partial unit)");
+
+        CompilerDiagnostic diagnostic = SemanticLowerer.loweringFailure(MODULE, defect);
+        LoweringFailureDetail detail = SemanticLowerer.loweringFailureDetail(MODULE,
+            defect);
+        check("E6005".equals(diagnostic.code())
+                && diagnostic.diagnosticCode() == DiagnosticCode.E6005
+                && "error".equals(diagnostic.severity()),
+            "the catalog miss converts to an error-severity E6005 diagnostic");
+        check(diagnostic.message().equals(
+                FailureContractRegistry.instantiateMessage(detail)),
+            "the catalog-miss message is the unchanged registry instantiation: "
+                + diagnostic.message());
+        check(diagnostic.range().origin() == RangeOrigin.SOURCE,
+            "the E6005 range is SOURCE, got " + diagnostic.range().origin());
+        check("test.deal".equals(diagnostic.range().file()),
+            "the E6005 range names the offending file: " + diagnostic.range().file());
+        check(diagnostic.range().startLine() == 3
+                && diagnostic.range().startColumn() == 10
+                && diagnostic.range().endLine() == 3
+                && diagnostic.range().endColumn() == 21,
+            "the E6005 range is the offending access's own positions: "
+                + diagnostic.range());
+        check(diagnostic.range().startScalarOffset() == 72
+                && diagnostic.range().endScalarOffset() == 83
+                && diagnostic.range().scalarLength() == 11,
+            "the E6005 range is the offending access's own half-open scalar range: "
+                + diagnostic.range());
+
+        // Control: a defect that identifies no source construct keeps the
+        // canonical empty-file synthetic range.
+        CompilerDiagnostic originless = SemanticLowerer.loweringFailure(MODULE,
+            new SemanticLowerer.ConstructUnlowered("a producer fact without one "
+                + "source construct"));
+        check(originless.range().isCanonicalSynthetic()
+                && "".equals(originless.range().file()),
+            "an originless defect keeps the canonical empty-file synthetic range: "
+                + originless.range());
+    }
+
     // =========================================================================
     // 11. Descriptor negatives — DESCRIPTOR_UNREPRESENTABLE
     // =========================================================================
@@ -2061,6 +2153,7 @@ public class ContainerLoweringArmsTest {
         testDynamicTableIndexReadArm(tableReads);
         testForEachArm(nested);
         testConstructUnloweredNegatives();
+        testImportMemberCatalogMissOrigin();
         testDescriptorNegatives();
         testCombinedDependencyStep();
         testModuleCorpusDeterminism();

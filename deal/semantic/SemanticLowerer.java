@@ -9168,7 +9168,7 @@ public final class SemanticLowerer {
                             + importFact.resolvedModuleId().path()
                             + "' is outside the closed stdlib catalog (the catalog is "
                             + "the STDLIB kind's resolution authority; an unrecognized "
-                            + "stdlib member is never a call)"));
+                            + "stdlib member is never a call)", access.span()));
                     descriptor = row.declaredDescriptor();
                     if (!descriptor.equals(checked)) {
                         throw new ConstructUnlowered("stdlib member '" + alias.name()

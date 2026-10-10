@@ -969,6 +969,150 @@ public class ControlFlowValidatorTest {
             message + " (expected " + expected + ", got " + actual + ")");
     }
 
+    /**
+     * The preserved membership origins (ISSUE-0750): every block-tree
+     * membership failure that names an offending op of the unit carries
+     * that op's own source origin as the E6005 range — the exact SOURCE
+     * range, never the empty-file synthetic anchor — while a failure whose
+     * named op is not a produced op of the unit keeps the canonical
+     * synthetic range.
+     */
+    private static void testMembershipFailuresCarryTheOffendingOpOrigin() {
+        System.out.println("-- the block-tree membership failures name an op of the "
+            + "unit: its own source origin is the E6005 range --");
+
+        String file = "offending.deal";
+        SourceOrigin source = new SourceOrigin(file,
+            new SourceSpan(file, 2, 3, 2, 7, 10, 15),
+            SourceOriginKind.USER, new AnchorId(1), null);
+
+        // Single membership: the offending op is listed in two blocks.
+        {
+            SemanticOp shared = opWithOrigin(nextOpId(), SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+                INT, FailurePolicyId.NO_DEAL_FAILURE, source);
+            LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)),
+                List.of(shared));
+            StructuredBodyTable table = tableOf(Map.ofEntries(
+                Map.entry(INIT, List.<SemanticOp>of()),
+                Map.entry(B0, List.of(shared)),
+                Map.entry(b(1), List.of(shared))));
+            Optional<CompilerDiagnostic> diagnostic =
+                ControlFlowValidator.validate(unit, table);
+            assertE6005(diagnostic, ControlFlowValidator.CONTROL_BLOCK_TREE,
+                "is a member of more than one block");
+            assertOffendingSourceRange(diagnostic, file,
+                "the duplicate-membership failure");
+        }
+
+        // Inverse consistency: the listed op has no inverse membership entry.
+        {
+            SemanticOp shared = opWithOrigin(nextOpId(), SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+                INT, FailurePolicyId.NO_DEAL_FAILURE, source);
+            LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)),
+                List.of(shared));
+            Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
+            blockOps.put(INIT, List.of());
+            blockOps.put(B0, List.of(shared.opId()));
+            Optional<CompilerDiagnostic> diagnostic = ControlFlowValidator.validate(unit,
+                new StructuredBodyTable(blockOps, Map.of()));
+            assertE6005(diagnostic, ControlFlowValidator.CONTROL_BLOCK_TREE,
+                "has no inverse membership entry");
+            assertOffendingSourceRange(diagnostic, file,
+                "the missing-inverse-entry failure");
+        }
+
+        // Inverse consistency: the inverse entry names a different block.
+        {
+            SemanticOp shared = opWithOrigin(nextOpId(), SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+                INT, FailurePolicyId.NO_DEAL_FAILURE, source);
+            LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)),
+                List.of(shared));
+            Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
+            blockOps.put(INIT, List.of());
+            blockOps.put(B0, List.of(shared.opId()));
+            Map<OpId, BlockId> opBlocks = new LinkedHashMap<>();
+            opBlocks.put(shared.opId(), b(1));
+            Optional<CompilerDiagnostic> diagnostic = ControlFlowValidator.validate(unit,
+                new StructuredBodyTable(blockOps, opBlocks));
+            assertE6005(diagnostic, ControlFlowValidator.CONTROL_BLOCK_TREE,
+                "inverse-map conflict");
+            assertOffendingSourceRange(diagnostic, file,
+                "the conflicting-inverse-entry failure");
+        }
+
+        // Inverse consistency: an inverse-only entry names an op listed in no
+        // block.
+        {
+            SemanticOp listed = constInt();
+            SemanticOp extra = opWithOrigin(nextOpId(), SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+                INT, FailurePolicyId.NO_DEAL_FAILURE, source);
+            LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)),
+                List.of(listed, extra));
+            Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
+            blockOps.put(INIT, List.of());
+            blockOps.put(B0, List.of(listed.opId()));
+            Map<OpId, BlockId> opBlocks = new LinkedHashMap<>();
+            opBlocks.put(listed.opId(), B0);
+            opBlocks.put(extra.opId(), b(1));
+            Optional<CompilerDiagnostic> diagnostic = ControlFlowValidator.validate(unit,
+                new StructuredBodyTable(blockOps, opBlocks));
+            assertE6005(diagnostic, ControlFlowValidator.CONTROL_BLOCK_TREE,
+                "listed in no block");
+            assertOffendingSourceRange(diagnostic, file,
+                "the inverse-only-membership failure");
+        }
+
+        // Originless control: a membership failure whose named op is not a
+        // produced op of the unit keeps the canonical empty-file synthetic
+        // range (no origin exists to preserve).
+        {
+            SemanticOp produced = constInt();
+            OpId ghost = new OpId(MOD, 9999);
+            LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)),
+                List.of(produced));
+            Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
+            blockOps.put(INIT, List.of());
+            blockOps.put(B0, List.of(ghost));
+            Optional<CompilerDiagnostic> diagnostic = ControlFlowValidator.validate(unit,
+                new StructuredBodyTable(blockOps, Map.of(ghost, B0)));
+            assertE6005(diagnostic, ControlFlowValidator.CONTROL_BLOCK_TREE,
+                "is not a produced op of the unit");
+            if (diagnostic.isPresent()) {
+                CompilerDiagnostic d = diagnostic.get();
+                check(d.range().isCanonicalSynthetic(),
+                    "the unproduced-op failure keeps the canonical synthetic range: "
+                        + d.range());
+                checkEq("", d.range().file(),
+                    "the unproduced-op failure keeps the empty-file anchor");
+            }
+        }
+    }
+
+    /** One SOURCE range assertion: the offending op's own exact origin. */
+    private static void assertOffendingSourceRange(Optional<CompilerDiagnostic> diagnostic,
+            String file, String what) {
+        if (diagnostic.isEmpty()) {
+            return;
+        }
+        CompilerDiagnostic d = diagnostic.get();
+        check(d.range().origin() == RangeOrigin.SOURCE,
+            what + ": the E6005 range is SOURCE, got " + d.range().origin());
+        checkEq(file, d.range().file(), what + ": the E6005 range file");
+        checkEq(2, d.range().startLine(), what + ": the E6005 range start line");
+        checkEq(3, d.range().startColumn(), what + ": the E6005 range start column");
+        checkEq(2, d.range().endLine(), what + ": the E6005 range end line");
+        checkEq(8, d.range().endColumn(), what + ": the E6005 range end column");
+        checkEq(5, d.range().scalarLength(), what + ": the E6005 range scalar length");
+        checkEq(10, d.range().startScalarOffset(),
+            what + ": the E6005 range start offset");
+        checkEq(15, d.range().endScalarOffset(),
+            what + ": the E6005 range end offset");
+    }
+
     private static void testCallOwnedReturnRecords() {
         System.out.println("-- Call-owned return records: the dynamic invocation's "
             + "record is admitted outside the block tree --");
@@ -1193,6 +1337,7 @@ public class ControlFlowValidatorTest {
         testNegatives();
         testCallOwnedReturnRecords();
         testFailingRuleCarriesTheOffendingOpOrigin();
+        testMembershipFailuresCarryTheOffendingOpOrigin();
         testDeterminismAndPurity();
         testNullArgs();
 
