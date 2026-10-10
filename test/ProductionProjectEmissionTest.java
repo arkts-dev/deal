@@ -17,6 +17,7 @@ import deal.semantic.HostDeclarationSurface;
 import deal.semantic.ReleaseConfiguration;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticRequirementManifest;
+import deal.semantic.ir.CanonicalJson;
 import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.ProjectInterfaceIndex;
@@ -410,7 +411,7 @@ public class ProductionProjectEmissionTest {
             Set.of(), backend, sourceMapExplicit, fixture.distributionHome(), stager);
     }
 
-    /** Runs the unit with stderr captured (the C9 warning observable). */
+    /** Runs the unit with stderr captured (the warning/status observable). */
     private static String emitCapturingStderr(Fixture fixture, Backend backend,
             PublicationStager stager, boolean sourceMapExplicit) throws Exception {
         PrintStream originalErr = System.err;
@@ -468,7 +469,7 @@ public class ProductionProjectEmissionTest {
             "the entry consumes the compile's declared inputs (the extern-C"
                 + " generated modules and the manifest-directory text feeding"
                 + " the Lua session's FFI emission input), the backend, the"
-                + " explicit source-map flag, the deployment-copy resolver, and the"
+                + " effective source-map flag, the deployment-copy resolver, and the"
                 + " staging surface");
         for (Class<?> parameter : entry.getParameterTypes()) {
             String name = parameter.getName();
@@ -480,16 +481,6 @@ public class ProductionProjectEmissionTest {
             }
         }
 
-        checkEq("Warning: --source-map produces no source-map sidecars with the "
-                + "LuaJIT project emission (source maps are LuaJIT/JVM-unavailable in "
-                + "this release)",
-            ProductionProjectEmission.WARNING_LUAJIT,
-            "the pinned LuaJIT C9 warning text");
-        checkEq("Warning: --source-map produces no source-map sidecars with the "
-                + "JVM project emission (source maps are LuaJIT/JVM-unavailable in "
-                + "this release)",
-            ProductionProjectEmission.WARNING_JVM,
-            "the pinned JVM C9 warning text");
         checkEq("SHARED_EMITTER_COVERAGE",
             ProductionProjectEmission.SHARED_EMITTER_COVERAGE,
             "the registered emitter-coverage rule id");
@@ -1132,54 +1123,271 @@ public class ProductionProjectEmissionTest {
     }
 
     // =========================================================================
-    // 6. The C9 source-map disposition
+    // 6. The source-map emission: real coordinates, explicit flag, rollback
     // =========================================================================
 
-    private static void testSourceMapDisposition(Fixture fixture) throws Exception {
-        System.out.println("-- an explicit --source-map prints the pinned warning "
-            + "once and stages no sidecar; a --dump-ir-derived flag prints none --");
+    private static void testSourceMapEmission(Fixture fixture) throws Exception {
+        System.out.println("-- an effective --source-map emits source comments and "
+            + "one sidecar per constituent module with real generated/source "
+            + "coordinates on both targets; no flag emits neither; a failing run "
+            + "preserves the previous set byte-for-byte --");
+
+        // (1) LuaJIT: the artifact's source comments and each constituent
+        // module's sidecar mapping agree with the real artifact and source
+        // coordinates, and no warning text is printed anymore.
         Path out = fixture.root().resolve("source-map-out");
+        String lua;
+        Sidecar appMap;
+        Sidecar libMap;
         {
-            PublicationStager explicitStager = PublicationStager.forRoot(out);
-            String explicitStderr;
+            PublicationStager stager = PublicationStager.forRoot(out);
             try {
-                explicitStderr = emitCapturingStderr(fixture, Backend.LUAJIT,
-                    explicitStager, true);
-                for (String path : explicitStager.stagedSet().relativePaths()) {
-                    check(!path.endsWith(".deal.map.json"),
-                        "the explicit --source-map compile stages no sidecar: " + path);
-                }
+                String stderr = emitCapturingStderr(fixture, Backend.LUAJIT,
+                    stager, true);
+                checkEq("", stderr,
+                    "the effective --source-map run prints no warning");
+                check(stager.stagedSet().artifact("app.lua").isPresent(),
+                    "the source-map run stages the entry module's chunk");
+                check(stager.stagedSet().artifact("app.deal.map.json").isPresent(),
+                    "the entry module's sidecar stages with the chunk");
+                check(stager.stagedSet().artifact("lib.deal.map.json").isPresent(),
+                    "the constituent library module's sidecar stages too");
+                lua = new String(stager.stagedSet().artifact("app.lua")
+                    .orElseThrow().content(), StandardCharsets.UTF_8);
+                appMap = parseSidecar(new String(stager.stagedSet()
+                    .artifact("app.deal.map.json").orElseThrow().content(),
+                    StandardCharsets.UTF_8));
+                libMap = parseSidecar(new String(stager.stagedSet()
+                    .artifact("lib.deal.map.json").orElseThrow().content(),
+                    StandardCharsets.UTF_8));
             } finally {
-                explicitStager.discard();
+                stager.discard();
             }
-            checkEq(ProductionProjectEmission.WARNING_LUAJIT + "\n", explicitStderr,
-                "the explicit LuaJIT --source-map warning is the pinned text, once");
-            checkEq(1, countOccurrences(explicitStderr, "Warning:"),
-                "the pinned warning prints exactly once");
-
-            PublicationStager derivedStager =
-                PublicationStager.forRoot(fixture.root().resolve("derived-out"));
-            String derivedStderr;
-            try {
-                derivedStderr = emitCapturingStderr(fixture, Backend.LUAJIT,
-                    derivedStager, false);
-            } finally {
-                derivedStager.discard();
-            }
-            checkEq("", derivedStderr,
-                "a --dump-ir-derived source-map flag prints no warning");
-
-            PublicationStager jvmStager =
-                PublicationStager.forRoot(fixture.root().resolve("jvm-map-out"));
-            String jvmStderr;
-            try {
-                jvmStderr = emitCapturingStderr(fixture, Backend.JVM, jvmStager, true);
-            } finally {
-                jvmStager.discard();
-            }
-            checkEq(ProductionProjectEmission.WARNING_JVM + "\n", jvmStderr,
-                "the explicit JVM --source-map warning is the pinned text, once");
         }
+        List<String> luaLines = lua.lines().toList();
+        check(appMap.generated().endsWith("/source-map-out/app.lua"),
+            "the entry sidecar's generated path is the shared artifact: "
+                + appMap.generated());
+        check(libMap.generated().equals(appMap.generated()),
+            "every constituent sidecar maps the same shared artifact: "
+                + libMap.generated());
+        verifySidecarCoordinates(appMap, luaLines, APP_SOURCE, "-- ",
+            "src/app.deal");
+        verifySidecarCoordinates(libMap, luaLines, LIB_SOURCE, "-- ",
+            "src/lib.deal");
+        check(hasMappingAtSourceLine(appMap, 4),
+            "the entry sidecar maps the main body's return null");
+        check(hasMappingAtSourceLine(appMap, 8),
+            "the entry sidecar maps the label body's return");
+        check(hasMappingAtSourceLine(libMap, 2),
+            "the library sidecar maps add's return a + b");
+        check(hasMappingAtSourceLine(libMap, 6),
+            "the library sidecar maps twice's return x * 2");
+        checkEq(countSourceComments(lua, "-- "),
+            appMap.mappings().size() + libMap.mappings().size(),
+            "every recorded mapping is one emitted source comment of the chunk");
+
+        // (2) The same project without the effective flag: no warning, no
+        // sidecar, and no source comment in the artifact bytes.
+        Path noMapOut = fixture.root().resolve("no-map-out");
+        String noMapLua;
+        {
+            PublicationStager stager = PublicationStager.forRoot(noMapOut);
+            String stderr;
+            try {
+                stderr = emitCapturingStderr(fixture, Backend.LUAJIT, stager,
+                    false);
+                check(stager.stagedSet().relativePaths().stream()
+                        .noneMatch(path -> path.endsWith(".deal.map.json")),
+                    "a compile without the effective flag stages no sidecar");
+                noMapLua = new String(stager.stagedSet().artifact("app.lua")
+                    .orElseThrow().content(), StandardCharsets.UTF_8);
+            } finally {
+                stager.discard();
+            }
+            checkEq("", stderr, "a compile without the flag prints no warning");
+        }
+        checkEq(0, countSourceComments(noMapLua, "-- "),
+            "a compile without the flag emits no source comment");
+
+        // (3) JVM: the class source carries the same source comments and the
+        // two sidecars map its real generated coordinates.
+        Path jvmOut = fixture.root().resolve("jvm-map-out");
+        String javaSource;
+        Sidecar jvmAppMap;
+        Sidecar jvmLibMap;
+        {
+            PublicationStager stager = PublicationStager.forRoot(jvmOut);
+            try {
+                String stderr = emitCapturingStderr(fixture, Backend.JVM,
+                    stager, true);
+                checkEq("", stderr,
+                    "the JVM effective --source-map run prints no warning");
+                check(stager.stagedSet().artifact("App.java").isPresent(),
+                    "the JVM source-map run stages the one entry class");
+                javaSource = new String(stager.stagedSet().artifact("App.java")
+                    .orElseThrow().content(), StandardCharsets.UTF_8);
+                jvmAppMap = parseSidecar(new String(stager.stagedSet()
+                    .artifact("app.deal.map.json").orElseThrow().content(),
+                    StandardCharsets.UTF_8));
+                jvmLibMap = parseSidecar(new String(stager.stagedSet()
+                    .artifact("lib.deal.map.json").orElseThrow().content(),
+                    StandardCharsets.UTF_8));
+            } finally {
+                stager.discard();
+            }
+        }
+        List<String> javaLines = javaSource.lines().toList();
+        verifySidecarCoordinates(jvmAppMap, javaLines, APP_SOURCE, "// ",
+            "src/app.deal");
+        verifySidecarCoordinates(jvmLibMap, javaLines, LIB_SOURCE, "// ",
+            "src/lib.deal");
+        checkEq(countSourceComments(javaSource, "// "),
+            jvmAppMap.mappings().size() + jvmLibMap.mappings().size(),
+            "every recorded mapping is one emitted source comment of the class");
+
+        // (4) Rollback: a failing run into a root holding a previously
+        // published set (artifact and maps) leaves that set byte-identical.
+        Path rollbackOut = fixture.root().resolve("rollback-out");
+        writeFileIn(rollbackOut, "app.lua", "-- previous artifact\n");
+        writeFileIn(rollbackOut, "app.deal.map.json", "-- previous map\n");
+        writeFileIn(rollbackOut, "lib.deal.map.json", "-- previous map\n");
+        writeFileIn(rollbackOut, "deal/runtime.lua", "-- previous runtime\n");
+        Map<String, String> before = snapshotTree(rollbackOut);
+        Fixture failing = adapterSourceFixture();
+        try {
+            PublicationStager stager = PublicationStager.forRoot(rollbackOut);
+            ProductionProjectEmission.Result result;
+            try {
+                result = emit(failing, Backend.LUAJIT, stager, true);
+                check(!result.emitted(),
+                    "the failing source-map run emits nothing");
+                check(stager.stagedSet().relativePaths().isEmpty()
+                        || stager.stagedSet().relativePaths().stream()
+                            .noneMatch(path -> path.endsWith(".deal.map.json")),
+                    "the failing source-map run stages no sidecar");
+            } finally {
+                stager.discard();
+            }
+            checkEq(before, snapshotTree(rollbackOut),
+                "the failing source-map run preserves the previous set "
+                    + "(artifact and maps) byte-identical");
+        } finally {
+            deleteRecursively(failing.root());
+        }
+    }
+
+    /** One parsed source-map sidecar (the spec's pinned document shape). */
+    private record Sidecar(String source, String generated,
+                           List<MapEntry> mappings) {
+    }
+
+    /** One mapping entry of a sidecar. */
+    private record MapEntry(int generatedLine, int generatedColumn,
+                            int sourceLine, int sourceColumn) {
+    }
+
+    /**
+     * Parses one {@code .deal.map.json} document through the strict canonical
+     * JSON transport and verifies its pinned fields (version, source,
+     * generated, mapping shape).
+     */
+    private static Sidecar parseSidecar(String json) {
+        CanonicalJson.Obj root;
+        try {
+            root = (CanonicalJson.Obj) CanonicalJson.parse(json);
+        } catch (RuntimeException malformed) {
+            fail("the sidecar is not valid JSON: " + malformed);
+            return new Sidecar("", "", List.of());
+        }
+        Map<String, CanonicalJson.Value> fields = new LinkedHashMap<>();
+        for (CanonicalJson.Entry entry : root.entries()) {
+            fields.put(entry.key(), entry.value());
+        }
+        checkEq(1, ((CanonicalJson.Int) fields.get("version")).value(),
+            "the sidecar version is the pinned 1");
+        String source = ((CanonicalJson.Str) fields.get("source")).value();
+        String generated = ((CanonicalJson.Str) fields.get("generated")).value();
+        List<MapEntry> mappings = new ArrayList<>();
+        for (CanonicalJson.Value item
+                : ((CanonicalJson.Arr) fields.get("mappings")).items()) {
+            Map<String, CanonicalJson.Value> entryFields = new LinkedHashMap<>();
+            for (CanonicalJson.Entry entry
+                    : ((CanonicalJson.Obj) item).entries()) {
+                entryFields.put(entry.key(), entry.value());
+            }
+            mappings.add(new MapEntry(
+                ((CanonicalJson.Int) entryFields.get("generatedLine")).value(),
+                ((CanonicalJson.Int) entryFields.get("generatedColumn")).value(),
+                ((CanonicalJson.Int) entryFields.get("sourceLine")).value(),
+                ((CanonicalJson.Int) entryFields.get("sourceColumn")).value()));
+        }
+        return new Sidecar(source, generated, mappings);
+    }
+
+    /** Whether one sidecar records a mapping at the given source line. */
+    private static boolean hasMappingAtSourceLine(Sidecar sidecar,
+            int sourceLine) {
+        return sidecar.mappings().stream()
+            .anyMatch(mapping -> mapping.sourceLine() == sourceLine);
+    }
+
+    /**
+     * Verifies one sidecar against the real artifact and the module's real
+     * source file: every mapped position is inside both texts, and the mapped
+     * artifact line is exactly the source comment carrying the mapped source
+     * coordinates under the module's one display name.
+     */
+    private static void verifySidecarCoordinates(Sidecar sidecar,
+            List<String> artifactLines, String sourceText, String commentMarker,
+            String expectedSourceSuffix) {
+        check(sidecar.source().endsWith(expectedSourceSuffix),
+            "the sidecar names the constituent source file: " + sidecar.source());
+        check(!sidecar.mappings().isEmpty(),
+            "the sidecar of " + sidecar.source() + " carries mappings");
+        List<String> sourceLines = sourceText.lines().toList();
+        for (MapEntry mapping : sidecar.mappings()) {
+            check(mapping.generatedLine() >= 1
+                    && mapping.generatedLine() <= artifactLines.size(),
+                "the mapped generated line is inside the artifact: " + mapping);
+            check(mapping.sourceLine() >= 1
+                    && mapping.sourceLine() <= sourceLines.size(),
+                "the mapped source line addresses the real source file: "
+                    + mapping);
+            if (mapping.sourceLine() >= 1
+                    && mapping.sourceLine() <= sourceLines.size()) {
+                int lineLength = sourceLines.get(mapping.sourceLine() - 1).length();
+                check(mapping.sourceColumn() >= 1
+                        && mapping.sourceColumn() <= lineLength + 1,
+                    "the mapped source column addresses real source text: "
+                        + mapping);
+            }
+            if (mapping.generatedLine() >= 1
+                    && mapping.generatedLine() <= artifactLines.size()) {
+                String generatedLine = artifactLines.get(
+                    mapping.generatedLine() - 1);
+                checkEq(commentMarker + sidecar.source() + ":"
+                        + mapping.sourceLine() + ":" + mapping.sourceColumn(),
+                    generatedLine.strip(),
+                    "the mapped artifact line is the mapping's source comment");
+                checkEq(generatedLine.indexOf(commentMarker) + 1,
+                    mapping.generatedColumn(),
+                    "the mapped generated column addresses the comment start");
+            }
+        }
+    }
+
+    /** The emitted source comments of one artifact text. */
+    private static int countSourceComments(String artifact, String commentMarker) {
+        int count = 0;
+        for (String line : artifact.lines().toList()) {
+            String stripped = line.strip();
+            if (stripped.startsWith(commentMarker)
+                    && stripped.matches(".*/[^ ]*\\.deal:[0-9]+:[0-9]+")) {
+                count++;
+            }
+        }
+        return count;
     }
 
     // =========================================================================
@@ -1299,7 +1507,7 @@ public class ProductionProjectEmissionTest {
             cross = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
             same = asyncFixture(ASYNC_LIB_SOURCE, SAME_ASYNC_APP_SOURCE);
             testCrossModuleAsyncEmission(cross, same);
-            testSourceMapDisposition(fixture);
+            testSourceMapEmission(fixture);
         } finally {
             deleteRecursively(same == null ? null : same.root());
             deleteRecursively(cross == null ? null : cross.root());

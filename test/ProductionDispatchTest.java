@@ -35,6 +35,7 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
@@ -1180,12 +1181,15 @@ public class ProductionDispatchTest {
     }
 
     // =========================================================================
-    // 5. The C9 source-map disposition
+    // 5. The source-map emission through the public CLI
     // =========================================================================
 
     private static void testSourceMapDisposition() throws Exception {
-        System.out.println("-- source map: an explicit --source-map warns once "
-            + "and stages no sidecar; --dump-ir is silent --");
+        System.out.println("-- source map: an explicit --source-map publishes the "
+            + "artifact with source comments and one .deal.map.json per module "
+            + "with real coordinates; a failing recompile preserves the "
+            + "published artifact and maps byte-for-byte; --dump-ir emits the "
+            + "same set without a warning --");
 
         Path project = Files.createTempDirectory("production-dispatch-map-");
         try {
@@ -1193,65 +1197,176 @@ public class ProductionDispatchTest {
             write(project, "src/lib.deal", LIB_SOURCE);
             write(project, "src/main.deal", APP_SOURCE);
 
+            // (1) The explicit --source-map: one sidecar per constituent
+            // module mapping the one shared artifact, real generated/source
+            // coordinates, no warning, and the commented artifact still
+            // compiles and runs.
+            Path jvmOut = project.resolve("build/out");
             ProjectOutcome explicit = runProductionCli("compile",
                 project.resolve("src/main.deal").toAbsolutePath().toString(),
                 "--backend", "jvm", "--source-map", "--output",
-                project.resolve("out-map").toAbsolutePath().toString());
+                jvmOut.toAbsolutePath().toString());
             check(explicit.exitCode() == 0,
                 "the explicit --source-map production compile succeeds: "
                     + explicit.stderr());
-            checkEq(1, countOccurrences(explicit.stderr(),
-                    deal.module.ProductionProjectEmission.WARNING_JVM),
-                "the pinned JVM warning prints exactly once");
-            check(artifactFiles(project.resolve("out-map"))
-                    .contains("Main.java"),
+            check(!explicit.stderr().contains("Warning:"),
+                "the explicit --source-map compile prints no warning: "
+                    + explicit.stderr());
+            List<String> published = artifactFiles(jvmOut);
+            check(published.contains("Main.java"),
                 "the explicit --source-map compile publishes its project "
-                    + "artifact");
-            check(artifactFiles(project.resolve("out-map")).stream()
-                    .noneMatch(file -> file.endsWith(".deal.map.json")),
-                "the explicit --source-map compile writes no sidecar");
+                    + "artifact: " + published);
+            check(published.contains("main.deal.map.json")
+                    && published.contains("lib.deal.map.json"),
+                "the explicit --source-map compile publishes one sidecar per "
+                    + "constituent module: " + published);
+            verifyPublishedSidecar(project, jvmOut, "main.deal.map.json",
+                "src/main.deal", "build/out/Main.java", "Main.java", "// ");
+            verifyPublishedSidecar(project, jvmOut, "lib.deal.map.json",
+                "src/lib.deal", "build/out/Main.java", "Main.java", "// ");
 
+            String classpath = Path.of("build").toAbsolutePath().normalize()
+                .toString();
+            ProcessOutcome javac = runProcess(project, "javac", "--release", "25",
+                "-proc:none", "-cp", classpath, "-d", jvmOut.toString(),
+                jvmOut.resolve("Main.java").toString());
+            check(javac.exitCode() == 0,
+                "the source-commented JVM artifact compiles: " + javac.output());
+            if (javac.exitCode() == 0) {
+                ProcessOutcome run = runProcess(jvmOut, "java", "-cp",
+                    classpath + File.pathSeparator + jvmOut, "Main");
+                check(run.exitCode() == 0
+                        && countOccurrences(run.output(), "PROBE|MAIN-ONCE") == 1,
+                    "the source-commented JVM artifact runs the entry once: exit="
+                        + run.exitCode() + " output=" + run.output());
+            }
+
+            // (2) Rollback: a failing recompile into the same output root
+            // leaves the published artifact and both sidecars byte-identical.
+            Map<String, byte[]> publishedSet = snapshotTree(jvmOut);
+            write(project, "src/lib.deal", "export function value(:\n");
+            ProjectOutcome failing = runProductionCli("compile",
+                project.resolve("src/main.deal").toAbsolutePath().toString(),
+                "--backend", "jvm", "--source-map", "--output",
+                jvmOut.toAbsolutePath().toString());
+            check(failing.exitCode() != 0,
+                "the failing --source-map recompile fails: " + failing.stderr());
+            checkTreeIdentical(publishedSet, jvmOut,
+                "the failing --source-map recompile preserves the published "
+                    + "artifact and both sidecars");
+            write(project, "src/lib.deal", LIB_SOURCE);
+
+            // (3) The effective --dump-ir-derived request emits the same set
+            // without a warning (the one effective flag of both arms).
+            Path dumpOut = project.resolve("build/dump");
             ProjectOutcome dumpIr = runProductionCli("compile",
                 project.resolve("src/main.deal").toAbsolutePath().toString(),
                 "--backend", "jvm", "--dump-ir", "--output",
-                project.resolve("out-dump").toAbsolutePath().toString());
+                dumpOut.toAbsolutePath().toString());
             check(dumpIr.exitCode() == 0,
-                "the --dump-ir-only production compile succeeds: "
-                    + dumpIr.stderr());
-            check(!dumpIr.stderr().contains("source-map"),
-                "a --dump-ir-derived flag prints no warning: "
-                    + dumpIr.stderr());
+                "the --dump-ir production compile succeeds: " + dumpIr.stderr());
+            check(!dumpIr.stderr().contains("Warning:"),
+                "a --dump-ir-derived flag prints no warning: " + dumpIr.stderr());
+            List<String> dumped = artifactFiles(dumpOut);
+            check(dumped.contains("main.deal.map.json")
+                    && dumped.contains("lib.deal.map.json"),
+                "the --dump-ir-derived flag emits the same sidecar set: "
+                    + dumped);
 
-            // The LuaJIT target pins the LuaJIT warning text.
-            Path luaProject = Files.createTempDirectory(
-                "production-dispatch-map-lua-");
-            try {
-                write(luaProject, "deal.json", DEAL_JSON_LUA);
-                write(luaProject, "src/main.deal", """
-                    export function main(): null {
-                      return null
-                    }
-                    """);
-                ProjectOutcome lua = runProductionCli("compile",
-                    luaProject.resolve("src/main.deal").toAbsolutePath()
-                        .toString(),
-                    "--source-map", "--output",
-                    luaProject.resolve("out-map").toAbsolutePath().toString());
-                check(lua.exitCode() == 0,
-                    "the explicit --source-map LuaJIT compile succeeds: "
-                        + lua.stderr());
-                checkEq(1, countOccurrences(lua.stderr(),
-                        deal.module.ProductionProjectEmission.WARNING_LUAJIT),
-                    "the pinned LuaJIT warning prints exactly once");
-                check(artifactFiles(luaProject.resolve("out-map"))
-                        .contains("main.lua"),
-                    "the LuaJIT --source-map compile publishes its project "
-                        + "artifact");
-            } finally {
-                deleteRecursively(luaProject);
-            }
+            // (4) The LuaJIT target: the chunk carries the source comments and
+            // the two sidecars map the same shared artifact; the commented
+            // chunk still runs under luajit.
+            Path luaOut = project.resolve("build/lua");
+            ProjectOutcome lua = runProductionCli("compile",
+                project.resolve("src/main.deal").toAbsolutePath().toString(),
+                "--backend", "luajit", "--source-map", "--output",
+                luaOut.toAbsolutePath().toString());
+            check(lua.exitCode() == 0,
+                "the LuaJIT --source-map compile succeeds: " + lua.stderr());
+            check(!lua.stderr().contains("Warning:"),
+                "the LuaJIT --source-map compile prints no warning: "
+                    + lua.stderr());
+            List<String> luaPublished = artifactFiles(luaOut);
+            check(luaPublished.contains("main.lua")
+                    && luaPublished.contains("main.deal.map.json")
+                    && luaPublished.contains("lib.deal.map.json"),
+                "the LuaJIT --source-map compile publishes the chunk and both "
+                    + "sidecars: " + luaPublished);
+            verifyPublishedSidecar(project, luaOut, "main.deal.map.json",
+                "src/main.deal", "build/lua/main.lua", "main.lua", "-- ");
+            verifyPublishedSidecar(project, luaOut, "lib.deal.map.json",
+                "src/lib.deal", "build/lua/main.lua", "main.lua", "-- ");
+            ProcessOutcome luaRun = runProcess(luaOut, "luajit", "main.lua");
+            check(luaRun.exitCode() == 0
+                    && countOccurrences(luaRun.output(), "PROBE|MAIN-ONCE") == 1,
+                "the source-commented LuaJIT chunk runs the entry once: exit="
+                    + luaRun.exitCode() + " output=" + luaRun.output());
         } finally {
             deleteRecursively(project);
+        }
+    }
+
+    /**
+     * Verifies one published {@code .deal.map.json} sidecar: the pinned
+     * fields, at least one mapping, and every mapping against the real
+     * artifact line (the mapped generated line is exactly the source comment
+     * carrying the mapped source coordinates under the sidecar's source name)
+     * and the real source file line range.
+     */
+    private static void verifyPublishedSidecar(Path project, Path outputRoot,
+            String sidecarName, String expectedSource, String expectedGenerated,
+            String artifactName, String commentMarker) throws Exception {
+        Path sidecar = outputRoot.resolve(sidecarName);
+        check(Files.isRegularFile(sidecar),
+            "the sidecar is published: " + sidecarName);
+        if (!Files.isRegularFile(sidecar)) {
+            return;
+        }
+        String json = Files.readString(sidecar);
+        check(json.contains("\"version\": 1"),
+            sidecarName + " carries the pinned version: " + json);
+        check(json.contains("\"source\": \"" + expectedSource + "\""),
+            sidecarName + " names its constituent source file: " + json);
+        check(json.contains("\"generated\": \"" + expectedGenerated + "\""),
+            sidecarName + " maps the one shared artifact: " + json);
+
+        List<int[]> mappings = new ArrayList<>();
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
+            "\\{ \"generatedLine\": ([0-9]+), \"generatedColumn\": ([0-9]+), "
+                + "\"sourceLine\": ([0-9]+), \"sourceColumn\": ([0-9]+) \\}")
+            .matcher(json);
+        while (matcher.find()) {
+            mappings.add(new int[] {
+                Integer.parseInt(matcher.group(1)),
+                Integer.parseInt(matcher.group(2)),
+                Integer.parseInt(matcher.group(3)),
+                Integer.parseInt(matcher.group(4)),
+            });
+        }
+        check(!mappings.isEmpty(),
+            sidecarName + " carries real mappings: " + json);
+        List<String> artifactLines = Files.readString(
+            outputRoot.resolve(artifactName)).lines().toList();
+        List<String> sourceLines = Files.readString(
+            project.resolve(expectedSource)).lines().toList();
+        for (int[] mapping : mappings) {
+            int generatedLine = mapping[0];
+            int sourceLine = mapping[2];
+            int sourceColumn = mapping[3];
+            check(generatedLine >= 1 && generatedLine <= artifactLines.size(),
+                sidecarName + " maps a real generated line: " + generatedLine);
+            check(sourceLine >= 1 && sourceLine <= sourceLines.size(),
+                sidecarName + " maps a real source line: " + sourceLine);
+            if (generatedLine >= 1 && generatedLine <= artifactLines.size()) {
+                String artifactLine = artifactLines.get(generatedLine - 1);
+                checkEq(commentMarker + expectedSource + ":" + sourceLine + ":"
+                        + sourceColumn,
+                    artifactLine.strip(),
+                    sidecarName + " maps the source comment at its generated "
+                        + "line");
+                checkEq(artifactLine.indexOf(commentMarker) + 1, mapping[1],
+                    sidecarName + " maps the comment start column");
+            }
         }
     }
 

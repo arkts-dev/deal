@@ -2,6 +2,9 @@ package deal.module;
 
 import deal.checker.BuiltinErrorDeclaration;
 import deal.codegen.Backend;
+import deal.codegen.SourceMapGenerator;
+import deal.codegen.SourceMapPaths;
+import deal.codegen.SourceMapRecorder;
 import deal.codegen.jvm.JvmNames;
 import deal.codegen.jvm.JvmSemanticEmitter;
 import deal.codegen.lua.FfiEmissionInput;
@@ -31,6 +34,8 @@ import deal.semantic.ir.SemanticCapability;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -56,18 +61,6 @@ public final class ProductionProjectEmission {
      * offending provider alias and module path.
      */
     public static final String FFI_PROVIDER_GAP = "FFI_PROVIDER_GAP";
-
-    /** The pinned C9 warning of the LuaJIT target (printed verbatim). */
-    public static final String WARNING_LUAJIT =
-        "Warning: --source-map produces no source-map sidecars with the LuaJIT"
-            + " project emission (source maps are LuaJIT/JVM-unavailable in this"
-            + " release)";
-
-    /** The pinned C9 warning of the JVM target (printed verbatim). */
-    public static final String WARNING_JVM =
-        "Warning: --source-map produces no source-map sidecars with the JVM"
-            + " project emission (source maps are LuaJIT/JVM-unavailable in this"
-            + " release)";
 
     /** The unchanged LuaJIT runtime deployment copy source name. */
     private static final String RUNTIME_LUA = "deal/runtime.lua";
@@ -130,13 +123,15 @@ public final class ProductionProjectEmission {
 
     /**
      * Runs the production arm for one release-owned production compile:
-     * the C9 warning, the closure guard's whole-closure step (both
-     * HOST-kind declaration kinds admitted and realized) over the
-     * closure's resolved import facts, the one project lowering, the one
-     * emission, the one staged project
-     * artifact, and the unchanged LuaJIT deployment copies. The caller
-     * (the phase-4 dispatch) owns the arm selection, the emission record,
-     * and the publication transaction; this unit stages artifacts only.
+     * the closure guard's whole-closure step (both HOST-kind declaration
+     * kinds admitted and realized) over the closure's resolved import
+     * facts, the one project lowering, the one emission (with the one
+     * source-map recorder and the project's source comments when the
+     * effective source-map flag is set), the one staged project artifact
+     * with its per-module {@code .deal.map.json} sidecars, and the
+     * unchanged LuaJIT deployment copies. The caller (the phase-4 dispatch)
+     * owns the arm selection, the emission record, and the publication
+     * transaction; this unit stages artifacts only.
      *
      */
     public static Result run(
@@ -152,7 +147,7 @@ public final class ProductionProjectEmission {
             List<IntrinsicKind> conversionIntrinsics,
             Set<String> callbackExports,
             Backend backend,
-            boolean sourceMapExplicit,
+            boolean sourceMap,
             DistributionHome distributionHome,
             PublicationStager stager) throws IOException {
         Objects.requireNonNull(invocation, "invocation must not be null");
@@ -180,13 +175,6 @@ public final class ProductionProjectEmission {
                     + backend);
         }
 
-        // (1) The C9 disposition: the pinned warning once, before emission,
-        // only for an explicit --source-map request; this unit never stages
-        // a .deal.map.json sidecar.
-        if (sourceMapExplicit) {
-            System.err.println(backend == Backend.JVM ? WARNING_JVM : WARNING_LUAJIT);
-        }
-
         Optional<CompilerDiagnostic> hostImport =
             hostImportGuard(checkedProject, declarationSurface, invocation);
         if (hostImport.isPresent()) {
@@ -205,24 +193,32 @@ public final class ProductionProjectEmission {
         }
         ExecutableLoweredProject project = lowering.project();
 
-        // (4) The one emission per target, then the one staged project
-        // artifact. An emitter gap is E6005 SHARED_EMITTER_COVERAGE and
-        // stages nothing.
-        String artifactRelativePath;
+        // (4) The one emission per target — with the one source-map
+        // recorder of the effective source-map request — then the one
+        // staged project artifact and its per-module source-map sidecars.
+        // An emitter gap is E6005 SHARED_EMITTER_COVERAGE and stages
+        // nothing.
+        String jvmClassName = backend == Backend.JVM
+            ? JvmNames.classNameFor(project.entryModule().path())
+            : null;
+        String artifactRelativePath = backend == Backend.JVM
+            ? jvmClassName + ".java"
+            : project.entryModule().path().replace('.', '/') + ".lua";
+        SourceMapRecorder sourceMapRecorder = sourceMap
+            ? sourceMapRecorder(checkedProject, artifactRelativePath, stager)
+            : null;
         String artifactSource;
         if (backend == Backend.JVM) {
-            String className = JvmNames.classNameFor(project.entryModule().path());
             JvmSemanticEmitter.EmissionResult emission;
             try {
                 emission = JvmSemanticEmitter.emitProductionProject(project,
-                    lowering.tables(), lowering.registries(), className,
-                    declarationSurface);
+                    lowering.tables(), lowering.registries(), jvmClassName,
+                    declarationSurface, sourceMapRecorder);
             } catch (IllegalStateException emitterGap) {
                 return new Result(Outcome.FAILED,
                     List.of(sharedEmitterCoverage(project.entryModule().path(),
                         emitterGap, invocation)), null, null);
             }
-            artifactRelativePath = className + ".java";
             artifactSource = emission.source();
         } else {
             String source;
@@ -230,18 +226,21 @@ public final class ProductionProjectEmission {
                 source = LuaSemanticEmitter.emitProductionProject(project,
                     lowering.tables(), lowering.registries(),
                     declarationSurface,
-                    new FfiEmissionInput(externCModules, manifestDirectory));
+                    new FfiEmissionInput(externCModules, manifestDirectory),
+                    sourceMapRecorder);
             } catch (IllegalStateException emitterGap) {
                 return new Result(Outcome.FAILED,
                     List.of(sharedEmitterCoverage(project.entryModule().path(),
                         emitterGap, invocation)), null, null);
             }
-            artifactRelativePath =
-                project.entryModule().path().replace('.', '/') + ".lua";
             artifactSource = source;
         }
         stager.stage(artifactRelativePath,
             artifactSource.getBytes(StandardCharsets.UTF_8));
+        if (sourceMapRecorder != null) {
+            stageSourceMapSidecars(project, sourceMapRecorder,
+                artifactRelativePath, stager);
+        }
 
         // (5) The unchanged LuaJIT deployment copies, staged from the
         // resolved distribution surface after the one project artifact. A
@@ -263,6 +262,56 @@ public final class ProductionProjectEmission {
         }
         return new Result(Outcome.EMITTED, List.of(), project,
             artifactRelativePath);
+    }
+
+    /**
+     * The one source-map recorder of a source-mapping production run: one
+     * {@link SourceMapGenerator} per constituent module with the shared
+     * project-relative display source name ({@link SourceMapPaths}, the same
+     * normalization the JavaScript orchestrator arm consumes), so the emitted
+     * source comments and the staged sidecars carry one file spelling and a
+     * single mapping authority owns the emission.
+     */
+    private static SourceMapRecorder sourceMapRecorder(
+            CheckedProjectInput checkedProject, String artifactRelativePath,
+            PublicationStager stager) {
+        Path root = stager.publicationRoot();
+        Path generated = root.resolve(artifactRelativePath);
+        Map<ModuleId, String> displaySourceNames = new LinkedHashMap<>();
+        for (CheckedModuleInput module : checkedProject.modules()) {
+            displaySourceNames.put(module.moduleId(),
+                SourceMapPaths.sourceDisplay(module.sourceId(), root));
+        }
+        return new SourceMapRecorder(displaySourceNames);
+    }
+
+    /**
+     * Stages the project's source-map sidecars into the same publication
+     * transaction as the artifact: one {@code <module>.deal.map.json} per
+     * constituent module — its own source file as {@code source}, the one
+     * shared artifact as {@code generated} — carrying the mappings recorded
+     * for that module's ops. A module that recorded no mappable op still
+     * receives its sidecar with an empty mappings array, so every
+     * constituent source file keeps exactly one sidecar. The stager publishes
+     * the whole set atomically, so a failure anywhere before the swap leaves
+     * the prior artifacts and maps untouched.
+     */
+    private static void stageSourceMapSidecars(ExecutableLoweredProject project,
+            SourceMapRecorder recorder, String artifactRelativePath,
+            PublicationStager stager) throws IOException {
+        Path root = stager.publicationRoot();
+        String generatedDisplay = SourceMapPaths.generatedDisplay(root,
+            root.resolve(artifactRelativePath));
+        for (ModuleId module : project.modules().keySet()) {
+            SourceMapGenerator generator = recorder.generatorFor(module);
+            if (generator == null) {
+                generator = new SourceMapGenerator();
+            }
+            String json = generator.toJson(
+                recorder.displayName(module, module.path()), generatedDisplay);
+            stager.stage(module.path().replace('.', '/') + ".deal.map.json",
+                json.getBytes(StandardCharsets.UTF_8));
+        }
     }
 
     private static Optional<CompilerDiagnostic> hostImportGuard(

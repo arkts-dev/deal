@@ -2,6 +2,7 @@ package deal.codegen.jvm;
 
 import deal.codegen.EmitterSessionBase;
 import deal.codegen.SemanticEmitterShared;
+import deal.codegen.SourceMapRecorder;
 import deal.semantic.HostDeclarationSurface;
 import deal.semantic.StdlibFunctionCatalog;
 import deal.semantic.ir.AdaptSourceRef;
@@ -107,6 +108,26 @@ public final class JvmSemanticEmitter {
                                                        Map<ModuleId, ClassFactoryRegistry> registries,
                                                        String className,
                                                        HostDeclarationSurface declarationSurface) {
+        return emitProductionProject(project, tables, registries, className,
+            declarationSurface, null);
+    }
+
+    /**
+     * The source-mapping production entry (the effective {@code --source-map}
+     * request): identical emission to the overload above with one
+     * {@link SourceMapRecorder} installed, so every mapped op entry emits its
+     * source comment before the generated statement group and records the
+     * generated position in its owning module's mapper. The caller serializes
+     * the recorders into the project's {@code .deal.map.json} sidecars and
+     * stages them atomically with the artifact. A {@code null} recorder is the
+     * recorder-less emission (byte-identical to the overload above).
+     */
+    public static EmissionResult emitProductionProject(ExecutableLoweredProject project,
+                                                       Map<ModuleId, StructuredBodyTable> tables,
+                                                       Map<ModuleId, ClassFactoryRegistry> registries,
+                                                       String className,
+                                                       HostDeclarationSurface declarationSurface,
+                                                       SourceMapRecorder sourceMapRecorder) {
         Objects.requireNonNull(project, "project must not be null");
         Objects.requireNonNull(tables, "tables must not be null");
         Objects.requireNonNull(registries, "registries must not be null");
@@ -114,7 +135,7 @@ public final class JvmSemanticEmitter {
         Objects.requireNonNull(declarationSurface,
             "declarationSurface must not be null");
         return new Session(project, tables, registries, false, className,
-            declarationSurface).emit();
+            declarationSurface, sourceMapRecorder).emit();
     }
 
     public static EmissionResult emitProductionModule(LoweredModuleUnit unit,
@@ -345,18 +366,27 @@ public final class JvmSemanticEmitter {
         Session(ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
                 Map<ModuleId, ClassFactoryRegistry> registries, boolean trace,
                 String className) {
-            this(project, tables, registries, trace, className, null);
+            this(project, tables, registries, trace, className, null, null);
         }
 
         Session(ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
                 Map<ModuleId, ClassFactoryRegistry> registries, boolean trace,
                 String className, HostDeclarationSurface hostSurface) {
+            this(project, tables, registries, trace, className, hostSurface,
+                null);
+        }
+
+        Session(ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
+                Map<ModuleId, ClassFactoryRegistry> registries, boolean trace,
+                String className, HostDeclarationSurface hostSurface,
+                SourceMapRecorder sourceMapRecorder) {
             super(project.modules().get(project.entryModule()),
                 tables.get(project.entryModule()));
             if (unit == null || table == null) {
                 throw new IllegalArgumentException(
                     "the entry module is not in the executable closure");
             }
+            this.sourceMapRecorder = sourceMapRecorder;
 
             String resolvedClassName = className != null ? className
                 : sharedClassName(project.modules().containsKey(project.entryModule())
@@ -407,6 +437,11 @@ public final class JvmSemanticEmitter {
 
         protected String cell(BindingId id, long generation) {
             return "b" + id.id() + "g" + generation;
+        }
+
+        @Override
+        protected String sourceCommentMarker() {
+            return "// ";
         }
 
         String fnFactory(FunctionId id) {
@@ -612,6 +647,7 @@ public final class JvmSemanticEmitter {
                     KindPayload.FunctionAdaptPayload payload =
                         (KindPayload.FunctionAdaptPayload) op.payload();
                     if (payload.source() instanceof AdaptSourceRef.Thunk thunk) {
+                        beginSourceMappedGroup(op, indent(1));
                         emitThunkMethod(op, thunk.blockId());
                     }
                 }
@@ -625,6 +661,7 @@ public final class JvmSemanticEmitter {
             for (LoweredModuleUnit moduleUnit : units.values()) {
                 for (SemanticOp op : moduleUnit.ops()) {
                     if (op.kind() == SemanticOpKind.CLASS_DEFAULT) {
+                        beginSourceMappedGroup(op, indent(1));
                         emitClassDefaultMethod(op);
                     }
                 }
@@ -718,6 +755,7 @@ public final class JvmSemanticEmitter {
             for (LoweredModuleUnit moduleUnit : units.values()) {
                 for (SemanticOp op : moduleUnit.ops()) {
                     if (op.kind() == SemanticOpKind.CALLBACK_INVOKE) {
+                        beginSourceMappedGroup(op, indent(1));
                         emitCallbackInvoke(op, 1);
                     }
                 }
@@ -727,6 +765,7 @@ public final class JvmSemanticEmitter {
                 for (SemanticOp op : moduleUnit.ops()) {
                     if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
                             && ((KindPayload.ExternalEntryPayload) op.payload()).async()) {
+                        beginSourceMappedGroup(op, indent(1));
                         emitAsyncEntry(op, 1, moduleUnit);
                     }
                 }
@@ -759,6 +798,7 @@ public final class JvmSemanticEmitter {
                     emitModuleLevelGroupCells(moduleUnit, indent);
                     emitBlockOps(moduleUnit.moduleInit().initBlock(), indent);
                 } else {
+                    beginSourceMappedGroup(moduleInitOp, indent(indent));
                     emitModuleInit(moduleInitOp, indent);
                 }
             }
@@ -1439,6 +1479,7 @@ public final class JvmSemanticEmitter {
         // -- per-op emission ---------------------------------------------------------
 
         private void emitOp(SemanticOp op, int indent) {
+            beginSourceMappedGroup(op, indent(indent));
             switch (op.kind()) {
                 case CONST -> emitConst(op, indent);
                 case UNARY -> emitUnary(op, indent);

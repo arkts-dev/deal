@@ -62,11 +62,24 @@ public final class SourceMapGenerator {
     public void emitStatement(int generatedLine, int generatedColumn,
                               Span sourceSpan) {
         if (sourceSpan == null) return;
+        emitStatement(generatedLine, generatedColumn,
+            sourceSpan.startLine(), sourceSpan.startColumn());
+    }
+
+    /**
+     * Records a mapping from the given generated position to a DEAL source
+     * line/column pair. This is the span-neutral overload the shared
+     * LuaJIT/JVM project emitters record through (their semantic-IR origins
+     * carry {@code deal.semantic.ir.SourceSpan}, never an AST {@link Span}),
+     * so one mapping format and one serializer serve every backend.
+     */
+    public void emitStatement(int generatedLine, int generatedColumn,
+                              int sourceLine, int sourceColumn) {
         mappings.add(new Mapping(
             generatedLine,
             generatedColumn,
-            sourceSpan.startLine(),
-            sourceSpan.startColumn()
+            sourceLine,
+            sourceColumn
         ));
     }
 

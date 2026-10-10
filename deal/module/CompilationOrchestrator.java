@@ -3,8 +3,9 @@ package deal.module;
 import deal.ast.*;
 import deal.checker.*;
 import deal.codegen.Backend;
-import deal.codegen.SourceMapGenerator;
 import deal.codegen.HostModuleDeclarations;
+import deal.codegen.SourceMapGenerator;
+import deal.codegen.SourceMapPaths;
 import deal.codegen.js.JsBackend;
 import deal.identity.CanonicalModuleIdentity;
 import deal.ir.IrDumper;
@@ -79,8 +80,20 @@ public final class CompilationOrchestrator {
     private final Path outputRoot;
     private final boolean verbose;
     private final boolean dumpIr;
+    /**
+     * The effective source-map flag of this compile (the explicit
+     * {@code --source-map} request or the {@code --dump-ir}-derived one,
+     * resolved by {@code deal.Main}): the one flag both sidecar emitters —
+     * the JS arm and the LuaJIT/JVM production projection — consume.
+     */
     private final boolean sourceMap;
 
+    /**
+     * The explicit {@code --source-map} spelling of the effective
+     * {@link #sourceMap} flag. Retained as part of the constructor surface;
+     * the production projection is governed by the effective flag alone (one
+     * flag, one sidecar authority across backends).
+     */
     private final boolean sourceMapExplicit;
     private final Backend backend;
 
@@ -2007,10 +2020,11 @@ public final class CompilationOrchestrator {
     /**
      * The one phase-4 production entry (P5/P6): exactly one
      * {@link ProductionProjectEmission#run} over the compile's declared
-     * inputs — the C9 source-map warning, the one project lowering, the
-     * pre-emission closure guard, the one production emission, and the
-     * one staged project artifact plus the unchanged LuaJIT deployment
-     * copies — then the one project emission record
+     * inputs — the one project lowering, the pre-emission closure guard,
+     * the one production emission (with the project's source comments and
+     * {@code .deal.map.json} sidecars under the effective source-map flag),
+     * and the one staged project artifact plus the unchanged LuaJIT
+     * deployment copies — then the one project emission record
      * ({@link #semanticEmissionCount}) and the one read-only
      * produced-project reference this compile exposes
      * ({@link #producedProject()}). A lowering, guard, or emission
@@ -2042,7 +2056,7 @@ public final class CompilationOrchestrator {
             builtinErrorDeclaration(checked.input()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW),
-            Set.of(), backend, sourceMapExplicit, distributionHome, stager);
+            Set.of(), backend, sourceMap, distributionHome, stager);
         if (result.emitted()) {
             semanticEmissionCount++;
             recordProducedProject(result.producedProject());
@@ -2448,40 +2462,15 @@ public final class CompilationOrchestrator {
 
     /**
      * The source/generated path pair passed to
-     * {@link SourceMapGenerator#toJson} for a JS sidecar — the exact
-     * strings the Lua arm passes (the retained test-scope AST codegen's
-     * project-relative normalization, mirrored verbatim): the source
-     * path and the generated artifact path relativized against the
-     * project root inferred as {@code outputRoot/../..} when the
-     * relativization stays inside the project; otherwise the fallback
-     * pair — the raw source path and the output-root-relative
-     * generated path.
+     * {@link SourceMapGenerator#toJson} for a sidecar — the exact strings
+     * every source-map arm consumes ({@link deal.codegen.SourceMapPaths}, the
+     * one project-relative normalization of the JS arm and the
+     * LuaJIT/JVM production projection).
      */
     private static String[] sourceMapSidecarPaths(String sourcePath,
                                                   Path outputRoot,
                                                   Path outputPath) {
-        String relSourcePath = sourcePath;
-        String relGeneratedPath = outputRoot.relativize(outputPath).toString();
-
-        try {
-            Path absOutputRoot = outputRoot.toAbsolutePath().normalize();
-            Path projectRoot = absOutputRoot.resolve("..").resolve("..").normalize();
-            Path absSource = Path.of(sourcePath).toAbsolutePath();
-
-            Path srcRel = projectRoot.relativize(absSource);
-            if (!srcRel.startsWith("..")) {
-                relSourcePath = srcRel.toString();
-            }
-
-            Path genRel = projectRoot.relativize(outputPath.toAbsolutePath());
-            if (!genRel.startsWith("..")) {
-                relGeneratedPath = genRel.toString();
-            }
-        } catch (IllegalArgumentException e) {
-            // Keep fallback paths if relativization fails
-        }
-
-        return new String[] { relSourcePath, relGeneratedPath };
+        return SourceMapPaths.projectRelative(sourcePath, outputRoot, outputPath);
     }
 
     private boolean isSpecStdlibModuleInfo(ModuleInfo info) {

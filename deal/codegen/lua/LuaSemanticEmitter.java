@@ -1,6 +1,7 @@
 package deal.codegen.lua;
 
 import deal.codegen.EmitterSessionBase;
+import deal.codegen.SourceMapRecorder;
 import deal.ffi.FfiGeneratedModule;
 import deal.ffi.FfiFunctionDescriptor;
 import deal.ffi.FfiImportedClassPlanReference;
@@ -160,13 +161,33 @@ public final class LuaSemanticEmitter {
                                                Map<ModuleId, ClassFactoryRegistry> registries,
                                                HostDeclarationSurface declarationSurface,
                                                FfiEmissionInput ffiEmissionInput) {
+        return emitProductionProject(project, tables, registries,
+            declarationSurface, ffiEmissionInput, null);
+    }
+
+    /**
+     * The source-mapping production entry (the effective {@code --source-map}
+     * request): identical emission to the overload above with one
+     * {@link SourceMapRecorder} installed, so every mapped op entry emits its
+     * source comment before the generated statement group and records the
+     * generated position in its owning module's mapper. The caller serializes
+     * the recorders into the project's {@code .deal.map.json} sidecars and
+     * stages them atomically with the artifact. A {@code null} recorder is the
+     * recorder-less emission (byte-identical to the overload above).
+     */
+    public static String emitProductionProject(ExecutableLoweredProject project,
+                                               Map<ModuleId, StructuredBodyTable> tables,
+                                               Map<ModuleId, ClassFactoryRegistry> registries,
+                                               HostDeclarationSurface declarationSurface,
+                                               FfiEmissionInput ffiEmissionInput,
+                                               SourceMapRecorder sourceMapRecorder) {
         Objects.requireNonNull(project, "project must not be null");
         Objects.requireNonNull(tables, "tables must not be null");
         Objects.requireNonNull(registries, "registries must not be null");
         Objects.requireNonNull(declarationSurface,
             "declarationSurface must not be null");
         return new Session(project, tables, registries, false,
-            declarationSurface, ffiEmissionInput).emit();
+            declarationSurface, ffiEmissionInput, sourceMapRecorder).emit();
     }
 
     public static String emitProductionModule(LoweredModuleUnit unit,
@@ -299,7 +320,7 @@ public final class LuaSemanticEmitter {
         Session(ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
                 Map<ModuleId, ClassFactoryRegistry> registries, boolean trace,
                 HostDeclarationSurface hostSurface) {
-            this(project, tables, registries, trace, hostSurface, null);
+            this(project, tables, registries, trace, hostSurface, null, null);
         }
 
         /**
@@ -315,7 +336,8 @@ public final class LuaSemanticEmitter {
          */
         Session(ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
                 Map<ModuleId, ClassFactoryRegistry> registries, boolean trace,
-                HostDeclarationSurface hostSurface, FfiEmissionInput ffiInput) {
+                HostDeclarationSurface hostSurface, FfiEmissionInput ffiInput,
+                SourceMapRecorder sourceMapRecorder) {
             super(project.modules().get(project.entryModule()),
                 tables.get(project.entryModule()));
             if (ffiInput != null && hostSurface == null) {
@@ -334,6 +356,7 @@ public final class LuaSemanticEmitter {
             this.projectSession = true;
             this.trace = trace;
             this.entryModule = true;
+            this.sourceMapRecorder = sourceMapRecorder;
             registerDeclarationClasses();
             for (Map.Entry<ModuleId, LoweredModuleUnit> entry
                     : project.modules().entrySet()) {
@@ -422,6 +445,11 @@ public final class LuaSemanticEmitter {
 
         protected String cell(BindingId id, long generation) {
             return "S.b" + id.id() + "g" + generation;
+        }
+
+        @Override
+        protected String sourceCommentMarker() {
+            return "-- ";
         }
 
         String label(BlockId id) {
@@ -807,6 +835,7 @@ public final class LuaSemanticEmitter {
                     KindPayload.FunctionAdaptPayload payload =
                         (KindPayload.FunctionAdaptPayload) op.payload();
                     if (payload.source() instanceof AdaptSourceRef.Thunk thunk) {
+                        beginSourceMappedGroup(op, "");
                         emitThunkFunction(op, thunk.blockId());
                     }
                 }
@@ -827,6 +856,7 @@ public final class LuaSemanticEmitter {
             for (LoweredModuleUnit moduleUnit : units.values()) {
                 for (SemanticOp op : moduleUnit.ops()) {
                     if (op.kind() == SemanticOpKind.CLASS_DEFAULT) {
+                        beginSourceMappedGroup(op, "");
                         emitClassDefaultFunction(op);
                     }
                 }
@@ -863,6 +893,7 @@ public final class LuaSemanticEmitter {
                     emitModuleLevelGroupCells(moduleUnit);
                     emitBlockOps(moduleUnit.moduleInit().initBlock());
                 } else {
+                    beginSourceMappedGroup(moduleInitOp, "");
                     emitModuleInit(moduleInitOp);
                 }
             }
@@ -1386,6 +1417,7 @@ public final class LuaSemanticEmitter {
         // -- per-op emission ---------------------------------------------------------
 
         private void emitOp(SemanticOp op) {
+            beginSourceMappedGroup(op, "");
             switch (op.kind()) {
                 case CONST -> emitConst(op);
                 case UNARY -> emitUnary(op);

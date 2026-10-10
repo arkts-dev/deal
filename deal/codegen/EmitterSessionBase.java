@@ -25,6 +25,7 @@ import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticValue;
+import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ValueId;
 
@@ -178,6 +179,19 @@ public abstract class EmitterSessionBase {
     protected final StringBuilder out = new StringBuilder();
     /** The enclosing TRY_CATCH depth (target-specific transfer signalling). */
     protected int tryDepth = 0;
+    /**
+     * The project-wide source-map recorder of this session, or {@code null}
+     * when the compile requested no source maps. A non-null recorder makes
+     * every mapped op entry emit its source comment before the generated
+     * statement group and record the generated position in the owning
+     * module's mapper; a null recorder emits no comment and no mapping, so
+     * the artifact bytes stay exactly the recorder-less bytes.
+     */
+    protected SourceMapRecorder sourceMapRecorder;
+    /** Output-buffer prefix already counted by {@link #currentGeneratedLine()}. */
+    private int countedThrough;
+    /** Number of complete output lines produced so far (1-based current line). */
+    private int countedLine = 1;
 
     protected EmitterSessionBase(LoweredModuleUnit unit, StructuredBodyTable table) {
         this.unit = unit;
@@ -189,6 +203,61 @@ public abstract class EmitterSessionBase {
 
     /** The target's cell name of one binding generation. */
     protected abstract String cell(BindingId id, long generation);
+
+    /** The target's line-comment marker (the source-comment prefix). */
+    protected abstract String sourceCommentMarker();
+
+    /**
+     * The current 1-based line number of the output buffer. The scan is
+     * incremental (only the appended region is counted), because every
+     * emitter appends to one buffer and never rewrites it.
+     */
+    protected final int currentGeneratedLine() {
+        for (int i = countedThrough; i < out.length(); i++) {
+            if (out.charAt(i) == '\n') {
+                countedLine++;
+            }
+        }
+        countedThrough = out.length();
+        return countedLine;
+    }
+
+    /**
+     * Emits the source comment of one op's generated statement group and
+     * records the generated position of the comment line as the mapping of
+     * the op's owning module (the target spelling of the shared
+     * {@code SourceMapGenerator} format). The comment carries the module's
+     * one display source name and the op's source line/column, so the
+     * generated artifact is self-describing and the sidecar mapping of the
+     * same position is directly verifiable against the emitted line.
+     *
+     * <p>A no-op when the session carries no recorder: a compile without
+     * the effective source-map request emits exactly the bytes it emitted
+     * before source comments existed.</p>
+     */
+    protected final void beginSourceMappedGroup(SemanticOp op, String indent) {
+        if (sourceMapRecorder == null) {
+            return;
+        }
+        SourceSpan span = op.origin().span();
+        if (span == null) {
+            return;
+        }
+        if (out.length() > 0 && out.charAt(out.length() - 1) != '\n') {
+            out.append('\n');
+        }
+        int generatedLine = currentGeneratedLine();
+        int generatedColumn = indent.length() + 1;
+        ModuleId owner = opModule.get(op.opId());
+        String file = sourceMapRecorder.displayName(owner, span.file());
+        out.append(indent).append(sourceCommentMarker())
+            .append(file).append(':').append(span.startLine()).append(':')
+            .append(span.startColumn()).append('\n');
+        if (owner != null) {
+            sourceMapRecorder.record(owner, generatedLine, generatedColumn,
+                span.startLine(), span.startColumn());
+        }
+    }
 
     /**
      * Marks the ENTRY_INVOKE delegation of one non-entry module as

@@ -1660,12 +1660,14 @@ public class HostModuleLoadEmissionTest {
             "the JVM call site is present");
         check(unit.contains("LuaSemanticEmitter.emitProductionProject(project,"),
             "the LuaJIT call site is present");
-        checkEq(1, countOccurrences(unit, "declarationSurface);"),
+        checkEq(1, countOccurrences(unit, "declarationSurface, sourceMapRecorder);"),
             "the JVM call site passes the declaration surface through");
         checkEq(1, countOccurrences(unit,
-                "new FfiEmissionInput(externCModules, manifestDirectory));"),
+                "new FfiEmissionInput(externCModules, manifestDirectory),"),
             "the LuaJIT call site passes the declaration surface and the "
                 + "compile's FFI emission input through");
+        checkEq(2, countOccurrences(unit, "sourceMapRecorder);"),
+            "both production emitter entries receive the source-map recorder");
     }
 
     // =========================================================================
