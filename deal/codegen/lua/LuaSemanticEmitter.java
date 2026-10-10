@@ -8988,6 +8988,47 @@ local function __checkActualField(id, arm, actual)
     end
   end
 end
+-- The declared parameter-source binding (the walk arm's W1 same-token
+-- rule): a parameter whose declared source carries a tuple field's own
+-- value -- the expected-field sources and the actual-field sources --
+-- must equal that field's value. A closed-but-contradictory pair (two
+-- different tokens, one in the message parameter and one in the field)
+-- is a fail-closed producer defect, never a message that disagrees with
+-- its own tuple; every other parameter source (the kind text, the host
+-- inner reason, the literal index/path data) stays independent.
+local __expectedSourceParameters = {CELL_DESCRIPTOR = true,
+  ELEMENT_DESCRIPTOR = true, DECLARED_SIGNATURE = true, CLASS_ATOM = true}
+local __actualSourceParameters = {CARRIED_SIGNATURE = true,
+  CARRIED_CLASS_ATOM = true, TYPED_BOUNDARY_ACTUAL = true,
+  CARRIER_KIND_ACTUAL = true}
+local function __checkFieldBinding(id, arm, values, expected, actual)
+  for entry in string.gmatch(arm.k or "", "[^,]+") do
+    local eq = string.find(entry, "=", 1, true)
+    if eq ~= nil then
+      local name = string.sub(entry, 1, eq - 1)
+      local source = string.sub(entry, eq + 1)
+      local field = nil
+      local fieldName = nil
+      if __expectedSourceParameters[source] then
+        field, fieldName = expected, "expected"
+      elseif __actualSourceParameters[source] then
+        field, fieldName = actual, "actual"
+      end
+      if fieldName ~= nil then
+        local value = nil
+        if values ~= nil then value = values[name] end
+        if value ~= field then
+          error("failure arm '"..id.."' declares its parameter {"..name.."} with "
+            .."the "..fieldName.." field's own source ("..source.."), so the "
+            .."message parameter and the "..fieldName.." field render the "
+            .."identical value; the render supplied '"..tostring(value).."' and '"
+            ..tostring(field).."' (a contradictory tuple is a producer "
+            .."defect)", 0)
+        end
+      end
+    end
+  end
+end
 local function __arm(id, values, origin, expected, actual)
   local arm = __arms[id]
   if arm == nil then
@@ -9009,6 +9050,7 @@ local function __arm(id, values, origin, expected, actual)
   end
   __checkExpectedField(id, arm, values, expected)
   __checkActualField(id, arm, actual)
+  __checkFieldBinding(id, arm, values, expected, actual)
   return __failExpr(arm.c, __renderTemplate(id, values), origin, expected, actual)
 end
 -- An inner-only arm's message text (the host arms' inner reasons).
