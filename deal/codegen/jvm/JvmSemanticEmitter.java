@@ -656,13 +656,31 @@ public final class JvmSemanticEmitter {
                 out.append("    }\n");
             } else {
                 // Production terminal: a DEAL failure publishes the
-                // retained DEAL_ERROR_CODE line on stdout and exits 1.
+                // retained DEAL_ERROR_CODE line on stdout and exits 1;
+                // the reserved async-export host mode publishes the
+                // shared deal-error envelope instead (the invoker's
+                // child-process contract).
+                out.append("    boolean __hostInvocation = args.length > 0 && ")
+                    .append(javaString(JvmNames.ASYNC_EXPORT_HOST_ARG))
+                    .append(".equals(args[0]);\n");
                 out.append("    try {\n");
                 out.append("      dealMain();\n");
                 out.append("    } catch (JvmRuntime.DealError e) {\n");
+                out.append("      if (__hostInvocation) {\n");
+                out.append("        System.out.println(JvmRuntime.asyncExportEnvelope(\"deal-error\", \"code\", e.code, \"message\", e.msg));\n");
+                out.append("        System.out.flush();\n");
+                out.append("        return;\n");
+                out.append("      }\n");
                 out.append("      System.out.println(\"DEAL_ERROR_CODE: \" + e.code);\n");
                 out.append("      System.out.flush();\n");
                 out.append("      System.exit(1);\n");
+                out.append("      return;\n");
+                out.append("    }\n");
+                out.append("    if (__hostInvocation) {\n");
+                out.append("      System.out.println(args.length >= 3\n");
+                out.append("          ? $asyncExportHost(args[1], args[2])\n");
+                out.append("          : JvmRuntime.asyncExportEnvelope(\"infrastructure-failure\", \"reason\", \"invalid async-export host argv: expected [marker, exportName, returnDescriptor]\"));\n");
+                out.append("      System.out.flush();\n");
                 out.append("    }\n");
             }
             out.append("  }\n");
@@ -686,6 +704,9 @@ public final class JvmSemanticEmitter {
                         emitAsyncEntry(op, 1, moduleUnit);
                     }
                 }
+            }
+            if (entryModule && !trace) {
+                emitAsyncExportHostSurface();
             }
             out.append("}\n");
 
@@ -6802,6 +6823,116 @@ public final class JvmSemanticEmitter {
             // The link caller receives this activation's own task instance.
             out.append(indent(indent + 1)).append("return __tk;\n");
             out.append(indent(indent)).append("}\n");
+        }
+
+        /**
+         * The reserved async-export host surface of the entry class (the
+         * production JvmAsyncExportInvoker's child-process contract,
+         * ISSUE-0749): one registry row per declared export of the entry
+         * module (the surface the invoker selects from), the
+         * selection/invocation entry the process calls after the one
+         * initialization and main() drive, and the nested
+         * {@code $AsyncExportHost} launcher the invoker's java command
+         * resolves ({@code <Entry>$$AsyncExportHost.class}).
+         *
+         * <p>The registry mirrors the declaration surface: a function
+         * export carries the declaration's canonical spec text and the
+         * activation of its async {@code EXTERNAL_ENTRY} (null for a
+         * sync, parameterized, or class export — selection rejects those
+         * before any activation), and the completion descriptor triple
+         * the canonical matcher checks against. Every emitted
+         * {@code $} name is unreachable from {@code javaName}, so the
+         * reserved surface is never source-visible.</p>
+         */
+        private void emitAsyncExportHostSurface() {
+            out.append("\n");
+            out.append("  // The reserved async-export host registry and entry (the\n");
+            out.append("  // production invoker's child-process contract): one row per\n");
+            out.append("  // declared export of the entry module. The invoker selects\n");
+            out.append("  // exactly one async()->R export, activates it once, checks\n");
+            out.append("  // its completion, encodes the checked value, and prints\n");
+            out.append("  // the shared envelope line.\n");
+            out.append("  private static final List<JvmRuntime.AsyncExportRow> $asyncExports = List.of(\n");
+            StringBuilder rows = new StringBuilder();
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() != SemanticOpKind.EXPORT_PUBLISH) {
+                    continue;
+                }
+                KindPayload.ExportPublishPayload payload =
+                    (KindPayload.ExportPublishPayload) op.payload();
+                boolean function = payload.descriptor()
+                    instanceof RuntimeDescriptor.Func;
+                String fail = "mismatch";
+                String invoke = "null";
+                String completionDesc = "null";
+                String completionKind = "null";
+                String completionCanon = "null";
+                if (function) {
+                    RuntimeDescriptor.Func func =
+                        (RuntimeDescriptor.Func) payload.descriptor();
+                    fail = func.isAsync()
+                        ? (func.paramTypes().isEmpty() ? "mismatch" : "param")
+                        : "sync";
+                    SemanticOp entry = !func.isAsync()
+                            || !func.paramTypes().isEmpty()
+                        ? null
+                        : asyncExportEntry(payload.module(), payload.name());
+                    if (entry != null) {
+                        invoke = "(JvmRuntime.Fn) __args -> ae"
+                            + entry.opId().id() + "(null, true, __args)";
+                    }
+                    RuntimeDescriptor completion = func.returnType();
+                    completionDesc = javaString(descriptorText(completion));
+                    completionKind = javaString(staticKind(completion));
+                    if (containsFunction(completion)) {
+                        completionCanon = javaString(
+                            completion.canonicalSpecText());
+                    }
+                }
+                if (rows.length() > 0) {
+                    rows.append(",\n");
+                }
+                rows.append("      new JvmRuntime.AsyncExportRow(")
+                    .append(javaString(payload.name())).append(", ")
+                    .append(javaString(payload.descriptor().canonicalSpecText()))
+                    .append(", ").append(javaString(function ? "f" : "c"))
+                    .append(", ").append(javaString(fail))
+                    .append(", ").append(invoke)
+                    .append(", ").append(completionDesc)
+                    .append(", ").append(completionKind)
+                    .append(", ").append(completionCanon).append(")");
+            }
+            out.append(rows).append("\n");
+            out.append("  );\n");
+            out.append("  static String $asyncExportHost(String exportName, String returnDescriptor) {\n");
+            out.append("    try {\n");
+            out.append("      Object[] sel = JvmRuntime.invokeAsyncExport($asyncExports, exportName, returnDescriptor);\n");
+            out.append("      if (sel[0] != null) {\n");
+            out.append("        return JvmRuntime.asyncExportEnvelope(\"host-failure\", \"reason\", String.valueOf(sel[0]));\n");
+            out.append("      }\n");
+            out.append("      String valueJson;\n");
+            out.append("      try {\n");
+            out.append("        valueJson = JvmRuntime.jsonText(sel[1]);\n");
+            out.append("      } catch (Throwable encode) {\n");
+            out.append("        return JvmRuntime.asyncExportEnvelope(\"representation-failure\", \"reason\", encode.getMessage() == null ? String.valueOf(encode) : encode.getMessage());\n");
+            out.append("      }\n");
+            out.append("      return JvmRuntime.asyncExportEnvelope(\"value\", \"descriptor\", returnDescriptor, \"value\", valueJson);\n");
+            out.append("    } catch (JvmRuntime.DealError e) {\n");
+            out.append("      return JvmRuntime.asyncExportEnvelope(\"deal-error\", \"code\", e.code, \"message\", e.msg);\n");
+            out.append("    } catch (Throwable t) {\n");
+            out.append("      return JvmRuntime.asyncExportEnvelope(\"infrastructure-failure\", \"reason\", t.getMessage() == null ? String.valueOf(t) : t.getMessage());\n");
+            out.append("    }\n");
+            out.append("  }\n");
+            // The nested launcher is the process entry the production
+            // invoker's java command resolves (<Entry>$$AsyncExportHost):
+            // it delegates to the entry class's main, whose reserved argv
+            // marker dispatches the host surface after exactly one
+            // initialization and main() drive.
+            out.append("  public static final class $AsyncExportHost {\n");
+            out.append("    public static void main(String[] args) {\n");
+            out.append("      ").append(className).append(".main(args);\n");
+            out.append("    }\n");
+            out.append("  }\n");
         }
 
         /**

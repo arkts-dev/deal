@@ -13,6 +13,31 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Objects;
 
+/**
+ * The production JVM host half of {@code BackendAsyncExportInvoker}: it
+ * executes the entry module's emitted artifact under one fresh
+ * {@code java} child and maps the shared {@code DEAL_ASYNC_EXPORT_RESULT:}
+ * envelope.
+ *
+ * <p>The emitted production artifact carries the reserved host surface
+ * the entry class emits: the nested
+ * {@code <Entry>$$AsyncExportHost} launcher ({@link #HOST_CLASS_SUFFIX})
+ * plus the {@code $asyncExportHost} registry/selection/check/encode
+ * entry, which runs module initialization and {@code main()} exactly
+ * once and then activates exactly one {@code async()->R} export. The
+ * invoker spawns the launcher with the reserved argv marker
+ * ({@link #HOST_ARG}), the export name, and the byte-exact canonical
+ * return descriptor; the child classpath carries the artifact root plus
+ * the toolchain runtime classes the emitted artifact links against.</p>
+ *
+ * <p>The outcome mapping is the shared three-variant contract:
+ * {@code value} → {@link Result.Value}, {@code deal-error} →
+ * {@link Result.DealError} (the JVM emitted errors carry no source
+ * location, so the location fields stay null), {@code host-failure} →
+ * {@link Result.HostFailure}; representation/infrastructure failures, a
+ * missing or malformed envelope, and unknown statuses throw
+ * {@link JvmAsyncExportInvocationException} with the captured output.</p>
+ */
 public class JvmAsyncExportInvoker {
 
     /**
@@ -165,9 +190,13 @@ public class JvmAsyncExportInvoker {
             // Exactly one non-detached java child per invoke, argv only
             // (no shell), working directory = artifact root, capture files
             // instead of pipes (no pipe deadlock), no deadline, no
-            // containment.
+            // containment. The child classpath carries the artifact root
+            // plus the toolchain runtime location the emitted artifact
+            // links against (JvmRuntime/JvmJson are toolchain classes, not
+            // artifact classes), so the launcher resolves the same
+            // runtime the invoker itself runs on.
             ProcessBuilder pb = new ProcessBuilder("java",
-                "-cp", artifactRoot.toString(),
+                "-cp", childClasspath(artifactRoot),
                 launcherBinary,
                 HOST_ARG,
                 request.exportName(),
@@ -206,6 +235,45 @@ public class JvmAsyncExportInvoker {
             return mapOutcome(exit, stdout, stderr);
         } finally {
             AsyncExportEnvelope.deleteRecursively(tempDir);
+        }
+    }
+
+    // =========================================================================
+    // Child classpath
+    // =========================================================================
+
+    /**
+     * The child classpath of one spawn: the artifact root (the compiled
+     * entry class, its launcher, and any deployed host classes) followed
+     * by the toolchain runtime location the emitted artifact links
+     * against. The emitted source references
+     * {@code deal.codegen.jvm.JvmRuntime} and
+     * {@code deal.codegen.jvm.JvmJson}, which are production classes of
+     * the emitting toolchain rather than of the artifact; the runtime
+     * location is the code-source root the invoker's own runtime class
+     * was loaded from. When that location cannot be resolved, the
+     * artifact root alone is used and the child fails closed with the
+     * captured output.
+     */
+    static String childClasspath(Path artifactRoot) {
+        String runtime = runtimeClassLocation();
+        if (runtime == null || runtime.isEmpty()) {
+            return artifactRoot.toString();
+        }
+        return artifactRoot + java.io.File.pathSeparator + runtime;
+    }
+
+    /** The resolved classpath location of the toolchain's shared JVM runtime. */
+    private static String runtimeClassLocation() {
+        try {
+            java.security.CodeSource source = JvmRuntime.class
+                .getProtectionDomain().getCodeSource();
+            if (source == null || source.getLocation() == null) {
+                return null;
+            }
+            return Path.of(source.getLocation().toURI()).toString();
+        } catch (Exception unresolvable) {
+            return null;
         }
     }
 

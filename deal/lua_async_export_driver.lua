@@ -23,10 +23,13 @@
 --       .. package.path
 --     so deal.runtime, generated module imports, stdlib imports, and
 --     staged host implementations resolve uniformly (D5).
---   * the entry chunk runs exactly once via dofile(entryArtifact), which
---     executes the module initialization and the chunk-end
---     exports.main.f() together (D4); this driver never calls main itself
---     and never re-loads the chunk.
+--   * the entry chunk runs exactly once via dofile(entryArtifact). With
+--     the invoker's DEAL_DEFER_MAIN marker the chunk publishes only its
+--     surfaces and this driver then drives the chunk's own __dealMain
+--     entry, which runs module initialization and the chunk-end main()
+--     together (D4); without the marker the chunk already ran both at
+--     load and the drive is the state guard's no-op. This driver never
+--     calls main itself and never re-loads the chunk.
 --   * __rt.invoke_async_export(exports, exportName, returnDescriptor) is
 --     called once with the dofile-published exports table and the argv
 --     name/descriptor verbatim (D9); the driver performs no descriptor or
@@ -47,8 +50,10 @@
 --   (1) table with __hostInvocationFailure == true  -> host-failure
 --       envelope, reason = the runtime's pinned message verbatim, exit 0;
 --   (2) table with a non-nil string code            -> deal-error
---       envelope with code/message/file/line/column byte-for-byte and
---       absent location fields omitted, exit 0;
+--       envelope with the code/message and any present position fields
+--       byte-for-byte (the runtime half's `message`/file/line/column or
+--       the emitted artifact's `m` plus the `file:line:column` origin
+--       text in `o`, both mapped to the same envelope fields), exit 0;
 --   (3) anything else raised by dofile/invoke       -> infrastructure-
 --       failure envelope, exit 1;
 --   (4) any error raised by the completion-encoding step, regardless of
@@ -157,14 +162,33 @@ local function encode_completion(value)
 end
 
 -- One protected execution: runtime require, exactly one dofile of the
--- entry chunk (module initialization plus the chunk-end main call), one
--- runtime-entry call, then completion encoding. The phase flag
--- distinguishes operation errors from encoding errors in the handler.
+-- entry chunk (which publishes the module surfaces and, unless the
+-- invoker's DEAL_DEFER_MAIN marker is set, runs the chunk-end module
+-- initialization plus main call), the deferred-main drive when the
+-- chunk exposes the deferred entry, one runtime-entry call, then
+-- completion encoding. The phase flag distinguishes operation errors
+-- from encoding errors in the handler.
 local phase = "execute"
 
 local ok, payload = xpcall(function()
   local __rt = require("deal.runtime")
   local exports = dofile(entryArtifact)
+  -- The deferred-main drive: with DEAL_DEFER_MAIN set (the production
+  -- invoker always sets it), the chunk published its surfaces without
+  -- running module initialization or main, so this protected step runs
+  -- both exactly once in the same runtime instance and a DEAL error
+  -- raised by either classifies as a deal-error envelope instead of the
+  -- chunk's own DEAL_ERROR_CODE terminal (which would exit the process
+  -- before the envelope). The emitted chunk's own state guard makes a
+  -- repeated drive a no-op, so a chunk that already ran its terminal
+  -- stays correct; a chunk without the deferred entry already ran its
+  -- initialization and main at load.
+  if type(__dealMain) == "function" then
+    local __mainOk, __mainErr = __dealMain()
+    if not __mainOk then
+      error(__mainErr, 0)
+    end
+  end
   local value = __rt.invoke_async_export(exports, exportName,
       returnDescriptor)
   phase = "encode"
@@ -193,14 +217,28 @@ elseif type(payload) == "table"
         or tostring(payload),
   }, 0)
 elseif type(payload) == "table" and type(payload.code) == "string" then
+  -- The two DEAL error shapes of the production path: the deployed
+  -- runtime half carries `message` plus optional file/line/column
+  -- positions (__rt._err), while the emitted artifact's closed failure
+  -- arms carry the rendered message in `m` and the origin text
+  -- `file:line:column` in `o` (__failExpr). Both map to the same
+  -- envelope fields; a runtime error that already carries positions
+  -- keeps them byte-for-byte.
   local fields = {
     status = "deal-error",
     code = payload.code,
-    message = payload.message,
+    message = payload.message ~= nil and payload.message or payload.m,
   }
-  if payload.file ~= nil then fields.file = payload.file end
-  if payload.line ~= nil then fields.line = payload.line end
-  if payload.column ~= nil then fields.column = payload.column end
+  local file, line, column = payload.file, payload.line, payload.column
+  if file == nil and type(payload.o) == "string" then
+    local oFile, oLine, oColumn = string.match(payload.o, "^(.*):(%d+):(%d+)$")
+    if oFile ~= nil then
+      file, line, column = oFile, tonumber(oLine), tonumber(oColumn)
+    end
+  end
+  if file ~= nil then fields.file = file end
+  if line ~= nil then fields.line = line end
+  if column ~= nil then fields.column = column end
   emit(fields, 0)
 else
   emit({

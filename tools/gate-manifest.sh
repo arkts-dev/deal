@@ -80,6 +80,13 @@ WARNING: node not found, skipping standard library JS tests'
   'fg|=== Running Lua Production Project Emission Tests (ISSUE-0640) ===|java -ea -cp build deal.test.LuaProductionProjectEmissionTest'
   'fg|=== Running Production Project Emission Tests (ISSUE-0642) ===|java -ea -cp build deal.test.ProductionProjectEmissionTest'
   'fg|=== Running Production Dispatch and Cutover Acceptance Tests (ISSUE-0643) ===|java -ea -cp build deal.test.ProductionDispatchTest'
+  # ISSUE-0749 (the public LuaJIT/JVM async-export invokers on shared
+  # production artifacts): the one-visible-entry compile plus the
+  # production invoker drives — the pinned value 7, a delayed host async
+  # completion, a typed completion rejection, DEAL errors raised by the
+  # operation and main() with unchanged fields, and initialization/main
+  # exactly once per invocation on both targets.
+  'fg|=== Running Async-Export Invoker Production Tests (ISSUE-0749) ===|java -ea -cp build deal.test.AsyncExportInvokerProductionTest'
   'fg|=== Running Host Module Load / JVM Host ABI Surface Tests (ISSUE-0650) ===|java -ea -cp build deal.test.HostModuleLoadEmissionTest'
   'fg|=== Running Cross-Module Call Realization Tests (ISSUE-0654) ===|java -ea -cp build deal.test.CrossModuleCallRealizationTest'
   'fg|=== Running FFI Plan Projection Oracle Tests (ISSUE-0667) ===|java -ea -cp build deal.test.FfiPlanProjectionOracleTest'

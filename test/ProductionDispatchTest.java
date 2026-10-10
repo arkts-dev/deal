@@ -836,6 +836,8 @@ public class ProductionDispatchTest {
             if (luaCompile.exitCode() != 0) {
                 return;
             }
+            write(same, "deal/runtime.lua",
+                Files.readString(Path.of("deal/runtime.lua"), StandardCharsets.UTF_8));
             write(same, "probe.lua", """
                 local surfaces = dofile("out/main.lua")
                 assert(type(surfaces) == "table",
@@ -843,8 +845,12 @@ public class ProductionDispatchTest {
                 local worker = surfaces.worker
                 assert(type(worker) == "table" and worker.__kind == "function",
                   "the entry surface publishes the same-module async export")
-                local completion = worker.f()
-                assert(completion == 1,
+                local handle = worker.f()
+                assert(type(handle) == "table" and handle.__kind == "async",
+                  "the published async export produces an async operation")
+                require("deal.runtime").async_step(handle)
+                local completion = handle.__result
+                assert(handle.__done and completion == 1,
                   "the awaiting call completes with 1, got "
                     .. tostring(completion))
                 """);

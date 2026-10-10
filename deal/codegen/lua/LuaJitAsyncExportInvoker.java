@@ -35,10 +35,14 @@ import java.util.Objects;
  *   <li>spawns exactly one non-detached
  *       {@code ProcessBuilder("luajit", driverPath, entryArtifact,
  *       artifactRoot, exportName, returnDescriptor)} — argv only, no
- *       shell, working directory = artifact root — with stdout/stderr
- *       redirected to temp capture files (no pipe deadlock), waits for
- *       exit, imposes no deadline, and builds no containment (D3, the
- *       delegated containment boundary);</li>
+ *       shell, working directory = artifact root — with the
+ *       {@code DEAL_DEFER_MAIN} marker in the child environment (the
+ *       driver then drives the chunk's deferred-main entry, so a DEAL
+ *       error raised by module initialization or {@code main()} reaches
+ *       the envelope instead of the chunk's own {@code DEAL_ERROR_CODE}
+ *       terminal), stdout/stderr redirected to temp capture files (no
+ *       pipe deadlock), waits for exit, imposes no deadline, and builds
+ *       no containment (D3, the delegated containment boundary);</li>
  *   <li>parses the last stdout line with the exact marker prefix
  *       {@value #RESULT_PREFIX} through the strict conventional-JSON
  *       envelope codec (D6, Architecture item 3) and maps the outcome;</li>
@@ -75,8 +79,13 @@ public class LuaJitAsyncExportInvoker {
     public static final String DRIVER_RESOURCE =
         "deal/lua_async_export_driver.lua";
 
-    /** The exact stdout marker prefix of the envelope protocol (D6). */
-    public static final String RESULT_PREFIX = "DEAL_ASYNC_EXPORT_RESULT:";
+    /**
+     * The exact stdout marker prefix of the envelope protocol (D6): the
+     * one shared source of the marker the JVM invoker, the runtime host
+     * surfaces, and the driver protocol all use.
+     */
+    public static final String RESULT_PREFIX =
+        AsyncExportEnvelope.RESULT_PREFIX;
 
     /** Temp-directory prefix for the per-invocation materialization. */
     static final String TEMP_DIR_PREFIX = "deal-async-export-invoker-";
@@ -205,6 +214,13 @@ public class LuaJitAsyncExportInvoker {
                 request.exportName(),
                 request.returnDescriptor());
             pb.directory(artifactRoot.toFile());
+            // The entry chunk publishes its surfaces without running
+            // module initialization or main; the driver drives the
+            // chunk's own deferred-main entry exactly once, so a DEAL
+            // error raised by initialization or main classifies through
+            // the envelope protocol instead of the chunk's own
+            // DEAL_ERROR_CODE terminal.
+            pb.environment().put("DEAL_DEFER_MAIN", "1");
             pb.redirectOutput(stdoutFile.toFile());
             pb.redirectError(stderrFile.toFile());
 

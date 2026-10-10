@@ -5212,8 +5212,8 @@ public final class LuaSemanticEmitter {
                 .append("][").append(luaString(payload.name()))
                 .append("] = {__kind = \"function\", sig = ")
                 .append(luaString(payload.descriptor().canonicalSpecText()))
-                .append(", f = __unfn(").append(slot(payload.value()))
-                .append("), __val = ").append(slot(payload.value()))
+                .append(", f = ").append(exportCallable(op, payload))
+                .append(", __val = ").append(slot(payload.value()))
                 .append("}\n");
             // The publication records the entry's key in the surface's own
             // order discipline: the module's declared exports are its
@@ -5223,6 +5223,35 @@ public final class LuaSemanticEmitter {
                 .append(luaString(emittingModulePath(op))).append("], ")
                 .append(luaString(payload.name())).append(")\n");
             emitPlainSuccess(op);
+        }
+
+        /**
+         * The published {@code f} projection of one export (the
+         * retained-caller ABI). A sync export publishes its unwrapped
+         * closure. An exported async declaration publishes a wrapper
+         * that starts the declaration's own async operation: the
+         * reserved {@code EXTERNAL_ENTRY} activation (the same dispatch
+         * key every in-project async link uses) driven to completion
+         * through the deployed runtime's {@code async_start}, so the
+         * carried sig {@code async()->R} and the returned value agree
+         * with the runtime half's host contract — a raw body call would
+         * return the completion value of a synchronous execution and
+         * the host half would reject it as a non-operation. The runtime
+         * is required lazily, inside the wrapper, so a chunk that only
+         * carries the export surface keeps loading without a deployed
+         * runtime.
+         */
+        private String exportCallable(SemanticOp op,
+                KindPayload.ExportPublishPayload payload) {
+            if (!(payload.descriptor() instanceof RuntimeDescriptor.Func func)
+                    || !func.isAsync()
+                    || asyncExportEntry(payload.module(), payload.name()) == null) {
+                return "__unfn(" + slot(payload.value()) + ")";
+            }
+            return "function() local __rtAsync = require(\"deal.runtime\");"
+                + " return __rtAsync.async_start(function() return "
+                + "__asyncEntries[" + luaString(payload.module().path() + "#"
+                    + payload.name()) + "](nil, true) end) end";
         }
 
         /**
