@@ -8440,7 +8440,8 @@ local function __checkMarkedBindingSlots(id, arm)
 end
 local __checkInnerReason -- assigned below, once the descriptor and class-atom
 -- checks are declared: an HOST_INNER_REASON parameter is validated against
--- the closed inner-reason vocabulary (P2 item 3) at every template render.
+-- the closed inner-reason vocabulary its serialized arm templates declare
+-- (P2 item 3) at every template render.
 local function __renderTemplate(id, values)
   local arm = __arms[id]
   if arm == nil then
@@ -8727,55 +8728,129 @@ local function __isDescriptorText(s)
 end
 return __isClassAtom, __isDescriptorText
 end)()
--- The closed host inner-reason vocabulary (P2 item 3): the texts the
+-- The closed host inner-reason vocabulary (P2 item 3, P4): the texts the
 -- declared inner-reason arms produce — the typed-boundary kind text, the
 -- int refinement, the signed32 range, the two host string-carrier texts,
 -- the function signature, the class identity, and the array-element
--- mismatch. A consumer-composed or foreign text is a producer defect,
--- never a published inner reason; the arm's literal index data is not
--- inspected here.
-local function __isInnerReason(s)
-  if type(s) ~= "string" then return false end
-  if string.sub(s, 1, 9) == "expected " and __kindTexts[string.sub(s, 10)] then
-    return true
+-- mismatch. Every accepted spelling is read from the serialized __arms
+-- entry of the arm that owns it — its template and the literal segments
+-- around its placeholders — so the declaration stays the single text
+-- authority and this validator holds no copied fragment of it. Only the
+-- closed operand sets (the kind texts, the descriptor spellings, the
+-- canonical class atoms, and the one-based indexes) stay here. A
+-- consumer-composed or foreign text is a producer defect, never a
+-- published inner reason; the arm's literal index data is not inspected
+-- here.
+__checkInnerReason = (function()
+  -- The declared template's literal segment before its first placeholder.
+  local function templatePrefix(template)
+    local open = string.find(template, "{", 1, true)
+    return open == nil and template or string.sub(template, 1, open - 1)
   end
-  if s == "expected int, got NaN" or s == "expected int, got infinity"
-      or s == "expected int, got non-integer number" then return true end
-  if s == "int out of safe range" then return true end
-  if s == "expected string, got invalid UTF-8 encoding"
-      or s == "expected string, got UTF-16 surrogate code point" then return true end
-  local signature = "function signature mismatch: expected "
-  if string.sub(s, 1, #signature) == signature then
-    local sep = string.find(s, ", got ", #signature + 1, true)
-    if sep == nil then return false end
-    local expected = string.sub(s, #signature + 1, sep - 1)
-    local actual = string.sub(s, sep + 6)
-    return (expected == "" or __isDescriptorText(expected))
-      and (actual == "" or __isDescriptorText(actual))
+  -- The declared template's literal segment between its two placeholders.
+  local function templateInfix(template)
+    local firstClose = string.find(template, "}", 1, true)
+    local secondOpen = firstClose ~= nil
+      and string.find(template, "{", firstClose + 1, true) or nil
+    if firstClose == nil or secondOpen == nil then
+      error("failure arm template carries no two-placeholder shape: '"
+        ..template.."' (producer defect)", 0)
+    end
+    return string.sub(template, firstClose + 1, secondOpen - 1)
   end
-  local identity = "expected instance of "
-  if string.sub(s, 1, #identity) == identity then
-    local sep = string.find(s, ", got ", #identity + 1, true)
-    if sep == nil then return false end
-    return __isClassAtom(string.sub(s, #identity + 1, sep - 1))
-      and __isClassAtom(string.sub(s, sep + 6))
+  -- The declared template's literal segment after its last placeholder.
+  local function templateSuffix(template)
+    local lastClose = nil
+    local cursor = 1
+    while true do
+      local close = string.find(template, "}", cursor, true)
+      if close == nil then break end
+      lastClose = close
+      cursor = close + 1
+    end
+    if lastClose == nil then
+      error("failure arm template carries no placeholder: '"..template
+        .."' (producer defect)", 0)
+    end
+    return string.sub(template, lastClose + 1)
   end
-  local element = "array element "
-  local mismatch = " type mismatch"
-  if string.sub(s, 1, #element) == element
-      and string.sub(s, -#mismatch) == mismatch
-      and #s > #element + #mismatch then
-    local index = string.sub(s, #element + 1, -(#mismatch + 1))
-    return string.find(index, "^[1-9]%d*$") ~= nil
+  -- The declared kind arm's own template instantiated with one closed
+  -- kind text (its declared {kind} parameter).
+  local function kindReasonText(template, kindText)
+    local parts = {}
+    local cursor = 1
+    while true do
+      local open = string.find(template, "{kind}", cursor, true)
+      if open == nil then
+        parts[#parts + 1] = string.sub(template, cursor)
+        break
+      end
+      parts[#parts + 1] = string.sub(template, cursor, open - 1)
+      parts[#parts + 1] = kindText
+      cursor = open + 6
+    end
+    return table.concat(parts)
   end
-  return false
-end
-__checkInnerReason = function(id, name, value)
-  if __isInnerReason(value) then return end
-  error("failure arm '"..id.."' declares its parameter {"..name.."} as a host "
-    .."inner-reason render but the render supplied '"..tostring(value).."', which "
-    .."is outside the closed inner-reason vocabulary (producer defect)", 0)
-end
+  -- The arms whose declared templates are fixed texts: the int
+  -- refinements, the signed32 range, and the two host string-carrier
+  -- texts.
+  local fixedTemplateArms = {"INT_CONVERSION_NAN", "INT_CONVERSION_INFINITY",
+    "INT_CONVERSION_FRACTIONAL", "INT32_RANGE", "HOST_STRING_INVALID_UTF8",
+    "HOST_STRING_SURROGATE"}
+  local function isClosedInnerReason(s)
+    if type(s) ~= "string" then return false end
+    local kindTemplate = __arms.TYPED_BOUNDARY_KIND.t
+    for kindText in pairs(__kindTexts) do
+      if s == kindReasonText(kindTemplate, kindText) then return true end
+    end
+    for _, id in ipairs(fixedTemplateArms) do
+      if s == __arms[id].t then return true end
+    end
+    -- The declared signature arm's template split by its own literal
+    -- segments: both operands are closed descriptor spellings.
+    local signature = __arms.FUNCTION_SIGNATURE_MISMATCH.t
+    local signaturePrefix = templatePrefix(signature)
+    if string.sub(s, 1, #signaturePrefix) == signaturePrefix then
+      local signatureInfix = templateInfix(signature)
+      local split = string.find(s, signatureInfix, #signaturePrefix + 1, true)
+      if split == nil then return false end
+      local expected = string.sub(s, #signaturePrefix + 1, split - 1)
+      local actual = string.sub(s, split + #signatureInfix)
+      return (expected == "" or __isDescriptorText(expected))
+        and (actual == "" or __isDescriptorText(actual))
+    end
+    -- The declared identity arm's template split by its own literal
+    -- segments: both operands are canonical class atoms.
+    local identity = __arms.CLASS_IDENTITY.t
+    local identityPrefix = templatePrefix(identity)
+    if string.sub(s, 1, #identityPrefix) == identityPrefix then
+      local identityInfix = templateInfix(identity)
+      local split = string.find(s, identityInfix, #identityPrefix + 1, true)
+      if split == nil then return false end
+      return __isClassAtom(string.sub(s, #identityPrefix + 1, split - 1))
+        and __isClassAtom(string.sub(s, split + #identityInfix))
+    end
+    -- The declared array-element arm's template: the operand between its
+    -- literal segments is a one-based index.
+    local element = __arms.ARRAY_ELEMENT_KIND.t
+    local elementPrefix = templatePrefix(element)
+    local elementSuffix = templateSuffix(element)
+    local ends = #elementSuffix == 0
+      or string.sub(s, #s - #elementSuffix + 1) == elementSuffix
+    if string.sub(s, 1, #elementPrefix) == elementPrefix and ends
+        and #s > #elementPrefix + #elementSuffix then
+      local index = string.sub(s, #elementPrefix + 1, #s - #elementSuffix)
+      return string.find(index, "^[1-9]%d*$") ~= nil
+    end
+    return false
+  end
+  return function(id, name, value)
+    if isClosedInnerReason(value) then return end
+    error("failure arm '"..id.."' declares its parameter {"..name.."} as a host "
+      .."inner-reason render but the render supplied '"..tostring(value).."', which "
+      .."is outside the closed inner-reason vocabulary (producer defect)", 0)
+  end
+end)()
 -- The canonical floating-point text of the failing value (the sqrt arm's
 -- actual): Java's hex-float spelling or the special values.
 local function __isNumberText(s)

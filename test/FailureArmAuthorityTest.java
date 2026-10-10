@@ -109,6 +109,7 @@ public class FailureArmAuthorityTest {
         testDescriptorAndClassAtomVocabularyDepth();
         testNullableInnerInvariant();
         testKindOnlySpellingVocabulary();
+        testHostInnerReasonTemplateAuthority();
         testHostInnerReasonDescriptorValidation();
         testEmittedParameterContract();
         testNegativeSingleSourceControl();
@@ -2569,6 +2570,94 @@ public class FailureArmAuthorityTest {
             "the Lua arm renderer keeps the function kind reason (the control)");
         checkEq("kind-arm|true|expected array", rows.get(6),
             "the Lua arm renderer keeps the bare array kind arm (the control)");
+    }
+
+    /**
+     * The host inner-reason validator consumes the serialized arm templates
+     * (P4): the emitted chunk holds no independent copy of an inner-reason
+     * text, so replacing one declared template in the chunk's own
+     * {@code __arms} table redirects which reasons the validator admits.
+     * The probe mutates one template per family — the kind template with
+     * its {@code {kind}} operand, a fixed refinement/range/string-carrier
+     * template, and the signature/identity/element templates' literal
+     * segments — and checks both directions (the text derived from the
+     * replaced template is admitted, the former literal is rejected) plus
+     * the renderer-side read of the same table. A validator holding a
+     * copied literal would fail the first direction and keep passing the
+     * second.
+     */
+    static void testHostInnerReasonTemplateAuthority() throws Exception {
+        System.out.println("-- the host inner-reason template authority --");
+        List<String> rows = runPreludeProbe("""
+            local function hostInner(label, inner)
+              local ok, value = pcall(__arm, "HOST_PARAMETER_CELL",
+                {index = "1", inner = inner}, "-", "int", "number")
+              print(label .. "|" .. tostring(ok) .. "|" .. (ok and value.m or ""))
+            end
+            __arms.TYPED_BOUNDARY_KIND.t = "kind-control {kind}"
+            hostInner("kind-derived", "kind-control int")
+            hostInner("kind-old", "expected int")
+            __arms.TYPED_BOUNDARY_KIND.t = "expected {kind}"
+            __arms.INT32_RANGE.t = "range-control"
+            print("range-render|" .. __renderTemplate("INT32_RANGE", nil))
+            hostInner("range-derived", "range-control")
+            hostInner("range-old", "int out of safe range")
+            __arms.INT32_RANGE.t = "int out of safe range"
+            __arms.HOST_STRING_INVALID_UTF8.t = "utf8-control"
+            hostInner("utf8-derived", "utf8-control")
+            hostInner("utf8-old", "expected string, got invalid UTF-8 encoding")
+            __arms.HOST_STRING_INVALID_UTF8.t = "expected string, got invalid UTF-8 encoding"
+            __arms.FUNCTION_SIGNATURE_MISMATCH.t = "sig-control [{expected}] => {actual}"
+            hostInner("signature-derived", "sig-control [int] => (int)->int")
+            hostInner("signature-old", "function signature mismatch: expected int, got (int)->int")
+            __arms.FUNCTION_SIGNATURE_MISMATCH.t = "function signature mismatch: expected {expected}, got {actual}"
+            __arms.CLASS_IDENTITY.t = "ident-control [{expected}] => {actual}"
+            hostInner("identity-derived", "ident-control [@src/A] => @src/B")
+            hostInner("identity-old", "expected instance of @src/A, got @src/B")
+            __arms.CLASS_IDENTITY.t = "expected instance of {expected}, got {actual}"
+            __arms.ARRAY_ELEMENT_KIND.t = "elem-control {oneBasedIndex}!"
+            hostInner("element-derived", "elem-control 2!")
+            hostInner("element-old", "array element 2 type mismatch")
+            __arms.ARRAY_ELEMENT_KIND.t = "array element {oneBasedIndex} type mismatch"
+            hostInner("restored", "int out of safe range")
+            """, "inner-template-authority-probe", 14);
+        checkEq("kind-derived|true|parameter 1 type mismatch: kind-control int",
+            rows.get(0),
+            "the kind inner reason follows the serialized kind template");
+        checkEq("kind-old|false|", rows.get(1),
+            "the former kind literal is rejected once its template is replaced");
+        checkEq("range-render|range-control", rows.get(2),
+            "the renderer reads the replaced range template");
+        checkEq("range-derived|true|parameter 1 type mismatch: range-control",
+            rows.get(3),
+            "the fixed inner reason follows the serialized range template");
+        checkEq("range-old|false|", rows.get(4),
+            "the former range literal is rejected once its template is replaced");
+        checkEq("utf8-derived|true|parameter 1 type mismatch: utf8-control",
+            rows.get(5),
+            "the string-carrier inner reason follows the serialized template");
+        checkEq("utf8-old|false|", rows.get(6),
+            "the former invalid-UTF-8 literal is rejected once its template is "
+                + "replaced");
+        checkEq("signature-derived|true|parameter 1 type mismatch: sig-control "
+                + "[int] => (int)->int", rows.get(7),
+            "the signature inner reason follows the serialized template segments");
+        checkEq("signature-old|false|", rows.get(8),
+            "the former signature literal is rejected once its template is replaced");
+        checkEq("identity-derived|true|parameter 1 type mismatch: ident-control "
+                + "[@src/A] => @src/B", rows.get(9),
+            "the identity inner reason follows the serialized template segments");
+        checkEq("identity-old|false|", rows.get(10),
+            "the former identity literal is rejected once its template is replaced");
+        checkEq("element-derived|true|parameter 1 type mismatch: elem-control 2!",
+            rows.get(11),
+            "the element inner reason follows the serialized template segments");
+        checkEq("element-old|false|", rows.get(12),
+            "the former element literal is rejected once its template is replaced");
+        checkEq("restored|true|parameter 1 type mismatch: int out of safe range",
+            rows.get(13),
+            "the restored declared templates admit their own reasons again (the "
+                + "control)");
     }
 
     // =========================================================================
