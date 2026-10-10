@@ -469,7 +469,8 @@ public final class ControlFlowValidator {
                 if (count != null) {
                     return fail(ctx, CONTROL_BLOCK_TREE, "block " + child
                         + " is referenced by more than one control payload position (op "
-                        + ctx.referencing.get(child).opId() + " and op " + op.opId() + ")");
+                        + ctx.referencing.get(child).opId() + " and op " + op.opId() + ")",
+                        op);
                 }
                 ctx.referenceCount.put(child, 1);
                 ctx.referencing.put(child, op);

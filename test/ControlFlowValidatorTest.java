@@ -1092,6 +1092,74 @@ public class ControlFlowValidatorTest {
         }
     }
 
+    /**
+     * The preserved double-reference origins (ISSUE-0750): a block-tree
+     * double-reference failure names the offending op and carries that
+     * op's own source origin as the E6005 range — the exact SOURCE range,
+     * never the empty-file synthetic anchor — for both a repeated payload
+     * position on one op and a second op referencing an already-referenced
+     * block.
+     */
+    private static void testDoubleReferenceFailuresCarryTheOffendingOpOrigin() {
+        System.out.println("-- the block-tree double-reference failures name an op of the "
+            + "unit: its own source origin is the E6005 range --");
+
+        String file = "offending.deal";
+        SourceOrigin source = new SourceOrigin(file,
+            new SourceSpan(file, 2, 3, 2, 7, 10, 15),
+            SourceOriginKind.USER, new AnchorId(1), null);
+
+        // Double reference: one op's control payload names the same block in
+        // both positions (selected and alternate).
+        {
+            SemanticOp branch = opWithOrigin(nextOpId(), SemanticOpKind.BRANCH,
+                new KindPayload.BranchPayload(ControlSelector.IF, nextValue(), b(77), b(77)),
+                null, FailurePolicyId.NO_DEAL_FAILURE, source);
+            SemanticOp anchor = constInt();
+            LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)),
+                List.of(anchor, branch));
+            StructuredBodyTable table = tableOf(Map.ofEntries(
+                Map.entry(INIT, List.<SemanticOp>of()),
+                Map.entry(B0, List.of(anchor, branch)),
+                Map.entry(b(77), List.<SemanticOp>of())));
+            Optional<CompilerDiagnostic> diagnostic =
+                ControlFlowValidator.validate(unit, table);
+            assertE6005(diagnostic, ControlFlowValidator.CONTROL_BLOCK_TREE,
+                "is referenced by more than one control payload position");
+            assertOffendingSourceRange(diagnostic, file,
+                "the repeated-payload-position failure");
+        }
+
+        // Double reference: a second op references a block already referenced
+        // by an earlier op. The range is the currently offending op's own
+        // origin, not the earlier referencing op's anchor.
+        {
+            String earlierFile = "earlier.deal";
+            SourceOrigin earlierSource = new SourceOrigin(earlierFile,
+                new SourceSpan(earlierFile, 5, 1, 5, 4, 40, 43),
+                SourceOriginKind.USER, new AnchorId(2), null);
+            SemanticOp first = opWithOrigin(nextOpId(), SemanticOpKind.BRANCH,
+                new KindPayload.BranchPayload(ControlSelector.IF, nextValue(), b(78), null),
+                null, FailurePolicyId.NO_DEAL_FAILURE, earlierSource);
+            SemanticOp second = opWithOrigin(nextOpId(), SemanticOpKind.BRANCH,
+                new KindPayload.BranchPayload(ControlSelector.IF, nextValue(), b(78), null),
+                null, FailurePolicyId.NO_DEAL_FAILURE, source);
+            SemanticOp anchor = constInt();
+            LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)),
+                List.of(anchor, first, second));
+            StructuredBodyTable table = tableOf(Map.ofEntries(
+                Map.entry(INIT, List.<SemanticOp>of()),
+                Map.entry(B0, List.of(anchor, first, second)),
+                Map.entry(b(78), List.<SemanticOp>of())));
+            Optional<CompilerDiagnostic> diagnostic =
+                ControlFlowValidator.validate(unit, table);
+            assertE6005(diagnostic, ControlFlowValidator.CONTROL_BLOCK_TREE,
+                "is referenced by more than one control payload position");
+            assertOffendingSourceRange(diagnostic, file,
+                "the second-referencing-op failure");
+        }
+    }
+
     /** One SOURCE range assertion: the offending op's own exact origin. */
     private static void assertOffendingSourceRange(Optional<CompilerDiagnostic> diagnostic,
             String file, String what) {
@@ -1338,6 +1406,7 @@ public class ControlFlowValidatorTest {
         testCallOwnedReturnRecords();
         testFailingRuleCarriesTheOffendingOpOrigin();
         testMembershipFailuresCarryTheOffendingOpOrigin();
+        testDoubleReferenceFailuresCarryTheOffendingOpOrigin();
         testDeterminismAndPurity();
         testNullArgs();
 
