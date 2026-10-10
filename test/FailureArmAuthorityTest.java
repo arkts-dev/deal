@@ -1,7 +1,20 @@
 package deal.test;
 
+import deal.checker.BuiltinErrorDeclaration;
+import deal.codegen.Backend;
+import deal.codegen.jvm.JvmNames;
 import deal.codegen.lua.LuaSemanticEmitter;
+import deal.identity.CanonicalModuleIdentity;
+import deal.module.CompilationOrchestrator;
+import deal.semantic.CheckedProjectBuildResult;
+import deal.semantic.CheckedProjectInput;
+import deal.semantic.CompilerInvocation;
+import deal.semantic.CompilerProfileProvider;
 import deal.semantic.HostDeclarationSurface;
+import deal.semantic.ReleaseConfiguration;
+import deal.semantic.SemanticLowerer;
+import deal.semantic.SemanticOracle;
+import deal.semantic.SemanticRuntimeModel;
 import deal.semantic.ir.ActualKind;
 import deal.semantic.ir.BoundaryContext;
 import deal.semantic.ir.BoundaryExecutor;
@@ -10,17 +23,25 @@ import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.BoundaryOutcome;
 import deal.semantic.ir.BoundaryValueView;
 import deal.semantic.ir.ClassOpsExecutor;
+import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.FailureArm;
 import deal.semantic.ir.FailureArmId;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FailurePolicyRow;
 import deal.semantic.ir.FailureProjections;
+import deal.semantic.ir.FunctionId;
+import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
+import deal.semantic.ir.LoweredModuleUnit;
+import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.ScalarValue;
 import deal.semantic.ir.SemanticArray;
+import deal.semantic.ir.SemanticOp;
+import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticTable;
+import deal.semantic.ir.StructuredBodyTable;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -31,6 +52,7 @@ import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * The canonical failure-projection authority's arm-table battery
@@ -777,137 +799,609 @@ public class FailureArmAuthorityTest {
      * The completion cell's function-signature family (P4's tuple identity,
      * the ISSUE-0759 remediation): a differing carried signature at the
      * completion position renders the agreed closed
-     * {@code FUNCTION_SIGNATURE_MISMATCH} arm on all three producers — the
-     * oracle's completion check, the JVM completion check
-     * ({@code bcheckCompletion}), and the emitted Lua completion check
-     * ({@code __fnRow} through {@code __bcheck}) — with the declared and
-     * carried canonical texts and the supplied await origin, and the
-     * matching carried signature stays an admission control on every
-     * consumer.
+     * {@code FUNCTION_SIGNATURE_MISMATCH} arm with the declared and carried
+     * canonical texts, and the matching carried signature stays an admission
+     * control on every consumer.
+     *
+     * <p>The drive is a real three-consumer drive: it materializes its own
+     * host-async project (a declared {@code async} host function completing
+     * with a function value), compiles it through the release-owned
+     * production invocation, and lowers it once, so the supplied await origin
+     * is the lowerer's own {@code ASYNC_COMPLETION} {@code SourceOrigin}. The
+     * oracle runs the lowered project's async entries through its closed host
+     * seam; the LuaJIT and JVM legs run the staged production artifacts under
+     * real {@code luajit} and {@code javac --release 25 -proc:none} +
+     * {@code java} with the real host module deployed. Every compared field —
+     * the span included — is captured from the failure the consumer produced
+     * (the oracle's error snapshot, the Lua error table's {@code .o}, the JVM
+     * {@code DealError.origin}), never substituted at comparison time, so a
+     * consumer that publishes a constant or a derived span is reported by
+     * field name.</p>
      */
     static void testCompletionSignatureDrive() throws Exception {
         System.out.println("-- the completion cell's function-signature family: the "
-            + "three producers render the agreed signature arm at the await origin --");
-        String awaitOrigin = FailureContractRegistry.arm(
-            FailureArmId.ASYNC_COMPLETION_KIND).origin().name();
-        checkEq(FailureArm.OriginConvention.AWAIT_EXPRESSION.name(), awaitOrigin,
-            "the completion cell's origin convention is the await expression");
-        RuntimeDescriptor.Func declared = (RuntimeDescriptor.Func)
-            RuntimeDescriptor.parseCanonicalText("(int)->int");
-        RuntimeDescriptor.Func carried = (RuntimeDescriptor.Func)
-            RuntimeDescriptor.parseCanonicalText("(int)->string");
-        RuntimeDescriptor nullableDeclared =
-            RuntimeDescriptor.parseCanonicalText("?(int)->int");
-        Tuple signature = new Tuple("E8010", "function signature mismatch: expected "
-            + "(int)->int, got (int)->string", awaitOrigin, "(int)->int",
-            "(int)->string");
+            + "oracle, the LuaJIT artifact, and the JVM artifact publish the lowered "
+            + "await origin on the agreed E8010 arm --");
+        Path root = Files.createTempDirectory("completion-signature").toRealPath();
+        try {
+            CompletionDrive drive = compileCompletionDrive(root);
+            if (drive == null) {
+                return;
+            }
+            // The supplied await origins: the drive's own source text names
+            // every await position, and the one lowering must select exactly
+            // those positions for the declared completion descriptors (P3).
+            Map<String, String> supplied = new LinkedHashMap<>();
+            for (CompletionCell cell : COMPLETION_CELLS) {
+                String origin = awaitOriginAt(drive.entryFile(), cell);
+                supplied.put(cell.label(), origin);
+                check(drive.completionCells().contains(cell.declaredSpec() + "@" + origin),
+                    "the lowering selects the await expression at " + origin + " as the "
+                        + cell.label() + " completion cell's origin; lowered cells: "
+                        + drive.completionCells());
+            }
 
-        // The oracle producer leg: the direct and the nullable completion
-        // cells render the identical full tuple.
-        Tuple oracleDirect = tupleOf(oracleFailure(BoundaryExecutor.check(
-            FailurePolicyId.ASYNC_COMPLETION, declared,
-            BoundaryValueView.ofFunction(carried), BoundaryContext.none()),
-            "the direct function completion cell"), awaitOrigin);
-        checkEq(signature, oracleDirect,
-            "the oracle renders the direct function completion signature tuple");
-        Tuple oracleNullable = tupleOf(oracleFailure(BoundaryExecutor.check(
-            FailurePolicyId.ASYNC_COMPLETION, nullableDeclared,
-            BoundaryValueView.ofFunction(carried), BoundaryContext.none()),
-            "the nullable function completion cell"), awaitOrigin);
-        checkEq(signature, oracleNullable,
-            "the oracle renders the nullable function completion signature tuple");
+            // The oracle leg: the completion boundary attaches the boundary
+            // op's own SourceOrigin to the rendered arm.
+            Map<String, Tuple> oracleFailures = new LinkedHashMap<>();
+            Map<String, String> oracleAdmissions = new LinkedHashMap<>();
+            for (CompletionCell cell : COMPLETION_CELLS) {
+                SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeAsyncEntry(
+                    drive.project(), drive.tables(), completionResponder(),
+                    drive.project().entryModule(), cell.export(), List.of());
+                if (run.terminal()
+                        instanceof SemanticRuntimeModel.Terminal.DealFailure failure) {
+                    SemanticRuntimeModel.ErrorSnapshot error = failure.error();
+                    oracleFailures.put(cell.label(), new Tuple(error.code(),
+                        error.message(), error.origin(), error.expected(),
+                        error.actual()));
+                } else {
+                    oracleAdmissions.put(cell.label(), String.valueOf(run.terminal()));
+                }
+            }
 
-        // The JVM producer leg (the shared JvmRuntime.bcheckCompletion the
-        // emitted AWAIT site calls): the same arm and texts.
-        deal.codegen.jvm.JvmRuntime.FunctionValue carriedJvm =
-            new deal.codegen.jvm.JvmRuntime.FunctionValue(null, "(int)->string",
-                "(int)->string", null);
-        deal.codegen.jvm.JvmRuntime.DealError jvmDirect = jvmFailure(
-            () -> deal.codegen.jvm.JvmRuntime.bcheckCompletion("function(int;int)",
-                "function", carriedJvm, "(int)->int"));
-        check(jvmDirect != null, "the JVM direct completion check fails: " + jvmDirect);
-        if (jvmDirect != null) {
-            checkEq(null, firstDifferingField(signature, new Tuple(jvmDirect.code,
-                jvmDirect.msg, awaitOrigin, jvmDirect.expected, jvmDirect.actual)),
-                "the JVM runtime renders the oracle's identical direct function "
-                    + "completion tuple");
+            // The two staged production artifacts under the real toolchains.
+            Map<String, String> luaRows = runLuaCompletionDrive(drive);
+            Map<String, String> jvmRows = runJvmCompletionDrive(drive);
+
+            Map<String, Tuple> captured = new LinkedHashMap<>();
+            for (CompletionCell cell : COMPLETION_CELLS) {
+                if (!cell.failing()) {
+                    // The matching-signature controls: the declared
+                    // signature's own carrier stays admitted on every
+                    // consumer, so the arm selection rejects the differing
+                    // signature rather than every function completion.
+                    check(oracleAdmissions.containsKey(cell.label()),
+                        "the oracle admits the " + cell.label() + " matching function "
+                            + "completion: " + oracleAdmissions.get(cell.label()));
+                    checkEq(cell.label() + "|OK", luaRows.get(cell.label()),
+                        "the LuaJIT artifact admits the " + cell.label() + " matching "
+                            + "function completion");
+                    checkEq(cell.label() + "|OK", jvmRows.get(cell.label()),
+                        "the JVM artifact admits the " + cell.label() + " matching "
+                            + "function completion");
+                    continue;
+                }
+                Tuple expected = new Tuple("E8010", "function signature mismatch: "
+                    + "expected (int)->int, got (int)->string", supplied.get(cell.label()),
+                    "(int)->int", "(int)->string");
+                Tuple oracle = oracleFailures.get(cell.label());
+                check(oracle != null, "the oracle fails the " + cell.label()
+                    + " function completion cell");
+                Tuple lua = tupleOfConsumerRow(cell, luaRows.get(cell.label()),
+                    "the LuaJIT artifact");
+                Tuple jvm = tupleOfConsumerRow(cell, jvmRows.get(cell.label()),
+                    "the JVM artifact");
+                if (oracle == null || lua == null || jvm == null) {
+                    continue;
+                }
+                checkEq(expected, oracle, "the oracle publishes the " + cell.label()
+                    + " function completion signature tuple at the supplied await origin");
+                checkEq(null, firstDifferingField(expected, lua), "the LuaJIT artifact "
+                    + "publishes the oracle's identical " + cell.label() + " tuple");
+                checkEq(null, firstDifferingField(expected, jvm), "the JVM artifact "
+                    + "publishes the oracle's identical " + cell.label() + " tuple");
+                checkEq(null, firstDifferingField(lua, jvm), "the LuaJIT and the JVM "
+                    + "artifacts publish the identical " + cell.label() + " tuple");
+                captured.put(cell.label(), lua);
+            }
+
+            // The span negative operates on the origins the consumers
+            // actually published: the two failing cells render the identical
+            // signature tuple and differ only in the lowerer-supplied await
+            // origin, so the comparison must report the field by name, and a
+            // consumer publishing the arm's origin-convention name instead of
+            // the await position is caught here.
+            Tuple direct = captured.get("direct");
+            Tuple nullable = captured.get("nullable");
+            if (direct != null && nullable != null) {
+                check(!"AWAIT_EXPRESSION".equals(direct.span()), "the LuaJIT artifact "
+                    + "publishes the lowerer-selected await origin, never the arm's "
+                    + "origin-convention name");
+                checkEq("span", firstDifferingField(direct, nullable), "two cells whose "
+                    + "only published difference is the consumer-attached await origin "
+                    + "are reported by field name span");
+            }
+        } finally {
+            deleteRecursively(root);
         }
-        deal.codegen.jvm.JvmRuntime.DealError jvmNullable = jvmFailure(
-            () -> deal.codegen.jvm.JvmRuntime.bcheckCompletion(
-                "nullable(function(int;int))", "function", carriedJvm,
-                "?(int)->int"));
-        check(jvmNullable != null, "the JVM nullable completion check fails: "
-            + jvmNullable);
-        if (jvmNullable != null) {
-            checkEq(null, firstDifferingField(signature, new Tuple(jvmNullable.code,
-                jvmNullable.msg, awaitOrigin, jvmNullable.expected,
-                jvmNullable.actual)),
-                "the JVM runtime renders the oracle's identical nullable function "
-                    + "completion tuple");
+    }
+
+    /** One cell of the completion-signature drive. */
+    private record CompletionCell(String label, String export, String hostExport,
+                                  String declaredSpec, boolean failing) {
+
+        /** The entry module's await expression of this cell. */
+        String awaitMarker() {
+            return "await host." + hostExport + "()";
         }
-        deal.codegen.jvm.JvmRuntime.FunctionValue matchingJvm =
-            new deal.codegen.jvm.JvmRuntime.FunctionValue(null, "(int)->int",
-                "(int)->int", null);
-        checkEq(matchingJvm, deal.codegen.jvm.JvmRuntime.bcheckCompletion(
-            "function(int;int)", "function", matchingJvm, "(int)->int"),
-            "the JVM direct completion check admits the matching signature unchanged");
-        checkEq(matchingJvm, deal.codegen.jvm.JvmRuntime.bcheckCompletion(
-            "nullable(function(int;int))", "function", matchingJvm, "?(int)->int"),
-            "the JVM nullable completion check admits the matching signature unchanged");
+    }
 
-        // The emitted Lua producer leg, under real luajit.
-        List<String> luaRows = luaCompletionSignatureRows();
-        checkEq("direct-signature|E8010|(int)->int|(int)->string|function signature "
-            + "mismatch: expected (int)->int, got (int)->string", luaRows.get(0),
-            "the emitted prelude renders the direct function completion signature arm");
-        checkEq("nullable-signature|E8010|(int)->int|(int)->string|function signature "
-            + "mismatch: expected (int)->int, got (int)->string", luaRows.get(1),
-            "the emitted prelude renders the nullable function completion signature arm");
-        checkEq("direct-match|OK|", luaRows.get(2),
-            "the emitted prelude admits the matching direct signature unchanged");
-        checkEq("nullable-match|OK|", luaRows.get(3),
-            "the emitted prelude admits the matching nullable signature unchanged");
-        String[] parts = luaRows.get(0).split("\\|", -1);
-        checkEq(null, firstDifferingField(oracleDirect,
-            new Tuple(parts[1], parts[4], awaitOrigin, parts[2], parts[3])),
-            "the Lua artifact renders the oracle's identical direct function "
-                + "completion tuple");
-        parts = luaRows.get(1).split("\\|", -1);
-        checkEq(null, firstDifferingField(oracleNullable,
-            new Tuple(parts[1], parts[4], awaitOrigin, parts[2], parts[3])),
-            "the Lua artifact renders the oracle's identical nullable function "
-                + "completion tuple");
+    /** The four driven cells: the two failing signatures and their controls. */
+    private static final List<CompletionCell> COMPLETION_CELLS = List.of(
+        new CompletionCell("direct", "test_direct", "fetchDirect", "(int)->int", true),
+        new CompletionCell("nullable", "test_nullable", "fetchNullable", "?(int)->int",
+            true),
+        new CompletionCell("direct-match", "test_direct_match", "fetchDirectMatch",
+            "(int)->int", false),
+        new CompletionCell("nullable-match", "test_nullable_match",
+            "fetchNullableMatch", "?(int)->int", false));
 
-        // The origin negative: a consumer that publishes a span other than
-        // the supplied await origin is reported by field name span.
-        checkEq("span", firstDifferingField(oracleDirect, new Tuple(
-            signature.code(), signature.message(), "consumer-anchor.deal:1:1",
-            signature.expected(), signature.actual())),
-            "a consumer-derived completion span is reported by field name span");
+    /**
+     * The drive's host declaration: two async exports completing with the
+     * declared direct/nullable function type and their matching controls.
+     */
+    private static final String COMPLETION_HOST_DECLARATION = """
+        export async function fetchDirect(): (x: int) => int;
+        export async function fetchNullable(): ((x: int) => int) | null;
+        export async function fetchDirectMatch(): (x: int) => int;
+        export async function fetchNullableMatch(): ((x: int) => int) | null;
+        """;
+
+    /**
+     * The drive's entry module: four async exports awaiting the declared host
+     * functions. Every await expression sits on its own source line, so the
+     * drive derives each cell's supplied await origin from this text and
+     * compares it with the origin each consumer attaches.
+     */
+    private static final String COMPLETION_ENTRY_SOURCE = """
+        import * as host from "host/async_fn"
+
+        export async function test_direct(): (x: int) => int {
+          let f: (x: int) => int = await host.fetchDirect()
+          return f
+        }
+
+        export async function test_nullable(): ((x: int) => int) | null {
+          let f: ((x: int) => int) | null = await host.fetchNullable()
+          return f
+        }
+
+        export async function test_direct_match(): (x: int) => int {
+          let f: (x: int) => int = await host.fetchDirectMatch()
+          return f
+        }
+
+        export async function test_nullable_match(): ((x: int) => int) | null {
+          let f: ((x: int) => int) | null = await host.fetchNullableMatch()
+          return f
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
+    /**
+     * The drive's Lua host implementation: the two failing cells complete
+     * with a DEAL function carrier whose carried canonical signature is
+     * {@code (int)->string} while the declared completion is
+     * {@code (int)->int} / {@code ?(int)->int}; the matching controls complete
+     * with the declared signature.
+     */
+    private static final String COMPLETION_LUA_HOST = """
+        local rt = require("deal.runtime")
+
+        local function mismatched()
+          return {__fn = function(x) return "s" end, __sig = "function(int;string)",
+            __csig = "(int)->string", __fid = nil}
+        end
+
+        local function matching()
+          return {__fn = function(x) return x end, __sig = "function(int;int)",
+            __csig = "(int)->int", __fid = nil}
+        end
+
+        local function operation(value)
+          return rt.async_start(function() return value() end)
+        end
+
+        return {
+          fetchDirect = function() return operation(mismatched) end,
+          fetchNullable = function() return operation(mismatched) end,
+          fetchDirectMatch = function() return operation(matching) end,
+          fetchNullableMatch = function() return operation(matching) end,
+        }
+        """;
+
+    /**
+     * The drive's JVM host implementation ({@code %s}: the host module's
+     * production class name), the same four completions as the Lua host.
+     */
+    private static final String COMPLETION_JVM_HOST = """
+        import java.util.concurrent.CompletableFuture;
+
+        final class %s {
+          public static Object fetchDirect() {
+            return CompletableFuture.completedFuture(mismatched());
+          }
+
+          public static Object fetchNullable() {
+            return CompletableFuture.completedFuture(mismatched());
+          }
+
+          public static Object fetchDirectMatch() {
+            return CompletableFuture.completedFuture(matching());
+          }
+
+          public static Object fetchNullableMatch() {
+            return CompletableFuture.completedFuture(matching());
+          }
+
+          private static Object mismatched() {
+            return new deal.codegen.jvm.JvmRuntime.FunctionValue(null,
+                "function(int;string)", "(int)->string", null);
+          }
+
+          private static Object matching() {
+            return new deal.codegen.jvm.JvmRuntime.FunctionValue(null,
+                "function(int;int)", "(int)->int", null);
+          }
+        }
+        """;
+
+    /** The drive's compiled, lowered, and staged project (one lowering). */
+    private record CompletionDrive(Path root, Path entryFile,
+                                   ExecutableLoweredProject project,
+                                   Map<ModuleId, StructuredBodyTable> tables,
+                                   Map<String, Long> entryOpIds, List<String> completionCells,
+                                   Path luaOut, Path jvmOut, String modulePath,
+                                   String className) {
+
+        Path jvmArtifact() {
+            return jvmOut.resolve(className + ".java");
+        }
     }
 
     /**
-     * Runs the emitted prelude's completion signature renders under
-     * {@code luajit}: one {@code label|code|expected|actual|message} row per
-     * failing cell and one {@code label|OK|} row per admission control.
+     * Materializes the drive's host-async project, compiles it through the
+     * release-owned production invocation on both targets, and lowers it once:
+     * the completion cells' origins are the one lowering's own
+     * {@code ASYNC_COMPLETION} {@code SourceOrigin}s.
      */
-    private static List<String> luaCompletionSignatureRows() throws Exception {
-        return runPreludeProbe("""
-            local carried = {__fn = true, __csig = "(int)->string"}
-            local ok, value = pcall(__bcheck, "function(int;int)", "function",
-              carried, "(int)->int", true)
-            row("direct-signature", ok, value)
-            ok, value = pcall(__bcheck, "nullable(function(int;int))", "function",
-              carried, "?(int)->int", true)
-            row("nullable-signature", ok, value)
-            local matching = {__fn = true, __csig = "(int)->int"}
-            ok, value = pcall(__bcheck, "function(int;int)", "function",
-              matching, "(int)->int", true)
-            row("direct-match", ok, value)
-            ok, value = pcall(__bcheck, "nullable(function(int;int))", "function",
-              matching, "?(int)->int", true)
-            row("nullable-match", ok, value)
-            """, "completion-signature-probe", 4);
+    private static CompletionDrive compileCompletionDrive(Path root) throws Exception {
+        Path src = root.resolve("src");
+        Files.createDirectories(src);
+        Path entry = src.resolve("main.deal");
+        Files.writeString(entry, COMPLETION_ENTRY_SOURCE, StandardCharsets.UTF_8);
+        Path declaration = root.resolve("bindings").resolve("async_fn.d.deal");
+        Files.createDirectories(declaration.getParent());
+        Files.writeString(declaration, COMPLETION_HOST_DECLARATION, StandardCharsets.UTF_8);
+        Map<String, String> externals = new LinkedHashMap<>();
+        externals.put("host.async_fn", declaration.toAbsolutePath().toString());
+        externals.put("host/async_fn", declaration.toAbsolutePath().toString());
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(
+            ReleaseConfiguration.CURRENT_RELEASE_STATE,
+            ReleaseConfiguration.releaseCapabilityRegistry());
+        Path luaOut = root.resolve("out-luajit");
+        CompilationOrchestrator lua = new CompilationOrchestrator(entry, luaOut, false,
+            false, false, false, Backend.LUAJIT, externals, List.of(src.toAbsolutePath()),
+            Path.of("std").toAbsolutePath().normalize(), null, invocation);
+        boolean compiled = lua.compile();
+        CheckedProjectBuildResult built = lua.checkedProject();
+        var manifests = lua.requirementManifests();
+        check(compiled && built != null && built.input() != null && built.index() != null
+                && !built.hasErrors() && manifests != null && manifests.manifests() != null
+                && lua.hostDeclarationSurface() != null,
+            "the completion-signature drive's project compiles through the release-owned "
+                + "invocation: " + lua.diagnostics());
+        if (!compiled || built == null || built.input() == null || built.index() == null
+                || built.hasErrors() || manifests == null || manifests.manifests() == null
+                || lua.hostDeclarationSurface() == null) {
+            return null;
+        }
+        Map<ModuleId, CanonicalModuleIdentity> identities = new LinkedHashMap<>();
+        for (ModuleId declared : lua.hostDeclarationSurface().moduleIds()) {
+            identities.put(declared, new CanonicalModuleIdentity.ExternalModule(
+                declared.path().replace('/', '.')));
+        }
+        SemanticLowerer.ProjectLoweringResult lowering = SemanticLowerer.lowerProject(
+            invocation, built.input(), built.index(), manifests.manifests(),
+            lua.hostDeclarationSurface(), identities, new LinkedHashMap<>(),
+            BuiltinErrorDeclaration.synthesized(entrySpan(built.input())),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW),
+            Set.of());
+        check(lowering.project() != null && lowering.project().modules()
+                .containsKey(lowering.project().entryModule()),
+            "the one lowering produces the drive's implementation closure (the entry "
+                + "module; the declared host module is no implementation unit): "
+                + lowering.diagnostics());
+        if (lowering.project() == null) {
+            return null;
+        }
+        ExecutableLoweredProject project = lowering.project();
+        LoweredModuleUnit unit = project.modules().get(project.entryModule());
+        Map<String, Long> entryOpIds = new LinkedHashMap<>();
+        List<String> completionCells = new ArrayList<>();
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY) {
+                KindPayload.ExternalEntryPayload payload =
+                    (KindPayload.ExternalEntryPayload) op.payload();
+                if (payload.async()) {
+                    entryOpIds.put(payload.exportName(), op.opId().id());
+                }
+            } else if (op.kind() == SemanticOpKind.BOUNDARY
+                    && ((KindPayload.BoundaryPayload) op.payload()).kind()
+                        == BoundaryKind.ASYNC_COMPLETION) {
+                KindPayload.BoundaryPayload payload =
+                    (KindPayload.BoundaryPayload) op.payload();
+                completionCells.add(payload.descriptor().canonicalSpecText() + "@"
+                    + originText(op.origin()));
+            }
+        }
+        check(completionCells.size() == COMPLETION_CELLS.size(),
+            "the lowering records one ASYNC_COMPLETION cell per driven await: "
+                + completionCells);
+        Path jvmOut = root.resolve("out-jvm");
+        CompilationOrchestrator jvm = new CompilationOrchestrator(entry, jvmOut, false,
+            false, false, false, Backend.JVM, externals, List.of(src.toAbsolutePath()),
+            Path.of("std").toAbsolutePath().normalize(), null, invocation);
+        boolean jvmCompiled = jvm.compile();
+        check(jvmCompiled && jvm.diagnostics().isEmpty(), "the completion-signature "
+            + "drive's project compiles on the JVM target: " + jvm.diagnostics());
+        String modulePath = project.entryModule().path();
+        String className = JvmNames.classNameFor(modulePath);
+        return new CompletionDrive(root, entry, project, lowering.tables(), entryOpIds,
+            completionCells, luaOut, jvmOut, modulePath, className);
+    }
+
+    /** The entry module's AST span (the synthesized builtin Error declaration's). */
+    private static deal.ast.Span entrySpan(CheckedProjectInput project) {
+        return project.modules().stream()
+            .filter(module -> module.moduleId().equals(project.entryModule()))
+            .findFirst().orElseThrow().ast().span();
+    }
+
+    /**
+     * The drive's supplied await origin of one cell: the {@code await}
+     * keyword's position in the entry module's own source text (the P3
+     * await-expression origin cell), rendered with the consumers' own origin
+     * atom.
+     */
+    private static String awaitOriginAt(Path entryFile, CompletionCell cell) {
+        String marker = cell.awaitMarker();
+        int at = COMPLETION_ENTRY_SOURCE.indexOf(marker);
+        check(at >= 0, "the drive's entry module awaits " + marker);
+        int line = 1;
+        int lineStart = 0;
+        for (int i = 0; i < at; i++) {
+            if (COMPLETION_ENTRY_SOURCE.charAt(i) == '\n') {
+                line++;
+                lineStart = i + 1;
+            }
+        }
+        return entryFile + ":" + line + ":" + (at - lineStart + 1);
+    }
+
+    /** One op origin's rendered atom (the consumers' own origin text). */
+    private static String originText(deal.semantic.ir.SourceOrigin origin) {
+        return SemanticRuntimeModel.originAtom(origin.sourceId(),
+            origin.span().startLine(), origin.span().startColumn());
+    }
+
+    /**
+     * The oracle's scripted host seam of the drive: the failing cells'
+     * declared async functions complete with a {@code (int)->string} function
+     * value, the matching controls with the declared {@code (int)->int}.
+     */
+    private static SemanticOracle.HostResponder completionResponder() {
+        return new SemanticOracle.HostResponder() {
+            private String started;
+
+            @Override
+            public String startAsync(ModuleId module, String export,
+                    RuntimeDescriptor.Func descriptor,
+                    List<SemanticOracle.Value> args, String operationLabel) {
+                started = export;
+                return operationLabel;
+            }
+
+            @Override
+            public SyncOutcome completeAsync(String operationLabel) {
+                boolean matching = started != null && started.endsWith("Match");
+                return new SyncOutcome.Returned(new SemanticOracle.Value.FuncValue(
+                    new FunctionId(9999), (RuntimeDescriptor.Func) RuntimeDescriptor
+                        .parseCanonicalText(matching ? "(int)->int" : "(int)->string"),
+                    Map.of()));
+            }
+        };
+    }
+
+    /**
+     * Runs the staged LuaJIT artifact's four async entries under real
+     * {@code luajit} with the drive's host module deployed beside it, and
+     * returns one {@code label|...} row per cell.
+     */
+    private static Map<String, String> runLuaCompletionDrive(CompletionDrive drive)
+            throws Exception {
+        Path host = drive.luaOut().resolve("host").resolve("async_fn.lua");
+        Files.createDirectories(host.getParent());
+        Files.writeString(host, COMPLETION_LUA_HOST, StandardCharsets.UTF_8);
+        Path artifact = drive.luaOut().resolve(
+            drive.modulePath().replace('.', '/') + ".lua");
+        StringBuilder probe = new StringBuilder();
+        probe.append("local surface = dofile(")
+            .append(quote(artifact.toAbsolutePath().toString())).append(")\n");
+        probe.append("local ok, err = __dealMain()\n");
+        probe.append("if not ok then print(\"MAIN-FAIL|\" .. __callbacks.__errtext(err)) "
+            + "os.exit(0) end\n");
+        probe.append("local function row(label, ok2, e)\n");
+        probe.append("  if ok2 then print(label .. \"|OK\") return end\n");
+        probe.append("  print(label .. \"|\" .. tostring(e.code) .. \"|\" .. tostring(e.m) "
+            + ".. \"|\" .. tostring(e.o) .. \"|\" .. tostring(e.e) .. \"|\" "
+            + ".. tostring(e.a))\n");
+        probe.append("end\n");
+        for (CompletionCell cell : COMPLETION_CELLS) {
+            probe.append("row(").append(quote(cell.label())).append(", pcall(__asyncEntries[")
+                .append(quote(drive.modulePath() + "#" + cell.export()))
+                .append("], \"-\", true))\n");
+        }
+        Path probeFile = drive.luaOut().resolve("completion-signature-probe.lua");
+        Files.writeString(probeFile, probe.toString(), StandardCharsets.UTF_8);
+        ProcessBuilder builder = new ProcessBuilder("luajit",
+            probeFile.getFileName().toString());
+        builder.directory(drive.luaOut().toFile());
+        // The probe drives the artifact's recorded async entries directly:
+        // the deferred-main flag keeps the module-init walk out of the load
+        // path (the probe runs it explicitly).
+        builder.environment().put("DEAL_DEFER_MAIN", "1");
+        builder.redirectErrorStream(true);
+        Process process = builder.start();
+        String output = new String(process.getInputStream().readAllBytes(),
+            StandardCharsets.UTF_8);
+        int exit = process.waitFor();
+        check(exit == 0, "the staged LuaJIT artifact runs the completion-signature drive "
+            + "under luajit: exit=" + exit + " output=" + output);
+        return completionRows(output);
+    }
+
+    /**
+     * Compiles and runs the staged JVM artifact's four async entries under
+     * real {@code javac --release 25 -proc:none} + {@code java} with the
+     * drive's host implementation deployed, and returns one {@code label|...}
+     * row per cell.
+     */
+    private static Map<String, String> runJvmCompletionDrive(CompletionDrive drive)
+            throws Exception {
+        Path out = drive.jvmOut();
+        String hostClass = JvmNames.classNameFor("host/async_fn");
+        Path host = out.resolve(hostClass + ".java");
+        Files.writeString(host, COMPLETION_JVM_HOST.formatted(hostClass),
+            StandardCharsets.UTF_8);
+        Path driver = out.resolve("CompletionSignatureDriver.java");
+        Files.writeString(driver, completionDriverSource(drive), StandardCharsets.UTF_8);
+        Path classes = drive.root().resolve("jvm-classes");
+        Files.createDirectories(classes);
+        String classpath = absoluteClasspath();
+        List<String> javacArgs = new ArrayList<>(List.of("javac", "--release", "25",
+            "-proc:none", "-cp", classpath, "-d", classes.toString()));
+        javacArgs.add(drive.jvmArtifact().toString());
+        javacArgs.add(host.toString());
+        javacArgs.add(driver.toString());
+        ProcessBuilder javac = new ProcessBuilder(javacArgs).redirectErrorStream(true);
+        javac.directory(out.toFile());
+        Process compile = javac.start();
+        String compileOutput = new String(compile.getInputStream().readAllBytes(),
+            StandardCharsets.UTF_8);
+        int compileExit = compile.waitFor();
+        check(compileExit == 0, "the staged JVM artifact compiles with the drive's host "
+            + "implementation and driver: " + compileOutput);
+        if (compileExit != 0) {
+            return Map.of();
+        }
+        ProcessBuilder javaRun = new ProcessBuilder("java", "-cp",
+            classpath + java.io.File.pathSeparator + classes, "CompletionSignatureDriver");
+        javaRun.directory(out.toFile());
+        javaRun.redirectErrorStream(true);
+        Process run = javaRun.start();
+        String output = new String(run.getInputStream().readAllBytes(),
+            StandardCharsets.UTF_8);
+        int exit = run.waitFor();
+        check(exit == 0, "the staged JVM artifact runs the completion-signature drive: "
+            + "exit=" + exit + " output=" + output);
+        return completionRows(output);
+    }
+
+    /**
+     * The JVM drive's host {@code main}: the artifact's module-init walk, then
+     * each async export driven through the artifact's own static dispatch
+     * entry; one {@code label|...} row per cell.
+     */
+    private static String completionDriverSource(CompletionDrive drive) {
+        StringBuilder source = new StringBuilder();
+        source.append("public class CompletionSignatureDriver {\n");
+        source.append("  public static void main(String[] args) {\n");
+        source.append("    try {\n");
+        source.append("      ").append(drive.className()).append(".dealMain();\n");
+        source.append("    } catch (Throwable t) {\n");
+        source.append("      System.out.println(\"MAIN-FAIL|\" + t);\n");
+        source.append("      return;\n");
+        source.append("    }\n");
+        for (CompletionCell cell : COMPLETION_CELLS) {
+            source.append("    try {\n");
+            source.append("      ").append(drive.className()).append(".ae")
+                .append(drive.entryOpIds().get(cell.export()))
+                .append("(\"-\", true, new Object[]{});\n");
+            source.append("      System.out.println(\"").append(cell.label())
+                .append("|OK\");\n");
+            source.append("    } catch (deal.codegen.jvm.JvmRuntime.DealError e) {\n");
+            source.append("      System.out.println(\"").append(cell.label())
+                .append("|\" + e.code + \"|\" + e.msg + \"|\" + e.origin + \"|\" + "
+                    + "e.expected + \"|\" + e.actual);\n");
+            source.append("    }\n");
+        }
+        source.append("  }\n");
+        source.append("}\n");
+        return source.toString();
+    }
+
+    /** The {@code label|...} rows of one completion-drive consumer run. */
+    private static Map<String, String> completionRows(String output) {
+        Map<String, String> rows = new LinkedHashMap<>();
+        for (String line : output.lines().toList()) {
+            String text = line.strip();
+            int bar = text.indexOf('|');
+            if (bar > 0) {
+                rows.put(text.substring(0, bar), text);
+            }
+        }
+        return rows;
+    }
+
+    /**
+     * One failing cell's consumer row as its captured tuple: the row's own
+     * code, message, origin, expected, and actual fields. A missing row, an
+     * admission, or an unframed row is reported as the consumer's defect.
+     */
+    private static Tuple tupleOfConsumerRow(CompletionCell cell, String row,
+                                            String consumer) {
+        if (row == null) {
+            check(false, consumer + " prints the " + cell.label() + " row");
+            return null;
+        }
+        String[] parts = row.split("\\|", -1);
+        if (parts.length == 2 && "OK".equals(parts[1])) {
+            check(false, consumer + " admitted the " + cell.label() + " function "
+                + "completion that must fail with the signature arm");
+            return null;
+        }
+        check(parts.length == 6, consumer + " frames the " + cell.label() + " row as "
+            + "label|code|message|origin|expected|actual: " + row);
+        if (parts.length != 6) {
+            return null;
+        }
+        return new Tuple(parts[1], parts[2], parts[3], parts[4], parts[5]);
+    }
+
+    /** The absolute entries of the test JVM's own classpath (the javac/-cp). */
+    private static String absoluteClasspath() {
+        List<String> entries = new ArrayList<>();
+        for (String entry : System.getProperty("java.class.path", "")
+                .split(java.util.regex.Pattern.quote(java.io.File.pathSeparator), -1)) {
+            entries.add(Path.of(entry).toAbsolutePath().normalize().toString());
+        }
+        return String.join(java.io.File.pathSeparator, entries);
     }
 
     /**
