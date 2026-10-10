@@ -178,7 +178,7 @@ public final class BoundaryExecutor {
         FailureArm arm = FailureContractRegistry.arm(FailureArmId.HOST_PARAMETER_CELL);
         Map<String, String> parameters = new LinkedHashMap<>();
         parameters.put("index", Integer.toString(parameterIndex));
-        parameters.put("inner", innerReason(fail));
+        parameters.put("inner", innerReason(fail, view));
         return FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL, parameters,
             FailureProjections.expectedFor(arm, descriptor, null),
             FailureProjections.actualFor(arm, null, hostActual(view, fail), null, null, null), null);
@@ -201,7 +201,7 @@ public final class BoundaryExecutor {
             case CoreFail fail -> {
                 FailureArm arm = FailureContractRegistry.arm(FailureArmId.HOST_SYNC_RETURN_CELL);
                 Map<String, String> parameters = new LinkedHashMap<>();
-                parameters.put("inner", innerReason(fail));
+                parameters.put("inner", innerReason(fail, view));
                 yield new BoundaryOutcome.Fail(FailureContractRegistry.render(
                     FailureArmId.HOST_SYNC_RETURN_CELL, parameters,
                     FailureProjections.expectedFor(arm, descriptor, null),
@@ -216,16 +216,21 @@ public final class BoundaryExecutor {
      * check's own message. A failure that carries its own row text (the
      * signed32-range, signature, and array-element failures) renders that
      * text unchanged; every other inner failure renders a vocabulary entry.
-     * An inner failure outside the vocabulary is a producer defect.
+     * The invalid-Unicode entry selects between the two pinned host
+     * string-carrier texts from the view's closed encoding defect (a
+     * surrogate code point sequence versus every other malformed
+     * encoding), never from the carrier's length. An inner failure outside
+     * the vocabulary is a producer defect.
      */
-    private static String innerReason(CoreFail fail) {
+    private static String innerReason(CoreFail fail, BoundaryValueView view) {
         return switch (fail.caseKind()) {
             case KIND_MISMATCH -> FailureProjections.kindReason(fail.descriptor());
             case INT_REFINEMENT -> FailureProjections.refinementReason(
                 FailureProjections.kindToken(fail.descriptor()), fail.actualToken());
             case INT_OUT_OF_RANGE -> FailureContractRegistry
                 .arm(FailureArmId.INT32_RANGE).template();
-            case INVALID_UNICODE -> FailureProjections.stringCarrierReason(false);
+            case INVALID_UNICODE -> FailureProjections.stringCarrierReason(
+                view.unicodeDefect() == UnicodeScalars.Defect.SURROGATE);
             case CLASS_IDENTITY -> renderIdentity(fail).message();
             case SIG_MISMATCH -> {
                 FailureArm arm = FailureContractRegistry.arm(

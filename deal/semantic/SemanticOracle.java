@@ -527,7 +527,33 @@ public final class SemanticOracle {
         record NumValue(double value) implements Value {
         }
 
-        record StrValue(String value) implements Value {
+        /**
+         * One string carrier. The {@code defect} component is the raw
+         * host-carrier encoding mark of the oracle's host seam: a
+         * responder that models a byte-oriented (or otherwise
+         * backend-native) carrier records the carrier's closed encoding
+         * defect so the boundary projection selects the same pinned host
+         * string-carrier reason the production artifacts select.
+         * {@code null} classifies the carrier by its own scalar validity.
+         * A non-null mark is legal only on a carrier that is itself not a
+         * valid scalar sequence, so every other consumer of the value
+         * agrees with the marked classification.
+         */
+        record StrValue(String value, UnicodeScalars.Defect defect) implements Value {
+
+            public StrValue {
+                Objects.requireNonNull(value, "value must not be null");
+                if (defect != null && UnicodeScalars.carrierDefect(value) == null) {
+                    throw new IllegalArgumentException(
+                        "a marked host string carrier must itself be an invalid "
+                            + "scalar sequence (the mark refines the classification)");
+                }
+            }
+
+            /** A carrier classified by its own scalar validity. */
+            public StrValue(String value) {
+                this(value, null);
+            }
         }
 
         /** An insertion-ordered table over string keys. */
@@ -3459,10 +3485,11 @@ public final class SemanticOracle {
                 case Value.IntValue intValue -> BoundaryValueView.ofInt(intValue.value());
                 case Value.NumValue num -> BoundaryValueView.ofNumber(num.value());
                 case Value.StrValue str -> {
-                    UnicodeScalars.ScalarString scalar = UnicodeScalars.validate(str.value());
-                    yield scalar instanceof UnicodeScalars.Valid
+                    UnicodeScalars.Defect defect = str.defect() != null
+                        ? str.defect() : UnicodeScalars.carrierDefect(str.value());
+                    yield defect == null
                         ? BoundaryValueView.of(ActualKind.STRING)
-                        : BoundaryValueView.of(ActualKind.INVALID_UNICODE);
+                        : BoundaryValueView.ofInvalidUnicode(defect);
                 }
                 case Value.TableValue table -> BoundaryValueView.of(ActualKind.TABLE);
                 case Value.BytesValue ignored ->
@@ -5578,6 +5605,18 @@ public final class SemanticOracle {
             return DealFailure.of(failure, op.origin(), List.copyOf(frames));
         }
 
+        /**
+         * The canonical typed-boundary token of one string carrier: the
+         * marked raw-carrier defect or the carrier's own scalar validity
+         * classifies it, and every invalid carrier projects the single
+         * closed {@code invalid-unicode} token (P2 item 1).
+         */
+        private static String canonicalKindOf(Value.StrValue str) {
+            return str.defect() != null
+                    || UnicodeScalars.carrierDefect(str.value()) != null
+                ? "invalid-unicode" : "string";
+        }
+
         /** The canonical typed-boundary token of a runtime value (P2 item 1). */
         private String canonicalKind(Value input) {
             return switch (input) {
@@ -5589,9 +5628,7 @@ public final class SemanticOracle {
                 // classification (the same viewOfValue classification the
                 // boundary cells project): a string carrier that is not a
                 // valid Unicode scalar sequence projects invalid-unicode.
-                case Value.StrValue str -> UnicodeScalars.validate(str.value())
-                        instanceof UnicodeScalars.Valid
-                    ? "string" : "invalid-unicode";
+                case Value.StrValue str -> canonicalKindOf(str);
                 case Value.TableValue ignored -> "table";
                 case Value.ArrayValue ignored -> "array";
                 case Value.BytesValue ignored -> "bytes";

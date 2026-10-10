@@ -42,6 +42,7 @@ import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticTable;
 import deal.semantic.ir.StructuredBodyTable;
+import deal.semantic.ir.UnicodeScalars;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -695,6 +696,37 @@ public class FailureArmAuthorityTest {
             "the host string-carrier inner reason is the INNER_ONLY arm's own text");
         checkEq("string", invalid.actual(),
             "an invalid-Unicode view is a string carrier on the carrier-kind projection");
+        // The surrogate code point sequence selects the other closed host
+        // string-carrier reason (the host-surrogate-utf8-e8010 pin): the
+        // selection is the view's closed encoding defect, never a length.
+        BoundaryFailure surrogate = oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.HOST_SYNC_RETURN, RuntimeDescriptor.String.INSTANCE,
+            BoundaryValueView.ofInvalidUnicode(
+                UnicodeScalars.Defect.SURROGATE),
+            BoundaryContext.none()),
+            "the host surrogate code point return cell");
+        checkEq("return value 1 type mismatch: expected string, got UTF-16 surrogate "
+            + "code point", surrogate.message(),
+            "the surrogate host string-carrier inner reason is the INNER_ONLY "
+                + "arm's own text");
+        checkEq("string", surrogate.expected(),
+            "the surrogate cell keeps the declared string descriptor");
+        checkEq("string", surrogate.actual(),
+            "a surrogate view is a string carrier on the carrier-kind projection");
+        // The malformed class explicitly at the parameter cell (the
+        // classification-only factory defaults to it).
+        BoundaryFailure malformed = oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.HOST_PARAMETER, RuntimeDescriptor.String.INSTANCE,
+            BoundaryValueView.ofInvalidUnicode(
+                UnicodeScalars.Defect.MALFORMED),
+            BoundaryContext.parameter(1)),
+            "the host malformed string parameter cell");
+        checkEq("parameter 1 type mismatch: expected string, got invalid UTF-8 "
+            + "encoding", malformed.message(),
+            "the malformed host string-carrier inner reason is the INNER_ONLY "
+                + "arm's own text");
+        checkEq("string", malformed.actual(),
+            "the malformed carrier cell projects the string actual");
         // The host parameter cell of the same shape (host-bytes-param-mismatch's
         // sibling int cell with a string value).
         BoundaryFailure parameter = oracleFailure(BoundaryExecutor.check(

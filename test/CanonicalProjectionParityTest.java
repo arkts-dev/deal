@@ -38,6 +38,7 @@ import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.StructuredBodyTable;
+import deal.semantic.ir.UnicodeScalars;
 import deal.test.conformance.CorpusDiscovery;
 import deal.test.conformance.SidecarExpectations;
 import deal.test.conformance.SidecarSchemaValidator;
@@ -622,12 +623,40 @@ public class CanonicalProjectionParityTest {
         return tupleOf(failure.error(), compiled, compiled.spec().fixtureFile());
     }
 
+    /** The raw host carrier of the bad_string fixture's malformed string ("a\x80b"). */
+    private static final byte[] RAW_MALFORMED_STRING = { 0x61, (byte) 0x80, 0x62 };
+
     /**
      * The closed E7 host seam of the async cases (the scripted bad handle
      * for the shape fixture and the violating completion value for the
-     * completion fixture).
+     * completion fixture) and of the raw host string carriers (the
+     * backend-native carrier marks of the bad_string fixture).
      */
     private static SemanticOracle.HostResponder responderFor(Case spec) {
+        if ("bad_string".equals(spec.hostStem())) {
+            return new SemanticOracle.HostResponder() {
+                @Override
+                public SyncOutcome call(ModuleId module, String export,
+                        RuntimeDescriptor.Func descriptor,
+                        List<SemanticOracle.Value> args) {
+                    return switch (export) {
+                        // The raw host carrier of "a\x80b": the malformed
+                        // (non-surrogate) byte sequence of the Lua host's
+                        // badString, classified by its encoding.
+                        case "badString" -> new SyncOutcome.Returned(
+                            new SemanticOracle.Value.StrValue("a\uD800b",
+                                UnicodeScalars.utf8Defect(RAW_MALFORMED_STRING)));
+                        // The U+D800 surrogate code point: the UTF-16
+                        // carrier's own scalar validity selects the class.
+                        case "surrogateString" -> new SyncOutcome.Returned(
+                            new SemanticOracle.Value.StrValue("\uD800"));
+                        default -> throw new IllegalStateException(
+                            "the bad_string host seam scripts no export '"
+                                + export + "'");
+                    };
+                }
+            };
+        }
         if (spec.oracleResponder() == null) {
             return null;
         }
@@ -977,7 +1006,9 @@ public class CanonicalProjectionParityTest {
                 case "host-abi/host-bytes-param-mismatch-e8010",
                      "host-abi/host-nullable-function-param-bad",
                      "host-abi/host-rest-bad",
-                     "host-abi/host-async-bad" -> {
+                     "host-abi/host-async-bad",
+                     "host-abi/host-invalid-utf8-e8010",
+                     "host-abi/host-surrogate-utf8-e8010" -> {
                     assertModuleExportOrigins(compiled);
             Tuple oracle = oracleTuple(compiled);
                     assertPinned(oracle, pin, spec, "oracle");
@@ -1011,10 +1042,6 @@ public class CanonicalProjectionParityTest {
                     FailurePolicyId.HOST_SYNC_RETURN,
                     RuntimeDescriptor.parseCanonicalText("?string"),
                     BoundaryValueView.ofNumber(1.0), BoundaryContext.none());
-                case "host-abi/host-invalid-utf8-e8010" -> assertOracleCell(spec, lua,
-                    FailurePolicyId.HOST_SYNC_RETURN, RuntimeDescriptor.String.INSTANCE,
-                    BoundaryValueView.of(ActualKind.INVALID_UNICODE),
-                    BoundaryContext.none());
                 default -> {
                     // The class-construction and host-load families' oracle
                     // renders are the closed arm table's (the three-renderer
@@ -2368,15 +2395,64 @@ public class CanonicalProjectionParityTest {
 
         BoundaryFailure stringCarrier = cell(FailurePolicyId.HOST_SYNC_RETURN,
             RuntimeDescriptor.String.INSTANCE,
-            BoundaryValueView.of(ActualKind.INVALID_UNICODE), BoundaryContext.none());
+            BoundaryValueView.ofInvalidUnicode(UnicodeScalars.Defect.MALFORMED),
+            BoundaryContext.none());
         checkEq("return value 1 type mismatch: " + FailureContractRegistry
             .renderInner(FailureArmId.HOST_STRING_INVALID_UTF8, Map.of()),
             stringCarrier.message(), "the invalid-UTF-8 inner reason is the "
                 + "inner-only arm's own text");
+        checkEq("string", stringCarrier.expected(), "the invalid-UTF-8 carrier cell "
+            + "keeps the declared string descriptor");
+        checkEq("string", stringCarrier.actual(), "the invalid-UTF-8 carrier cell "
+            + "projects the string carrier kind");
+        BoundaryFailure surrogateCarrier = cell(FailurePolicyId.HOST_SYNC_RETURN,
+            RuntimeDescriptor.String.INSTANCE,
+            BoundaryValueView.ofInvalidUnicode(UnicodeScalars.Defect.SURROGATE),
+            BoundaryContext.none());
+        checkEq("return value 1 type mismatch: " + FailureContractRegistry
+            .renderInner(FailureArmId.HOST_STRING_SURROGATE, Map.of()),
+            surrogateCarrier.message(), "the surrogate inner reason is the "
+                + "inner-only arm's own text");
+        checkEq("string", surrogateCarrier.expected(), "the surrogate carrier cell "
+            + "keeps the declared string descriptor");
+        checkEq("string", surrogateCarrier.actual(), "the surrogate carrier cell "
+            + "projects the string carrier kind");
+        check(BoundaryExecutor.check(FailurePolicyId.HOST_SYNC_RETURN,
+            RuntimeDescriptor.String.INSTANCE, BoundaryValueView.of(ActualKind.STRING),
+            BoundaryContext.none()) instanceof BoundaryOutcome.Pass,
+            "the host return cell admits the valid string carrier (the control)");
         checkEq(FailureContractRegistry.renderInner(
             FailureArmId.HOST_STRING_SURROGATE, Map.of()),
             deal.codegen.jvm.JvmRuntime.stringCarrierReason(true),
             "the JVM runtime renders the surrogate inner text");
+
+        // The JVM producer's own selection (the emitted seam delegates to it):
+        // a lone surrogate at any position is the surrogate class, the raw
+        // byte carrier's first defect class selects the reason, and valid
+        // carriers are admitted — never the carrier's length.
+        String surrogateText = FailureContractRegistry.renderInner(
+            FailureArmId.HOST_STRING_SURROGATE, Map.of());
+        String invalidText = FailureContractRegistry.renderInner(
+            FailureArmId.HOST_STRING_INVALID_UTF8, Map.of());
+        checkEq(surrogateText, deal.codegen.jvm.JvmRuntime.hostStringReason("\uD800"),
+            "the JVM host carrier selector renders the surrogate reason for a lone "
+                + "surrogate");
+        checkEq(surrogateText, deal.codegen.jvm.JvmRuntime.hostStringReason("a\uD800b"),
+            "the JVM host carrier selector renders the surrogate reason for an "
+                + "embedded lone surrogate (never the invalid-UTF-8 reason)");
+        checkEq(invalidText, deal.codegen.jvm.JvmRuntime.hostStringReason(
+            RAW_MALFORMED_STRING),
+            "the JVM host carrier selector renders the invalid-UTF-8 reason for a "
+                + "malformed non-surrogate byte sequence");
+        checkEq(surrogateText, deal.codegen.jvm.JvmRuntime.hostStringReason(
+            new byte[] { 0x61, (byte) 0xED, (byte) 0xA0, (byte) 0x80, 0x62 }),
+            "the JVM host carrier selector renders the surrogate reason for an "
+                + "embedded surrogate code point encoding");
+        checkEq(null, deal.codegen.jvm.JvmRuntime.hostStringReason("ok"),
+            "the JVM host carrier selector admits the valid string carrier");
+        checkEq(null, deal.codegen.jvm.JvmRuntime.hostStringReason(
+            new byte[] { 0x6F, 0x6B }),
+            "the JVM host carrier selector admits the valid byte carrier");
 
         // The deployed runtime's matcher under real luajit: the same inner
         // reason texts the oracle and the JVM runtime compose.
@@ -2390,6 +2466,17 @@ public class CanonicalProjectionParityTest {
         checkEq(FailureContractRegistry.renderInner(
             FailureArmId.HOST_STRING_INVALID_UTF8, Map.of()), luaRows.get("utf8"),
             "the loaded matcher renders the invalid-UTF-8 inner reason");
+        checkEq(FailureContractRegistry.renderInner(
+            FailureArmId.HOST_STRING_SURROGATE, Map.of()),
+            luaRows.get("utf8-surrogate"), "the loaded matcher renders the "
+                + "surrogate inner reason for the surrogate code point encoding");
+        checkEq(FailureContractRegistry.renderInner(
+            FailureArmId.HOST_STRING_SURROGATE, Map.of()),
+            luaRows.get("utf8-surrogate-embedded"), "the loaded matcher renders "
+                + "the surrogate inner reason for an embedded surrogate code point "
+                + "encoding (never the invalid-UTF-8 reason)");
+        checkEq("PASS", luaRows.get("utf8-valid"),
+            "the loaded matcher admits the valid string carrier");
         checkEq(FailureContractRegistry.arm(FailureArmId.ARRAY_ELEMENT_KIND).template()
                 .replace("{oneBasedIndex}", "2"), luaRows.get("element"),
             "the loaded matcher renders the element inner reason");
@@ -2429,6 +2516,10 @@ public class CanonicalProjectionParityTest {
                 row("kind", "bytes", 3)
                 row("range", "int", 1e10)
                 row("utf8", "string", "a" .. string.char(128) .. "b")
+                row("utf8-surrogate", "string", string.char(237, 160, 128))
+                row("utf8-surrogate-embedded", "string",
+                  "a" .. string.char(237, 160, 128) .. "b")
+                row("utf8-valid", "string", "ok")
                 row("element", "[int]", {1, "x"})
                 """, StandardCharsets.UTF_8);
             ProcessBuilder builder = new ProcessBuilder("luajit", "probe.lua");

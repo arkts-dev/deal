@@ -832,6 +832,42 @@ public final class JvmRuntime {
             java.util.Map.of());
     }
 
+    /**
+     * The host string-carrier reason of one UTF-16 host carrier, or
+     * {@code null} when the carrier is a scalar sequence: a carrier with a
+     * lone surrogate code unit selects the surrogate code point reason at
+     * any position. The choice is the carrier's scalar validity, never its
+     * length (the pinned {@code host-surrogate-utf8-e8010} selection).
+     */
+    public static String hostStringReason(String carrier) {
+        if (carrier == null) {
+            throw new IllegalArgumentException(
+                "the host string carrier must not be null");
+        }
+        return deal.semantic.ir.UnicodeScalars.carrierDefect(carrier) == null
+            ? null : stringCarrierReason(true);
+    }
+
+    /**
+     * The host string-carrier reason of one raw UTF-8 host carrier (the
+     * backend-native byte carrier), or {@code null} when the sequence is
+     * scalar-valid: the closed defect class of the first malformed
+     * sequence selects the surrogate code point reason for a surrogate
+     * code point encoding ({@code ED A0..BF ...}) and the invalid UTF-8
+     * encoding reason for every other malformed sequence. A scalar-valid
+     * sequence decodes to its UTF-16 carrier unchanged.
+     */
+    public static String hostStringReason(byte[] utf8) {
+        if (utf8 == null) {
+            throw new IllegalArgumentException(
+                "the host string carrier must not be null");
+        }
+        deal.semantic.ir.UnicodeScalars.Defect defect =
+            deal.semantic.ir.UnicodeScalars.utf8Defect(utf8);
+        return defect == null ? null : stringCarrierReason(
+            defect == deal.semantic.ir.UnicodeScalars.Defect.SURROGATE);
+    }
+
     /** The array-element inner reason (the element arm's own text). */
     public static String elementReason(int oneBasedIndex) {
         return deal.semantic.ir.FailureContractRegistry

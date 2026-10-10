@@ -199,6 +199,50 @@ public class UnicodeScalarsTest {
         check(UnicodeScalars.validate(bytes(0xF4, 0x90, 0x80, 0x80)).actualKind()
                 == ActualKind.INVALID_UNICODE,
             "an above-U+10FFFF sequence renders the invalid-unicode actual kind");
+
+        // The closed defect class beside the single classification (the two
+        // pinned host string-carrier reasons): the surrogate code point
+        // encoding is the surrogate class at any position, every other
+        // defect of the first malformed sequence is the malformed class,
+        // and a scalar sequence carries no defect. The selection is the
+        // sequence's encoding class, never any carrier length.
+        check(UnicodeScalars.utf8Defect(bytes(0xED, 0xA0, 0x80))
+                == UnicodeScalars.Defect.SURROGATE,
+            "ED A0 80 (U+D800) is the surrogate class");
+        check(UnicodeScalars.utf8Defect(bytes(0x61, 0xED, 0xA0, 0x80, 0x62))
+                == UnicodeScalars.Defect.SURROGATE,
+            "an embedded surrogate code point encoding is the surrogate class");
+        check(UnicodeScalars.utf8Defect(bytes(0x61, 0x80, 0x62))
+                == UnicodeScalars.Defect.MALFORMED,
+            "a stray continuation byte is the malformed class");
+        check(UnicodeScalars.utf8Defect(bytes(0x61, 0x80, 0xED, 0xA0, 0x80))
+                == UnicodeScalars.Defect.MALFORMED,
+            "the first malformed sequence decides the class (the surrogate "
+                + "encoding after it is never reached)");
+        check(UnicodeScalars.utf8Defect(bytes(0xED, 0xA0))
+                == UnicodeScalars.Defect.MALFORMED,
+            "a truncated surrogate lead is the malformed class");
+        check(UnicodeScalars.utf8Defect(bytes(0xED, 0x9F, 0xBF)) == null,
+            "ED 9F BF (U+D7FF) is a scalar sequence with no defect");
+        check(UnicodeScalars.utf8Defect(new byte[0]) == null,
+            "the empty byte sequence carries no defect");
+        check(UnicodeScalars.utf8Defect("a\u00E9\uD83D\uDE00b".getBytes(
+                StandardCharsets.UTF_8)) == null,
+            "a scalar-valid UTF-8 sequence carries no defect");
+        check(UnicodeScalars.carrierDefect("\uD800")
+                == UnicodeScalars.Defect.SURROGATE,
+            "a lone high surrogate carrier is the surrogate class");
+        check(UnicodeScalars.carrierDefect("a\uD800b")
+                == UnicodeScalars.Defect.SURROGATE,
+            "an embedded lone surrogate carrier is the surrogate class, "
+                + "never the carrier's length");
+        check(UnicodeScalars.carrierDefect("a\uDC80b")
+                == UnicodeScalars.Defect.SURROGATE,
+            "an embedded lone low surrogate carrier is the surrogate class");
+        check(UnicodeScalars.carrierDefect("a\uD83D\uDE00b") == null,
+            "a valid surrogate pair carrier carries no defect");
+        check(UnicodeScalars.carrierDefect("ok") == null,
+            "a scalar carrier carries no defect");
     }
 
     static void testUtf8StrictDecode() {

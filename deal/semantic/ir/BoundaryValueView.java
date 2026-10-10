@@ -9,8 +9,24 @@ public record BoundaryValueView(
     Double numberValue,
     RuntimeDescriptor.Func functionSignature,
     List<BoundaryValueView> elements,
-    boolean decodedArrayMark
+    boolean decodedArrayMark,
+    UnicodeScalars.Defect unicodeDefect
 ) {
+
+    /**
+     * The classification-only view constructor: every kind but
+     * {@code INVALID_UNICODE} carries no encoding defect, and an invalid
+     * Unicode view without an explicit class is the malformed
+     * (non-surrogate) class.
+     */
+    public BoundaryValueView(ActualKind kind, String classId, Double numberValue,
+                             RuntimeDescriptor.Func functionSignature,
+                             List<BoundaryValueView> elements,
+                             boolean decodedArrayMark) {
+        this(kind, classId, numberValue, functionSignature, elements, decodedArrayMark,
+            kind == ActualKind.INVALID_UNICODE
+                ? UnicodeScalars.Defect.MALFORMED : null);
+    }
 
     public BoundaryValueView {
         Objects.requireNonNull(kind, "kind must not be null");
@@ -53,9 +69,10 @@ public record BoundaryValueView(
             }
             default -> {
                 // NULL, MISSING, BOOLEAN, STRING, BYTES, TABLE,
-                // ASYNC_OPERATION, NOTHING, INVALID_UNICODE: no payload
-                // field (a BYTES view is classification-only: it carries
-                // no contents, K6 item 11).
+                // ASYNC_OPERATION, NOTHING: no payload field (a BYTES view
+                // is classification-only: it carries no contents, K6 item
+                // 11). An INVALID_UNICODE view carries its closed encoding
+                // defect class in unicodeDefect instead.
             }
         }
         if (kind != ActualKind.CLASS && classId != null) {
@@ -79,6 +96,17 @@ public record BoundaryValueView(
                 "the decoded-array mark is legal only on an ARRAY view (a "
                     + "non-ARRAY view carrying it is a fail-closed producer defect)");
         }
+        if (kind != ActualKind.INVALID_UNICODE && unicodeDefect != null) {
+            throw new IllegalArgumentException(
+                "only an INVALID_UNICODE view carries an encoding defect; a "
+                    + kind + " view with a defect is a fail-closed producer defect");
+        }
+        if (kind == ActualKind.INVALID_UNICODE && unicodeDefect == null) {
+            throw new IllegalArgumentException(
+                "an INVALID_UNICODE view names its closed encoding defect "
+                    + "(the two pinned host string-carrier reasons); use "
+                    + "ofInvalidUnicode(Defect)");
+        }
         if (elements != null) {
             elements = List.copyOf(elements);
         }
@@ -86,7 +114,10 @@ public record BoundaryValueView(
 
     /** A payload-free view for {@code NULL}, {@code MISSING}, {@code BOOLEAN},
      *  {@code INT}, {@code STRING}, {@code BYTES}, {@code TABLE},
-     *  {@code ASYNC_OPERATION}, {@code NOTHING}, and {@code INVALID_UNICODE}. */
+     *  {@code ASYNC_OPERATION}, and {@code NOTHING}. An
+     *  {@code INVALID_UNICODE} view always names its defect; use
+     *  {@link #ofInvalidUnicode(UnicodeScalars.Defect)} — or this factory,
+     *  which defaults that view to the malformed class. */
     public static BoundaryValueView of(ActualKind kind) {
         Objects.requireNonNull(kind, "kind must not be null");
         return switch (kind) {
@@ -97,6 +128,22 @@ public record BoundaryValueView(
                 throw new IllegalArgumentException(kind
                     + " carries a payload; use the payload-bearing factory");
         };
+    }
+
+    /**
+     * An {@code INVALID_UNICODE} view carrying its closed encoding defect
+     * class: {@link UnicodeScalars.Defect#SURROGATE} for a surrogate code
+     * point sequence (the pinned UTF-16 surrogate code point reason) and
+     * {@link UnicodeScalars.Defect#MALFORMED} for every other malformed
+     * encoding (the pinned invalid UTF-8 encoding reason). The typed
+     * boundary projection renders both classes as the single closed
+     * {@code invalid-unicode} actual token; the host inner-reason render
+     * selects the pinned text from this class.
+     */
+    public static BoundaryValueView ofInvalidUnicode(UnicodeScalars.Defect defect) {
+        Objects.requireNonNull(defect, "defect must not be null");
+        return new BoundaryValueView(ActualKind.INVALID_UNICODE, null, null, null, null,
+            false, defect);
     }
 
     /**

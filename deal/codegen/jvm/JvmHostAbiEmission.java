@@ -897,7 +897,13 @@ final class JvmHostAbiEmission {
      * kind projection, the parameter and return cells with the pinned
      * E8010 texts, the descriptor-driven value check, the Lua-mirrored
      * inner reason, the load-time presence and defaults helpers, and the
-     * reflective invocation.
+     * reflective invocation. A declared {@code string} position admits the
+     * UTF-16 {@code java.lang.String} carrier and the backend-native raw
+     * UTF-8 {@code byte[]} carrier (decoded strictly); the carrier's closed
+     * encoding defect selects the pinned string-carrier reason
+     * ({@link JvmRuntime#hostStringReason(String)} /
+     * {@link JvmRuntime#hostStringReason(byte[])}), never the carrier's
+     * length.
      */
     private void emitSeams(StringBuilder out) {
         out.append("  // ---- The emitted host boundary-check seam (host-module-abi; "
@@ -930,6 +936,7 @@ final class JvmHostAbiEmission {
         out.append("    if (v == JvmRuntime.MISSING) return \"nil\";\n");
         out.append("    if (v == null) return \"table\";\n");
         out.append("    if (v instanceof java.lang.String) return \"string\";\n");
+        out.append("    if (v instanceof byte[]) return \"string\";\n");
         out.append("    if (v instanceof java.lang.Long || v instanceof java.lang.Integer || v instanceof java.lang.Double) return \"number\";\n");
         out.append("    if (v instanceof java.lang.Boolean) return \"boolean\";\n");
         out.append("    for (java.lang.Class<?> __k : v.getClass().getInterfaces()) { int __n = 0; for (java.lang.reflect.Method __m : __k.getMethods()) { if (java.lang.reflect.Modifier.isAbstract(__m.getModifiers())) __n++; } if (__n >= 1 && !(v instanceof $DealRt.Bytes) && !(v instanceof JvmRuntime.Table) && !(v instanceof JvmRuntime.Array) && !(v instanceof JvmRuntime.ClassInstance) && !(v instanceof JvmRuntime.FunctionValue) && !(v instanceof $DealRt.FnValue)) return \"function\"; }\n");
@@ -954,14 +961,7 @@ final class JvmHostAbiEmission {
         out.append("    return d;\n");
         out.append("  }\n\n");
         out.append("  static java.lang.String __hostStringReason(java.lang.String s) {\n");
-        out.append("    boolean malformed = false;\n");
-        out.append("    for (int i = 0; i < s.length(); i++) {\n");
-        out.append("      char c = s.charAt(i);\n");
-        out.append("      if (java.lang.Character.isHighSurrogate(c) && i + 1 < s.length() && java.lang.Character.isLowSurrogate(s.charAt(i + 1))) { i++; }\n");
-        out.append("      else if (java.lang.Character.isHighSurrogate(c) || java.lang.Character.isLowSurrogate(c)) { malformed = true; break; }\n");
-        out.append("    }\n");
-        out.append("    if (!malformed) return null;\n");
-        out.append("    return s.length() == 1 ? JvmRuntime.stringCarrierReason(true) : JvmRuntime.stringCarrierReason(false);\n");
+        out.append("    return JvmRuntime.hostStringReason(s);\n");
         out.append("  }\n\n");
         out.append("  static java.lang.String __hostInnerMessage(java.lang.String d, "
             + "java.lang.Object v, JvmRuntime.DealError inner) {\n");
@@ -1352,7 +1352,7 @@ final class JvmHostAbiEmission {
         out.append("      throw __hostFail(JvmRuntime.kindReason(\"int\"), d, v, oFile, oLine, oCol);\n");
         out.append("    }\n");
         out.append("    if (d.equals(\"number\")) { if (v instanceof java.lang.Double || v instanceof java.lang.Long) return v; throw __hostFail(JvmRuntime.kindReason(\"number\"), d, v, oFile, oLine, oCol); }\n");
-        out.append("    if (d.equals(\"string\")) { if (v instanceof java.lang.String __s) { java.lang.String __r = __hostStringReason(__s); if (__r != null) throw __hostFail(__r, d, v, oFile, oLine, oCol); return v; } throw __hostFail(JvmRuntime.kindReason(\"string\"), d, v, oFile, oLine, oCol); }\n");
+        out.append("    if (d.equals(\"string\")) { if (v instanceof java.lang.String __s) { java.lang.String __r = __hostStringReason(__s); if (__r != null) throw __hostFail(__r, d, v, oFile, oLine, oCol); return v; } if (v instanceof byte[] __b) { java.lang.String __r = JvmRuntime.hostStringReason(__b); if (__r != null) throw __hostFail(__r, d, v, oFile, oLine, oCol); return new java.lang.String(__b, java.nio.charset.StandardCharsets.UTF_8); } throw __hostFail(JvmRuntime.kindReason(\"string\"), d, v, oFile, oLine, oCol); }\n");
         // The bytes cell admits both representations of one buffer (K6
         // item 13 / H7): the production carrier `JvmRuntime.BytesValue`
         // the DEAL-side parameter cell checks before the host-facing

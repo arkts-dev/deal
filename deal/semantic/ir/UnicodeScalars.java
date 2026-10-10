@@ -65,7 +65,11 @@ public final class UnicodeScalars {
      * named {@code TYPE_DESCRIPTOR} failure, never through a
      * per-defect projection (D5: truncated, overlong, bad continuation,
      * surrogate, and above-U+10FFFF materializations all classify
-     * {@code Invalid} the same way).
+     * {@code Invalid} the same way). The closed {@link Defect} class of
+     * the first malformed sequence stays available beside the single
+     * classification for the host string-carrier reason selection
+     * ({@link #utf8Defect(byte[])} / {@link #carrierDefect(String)}); it
+     * never changes this classification.
      */
     public enum Invalid implements ScalarString {
 
@@ -111,6 +115,39 @@ public final class UnicodeScalars {
      *
      */
     public static ScalarString validate(byte[] utf8) {
+        return utf8Defect(utf8) == null
+            ? new Valid(new String(utf8, StandardCharsets.UTF_8))
+            : Invalid.INSTANCE;
+    }
+
+    /**
+     * The two closed invalid-encoding defect classes of the pinned host
+     * string-carrier reasons (the {@code HOST_STRING_INVALID_UTF8} /
+     * {@code HOST_STRING_SURROGATE} inner-only arms): a surrogate code
+     * point encoding is the surrogate class, every other malformed
+     * sequence the malformed class. The class refines the single
+     * {@link Invalid} classification; it never replaces it.
+     */
+    public enum Defect {
+
+        /** A surrogate code point encoding ({@code ED A0..BF ...}). */
+        SURROGATE,
+
+        /** Every other malformed sequence (truncated, overlong, bad continuation,
+         *  above U+10FFFF). */
+        MALFORMED
+    }
+
+    /**
+     * The defect class of the <em>first</em> malformed sequence of a raw
+     * UTF-8 byte sequence, or {@code null} when the complete sequence is
+     * scalar-valid. The walk mirrors the Lua reference's
+     * {@code __rt.utf8_status} (deal/runtime.lua): the surrogate class is
+     * selected only for a syntactically well-formed three-byte sequence
+     * encoding U+D800..U+DFFF, and the walk stops at the first defect, so
+     * the class is deterministic.
+     */
+    public static Defect utf8Defect(byte[] utf8) {
         Objects.requireNonNull(utf8, "utf8 must not be null");
         int n = utf8.length;
         int i = 0;
@@ -128,44 +165,55 @@ public final class UnicodeScalars {
             } else {
                 // A stray 80..BF continuation lead, a C0/C1 overlong
                 // 2-byte lead, or an F5..FF above-U+10FFFF lead.
-                return Invalid.INSTANCE;
+                return Defect.MALFORMED;
             }
             if (i + len > n) {
-                return Invalid.INSTANCE; // truncated
+                return Defect.MALFORMED; // truncated
             }
             if (len >= 2) {
                 int b2 = utf8[i + 1] & 0xFF;
                 if (b2 < 0x80 || b2 > 0xBF) {
-                    return Invalid.INSTANCE; // bad continuation
+                    return Defect.MALFORMED; // bad continuation
                 }
                 if (len == 3) {
                     int b3 = utf8[i + 2] & 0xFF;
                     if (b3 < 0x80 || b3 > 0xBF) {
-                        return Invalid.INSTANCE; // bad continuation
+                        return Defect.MALFORMED; // bad continuation
                     }
                     if (b1 == 0xE0 && b2 < 0xA0) {
-                        return Invalid.INSTANCE; // overlong
+                        return Defect.MALFORMED; // overlong
                     }
                     if (b1 == 0xED && b2 > 0x9F) {
-                        return Invalid.INSTANCE; // surrogate U+D800..U+DFFF
+                        return Defect.SURROGATE; // U+D800..U+DFFF
                     }
                 } else if (len == 4) {
                     int b3 = utf8[i + 2] & 0xFF;
                     int b4 = utf8[i + 3] & 0xFF;
                     if (b3 < 0x80 || b3 > 0xBF || b4 < 0x80 || b4 > 0xBF) {
-                        return Invalid.INSTANCE; // bad continuation
+                        return Defect.MALFORMED; // bad continuation
                     }
                     if (b1 == 0xF0 && b2 < 0x90) {
-                        return Invalid.INSTANCE; // overlong
+                        return Defect.MALFORMED; // overlong
                     }
                     if (b1 == 0xF4 && b2 > 0x8F) {
-                        return Invalid.INSTANCE; // above U+10FFFF
+                        return Defect.MALFORMED; // above U+10FFFF
                     }
                 }
             }
             i += len;
         }
-        return new Valid(new String(utf8, StandardCharsets.UTF_8));
+        return null;
+    }
+
+    /**
+     * The defect class of one UTF-16 carrier: a carrier with a lone
+     * surrogate unit is the surrogate class, a scalar sequence carries no
+     * defect. A UTF-16 carrier has no other malformed class, so the
+     * selection is scalar validity itself, never the carrier's length.
+     */
+    public static Defect carrierDefect(String carrier) {
+        Objects.requireNonNull(carrier, "carrier must not be null");
+        return loneSurrogateOffset(carrier) >= 0 ? Defect.SURROGATE : null;
     }
 
     /**
