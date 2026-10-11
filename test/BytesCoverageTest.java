@@ -1576,6 +1576,100 @@ public class BytesCoverageTest {
     }
 
     // =========================================================================
+    // 4b2. The byte-element descriptor failure's origin (ISSUE-0769)
+    // =========================================================================
+
+    /** The byte-element assignment program of the descriptor-origin drive. */
+    private static final String CELL_ORIGIN_SOURCE = """
+        export function main(): null {
+          let b: bytes = bytes(4);
+          b[0] = 1;
+          return null;
+        }
+        """;
+
+    /**
+     * The byte-element assignment cell's failed descriptor check carries
+     * the lowerer-selected assignment origin on every consumer
+     * (ISSUE-0769): the oracle attaches the boundary op's own origin, the
+     * JVM runtime's {@code bytesBounds} re-seats the leaf failure, and the
+     * production Lua chunk's {@code __bytesBounds} does the same — never
+     * the target matcher's internal {@code "-"} placeholder.
+     */
+    private static void testByteElementDescriptorOrigin() throws Exception {
+        System.out.println("-- the byte-element descriptor failure's origin "
+            + "(ISSUE-0769) --");
+        String origin = "main.deal:4:3";
+        // The oracle's closed cell render of the same values.
+        BoundaryOutcome outcome = BoundaryExecutor.check(FailurePolicyId.BYTES_WRITE,
+            RuntimeDescriptor.Int.INSTANCE,
+            BoundaryValueView.of(deal.semantic.ir.ActualKind.STRING),
+            BoundaryContext.bytesBounds(0, 4));
+        check(outcome instanceof BoundaryOutcome.Fail,
+            "the oracle's byte-element cell rejects the wrong-kind input: " + outcome);
+        if (!(outcome instanceof BoundaryOutcome.Fail fail)) {
+            return;
+        }
+        BoundaryFailure cell = fail.failure();
+        checkEq("E8001", cell.code().name(), "the cell's code");
+        checkEq("expected int", cell.message(), "the cell's message");
+        checkEq("int", cell.expected(), "the cell's expected token");
+        checkEq("string", cell.actual(), "the cell's actual token");
+        // The JVM runtime cell: the identical tuple at the boundary origin.
+        try {
+            deal.codegen.jvm.JvmRuntime.bytesBounds("k", "d", "p", "junk", 0L, 4L,
+                "int", "int", origin);
+            fail("the JVM byte-element cell rejects the wrong-kind input");
+        } catch (deal.codegen.jvm.JvmRuntime.DealError error) {
+            checkEq(cell.code().name(), error.code, "the JVM cell's code");
+            checkEq(cell.message(), error.msg, "the JVM cell's message");
+            checkEq(cell.expected(), error.expected, "the JVM cell's expected token");
+            checkEq(cell.actual(), error.actual, "the JVM cell's actual token");
+            checkEq(origin, error.origin, "the JVM cell re-seats the lowerer-selected "
+                + "origin (never the matcher's internal placeholder)");
+        }
+        // The production Lua chunk's cell is the same re-seat: the emitted
+        // function body re-seats the failed descriptor check onto the
+        // lowerer-selected assignment expression before it raises (the cell
+        // is a defensive check no legal source reaches).
+        Path root = Files.createTempDirectory("bytes-cell-origin-");
+        try {
+            Compiled compiled = compileFocused(root, CELL_ORIGIN_SOURCE, null, null);
+            check(compiled != null, "the byte-element origin seed compiles");
+            if (compiled == null) {
+                return;
+            }
+            String chunk = compiled.luaSource();
+            String cellBody = emittedFunctionBody(chunk, "local function __bytesBounds(");
+            check(cellBody != null,
+                "the production chunk carries the byte-element cell");
+            if (cellBody == null) {
+                return;
+            }
+            int leaf = cellBody.indexOf(
+                "local ok, checked = pcall(__bcheck, desc, kind, input)");
+            int reseat = cellBody.indexOf("checked.o = origin", leaf);
+            int raise = cellBody.indexOf("error(checked, 0)", reseat);
+            check(leaf >= 0 && reseat > leaf && raise > reseat,
+                "the emitted byte-element cell re-seats the failed descriptor check's "
+                    + "origin onto the lowerer-selected assignment expression before "
+                    + "it raises");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /** The source of one named prelude function of the emitted chunk, or null. */
+    private static String emittedFunctionBody(String chunk, String header) {
+        int at = chunk.indexOf(header);
+        if (at < 0) {
+            return null;
+        }
+        int end = chunk.indexOf("\nend\n", at);
+        return end < 0 ? null : chunk.substring(at, end + 5);
+    }
+
+    // =========================================================================
     // 4c. The decoded-array mark: the real decode producers, the exact
     //     tuples, and projection-only inertness (ISSUE-0710)
     // =========================================================================
@@ -5475,6 +5569,7 @@ public class BytesCoverageTest {
         testReadShapeAndWriteChain();
         testBytesElementAssignmentOrigin();
         testBytesBoundaryContext();
+        testByteElementDescriptorOrigin();
         testDecodedArrayMark();
         testIntegralNumberFormArrayElements();
         testCanonicalFunctionSignatureFieldBoundaries();

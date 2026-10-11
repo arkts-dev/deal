@@ -1043,6 +1043,25 @@ function __rt.from_lua_function(sig, raw_f)
   end)
 end
 
+--- The load-time class-metadata failure of one declared host class
+-- (canonical failure-projection authority P1/P4): the emitted chunk
+-- registers its own closed-arm renderer on the deployed runtime at load
+-- (`__rt.__hostLoadMetadata`), so `load_host` renders
+-- HOST_LOAD_INVALID_METADATA through the authority — the arm's own
+-- template instantiated with the closed named parameters, at the
+-- importing statement's origin — and composes no failure text of its
+-- own. An unregistered renderer (the runtime driven outside a production
+-- artifact) is a fail-closed producer defect, never a textual fallback.
+local function host_metadata_failure(name, module_path, kind, file, line, column)
+  local render = __rt.__hostLoadMetadata
+  if render == nil then
+    error("the host-load metadata arm renderer is not registered on the "
+      .. "deployed runtime (the emitted chunk registers it at load; a "
+      .. "producer defect)", 0)
+  end
+  error(render(name, module_path, kind, file, line, column), 0)
+end
+
 --- Load and validate a host module at import time.
 --
 -- @param module_path string  the raw import specifier as written (required
@@ -1056,12 +1075,14 @@ end
 --
 -- Errors: E8011 at load — require failure, non-table module result, missing
 -- declared export, invalid function/class export shape, pre-wrapped sig
--- mismatch or non-function .f, class identity mismatch, missing/non-table
--- defaults, present-but-non-table <C>_fields, and any declared descriptor
--- the canonical parser rejects (including every legacy dialect spelling).
--- E8010 never fires at load for legal declared maps (every emitted
--- Type.Func descriptor is a canonical function atom); call-time violations
--- raise E8010 inside the wrapped functions.
+-- mismatch or non-function .f, class identity mismatch, and the
+-- HOST_LOAD_INVALID_METADATA arm for missing/non-table defaults and
+-- present-but-non-table <C>_fields (rendered by the artifact-registered
+-- arm renderer at the importing statement's origin); plus any declared
+-- descriptor the canonical parser rejects (including every legacy dialect
+-- spelling). E8010 never fires at load for legal declared maps (every
+-- emitted Type.Func descriptor is a canonical function atom); call-time
+-- violations raise E8010 inside the wrapped functions.
 function __rt.load_host(module_path, declared, file, line, column)
   if type(declared) ~= "table" then
     error(__rt._err("E8011", "host module declarations must be a table", file, line, column, "table", type(declared)))
@@ -1110,20 +1131,24 @@ function __rt.load_host(module_path, declared, file, line, column)
         error(__rt._err("E8011", "host class export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' has identity mismatch: expected " .. descriptor .. ", got " .. tostring(v.__classname), file, line, column, descriptor, v.__classname))
       end
       exports[name] = v
-      -- <C>_defaults is mandatory (construction depends on it).
+      -- <C>_defaults is mandatory (construction depends on it); a
+      -- missing or non-table entry is the HOST_LOAD_INVALID_METADATA
+      -- arm's `defaults` kind, rendered by the artifact-registered arm
+      -- renderer.
       local defaults_key = name .. "_defaults"
       local defaults = raw[defaults_key]
       if type(defaults) ~= "table" then
-        error(__rt._err("E8011", "host class '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' is missing its defaults table", file, line, column, "table", type(defaults)))
+        host_metadata_failure(name, module_path, "defaults", file, line, column)
       end
       exports[defaults_key] = defaults
       -- <C>_fields is optional: copied through when the raw host table
-      -- supplies it (E8011 if present but not a table); absence is tolerated.
+      -- supplies it (an arm-rendered metadata failure when present but
+      -- not a table); absence is tolerated.
       local fields_key = name .. "_fields"
       local fields = raw[fields_key]
       if fields ~= nil then
         if type(fields) ~= "table" then
-          error(__rt._err("E8011", "host class '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' supplies a non-table _fields value", file, line, column, "table", type(fields)))
+          host_metadata_failure(name, module_path, "fields", file, line, column)
         end
         exports[fields_key] = fields
       end

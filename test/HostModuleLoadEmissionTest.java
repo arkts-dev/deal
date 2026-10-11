@@ -24,6 +24,8 @@ import deal.semantic.ir.BoundaryFailure;
 import deal.semantic.ir.BoundaryOutcome;
 import deal.semantic.ir.BoundaryValueView;
 import deal.semantic.ir.ExecutableLoweredProject;
+import deal.semantic.ir.FailureArmId;
+import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
@@ -605,9 +607,11 @@ public class HostModuleLoadEmissionTest {
             "host export 'missing' in module 'host/missing_export' is not a function",
             -1, -1, "non-function-export-shape");
 
-        // The declared-class seeds: a class identity mismatch, a missing
-        // <C>_defaults, and a present-but-non-table <C>_fields all fail the
-        // init with their pinned E8011.
+        // The declared-class seeds: a class identity mismatch fails with
+        // its pinned E8011, and the class-metadata defects (a missing or
+        // non-table <C>_defaults, a present-but-non-table <C>_fields)
+        // render the closed HOST_LOAD_INVALID_METADATA arm at the import
+        // statement's origin on the production artifact (ISSUE-0769).
         checkLuaSeed(cfgFixture, "host/cfg.lua",
             CFG_LUA.replace("@$external/host/cfg/ServerConfig",
                 "@$external/host/cfg/Other"),
@@ -615,17 +619,18 @@ public class HostModuleLoadEmissionTest {
                 + "mismatch: expected @$external/host/cfg/ServerConfig, got "
                 + "@$external/host/cfg/Other",
             -1, -1, "cfg-identity-mismatch");
-        checkLuaSeed(cfgFixture, "host/cfg.lua",
+        String defaultsMessage = invalidMetadata("ServerConfig", CFG_SPECIFIER,
+            "defaults").message();
+        String fieldsMessage = invalidMetadata("Endpoint", CFG_SPECIFIER,
+            "fields").message();
+        String cfgOrigin = importOrigin(cfgFixture, CFG_SPECIFIER);
+        checkLuaArmSeed(cfgFixture, "host/cfg.lua",
             CFG_LUA.replace("ServerConfig_defaults", "ServerConfig_other"),
-            "host class 'ServerConfig' in module 'host/cfg' is missing its "
-                + "defaults table",
-            -1, -1, "cfg-missing-defaults");
-        checkLuaSeed(cfgFixture, "host/cfg.lua",
+            defaultsMessage, cfgOrigin, "cfg-missing-defaults");
+        checkLuaArmSeed(cfgFixture, "host/cfg.lua",
             CFG_LUA.replace("ServerConfig_defaults = { port = 8080,",
                 "ServerConfig_defaults = 42, ServerConfig_ignored = {"),
-            "host class 'ServerConfig' in module 'host/cfg' is missing its "
-                + "defaults table",
-            -1, -1, "cfg-non-table-defaults");
+            defaultsMessage, cfgOrigin, "cfg-non-table-defaults");
         checkLuaSeed(cfgFixture, "host/cfg.lua",
             CFG_LUA.replace(
                 "ServerConfig = { __kind = \"class\", __classname = "
@@ -634,12 +639,92 @@ public class HostModuleLoadEmissionTest {
             "host export 'ServerConfig' in module 'host/cfg' is not a class meta "
                 + "table",
             -1, -1, "cfg-invalid-class-shape");
-        checkLuaSeed(cfgFixture, "host/cfg.lua",
+        checkLuaArmSeed(cfgFixture, "host/cfg.lua",
             CFG_LUA.replace("describe = function(s)",
                 "Endpoint_fields = 42, describe = function(s)"),
-            "host class 'Endpoint' in module 'host/cfg' supplies a non-table _fields "
-                + "value",
-            -1, -1, "cfg-non-table-fields");
+            fieldsMessage, cfgOrigin, "cfg-non-table-fields");
+    }
+
+    /**
+     * The canonical {@code HOST_LOAD_INVALID_METADATA} render of one
+     * declared class's metadata defect (the authority every production
+     * consumer must equal).
+     */
+    private static BoundaryFailure invalidMetadata(String name, String module,
+            String kind) {
+        return FailureContractRegistry.render(
+            FailureArmId.HOST_LOAD_INVALID_METADATA,
+            Map.of("name", name, "module", module, "defaults|fields", kind),
+            null, null, null);
+    }
+
+    /** The import-statement origin text of one host import of a fixture. */
+    private static String importOrigin(Baseline fixture, String rawSpecifier) {
+        SemanticLowerer.ProjectLoweringResult result = fixture.result();
+        if (result.project() == null) {
+            throw new IllegalStateException("the fixture does not lower: "
+                + result.diagnostics());
+        }
+        SemanticOp importOp = hostImportOp(result.project(), rawSpecifier);
+        return importOp.origin().sourceId() + ":"
+            + importOp.origin().span().startLine() + ":"
+            + importOp.origin().span().startColumn();
+    }
+
+    /**
+     * One arm-shaped LuaJIT seed drive (ISSUE-0769): the importing
+     * module's init must fail with the closed arm's carrier — the exact
+     * code/message at the pinned import origin and no fabricated
+     * expected/actual field.
+     */
+    private static void checkLuaArmSeed(Baseline fixture, String hostFile,
+            String rawLua, String expectedMessage, String origin, String label)
+            throws Exception {
+        Path workspace = Files.createTempDirectory("host-load-lua-arm-seed");
+        try {
+            if (fixture.result().project() == null) {
+                fail("the arm seed fixture '" + label + "' lowers: "
+                    + fixture.result().diagnostics());
+                return;
+            }
+            Path artifact = workspace.resolve("project.lua");
+            Files.writeString(artifact, fixture.lua(), StandardCharsets.UTF_8);
+            deployRuntime(workspace);
+            writeFileIn(workspace, hostFile, rawLua);
+            Path probe = workspace.resolve("probe.lua");
+            Files.writeString(probe,
+                luaArmFailureProbe(artifact, expectedMessage, origin),
+                StandardCharsets.UTF_8);
+            ProcessOutcome run = runProcess(List.of("luajit",
+                probe.toAbsolutePath().toString()), workspace, true);
+            check(run.exitCode() == 0 && run.stdout().contains("PROBE-OK"),
+                "the arm seed '" + label + "' renders the canonical "
+                    + "HOST_LOAD_INVALID_METADATA tuple: exit=" + run.exitCode()
+                    + " stdout=" + escaped(run.stdout()) + " stderr="
+                    + escaped(run.stderr()));
+        } finally {
+            deleteRecursively(workspace);
+        }
+    }
+
+    /** The LuaJIT arm-shaped failure probe: the closed carrier's full tuple. */
+    private static String luaArmFailureProbe(Path artifact, String message,
+            String origin) {
+        return """
+            local function fail(m) print("PROBE-FAIL: " .. m) os.exit(1) end
+            dofile("%s")
+            local ok, err = __dealMain()
+            if ok then fail("the init succeeded") end
+            if type(err) ~= "table" or err.__d ~= true or err.code ~= "E8011" then
+              fail("code: " .. tostring(type(err) == "table" and err.code))
+            end
+            if err.m ~= %s then fail("message: " .. tostring(err.m)) end
+            if err.o ~= %s then fail("origin: " .. tostring(err.o)) end
+            if err.e ~= nil then fail("expected: " .. tostring(err.e)) end
+            if err.a ~= nil then fail("actual: " .. tostring(err.a)) end
+            print("PROBE-OK")
+            """.formatted(artifact.toAbsolutePath().toString(), luaString(message),
+                luaString(origin));
     }
 
     /**
@@ -1346,53 +1431,44 @@ public class HostModuleLoadEmissionTest {
                 }
                 """, "E8011",
                 "missing host export 'missing' in module 'host/missing_export'",
-                ":6:1", "missing-export-at-6:1");
+                importOrigin(fixture, MISSING_SPECIFIER), "missing-export-at-6:1");
         }
 
-        // The declared-class seed: a host class without its mandatory
-        // <C>_defaults field fails the load entry with the closed
-        // HOST_LOAD_INVALID_METADATA arm — the canonical message the registry
-        // renders for {name, module, reason=defaults} — and no expected/actual
-        // fields.
-        String defaultsArmMessage = deal.semantic.ir.FailureContractRegistry.render(
-            deal.semantic.ir.FailureArmId.HOST_LOAD_INVALID_METADATA,
-            java.util.Map.of("name", "ServerConfig", "module", "host/cfg",
-                "defaults|fields", "defaults"),
-            null, null, null).message();
-        {
-            checkJvmLoadFailure(cfgFixture, "HostCfg.java", """
-                final class HostCfg {
-                  public static final java.util.Map<String, Object> Endpoint_defaults =
-                      java.util.Map.of("path", "/");
-                  public static Object describe(Object s) { return "cfg"; }
-                }
-                """, "E8011", defaultsArmMessage,
-                ":1:1", "missing-defaults");
-        }
-
-        // The same cell's non-map seed: a present <C>_defaults field of
-        // another shape renders the identical arm.
-        {
-            checkJvmLoadFailure(cfgFixture, "HostCfg.java", """
-                final class HostCfg {
-                  public static final java.util.Map<String, Object> Endpoint_defaults =
-                      java.util.Map.of("path", "/");
-                  public static final int ServerConfig_defaults = 42;
-                  public static Object describe(Object s) { return "cfg"; }
-                }
-                """, "E8011", defaultsArmMessage,
-                ":1:1", "non-map-defaults");
-        }
+        // The declared-class seeds: a host class without its mandatory
+        // <C>_defaults field and a host class whose <C>_defaults is not a
+        // map both render the closed HOST_LOAD_INVALID_METADATA arm — the
+        // authority's message at the import statement's origin, no
+        // expected/actual fields (ISSUE-0769).
+        String cfgOrigin = importOrigin(cfgFixture, CFG_SPECIFIER);
+        checkJvmLoadFailure(cfgFixture, "HostCfg.java", """
+            final class HostCfg {
+              public static final java.util.Map<String, Object> Endpoint_defaults =
+                  java.util.Map.of("path", "/");
+              public static Object describe(Object s) { return "cfg"; }
+            }
+            """, "E8011",
+            invalidMetadata("ServerConfig", CFG_SPECIFIER, "defaults").message(),
+            cfgOrigin, "missing-defaults");
+        checkJvmLoadFailure(cfgFixture, "HostCfg.java", """
+            final class HostCfg {
+              public static final java.util.Map<String, Object> Endpoint_defaults =
+                  java.util.Map.of("path", "/");
+              public static final Object ServerConfig_defaults = 42;
+              public static Object describe(Object s) { return "cfg"; }
+            }
+            """, "E8011",
+            invalidMetadata("ServerConfig", CFG_SPECIFIER, "defaults").message(),
+            cfgOrigin, "wrong-kind-defaults");
     }
 
     /**
      * One JVM load-failure drive: the artifact compiles and runs with the
      * given host implementation, and the module init must fail with the
-     * pinned E8011 (and, when pinned, the origin suffix).
+     * pinned E8011 tuple (the message and, when pinned, the exact origin).
      */
     private static void checkJvmLoadFailure(Baseline fixture, String hostFileName,
             String hostSource, String expectedCode, String expectedMessage,
-            String originSuffix, String label) throws Exception {
+            String expectedOrigin, String label) throws Exception {
         Path workspace = Files.createTempDirectory("host-load-jvm-seed");
         try {
             SemanticLowerer.ProjectLoweringResult result = fixture.result();
@@ -1408,7 +1484,7 @@ public class HostModuleLoadEmissionTest {
             Files.writeString(workspace.resolve(hostFileName), hostSource,
                 StandardCharsets.UTF_8);
             Files.writeString(workspace.resolve("HostLoadFailureProbe.java"),
-                jvmFailureProbe(expectedCode, expectedMessage, originSuffix),
+                jvmFailureProbe(expectedCode, expectedMessage, expectedOrigin),
                 StandardCharsets.UTF_8);
             Path classes = workspace.resolve("classes");
             Files.createDirectories(classes);
@@ -1437,10 +1513,16 @@ public class HostModuleLoadEmissionTest {
 
     /** The JVM load-failure probe of one pinned E8011. */
     private static String jvmFailureProbe(String expectedCode,
-            String expectedMessage, String originSuffix) {
-        String originCheck = originSuffix == null ? ""
-            : "      if (!error.origin.endsWith(" + quoted(originSuffix)
-                + ")) { throw new IllegalStateException(\"FAIL: origin \" + error.origin); }\n";
+            String expectedMessage, String expectedOrigin) {
+        String originCheck = expectedOrigin == null ? ""
+            : "      if (!" + quoted(expectedOrigin)
+                + ".equals(error.origin)) { throw new IllegalStateException("
+                + "\"FAIL: origin \" + error.origin); }\n";
+        // Every HOST_LOAD arm this probe drives (a missing export and the
+        // class-metadata defects) declares no expected/actual field: the
+        // probe asserts the complete canonical tuple (a fabricated field
+        // fails by name), so the production load path can never publish
+        // one for these arms.
         return """
             final class HostLoadFailureProbe {
               public static void main(String[] args) {
@@ -1455,8 +1537,8 @@ public class HostModuleLoadEmissionTest {
                     throw new IllegalStateException("FAIL: message " + error.msg);
                   }
                   if (error.expected != null || error.actual != null) {
-                    throw new IllegalStateException("FAIL: the arm declares no "
-                        + "expected/actual, got " + error.expected + "/" + error.actual);
+                    throw new IllegalStateException("FAIL: fabricated expected/actual "
+                        + error.expected + "/" + error.actual);
                   }
             $ORIGIN$      System.out.println("PROBE-OK " + error.origin);
                 }

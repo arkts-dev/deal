@@ -2645,28 +2645,63 @@ test("load_host non-class export for class descriptor raises E8011", function()
   end, "E8011")
 end)
 
-test("load_host class missing defaults raises E8011", function()
-  assert_error(function()
-    __rt.load_host(HOST_FIXTURE, { NoDefaults = "@$external/host.cfg/NoDefaults" })
+test("load_host class metadata failures render the registered arm renderer", function()
+  -- The emitted chunk registers its closed-arm renderer on the deployed
+  -- runtime (`__rt.__hostLoadMetadata`); load_host delegates every
+  -- class-metadata defect (a missing or non-table <C>_defaults, a
+  -- present-but-non-table <C>_fields) to it — the arm's own template at
+  -- the importing statement's origin, never a runtime-composed text
+  -- (ISSUE-0769).
+  __rt.__hostLoadMetadata = nil
+  local calls = {}
+  __rt.__hostLoadMetadata = function(name, module_path, kind, file, line, column)
+    calls[#calls + 1] = { name = name, module = module_path, kind = kind,
+      file = file, line = line, column = column }
+    return { code = "E8011", message = "arm:" .. name .. "/" .. kind }
+  end
+  local missing = assert_error(function()
+    __rt.load_host(HOST_FIXTURE,
+      { NoDefaults = "@$external/host.cfg/NoDefaults" }, "probe.deal", 3, 9)
   end, "E8011")
+  assert(missing.message == "arm:NoDefaults/defaults")
+  assert(#calls == 1 and calls[1].name == "NoDefaults"
+    and calls[1].module == HOST_FIXTURE and calls[1].kind == "defaults"
+    and calls[1].file == "probe.deal" and calls[1].line == 3
+    and calls[1].column == 9)
+  calls = {}
+  local wrongKind = assert_error(function()
+    __rt.load_host(HOST_FIXTURE,
+      { BadDefaults = "@$external/host.cfg/BadDefaults" }, "probe.deal", 4, 1)
+  end, "E8011")
+  assert(wrongKind.message == "arm:BadDefaults/defaults")
+  assert(#calls == 1 and calls[1].kind == "defaults")
+  calls = {}
+  local badFields = assert_error(function()
+    __rt.load_host(HOST_FIXTURE,
+      { BadFields = "@$external/host.cfg/BadFields" }, "probe.deal", 5, 1)
+  end, "E8011")
+  assert(badFields.message == "arm:BadFields/fields")
+  assert(#calls == 1 and calls[1].name == "BadFields" and calls[1].kind == "fields")
+  __rt.__hostLoadMetadata = nil
 end)
 
-test("load_host class non-table defaults raises E8011", function()
-  assert_error(function()
-    __rt.load_host(HOST_FIXTURE, { BadDefaults = "@$external/host.cfg/BadDefaults" })
-  end, "E8011")
+test("load_host class metadata failures without the registered renderer fail closed", function()
+  -- The runtime composes no failure text of its own: outside the emitted
+  -- artifact (no registered arm renderer) the defect is a fail-closed
+  -- producer error, never a textual fallback.
+  __rt.__hostLoadMetadata = nil
+  local ok, err = pcall(function()
+    __rt.load_host(HOST_FIXTURE,
+      { NoDefaults = "@$external/host.cfg/NoDefaults" }, "probe.deal", 3, 9)
+  end)
+  assert(not ok and type(err) == "string"
+    and string.find(err, "arm renderer is not registered", 1, true) ~= nil)
 end)
 
 test("load_host class supplied _fields copied through", function()
   local host = __rt.load_host(HOST_FIXTURE, { ServerConfig = "@$external/host.cfg/ServerConfig" })
   assert(type(host.ServerConfig_fields) == "table")
   assert(host.ServerConfig_fields[1].name == "port")
-end)
-
-test("load_host class non-table _fields raises E8011", function()
-  assert_error(function()
-    __rt.load_host(HOST_FIXTURE, { BadFields = "@$external/host.cfg/BadFields" })
-  end, "E8011")
 end)
 
 test("load_host class absent _fields tolerated", function()
