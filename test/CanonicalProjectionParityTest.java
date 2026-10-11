@@ -1245,6 +1245,7 @@ public class CanonicalProjectionParityTest {
                 assertAbsentAsyncHandle(compiled, pin);
                 assertAsyncHandleCarriers(compiled, pin);
                 assertCyclicAsyncHandle(compiled, pin);
+                assertNumericAsyncHandleBoundaries(compiled, pin);
                 assertHarnessNullLabelAbsentHandle(compiled, pin);
             }
         } finally {
@@ -1428,6 +1429,85 @@ public class CanonicalProjectionParityTest {
         checkEq(null, firstDifferingField(oracle, jvm), compiled.spec().what()
             + ": the oracle and the JVM artifact render the identical "
             + "cyclic-carrier tuple");
+    }
+
+    /**
+     * The numeric-boundary invalid-handle regressions of the async shape
+     * fixture: immediately inside and outside both signed32 boundaries the
+     * integer host carrier is a plain numeric carrier, so the oracle's
+     * program drive must classify the returned value {@code number}
+     * without applying the typed-boundary signed32 payload validation, and
+     * both production artifacts driven with the corresponding host
+     * carriers (a Lua number and a JVM {@code Long}) must render the
+     * identical complete tuple. The pre-correction classification
+     * validated the {@code IntValue} payload before the closed arm's own
+     * render, so the out-of-signed32 drives threw
+     * {@code IllegalArgumentException} instead of producing the DEAL
+     * failure.
+     */
+    private static void assertNumericAsyncHandleBoundaries(Compiled compiled,
+            SidecarExpectations.ErrorExpectation pin) throws Exception {
+        for (long value : new long[] { 2147483647L, 2147483648L, -2147483648L,
+                -2147483649L }) {
+            String where = compiled.spec().what() + " (oracle, integer carrier "
+                + value + ")";
+            Tuple oracle = oracleTupleWith(compiled,
+                new SemanticOracle.HostResponder() {
+                    @Override
+                    public AsyncStartOutcome startAsync(ModuleId module,
+                            String export, RuntimeDescriptor.Func descriptor,
+                            List<SemanticOracle.Value> args,
+                            String operationLabel) {
+                        return new AsyncStartOutcome.InvalidHandle(
+                            new SemanticOracle.Value.IntValue(value));
+                    }
+                });
+            checkEq("E8010", oracle.code(), where + ": the E8010 code");
+            checkEq("host async function must return an async operation, got number",
+                oracle.message(), where + ": the number message");
+            checkEq("async operation", oracle.expected(), where
+                + ": the expected token");
+            checkEq("number", oracle.actual(), where
+                + ": the numeric carrier's shared host-carrier projection");
+            checkEq(pin.sourceFile(), oracle.file(), where
+                + ": the pinned call-origin file");
+            checkEq(pin.line(), oracle.line(), where
+                + ": the pinned call-origin line");
+            checkEq(pin.column(), oracle.column(), where
+                + ": the pinned call-origin column");
+            Tuple lua = luaArtifactWithHost(compiled, "async_shape_bad",
+                numericHostLua(value));
+            checkEq(null, firstDifferingField(oracle, lua), where
+                + ": the oracle and the LuaJIT artifact render the identical "
+                + "tuple");
+            Tuple jvm = jvmArtifactWithHost(compiled, "async_shape_bad",
+                numericHostJava(value));
+            checkEq(null, firstDifferingField(oracle, jvm), where
+                + ": the oracle and the JVM artifact render the identical "
+                + "tuple");
+        }
+    }
+
+    /** The Lua host carrier of one numeric-boundary drive: a plain number. */
+    private static String numericHostLua(long value) {
+        return """
+            return {
+              fetchValue = function()
+                return %d
+              end,
+            }
+            """.formatted(value);
+    }
+
+    /** The JVM host carrier of one numeric-boundary drive: a boxed long. */
+    private static String numericHostJava(long value) {
+        return """
+            final class HostAsync_shape_bad {
+              public static Object fetchValue() {
+                return java.lang.Long.valueOf(%dL);
+              }
+            }
+            """.formatted(value);
     }
 
     /**

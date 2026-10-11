@@ -466,7 +466,10 @@ public final class SemanticOracle {
              * {@code number}, the DEAL language-null sentinel, bytes, arrays
              * and class instances project {@code table}, and the invalid
              * handle's own carrier kind is never lost or refined by the
-             * typed-boundary classification. Array carriers classify by
+             * typed-boundary classification. An integer carrier's payload is
+             * never validated against signed32: a host may return any long,
+             * and both target host classifiers project every numeric carrier
+             * {@code number}. Array carriers classify by
              * their outer kind without materializing element views, so a
              * reference-cyclic host array projects {@code table} exactly
              * like both target host classifiers.
@@ -3662,12 +3665,12 @@ public final class SemanticOracle {
 
         /**
          * The shallow classification view of one value: the value's own
-         * outer carrier kind only, with no payload walk. An invalid async
-         * handle needs only that outer carrier kind, so a reference-cyclic
-         * host array is a legal carrier: both target host classifiers
-         * project it {@code table}, and materializing its element views
-         * would dive into the cycle instead of reproducing the same
-         * closed {@code ASYNC_SHAPE} tuple.
+         * outer carrier kind only, with no payload walk and with the
+         * typed-boundary int payload validation intact. Every non-array
+         * value of an ordinary typed boundary executes through this view;
+         * the invalid async handle's carrier classification
+         * ({@link #carrierViewOfValue}) keeps the shallow shape without
+         * that validation.
          */
         private BoundaryValueView shallowViewOfValue(Value value) {
             return switch (value) {
@@ -3708,6 +3711,26 @@ public final class SemanticOracle {
                     BoundaryValueView.ofClass(classValue.classId().text());
                 case Value.SlotValue slot -> BoundaryValueView.of(ActualKind.INT);
             };
+        }
+
+        /**
+         * The carrier-classification view of one invalid async handle: the
+         * returned value's outer carrier kind only, without the
+         * typed-boundary payload validation. An integer carrier's payload is
+         * not a typed-boundary int — a host may return any long, and both
+         * target host classifiers project every numeric carrier
+         * {@code number} — so the signed32 check of
+         * {@link BoundaryValueView#ofInt(long)} must not reject it. Every
+         * other kind reuses the shallow classification view, so a
+         * reference-cyclic host array classifies by its outer kind without
+         * materializing element views, and ordinary typed-boundary execution
+         * keeps the validated view through {@link #viewOfValue}.
+         */
+        private BoundaryValueView carrierViewOfValue(Value value) {
+            if (value instanceof Value.IntValue intValue) {
+                return BoundaryValueView.ofNumber(intValue.value());
+            }
+            return shallowViewOfValue(value);
         }
 
         /** The passed boundary view → runtime value (missing→null was pre-mapped). */
@@ -5114,7 +5137,7 @@ public final class SemanticOracle {
                 case HostResponder.AsyncStartOutcome.InvalidHandle invalid ->
                     throw armFailure(op, FailureArmId.ASYNC_SHAPE, "async operation",
                         BoundaryExecutor.hostCarrierKind(
-                            shallowViewOfValue(invalid.value())));
+                            carrierViewOfValue(invalid.value())));
                 case HostResponder.AsyncStartOutcome.Operation operation -> {
                     hostOperations.put(token.tokenId(), operation.label());
                     tasks.put(token.tokenId(), new Task(token, null));
