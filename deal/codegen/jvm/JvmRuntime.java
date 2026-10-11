@@ -402,7 +402,31 @@ public final class JvmRuntime {
         }
 
         public FunctionValue(Fn fn, String signature, String spec, String fid) {
-            this.fn = fn;
+            if (fid == null) {
+                this.fn = fn;
+            } else {
+                // A DEAL body carrier names its own frame: every
+                // in-project invocation path (the CALL arm, the adapter
+                // invocation, the callback dispatch, the async task and
+                // entry bodies) pushes this label before invoking the
+                // carrier, and the balanced conditional push below then
+                // leaves it alone. A direct invocation that runs no such
+                // path — the host invoking a published callable — pushes
+                // the label itself, on the success and the failure path
+                // alike (the finally pops), so a host-visible stack never
+                // loses the invoked export's generated and original names
+                // and never keeps a stale frame.
+                this.fn = args -> {
+                    if (!pushFrameUnlessTop(fid)) {
+                        return fn.invoke(args);
+                    }
+                    try {
+                        return fn.invoke(args);
+                    } finally {
+                        popFrame();
+                    }
+                };
+            }
             this.signature = signature;
             this.spec = spec;
             this.fid = fid;
@@ -543,6 +567,23 @@ public final class JvmRuntime {
     /** Pushes/pops the innermost active frame (the stack-frame label). */
     public static void pushFrame(String functionId) {
         FRAMES.get().add(0, functionId);
+    }
+
+    /**
+     * Pushes one frame label unless it is already the innermost active
+     * frame (the in-project invocation paths pushed the callee's label
+     * immediately before invoking its carrier), and answers whether this
+     * call pushed — only then does the caller pop. The published-body
+     * carrier uses this to complete the direct host invocation without
+     * doubling an in-project invocation's frame.
+     */
+    public static boolean pushFrameUnlessTop(String functionId) {
+        List<String> frames = FRAMES.get();
+        if (!frames.isEmpty() && frames.get(0).equals(functionId)) {
+            return false;
+        }
+        frames.add(0, functionId);
+        return true;
     }
 
     public static void popFrame() {

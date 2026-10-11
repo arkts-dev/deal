@@ -916,13 +916,17 @@ public class LuaProductionProjectEmissionTest {
         """;
 
     /**
-     * The host-capture entry: {
-     * {@code run} reaches the companion failure through a production call,
-     * {@code reraise} catches and rethrows it, {@code arun}/{@code areraise}
-     * drive the same shapes through {@code await}, {@code overflow} raises
-     * the expected/actual-less E8004, {@code replaced} throws a new
-     * Error while handling the caught one, and {@code alias} answers the
-     * catch/rethrow/catch alias identity of a retained Error value.
+     * The host-capture entry: {@code run} reaches the companion failure
+     * through a production call, {@code reraise} catches and rethrows it,
+     * {@code leafFail} raises directly inside the exported function itself,
+     * {@code swallow} handles a companion failure and returns normally
+     * (the frame-cleanup arm), {@code arun}/{@code areraise} drive the same
+     * shapes through {@code await}, {@code overflow} raises the
+     * expected/actual-less E8004, {@code replaced} throws a new Error while
+     * handling the caught one, {@code alias} answers the
+     * catch/rethrow/catch alias identity of a retained Error value, and
+     * {@code mutate} edits a retained E8001 alias after the OUTER
+     * replacement linked it as cause and then rethrows the OUTER error.
      */
     private static final String HOST_ERROR_APP_SOURCE = """
         import * as helper from "./lib";
@@ -933,6 +937,16 @@ public class LuaProductionProjectEmissionTest {
 
         export function reraise(): int {
           try { return helper.fail(); } catch (e) { throw e; }
+        }
+
+        export function leafFail(): int {
+          let t: table = { value: "bad" };
+          let x: int = t.value;
+          return x;
+        }
+
+        export function swallow(): int {
+          try { return helper.fail(); } catch (e) { return 0; }
         }
 
         export async function arun(): int { return await helper.afail(); }
@@ -949,6 +963,26 @@ public class LuaProductionProjectEmissionTest {
         }
 
         export function alias(): boolean { return helper.alias(); }
+
+        export function mutate(): int {
+          let saved: Error = { code: "seed", message: "seed" };
+
+          function step(): int {
+            try {
+              try { return helper.fail(); }
+              catch (e) {
+                saved = e;
+                throw { code: "OUTER", message: "outer" };
+              }
+            } catch (o) {
+              saved.code = "CHANGED";
+              saved.message = "changed";
+              throw o;
+            }
+          }
+
+          return step();
+        }
         """;
 
     /** One host-captured error row: the artifact's own DEAL error fields. */
@@ -959,7 +993,8 @@ public class LuaProductionProjectEmissionTest {
 
     /** The probe exports of the host-capture battery, in probe order. */
     private static final List<String> HOST_ERROR_EXPORTS = List.of(
-        "run", "reraise", "arun", "areraise", "overflow", "replaced");
+        "run", "reraise", "leafFail", "swallow", "arun", "areraise",
+        "overflow", "replaced", "mutate");
 
     private static void testHostErrorTransport() throws Exception {
         System.out.println("-- the host-visible DEALRuntimeError of the production "
@@ -985,12 +1020,16 @@ public class LuaProductionProjectEmissionTest {
             checkEq(0, run.exitCode(), "the host-error probe exits 0: stdout="
                 + escaped(run.stdout()) + " stderr=" + escaped(run.stderr()));
             Map<String, HostErrorRow> rows = hostErrorRows(run.stdout());
-            checkEq(HOST_ERROR_EXPORTS.size(), rows.size(),
-                "the probe captures one host error per probe export: "
+            checkEq(8, rows.size(),
+                "the probe captures one closed host error row per failing probe "
+                    + "export (the success arm publishes the none row): "
                     + escaped(run.stdout()));
 
             // The production call arm: code/message/origin, the applicable
-            // expected/actual pair, the named active frames, no cause.
+            // expected/actual pair, the named active frames, no cause. The
+            // direct host invocation of the published callable names the
+            // exported function too (app#run, the innermost production call
+            // below it).
             HostErrorRow direct = rows.get("run");
             check(direct != null, "the probe captured the run error");
             if (direct == null) {
@@ -1003,14 +1042,17 @@ public class LuaProductionProjectEmissionTest {
                     + "location: " + direct.origin());
             checkEq("int", direct.expected(), "the applicable expected type");
             checkEq("string", direct.actual(), "the applicable actual kind");
-            check(direct.frames().matches("lib#inner@F\\d+,lib#fail@F\\d+"),
+            check(direct.frames().matches(
+                    "lib#inner@F\\d+,lib#fail@F\\d+,app#run@F\\d+"),
                 "the frames name the original and generated functions of every "
-                    + "active DEAL call, innermost first: " + direct.frames());
+                    + "active DEAL call including the directly invoked export, "
+                    + "innermost first: " + direct.frames());
             checkEq("-", direct.cause(), "a primary failure carries no cause");
 
             // Catch/rethrow: the original error identity survives the catch
-            // and the rethrow (every field identical) and no cause is
-            // invented for the rethrow.
+            // and the rethrow (code/message/origin/expected/actual and the
+            // frames captured at the raise), no cause is invented, and the
+            // active export is named in the rethrow's own frames.
             HostErrorRow reraise = rows.get("reraise");
             check(reraise != null, "the probe captured the reraise error");
             if (reraise != null) {
@@ -1023,11 +1065,40 @@ public class LuaProductionProjectEmissionTest {
                     "the rethrow keeps the expected type");
                 checkEq(direct.actual(), reraise.actual(),
                     "the rethrow keeps the actual kind");
-                checkEq(direct.frames(), reraise.frames(),
-                    "the rethrow keeps the original frames");
-                checkEq("-", reraise.cause(),
-                    "the rethrow invents no cause");
+                check(reraise.frames().matches(
+                        "lib#inner@F\\d+,lib#fail@F\\d+,app#reraise@F\\d+"),
+                    "the rethrow keeps the frames captured at the raise, with "
+                        + "its own directly invoked export named: "
+                        + reraise.frames());
+                checkEq("-", reraise.cause(), "the rethrow invents no cause");
             }
+
+            // The leaf-export arm: a failure raised directly inside the
+            // published callable is named by that callable's own frame — the
+            // generated and original names of the invoked export.
+            HostErrorRow leaf = rows.get("leafFail");
+            check(leaf != null, "the probe captured the leaf-export error");
+            if (leaf != null) {
+                checkEq("E8001", leaf.code(), "the leaf failure's code");
+                checkEq("expected int", leaf.message(),
+                    "the leaf failure's message");
+                check(leaf.origin().contains("src/app.deal:"),
+                    "the leaf failure's origin is its own raising site: "
+                        + leaf.origin());
+                checkEq("int", leaf.expected(),
+                    "the leaf failure's expected type");
+                checkEq("string", leaf.actual(),
+                    "the leaf failure's actual kind");
+                check(leaf.frames().matches("app#leafFail@F\\d+"),
+                    "the leaf failure's frames name the directly invoked export "
+                        + "alone: " + leaf.frames());
+                checkEq("-", leaf.cause(), "the leaf failure carries no cause");
+            }
+
+            // The success arm returns normally and leaves no active frame:
+            // the cleanup probe below re-invokes the leaf export after it.
+            check(run.stdout().contains("HOST-ERR|swallow|none|0"),
+                "the handling export returns its own value: " + escaped(run.stdout()));
 
             // The await arm: the awaited companion failure transports the
             // same complete surface, and its rethrow preserves it.
@@ -1062,16 +1133,17 @@ public class LuaProductionProjectEmissionTest {
                     "the await rethrow keeps the expected type");
                 checkEq(awaitDirect.actual(), awaitReraise.actual(),
                     "the await rethrow keeps the actual kind");
+                checkEq("-", awaitReraise.cause(),
+                    "the await rethrow invents no cause");
                 check(awaitReraise.frames().matches(
                         "lib#ainner@F\\d+,lib#afail@F\\d+,app#areraise@F\\d+"),
                     "the await rethrow keeps the original active frames with its "
                         + "own awaiting entry: " + awaitReraise.frames());
-                checkEq("-", awaitReraise.cause(),
-                    "the await rethrow invents no cause");
             }
 
             // The absent-field rule: the E8004 carries no expected/actual
-            // and no cause, and its frames stay named.
+            // and no cause, and its frames stay named — the directly invoked
+            // export included.
             HostErrorRow overflow = rows.get("overflow");
             check(overflow != null, "the probe captured the overflow error");
             if (overflow != null) {
@@ -1085,14 +1157,16 @@ public class LuaProductionProjectEmissionTest {
                     "the overflow carries no expected type (absent, not empty)");
                 checkEq("-", overflow.actual(),
                     "the overflow carries no actual kind (absent, not empty)");
-                check(overflow.frames().matches("lib#boom@F\\d+"),
-                    "the overflow frames name the active DEAL call: "
+                check(overflow.frames().matches(
+                        "lib#boom@F\\d+,app#overflow@F\\d+"),
+                    "the overflow frames name every active DEAL call: "
                         + overflow.frames());
                 checkEq("-", overflow.cause(), "the overflow carries no cause");
             }
 
             // The applicable-cause rule: a new failure raised while handling
-            // the caught one links the caught failure as its cause.
+            // the caught one links the caught failure as its cause and names
+            // the handler's own active frame.
             HostErrorRow replaced = rows.get("replaced");
             check(replaced != null, "the probe captured the replacement error");
             if (replaced != null) {
@@ -1100,15 +1174,69 @@ public class LuaProductionProjectEmissionTest {
                     "the replacement failure's code");
                 checkEq("handled", replaced.message(),
                     "the replacement failure's message");
-                check(replaced.origin().contains("src/app.deal:21:"),
+                check(replaced.origin().contains("src/app.deal:"),
                     "the replacement failure raises at its own THROW origin: "
                         + replaced.origin());
                 checkEq("-", replaced.expected(),
                     "the replacement failure carries no expected type");
                 checkEq("-", replaced.actual(),
                     "the replacement failure carries no actual kind");
+                check(replaced.frames().matches("app#replaced@F\\d+"),
+                    "the replacement failure's frames name the handling export: "
+                        + replaced.frames());
                 checkEq("E8001", replaced.cause(),
                     "the replacement failure links the caught failure as its cause");
+            }
+
+            // The saved-cause-alias arm: the E8001 alias is edited after the
+            // OUTER replacement linked it as cause, and the OUTER error is
+            // rethrown; the linked cause keeps the transport captured at
+            // catch time (never the later mutation).
+            String mutated = hostFieldLine(run.stdout(), "HOST-CAUSE|mutate|");
+            check(mutated != null, "the probe recorded the mutated-cause row: "
+                + escaped(run.stdout()));
+            if (mutated != null) {
+                String[] parts = mutated.split("\\|", -1);
+                checkEq(9, parts.length,
+                    "the mutated-cause row carries every compared field: " + mutated);
+                if (parts.length == 9) {
+                    checkEq("OUTER", parts[0],
+                        "the rethrown failure keeps its code: " + mutated);
+                    checkEq("outer", parts[1],
+                        "the rethrown failure keeps its message: " + mutated);
+                    checkEq("E8001", parts[2],
+                        "the linked cause stays the E8001, never the edited "
+                            + "alias: " + mutated);
+                    checkEq("expected int", parts[3],
+                        "the linked cause keeps its captured message: " + mutated);
+                    check(parts[4].endsWith("src/lib.deal:3:16"),
+                        "the linked cause keeps its captured source location: "
+                            + mutated);
+                    checkEq("int", parts[5],
+                        "the linked cause keeps its captured expected type: "
+                            + mutated);
+                    checkEq("string", parts[6],
+                        "the linked cause keeps its captured actual kind: "
+                            + mutated);
+                    check(parts[7].matches(
+                            "lib#inner@F\\d+,lib#fail@F\\d+,app#step@F\\d+,"
+                                + "app#mutate@F\\d+"),
+                        "the linked cause keeps its captured frames: " + mutated);
+                    checkEq("-", parts[8],
+                        "the linked cause gains no invented cause: " + mutated);
+                }
+            }
+
+            // The cleanup arm: after the failure and the success probes, a
+            // fresh direct invocation of the leaf export names exactly its
+            // own frame — every host-visible push was balanced by its pop.
+            String clean = hostFieldLine(run.stdout(), "HOST-CLEAN|leafFail|");
+            check(clean != null, "the probe recorded the frame-cleanup row: "
+                + escaped(run.stdout()));
+            if (clean != null) {
+                check(clean.matches("app#leafFail@F\\d+"),
+                    "the frame stack is clean before the fresh invocation and "
+                        + "balanced after it: " + clean);
             }
 
             // The identity arm: the DEAL probe's own catch/rethrow/catch
@@ -1234,6 +1362,36 @@ public class LuaProductionProjectEmissionTest {
         lua.append("    print(\"HOST-ERR|\" .. __name .. \"|raw|\" .. tostring(__err))\n");
         lua.append("  end\n");
         lua.append("end\n");
+        // The cleanup probe: a fresh direct invocation of the leaf export
+        // after the failure and the success probes names exactly its own
+        // frame — every host-visible push was balanced by its pop.
+        lua.append("local __okC, __errC = pcall(__surface.leafFail.f)\n");
+        lua.append("if __okC or type(__errC) ~= \"table\" then\n");
+        lua.append("  print(\"HOST-CLEAN|leafFail|none\")\n");
+        lua.append("else\n");
+        lua.append("  print(\"HOST-CLEAN|leafFail|\" .. __field(__errC.f))\n");
+        lua.append("end\n");
+        // The saved-cause-alias probe: the E8001 alias is edited after the
+        // OUTER replacement linked it as cause, and the OUTER error is
+        // rethrown; the linked cause keeps the transport captured at catch
+        // time (never the later mutation).
+        lua.append("local __okM, __errM = pcall(__surface.mutate.f)\n");
+        lua.append("if __okM or type(__errM) ~= \"table\" then\n");
+        lua.append("  print(\"HOST-CAUSE|mutate|none\")\n");
+        lua.append("else\n");
+        lua.append("  local __cm = __errM.cause\n");
+        lua.append("  if __cm == nil then\n");
+        lua.append("    print(\"HOST-CAUSE|mutate|\" .. __field(__errM.code)"
+            + " .. \"|\" .. __field(__errM.m) .. \"|-|-|-|-|-|-\")\n");
+        lua.append("  else\n");
+        lua.append("    print(\"HOST-CAUSE|mutate|\" .. __field(__errM.code)"
+            + " .. \"|\" .. __field(__errM.m) .. \"|\" .. __field(__cm.code)"
+            + " .. \"|\" .. __field(__cm.m) .. \"|\" .. __field(__cm.o)"
+            + " .. \"|\" .. __field(__cm.e) .. \"|\" .. __field(__cm.a)"
+            + " .. \"|\" .. __field(__cm.f) .. \"|\""
+            + " .. (__cm.cause == nil and \"-\" or __field(__cm.cause.code)))\n");
+        lua.append("  end\n");
+        lua.append("end\n");
         // The catch/rethrow/catch alias identity probe: the DEAL export's
         // own === answer for an Error value caught, rethrown and caught
         // again — one identity on every consumer.
@@ -1244,6 +1402,19 @@ public class LuaProductionProjectEmissionTest {
         lua.append("  print(\"HOST-ID|alias|missing\")\n");
         lua.append("end\n");
         return lua.toString();
+    }
+
+    /**
+     * The payload of the single probe line with one prefix (the text after
+     * the prefix), or {@code null} when the line is absent.
+     */
+    private static String hostFieldLine(String stdout, String prefix) {
+        for (String line : stdout.split("\n", -1)) {
+            if (line.startsWith(prefix)) {
+                return line.substring(prefix.length());
+            }
+        }
+        return null;
     }
 
     /**

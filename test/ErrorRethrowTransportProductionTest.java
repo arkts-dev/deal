@@ -100,6 +100,52 @@ public class ErrorRethrowTransportProductionTest {
         }
         """;
 
+    /**
+     * The saved-cause-alias fixture: {@code inner} raises the typed E8001,
+     * {@code raiseOuter} catches it as {@code e}, retains the alias in
+     * {@code saved}, and raises the fresh constructed OUTER failure (which
+     * links the E8001 as its cause); {@code probe} catches OUTER, edits the
+     * retained E8001 alias's code and message, and rethrows OUTER. The
+     * linked cause must keep the transport captured at catch time on every
+     * consumer — never the later alias edit.
+     */
+    private static final String SAVED_CAUSE_LIB_SOURCE = """
+        function inner(): int {
+          let t: table = { value: "bad" };
+          let x: int = t.value;
+          return x;
+        }
+
+        export function probe(): int {
+          let saved: Error = { code: "seed", message: "seed" };
+
+          function raiseOuter(): int {
+            try { return inner(); }
+            catch (e) {
+              saved = e;
+              throw { code: "OUTER", message: "outer" };
+            }
+          }
+
+          try { return raiseOuter(); }
+          catch (o) {
+            saved.code = "CHANGED";
+            saved.message = "changed";
+            throw o;
+          }
+        }
+        """;
+
+    /** The entry drives the saved-cause-alias probe through the module boundary. */
+    private static final String SAVED_CAUSE_APP_SOURCE = """
+        import * as helper from "./lib";
+
+        export function main(): null {
+          let x: int = helper.probe();
+          return null;
+        }
+        """;
+
     private record Fixture(Path root, CheckedProjectBuildResult built,
                            RequirementManifestResult manifests,
                            CompilationOrchestrator orchestrator) {
@@ -111,11 +157,16 @@ public class ErrorRethrowTransportProductionTest {
     }
 
     private static Fixture compileProject() throws Exception {
+        return compileProject(LIB_SOURCE, APP_SOURCE);
+    }
+
+    private static Fixture compileProject(String libSource, String appSource)
+            throws Exception {
         Path root = Files.createTempDirectory("error-rethrow-project");
         Path src = root.resolve("src");
         Files.createDirectories(src);
-        Files.writeString(src.resolve("lib.deal"), LIB_SOURCE, StandardCharsets.UTF_8);
-        Files.writeString(src.resolve("app.deal"), APP_SOURCE, StandardCharsets.UTF_8);
+        Files.writeString(src.resolve("lib.deal"), libSource, StandardCharsets.UTF_8);
+        Files.writeString(src.resolve("app.deal"), appSource, StandardCharsets.UTF_8);
         Path entry = src.resolve("app.deal").toAbsolutePath();
         Path output = root.resolve("out").toAbsolutePath();
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(entry, output,
@@ -244,6 +295,106 @@ public class ErrorRethrowTransportProductionTest {
         }
     }
 
+    /**
+     * The saved-cause-alias regression: the retained E8001 alias is edited
+     * after the OUTER replacement linked it as cause, and OUTER is
+     * rethrown. The linked cause is the stable transport captured at catch
+     * time on all three consumers — its code, message, origin,
+     * expected/actual and frames never change retroactively — while the
+     * rethrow publishes the OUTER identity's own code/message.
+     */
+    private static void testSavedCauseAliasMutation() throws Exception {
+        System.out.println("-- an edited Error alias never rewrites an already "
+            + "linked cause on any consumer --");
+        Fixture fixture = compileProject(SAVED_CAUSE_LIB_SOURCE,
+            SAVED_CAUSE_APP_SOURCE);
+        Path workspace = Files.createTempDirectory("error-saved-cause-matrix");
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+            check(result.project() != null && result.diagnostics().isEmpty(),
+                "the saved-cause fixture lowers with zero diagnostics: "
+                    + result.diagnostics());
+            if (result.project() == null) {
+                return;
+            }
+            SemanticDifferentialHarness.Expectation expectation =
+                SemanticDifferentialHarness.Expectation.failure(
+                    "an edited Error alias never rewrites a linked cause",
+                    List.of(), "OUTER", null);
+            SemanticDifferentialHarness.Verdict verdict =
+                SemanticDifferentialHarness.runProject(result.project(), result.tables(),
+                    result.registries(), expectation, workspace);
+            check(verdict.pass(), "the oracle and both shared artifacts agree "
+                + "event-for-event with the pinned terminal: " + verdict.failures());
+            checkEq(3, verdict.runs().size(),
+                "the differential matrix produced the three consumers: "
+                    + verdict.failures());
+            String snapshot = null;
+            for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+                if (!(run.terminal()
+                        instanceof SemanticRuntimeModel.Terminal.DealFailure terminal)) {
+                    fail(run.consumer() + ": the terminal is the escaped DEAL failure; got "
+                        + run.terminal());
+                    continue;
+                }
+                SemanticRuntimeModel.ErrorSnapshot error = terminal.error();
+                checkEq("OUTER", error.code(), run.consumer()
+                    + ": the rethrown failure keeps the OUTER code");
+                checkEq("outer", error.message(), run.consumer()
+                    + ": the rethrown failure keeps the OUTER message");
+                check(error.origin() != null
+                        && error.origin().contains("src/lib.deal:14:"),
+                    run.consumer() + ": the constructed OUTER raises at its own "
+                        + "THROW origin; got " + error.origin());
+                checkEq(null, error.expected(), run.consumer()
+                    + ": the rethrown failure keeps the absent expected type");
+                checkEq(null, error.actual(), run.consumer()
+                    + ": the rethrown failure keeps the absent actual kind");
+                check(String.join(",", error.frames()).matches(
+                        "lib#raiseOuter@F\\d+,lib#probe@F\\d+,app#main@F\\d+"),
+                    run.consumer() + ": the rethrown failure keeps the frames "
+                        + "captured at the raise: " + error.frames());
+                SemanticRuntimeModel.ErrorSnapshot cause = error.cause();
+                check(cause != null, run.consumer() + ": the rethrown failure keeps "
+                    + "its own cause");
+                if (cause == null) {
+                    continue;
+                }
+                checkEq("E8001", cause.code(), run.consumer()
+                    + ": the linked cause stays the E8001, never the edited "
+                    + "CHANGED alias code");
+                checkEq("expected int", cause.message(), run.consumer()
+                    + ": the linked cause keeps its captured message, never the "
+                    + "edited one");
+                check(cause.origin() != null
+                        && cause.origin().endsWith("src/lib.deal:3:16"),
+                    run.consumer() + ": the linked cause keeps its captured "
+                        + "source location; got " + cause.origin());
+                checkEq("int", cause.expected(), run.consumer()
+                    + ": the linked cause keeps its captured expected type");
+                checkEq("string", cause.actual(), run.consumer()
+                    + ": the linked cause keeps its captured actual kind");
+                check(String.join(",", cause.frames()).matches(
+                        "lib#inner@F\\d+,lib#raiseOuter@F\\d+,lib#probe@F\\d+,"
+                            + "app#main@F\\d+"),
+                    run.consumer() + ": the linked cause keeps its captured "
+                        + "frames: " + cause.frames());
+                checkEq(null, cause.cause(), run.consumer()
+                    + ": the linked cause gains no invented cause");
+                if (snapshot == null) {
+                    snapshot = error.text();
+                } else {
+                    checkEq(snapshot, error.text(), run.consumer()
+                        + ": the complete nested terminal snapshot equals the first "
+                            + "consumer's");
+                }
+            }
+        } finally {
+            deleteRecursively(workspace);
+            deleteRecursively(fixture.root());
+        }
+    }
+
     private static void deleteRecursively(Path root) throws Exception {
         if (root == null || !Files.exists(root)) {
             return;
@@ -261,6 +412,7 @@ public class ErrorRethrowTransportProductionTest {
 
     public static void main(String[] args) throws Exception {
         testRethrowAcrossHandler();
+        testSavedCauseAliasMutation();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

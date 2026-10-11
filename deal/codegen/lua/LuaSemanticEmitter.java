@@ -1197,7 +1197,13 @@ public final class LuaSemanticEmitter {
             }
             out.append(fnFactory(functionId)).append(" = function(")
                 .append(params).append(")\n");
-            out.append("  return function(...)\n");
+            // The body carries its own frame label through the balanced
+            // wrapper: a direct host invocation of the published callable
+            // pushes/pops it, an in-project invocation's own call-path
+            // push is never doubled.
+            out.append("  return __frameWrap(")
+                .append(luaString(frameLabel(functionId)))
+                .append(", function(...)\n");
             emitBodyFunctionPreamble();
             int argIndex = 1;
             List<OpId> bodyOps = tableOfFunction(function).blockOps().get(function.body());
@@ -1231,7 +1237,7 @@ public final class LuaSemanticEmitter {
             // invalid — one uniform trampoline keeps every shape valid).
             out.append("::").append(returnLabel(functionId)).append("::\n");
             out.append("  return __rvcT\n");
-            out.append("  end\n");
+            out.append("  end)\n");
             out.append("end\n");
             currentFunctionId = null;
             currentFunction = null;
@@ -4963,13 +4969,18 @@ public final class LuaSemanticEmitter {
             KindPayload.TryCatchPayload payload = (KindPayload.TryCatchPayload) op.payload();
             emitStart(op);
             String cellName = cell(payload.catchBinding(), 0);
-            // The caught error's identity, kept beside the catch binding:
-            // the catch block's own failure links it as its cause when the
-            // failure is genuinely new, while a rethrow of any transported
-            // error (the __re mark below) keeps its own identity and gains
-            // no cause. The per-op local survives a nested try/catch inside
-            // the catch block, which would otherwise clobber the shared
-            // scratch temps.
+            // The caught failure's stable transport, captured beside the
+            // catch binding: the catch block's own failure links it as its
+            // cause when the failure is genuinely new, while a rethrow of
+            // any transported error (the __re mark below) keeps its own
+            // identity and gains no cause. The captured transport is a
+            // snapshot of the failure's fields at catch time, never the
+            // live reified Error identity: editing a retained Error alias
+            // (saved.code = ...) stays visible through the identity — a
+            // rethrow publishes the identity's current code/message — but
+            // never rewrites a cause that was already linked. The per-op
+            // locals survive a nested try/catch inside the catch block,
+            // which would otherwise clobber the shared scratch temps.
             String caughtIdentity = "__ctT" + op.opId().id();
             tryDepth++;
             out.append("__okT, __resT = pcall(function()\n");
@@ -4987,8 +4998,18 @@ public final class LuaSemanticEmitter {
             // the rethrow is a transported failure — never a new failure
             // that links that catch's own caught failure as its cause.
             out.append("    __resT.__re = true\n");
+            // The stable transport snapshot: code/message are the live
+            // identity's current fields, while origin, expected/actual,
+            // frames and the nested cause are the failure's own at catch
+            // time. A cause linked from here never changes retroactively
+            // when the Error alias is edited (JVM/Oracle parity); the
+            // nested cause is itself a snapshot or absent (cause links are
+            // the only writer of the field and always link this snapshot
+            // form).
             out.append("    local ").append(caughtIdentity)
-                .append(" = __resT\n");
+                .append(" = {__d = true, code = __resT.code, m = __resT.m, ")
+                .append("o = __resT.o, e = __resT.e, a = __resT.a, ")
+                .append("f = __resT.f, cause = __resT.cause}\n");
             out.append("    ").append(cellName).append(" = __resT\n");
             tryDepth++;
             out.append("    __okT, __terrT = pcall(function()\n");
@@ -8350,6 +8371,31 @@ end
 local function __framesText()
   if #__frames == 0 then return "-" end
   return table.concat(__frames, ",")
+end
+-- The balanced frame wrapper of one generated DEAL body: the direct host
+-- invocation of a published callable runs the body with the body's own
+-- frame pushed, while an in-project invocation already pushed the
+-- identical label through its call path (the CALL arm, the adapter
+-- invocation, the callback dispatch, the async task and entry bodies) —
+-- the wrapper then runs the body directly and never doubles a frame. The
+-- push and its matching pop stay balanced on the success and the failure
+-- path. A chunk-global like the rest of the run state, never a new
+-- chunk-level local (the main chunk's local budget admits no more prelude
+-- helpers; the growing-factory guard loads the real chunk with an
+-- appended 12-local probe body).
+__frameWrap = function(__label, __fn)
+  return function(...)
+    if __frames[1] == __label then
+      return __fn(...)
+    end
+    table.insert(__frames, 1, __label)
+    local __ok, __r = pcall(__fn, ...)
+    table.remove(__frames, 1)
+    if not __ok then
+      error(__r, 0)
+    end
+    return __r
+  end
 end
 local function __allocId(v)
   local id = __allocIds[v]
