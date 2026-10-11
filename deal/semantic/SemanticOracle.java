@@ -663,12 +663,29 @@ public final class SemanticOracle {
 
             private String code;
             private String message;
+            /**
+             * The caught failure this Error value reifies, or {@code null}
+             * for a constructed Error (the builtin Error class literal).
+             * The transport travels with the value: a rethrow of a caught
+             * error preserves its origin, expected/actual, frames and cause
+             * — never a synthesized replacement.
+             */
+            private final DealFailure transport;
 
             ErrorValue(String code, String message) {
+                this(code, message, null);
+            }
+
+            ErrorValue(DealFailure transport) {
+                this(transport.code, transport.message, transport);
+            }
+
+            ErrorValue(String code, String message, DealFailure transport) {
                 Objects.requireNonNull(code, "code must not be null");
                 Objects.requireNonNull(message, "message must not be null");
                 this.code = code;
                 this.message = message;
+                this.transport = transport;
             }
 
             /** The error code field. */
@@ -679,6 +696,11 @@ public final class SemanticOracle {
             /** The error message field. */
             String message() {
                 return message;
+            }
+
+            /** The caught failure this value reifies, or {@code null}. */
+            DealFailure transport() {
+                return transport;
             }
 
             /** Commits one checked field write in place (K13's field surface). */
@@ -769,10 +791,25 @@ public final class SemanticOracle {
         final String actual;
         final DealFailure cause;
         final List<FunctionId> frames;
+        /**
+         * The primary failure this failure re-publishes: itself for a
+         * primary failure, and the rethrown failure's primary for a
+         * rethrow (whose code/message may have been rewritten). The
+         * try/catch arm compares carriers to tell a rethrow of the caught
+         * error — identity preserved, no invented cause — from a new
+         * failure raised while handling it.
+         */
+        final DealFailure carrier;
 
         DealFailure(String code, String message, SourceOrigin origin,
                     String expected, String actual, DealFailure cause,
                     List<FunctionId> frames) {
+            this(code, message, origin, expected, actual, cause, frames, null);
+        }
+
+        DealFailure(String code, String message, SourceOrigin origin,
+                    String expected, String actual, DealFailure cause,
+                    List<FunctionId> frames, DealFailure carrier) {
             super(message, cause);
             this.code = code;
             this.message = message;
@@ -781,6 +818,7 @@ public final class SemanticOracle {
             this.actual = actual;
             this.cause = cause;
             this.frames = List.copyOf(frames);
+            this.carrier = carrier == null ? this : carrier;
         }
 
         static DealFailure of(BoundaryFailure failure, SourceOrigin origin,
@@ -1360,11 +1398,31 @@ public final class SemanticOracle {
         SemanticRuntimeModel.ErrorSnapshot snapshot(DealFailure failure) {
             List<String> frameTexts = new ArrayList<>();
             for (FunctionId frame : failure.frames) {
-                frameTexts.add(String.valueOf(frame.id()));
+                frameTexts.add(frameLabel(frame));
             }
             return new SemanticRuntimeModel.ErrorSnapshot(failure.code, failure.message,
                 originText(failure.origin), failure.expected, failure.actual, frameTexts,
                 failure.cause == null ? null : snapshot(failure.cause));
+        }
+
+        /**
+         * The stack-frame label of one active DEAL call: the owning
+         * module path, the function's original source name, and the
+         * generated function name (the shared {@link FrameLabels} form),
+         * resolved from the same unit closure the shared emitters derive
+         * their frames from, so the two consumers' error frames are
+         * byte-equal. An id outside the closure projects the generated
+         * name alone — never a guessed module or source name.
+         */
+        private String frameLabel(FunctionId functionId) {
+            for (Map.Entry<ModuleId, UnitState> entry : units.entrySet()) {
+                var function = entry.getValue().unit.functions().get(functionId);
+                if (function != null) {
+                    return deal.semantic.ir.FrameLabels.of(entry.getKey().path(),
+                        functionId, function.sourceName());
+                }
+            }
+            return deal.semantic.ir.FrameLabels.of(functionId);
         }
 
         // -- cells -------------------------------------------------------------------
@@ -6277,14 +6335,24 @@ public final class SemanticOracle {
             } catch (DealFailure failure) {
                 caught = failure;
             }
-            // Reify the DEAL failure as an Error value bound to the catch binding.
-            Value.ErrorValue error = new Value.ErrorValue(caught.code, caught.message);
+            // Reify the DEAL failure as an Error value bound to the catch
+            // binding; the value carries the failure's transport, so a
+            // rethrow of it preserves origin, expected/actual, frames and
+            // cause unchanged.
+            Value.ErrorValue error = new Value.ErrorValue(caught);
             Cell cell = cellOf(payload.catchBinding(), 0, true);
             cell.value = error;
             cell.initialized = true;
             try {
                 runBlock(payload.catchBlock());
             } catch (DealFailure replacement) {
+                if (replacement.carrier == caught.carrier) {
+                    // A rethrow of the caught error: the identical failure
+                    // (identity preserved); no cause is invented.
+                    throw replacement;
+                }
+                // A replacement failure raised while handling the caught
+                // one links the caught failure as its cause.
                 throw new DealFailure(replacement.code, replacement.message,
                     replacement.origin, replacement.expected, replacement.actual,
                     caught, replacement.frames);
@@ -6295,6 +6363,22 @@ public final class SemanticOracle {
         private String executeThrow(SemanticOp op) {
             KindPayload.ThrowPayload payload = (KindPayload.ThrowPayload) op.payload();
             Value.ErrorValue error = (Value.ErrorValue) valueOf(payload.errorValue());
+            DealFailure transport = error.transport();
+            if (transport != null) {
+                // The supplied Error is an error identity (a caught error,
+                // or one that crossed a return/parameter): the failure is
+                // published from its carried transport with the supplied
+                // value's current code/message and its carrier — origin,
+                // expected/actual, frames and any cause preserved unchanged,
+                // never a synthesized replacement and never an invented
+                // cause.
+                throw new DealFailure(error.code(), error.message(), transport.origin,
+                    transport.expected, transport.actual, transport.cause,
+                    transport.frames, transport.carrier);
+            }
+            // A constructed Error carries no origin: the failure is
+            // synthesized at the THROW origin with no expected/actual and no
+            // cause (absent fields stay absent), frames active.
             throw new DealFailure(error.code(), error.message(), op.origin(), null, null,
                 null, List.copyOf(frames));
         }

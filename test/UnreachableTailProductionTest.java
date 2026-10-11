@@ -730,21 +730,23 @@ public class UnreachableTailProductionTest {
                             continue;
                         }
                         // The terminator's own emission is the THROW arm's
-                        // DealError construction carrying the origin and its
-                        // `throw __thrown;` statement; the JLS \u00a714.21 skip
-                        // marker is the next non-blank line, so no tail
-                        // statement is emitted between them.
+                        // DealError construction carrying the origin (the
+                        // fresh-Error branch; a rethrow publishes the carried
+                        // transport) and its `throw __thrown<opId>;` transfer
+                        // statement, so no tail statement is emitted between
+                        // them and the JLS \u00a714.21 skip marker is the next
+                        // non-blank line.
                         check(lines.get(originLine).contains(
-                                "JvmRuntime.DealError __thrown = new JvmRuntime"
-                                    + ".DealError("),
+                                "new JvmRuntime.DealError("),
                             stem + " [jvm]: the terminator origin line is the THROW "
                                 + "arm's DealError construction");
                         int after = originLine + 1;
-                        while (after < lines.size() && lines.get(after).isBlank()) {
+                        while (after < lines.size() && (lines.get(after).isBlank()
+                                || lines.get(after).trim().equals("}"))) {
                             after++;
                         }
                         check(after < lines.size() && lines.get(after).trim()
-                                .equals("throw __thrown;"),
+                                .startsWith("throw __thrown"),
                             stem + " [jvm]: the terminator emits its transfer "
                                 + "statement: "
                                 + (after < lines.size() ? lines.get(after).trim() : "<eof>"));

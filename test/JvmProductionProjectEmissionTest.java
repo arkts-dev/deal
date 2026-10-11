@@ -145,8 +145,17 @@ public class JvmProductionProjectEmissionTest {
     /** A real checked project with the given entry source and entry file. */
     private static Fixture compileProject(String entrySource, String entryRelative)
             throws Exception {
+        return compileProject(LIB_SOURCE, entrySource, entryRelative);
+    }
+
+    /**
+     * A real checked project with the given companion {@code src/lib.deal}
+     * and the given entry source and entry file.
+     */
+    private static Fixture compileProject(String libSource, String entrySource,
+                                          String entryRelative) throws Exception {
         Path root = Files.createTempDirectory("jvm-production-project");
-        writeFileIn(root, "src/lib.deal", LIB_SOURCE);
+        writeFileIn(root, "src/lib.deal", libSource);
         writeFileIn(root, entryRelative, entrySource);
         Path entry = root.resolve(entryRelative).toAbsolutePath();
         Path output = root.resolve("out").toAbsolutePath();
@@ -539,6 +548,279 @@ public class JvmProductionProjectEmissionTest {
         }
     }
 
+    // =========================================================================
+    // 3b. The host-visible DEALRuntimeError: complete transport and named frames
+    // =========================================================================
+
+    /**
+     * The host-error companion: a nested non-exported function raises the
+     * typed boundary failure (the E8001 with the expected/actual pair and
+     * the raising function's origin), the exported sync and async
+     * functions call it across the module boundary, and the E8004
+     * arithmetic overflow carries no expected/actual.
+     */
+    private static final String HOST_ERROR_LIB_SOURCE = """
+        function inner(): int {
+          let t: table = { value: "bad" };
+          let x: int = t.value;
+          return x;
+        }
+
+        export function fail(): int {
+          return inner();
+        }
+
+        async function ainner(): int {
+          let t: table = { value: "bad" };
+          let x: int = t.value;
+          return x;
+        }
+
+        export async function afail(): int {
+          return await ainner();
+        }
+
+        export function boom(): int {
+          return 2147483647 + 1;
+        }
+        """;
+
+    /**
+     * The host-capture entry: {@code run} reaches the companion failure
+     * through a production call, {@code reraise} catches and rethrows it,
+     * {@code arun}/{@code areraise} drive the same shapes through
+     * {@code await}, {@code overflow} raises the expected/actual-less
+     * E8004, and {@code replaced} throws a new Error while handling the
+     * caught one.
+     */
+    private static final String HOST_ERROR_APP_SOURCE = """
+        import * as helper from "./lib";
+
+        export function main(): null { return null; }
+
+        export function run(): int { return helper.fail(); }
+
+        export function reraise(): int {
+          try { return helper.fail(); } catch (e) { throw e; }
+        }
+
+        export async function arun(): int { return await helper.afail(); }
+
+        export async function areraise(): int {
+          try { return await helper.afail(); } catch (e) { throw e; }
+        }
+
+        export function overflow(): int { return helper.boom(); }
+
+        export function replaced(): int {
+          try { return helper.fail(); }
+          catch (e) { throw { code: "REPLACED", message: "handled" }; }
+        }
+        """;
+
+    /** One host-captured error row: the artifact's own DEAL error fields. */
+    private record HostErrorRow(String code, String message, String origin,
+                                String expected, String actual, String frames,
+                                String cause) {
+    }
+
+    private static void testHostErrorTransport() throws Exception {
+        System.out.println("-- the host-visible DealError of the production "
+            + "artifact: the complete transport through calls, await, and "
+            + "catch/rethrow, with named frames --");
+        Fixture fixture = compileProject(HOST_ERROR_LIB_SOURCE,
+            HOST_ERROR_APP_SOURCE, "src/app.deal");
+        Path workspace = Files.createTempDirectory("jvm-production-project-hosterror");
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+            if (result.project() == null) {
+                fail("the host-error fixture lowers: " + result.diagnostics());
+                return;
+            }
+            ExecutableLoweredProject project = result.project();
+            String className = JvmBackend.classNameFor(project.entryModule().path());
+            JvmSemanticEmitter.EmissionResult emission =
+                JvmSemanticEmitter.emitProductionProject(project, result.tables(),
+                    result.registries(), className, fixture.surface());
+            Path source = workspace.resolve(className + ".java");
+            Files.writeString(source, emission.source(), StandardCharsets.UTF_8);
+            SemanticOp arun = asyncEntry(project.modules().get(new ModuleId("app")),
+                "arun");
+            SemanticOp areraise = asyncEntry(project.modules().get(new ModuleId("app")),
+                "areraise");
+            check(arun != null && areraise != null,
+                "the fixture records the async external entries of arun/areraise");
+            if (arun == null || areraise == null) {
+                return;
+            }
+            Path probe = workspace.resolve("HostProbe.java");
+            Files.writeString(probe, jvmHostErrorProbe(className, arun, areraise),
+                StandardCharsets.UTF_8);
+            Path classes = workspace.resolve("classes");
+            Files.createDirectories(classes);
+            String classpath = absoluteClasspath();
+            ProcessOutcome javacRun = runProcess(List.of("javac", "--release", "25",
+                "-proc:none", "-cp", classpath, "-d", classes.toString(),
+                source.toAbsolutePath().toString(), probe.toAbsolutePath().toString()),
+                workspace);
+            check(javacRun.exitCode() == 0,
+                "the host-error artifact and its host probe compile: "
+                    + javacRun.output());
+            if (javacRun.exitCode() != 0) {
+                return;
+            }
+            ProcessOutcome run = runProcess(List.of("java", "-cp",
+                classpath + java.io.File.pathSeparator + classes, "HostProbe"),
+                workspace);
+            checkEq(0, run.exitCode(), "the host-error probe exits 0: "
+                + run.output());
+            Map<String, HostErrorRow> rows = hostErrorRows(run.stdout());
+            checkEq(6, rows.size(),
+                "the probe captures one host error per probe export: "
+                    + run.output());
+
+            // The production call arm: code/message/origin, the applicable
+            // expected/actual pair, the named active frames, no cause.
+            HostErrorRow direct = rows.get("run");
+            check(direct != null, "the probe captured the run error");
+            if (direct == null) {
+                return;
+            }
+            checkEq("E8001", direct.code(), "the companion failure's code");
+            checkEq("expected int", direct.message(), "the companion failure's message");
+            check(direct.origin().endsWith("src/lib.deal:3:16"),
+                "the companion check's origin is the raising function's source "
+                    + "location: " + direct.origin());
+            checkEq("int", direct.expected(), "the applicable expected type");
+            checkEq("string", direct.actual(), "the applicable actual kind");
+            check(direct.frames().matches("lib#inner@F\\d+,lib#fail@F\\d+"),
+                "the frames name the original and generated functions of every "
+                    + "active DEAL call, innermost first: " + direct.frames());
+            checkEq("-", direct.cause(), "a primary failure carries no cause");
+
+            // Catch/rethrow: the original error identity survives the catch
+            // and the rethrow (every field identical) and no cause is
+            // invented for the rethrow.
+            HostErrorRow reraise = rows.get("reraise");
+            check(reraise != null, "the probe captured the reraise error");
+            if (reraise != null) {
+                checkEq(direct.code(), reraise.code(), "the rethrow keeps the code");
+                checkEq(direct.message(), reraise.message(),
+                    "the rethrow keeps the message");
+                checkEq(direct.origin(), reraise.origin(),
+                    "the rethrow keeps the original source location");
+                checkEq(direct.expected(), reraise.expected(),
+                    "the rethrow keeps the expected type");
+                checkEq(direct.actual(), reraise.actual(),
+                    "the rethrow keeps the actual kind");
+                checkEq(direct.frames(), reraise.frames(),
+                    "the rethrow keeps the original frames");
+                checkEq("-", reraise.cause(), "the rethrow invents no cause");
+            }
+
+            // The await arm: the awaited companion failure transports the
+            // same complete surface through the artifact's async-entry
+            // dispatch (the reserved entry the host invoker drives), and
+            // its rethrow preserves it.
+            HostErrorRow awaitDirect = rows.get("arun");
+            HostErrorRow awaitReraise = rows.get("areraise");
+            check(awaitDirect != null && awaitReraise != null,
+                "the probe captured the await errors");
+            if (awaitDirect != null) {
+                checkEq("E8001", awaitDirect.code(), "the awaited failure's code");
+                checkEq("expected int", awaitDirect.message(),
+                    "the awaited failure's message");
+                check(awaitDirect.origin().endsWith("src/lib.deal:13:16"),
+                    "the awaited failure's origin is the raising async function's "
+                        + "source location: " + awaitDirect.origin());
+                checkEq("int", awaitDirect.expected(),
+                    "the awaited failure's expected type");
+                checkEq("string", awaitDirect.actual(),
+                    "the awaited failure's actual kind");
+                check(awaitDirect.frames().matches(
+                        "lib#ainner@F\\d+,lib#afail@F\\d+,app#arun@F\\d+"),
+                    "the await frames name every active DEAL call including the "
+                        + "awaiting entry: " + awaitDirect.frames());
+                checkEq("-", awaitDirect.cause(),
+                    "the awaited failure carries no cause");
+            }
+            if (awaitReraise != null && awaitDirect != null) {
+                checkEq(awaitDirect.code(), awaitReraise.code(),
+                    "the await rethrow keeps the code");
+                checkEq(awaitDirect.origin(), awaitReraise.origin(),
+                    "the await rethrow keeps the original source location");
+                checkEq(awaitDirect.expected(), awaitReraise.expected(),
+                    "the await rethrow keeps the expected type");
+                checkEq(awaitDirect.actual(), awaitReraise.actual(),
+                    "the await rethrow keeps the actual kind");
+                checkEq("-", awaitReraise.cause(),
+                    "the await rethrow invents no cause");
+                check(awaitReraise.frames().matches(
+                        "lib#ainner@F\\d+,lib#afail@F\\d+,app#areraise@F\\d+"),
+                    "the await rethrow keeps the original active frames with its "
+                        + "own awaiting entry: " + awaitReraise.frames());
+            }
+
+            // The absent-field rule: the E8004 carries no expected/actual
+            // and no cause, and its frames stay named.
+            HostErrorRow overflow = rows.get("overflow");
+            check(overflow != null, "the probe captured the overflow error");
+            if (overflow != null) {
+                checkEq("E8004", overflow.code(), "the overflow failure's code");
+                checkEq("int out of safe range", overflow.message(),
+                    "the overflow failure's message");
+                check(overflow.origin().endsWith("src/lib.deal:22:10"),
+                    "the overflow origin is the arithmetic site: "
+                        + overflow.origin());
+                checkEq("-", overflow.expected(),
+                    "the overflow carries no expected type (absent, not empty)");
+                checkEq("-", overflow.actual(),
+                    "the overflow carries no actual kind (absent, not empty)");
+                check(overflow.frames().matches("lib#boom@F\\d+"),
+                    "the overflow frames name the active DEAL call: "
+                        + overflow.frames());
+                checkEq("-", overflow.cause(), "the overflow carries no cause");
+            }
+
+            // The applicable-cause rule: a new failure raised while handling
+            // the caught one links the caught failure as its cause.
+            HostErrorRow replaced = rows.get("replaced");
+            check(replaced != null, "the probe captured the replacement error");
+            if (replaced != null) {
+                checkEq("REPLACED", replaced.code(),
+                    "the replacement failure's code");
+                checkEq("handled", replaced.message(),
+                    "the replacement failure's message");
+                check(replaced.origin().contains("src/app.deal:21:"),
+                    "the replacement failure raises at its own THROW origin: "
+                        + replaced.origin());
+                checkEq("-", replaced.expected(),
+                    "the replacement failure carries no expected type");
+                checkEq("-", replaced.actual(),
+                    "the replacement failure carries no actual kind");
+                checkEq("E8001", replaced.cause(),
+                    "the replacement failure links the caught failure as its "
+                        + "cause");
+            }
+        } finally {
+            deleteRecursively(workspace);
+            deleteRecursively(fixture.root());
+        }
+    }
+
+    /** The async external entry op of one export name, or {@code null}. */
+    private static SemanticOp asyncEntry(LoweredModuleUnit unit, String exportName) {
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
+                    && op.payload() instanceof KindPayload.ExternalEntryPayload payload
+                    && payload.async() && payload.exportName().equals(exportName)) {
+                return op;
+            }
+        }
+        return null;
+    }
+
+    // =========================================================================
     // =========================================================================
     // 4. The non-entry module emission (ISSUE-0749 review)
     // =========================================================================
@@ -1036,6 +1318,91 @@ public class JvmProductionProjectEmissionTest {
         return new ProcessOutcome(exit, stdout, stderr);
     }
 
+    /**
+     * The generated JVM host probe: invokes every probe export once — the
+     * sync exports through the artifact's published surface, and the async
+     * exports through the artifact's reserved {@code ae<opId>} async-entry
+     * dispatch (the entry the host invoker drives) — and prints the raw
+     * {@code DealError} fields of the uncaught failure, with {@code -} for
+     * every absent field.
+     */
+    private static String jvmHostErrorProbe(String className, SemanticOp arun,
+            SemanticOp areraise) {
+        return "import deal.codegen.jvm.JvmRuntime;\n"
+            + "\n"
+            + "public final class HostProbe {\n"
+            + "  static final String[] SYNC = { \"run\", \"reraise\", \"overflow\","
+            + " \"replaced\" };\n"
+            + "  public static void main(String[] args) throws Exception {\n"
+            + "    " + className + ".main(new String[0]);\n"
+            + "    JvmRuntime.Table surface = " + className
+            + ".EXPORT_SURFACES.get(\"app\");\n"
+            + "    for (String name : SYNC) {\n"
+            + "      JvmRuntime.FunctionValue fn =\n"
+            + "          (JvmRuntime.FunctionValue) surface.read(name);\n"
+            + "      try {\n"
+            + "        System.out.println(\"HOST-ERR|\" + name + \"|none|\"\n"
+            + "            + fn.fn.invoke(new Object[0]));\n"
+            + "      } catch (Throwable t) {\n"
+            + "        report(name, t);\n"
+            + "      }\n"
+            + "    }\n"
+            + "    drive(\"arun\", " + arun.opId().id() + "L);\n"
+            + "    drive(\"areraise\", " + areraise.opId().id() + "L);\n"
+            + "  }\n"
+            + "\n"
+            + "  static void drive(String name, long opId) throws Exception {\n"
+            + "    java.lang.reflect.Method entry = " + className
+            + ".class.getMethod(\"ae\" + opId, String.class,\n"
+            + "        boolean.class, Object[].class);\n"
+            + "    try {\n"
+            + "      System.out.println(\"HOST-ERR|\" + name + \"|none|\"\n"
+            + "          + entry.invoke(null, \"-\", true, new Object[0]));\n"
+            + "    } catch (java.lang.reflect.InvocationTargetException e) {\n"
+            + "      report(name, e.getCause());\n"
+            + "    }\n"
+            + "  }\n"
+            + "\n"
+            + "  static void report(String name, Throwable t) {\n"
+            + "    Throwable c = t;\n"
+            + "    while (!(c instanceof JvmRuntime.DealError) && c.getCause() != null) {\n"
+            + "      c = c.getCause();\n"
+            + "    }\n"
+            + "    if (!(c instanceof JvmRuntime.DealError e)) {\n"
+            + "      System.out.println(\"HOST-ERR|\" + name + \"|raw|\" + t);\n"
+            + "      return;\n"
+            + "    }\n"
+            + "    System.out.println(\"HOST-ERR|\" + name + \"|\" + e.code + \"|\" + e.msg\n"
+            + "        + \"|\" + e.origin + \"|\" + f(e.expected) + \"|\" + f(e.actual)\n"
+            + "        + \"|\" + f(e.frames) + \"|\"\n"
+            + "        + (e.cause == null ? \"-\" : e.cause.code));\n"
+            + "  }\n"
+            + "\n"
+            + "  static String f(String v) { return v == null ? \"-\" : v; }\n"
+            + "}\n";
+    }
+
+    /**
+     * The captured host-error rows keyed by probe export; a row whose
+     * shape is not the closed {@code HOST-ERR} line is skipped (the caller
+     * reports the missing row).
+     */
+    private static Map<String, HostErrorRow> hostErrorRows(String stdout) {
+        Map<String, HostErrorRow> rows = new LinkedHashMap<>();
+        for (String line : stdout.split("\n", -1)) {
+            if (!line.startsWith("HOST-ERR|")) {
+                continue;
+            }
+            String[] parts = line.split("\\|", -1);
+            if (parts.length != 9) {
+                continue;
+            }
+            rows.put(parts[1], new HostErrorRow(parts[2], parts[3], parts[4],
+                parts[5], parts[6], parts[7], parts[8]));
+        }
+        return rows;
+    }
+
     private static void writeFileIn(Path root, String relative, String content)
             throws Exception {
         Path file = root.resolve(relative);
@@ -1080,6 +1447,7 @@ public class JvmProductionProjectEmissionTest {
             testOverflowTerminal();
             testShadowingBindings();
             testDynamicTableRead();
+            testHostErrorTransport();
         } finally {
             deleteRecursively(fixture.root());
         }

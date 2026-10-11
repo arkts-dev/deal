@@ -697,7 +697,8 @@ public final class LuaSemanticEmitter {
                     emitFunctionFactory(function);
 
                     out.append("__fnModules[")
-                        .append(function.functionId().id()).append("] = ")
+                        .append(luaString(frameLabel(function.functionId())))
+                        .append("] = ")
                         .append(luaString(moduleUnit.moduleId().path()))
                         .append("\n");
                 }
@@ -2502,7 +2503,7 @@ public final class LuaSemanticEmitter {
                 .append(", __csig = ")
                 .append(luaString(payload.signature().canonicalSpecText()))
                 .append(", __fid = ")
-                .append(payload.function().id()).append("}\n");
+                .append(luaString(frameLabel(payload.function()))).append("}\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
 
@@ -2636,7 +2637,7 @@ public final class LuaSemanticEmitter {
                     .append(", __csig = ")
                     .append(luaString(function.descriptor().canonicalSpecText()))
                     .append(", __fid = ")
-                    .append(functionId.id()).append("}\n");
+                    .append(luaString(frameLabel(functionId))).append("}\n");
             }
             for (int i = 0; i < payload.bindings().size(); i++) {
                 out.append(cell(payload.bindings().get(i), 0)).append("[1] = ")
@@ -2944,7 +2945,7 @@ public final class LuaSemanticEmitter {
                     FunctionId callee = body.functionId();
                     String savedState = emitInvocationStateSave(callee, op.opId());
                     out.append("table.insert(__frames, 1, ")
-                        .append(luaString(String.valueOf(callee.id()))).append(")\n");
+                        .append(luaString(frameLabel(callee))).append(")\n");
                     // The invoking call's origin: a failure inside the body
                     // whose arm renders the call origin (the @jsonable
                     // toJson walk) reads the innermost active call.
@@ -3074,7 +3075,7 @@ public final class LuaSemanticEmitter {
             String savedState = emitInvocationStateSave(entryPayload.function(),
                 op.opId());
             out.append("table.insert(__frames, 1, ")
-                .append(luaString(String.valueOf(entryPayload.function().id())))
+                .append(luaString(frameLabel(entryPayload.function())))
                 .append(")\n");
             out.append("__callOrigins[#__callOrigins + 1] = ")
                 .append(luaString(originOf(op))).append("\n");
@@ -4962,6 +4963,14 @@ public final class LuaSemanticEmitter {
             KindPayload.TryCatchPayload payload = (KindPayload.TryCatchPayload) op.payload();
             emitStart(op);
             String cellName = cell(payload.catchBinding(), 0);
+            // The caught error's identity, kept beside the catch binding so
+            // the catch block's own failure can tell a rethrow of the caught
+            // error (identity preserved, no invented cause) from a new
+            // failure raised while handling it (cause = the original
+            // failure). The per-op local survives a nested try/catch inside
+            // the catch block, which would otherwise clobber the shared
+            // scratch temps.
+            String caughtIdentity = "__ctT" + op.opId().id();
             tryDepth++;
             out.append("__okT, __resT = pcall(function()\n");
             emitBlockOps(payload.tryBlock());
@@ -4971,6 +4980,12 @@ public final class LuaSemanticEmitter {
             emitTransferDispatch(op, payload.tryBlock(), "  ", "__resT");
             out.append("  if type(__resT) == \"table\" and __resT.__d then\n");
 
+            // The DEAL error is an error identity from here on: a rethrow
+            // of this value re-raises it verbatim (code/message, origin,
+            // expected/actual, frames, and any cause preserved unchanged).
+            out.append("    __resT.__re = true\n");
+            out.append("    local ").append(caughtIdentity)
+                .append(" = __resT\n");
             out.append("    ").append(cellName).append(" = __resT\n");
             tryDepth++;
             out.append("    __okT, __terrT = pcall(function()\n");
@@ -4980,11 +4995,22 @@ public final class LuaSemanticEmitter {
             out.append("    if not __okT then\n");
 
             emitTransferDispatch(op, payload.catchBlock(), "      ", "__terrT");
-            out.append("      __wrappedT = {__d = true, code = __terrT.code, "
+            // A rethrow of the caught error keeps its own identity and
+            // gains no cause; a new failure raised in the catch block is
+            // the replacement failure and links the caught failure as its
+            // cause (frames/code/message/origin unchanged).
+            out.append("      if __terrT == ").append(caughtIdentity).append(" then\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op,
+                "__errtext(__terrT)");
+            out.append("        error(__terrT, 0)\n");
+            out.append("      else\n");
+            out.append("        __wrappedT = {__d = true, code = __terrT.code, "
                 + "m = __terrT.m, o = __terrT.o, e = __terrT.e, a = __terrT.a, "
-                + "f = __terrT.f, cause = __resT}\n");
-            emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__wrappedT)");
-            out.append("      error(__wrappedT, 0)\n");
+                + "f = __terrT.f, cause = " + caughtIdentity + "}\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op,
+                "__errtext(__wrappedT)");
+            out.append("        error(__wrappedT, 0)\n");
+            out.append("      end\n");
             out.append("    end\n");
             out.append("  else\n");
             emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__resT)");
@@ -5080,15 +5106,28 @@ public final class LuaSemanticEmitter {
         private void emitThrow(SemanticOp op) {
             KindPayload.ThrowPayload payload = (KindPayload.ThrowPayload) op.payload();
             emitStart(op);
+            // The supplied Error value's own origin and transport win
+            // whenever it is an error identity (a caught error, or an error
+            // that already crossed a return/parameter): the identical value
+            // is re-raised, so code/message, origin, expected/actual, frames
+            // and any cause are preserved unchanged and no cause is
+            // invented. A constructed Error carries no origin: the failure
+            // is synthesized at the THROW origin with no expected/actual and
+            // no cause (absent fields stay absent), frames active.
+            String value = slot(payload.errorValue());
+            out.append("if type(").append(value).append(") == \"table\" and ")
+                .append(value).append(".__re then\n");
             emitFailureEvent(op.opId(), op.kind().name(), op,
-                "__errtext({__d = true, code = " + slot(payload.errorValue())
-                    + ".code, m = " + slot(payload.errorValue()) + ".m, o = "
-                    + luaString(originOf(op)) + ", e = nil, a = nil, f = __framesText(), "
-                    + "cause = nil})");
-            out.append("error({__d = true, code = ").append(slot(payload.errorValue()))
-                .append(".code, m = ").append(slot(payload.errorValue()))
-                .append(".m, o = ").append(luaString(originOf(op)))
-                .append(", e = nil, a = nil, f = __framesText(), cause = nil}, 0)\n");
+                "__errtext(" + value + ")");
+            out.append("  error(").append(value).append(", 0)\n");
+            out.append("else\n");
+            String synthesized = "{__d = true, code = " + value + ".code, m = "
+                + value + ".m, o = " + luaString(originOf(op))
+                + ", e = nil, a = nil, f = __framesText(), cause = nil}";
+            emitFailureEvent(op.opId(), op.kind().name(), op,
+                "__errtext(" + synthesized + ")");
+            out.append("  error(").append(synthesized).append(", 0)\n");
+            out.append("end\n");
         }
 
         private void emitReturn(SemanticOp op) {
@@ -5437,7 +5476,7 @@ public final class LuaSemanticEmitter {
                         caps.append(captureArg(capture));
                     }
                     out.append("  table.insert(__frames, 1, ")
-                        .append(luaString(String.valueOf(body.functionId().id())))
+                        .append(luaString(frameLabel(body.functionId())))
                         .append(")\n");
                     out.append("  __okT, __resT = pcall(")
                         .append(fnFactory(body.functionId())).append("(")
@@ -5718,7 +5757,7 @@ public final class LuaSemanticEmitter {
                     out.append("__asyncStartBodyTask(").append(token.tokenId())
                         .append(", \"DEAL_BODY_TASK\", coroutine.create(function()\n");
                     out.append("  table.insert(__frames, 1, ")
-                        .append(luaString(String.valueOf(body.functionId().id())))
+                        .append(luaString(frameLabel(body.functionId())))
                         .append(")\n");
                     // The task's body execution is the async counterpart of
                     // the synchronous invocation: a recursive await of the
@@ -6107,7 +6146,7 @@ public final class LuaSemanticEmitter {
             emitModulePush();
             out.append("    __module = ").append(luaString(ownerPath)).append("\n");
             out.append("    table.insert(__frames, 1, ")
-                .append(luaString(String.valueOf(payload.function().id())))
+                .append(luaString(frameLabel(payload.function())))
                 .append(")\n");
             String savedState = emitInvocationStateSave(payload.function(), op.opId());
             out.append("    local __okA, __resA = pcall(")

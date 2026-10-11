@@ -4353,7 +4353,7 @@ public final class SemanticLowerer {
                     declaration.span(), FailurePolicyId.NO_DEAL_FAILURE);
             }
             functions.put(functionId, new LoweredFunction(functionId, signature, List.of(),
-                bodyBlock));
+                bodyBlock, helperName));
             registerDeclaredBody(new FunctionAllocationIdentity(closureIdentity.id()),
                 functionId, bodyBlock);
             emitTarget().addAll(bodyOps);
@@ -5337,7 +5337,7 @@ public final class SemanticLowerer {
             }
             List<BindingGeneration> captureIds = captureGenerations(captured);
             emitClosureNew(functionId, closureIdentity, signature, captureIds, bodyBlock,
-                function.span(), captured);
+                function.span(), captured, function.name());
             // The body's capture list is final from here: every later
             // reference classifies the value-carried invocation from the
             // recorded captures.
@@ -5521,7 +5521,7 @@ public final class SemanticLowerer {
                     // here, so every later reference classifies the
                     // value-carried invocation from the recorded captures.
                     functions.put(functionId, new LoweredFunction(functionId, signature,
-                        captureIds, bodyBlock));
+                        captureIds, bodyBlock, member.name()));
                     bodiesPendingCaptures.remove(functionId);
                 }
             }
@@ -5553,7 +5553,7 @@ public final class SemanticLowerer {
                     // walk; the preallocation arm registered it before the
                     // first member body walk (exactly once per identity).
                     functions.put(functionId, new LoweredFunction(functionId, signature,
-                        captureIds, bodyBlock));
+                        captureIds, bodyBlock, member.name()));
                     registry.registerGroupMember(new FunctionAllocationIdentity(identity.id()),
                         functionId, bodyBlock);
                 }
@@ -6389,7 +6389,8 @@ public final class SemanticLowerer {
         private void emitClosureNew(FunctionId functionId, ValueId result,
                                     RuntimeDescriptor.Func signature,
                                     List<BindingGeneration> captures, BlockId bodyBlock,
-                                    Span span, List<CapturedCell> captured) {
+                                    Span span, List<CapturedCell> captured,
+                                    String sourceName) {
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
             FunctionExecutionBinding.LoweredBody binding =
@@ -6400,7 +6401,7 @@ public final class SemanticLowerer {
                 new KindPayload.ClosureNewPayload(functionId, signature, captures, binding),
                 result, signature, FailurePolicyId.NO_DEAL_FAILURE, origin));
             functions.put(functionId, new LoweredFunction(functionId, signature, captures,
-                bodyBlock));
+                bodyBlock, sourceName));
             // Exactly one registration per allocation identity: a
             // pre-registered declared body (the preallocation guarantee of
             // {@link #lowerBindingFunctionDecl}) holds an identical
@@ -11536,7 +11537,7 @@ public final class SemanticLowerer {
             List<BindingGeneration> captureIds = captureGenerations(captured);
             ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
             emitClosureNew(functionId, result, signature, captureIds, bodyBlock,
-                functionExpr.span(), captured);
+                functionExpr.span(), captured, null);
             emitTarget().addAll(bodyOps);
             return result;
         }

@@ -221,10 +221,24 @@ public final class JvmRuntime {
     public static final class ErrorValue implements ClassInstance {
         public String code;
         public String message;
+        /**
+         * The caught failure this Error value reifies, or {@code null} for
+         * a constructed Error (the builtin Error class literal). The
+         * transport travels with the value: a rethrow of a caught error
+         * preserves its origin, expected/actual, frames and cause — never
+         * a synthesized replacement. The field is not a declared class
+         * field: the class read surface exposes exactly code and message.
+         */
+        public final JvmRuntime.DealError transport;
 
         public ErrorValue(String code, String message) {
+            this(code, message, null);
+        }
+
+        public ErrorValue(String code, String message, JvmRuntime.DealError transport) {
             this.code = code;
             this.message = message;
+            this.transport = transport;
         }
 
         @Override
@@ -371,7 +385,13 @@ public final class JvmRuntime {
         public final String signature;
         /** The canonical spec text (E8010 projections); null when unknown. */
         public final String spec;
-        /** The source function id text for frame pushes; null when absent. */
+        /**
+         * The stack-frame label of the function (the generated and
+         * original function names of the shared
+         * {@code FrameLabels} form, e.g. {@code lib#add@F3}); null when
+         * absent. The label is also the carrier's key in the artifact's
+         * function-to-module resolution.
+         */
         public final String fid;
 
         public FunctionValue(Fn fn, String signature) {
@@ -437,9 +457,24 @@ public final class JvmRuntime {
         public final String actual;
         public final String frames;
         public final DealError cause;
+        /**
+         * The primary failure this error re-publishes: the error itself
+         * for a primary failure, and the rethrown failure's primary for a
+         * rethrow (whose code/message may have been rewritten). The
+         * try/catch arm compares carriers to tell a rethrow of the caught
+         * error — identity preserved, no invented cause — from a new
+         * failure raised while handling it.
+         */
+        public final DealError carrier;
 
         public DealError(String code, String msg, String origin, String expected,
                          String actual, String frames, DealError cause) {
+            this(code, msg, origin, expected, actual, frames, cause, null);
+        }
+
+        public DealError(String code, String msg, String origin, String expected,
+                         String actual, String frames, DealError cause,
+                         DealError carrier) {
             super(msg, cause);
             this.code = code;
             this.msg = msg;
@@ -448,6 +483,7 @@ public final class JvmRuntime {
             this.actual = actual;
             this.frames = frames;
             this.cause = cause;
+            this.carrier = carrier == null ? this : carrier;
         }
     }
 
@@ -460,7 +496,7 @@ public final class JvmRuntime {
     static final IdentityHashMap<Object, String> ALLOC_IDS = new IdentityHashMap<>();
     static long allocNext = 1;
 
-    /** Pushes/pops the innermost active frame (function id text). */
+    /** Pushes/pops the innermost active frame (the stack-frame label). */
     public static void pushFrame(String functionId) {
         FRAMES.get().add(0, functionId);
     }
@@ -1330,9 +1366,9 @@ public final class JvmRuntime {
      * capture mode (VALUE retains, SHARED_CELL re-reads the generation
      * cell, REEVALUATE_THUNK re-executes the thunk), the source-signature
      * check, then the source invocation with the leading M arguments
-     * only. A DEAL-body source pushes its function id onto the active
-     * frames for the invocation (popped on every path); the identical
-     * completion error propagates unchanged.
+     * only. A DEAL-body source pushes its stack-frame label onto the
+     * active frames for the invocation (popped on every path); the
+     * identical completion error propagates unchanged.
      */
     public static Object invokeAdapter(AdapterValue adapter, String origin, Object[] args) {
         Object source = adapterSource(adapter);
