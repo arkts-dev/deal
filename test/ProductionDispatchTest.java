@@ -5,6 +5,7 @@ import deal.checker.NameResolver;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.codegen.Backend;
+import deal.codegen.SourceMapGenerator;
 import deal.codegen.jvm.JvmBackend;
 import deal.codegen.jvm.JvmNames;
 import deal.diagnostics.CompilerDiagnostic;
@@ -22,6 +23,7 @@ import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
 import deal.semantic.ReleaseConfiguration;
 import deal.semantic.SemanticLowerer;
+import deal.semantic.ir.CanonicalJson;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.SemanticOpKind;
@@ -196,6 +198,37 @@ public class ProductionDispatchTest {
           "backend": "luajit"
         }
         """;
+
+    /**
+     * The source-map control-character fixture manifest: the module root
+     * carries accepted C0 controls other than the LF/CR/TAB the serializer
+     * always escaped (BEL, VT, FF, US), spelled as JSON {@code \\uXXXX}
+     * escapes so the strict manifest parser resolves the real directory name.
+     */
+    private static final String DEAL_JSON_CONTROL_ROOT = """
+        {
+          "languageVersion": "1.2",
+          "moduleRoots": ["src\\u0007\\u000b\\u000c\\u001fline"],
+          "output": "out",
+          "backend": "luajit"
+        }
+        """;
+
+    /**
+     * The control-character module root name: four accepted C0 controls the
+     * serializer wrote into the sidecar raw before the strict-JSON escape
+     * (BEL, VT, FF, US), around ordinary text.
+     */
+    private static final String CONTROL_ROOT_NAME = "src"
+        + (char) 0x07 + (char) 0x0b + (char) 0x0c + (char) 0x1f + "line";
+
+    /**
+     * The control-character output directory name: BS and ESC in the
+     * generated path (the output root sits two levels below the project
+     * root, so the generated path is the project-relative spelling).
+     */
+    private static final String CONTROL_OUTPUT_NAME = "out"
+        + (char) 0x08 + (char) 0x1b + "dir";
 
     /** The unsafe-path fixture body: a trivial entry that returns null. */
     private static final String TRIVIAL_MAIN_SOURCE = """
@@ -1671,6 +1704,183 @@ public class ProductionDispatchTest {
         return null;
     }
 
+    /**
+     * The control-character path regression of the source-map sidecars: an
+     * accepted module root and an accepted output directory carrying C0
+     * controls other than the LF/CR/TAB the serializer always escaped must
+     * still yield sidecars that strict JSON consumers parse, with the decoded
+     * source and generated paths exactly the actual ones, on both targets,
+     * and the commented artifacts must still compile and run.
+     */
+    private static void testSourceMapControlCharacterPaths() throws Exception {
+        System.out.println("-- source map: accepted C0 controls in the source "
+            + "and generated paths still yield strict-JSON sidecars with the "
+            + "actual decoded paths, and runnable artifacts on both "
+            + "targets --");
+
+        verifySerializerEscapesEveryControl();
+
+        Path project = Files.createTempDirectory(
+            "production-dispatch-map-ctl-");
+        try {
+            Path moduleRoot = Path.of(CONTROL_ROOT_NAME);
+            write(project, "deal.json", DEAL_JSON_CONTROL_ROOT);
+            write(project, moduleRoot.resolve("main.deal").toString(),
+                TRIVIAL_MAIN_SOURCE);
+            String entry = project.resolve(moduleRoot).resolve("main.deal")
+                .toAbsolutePath().toString();
+            String actualSource = moduleRoot.toString()
+                .replace(File.separatorChar, '/') + "/main.deal";
+
+            // (1) The JVM target: the sidecar is strict JSON with the actual
+            // paths, and the commented class compiles and runs.
+            Path jvmOut = project.resolve(
+                Path.of("build", CONTROL_OUTPUT_NAME));
+            ProjectOutcome jvmCompile = runProductionCli("compile", entry,
+                "--backend", "jvm", "--source-map", "--output",
+                jvmOut.toAbsolutePath().toString());
+            check(jvmCompile.exitCode() == 0,
+                "the JVM control-path compile succeeds: "
+                    + jvmCompile.stderr());
+            if (jvmCompile.exitCode() == 0) {
+                verifyStrictSidecarPaths(jvmOut, "main.deal.map.json",
+                    actualSource, Path.of("build", CONTROL_OUTPUT_NAME)
+                        .toString().replace(File.separatorChar, '/')
+                        + "/Main.java");
+                String classpath = Path.of("build").toAbsolutePath().normalize()
+                    .toString();
+                ProcessOutcome javac = runProcess(project, "javac", "--release",
+                    "25", "-proc:none", "-cp", classpath, "-d",
+                    jvmOut.toString(), jvmOut.resolve("Main.java").toString());
+                check(javac.exitCode() == 0,
+                    "the JVM control-path artifact compiles: " + javac.output());
+                if (javac.exitCode() == 0) {
+                    ProcessOutcome run = runProcess(jvmOut, "java", "-cp",
+                        classpath + File.pathSeparator + jvmOut, "Main");
+                    checkEq(0, run.exitCode(),
+                        "the JVM control-path artifact runs: " + run.output());
+                }
+            }
+
+            // (2) The LuaJIT target: the same strict sidecar and a chunk that
+            // runs under the real interpreter.
+            Path luaOut = project.resolve(
+                Path.of("build", CONTROL_OUTPUT_NAME + "-lua"));
+            ProjectOutcome luaCompile = runProductionCli("compile", entry,
+                "--backend", "luajit", "--source-map", "--output",
+                luaOut.toAbsolutePath().toString());
+            check(luaCompile.exitCode() == 0,
+                "the LuaJIT control-path compile succeeds: "
+                    + luaCompile.stderr());
+            if (luaCompile.exitCode() == 0) {
+                verifyStrictSidecarPaths(luaOut, "main.deal.map.json",
+                    actualSource, Path.of("build",
+                        CONTROL_OUTPUT_NAME + "-lua")
+                        .toString().replace(File.separatorChar, '/')
+                        + "/main.lua");
+                ProcessOutcome run = runProcess(luaOut, "luajit", "main.lua");
+                checkEq(0, run.exitCode(),
+                    "the LuaJIT control-path artifact runs: " + run.output());
+            }
+        } finally {
+            deleteRecursively(project);
+        }
+    }
+
+    /**
+     * The exhaustive serializer check: a path carrying every C0 control
+     * character (U+0000..U+001F, not only the LF/CR/TAB short escapes) must
+     * serialize into a sidecar the strict canonical JSON transport parses,
+     * with the decoded value equal to the path text.
+     */
+    private static void verifySerializerEscapesEveryControl() {
+        SourceMapGenerator generator = new SourceMapGenerator();
+        generator.emitStatement(1, 1, 1, 1);
+        StringBuilder source = new StringBuilder("src");
+        for (char control = 0; control < 0x20; control++) {
+            source.append(control);
+        }
+        source.append("main.deal");
+        String json = generator.toJson(source.toString(),
+            "build/out/Main.java");
+        Map<String, CanonicalJson.Value> fields = strictSidecarFields(json,
+            "the every-C0-control serializer probe");
+        if (fields == null) {
+            return;
+        }
+        checkEq(source.toString(), canonicalScalar(fields.get("source")),
+            "the serializer escapes every C0 control with the decoded value "
+                + "preserved");
+    }
+
+    /**
+     * Strictly parses one published sidecar through the canonical JSON
+     * transport — the repository's strict reader, which rejects a raw control
+     * character inside a string, an invalid escape, and malformed syntax —
+     * and verifies the pinned version and the decoded source/generated paths
+     * against the actual ones.
+     */
+    private static void verifyStrictSidecarPaths(Path outputRoot,
+            String sidecarName, String expectedSource, String expectedGenerated)
+            throws Exception {
+        Path sidecar = outputRoot.resolve(sidecarName);
+        check(Files.isRegularFile(sidecar),
+            "the control-path sidecar is published: " + sidecarName);
+        if (!Files.isRegularFile(sidecar)) {
+            return;
+        }
+        Map<String, CanonicalJson.Value> fields = strictSidecarFields(
+            Files.readString(sidecar, StandardCharsets.UTF_8), sidecarName);
+        if (fields == null) {
+            return;
+        }
+        checkEq(1, canonicalScalar(fields.get("version")),
+            sidecarName + " carries the pinned version");
+        checkEq(expectedSource, canonicalScalar(fields.get("source")),
+            sidecarName + " decodes the actual source path");
+        checkEq(expectedGenerated, canonicalScalar(fields.get("generated")),
+            sidecarName + " decodes the actual generated path");
+        check(fields.get("mappings") instanceof CanonicalJson.Arr,
+            sidecarName + " carries its mappings array");
+    }
+
+    /**
+     * The top-level fields of one strictly parsed sidecar, or {@code null}
+     * after failing the check when the document is not strict JSON.
+     */
+    private static Map<String, CanonicalJson.Value> strictSidecarFields(
+            String json, String context) {
+        CanonicalJson.Obj root;
+        try {
+            root = (CanonicalJson.Obj) CanonicalJson.parse(json);
+        } catch (RuntimeException malformed) {
+            fail(context + " is not strict JSON: " + malformed);
+            return null;
+        }
+        Map<String, CanonicalJson.Value> fields = new java.util.LinkedHashMap<>();
+        for (CanonicalJson.Entry entry : root.entries()) {
+            fields.put(entry.key(), entry.value());
+        }
+        return fields;
+    }
+
+    /** The Java scalar of one canonical JSON value (containers stay as-is). */
+    private static Object canonicalScalar(CanonicalJson.Value value) {
+        if (value instanceof CanonicalJson.Int integer) {
+            return integer.value();
+        }
+        if (value instanceof CanonicalJson.Str string) {
+            return string.value();
+        }
+        if (value instanceof CanonicalJson.Num number) {
+            return number.value();
+        }
+        if (value instanceof CanonicalJson.Bool bool) {
+            return bool.value();
+        }
+        return null;
+    }
+
     // =========================================================================
     // 6. The single-arm dispatch: every recorded invocation runs the one
     //    production arm; a legacy profile fails closed at the lowering
@@ -2330,6 +2540,7 @@ public class ProductionDispatchTest {
         testFailClosedFamilies();
         testSourceMapDisposition();
         testSourceMapUnsafeSourcePathText();
+        testSourceMapControlCharacterPaths();
         testSingleArmDispatch();
         testLegacyRejectionStagesNothingWithDumps();
         testRetainedTestScopeEmitters();

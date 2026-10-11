@@ -121,6 +121,16 @@ public final class SourceMapGenerator {
         return sb.toString();
     }
 
+    /**
+     * Escapes one path string into JSON string content. Strict JSON allows
+     * no raw character below U+0020 inside a string: {@code "} and
+     * {@code \} take their mandatory escapes, LF/CR/TAB keep the short
+     * standard spellings, and every other control character takes the
+     * four-hex-digit backslash-u escape spelling. Every ordinary path byte
+     * is unchanged and the decoded value is the path text exactly, so an
+     * accepted source or output path carrying a control character still
+     * yields a sidecar that strict JSON consumers parse.
+     */
     private static String jsonEscape(String s) {
         if (s == null) return "null";
         StringBuilder sb = new StringBuilder();
@@ -132,7 +142,13 @@ public final class SourceMapGenerator {
                 case '\n' -> sb.append("\\n");
                 case '\r' -> sb.append("\\r");
                 case '\t' -> sb.append("\\t");
-                default -> sb.append(c);
+                default -> {
+                    if (c < 0x20) {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                }
             }
         }
         return sb.toString();
