@@ -405,21 +405,16 @@ public final class JvmRuntime {
             if (fid == null) {
                 this.fn = fn;
             } else {
-                // A DEAL body carrier names its own frame: every
-                // in-project invocation path (the CALL arm, the adapter
-                // invocation, the callback dispatch, the async task and
-                // entry bodies) pushes this label before invoking the
-                // carrier, and the balanced conditional push below then
-                // leaves it alone. A direct invocation that runs no such
-                // path — the host invoking a published callable — pushes
-                // the label itself, on the success and the failure path
-                // alike (the finally pops), so a host-visible stack never
-                // loses the invoked export's generated and original names
-                // and never keeps a stale frame.
+                // A DEAL body carrier owns its body's stack frame: the
+                // carrier is the single layer that pushes the label for
+                // its own activation and pops it on the success and the
+                // failure path alike. Every invocation — the in-project
+                // call paths and the host invoking a published callable —
+                // therefore contributes exactly one frame per active
+                // activation, repeated identical labels included, and no
+                // path can drop a frame or keep a stale one.
                 this.fn = args -> {
-                    if (!pushFrameUnlessTop(fid)) {
-                        return fn.invoke(args);
-                    }
+                    pushFrame(fid);
                     try {
                         return fn.invoke(args);
                     } finally {
@@ -564,26 +559,15 @@ public final class JvmRuntime {
     static final IdentityHashMap<Object, String> ALLOC_IDS = new IdentityHashMap<>();
     static long allocNext = 1;
 
-    /** Pushes/pops the innermost active frame (the stack-frame label). */
+    /**
+     * Pushes/pops the innermost active frame (the stack-frame label) of
+     * one DEAL body activation. The body carrier is the only pusher (see
+     * {@link FunctionValue}), so every active invocation has exactly one
+     * entry, repeated labels included, and every push has its balanced
+     * pop on the success and the failure path.
+     */
     public static void pushFrame(String functionId) {
         FRAMES.get().add(0, functionId);
-    }
-
-    /**
-     * Pushes one frame label unless it is already the innermost active
-     * frame (the in-project invocation paths pushed the callee's label
-     * immediately before invoking its carrier), and answers whether this
-     * call pushed — only then does the caller pop. The published-body
-     * carrier uses this to complete the direct host invocation without
-     * doubling an in-project invocation's frame.
-     */
-    public static boolean pushFrameUnlessTop(String functionId) {
-        List<String> frames = FRAMES.get();
-        if (!frames.isEmpty() && frames.get(0).equals(functionId)) {
-            return false;
-        }
-        frames.add(0, functionId);
-        return true;
     }
 
     public static void popFrame() {
@@ -1451,9 +1435,9 @@ public final class JvmRuntime {
      * capture mode (VALUE retains, SHARED_CELL re-reads the generation
      * cell, REEVALUATE_THUNK re-executes the thunk), the source-signature
      * check, then the source invocation with the leading M arguments
-     * only. A DEAL-body source pushes its stack-frame label onto the
-     * active frames for the invocation (popped on every path); the
-     * identical completion error propagates unchanged.
+     * only. A DEAL-body source owns its own stack frame (the carrier
+     * wrapper pushes and pops it); the identical completion error
+     * propagates unchanged.
      */
     public static Object invokeAdapter(AdapterValue adapter, String origin, Object[] args) {
         Object source = adapterSource(adapter);
@@ -1461,10 +1445,6 @@ public final class JvmRuntime {
         Object[] leading = new Object[adapter.arity];
         System.arraycopy(args, 0, leading, 0, adapter.arity);
         FunctionValue function = (FunctionValue) source;
-        boolean pushed = function.fid != null;
-        if (pushed) {
-            pushFrame(function.fid);
-        }
         // The invoking call's origin: a failure inside the adapted source
         // whose arm renders the call origin (the @jsonable toJson walk)
         // reads the innermost active call — the adapter call expression,
@@ -1480,9 +1460,6 @@ public final class JvmRuntime {
         } finally {
             if (pushedOrigin) {
                 callOrigins.pop();
-            }
-            if (pushed) {
-                popFrame();
             }
         }
     }

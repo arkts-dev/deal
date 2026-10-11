@@ -609,6 +609,9 @@ public class JvmProductionProjectEmissionTest {
      * catch/rethrow/catch alias identity of a retained Error value, and
      * {@code mutate} edits a retained E8001 alias after the OUTER
      * replacement linked it as cause and then rethrows the OUTER error.
+     * {@code recur} drives the host re-entry arm: the host-supplied step
+     * calls the same published export back while two activations of it are
+     * live, so three identical frame labels stack and none is lost.
      */
     private static final String HOST_ERROR_APP_SOURCE = """
         import * as helper from "./lib";
@@ -625,6 +628,15 @@ public class JvmProductionProjectEmissionTest {
           let t: table = { value: "bad" };
           let x: int = t.value;
           return x;
+        }
+
+        export function recur(n: int, step: (n: int) => int): int {
+          if (n === 0) {
+            let t: table = { value: "bad" };
+            let x: int = t.value;
+            return x;
+          }
+          return step(n - 1);
         }
 
         export function swallow(): int {
@@ -935,9 +947,56 @@ public class JvmProductionProjectEmissionTest {
                 }
             }
 
+            // The host re-entry arm: the host-supplied step invokes the
+            // same published export back while two activations of it are
+            // live, so the innermost failure names three identical active
+            // invocations — the label is never deduplicated against an
+            // earlier activation of the same function.
+            String reentry = hostFieldLine(run.stdout(), "HOST-REENTRY|recur|");
+            check(reentry != null, "the probe recorded the host re-entry row: "
+                + run.output());
+            if (reentry != null) {
+                String[] parts = reentry.split("\\|", -1);
+                checkEq(7, parts.length,
+                    "the host re-entry row carries every compared field: "
+                        + reentry);
+                if (parts.length == 7) {
+                    checkEq("E8001", parts[0],
+                        "the re-entered failure keeps its code: " + reentry);
+                    checkEq("expected int", parts[1],
+                        "the re-entered failure keeps its message: " + reentry);
+                    check(parts[2].contains("src/app.deal:"),
+                        "the re-entered failure keeps its own raising site: "
+                            + reentry);
+                    checkEq("int", parts[3],
+                        "the re-entered failure keeps its expected type: " + reentry);
+                    checkEq("string", parts[4],
+                        "the re-entered failure keeps its actual kind: " + reentry);
+                    check(parts[5].matches("app#recur@F\\d+,app#recur@F\\d+,"
+                            + "app#recur@F\\d+"),
+                        "the re-entered failure names every active invocation of "
+                            + "the same function: " + reentry);
+                    String[] frames = parts[5].split(",");
+                    check(frames.length == 3 && frames[0].equals(frames[1])
+                            && frames[1].equals(frames[2]),
+                        "the three re-entered invocations carry the identical "
+                            + "label: " + reentry);
+                    checkEq("-", parts[6],
+                        "the re-entered failure invents no cause: " + reentry);
+                }
+            }
+            // The frame stack is empty right after the re-entered failure:
+            // every re-entered activation popped its own frame as the error
+            // propagated out to the host.
+            String empty = hostFieldLine(run.stdout(), "HOST-EMPTY|recur|");
+            checkEq("-", empty,
+                "the re-entered activations leave no frame behind: "
+                    + run.output());
+
             // The cleanup arm: after the failure and the success probes, a
             // fresh direct invocation of the leaf export names exactly its
-            // own frame — every host-visible push was balanced by its pop.
+            // own frame — every host-visible push was balanced by its pop,
+            // including the re-entered activations above.
             String clean = hostFieldLine(run.stdout(), "HOST-CLEAN|leafFail|");
             check(clean != null, "the probe recorded the frame-cleanup row: "
                 + run.output());
@@ -1528,8 +1587,28 @@ public class JvmProductionProjectEmissionTest {
             + "    drive(\"arun\", " + arun.opId().id() + "L);\n"
             + "    drive(\"areraise\", " + areraise.opId().id() + "L);\n"
             + "    checkIdentity(surface);\n"
+            + "    checkReentry(surface);\n"
             + "    checkCleanup(surface);\n"
             + "    checkMutatedCause(surface);\n"
+            + "  }\n"
+            + "\n"
+            + "  static void checkReentry(JvmRuntime.Table surface) throws Exception {\n"
+            + "    JvmRuntime.FunctionValue recur =\n"
+            + "        (JvmRuntime.FunctionValue) surface.read(\"recur\");\n"
+            + "    JvmRuntime.FunctionValue[] step = new JvmRuntime.FunctionValue[1];\n"
+            + "    step[0] = new JvmRuntime.FunctionValue(args -> recur.fn.invoke(\n"
+            + "            new Object[]{ args[0], step[0] }),\n"
+            + "        \"(int)->int\", \"(int)->int\", null);\n"
+            + "    try {\n"
+            + "      recur.fn.invoke(new Object[]{ 2L, step[0] });\n"
+            + "      System.out.println(\"HOST-REENTRY|recur|none\");\n"
+            + "    } catch (JvmRuntime.DealError e) {\n"
+            + "      System.out.println(\"HOST-REENTRY|recur|\" + e.code + \"|\"\n"
+            + "          + e.msg + \"|\" + e.origin + \"|\" + f(e.expected) + \"|\"\n"
+            + "          + f(e.actual) + \"|\" + f(e.frames) + \"|\"\n"
+            + "          + (e.cause == null ? \"-\" : e.cause.code));\n"
+            + "    }\n"
+            + "    System.out.println(\"HOST-EMPTY|recur|\" + JvmRuntime.framesText());\n"
             + "  }\n"
             + "\n"
             + "  static void checkCleanup(JvmRuntime.Table surface) throws Exception {\n"

@@ -927,6 +927,9 @@ public class LuaProductionProjectEmissionTest {
      * catch/rethrow/catch alias identity of a retained Error value, and
      * {@code mutate} edits a retained E8001 alias after the OUTER
      * replacement linked it as cause and then rethrows the OUTER error.
+     * {@code recur} drives the host re-entry arm: the host-supplied step
+     * calls the same published export back while two activations of it are
+     * live, so three identical frame labels stack and none is lost.
      */
     private static final String HOST_ERROR_APP_SOURCE = """
         import * as helper from "./lib";
@@ -943,6 +946,15 @@ public class LuaProductionProjectEmissionTest {
           let t: table = { value: "bad" };
           let x: int = t.value;
           return x;
+        }
+
+        export function recur(n: int, step: (n: int) => int): int {
+          if (n === 0) {
+            let t: table = { value: "bad" };
+            let x: int = t.value;
+            return x;
+          }
+          return step(n - 1);
         }
 
         export function swallow(): int {
@@ -1227,9 +1239,56 @@ public class LuaProductionProjectEmissionTest {
                 }
             }
 
+            // The host re-entry arm: the host-supplied step invokes the
+            // same published export back while two activations of it are
+            // live, so the innermost failure names three identical active
+            // invocations — the label is never deduplicated against an
+            // earlier activation of the same function.
+            String reentry = hostFieldLine(run.stdout(), "HOST-REENTRY|recur|");
+            check(reentry != null, "the probe recorded the host re-entry row: "
+                + escaped(run.stdout()));
+            if (reentry != null) {
+                String[] parts = reentry.split("\\|", -1);
+                checkEq(7, parts.length,
+                    "the host re-entry row carries every compared field: "
+                        + reentry);
+                if (parts.length == 7) {
+                    checkEq("E8001", parts[0],
+                        "the re-entered failure keeps its code: " + reentry);
+                    checkEq("expected int", parts[1],
+                        "the re-entered failure keeps its message: " + reentry);
+                    check(parts[2].contains("src/app.deal:"),
+                        "the re-entered failure keeps its own raising site: "
+                            + reentry);
+                    checkEq("int", parts[3],
+                        "the re-entered failure keeps its expected type: " + reentry);
+                    checkEq("string", parts[4],
+                        "the re-entered failure keeps its actual kind: " + reentry);
+                    check(parts[5].matches("app#recur@F\\d+,app#recur@F\\d+,"
+                            + "app#recur@F\\d+"),
+                        "the re-entered failure names every active invocation of "
+                            + "the same function: " + reentry);
+                    String[] frames = parts[5].split(",");
+                    check(frames.length == 3 && frames[0].equals(frames[1])
+                            && frames[1].equals(frames[2]),
+                        "the three re-entered invocations carry the identical "
+                            + "label: " + reentry);
+                    checkEq("-", parts[6],
+                        "the re-entered failure invents no cause: " + reentry);
+                }
+            }
+            // The frame stack is empty right after the re-entered failure:
+            // every re-entered activation popped its own frame as the error
+            // propagated out to the host.
+            String empty = hostFieldLine(run.stdout(), "HOST-EMPTY|recur|");
+            checkEq("-", empty,
+                "the re-entered activations leave no frame behind: "
+                    + escaped(run.stdout()));
+
             // The cleanup arm: after the failure and the success probes, a
             // fresh direct invocation of the leaf export names exactly its
-            // own frame — every host-visible push was balanced by its pop.
+            // own frame — every host-visible push was balanced by its pop,
+            // including the re-entered activations above.
             String clean = hostFieldLine(run.stdout(), "HOST-CLEAN|leafFail|");
             check(clean != null, "the probe recorded the frame-cleanup row: "
                 + escaped(run.stdout()));
@@ -1361,6 +1420,33 @@ public class LuaProductionProjectEmissionTest {
         lua.append("  else\n");
         lua.append("    print(\"HOST-ERR|\" .. __name .. \"|raw|\" .. tostring(__err))\n");
         lua.append("  end\n");
+        lua.append("end\n");
+        // The host re-entry probe: the host-supplied step invokes the same
+        // published export back while two activations of it are live, so
+        // the innermost failure names three identical active invocations —
+        // the label is never deduplicated against an earlier activation of
+        // the same function. It runs before the cleanup probe below, so
+        // that row proves the re-entered activations left no stale frame.
+        lua.append("local __recur = __surface.recur.f\n");
+        lua.append("local __step\n");
+        lua.append("__step = {__kind = \"function\", sig = \"(int)->int\",\n");
+        lua.append("  f = function(n, origin, line, column) return __recur(n, __step) end}\n");
+        lua.append("local __okR, __errR = pcall(__recur, 2, __step)\n");
+        lua.append("if __okR or type(__errR) ~= \"table\" then\n");
+        lua.append("  print(\"HOST-REENTRY|recur|none\")\n");
+        lua.append("else\n");
+        lua.append("  print(\"HOST-REENTRY|recur|\" .. __field(__errR.code)\n");
+        lua.append("    .. \"|\" .. __field(__errR.m) .. \"|\" .. __field(__errR.o)\n");
+        lua.append("    .. \"|\" .. __field(__errR.e) .. \"|\" .. __field(__errR.a)\n");
+        lua.append("    .. \"|\" .. __field(__errR.f) .. \"|\" .. __cause(__errR))\n");
+        lua.append("end\n");
+        // The frame stack is empty right after the re-entered failure: every
+        // re-entered activation popped its own frame as the error propagated
+        // out to the host.
+        lua.append("if __frames == nil or next(__frames) == nil then\n");
+        lua.append("  print(\"HOST-EMPTY|recur|-\")\n");
+        lua.append("else\n");
+        lua.append("  print(\"HOST-EMPTY|recur|\" .. table.concat(__frames, \",\"))\n");
         lua.append("end\n");
         // The cleanup probe: a fresh direct invocation of the leaf export
         // after the failure and the success probes names exactly its own

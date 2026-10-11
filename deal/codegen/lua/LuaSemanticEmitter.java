@@ -1198,9 +1198,9 @@ public final class LuaSemanticEmitter {
             out.append(fnFactory(functionId)).append(" = function(")
                 .append(params).append(")\n");
             // The body carries its own frame label through the balanced
-            // wrapper: a direct host invocation of the published callable
-            // pushes/pops it, an in-project invocation's own call-path
-            // push is never doubled.
+            // wrapper: every invocation of the carrier — the in-project
+            // call paths and the host invoking the published callable —
+            // pushes exactly one label for its own activation.
             out.append("  return __frameWrap(")
                 .append(luaString(frameLabel(functionId)))
                 .append(", function(...)\n");
@@ -2950,8 +2950,6 @@ public final class LuaSemanticEmitter {
                 case FunctionExecutionBinding.LoweredBody body -> {
                     FunctionId callee = body.functionId();
                     String savedState = emitInvocationStateSave(callee, op.opId());
-                    out.append("table.insert(__frames, 1, ")
-                        .append(luaString(frameLabel(callee))).append(")\n");
                     // The invoking call's origin: a failure inside the body
                     // whose arm renders the call origin (the @jsonable
                     // toJson walk) reads the innermost active call.
@@ -2990,7 +2988,6 @@ public final class LuaSemanticEmitter {
                     }
                     out.append(")\n");
                     out.append("__callOrigins[#__callOrigins] = nil\n");
-                    out.append("table.remove(__frames, 1)\n");
                     emitInvocationStateRestore(callee, savedState);
                     out.append("if not __okT then\n");
                     emitFailureEvent(op.opId(), op.kind().name(), op,
@@ -3080,9 +3077,6 @@ public final class LuaSemanticEmitter {
             }
             String savedState = emitInvocationStateSave(entryPayload.function(),
                 op.opId());
-            out.append("table.insert(__frames, 1, ")
-                .append(luaString(frameLabel(entryPayload.function())))
-                .append(")\n");
             out.append("__callOrigins[#__callOrigins + 1] = ")
                 .append(luaString(originOf(op))).append("\n");
             out.append("__okT, __resT = pcall(")
@@ -3102,7 +3096,6 @@ public final class LuaSemanticEmitter {
             }
             out.append(")\n");
             out.append("__callOrigins[#__callOrigins] = nil\n");
-            out.append("table.remove(__frames, 1)\n");
             emitInvocationStateRestore(entryPayload.function(), savedState);
             out.append("if not __okT then\n");
             if (trace) {
@@ -3739,8 +3732,8 @@ public final class LuaSemanticEmitter {
             out.append("__dynC = ").append(slot(callee.callee())).append("\n");
             out.append("__dynK = __dynClass(__dynC)\n");
             // DEAL_BODY: the carrier's function id resolves its owning
-            // module; the frame and the module context are restored on
-            // every path.
+            // module; the module context is restored on every path and the
+            // carrier owns its own frame.
             out.append("if __dynK == \"DEAL_BODY\" then\n");
             out.append("  __dynM = __fnModules[__dynC.__fid]\n");
             out.append("  if __dynM == nil then\n");
@@ -3748,7 +3741,6 @@ public final class LuaSemanticEmitter {
             out.append("  end\n");
             out.append("  __modStack[#__modStack + 1] = __module\n");
             out.append("  __module = __dynM\n");
-            out.append("  table.insert(__frames, 1, tostring(__dynC.__fid))\n");
             // The invoking dynamic call's origin: a failure inside the
             // callee body whose arm renders the call origin (the
             // @jsonable toJson walk) reads the innermost active call —
@@ -3758,7 +3750,6 @@ public final class LuaSemanticEmitter {
             out.append("  __okT, __resT = pcall(__unfn(__dynC)").append(argList)
                 .append(")\n");
             out.append("  __callOrigins[#__callOrigins] = nil\n");
-            out.append("  table.remove(__frames, 1)\n");
             out.append("  __module = __modStack[#__modStack]\n");
             out.append("  __modStack[#__modStack] = nil\n");
             out.append("  if not __okT then\n");
@@ -3787,7 +3778,6 @@ public final class LuaSemanticEmitter {
             out.append("    end\n");
             out.append("    __modStack[#__modStack + 1] = __module\n");
             out.append("    __module = __dynM\n");
-            out.append("    table.insert(__frames, 1, tostring(__dynS.__fid))\n");
             out.append("    __dynA = {").append(argTable).append("}\n");
             // The invoking dynamic call's origin, as in the direct
             // DEAL_BODY row: the innermost active call is the f(w)
@@ -3797,7 +3787,6 @@ public final class LuaSemanticEmitter {
             out.append("    __okT, __resT = pcall(__unfn(__dynS), unpack(__dynA, 1, ")
                 .append("__dynC.__m))\n");
             out.append("    __callOrigins[#__callOrigins] = nil\n");
-            out.append("    table.remove(__frames, 1)\n");
             out.append("    __module = __modStack[#__modStack]\n");
             out.append("    __modStack[#__modStack] = nil\n");
             out.append("    if not __okT then\n");
@@ -3976,8 +3965,8 @@ public final class LuaSemanticEmitter {
             out.append("__dynC = ").append(slot(callee.callee())).append("\n");
             out.append("__dynK = __dynClass(__dynC)\n");
             // DEAL_BODY: the carrier's function id resolves its owning
-            // module; the frame and the module context are restored on
-            // every path.
+            // module; the module context is restored on every path and the
+            // carrier owns its own frame.
             out.append("if __dynK == \"DEAL_BODY\" then\n");
             out.append("  __dynM = __fnModules[__dynC.__fid]\n");
             out.append("  if __dynM == nil then\n");
@@ -3987,11 +3976,9 @@ public final class LuaSemanticEmitter {
                 .append(", \"DEAL_BODY_TASK\", coroutine.create(function()\n");
             out.append("    __modStack[#__modStack + 1] = __module\n");
             out.append("    __module = __dynM\n");
-            out.append("    table.insert(__frames, 1, tostring(__dynC.__fid))\n");
             out.append("    local __okA, __resA = pcall(__unfn(__dynC), unpack(")
                 .append(carrierArgs).append(", 1, #").append(carrierArgs)
                 .append("))\n");
-            out.append("    table.remove(__frames, 1)\n");
             out.append("    __module = __modStack[#__modStack]\n");
             out.append("    __modStack[#__modStack] = nil\n");
             out.append("    if not __okA then error(__resA, 0) end\n");
@@ -4047,10 +4034,8 @@ public final class LuaSemanticEmitter {
                 .append(", \"DEAL_BODY_TASK\", coroutine.create(function()\n");
             out.append("    __modStack[#__modStack + 1] = __module\n");
             out.append("    __module = __dynM\n");
-            out.append("    table.insert(__frames, 1, tostring(__dynS.__fid))\n");
             out.append("    local __okA, __resA = pcall(__unfn(__dynS), unpack(")
                 .append(carrierArgs).append(", 1, __dynC.__m))\n");
-            out.append("    table.remove(__frames, 1)\n");
             out.append("    __module = __modStack[#__modStack]\n");
             out.append("    __modStack[#__modStack] = nil\n");
             out.append("    if not __okA then error(__resA, 0) end\n");
@@ -5501,9 +5486,6 @@ public final class LuaSemanticEmitter {
                         }
                         caps.append(captureArg(capture));
                     }
-                    out.append("  table.insert(__frames, 1, ")
-                        .append(luaString(frameLabel(body.functionId())))
-                        .append(")\n");
                     out.append("  __okT, __resT = pcall(")
                         .append(fnFactory(body.functionId())).append("(")
                         .append(caps).append(")");
@@ -5511,7 +5493,6 @@ public final class LuaSemanticEmitter {
                         out.append(", __cargs[").append(i + 1).append("]");
                     }
                     out.append(")\n");
-                    out.append("  table.remove(__frames, 1)\n");
                     out.append("  if not __okT then\n");
                     if (trace) {
                         emitFailureEvent(op.opId(), op.kind().name(), op,
@@ -5782,9 +5763,6 @@ public final class LuaSemanticEmitter {
                     }
                     out.append("__asyncStartBodyTask(").append(token.tokenId())
                         .append(", \"DEAL_BODY_TASK\", coroutine.create(function()\n");
-                    out.append("  table.insert(__frames, 1, ")
-                        .append(luaString(frameLabel(body.functionId())))
-                        .append(")\n");
                     // The task's body execution is the async counterpart of
                     // the synchronous invocation: a recursive await of the
                     // same body runs the nested task inline (the FIFO drain)
@@ -5809,7 +5787,6 @@ public final class LuaSemanticEmitter {
                     }
                     out.append(", unpack(S.__sa").append(op.opId().id())
                         .append(", 1, #S.__sa").append(op.opId().id()).append("))\n");
-                    out.append("  table.remove(__frames, 1)\n");
                     emitAsyncInvocationStateRestore(body.functionId(), savedState, "  ");
                     out.append("  if not __okA then error(__resA, 0) end\n");
                     out.append("  return __resA\n");
@@ -6171,14 +6148,10 @@ public final class LuaSemanticEmitter {
             // module itself and restores it on every path.
             emitModulePush();
             out.append("    __module = ").append(luaString(ownerPath)).append("\n");
-            out.append("    table.insert(__frames, 1, ")
-                .append(luaString(frameLabel(payload.function())))
-                .append(")\n");
             String savedState = emitInvocationStateSave(payload.function(), op.opId());
             out.append("    local __okA, __resA = pcall(")
                 .append(fnFactory(payload.function())).append("(").append(caps)
                 .append("), unpack(__eargs, 1, #__eargs))\n");
-            out.append("    table.remove(__frames, 1)\n");
             emitInvocationStateRestore(payload.function(), savedState);
             emitModulePop();
             out.append("    if not __okA then error(__resA, 0) end\n");
@@ -8372,22 +8345,17 @@ local function __framesText()
   if #__frames == 0 then return "-" end
   return table.concat(__frames, ",")
 end
--- The balanced frame wrapper of one generated DEAL body: the direct host
--- invocation of a published callable runs the body with the body's own
--- frame pushed, while an in-project invocation already pushed the
--- identical label through its call path (the CALL arm, the adapter
--- invocation, the callback dispatch, the async task and entry bodies) —
--- the wrapper then runs the body directly and never doubles a frame. The
--- push and its matching pop stay balanced on the success and the failure
--- path. A chunk-global like the rest of the run state, never a new
--- chunk-level local (the main chunk's local budget admits no more prelude
--- helpers; the growing-factory guard loads the real chunk with an
--- appended 12-local probe body).
+-- The balanced frame wrapper of one generated DEAL body: the body
+-- carrier owns its own activation's frame, so every invocation — the
+-- in-project call paths and the host invoking a published callable —
+-- pushes exactly one label per active activation, repeated identical
+-- labels included. The push and its matching pop stay balanced on the
+-- success and the failure path. A chunk-global like the rest of the run
+-- state, never a new chunk-level local (the main chunk's local budget
+-- admits no more prelude helpers; the growing-factory guard loads the
+-- real chunk with an appended 12-local probe body).
 __frameWrap = function(__label, __fn)
   return function(...)
-    if __frames[1] == __label then
-      return __fn(...)
-    end
     table.insert(__frames, 1, __label)
     local __ok, __r = pcall(__fn, ...)
     table.remove(__frames, 1)
@@ -10175,9 +10143,9 @@ end
 -- The D15 adapter invocation protocol: resolve the source per the
 -- closed capture mode (0 VALUE, 1 SHARED_CELL, 2 REEVALUATE_THUNK),
 -- the source-signature check, then the source invocation with the
--- leading M arguments only. A DEAL-body source pushes its function id
--- onto the active frames for the invocation (popped on every path); the
--- identical completion error propagates unchanged.
+-- leading M arguments only. A DEAL-body source owns its own frame (its
+-- carrier wrapper pushes and pops it); the identical completion error
+-- propagates unchanged.
 local function __adaptInvoke(w, origin, ...)
   local __cargs = {...}
   local src = __adaptSource(w)
@@ -10185,7 +10153,6 @@ local function __adaptInvoke(w, origin, ...)
   local __fid = nil
   if type(src) == "table" then __fid = src.__fid end
   if type(src) == "function" then __fid = src.__fid end
-  local __pushed = false
   local __savedModule = __module
   local __switched = false
   if __fid ~= nil then
@@ -10197,8 +10164,6 @@ local function __adaptInvoke(w, origin, ...)
       __module = __srcModule
       __switched = true
     end
-    table.insert(__frames, 1, tostring(__fid))
-    __pushed = true
   end
   -- The invoking call's origin: a failure inside the adapted source
   -- whose arm renders the call origin (the @jsonable toJson walk) reads
@@ -10209,7 +10174,6 @@ local function __adaptInvoke(w, origin, ...)
   if __originPushed then __callOrigins[#__callOrigins + 1] = origin end
   local __okA, __vA = pcall(__unfn(src), unpack(__cargs, 1, w.__m))
   if __originPushed then __callOrigins[#__callOrigins] = nil end
-  if __pushed then table.remove(__frames, 1) end
   if __switched then __module = __savedModule end
   if not __okA then error(__vA, 0) end
   return __vA
