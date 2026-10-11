@@ -78,6 +78,12 @@ WARNING: node not found, skipping standard library JS tests'
   'fg|=== Running Body-Invocation Identity Tests (ISSUE-0635) ===|java -ea -cp build deal.test.BodyInvocationIdentityTest'
   'fg|=== Running JVM Production Project Emission Tests (ISSUE-0641) ===|java -ea -cp build deal.test.JvmProductionProjectEmissionTest'
   'fg|=== Running Lua Production Project Emission Tests (ISSUE-0640) ===|java -ea -cp build deal.test.LuaProductionProjectEmissionTest'
+  # ISSUE-0751 (the host-visible runtime error transport through
+  # catch/rethrow): an earlier error rethrown through a handler for a
+  # different error keeps its own cause and never gains an invented one —
+  # the three-consumer regression over the one lowering's terminal
+  # snapshot.
+  'fg|=== Running Error Rethrow Transport Production Tests (ISSUE-0751) ===|java -ea -cp build deal.test.ErrorRethrowTransportProductionTest'
   'fg|=== Running Production Project Emission Tests (ISSUE-0642) ===|java -ea -cp build deal.test.ProductionProjectEmissionTest'
   'fg|=== Running Production Dispatch and Cutover Acceptance Tests (ISSUE-0643) ===|java -ea -cp build deal.test.ProductionDispatchTest'
   # ISSUE-0749 (the public LuaJIT/JVM async-export invokers on shared

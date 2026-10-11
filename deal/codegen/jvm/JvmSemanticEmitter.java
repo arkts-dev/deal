@@ -5592,17 +5592,22 @@ public final class JvmSemanticEmitter {
                 emitBlockOps(payload.tryBlock(), indent + 2);
                 out.append(indent(indent))
                     .append("  } catch (JvmRuntime.DealError __terr) {\n");
+                // The caught failure reifies to its memoized Error value
+                // identity: catching the same rethrown failure again
+                // yields the identical Error value (saved === again).
                 out.append(indent(indent)).append("    ").append(cellName)
-                    .append(" = new JvmRuntime.ErrorValue(__terr.code, "
-                        + "__terr.msg, __terr);\n");
+                    .append(" = __terr.reify();\n");
                 out.append(indent(indent)).append("    JvmRuntime.DealError ")
                     .append(caught).append(" = __terr;\n");
                 out.append(indent(indent)).append("    try {\n");
                 emitBlockOps(payload.catchBlock(), indent + 3);
                 out.append(indent(indent))
                     .append("    } catch (JvmRuntime.DealError __cerr) {\n");
-                out.append(indent(indent)).append("      if (__cerr.carrier == ")
-                    .append(caught).append(".carrier) {\n");
+                // A transported rethrow propagates unchanged (identity
+                // preserved, no invented cause); a genuinely new failure
+                // raised while handling the caught one links the caught
+                // failure as its cause.
+                out.append(indent(indent)).append("      if (__cerr.transported) {\n");
                 emitFailureEvent(op.opId(), op.kind().name(), op,
                     "JvmRuntime.errtext(__cerr)", indent + 4);
                 out.append(indent(indent)).append("        throw __cerr;\n");
@@ -5788,16 +5793,17 @@ public final class JvmSemanticEmitter {
             emitStart(op, indent);
             String value = slot(payload.errorValue());
             String id = String.valueOf(op.opId().id());
-            // The supplied Error value's own origin and transport win
-            // whenever it is an error identity (a caught error, or an error
-            // that already crossed a return/parameter): the failure is
-            // published from the carried transport with the supplied
-            // value's current code/message and its carrier, so origin,
-            // expected/actual, frames and any cause are preserved unchanged
-            // and no cause is invented. A constructed Error carries no
-            // transport: the failure is synthesized at the THROW origin
-            // with no expected/actual and no cause (absent fields stay
-            // absent), frames active.
+            // The supplied Error value's own transport wins whenever it is
+            // an error identity (a caught error, or an error that already
+            // crossed a return/parameter): an unchanged rethrow publishes
+            // the identical failure and a rewritten code/message publishes
+            // the carried transport with the value's current fields, so
+            // origin, expected/actual, frames and any cause are preserved
+            // unchanged (no cause is invented) and the value's identity
+            // survives. A constructed Error carries no transport: the
+            // failure is synthesized at the THROW origin with no
+            // expected/actual and no cause (absent fields stay absent),
+            // frames active.
             out.append(indent(indent)).append("JvmRuntime.ErrorValue __tv")
                 .append(id).append(" = (JvmRuntime.ErrorValue) ").append(value)
                 .append(";\n");
@@ -5805,15 +5811,8 @@ public final class JvmSemanticEmitter {
                 .append(id).append(";\n");
             out.append(indent(indent)).append("if (__tv").append(id)
                 .append(".transport != null) {\n");
-            out.append(indent(indent)).append("  JvmRuntime.DealError __tr")
-                .append(id).append(" = __tv").append(id).append(".transport;\n");
             out.append(indent(indent)).append("  __thrown").append(id)
-                .append(" = new JvmRuntime.DealError(__tv").append(id)
-                .append(".code, __tv").append(id).append(".message, __tr")
-                .append(id).append(".origin, __tr").append(id)
-                .append(".expected, __tr").append(id).append(".actual, __tr")
-                .append(id).append(".frames, __tr").append(id)
-                .append(".cause, __tr").append(id).append(".carrier);\n");
+                .append(" = JvmRuntime.rethrow(__tv").append(id).append(");\n");
             out.append(indent(indent)).append("} else {\n");
             out.append(indent(indent)).append("  __thrown").append(id)
                 .append(" = new JvmRuntime.DealError(__tv").append(id)

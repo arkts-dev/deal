@@ -904,6 +904,15 @@ public class LuaProductionProjectEmissionTest {
         export function boom(): int {
           return 2147483647 + 1;
         }
+
+        export function alias(): boolean {
+          let first: Error = { code: "seed", message: "seed" };
+          try { throw { code: "X", message: "x" }; } catch (caught) { first = caught; }
+          first.code = "Z";
+          let again: Error = { code: "seed", message: "seed" };
+          try { throw first; } catch (caught) { again = caught; }
+          return first === again && again.code === "Z";
+        }
         """;
 
     /**
@@ -911,8 +920,9 @@ public class LuaProductionProjectEmissionTest {
      * {@code run} reaches the companion failure through a production call,
      * {@code reraise} catches and rethrows it, {@code arun}/{@code areraise}
      * drive the same shapes through {@code await}, {@code overflow} raises
-     * the expected/actual-less E8004, and {@code replaced} throws a new
-     * Error while handling the caught one.
+     * the expected/actual-less E8004, {@code replaced} throws a new
+     * Error while handling the caught one, and {@code alias} answers the
+     * catch/rethrow/catch alias identity of a retained Error value.
      */
     private static final String HOST_ERROR_APP_SOURCE = """
         import * as helper from "./lib";
@@ -937,6 +947,8 @@ public class LuaProductionProjectEmissionTest {
           try { return helper.fail(); }
           catch (e) { throw { code: "REPLACED", message: "handled" }; }
         }
+
+        export function alias(): boolean { return helper.alias(); }
         """;
 
     /** One host-captured error row: the artifact's own DEAL error fields. */
@@ -1098,6 +1110,15 @@ public class LuaProductionProjectEmissionTest {
                 checkEq("E8001", replaced.cause(),
                     "the replacement failure links the caught failure as its cause");
             }
+
+            // The identity arm: the DEAL probe's own catch/rethrow/catch
+            // alias identity — the rethrown error caught again is the
+            // identical Error value.
+            Map<String, String> identities = hostIdentityRows(run.stdout());
+            checkEq("true", identities.get("alias"),
+                "the catch/rethrow/catch alias identity holds on the artifact "
+                    + "(the rethrown error caught again is the identical Error "
+                    + "value): " + escaped(run.stdout()) + " " + escaped(run.stderr()));
         } finally {
             deleteRecursively(workspace);
             deleteRecursively(fixture.root());
@@ -1213,7 +1234,42 @@ public class LuaProductionProjectEmissionTest {
         lua.append("    print(\"HOST-ERR|\" .. __name .. \"|raw|\" .. tostring(__err))\n");
         lua.append("  end\n");
         lua.append("end\n");
+        // The catch/rethrow/catch alias identity probe: the DEAL export's
+        // own === answer for an Error value caught, rethrown and caught
+        // again — one identity on every consumer.
+        lua.append("local __okI, __errI = pcall(__surface.alias.f)\n");
+        lua.append("if __okI and type(__errI) == \"boolean\" then\n");
+        lua.append("  print(\"HOST-ID|alias|\" .. tostring(__errI))\n");
+        lua.append("else\n");
+        lua.append("  print(\"HOST-ID|alias|missing\")\n");
+        lua.append("end\n");
         return lua.toString();
+    }
+
+    /**
+     * The probe's identity rows keyed by probe name: the payload of every
+     * {@code HOST-ID} line (the fields after the name) keyed by the name.
+     */
+    private static Map<String, String> hostIdentityRows(String stdout) {
+        Map<String, String> rows = new LinkedHashMap<>();
+        for (String line : stdout.split("\n", -1)) {
+            if (!line.startsWith("HOST-ID|")) {
+                continue;
+            }
+            String[] parts = line.split("\\|", -1);
+            if (parts.length < 3) {
+                continue;
+            }
+            StringBuilder payload = new StringBuilder();
+            for (int i = 2; i < parts.length; i++) {
+                if (i > 2) {
+                    payload.append('|');
+                }
+                payload.append(parts[i]);
+            }
+            rows.put(parts[1], payload.toString());
+        }
+        return rows;
     }
 
     /**

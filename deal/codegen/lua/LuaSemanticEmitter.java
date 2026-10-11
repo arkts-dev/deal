@@ -4963,11 +4963,11 @@ public final class LuaSemanticEmitter {
             KindPayload.TryCatchPayload payload = (KindPayload.TryCatchPayload) op.payload();
             emitStart(op);
             String cellName = cell(payload.catchBinding(), 0);
-            // The caught error's identity, kept beside the catch binding so
-            // the catch block's own failure can tell a rethrow of the caught
-            // error (identity preserved, no invented cause) from a new
-            // failure raised while handling it (cause = the original
-            // failure). The per-op local survives a nested try/catch inside
+            // The caught error's identity, kept beside the catch binding:
+            // the catch block's own failure links it as its cause when the
+            // failure is genuinely new, while a rethrow of any transported
+            // error (the __re mark below) keeps its own identity and gains
+            // no cause. The per-op local survives a nested try/catch inside
             // the catch block, which would otherwise clobber the shared
             // scratch temps.
             String caughtIdentity = "__ctT" + op.opId().id();
@@ -4980,9 +4980,12 @@ public final class LuaSemanticEmitter {
             emitTransferDispatch(op, payload.tryBlock(), "  ", "__resT");
             out.append("  if type(__resT) == \"table\" and __resT.__d then\n");
 
-            // The DEAL error is an error identity from here on: a rethrow
-            // of this value re-raises it verbatim (code/message, origin,
-            // expected/actual, frames, and any cause preserved unchanged).
+            // The DEAL error is an error identity from here on: the __re
+            // mark makes a rethrow of this value re-raise it verbatim
+            // (code/message, origin, expected/actual, frames, and any cause
+            // preserved unchanged), and it tells an enclosing catch that
+            // the rethrow is a transported failure — never a new failure
+            // that links that catch's own caught failure as its cause.
             out.append("    __resT.__re = true\n");
             out.append("    local ").append(caughtIdentity)
                 .append(" = __resT\n");
@@ -4995,11 +4998,13 @@ public final class LuaSemanticEmitter {
             out.append("    if not __okT then\n");
 
             emitTransferDispatch(op, payload.catchBlock(), "      ", "__terrT");
-            // A rethrow of the caught error keeps its own identity and
+            // A transported rethrow (any previously caught error, not
+            // only this handler's caught one) keeps its own identity and
             // gains no cause; a new failure raised in the catch block is
             // the replacement failure and links the caught failure as its
             // cause (frames/code/message/origin unchanged).
-            out.append("      if __terrT == ").append(caughtIdentity).append(" then\n");
+            out.append("      if type(__terrT) == \"table\" and __terrT.__re"
+                + " then\n");
             emitFailureEvent(op.opId(), op.kind().name(), op,
                 "__errtext(__terrT)");
             out.append("        error(__terrT, 0)\n");

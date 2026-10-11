@@ -583,6 +583,17 @@ public class JvmProductionProjectEmissionTest {
         export function boom(): int {
           return 2147483647 + 1;
         }
+
+        export function echo(e: Error): int { throw e; }
+
+        export function alias(): boolean {
+          let first: Error = { code: "seed", message: "seed" };
+          try { throw { code: "X", message: "x" }; } catch (caught) { first = caught; }
+          first.code = "Z";
+          let again: Error = { code: "seed", message: "seed" };
+          try { throw first; } catch (caught) { again = caught; }
+          return first === again && again.code === "Z";
+        }
         """;
 
     /**
@@ -590,8 +601,10 @@ public class JvmProductionProjectEmissionTest {
      * through a production call, {@code reraise} catches and rethrows it,
      * {@code arun}/{@code areraise} drive the same shapes through
      * {@code await}, {@code overflow} raises the expected/actual-less
-     * E8004, and {@code replaced} throws a new Error while handling the
-     * caught one.
+     * E8004, {@code replaced} throws a new Error while handling the caught
+     * one, {@code echo} rethrows its Error argument across the module
+     * boundary, and {@code alias} answers the catch/rethrow/catch alias
+     * identity of a retained Error value.
      */
     private static final String HOST_ERROR_APP_SOURCE = """
         import * as helper from "./lib";
@@ -616,6 +629,10 @@ public class JvmProductionProjectEmissionTest {
           try { return helper.fail(); }
           catch (e) { throw { code: "REPLACED", message: "handled" }; }
         }
+
+        export function echo(e: Error): int { return helper.echo(e); }
+
+        export function alias(): boolean { return helper.alias(); }
         """;
 
     /** One host-captured error row: the artifact's own DEAL error fields. */
@@ -801,6 +818,39 @@ public class JvmProductionProjectEmissionTest {
                 checkEq("E8001", replaced.cause(),
                     "the replacement failure links the caught failure as its "
                         + "cause");
+            }
+
+            // The identity arm: the DEAL probe's own catch/rethrow/catch
+            // alias identity, and the host transport identity of an
+            // unchanged rethrow (the host observes the identical failure
+            // object and the identical reified Error value).
+            Map<String, String> identities = hostIdentityRows(run.stdout());
+            checkEq("true", identities.get("alias"),
+                "the catch/rethrow/catch alias identity holds on the artifact "
+                    + "(the rethrown error caught again is the identical Error "
+                    + "value): " + run.output());
+            String echo = identities.get("echo");
+            check(echo != null, "the probe recorded the echo identity: "
+                + run.output());
+            if (echo != null) {
+                String[] echoParts = echo.split("\\|", -1);
+                checkEq(5, echoParts.length,
+                    "the echo identity row carries every compared field: " + echo);
+                if (echoParts.length == 5) {
+                    checkEq("true", echoParts[0],
+                        "an unchanged rethrow escapes as the identical DealError "
+                            + "object: " + echo);
+                    checkEq("true", echoParts[1],
+                        "the rethrown error caught again reifies to the identical "
+                            + "Error value: " + echo);
+                    checkEq("E8001", echoParts[2],
+                        "the rethrown failure keeps its code: " + echo);
+                    check(echoParts[3].endsWith("src/lib.deal:3:16"),
+                        "the rethrown failure keeps its original source location: "
+                            + echo);
+                    checkEq("-", echoParts[4],
+                        "the rethrown failure invents no cause: " + echo);
+                }
             }
         } finally {
             deleteRecursively(workspace);
@@ -1349,6 +1399,34 @@ public class JvmProductionProjectEmissionTest {
             + "    }\n"
             + "    drive(\"arun\", " + arun.opId().id() + "L);\n"
             + "    drive(\"areraise\", " + areraise.opId().id() + "L);\n"
+            + "    checkIdentity(surface);\n"
+            + "  }\n"
+            + "\n"
+            + "  static void checkIdentity(JvmRuntime.Table surface) throws Exception {\n"
+            + "    Object alias = ((JvmRuntime.FunctionValue) surface.read(\"alias\"))\n"
+            + "        .fn.invoke(new Object[0]);\n"
+            + "    System.out.println(\"HOST-ID|alias|\" + alias);\n"
+            + "    JvmRuntime.DealError captured = null;\n"
+            + "    try {\n"
+            + "      ((JvmRuntime.FunctionValue) surface.read(\"run\"))\n"
+            + "          .fn.invoke(new Object[0]);\n"
+            + "    } catch (JvmRuntime.DealError e) {\n"
+            + "      captured = e;\n"
+            + "    }\n"
+            + "    if (captured == null) {\n"
+            + "      System.out.println(\"HOST-ID|echo|nocapture\");\n"
+            + "      return;\n"
+            + "    }\n"
+            + "    JvmRuntime.ErrorValue value = captured.reify();\n"
+            + "    try {\n"
+            + "      ((JvmRuntime.FunctionValue) surface.read(\"echo\"))\n"
+            + "          .fn.invoke(new Object[]{ value });\n"
+            + "      System.out.println(\"HOST-ID|echo|none\");\n"
+            + "    } catch (JvmRuntime.DealError e) {\n"
+            + "      System.out.println(\"HOST-ID|echo|\" + (e == captured) + \"|\"\n"
+            + "          + (e.reify() == value) + \"|\" + e.code + \"|\" + e.origin\n"
+            + "          + \"|\" + (e.cause == null ? \"-\" : e.cause.code));\n"
+            + "    }\n"
             + "  }\n"
             + "\n"
             + "  static void drive(String name, long opId) throws Exception {\n"
@@ -1399,6 +1477,32 @@ public class JvmProductionProjectEmissionTest {
             }
             rows.put(parts[1], new HostErrorRow(parts[2], parts[3], parts[4],
                 parts[5], parts[6], parts[7], parts[8]));
+        }
+        return rows;
+    }
+
+    /**
+     * The probe's identity rows keyed by probe name: the payload of every
+     * {@code HOST-ID} line (the fields after the name) keyed by the name.
+     */
+    private static Map<String, String> hostIdentityRows(String stdout) {
+        Map<String, String> rows = new LinkedHashMap<>();
+        for (String line : stdout.split("\n", -1)) {
+            if (!line.startsWith("HOST-ID|")) {
+                continue;
+            }
+            String[] parts = line.split("\\|", -1);
+            if (parts.length < 3) {
+                continue;
+            }
+            StringBuilder payload = new StringBuilder();
+            for (int i = 2; i < parts.length; i++) {
+                if (i > 2) {
+                    payload.append('|');
+                }
+                payload.append(parts[i]);
+            }
+            rows.put(parts[1], payload.toString());
         }
         return rows;
     }

@@ -664,11 +664,13 @@ public final class SemanticOracle {
             private String code;
             private String message;
             /**
-             * The caught failure this Error value reifies, or {@code null}
-             * for a constructed Error (the builtin Error class literal).
-             * The transport travels with the value: a rethrow of a caught
-             * error preserves its origin, expected/actual, frames and cause
-             * — never a synthesized replacement.
+             * The failure this Error value reifies, or {@code null} for a
+             * constructed Error (the builtin Error class literal). The
+             * transport travels with the value: a rethrow of a caught
+             * error preserves its origin, expected/actual, frames and
+             * cause — never a synthesized replacement — and one failure
+             * reifies to exactly one value identity, so a rethrown error
+             * caught again is the identical Error value.
              */
             private final DealFailure transport;
 
@@ -792,24 +794,27 @@ public final class SemanticOracle {
         final DealFailure cause;
         final List<FunctionId> frames;
         /**
-         * The primary failure this failure re-publishes: itself for a
-         * primary failure, and the rethrown failure's primary for a
-         * rethrow (whose code/message may have been rewritten). The
-         * try/catch arm compares carriers to tell a rethrow of the caught
-         * error — identity preserved, no invented cause — from a new
-         * failure raised while handling it.
+         * Whether this failure was published by a rethrow of a
+         * transported Error value (never by a fresh runtime check, a
+         * constructed Error's THROW, or a boundary re-projection). The
+         * try/catch arm propagates such a failure unchanged — identity
+         * preserved, no invented cause — while a genuinely new failure
+         * raised while handling the caught one links the caught failure
+         * as its cause.
          */
-        final DealFailure carrier;
+        final boolean transported;
+        /** The Error value identity this failure reifies (one per failure). */
+        private Value.ErrorValue reified;
 
         DealFailure(String code, String message, SourceOrigin origin,
                     String expected, String actual, DealFailure cause,
                     List<FunctionId> frames) {
-            this(code, message, origin, expected, actual, cause, frames, null);
+            this(code, message, origin, expected, actual, cause, frames, false);
         }
 
         DealFailure(String code, String message, SourceOrigin origin,
                     String expected, String actual, DealFailure cause,
-                    List<FunctionId> frames, DealFailure carrier) {
+                    List<FunctionId> frames, boolean transported) {
             super(message, cause);
             this.code = code;
             this.message = message;
@@ -818,7 +823,20 @@ public final class SemanticOracle {
             this.actual = actual;
             this.cause = cause;
             this.frames = List.copyOf(frames);
-            this.carrier = carrier == null ? this : carrier;
+            this.transported = transported;
+        }
+
+        /**
+         * The Error value this failure reifies — one identity per
+         * failure, so a rethrown error caught again is the identical
+         * Error value and a mutable code/message rewrite stays visible
+         * through every alias of that identity.
+         */
+        Value.ErrorValue reify() {
+            if (reified == null) {
+                reified = new Value.ErrorValue(this);
+            }
+            return reified;
         }
 
         static DealFailure of(BoundaryFailure failure, SourceOrigin origin,
@@ -6336,19 +6354,21 @@ public final class SemanticOracle {
                 caught = failure;
             }
             // Reify the DEAL failure as an Error value bound to the catch
-            // binding; the value carries the failure's transport, so a
-            // rethrow of it preserves origin, expected/actual, frames and
-            // cause unchanged.
-            Value.ErrorValue error = new Value.ErrorValue(caught);
+            // binding; the failure's memoized identity carries its
+            // transport, so a rethrow of it preserves origin,
+            // expected/actual, frames and cause unchanged and catching the
+            // rethrown error again is the identical Error value.
+            Value.ErrorValue error = caught.reify();
             Cell cell = cellOf(payload.catchBinding(), 0, true);
             cell.value = error;
             cell.initialized = true;
             try {
                 runBlock(payload.catchBlock());
             } catch (DealFailure replacement) {
-                if (replacement.carrier == caught.carrier) {
-                    // A rethrow of the caught error: the identical failure
-                    // (identity preserved); no cause is invented.
+                if (replacement.transported) {
+                    // A transported rethrow: the identical failure
+                    // propagates unchanged and no cause is invented —
+                    // independent of which failure this handler caught.
                     throw replacement;
                 }
                 // A replacement failure raised while handling the caught
@@ -6368,13 +6388,18 @@ public final class SemanticOracle {
                 // The supplied Error is an error identity (a caught error,
                 // or one that crossed a return/parameter): the failure is
                 // published from its carried transport with the supplied
-                // value's current code/message and its carrier — origin,
-                // expected/actual, frames and any cause preserved unchanged,
-                // never a synthesized replacement and never an invented
-                // cause.
-                throw new DealFailure(error.code(), error.message(), transport.origin,
-                    transport.expected, transport.actual, transport.cause,
-                    transport.frames, transport.carrier);
+                // value's current code/message — origin, expected/actual,
+                // frames and any cause preserved unchanged, never a
+                // synthesized replacement and never an invented cause. The
+                // failure is marked transported, so an enclosing catch
+                // propagates it unchanged, and it adopts the value's own
+                // reified identity, so catching the rethrown error again
+                // yields the identical Error value.
+                DealFailure published = new DealFailure(error.code(),
+                    error.message(), transport.origin, transport.expected,
+                    transport.actual, transport.cause, transport.frames, true);
+                published.reified = error;
+                throw published;
             }
             // A constructed Error carries no origin: the failure is
             // synthesized at the THROW origin with no expected/actual and no

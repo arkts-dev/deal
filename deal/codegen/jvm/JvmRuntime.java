@@ -222,14 +222,17 @@ public final class JvmRuntime {
         public String code;
         public String message;
         /**
-         * The caught failure this Error value reifies, or {@code null} for
-         * a constructed Error (the builtin Error class literal). The
+         * The failure this Error value reifies, or {@code null} for a
+         * constructed Error (the builtin Error class literal). The
          * transport travels with the value: a rethrow of a caught error
          * preserves its origin, expected/actual, frames and cause — never
-         * a synthesized replacement. The field is not a declared class
-         * field: the class read surface exposes exactly code and message.
+         * a synthesized replacement — and one failure reifies to exactly
+         * one value identity, so a rethrown error caught again is the
+         * identical Error value ({@code saved === again}). The field is
+         * not a declared class field: the class read surface exposes
+         * exactly code and message.
          */
-        public final JvmRuntime.DealError transport;
+        public JvmRuntime.DealError transport;
 
         public ErrorValue(String code, String message) {
             this(code, message, null);
@@ -458,23 +461,20 @@ public final class JvmRuntime {
         public final String frames;
         public final DealError cause;
         /**
-         * The primary failure this error re-publishes: the error itself
-         * for a primary failure, and the rethrown failure's primary for a
-         * rethrow (whose code/message may have been rewritten). The
-         * try/catch arm compares carriers to tell a rethrow of the caught
-         * error — identity preserved, no invented cause — from a new
-         * failure raised while handling it.
+         * Whether this failure was published by a rethrow of a
+         * transported Error value (never by a fresh runtime check, a
+         * constructed Error's THROW, or a boundary re-projection). The
+         * try/catch arm propagates such a failure unchanged — identity
+         * preserved, no invented cause — while a genuinely new failure
+         * raised while handling the caught one links the caught failure
+         * as its cause.
          */
-        public final DealError carrier;
+        public boolean transported;
+        /** The Error value identity this failure reifies (one per failure). */
+        private JvmRuntime.ErrorValue reified;
 
         public DealError(String code, String msg, String origin, String expected,
                          String actual, String frames, DealError cause) {
-            this(code, msg, origin, expected, actual, frames, cause, null);
-        }
-
-        public DealError(String code, String msg, String origin, String expected,
-                         String actual, String frames, DealError cause,
-                         DealError carrier) {
             super(msg, cause);
             this.code = code;
             this.msg = msg;
@@ -483,8 +483,52 @@ public final class JvmRuntime {
             this.actual = actual;
             this.frames = frames;
             this.cause = cause;
-            this.carrier = carrier == null ? this : carrier;
         }
+
+        /**
+         * The Error value this failure reifies — one identity per
+         * failure, so a rethrown error caught again is the identical
+         * Error value and a mutable code/message rewrite stays visible
+         * through every alias of that identity.
+         */
+        public JvmRuntime.ErrorValue reify() {
+            JvmRuntime.ErrorValue value = reified;
+            if (value == null) {
+                value = new JvmRuntime.ErrorValue(code, msg, this);
+                reified = value;
+            }
+            return value;
+        }
+    }
+
+    /**
+     * The failure one rethrow of an Error value publishes. The value's
+     * own transport travels with the rethrow: when the value's current
+     * code/message are unchanged the identical failure is re-published
+     * (the host observes the identical DealError), and a rewritten
+     * code/message publishes a failure carrying the transport's origin,
+     * expected/actual, frames and cause with the value's current
+     * code/message. Either way the failure is marked transported, so an
+     * enclosing catch propagates it unchanged and never invents a cause,
+     * and the value's reified identity survives the rethrow.
+     */
+    public static DealError rethrow(ErrorValue value) {
+        DealError transport = value.transport;
+        if (sameText(value.code, transport.code)
+                && sameText(value.message, transport.msg)) {
+            transport.transported = true;
+            return transport;
+        }
+        DealError published = new DealError(value.code, value.message, transport.origin,
+            transport.expected, transport.actual, transport.frames, transport.cause);
+        published.transported = true;
+        published.reified = value;
+        value.transport = published;
+        return published;
+    }
+
+    private static boolean sameText(String left, String right) {
+        return left == null ? right == null : left.equals(right);
     }
 
     // =========================================================================
