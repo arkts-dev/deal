@@ -2471,8 +2471,27 @@ end)
 
 -- ==================== load_host tests ====================
 -- test/fixtures/runtime-host-fixture.lua is the raw host module surface.
+--
+-- The emitted chunk registers the closed HOST_LOAD arm renderer
+-- (__rt.__hostLoadArm) on the deployed runtime at load; load_host
+-- delegates every mapped load failure (the require failure, a non-table
+-- module result, a missing declared export, a pre-wrapped signature
+-- mismatch, a class identity mismatch, and the class-metadata defects) to
+-- it, so the unit drives register a recording stub: the arm id, the closed
+-- named parameters and the import origin it receives are the observable
+-- delegation. The stub renders no expected/actual field — the arm's
+-- declaration owns them, and the production renderer is asserted by the
+-- artifact drives (HostModuleLoadEmissionTest).
 
 local HOST_FIXTURE = "test/fixtures/runtime-host-fixture"
+
+local host_load_arm_calls = {}
+local function stub_host_load_arm(id, values, file, line, column)
+  host_load_arm_calls[#host_load_arm_calls + 1] = { id = id, values = values,
+    file = file, line = line, column = column }
+  return { code = "E8011", message = "arm:" .. id }
+end
+__rt.__hostLoadArm = stub_host_load_arm
 
 test("load_host loads fixture and wraps raw functions", function()
   local host = __rt.load_host(HOST_FIXTURE, {
@@ -2645,57 +2664,137 @@ test("load_host non-class export for class descriptor raises E8011", function()
   end, "E8011")
 end)
 
-test("load_host class metadata failures render the registered arm renderer", function()
-  -- The emitted chunk registers its closed-arm renderer on the deployed
-  -- runtime (`__rt.__hostLoadMetadata`); load_host delegates every
-  -- class-metadata defect (a missing or non-table <C>_defaults, a
-  -- present-but-non-table <C>_fields) to it — the arm's own template at
-  -- the importing statement's origin, never a runtime-composed text
-  -- (ISSUE-0769).
-  __rt.__hostLoadMetadata = nil
-  local calls = {}
-  __rt.__hostLoadMetadata = function(name, module_path, kind, file, line, column)
-    calls[#calls + 1] = { name = name, module = module_path, kind = kind,
-      file = file, line = line, column = column }
-    return { code = "E8011", message = "arm:" .. name .. "/" .. kind }
-  end
+test("load_host mapped load failures delegate to the registered arm renderer", function()
+  -- Every mapped HOST_LOAD failure is the closed arm's own render: the
+  -- runtime passes the arm id, the arm's named parameters and the
+  -- importing statement's origin to the artifact-registered renderer, and
+  -- composes no failure text of its own. An arm that declares no
+  -- expected/actual field is rendered without one.
+  host_load_arm_calls = {}
+
+  -- HOST_LOAD_MISSING_EXPORT: the declared name is absent from the raw
+  -- module.
   local missing = assert_error(function()
+    __rt.load_host(HOST_FIXTURE, { missing = "()->int" }, "probe.deal", 6, 1)
+  end, "E8011")
+  assert(missing.message == "arm:HOST_LOAD_MISSING_EXPORT")
+  assert(#host_load_arm_calls == 1)
+  local call = host_load_arm_calls[1]
+  assert(call.id == "HOST_LOAD_MISSING_EXPORT")
+  assert(call.values.name == "missing" and call.values.module == HOST_FIXTURE)
+  assert(call.file == "probe.deal" and call.line == 6 and call.column == 1)
+
+  -- HOST_LOAD_FAILED: the raw module's require fails.
+  host_load_arm_calls = {}
+  local failed = assert_error(function()
+    __rt.load_host("no/such/deal-runtime-host-module", { x = "()->int" },
+      "probe.deal", 7, 2)
+  end, "E8011")
+  assert(failed.message == "arm:HOST_LOAD_FAILED")
+  call = host_load_arm_calls[1]
+  assert(#host_load_arm_calls == 1 and call.id == "HOST_LOAD_FAILED")
+  assert(call.values.module == "no/such/deal-runtime-host-module")
+  assert(type(call.values.reason) == "string" and #call.values.reason > 0)
+  assert(call.file == "probe.deal" and call.line == 7 and call.column == 2)
+
+  -- HOST_LOAD_NOT_A_MODULE: the raw module returns a non-table value.
+  host_load_arm_calls = {}
+  package.loaded["deal-runtime-test-nontable"] = 42
+  local nonModule = assert_error(function()
+    __rt.load_host("deal-runtime-test-nontable", { x = "()->int" })
+  end, "E8011")
+  package.loaded["deal-runtime-test-nontable"] = nil
+  assert(nonModule.message == "arm:HOST_LOAD_NOT_A_MODULE")
+  call = host_load_arm_calls[1]
+  assert(#host_load_arm_calls == 1 and call.id == "HOST_LOAD_NOT_A_MODULE")
+  assert(call.values.module == "deal-runtime-test-nontable")
+
+  -- HOST_LOAD_SIGNATURE_MISMATCH: the pre-wrapped export's own sig is not
+  -- the declared descriptor.
+  host_load_arm_calls = {}
+  local mismatch = assert_error(function()
+    __rt.load_host(HOST_FIXTURE, { prewrapped_good = "()->string" },
+      "probe.deal", 8, 3)
+  end, "E8011")
+  assert(mismatch.message == "arm:HOST_LOAD_SIGNATURE_MISMATCH")
+  call = host_load_arm_calls[1]
+  assert(#host_load_arm_calls == 1 and call.id == "HOST_LOAD_SIGNATURE_MISMATCH")
+  assert(call.values.name == "prewrapped_good"
+    and call.values.module == HOST_FIXTURE)
+  assert(call.values.expected == "()->string")
+  assert(type(call.values.actual) == "string" and call.values.actual ~= "()->string")
+  assert(call.file == "probe.deal" and call.line == 8 and call.column == 3)
+
+  -- HOST_LOAD_IDENTITY_MISMATCH: the class meta's identity is not the
+  -- declared descriptor.
+  host_load_arm_calls = {}
+  local identity = assert_error(function()
+    __rt.load_host(HOST_FIXTURE, { WrongName = "@$external/host.cfg/WrongName" },
+      "probe.deal", 9, 4)
+  end, "E8011")
+  assert(identity.message == "arm:HOST_LOAD_IDENTITY_MISMATCH")
+  call = host_load_arm_calls[1]
+  assert(#host_load_arm_calls == 1 and call.id == "HOST_LOAD_IDENTITY_MISMATCH")
+  assert(call.values.name == "WrongName" and call.values.module == HOST_FIXTURE)
+  assert(call.values.expected == "@$external/host.cfg/WrongName")
+  assert(type(call.values.actual) == "string")
+  assert(call.file == "probe.deal" and call.line == 9 and call.column == 4)
+
+  -- HOST_LOAD_INVALID_METADATA: the declared class's missing or non-table
+  -- <C>_defaults / <C>_fields entry.
+  host_load_arm_calls = {}
+  local missingDefaults = assert_error(function()
     __rt.load_host(HOST_FIXTURE,
       { NoDefaults = "@$external/host.cfg/NoDefaults" }, "probe.deal", 3, 9)
   end, "E8011")
-  assert(missing.message == "arm:NoDefaults/defaults")
-  assert(#calls == 1 and calls[1].name == "NoDefaults"
-    and calls[1].module == HOST_FIXTURE and calls[1].kind == "defaults"
-    and calls[1].file == "probe.deal" and calls[1].line == 3
-    and calls[1].column == 9)
-  calls = {}
+  assert(missingDefaults.message == "arm:HOST_LOAD_INVALID_METADATA")
+  call = host_load_arm_calls[1]
+  assert(#host_load_arm_calls == 1 and call.id == "HOST_LOAD_INVALID_METADATA")
+  assert(call.values.name == "NoDefaults" and call.values.module == HOST_FIXTURE
+    and call.values["defaults|fields"] == "defaults")
+  assert(call.file == "probe.deal" and call.line == 3 and call.column == 9)
+  host_load_arm_calls = {}
   local wrongKind = assert_error(function()
     __rt.load_host(HOST_FIXTURE,
       { BadDefaults = "@$external/host.cfg/BadDefaults" }, "probe.deal", 4, 1)
   end, "E8011")
-  assert(wrongKind.message == "arm:BadDefaults/defaults")
-  assert(#calls == 1 and calls[1].kind == "defaults")
-  calls = {}
+  assert(wrongKind.message == "arm:HOST_LOAD_INVALID_METADATA")
+  assert(#host_load_arm_calls == 1
+    and host_load_arm_calls[1].values["defaults|fields"] == "defaults")
+  host_load_arm_calls = {}
   local badFields = assert_error(function()
     __rt.load_host(HOST_FIXTURE,
       { BadFields = "@$external/host.cfg/BadFields" }, "probe.deal", 5, 1)
   end, "E8011")
-  assert(badFields.message == "arm:BadFields/fields")
-  assert(#calls == 1 and calls[1].name == "BadFields" and calls[1].kind == "fields")
-  __rt.__hostLoadMetadata = nil
+  assert(badFields.message == "arm:HOST_LOAD_INVALID_METADATA")
+  assert(#host_load_arm_calls == 1
+    and host_load_arm_calls[1].values.name == "BadFields"
+    and host_load_arm_calls[1].values["defaults|fields"] == "fields")
 end)
 
-test("load_host class metadata failures without the registered renderer fail closed", function()
+test("load_host mapped failures without the registered renderer fail closed", function()
   -- The runtime composes no failure text of its own: outside the emitted
-  -- artifact (no registered arm renderer) the defect is a fail-closed
-  -- producer error, never a textual fallback.
-  __rt.__hostLoadMetadata = nil
-  local ok, err = pcall(function()
-    __rt.load_host(HOST_FIXTURE,
-      { NoDefaults = "@$external/host.cfg/NoDefaults" }, "probe.deal", 3, 9)
-  end)
-  assert(not ok and type(err) == "string"
-    and string.find(err, "arm renderer is not registered", 1, true) ~= nil)
+  -- artifact (no registered arm renderer) every mapped load defect is a
+  -- fail-closed producer error, never a textual fallback.
+  __rt.__hostLoadArm = nil
+  local probes = {
+    function()
+      __rt.load_host(HOST_FIXTURE, { missing = "()->int" }, "probe.deal", 6, 1)
+    end,
+    function()
+      __rt.load_host("no/such/deal-runtime-host-module", { x = "()->int" })
+    end,
+    function()
+      __rt.load_host(HOST_FIXTURE,
+        { NoDefaults = "@$external/host.cfg/NoDefaults" }, "probe.deal", 3, 9)
+    end,
+  }
+  for i = 1, #probes do
+    local ok, err = pcall(probes[i])
+    assert(not ok and type(err) == "string"
+      and string.find(err, "arm renderer is not registered", 1, true) ~= nil)
+  end
+  __rt.__hostLoadArm = stub_host_load_arm
 end)
 
 test("load_host class supplied _fields copied through", function()

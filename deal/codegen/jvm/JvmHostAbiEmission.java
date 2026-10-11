@@ -660,9 +660,11 @@ final class JvmHostAbiEmission {
         out.append("      __h = java.lang.Class.forName(")
             .append(javaString(clsName)).append(");\n");
         out.append("    } catch (java.lang.ClassNotFoundException __e) {\n");
-        out.append("      throw JvmRuntime.fail(\"E8011\", \"host module '")
-            .append(raw).append("' not found (class ").append(clsName)
-            .append(")\", oFile + \":\" + oLine + \":\" + oCol, null, null);\n");
+        out.append("      throw JvmRuntime.arm(deal.semantic.ir.FailureArmId."
+            + "HOST_LOAD_FAILED, java.util.Map.of(\"module\", ")
+            .append(javaString(raw))
+            .append(", \"reason\", java.lang.String.valueOf(__e)), oFile + "
+                + "\":\" + oLine + \":\" + oCol, null, null);\n");
         out.append("    }\n");
         out.append("    ").append(classField(key)).append(" = __h;\n");
         for (Map.Entry<String, Type> export

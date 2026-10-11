@@ -1043,23 +1043,24 @@ function __rt.from_lua_function(sig, raw_f)
   end)
 end
 
---- The load-time class-metadata failure of one declared host class
--- (canonical failure-projection authority P1/P4): the emitted chunk
--- registers its own closed-arm renderer on the deployed runtime at load
--- (`__rt.__hostLoadMetadata`), so `load_host` renders
--- HOST_LOAD_INVALID_METADATA through the authority — the arm's own
--- template instantiated with the closed named parameters, at the
--- importing statement's origin — and composes no failure text of its
--- own. An unregistered renderer (the runtime driven outside a production
--- artifact) is a fail-closed producer defect, never a textual fallback.
-local function host_metadata_failure(name, module_path, kind, file, line, column)
-  local render = __rt.__hostLoadMetadata
+--- One mapped host-load failure (canonical failure-projection
+-- authority P1/P4): the emitted chunk registers its own closed-arm
+-- renderer on the deployed runtime at load (`__rt.__hostLoadArm`), so
+-- `load_host` renders every mapped HOST_LOAD arm through the authority —
+-- the arm's own template instantiated with the closed named parameters,
+-- its declared expected/actual fields (an arm that declares none
+-- publishes none), at the importing statement's origin — and composes
+-- no failure text of its own. An unregistered renderer (the runtime
+-- driven outside a production artifact) is a fail-closed producer
+-- defect, never a textual fallback.
+local function host_load_failure(id, values, file, line, column)
+  local render = __rt.__hostLoadArm
   if render == nil then
-    error("the host-load metadata arm renderer is not registered on the "
+    error("the host-load arm renderer is not registered on the "
       .. "deployed runtime (the emitted chunk registers it at load; a "
       .. "producer defect)", 0)
   end
-  error(render(name, module_path, kind, file, line, column), 0)
+  error(render(id, values, file, line, column), 0)
 end
 
 --- Load and validate a host module at import time.
@@ -1073,16 +1074,22 @@ end
 --         <C>_fields the raw host table supplied. Extra host exports are
 --         structurally dropped; the raw host table is never mutated.
 --
--- Errors: E8011 at load — require failure, non-table module result, missing
--- declared export, invalid function/class export shape, pre-wrapped sig
--- mismatch or non-function .f, class identity mismatch, and the
--- HOST_LOAD_INVALID_METADATA arm for missing/non-table defaults and
--- present-but-non-table <C>_fields (rendered by the artifact-registered
--- arm renderer at the importing statement's origin); plus any declared
--- descriptor the canonical parser rejects (including every legacy dialect
--- spelling). E8010 never fires at load for legal declared maps (every
--- emitted Type.Func descriptor is a canonical function atom); call-time
--- violations raise E8010 inside the wrapped functions.
+-- Errors: E8011 at load — the mapped failures render their closed
+-- HOST_LOAD arm through the artifact-registered arm renderer at the
+-- importing statement's origin: the require failure (HOST_LOAD_FAILED),
+-- a non-table module result (HOST_LOAD_NOT_A_MODULE), a missing declared
+-- export (HOST_LOAD_MISSING_EXPORT), a pre-wrapped signature mismatch
+-- (HOST_LOAD_SIGNATURE_MISMATCH), a class identity mismatch
+-- (HOST_LOAD_IDENTITY_MISMATCH), and missing/non-table defaults or
+-- present-but-non-table <C>_fields (HOST_LOAD_INVALID_METADATA); an arm
+-- declaring no expected/actual field publishes none. The remaining
+-- runtime shape defects (a non-function export, a non-function
+-- pre-wrapped .f, a non-class-meta class export, a non-table declared
+-- map, an unsupported declared descriptor) are runtime-side E8011
+-- producer/shape defects with no declared arm. E8010 never fires at load
+-- for legal declared maps (every emitted Type.Func descriptor is a
+-- canonical function atom); call-time violations raise E8010 inside the
+-- wrapped functions.
 function __rt.load_host(module_path, declared, file, line, column)
   if type(declared) ~= "table" then
     error(__rt._err("E8011", "host module declarations must be a table", file, line, column, "table", type(declared)))
@@ -1090,17 +1097,20 @@ function __rt.load_host(module_path, declared, file, line, column)
 
   local ok, raw = pcall(require, module_path)
   if not ok then
-    error(__rt._err("E8011", "failed to load host module '" .. tostring(module_path) .. "': " .. tostring(raw), file, line, column, nil, nil))
+    host_load_failure("HOST_LOAD_FAILED",
+      { module = module_path, reason = tostring(raw) }, file, line, column)
   end
   if type(raw) ~= "table" then
-    error(__rt._err("E8011", "host module '" .. tostring(module_path) .. "' did not return a table", file, line, column, "table", type(raw)))
+    host_load_failure("HOST_LOAD_NOT_A_MODULE",
+      { module = module_path }, file, line, column)
   end
 
   local exports = {}
   for name, descriptor in pairs(declared) do
     local v = raw[name]
     if v == nil then
-      error(__rt._err("E8011", "missing host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "'", file, line, column, nil, nil))
+      host_load_failure("HOST_LOAD_MISSING_EXPORT",
+        { name = name, module = module_path }, file, line, column)
     end
     local parsed = parse_descriptor(descriptor)
     if parsed ~= nil and parsed.kind == "function" then
@@ -1112,7 +1122,9 @@ function __rt.load_host(module_path, declared, file, line, column)
         -- metadata. Validate the identity, then re-wrap .f so raw and
         -- pre-wrapped exports get identical call-time enforcement.
         if v.sig ~= descriptor then
-          error(__rt._err("E8011", "host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' has signature mismatch: expected " .. descriptor .. ", got " .. tostring(v.sig), file, line, column, descriptor, v.sig))
+          host_load_failure("HOST_LOAD_SIGNATURE_MISMATCH",
+            { name = name, module = module_path, expected = descriptor,
+              actual = tostring(v.sig) }, file, line, column)
         end
         if type(v.f) ~= "function" then
           error(__rt._err("E8011", "host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' has non-function .f", file, line, column, "function", type(v.f)))
@@ -1128,7 +1140,9 @@ function __rt.load_host(module_path, declared, file, line, column)
         error(__rt._err("E8011", "host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' is not a class meta table", file, line, column, "class", type(v)))
       end
       if v.__classname ~= descriptor then
-        error(__rt._err("E8011", "host class export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' has identity mismatch: expected " .. descriptor .. ", got " .. tostring(v.__classname), file, line, column, descriptor, v.__classname))
+        host_load_failure("HOST_LOAD_IDENTITY_MISMATCH",
+          { name = name, module = module_path, expected = descriptor,
+            actual = tostring(v.__classname) }, file, line, column)
       end
       exports[name] = v
       -- <C>_defaults is mandatory (construction depends on it); a
@@ -1138,7 +1152,9 @@ function __rt.load_host(module_path, declared, file, line, column)
       local defaults_key = name .. "_defaults"
       local defaults = raw[defaults_key]
       if type(defaults) ~= "table" then
-        host_metadata_failure(name, module_path, "defaults", file, line, column)
+        host_load_failure("HOST_LOAD_INVALID_METADATA",
+          { name = name, module = module_path, ["defaults|fields"] = "defaults" },
+          file, line, column)
       end
       exports[defaults_key] = defaults
       -- <C>_fields is optional: copied through when the raw host table
@@ -1148,7 +1164,9 @@ function __rt.load_host(module_path, declared, file, line, column)
       local fields = raw[fields_key]
       if fields ~= nil then
         if type(fields) ~= "table" then
-          host_metadata_failure(name, module_path, "fields", file, line, column)
+          host_load_failure("HOST_LOAD_INVALID_METADATA",
+            { name = name, module = module_path, ["defaults|fields"] = "fields" },
+            file, line, column)
         end
         exports[fields_key] = fields
       end

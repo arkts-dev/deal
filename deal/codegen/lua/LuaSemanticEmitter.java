@@ -619,22 +619,22 @@ public final class LuaSemanticEmitter {
                 out.append("local __rt = require(\"deal.runtime\")\n");
                 out.append("__rtNull = __rt.__NULL\n");
                 out.append("__rtMissing = __rt.__MISSING\n");
-                // The host-load class-metadata arm renderer (canonical
-                // failure-projection authority P1/P4): the deployed
-                // runtime's load_host delegates a declared class's missing
-                // or non-table <C>_defaults / <C>_fields entry to this
+                // The host-load arm renderer (canonical failure-projection
+                // authority P1/P4): the deployed runtime's load_host
+                // delegates every mapped HOST_LOAD failure (the failed load,
+                // the non-module result, a missing export, a signature or
+                // identity mismatch, and a declared class's missing or
+                // non-table <C>_defaults/<C>_fields entry) to this
                 // artifact-owned render, so the production failure is the
-                // closed HOST_LOAD_INVALID_METADATA arm's own instantiation
-                // at the import statement's origin — never a runtime-side
-                // template copy, and never the target matcher's internal
+                // closed arm's own instantiation with the arm's declared
+                // fields — no expected/actual field the arm does not declare
+                // — at the importing statement's origin, never a runtime-side
+                // template copy and never the target matcher's internal
                 // placeholder.
-                out.append("__rt.__hostLoadMetadata = function(name, "
-                    + "module_path, kind, file, line, column)\n");
-                out.append("  return __arm(\"HOST_LOAD_INVALID_METADATA\", "
-                    + "{name = name, module = module_path, "
-                    + "[\"defaults|fields\"] = kind}, "
-                    + "tostring(file)..\":\"..tostring(line)..\":\""
-                    + "..tostring(column), nil, nil)\n");
+                out.append("__rt.__hostLoadArm = function(id, values, file, "
+                    + "line, column)\n");
+                out.append("  return __arm(id, values, tostring(file)..\":\""
+                    + "..tostring(line)..\":\"..tostring(column), nil, nil)\n");
                 out.append("end\n");
                 out.append(HOST_BOUNDARY_PRELUDE);
             } else if (bindsBytesRuntime()) {

@@ -967,13 +967,16 @@ public final class SemanticDifferentialHarness {
                     if (host.expectedExport() != null
                             && !host.expectedExport().equals(export)) {
                         // A mismatched export cell scripts the absent handle
-                        // (the two target seams return nil/null alike); the
-                        // retained actual projection is the closed
-                        // {@code nothing} token.
-                        return new AsyncStartOutcome.BadHandle("nothing");
+                        // (the two target seams return nil/null alike): the
+                        // closed arm's own absent projection is {@code nothing}.
+                        return new AsyncStartOutcome.Absent();
                     }
                     if (host.boundLabel() == null) {
-                        return new AsyncStartOutcome.BadHandle("nothing");
+                        // A null bound label scripts the bad-handle terminal:
+                        // the host function returned no operation at all, so
+                        // the absent result's fixed {@code nothing} actual
+                        // reaches the closed ASYNC_SHAPE arm.
+                        return new AsyncStartOutcome.Absent();
                     }
                     return new AsyncStartOutcome.Operation(host.boundLabel());
                 }

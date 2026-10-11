@@ -397,8 +397,8 @@ public final class SemanticOracle {
     /**
      * The deterministic host seam of the E7 call machine: a closed
      * responder supplies every host terminal — sync returns/throws,
-     * async starts (the bound operation label, or the invalid returned
-     * handle's retained actual projection), async
+     * async starts (the returned operation handle, the non-operation value
+     * the host returned in its place, or its absent result), async
      * completions, the loaded host surface entries
      * ({@link #loadedExport}), the loaded host class defaults
      * ({@link #loadedClassDefaults}), and the loaded extern-C C-struct
@@ -436,42 +436,53 @@ public final class SemanticOracle {
         }
 
         /**
-         * One async host start terminal: the operation label the returned
-         * handle binds to, or the invalid returned handle's actual
-         * projection (the {@code ASYNC_OPERATION_HANDLE} terminal check
-         * renders its arm with that token). The invalid handle is never
-         * collapsed onto the absent handle: the returned carrier's own
-         * kind reaches the rendered tuple.
+         * One async host start terminal: the operation handle the host
+         * function returned, the non-operation value it returned in the
+         * handle's place, or its absent result. The
+         * {@code ASYNC_OPERATION_HANDLE} terminal check renders the closed
+         * {@code ASYNC_SHAPE} arm: an invalid returned handle projects
+         * through the shared host-carrier projection (the classification
+         * both target host classifiers use), an absent result keeps the
+         * fixed {@code nothing} actual
+         * ({@link AsyncStartOutcome.Absent}), and a real handle binds its
+         * operation label ({@link AsyncStartOutcome.Operation}).
          */
         sealed interface AsyncStartOutcome
-                permits AsyncStartOutcome.Operation, AsyncStartOutcome.BadHandle {
+                permits AsyncStartOutcome.Operation, AsyncStartOutcome.InvalidHandle,
+                        AsyncStartOutcome.Absent {
 
             /** The returned handle binds to the operation label. */
             record Operation(String label) implements AsyncStartOutcome {
-
                 public Operation {
                     Objects.requireNonNull(label, "label must not be null");
                 }
             }
 
             /**
-             * The returned value is not an async operation: its canonical
-             * actual token (one of the closed typed-boundary tokens the
-             * {@code ASYNC_SHAPE} arm renders; {@code nothing} for the absent
-             * handle).
+             * The host returned a non-operation value: the terminal check
+             * projects the returned carrier through the shared host-carrier
+             * projection ({@link BoundaryExecutor#hostCarrierKind}), so an
+             * integer and every other numeric carrier project
+             * {@code number}, the DEAL language-null sentinel, bytes, arrays
+             * and class instances project {@code table}, and the invalid
+             * handle's own carrier kind is never lost or refined by the
+             * typed-boundary classification.
              */
-            record BadHandle(String actualKind) implements AsyncStartOutcome {
-
-                public BadHandle {
-                    Objects.requireNonNull(actualKind, "actualKind must not be null");
+            record InvalidHandle(Value value) implements AsyncStartOutcome {
+                public InvalidHandle {
+                    Objects.requireNonNull(value, "value must not be null");
                 }
+            }
+
+            /** The host function returned no value at all. */
+            record Absent() implements AsyncStartOutcome {
             }
         }
 
         /**
-         * One async host start: the bound operation label, or the invalid
-         * returned handle's retained actual projection (the
-         * {@code ASYNC_OPERATION_HANDLE} terminal check fails with it).
+         * One async host start: the handle outcome of the host function
+         * (the returned operation handle's label, the non-operation value it
+         * returned in the handle's place, or its absent result).
          */
         default AsyncStartOutcome startAsync(ModuleId module, String export,
                                   RuntimeDescriptor.Func descriptor, List<Value> args,
@@ -5054,9 +5065,12 @@ public final class SemanticOracle {
 
         /**
          * Starts one async host operation: the ASYNC_START_OP effect, the
-         * responder request (the invalid returned handle's retained actual
-         * projection is the pinned ASYNC_OPERATION_HANDLE failure), and the
-         * host-operation/task bookkeeping for the token.
+         * responder request (a non-operation returned handle is the pinned
+         * ASYNC_OPERATION_HANDLE failure: it renders the closed
+         * {@code ASYNC_SHAPE} arm with the value's shared host-carrier
+         * projection, while an absent result keeps the fixed
+         * {@code nothing} token), and the host-operation/task bookkeeping
+         * for the token.
          */
         private void startHostAsync(SemanticOp op, AsyncTokenId token,
                 String label, ModuleId hostModuleId, String exportName,
@@ -5065,10 +5079,17 @@ public final class SemanticOracle {
                 SemanticRuntimeModel.EffectEvent.Kind.ASYNC_START_OP, label));
             HostResponder.AsyncStartOutcome outcome = responder.startAsync(
                 hostModuleId, exportName, descriptor, List.copyOf(args), label);
+            if (outcome == null) {
+                throw new IllegalStateException("the async host responder returned no "
+                    + "start outcome (the E7 host seam fails closed, producer defect)");
+            }
             switch (outcome) {
-                case HostResponder.AsyncStartOutcome.BadHandle badHandle ->
+                case HostResponder.AsyncStartOutcome.Absent ignored ->
                     throw armFailure(op, FailureArmId.ASYNC_SHAPE,
-                        "async operation", badHandle.actualKind());
+                        "async operation", "nothing");
+                case HostResponder.AsyncStartOutcome.InvalidHandle invalid ->
+                    throw armFailure(op, FailureArmId.ASYNC_SHAPE, "async operation",
+                        BoundaryExecutor.hostCarrierKind(viewOfValue(invalid.value())));
                 case HostResponder.AsyncStartOutcome.Operation operation -> {
                     hostOperations.put(token.tokenId(), operation.label());
                     tasks.put(token.tokenId(), new Task(token, null));

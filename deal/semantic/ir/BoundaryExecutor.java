@@ -808,6 +808,18 @@ public final class BoundaryExecutor {
      * host runtimes project them.
      */
     private static String hostActual(BoundaryValueView view, CoreFail fail) {
+        return hostCarrierKind(view);
+    }
+
+    /**
+     * The shared host-carrier projection of one value view (P2 item 2): the
+     * single token both target host classifiers ({@code __carrierKind} on
+     * the LuaJIT artifact and {@code __hostKind} on the JVM host ABI
+     * surface) project for the same carrier. Every host-shaped failure site
+     * of the oracle renders through this helper, never a second
+     * classification table.
+     */
+    public static String hostCarrierKind(BoundaryValueView view) {
         return FailureProjections.carrierKindToken(carrierKindOf(view));
     }
 

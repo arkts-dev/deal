@@ -515,6 +515,17 @@ public class HostModuleLoadEmissionTest {
             check(walk >= 0 && loadAt > walk,
                 "the load runs inline in the module init walk");
 
+            // The artifact registers the closed HOST_LOAD arm renderer the
+            // deployed runtime's load_host delegates every mapped load
+            // failure to (canonical failure-projection authority P1/P4).
+            check(lua.contains("__rt.__hostLoadArm = function(id, values, "
+                        + "file, line, column)"),
+                "the artifact registers the closed host-load arm renderer");
+            check(lua.contains("return __arm(id, values, tostring(file)..\":\""
+                        + "..tostring(line)..\":\"..tostring(column), nil, nil)"),
+                "the registered renderer instantiates the arm at the import "
+                    + "origin with the arm's declared fields only");
+
             // Exactly one load statement per import op; two aliases of one
             // module share the registry key and the `or` guard.
             {
@@ -580,50 +591,66 @@ public class HostModuleLoadEmissionTest {
             deleteRecursively(workspace);
         }
 
-        // The pinned E8011 at the import origin (6:1, the corpus pin).
-        checkLuaSeed(missing, "host/missing_export.lua", MISSING_LUA,
-            "missing host export 'missing' in module 'host/missing_export'", 6, 1,
-            "missing-export-at-6:1");
-        // The declared-map defects of the host-module-abi loader contract:
-        // a pre-wrapped export whose .f is not a function, a pre-wrapped
-        // signature mismatch, and a non-table module result.
+        // The pinned E8011 at the import origin (6:1, the corpus pin): the
+        // closed HOST_LOAD_MISSING_EXPORT arm, no expected/actual field.
+        String missingOrigin = importOrigin(missing, MISSING_SPECIFIER);
+        checkLuaArmSeed(missing, "host/missing_export.lua", MISSING_LUA,
+            "missing host export 'missing' in module 'host/missing_export'",
+            missingOrigin, "missing-export-at-6:1");
+        // The remaining mapped loader defects of the host-module-abi
+        // contract render their closed HOST_LOAD arm at the import origin
+        // with no fabricated expected/actual field: the require failure
+        // (HOST_LOAD_FAILED), a pre-wrapped signature mismatch
+        // (HOST_LOAD_SIGNATURE_MISMATCH), and a non-table module result
+        // (HOST_LOAD_NOT_A_MODULE).
+        checkLuaArmSeed(missing, "host/missing_export.lua",
+            "error(\"host module unavailable\", 0)\n",
+            armMessage(FailureArmId.HOST_LOAD_FAILED, Map.of("module", MISSING_SPECIFIER,
+                "reason", "host module unavailable")), missingOrigin,
+            "require-failure");
+        checkLuaArmSeed(missing, "host/missing_export.lua",
+            "return { ping = function() return \"pong\" end,\n"
+                + "  missing = { __kind = \"function\", sig = \"(int)->string\", "
+                + "f = function() end } }\n",
+            armMessage(FailureArmId.HOST_LOAD_SIGNATURE_MISMATCH, Map.of("name", "missing",
+                "module", MISSING_SPECIFIER, "expected", "()->string",
+                "actual", "(int)->string")), missingOrigin,
+            "prewrapped-signature-mismatch");
+        checkLuaArmSeed(missing, "host/missing_export.lua", "return 42\n",
+            armMessage(FailureArmId.HOST_LOAD_NOT_A_MODULE, Map.of("module", MISSING_SPECIFIER)),
+            missingOrigin, "non-table-module-result");
+        // The unmapped runtime shape defects stay runtime-side E8011
+        // failures (no declared arm composes their text).
         checkLuaSeed(missing, "host/missing_export.lua",
             "return { ping = function() return \"pong\" end,\n"
                 + "  missing = { __kind = \"function\", sig = \"()->string\", f = 42 } }\n",
             "host export 'missing' in module 'host/missing_export' has non-function .f",
             -1, -1, "prewrapped-non-function-f");
         checkLuaSeed(missing, "host/missing_export.lua",
-            "return { ping = function() return \"pong\" end,\n"
-                + "  missing = { __kind = \"function\", sig = \"(int)->string\", "
-                + "f = function() end } }\n",
-            "host export 'missing' in module 'host/missing_export' has signature "
-                + "mismatch: expected ()->string, got (int)->string",
-            -1, -1, "prewrapped-signature-mismatch");
-        checkLuaSeed(missing, "host/missing_export.lua", "return 42\n",
-            "host module 'host/missing_export' did not return a table",
-            -1, -1, "non-table-module-result");
-        checkLuaSeed(missing, "host/missing_export.lua",
             "return { ping = function() return \"pong\" end, missing = 42 }\n",
             "host export 'missing' in module 'host/missing_export' is not a function",
             -1, -1, "non-function-export-shape");
 
-        // The declared-class seeds: a class identity mismatch fails with
-        // its pinned E8011, and the class-metadata defects (a missing or
-        // non-table <C>_defaults, a present-but-non-table <C>_fields)
-        // render the closed HOST_LOAD_INVALID_METADATA arm at the import
-        // statement's origin on the production artifact (ISSUE-0769).
-        checkLuaSeed(cfgFixture, "host/cfg.lua",
+        // The declared-class seeds: a class identity mismatch renders the
+        // closed HOST_LOAD_IDENTITY_MISMATCH arm at the import origin, and
+        // the class-metadata defects (a missing or non-table
+        // <C>_defaults, a present-but-non-table <C>_fields) render the
+        // closed HOST_LOAD_INVALID_METADATA arm — each with no
+        // expected/actual field the arm does not declare (ISSUE-0769,
+        // ISSUE-0771).
+        String cfgOrigin = importOrigin(cfgFixture, CFG_SPECIFIER);
+        checkLuaArmSeed(cfgFixture, "host/cfg.lua",
             CFG_LUA.replace("@$external/host/cfg/ServerConfig",
                 "@$external/host/cfg/Other"),
-            "host class export 'ServerConfig' in module 'host/cfg' has identity "
-                + "mismatch: expected @$external/host/cfg/ServerConfig, got "
-                + "@$external/host/cfg/Other",
-            -1, -1, "cfg-identity-mismatch");
+            armMessage(FailureArmId.HOST_LOAD_IDENTITY_MISMATCH, Map.of("name", "ServerConfig",
+                "module", CFG_SPECIFIER,
+                "expected", "@$external/host/cfg/ServerConfig",
+                "actual", "@$external/host/cfg/Other")),
+            cfgOrigin, "cfg-identity-mismatch");
         String defaultsMessage = invalidMetadata("ServerConfig", CFG_SPECIFIER,
             "defaults").message();
         String fieldsMessage = invalidMetadata("Endpoint", CFG_SPECIFIER,
             "fields").message();
-        String cfgOrigin = importOrigin(cfgFixture, CFG_SPECIFIER);
         checkLuaArmSeed(cfgFixture, "host/cfg.lua",
             CFG_LUA.replace("ServerConfig_defaults", "ServerConfig_other"),
             defaultsMessage, cfgOrigin, "cfg-missing-defaults");
@@ -656,6 +683,14 @@ public class HostModuleLoadEmissionTest {
             FailureArmId.HOST_LOAD_INVALID_METADATA,
             Map.of("name", name, "module", module, "defaults|fields", kind),
             null, null, null);
+    }
+
+    /**
+     * The canonical message of one declared {@code HOST_LOAD} arm render
+     * (the authority every production load path must publish).
+     */
+    private static String armMessage(FailureArmId arm, Map<String, String> values) {
+        return FailureContractRegistry.render(arm, values, null, null, null).message();
     }
 
     /** The import-statement origin text of one host import of a fixture. */
@@ -699,7 +734,7 @@ public class HostModuleLoadEmissionTest {
                 probe.toAbsolutePath().toString()), workspace, true);
             check(run.exitCode() == 0 && run.stdout().contains("PROBE-OK"),
                 "the arm seed '" + label + "' renders the canonical "
-                    + "HOST_LOAD_INVALID_METADATA tuple: exit=" + run.exitCode()
+                    + "HOST_LOAD tuple: exit=" + run.exitCode()
                     + " stdout=" + escaped(run.stdout()) + " stderr="
                     + escaped(run.stderr()));
         } finally {
@@ -960,6 +995,14 @@ public class HostModuleLoadEmissionTest {
                 "the load entry renders the host-load missing-export arm");
             check(!source.contains("missing host export '"),
                 "the load entry composes no missing-export text of its own");
+            check(source.contains("throw JvmRuntime.arm(deal.semantic.ir."
+                    + "FailureArmId.HOST_LOAD_FAILED, java.util.Map.of(\"module\", ")
+                    && source.contains("\"reason\", java.lang.String.valueOf(__e)), "
+                        + "oFile + \":\" + oLine + \":\" + oCol, null, null)"),
+                "the load entry renders the host-load failed arm for an absent "
+                    + "module class");
+            check(!source.contains("not found (class "),
+                "the load entry composes no module-not-found text of its own");
 
             // The per-export wrappers: the declared parameter cells in one-based
             // order and the declared return cell.
@@ -1434,6 +1477,18 @@ public class HostModuleLoadEmissionTest {
                 importOrigin(fixture, MISSING_SPECIFIER), "missing-export-at-6:1");
         }
 
+        // The failed-load analogue on the JVM target: a host module with no
+        // deployed implementation class renders the closed HOST_LOAD_FAILED
+        // arm — module and reason, no expected/actual field — at the import
+        // statement's origin, never the emitter's own composed
+        // "not found (class ...)" text.
+        {
+            String reason = "java.lang.ClassNotFoundException: HostMissing_export";
+            checkJvmLoadFailure(fixture, null, null, "E8011",
+                "failed to load host module 'host/missing_export': " + reason,
+                importOrigin(fixture, MISSING_SPECIFIER), "missing-host-class");
+        }
+
         // The declared-class seeds: a host class without its mandatory
         // <C>_defaults field and a host class whose <C>_defaults is not a
         // map both render the closed HOST_LOAD_INVALID_METADATA arm — the
@@ -1463,8 +1518,10 @@ public class HostModuleLoadEmissionTest {
 
     /**
      * One JVM load-failure drive: the artifact compiles and runs with the
-     * given host implementation, and the module init must fail with the
-     * pinned E8011 tuple (the message and, when pinned, the exact origin).
+     * given host implementation (a null file name deploys none, so the
+     * module class is absent), and the module init must fail with the
+     * pinned E8011 tuple (the message and, when pinned, the exact origin,
+     * and no expected/actual field for the HOST_LOAD arm).
      */
     private static void checkJvmLoadFailure(Baseline fixture, String hostFileName,
             String hostSource, String expectedCode, String expectedMessage,
@@ -1481,18 +1538,24 @@ public class HostModuleLoadEmissionTest {
             JvmSemanticEmitter.EmissionResult emission = fixture.jvm();
             Path source = workspace.resolve(className + ".java");
             Files.writeString(source, emission.source(), StandardCharsets.UTF_8);
-            Files.writeString(workspace.resolve(hostFileName), hostSource,
-                StandardCharsets.UTF_8);
+            List<String> compiled = new ArrayList<>();
+            compiled.add(source.toAbsolutePath().toString());
+            if (hostFileName != null) {
+                Files.writeString(workspace.resolve(hostFileName), hostSource,
+                    StandardCharsets.UTF_8);
+                compiled.add(hostFileName);
+            }
             Files.writeString(workspace.resolve("HostLoadFailureProbe.java"),
                 jvmFailureProbe(expectedCode, expectedMessage, expectedOrigin),
                 StandardCharsets.UTF_8);
+            compiled.add("HostLoadFailureProbe.java");
             Path classes = workspace.resolve("classes");
             Files.createDirectories(classes);
             String classpath = absoluteClasspath();
-            ProcessOutcome javacRun = runProcess(List.of("javac", "--release", "25",
-                "-proc:none", "-cp", classpath, "-d", classes.toString(),
-                source.toAbsolutePath().toString(), hostFileName,
-                "HostLoadFailureProbe.java"), workspace, false);
+            List<String> command = new ArrayList<>(List.of("javac", "--release", "25",
+                "-proc:none", "-cp", classpath, "-d", classes.toString()));
+            command.addAll(compiled);
+            ProcessOutcome javacRun = runProcess(command, workspace, false);
             check(javacRun.exitCode() == 0,
                 "the load-failure artifact ('" + label + "') compiles: "
                     + javacRun.output());
@@ -1518,11 +1581,11 @@ public class HostModuleLoadEmissionTest {
             : "      if (!" + quoted(expectedOrigin)
                 + ".equals(error.origin)) { throw new IllegalStateException("
                 + "\"FAIL: origin \" + error.origin); }\n";
-        // Every HOST_LOAD arm this probe drives (a missing export and the
-        // class-metadata defects) declares no expected/actual field: the
-        // probe asserts the complete canonical tuple (a fabricated field
-        // fails by name), so the production load path can never publish
-        // one for these arms.
+        // Every HOST_LOAD arm this probe drives (a missing export, an
+        // absent host module class, and the class-metadata defects)
+        // declares no expected/actual field: the probe asserts the complete
+        // canonical tuple (a fabricated field fails by name), so the
+        // production load path can never publish one for these arms.
         return """
             final class HostLoadFailureProbe {
               public static void main(String[] args) {

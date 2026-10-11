@@ -863,10 +863,16 @@ public class CanonicalProjectionParityTest {
                     deal.semantic.ir.RuntimeDescriptor.Func descriptor,
                     List<SemanticOracle.Value> args, String operationLabel) {
                 if ("async_shape_bad".equals(spec.hostStem())) {
-                    // The corpus host returns the number 42: the invalid
-                    // handle's actual projection is retained, never collapsed
-                    // onto the absent handle's nothing.
-                    return new AsyncStartOutcome.BadHandle("number");
+                    // The corpus host surface of host/async_shape_bad returns
+                    // the integer 42 in place of an operation handle (the Lua
+                    // host returns the Lua number 42, the JVM host returns
+                    // Long.valueOf(42L)): the terminal check projects the
+                    // returned carrier through the shared host-carrier
+                    // projection, so the integer projects {@code number}
+                    // exactly like both production artifacts, never the
+                    // typed-boundary {@code int}.
+                    return new AsyncStartOutcome.InvalidHandle(
+                        new SemanticOracle.Value.IntValue(42));
                 }
                 return new AsyncStartOutcome.Operation(operationLabel);
             }
@@ -1235,6 +1241,8 @@ public class CanonicalProjectionParityTest {
             }
             if ("host-abi/host-async-shape-bad".equals(spec.corpusPath())) {
                 assertAbsentAsyncHandle(compiled, pin);
+                assertAsyncHandleCarriers(compiled, pin);
+                assertHarnessNullLabelAbsentHandle(compiled, pin);
             }
         } finally {
             deleteRecursively(compiled.root());
@@ -1256,7 +1264,7 @@ public class CanonicalProjectionParityTest {
             public AsyncStartOutcome startAsync(ModuleId module, String export,
                     RuntimeDescriptor.Func descriptor,
                     List<SemanticOracle.Value> args, String operationLabel) {
-                return new AsyncStartOutcome.BadHandle("nothing");
+                return new AsyncStartOutcome.Absent();
             }
         });
         checkEq("E8010", absent.code(), compiled.spec().what()
@@ -1274,6 +1282,137 @@ public class CanonicalProjectionParityTest {
             + " (oracle, absent async handle): the pinned call-origin line");
         checkEq(pin.column(), absent.column(), compiled.spec().what()
             + " (oracle, absent async handle): the pinned call-origin column");
+    }
+
+    /**
+     * The oracle's scripted invalid-handle drives of the async shape
+     * fixture: the returned value's own carrier reaches the closed
+     * {@code ASYNC_SHAPE} arm through the shared host-carrier projection,
+     * never a substituted token. The corpus cell already drives the integer
+     * carrier the corpus host returns ({@code Long.valueOf(42L)} on the JVM
+     * host surface), and these drives pin the classification of the integer
+     * and of every nonnumeric table-carried carrier against the arm's own
+     * render: a plain table, an array, a bytes buffer and the DEAL
+     * language-null sentinel all project the single {@code table} token the
+     * two target host classifiers project (never the typed-boundary
+     * {@code table}/{@code array}/{@code bytes}/{@code null} refinement).
+     */
+    private static void assertAsyncHandleCarriers(Compiled compiled,
+            SidecarExpectations.ErrorExpectation pin) {
+        assertScriptedAsyncHandle(compiled, pin, new SemanticOracle.Value.IntValue(42),
+            "number", "integer carrier");
+        assertScriptedAsyncHandle(compiled, pin,
+            new SemanticOracle.Value.TableValue(new LinkedHashMap<>()), "table",
+            "table carrier");
+        assertScriptedAsyncHandle(compiled, pin, new SemanticOracle.Value.ArrayValue(
+                new ArrayList<>(), RuntimeDescriptor.parseCanonicalText("[string]"),
+                false),
+            "table", "array carrier");
+        assertScriptedAsyncHandle(compiled, pin, new SemanticOracle.Value.BytesValue(0),
+            "table", "bytes carrier");
+        assertScriptedAsyncHandle(compiled, pin, SemanticOracle.Value.NullValue.INSTANCE,
+            "table", "language-null carrier");
+    }
+
+    /**
+     * One scripted invalid-handle drive of the async shape fixture: the
+     * returned carrier, the closed arm's own render for the projected
+     * token, and the pinned call origin, all from the oracle's real program
+     * drive.
+     */
+    private static void assertScriptedAsyncHandle(Compiled compiled,
+            SidecarExpectations.ErrorExpectation pin, SemanticOracle.Value value,
+            String actualToken, String label) {
+        Tuple driven = oracleTupleWith(compiled, new SemanticOracle.HostResponder() {
+            @Override
+            public AsyncStartOutcome startAsync(ModuleId module, String export,
+                    RuntimeDescriptor.Func descriptor,
+                    List<SemanticOracle.Value> args, String operationLabel) {
+                return new AsyncStartOutcome.InvalidHandle(value);
+            }
+        });
+        String where = compiled.spec().what() + " (oracle, " + label + ")";
+        BoundaryFailure arm = FailureContractRegistry.render(FailureArmId.ASYNC_SHAPE,
+            Map.of("actual", actualToken), "async operation", actualToken, null);
+        checkEq(arm.code().name(), driven.code(), where + ": the E8010 code");
+        checkEq(arm.message(), driven.message(), where
+            + ": the closed ASYNC_SHAPE arm's message");
+        checkEq(arm.expected(), driven.expected(), where
+            + ": the closed ASYNC_SHAPE arm's expected token");
+        checkEq(arm.actual(), driven.actual(), where
+            + ": the returned carrier's shared host-carrier projection");
+        checkEq(pin.sourceFile(), driven.file(), where
+            + ": the pinned call-origin file");
+        checkEq(pin.line(), driven.line(), where + ": the pinned call-origin line");
+        checkEq(pin.column(), driven.column(), where
+            + ": the pinned call-origin column");
+    }
+
+    /**
+     * The differential harness's null-label regression of the async shape
+     * fixture: {@link SemanticDifferentialHarness.AsyncHostScript} documents
+     * a null bound label as the bad-handle terminal (the two target seams
+     * return {@code nil}/{@code null} alike), so all three consumers must
+     * reach the complete canonical absent-handle tuple. The oracle responder
+     * previously constructed a non-null operation label unconditionally and
+     * threw before the comparison ran.
+     */
+    private static void assertHarnessNullLabelAbsentHandle(Compiled compiled,
+            SidecarExpectations.ErrorExpectation pin) throws Exception {
+        Path workspace = compiled.root().resolve("harness-absent-handle");
+        SemanticDifferentialHarness.Expectation expectation =
+            SemanticDifferentialHarness.Expectation.failure(
+                "the async shape fixture's null-label absent handle",
+                List.of("host.async_shape_bad.fetchValue"), "E8010", null);
+        SemanticDifferentialHarness.AsyncHostScript script =
+            new SemanticDifferentialHarness.AsyncHostScript(null,
+                new SemanticDifferentialHarness.AsyncHostCompletion.Returned(
+                    new SemanticDifferentialHarness.CallbackArg.Str("unused")));
+        SemanticDifferentialHarness.Verdict verdict =
+            SemanticDifferentialHarness.runAsyncEntry(compiled.project(),
+                compiled.tables(), "test_host_async_shape_bad", List.of(), expectation,
+                workspace, script);
+        checkEq(3, verdict.runs().size(), compiled.spec().what()
+            + " (harness, null label): the three consumers run: "
+            + verdict.failures());
+        check(verdict.pass(), compiled.spec().what()
+            + " (harness, null label): the three-consumer matrix passes: "
+            + verdict.failures());
+        List<Tuple> tuples = new ArrayList<>();
+        for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+            if (!(run.terminal() instanceof
+                    SemanticRuntimeModel.Terminal.DealFailure failure)) {
+                fail(compiled.spec().what() + " (harness, null label, "
+                    + run.consumer() + "): the drive reaches the absent handle: "
+                    + run.terminal());
+                return;
+            }
+            Tuple tuple = tupleOf(failure.error(), compiled,
+                compiled.spec().fixtureFile());
+            String where = compiled.spec().what() + " (harness, null label, "
+                + run.consumer() + ")";
+            checkEq("E8010", tuple.code(), where + ": the E8010 code");
+            checkEq("host async function must return an async operation, got nothing",
+                tuple.message(), where + ": the nothing message");
+            checkEq("async operation", tuple.expected(), where
+                + ": the expected token");
+            checkEq("nothing", tuple.actual(), where
+                + ": the absent handle's actual token");
+            checkEq(pin.sourceFile(), tuple.file(), where
+                + ": the pinned call-origin file");
+            checkEq(pin.line(), tuple.line(), where
+                + ": the pinned call-origin line");
+            checkEq(pin.column(), tuple.column(), where
+                + ": the pinned call-origin column");
+            tuples.add(tuple);
+        }
+        for (int i = 1; i < tuples.size(); i++) {
+            checkEq(null, firstDifferingField(tuples.get(0), tuples.get(i)),
+                compiled.spec().what() + " (harness, null label): the "
+                    + verdict.runs().get(0).consumer() + " and the "
+                    + verdict.runs().get(i).consumer()
+                    + " consumers render the identical tuple");
+        }
     }
 
     /**
