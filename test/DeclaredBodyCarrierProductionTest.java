@@ -128,9 +128,25 @@ import java.util.stream.Stream;
  * adapter's nested source {@code ASYNC_START} realizes the declaration's own
  * async entry — the {@code ELIDED_BY_ADAPTER} leading-M operands, zero
  * parameter boundaries, the entry's canonical body-task token through the
- * {@code ExternalAsyncLink}, and zero nested return boundaries — with the
- * nested start's own activation-bound token under the outer
- * {@code ADAPTER_INNER} alias.</p>
+ * {@code ExternalAsyncLink}, and zero nested return boundaries — while the
+ * outer adapter start keeps the xN target-signature
+ * {@code FUNCTION_PARAMETER} cells.</p>
+ *
+ * <p>The fifth reported integration gap — the arity-extension adapter over a
+ * capture-carrying nested source declaration: the escaped shape {@code make}
+ * declares {@code target} (reading the parameter {@code base}) and
+ * {@code caller} holds the wider-typed adapter {@code wide} over
+ * {@code target}; {@code caller} captures {@code target} but not
+ * {@code base}. The awaited adapter's nested source start reconstructed
+ * {@code target}'s factory ({@code CallCallee.Static}) at the await site, so
+ * it re-resolved {@code target}'s creation-site capture of {@code base} from
+ * {@code caller}'s frame (the module-level slot) and the escaped closure
+ * failed at execution. The nested source start is now value-carried over the
+ * loaded D15 source carrier — {@code CallCallee.Indirect} over the source
+ * declaration's published closure identity — so the nested body task installs
+ * the source declaration's own creation-site captured cells, with the source
+ * body's own single return cell and the {@code DEAL_BODY_TASK} token owner
+ * unchanged.</p>
  *
  * <p>Per case, the measured surfaces:</p>
  *
@@ -826,6 +842,104 @@ public class DeclaredBodyCarrierProductionTest {
             """));
 
     /**
+     * The escaped nested-source arity-extension adapter, awaited: {@code make}
+     * declares the capture-carrying async {@code target} (reading the
+     * parameter {@code base}) and {@code caller} declares the wider-typed
+     * {@code wide} over {@code target} and awaits {@code wide(0)}. The
+     * adapter's source is a nested declared body whose creation-site capture
+     * of {@code base} lives in {@code target}'s own creation instance, so the
+     * nested source {@code ASYNC_START} must invoke through the loaded source
+     * carrier (the {@code Indirect} callee over the source's closure identity)
+     * instead of reconstructing {@code target}'s factory from
+     * {@code caller}'s capture context — {@code caller} captures
+     * {@code target} but not {@code base}. After {@code make(10)} returns,
+     * awaiting the escaped {@code caller} must observe {@code target}'s own
+     * creation-site {@code base} (10); the call-site reconstruction reads the
+     * module-level {@code base} slot instead.
+     */
+    private static final Case ESCAPED_NESTED_SOURCE_ADAPTER_ASYNC = new Case(
+        "escaped-nested-source-adapter-async",
+        """
+        import * as console from "std/console"
+
+        export async function drive(): int {
+          let c: async () => int = make(10);
+          let v: int = await c();
+          if (v === 10) {
+            console.log("declared-body-nested-source-adapter-ok");
+          } else {
+            console.log("declared-body-nested-source-adapter-bad");
+          }
+          return v;
+        }
+
+        export function main(): null {
+          return null;
+        }
+
+        function make(base: int): async () => int {
+          async function target(): int {
+            return base;
+          }
+          async function caller(): int {
+            let wide: async (extra: int) => int = target;
+            return await wide(0);
+          }
+          return caller;
+        }
+        """,
+        List.of("declared-body-nested-source-adapter-ok"), "drive", "int:10", 1);
+
+    /**
+     * Two distinct escaped instances of
+     * {@link #ESCAPED_NESTED_SOURCE_ADAPTER_ASYNC}: {@code make(10)} and
+     * {@code make(20)} each publish their own {@code target}/{@code caller}
+     * carriers, and each awaited adapter must invoke its own creation's
+     * {@code target} closure. A shared reconstruction slot would let the
+     * second instance's target displace the first instance's source.
+     */
+    private static final Case TWO_ESCAPED_NESTED_SOURCE_ADAPTERS_ASYNC = new Case(
+        "two-escaped-nested-source-adapters-async",
+        """
+        import * as console from "std/console"
+
+        export async function drive(): int {
+          let a: async () => int = make(10);
+          let b: async () => int = make(20);
+          let av: int = await a();
+          if (av === 10) {
+            console.log("declared-body-nested-adapter-instance-a-ok");
+          } else {
+            console.log("declared-body-nested-adapter-instance-a-bad");
+          }
+          let bv: int = await b();
+          if (bv === 20) {
+            console.log("declared-body-nested-adapter-instance-b-ok");
+          } else {
+            console.log("declared-body-nested-adapter-instance-b-bad");
+          }
+          return av + bv;
+        }
+
+        export function main(): null {
+          return null;
+        }
+
+        function make(base: int): async () => int {
+          async function target(): int {
+            return base;
+          }
+          async function caller(): int {
+            let wide: async (extra: int) => int = target;
+            return await wide(0);
+          }
+          return caller;
+        }
+        """,
+        List.of("declared-body-nested-adapter-instance-a-ok",
+            "declared-body-nested-adapter-instance-b-ok"), "drive", "int:30", 1);
+
+    /**
      * The forward arity-extension alias of an exported declaration, sync:
      * the alias type ({@code (n: int, extra: int) => int}) extends the
      * exported declaration's parameter list, so the assignment resolves the
@@ -1289,7 +1403,9 @@ public class DeclaredBodyCarrierProductionTest {
         FORWARD_ALIAS_EXPORTED_ADAPTER, FORWARD_ALIAS_EXPORTED_ADAPTER_REVERSE,
         FORWARD_ALIAS_EXPORTED_ADAPTER_ASYNC,
         FORWARD_ALIAS_EXPORTED_ADAPTER_ASYNC_REVERSE,
-        ADAPTER_OVER_ASYNC_EXTERNAL);
+        ADAPTER_OVER_ASYNC_EXTERNAL,
+        ESCAPED_NESTED_SOURCE_ADAPTER_ASYNC,
+        TWO_ESCAPED_NESTED_SOURCE_ADAPTERS_ASYNC);
 
     // =========================================================================
     // The case driver
@@ -1659,8 +1775,91 @@ public class DeclaredBodyCarrierProductionTest {
             + ": the unit records at least " + testCase.minEntryInvocations()
             + " same-module exported-entry realization(s); got "
             + moduleEntryInvocations);
+        checkAdapterOverAsyncNestedSources(testCase, unit, returnBoundaries);
         if (testCase.arityExtensionAdapter()) {
             checkArityExtensionAdapters(testCase, unit);
+        }
+    }
+
+    /**
+     * The adapter-over-async nested source start (the ISSUE-0766 gap): when
+     * the adapter's statically fixed source is a declared body (the
+     * non-entry shape), the nested source {@code ASYNC_START} is
+     * value-carried — {@code CallCallee.Indirect} over the source
+     * declaration's published closure identity — and keeps the source body's
+     * own single return cell and the {@code DEAL_BODY_TASK} canonical token
+     * owner. A captured nested source declaration is never reconstructed as
+     * a call-site factory; the exported-entry, external, host, and intrinsic
+     * source resolutions keep their static/entry shapes.
+     */
+    private static void checkAdapterOverAsyncNestedSources(Case testCase,
+            LoweredModuleUnit unit, Map<FunctionId, OpId> returnBoundaries) {
+        for (SemanticOp outer : unit.ops()) {
+            if (outer.kind() != SemanticOpKind.ASYNC_START
+                    || !(outer.payload() instanceof KindPayload.AsyncStartPayload started)
+                    || started.parameterBoundaryMode() != ParameterBoundaryMode.RUN) {
+                continue;
+            }
+            FunctionExecutionBinding outerBinding = switch (started.callee()) {
+                case KindPayload.CallCallee.Static stat -> stat.binding();
+                case KindPayload.CallCallee.Indirect indirect ->
+                    unit.functionBindings().get(
+                        new FunctionAllocationIdentity(indirect.callee().id()));
+                case KindPayload.CallCallee.Dynamic ignored -> null;
+            };
+            if (!(outerBinding instanceof FunctionExecutionBinding.AdapterBinding)) {
+                continue;
+            }
+            SemanticOp nested = null;
+            for (SemanticOp candidate : unit.ops()) {
+                if (candidate.kind() == SemanticOpKind.ASYNC_START
+                        && outer.opId().equals(candidate.origin().parentOpId())) {
+                    nested = candidate;
+                }
+            }
+            check(nested != null, testCase.name()
+                + ": the adapter-over-async start " + outer.opId()
+                + " carries its nested source ASYNC_START");
+            if (nested == null) {
+                continue;
+            }
+            KindPayload.AsyncStartPayload inner =
+                (KindPayload.AsyncStartPayload) nested.payload();
+            FunctionExecutionBinding nestedBinding = switch (inner.callee()) {
+                case KindPayload.CallCallee.Static stat -> stat.binding();
+                case KindPayload.CallCallee.Indirect indirect ->
+                    unit.functionBindings().get(
+                        new FunctionAllocationIdentity(indirect.callee().id()));
+                case KindPayload.CallCallee.Dynamic ignored -> null;
+            };
+            if (!(nestedBinding instanceof FunctionExecutionBinding.LoweredBody body)) {
+                // The exported-entry, external, host, and intrinsic source
+                // resolutions keep their own static/entry shapes.
+                continue;
+            }
+            check(inner.callee() instanceof KindPayload.CallCallee.Indirect,
+                testCase.name() + ": the nested source start " + nested.opId()
+                    + " of the adapter-over-async task " + outer.opId()
+                    + " is value-carried over the declared source's published"
+                    + " closure identity (never a call-site factory"
+                    + " reconstruction); got " + inner.callee());
+            check(inner.parameterBoundaryMode()
+                        == ParameterBoundaryMode.ELIDED_BY_ADAPTER
+                    && inner.parameterBoundaryOpIds().isEmpty(), testCase.name()
+                + ": the nested source start " + nested.opId()
+                + " runs zero parameter boundaries (ELIDED_BY_ADAPTER); got "
+                + inner.parameterBoundaryMode() + " with "
+                + inner.parameterBoundaryOpIds().size() + " cell(s)");
+            OpId bodyCell = returnBoundaries.get(body.functionId());
+            check(bodyCell != null && bodyCell.equals(inner.returnBoundaryOpId()),
+                testCase.name() + ": the nested source start " + nested.opId()
+                    + " records the declared source body's own return cell "
+                    + bodyCell + "; got " + inner.returnBoundaryOpId());
+            check(nested.result() instanceof AsyncTokenId.Canonical token
+                    && token.owner() == AsyncTokenOwner.DEAL_BODY_TASK,
+                testCase.name() + ": the nested source start " + nested.opId()
+                    + " keeps the DEAL_BODY_TASK canonical token owner; got "
+                    + nested.result());
         }
     }
 

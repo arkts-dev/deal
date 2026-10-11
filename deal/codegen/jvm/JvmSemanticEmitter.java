@@ -569,6 +569,18 @@ public final class JvmSemanticEmitter {
                             fields.add(cell(payload.binding(), payload.generation()));
                         case KindPayload.TryCatchPayload payload ->
                             fields.add(cell(payload.catchBinding(), 0));
+                        case KindPayload.AsyncStartPayload payload -> {
+                            // An indirect callee names a closure identity that
+                            // the op emits no result for (a value-carried
+                            // invocation over an identity-preserving load, or
+                            // the nested source start of an adapter-over-async
+                            // task): its slot field must exist even when no op
+                            // of the closure carries it as a result or operand.
+                            if (payload.callee()
+                                    instanceof KindPayload.CallCallee.Indirect indirect) {
+                                fields.add(slot(indirect.callee()));
+                            }
+                        }
                         default -> {
                         }
                     }
@@ -6420,6 +6432,19 @@ public final class JvmSemanticEmitter {
                     out.append(indent(indent + 1)).append("JvmRuntime.fnCheck(__src, ")
                         .append(javaString(adapter.sourceSignature().canonicalSpecText()))
                         .append(", ").append(javaString(originOf(op))).append(");\n");
+                    if (nested.payload() instanceof KindPayload.AsyncStartPayload nestedStart
+                            && nestedStart.callee()
+                                instanceof KindPayload.CallCallee.Indirect indirect) {
+                        // The value-carried nested source start (a declared
+                        // body source): the loaded D15 source carrier is
+                        // published under the source's own closure identity,
+                        // so the nested body task runs the source closure's
+                        // invoker with its creation-site captured cells —
+                        // never a call-site factory reconstruction from the
+                        // adapter caller's frame.
+                        out.append(indent(indent + 1)).append(slot(indirect.callee()))
+                            .append(" = __src;\n");
+                    }
                     emitAsyncStart(nested, indent + 1);
                     out.append(indent(indent + 1)).append("return null;\n");
                     out.append(indent(indent)).append("});\n");
