@@ -985,6 +985,11 @@ final class JvmHostAbiEmission {
         out.append("      throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.HOST_LOAD_MISSING_EXPORT, java.util.Map.of(\"name\", name, \"module\", module), oFile + \":\" + oLine + \":\" + oCol, null, null);\n");
         out.append("    }\n");
         out.append("  }\n\n");
+        // The declared class's mandatory <C>_defaults capture: every one of
+        // its load failures renders the closed HOST_LOAD_INVALID_METADATA arm
+        // (the {defaults|fields} reason "defaults") at the import origin —
+        // the emitted helper holds no failure text of its own, exactly like
+        // the missing-export arm beside it.
         out.append("  static java.util.Map<java.lang.String, java.lang.Object>"
             + " __hostDefaults(java.lang.Class<?> h, java.lang.String module,"
             + " java.lang.String name, java.lang.String oFile, int oLine, int"
@@ -994,12 +999,17 @@ final class JvmHostAbiEmission {
         out.append("      f.setAccessible(true);\n");
         out.append("      java.lang.Object v = f.get(null);\n");
         out.append("      if (v instanceof java.util.Map m) { return m; }\n");
-        out.append("      throw JvmRuntime.fail(\"E8011\", \"host class '\" + name + \"' in module '\" + module + \"' has a non-map defaults value\", oFile + \":\" + oLine + \":\" + oCol, null, null);\n");
+        out.append("      throw __hostDefaultsMetadataFailure(name, module, oFile, oLine, oCol);\n");
         out.append("    } catch (java.lang.NoSuchFieldException __e) {\n");
-        out.append("      throw JvmRuntime.fail(\"E8011\", \"host class '\" + name + \"' in module '\" + module + \"' is missing its defaults field (\" + name + \"_defaults)\", oFile + \":\" + oLine + \":\" + oCol, null, null);\n");
+        out.append("      throw __hostDefaultsMetadataFailure(name, module, oFile, oLine, oCol);\n");
         out.append("    } catch (java.lang.IllegalAccessException __e) {\n");
-        out.append("      throw JvmRuntime.fail(\"E8011\", \"host class '\" + name + \"' in module '\" + module + \"' defaults are inaccessible\", oFile + \":\" + oLine + \":\" + oCol, null, null);\n");
+        out.append("      throw __hostDefaultsMetadataFailure(name, module, oFile, oLine, oCol);\n");
         out.append("    }\n");
+        out.append("  }\n\n");
+        out.append("  static JvmRuntime.DealError __hostDefaultsMetadataFailure("
+            + "java.lang.String name, java.lang.String module, java.lang.String oFile,"
+            + " int oLine, int oCol) {\n");
+        out.append("    return JvmRuntime.arm(deal.semantic.ir.FailureArmId.HOST_LOAD_INVALID_METADATA, java.util.Map.of(\"name\", name, \"module\", module, \"defaults|fields\", \"defaults\"), oFile + \":\" + oLine + \":\" + oCol, null, null);\n");
         out.append("  }\n\n");
         out.append("  static java.lang.Object __hostInvoke(java.lang.reflect.Method m,"
             + " java.lang.Object[] args, java.lang.String oFile, int oLine, int"

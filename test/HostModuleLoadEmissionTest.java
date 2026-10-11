@@ -852,9 +852,22 @@ public class HostModuleLoadEmissionTest {
             check(source.contains("__hostD$" + cfgKey + "$ServerConfig = __hostDefaults("
                     + "__h, \"host/cfg\", \"ServerConfig\", oFile, oLine, oCol);"),
                 "the declared class export captures its mandatory <C>_defaults map");
-            check(source.contains("\"host class '\" + name + \"' in module '\" + module "
-                    + "+ \"' is missing its defaults field (\" + name + \"_defaults)\""),
-                "the pinned missing-defaults E8011 text is emitted");
+            check(source.contains("static JvmRuntime.DealError "
+                    + "__hostDefaultsMetadataFailure(java.lang.String name, "
+                    + "java.lang.String module, java.lang.String oFile, int oLine, "
+                    + "int oCol) {"),
+                "the <C>_defaults capture failures route through one arm-rendering "
+                    + "helper");
+            check(source.contains("return JvmRuntime.arm(deal.semantic.ir."
+                    + "FailureArmId.HOST_LOAD_INVALID_METADATA, java.util.Map.of(\"name\", "
+                    + "name, \"module\", module, \"defaults|fields\", \"defaults\"), "
+                    + "oFile + \":\" + oLine + \":\" + oCol, null, null)"),
+                "the <C>_defaults load failures render the closed "
+                    + "HOST_LOAD_INVALID_METADATA arm");
+            check(!source.contains("missing its defaults field")
+                    && !source.contains("non-map defaults value")
+                    && !source.contains("defaults are inaccessible"),
+                "the load entry composes no <C>_defaults failure text of its own");
             check(source.contains("throw JvmRuntime.arm(deal.semantic.ir."
                     + "FailureArmId.HOST_LOAD_MISSING_EXPORT, java.util.Map.of(\"name\", "
                     + "name, \"module\", module), oFile + \":\" + oLine + \":\" + oCol, "
@@ -1337,7 +1350,15 @@ public class HostModuleLoadEmissionTest {
         }
 
         // The declared-class seed: a host class without its mandatory
-        // <C>_defaults field fails the load entry with the pinned E8011.
+        // <C>_defaults field fails the load entry with the closed
+        // HOST_LOAD_INVALID_METADATA arm — the canonical message the registry
+        // renders for {name, module, reason=defaults} — and no expected/actual
+        // fields.
+        String defaultsArmMessage = deal.semantic.ir.FailureContractRegistry.render(
+            deal.semantic.ir.FailureArmId.HOST_LOAD_INVALID_METADATA,
+            java.util.Map.of("name", "ServerConfig", "module", "host/cfg",
+                "defaults|fields", "defaults"),
+            null, null, null).message();
         {
             checkJvmLoadFailure(cfgFixture, "HostCfg.java", """
                 final class HostCfg {
@@ -1345,10 +1366,22 @@ public class HostModuleLoadEmissionTest {
                       java.util.Map.of("path", "/");
                   public static Object describe(Object s) { return "cfg"; }
                 }
-                """, "E8011",
-                "host class 'ServerConfig' in module 'host/cfg' is missing its "
-                    + "defaults field (ServerConfig_defaults)",
-                null, "missing-defaults");
+                """, "E8011", defaultsArmMessage,
+                ":1:1", "missing-defaults");
+        }
+
+        // The same cell's non-map seed: a present <C>_defaults field of
+        // another shape renders the identical arm.
+        {
+            checkJvmLoadFailure(cfgFixture, "HostCfg.java", """
+                final class HostCfg {
+                  public static final java.util.Map<String, Object> Endpoint_defaults =
+                      java.util.Map.of("path", "/");
+                  public static final int ServerConfig_defaults = 42;
+                  public static Object describe(Object s) { return "cfg"; }
+                }
+                """, "E8011", defaultsArmMessage,
+                ":1:1", "non-map-defaults");
         }
     }
 
@@ -1420,6 +1453,10 @@ public class HostModuleLoadEmissionTest {
                   }
                   if (!$MESSAGE$.equals(error.msg)) {
                     throw new IllegalStateException("FAIL: message " + error.msg);
+                  }
+                  if (error.expected != null || error.actual != null) {
+                    throw new IllegalStateException("FAIL: the arm declares no "
+                        + "expected/actual, got " + error.expected + "/" + error.actual);
                   }
             $ORIGIN$      System.out.println("PROBE-OK " + error.origin);
                 }

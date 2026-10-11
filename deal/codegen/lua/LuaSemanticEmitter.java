@@ -8114,7 +8114,11 @@ end
 -- The bytes write's BYTE_ELEMENT_ASSIGNMENT cell (K6 item 4): the bounds
 -- check first (E8012 at the index expression), then the element
 -- descriptor check; the commit owns the E8013 range check and the single
--- mutation.
+-- mutation. The cell's own origin is the lowerer-selected byte-boundary
+-- origin (the index expression), so a descriptor-check failure of an
+-- in-bounds write re-renders at that origin, never at the prelude's
+-- internal placeholder — exactly like the array assignment cell and the
+-- oracle's boundary-origin attachment.
 local function __bytesBounds(bKey, bDigest, bParent, input, slotName, desc, kind, origin)
   local index = slotName.i
   __ev(bKey, "START", "BOUNDARY", bDigest, bParent, {__atom(kind, input)}, nil, nil)
@@ -8125,6 +8129,7 @@ local function __bytesBounds(bKey, bDigest, bParent, input, slotName, desc, kind
   end
   local ok, checked = pcall(__bcheck, desc, kind, input)
   if not ok then
+    if type(checked) == "table" and checked.__d then checked.o = origin end
     __ev(bKey, "FAILURE", "BOUNDARY", bDigest, bParent, {}, nil, __errtext(checked))
     error(checked, 0)
   end
