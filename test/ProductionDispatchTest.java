@@ -171,6 +171,43 @@ public class ProductionDispatchTest {
         """;
 
     /**
+     * The direct-emission library of the source-map regression: one exported
+     * class whose CLASS_FACTORY op carries the class declaration's span (the
+     * owner module of the construction-time factory group).
+     */
+    private static final String DIRECT_EMISSION_LIB_SOURCE = """
+        export function value(): int {
+          return 42
+        }
+
+        export class Point {
+          x: int = 0
+        }
+        """;
+
+    /**
+     * The direct-emission entry of the source-map regression: one
+     * parameterized export (its parameter BINDING_ALLOC is emitted directly
+     * in the function factory, never through emitOp) and one imported-class
+     * construction (the owner-side factory group emitted directly in the
+     * caller's body).
+     */
+    private static final String DIRECT_EMISSION_APP_SOURCE = """
+        import * as lib from "./lib"
+        import * as console from "std/console"
+
+        export function f(x: int): int {
+          return x
+        }
+
+        export function main(): null {
+          let p: lib.Point = { x: 1 };
+          console.log("PROBE|DIRECT-MAIN")
+          return null
+        }
+        """;
+
+    /**
      * The source-map unsafe-path fixture manifest: the module root carries an
      * embedded line terminator (the JSON escape the parser resolves to a real
      * LF in the directory name), so the source display name of the emitted
@@ -1788,6 +1825,243 @@ public class ProductionDispatchTest {
     }
 
     /**
+     * The direct-emission-group regression of the source maps: the parameter
+     * transfer of a parameterized export and the owner-side class-factory
+     * group are emitted directly (never through {@code emitOp}), so each must
+     * open its own mapped group — the parameter's own IR span, the owning
+     * module's class declaration span, and the caller's span again when the
+     * caller's statements resume — on both production targets, with the
+     * artifacts still runnable.
+     */
+    private static void testSourceMapDirectEmissionGroups() throws Exception {
+        System.out.println("-- source map: the directly emitted parameter "
+            + "transfer and the owner-side class-factory group carry their "
+            + "own source comments and sidecar mappings on both targets --");
+
+        Path project = Files.createTempDirectory(
+            "production-dispatch-map-direct-");
+        try {
+            write(project, "deal.json", DEAL_JSON_JVM);
+            write(project, "src/lib.deal", DIRECT_EMISSION_LIB_SOURCE);
+            write(project, "src/main.deal", DIRECT_EMISSION_APP_SOURCE);
+            String entry = project.resolve("src/main.deal").toAbsolutePath()
+                .toString();
+
+            // (1) The JVM target: the directly emitted groups carry their
+            // comments and mappings, and the commented class compiles and
+            // runs the entry.
+            Path jvmOut = project.resolve("build/jvm");
+            ProjectOutcome jvmCompile = runProductionCli("compile", entry,
+                "--backend", "jvm", "--source-map", "--output",
+                jvmOut.toAbsolutePath().toString());
+            check(jvmCompile.exitCode() == 0,
+                "the direct-emission JVM compile succeeds: "
+                    + jvmCompile.stderr());
+            if (jvmCompile.exitCode() == 0) {
+                verifyDirectEmissionGroups(project, jvmOut, "Main.java",
+                    "// ", "b\\d+g0 = args\\[0\\];",
+                    "String __prevMod_\\d+ = MODULE;", "MODULE = __prevMod_\\d+;");
+                String classpath = Path.of("build").toAbsolutePath().normalize()
+                    .toString();
+                ProcessOutcome javac = runProcess(project, "javac", "--release",
+                    "25", "-proc:none", "-cp", classpath, "-d",
+                    jvmOut.toString(), jvmOut.resolve("Main.java").toString());
+                check(javac.exitCode() == 0,
+                    "the direct-emission JVM artifact compiles: "
+                        + javac.output());
+                if (javac.exitCode() == 0) {
+                    ProcessOutcome run = runProcess(jvmOut, "java", "-cp",
+                        classpath + File.pathSeparator + jvmOut, "Main");
+                    check(run.exitCode() == 0
+                            && countOccurrences(run.output(),
+                                "PROBE|DIRECT-MAIN") == 1,
+                        "the direct-emission JVM artifact runs the entry once: "
+                            + "exit=" + run.exitCode() + " output="
+                            + run.output());
+                }
+            }
+
+            // (2) The LuaJIT target: the same groups carry the same
+            // comments and mappings, and the chunk runs under the real
+            // interpreter.
+            Path luaOut = project.resolve("build/lua");
+            ProjectOutcome luaCompile = runProductionCli("compile", entry,
+                "--backend", "luajit", "--source-map", "--output",
+                luaOut.toAbsolutePath().toString());
+            check(luaCompile.exitCode() == 0,
+                "the direct-emission LuaJIT compile succeeds: "
+                    + luaCompile.stderr());
+            if (luaCompile.exitCode() == 0) {
+                verifyDirectEmissionGroups(project, luaOut, "main.lua", "-- ",
+                    "S\\.b\\d+g0 = __args\\[1\\]",
+                    "__modStack\\[#__modStack \\+ 1\\] = __module",
+                    "__modStack\\[#__modStack\\] = nil");
+                ProcessOutcome run = runProcess(luaOut, "luajit", "main.lua");
+                check(run.exitCode() == 0
+                        && countOccurrences(run.output(),
+                            "PROBE|DIRECT-MAIN") == 1,
+                    "the direct-emission LuaJIT chunk runs the entry once: "
+                        + "exit=" + run.exitCode() + " output=" + run.output());
+            }
+        } finally {
+            deleteRecursively(project);
+        }
+    }
+
+    /**
+     * Verifies the directly emitted statement groups of one produced
+     * artifact: the parameter transfer of the parameterized export is
+     * immediately preceded by the parameter's own source comment and mapped
+     * at exactly that generated position by the entry module's sidecar; the
+     * owner-side factory group is immediately preceded by the owning module's
+     * class declaration comment and mapped there by the owning module's
+     * sidecar; and the first source comment after the group's module restore
+     * names the caller's own construction span and is mapped by the entry
+     * module's sidecar.
+     */
+    private static void verifyDirectEmissionGroups(Path project, Path outputRoot,
+            String artifactName, String commentMarker, String parameterPattern,
+            String factoryGroupStart, String factoryGroupEnd) throws Exception {
+        List<String> lines = Files.readString(outputRoot.resolve(artifactName))
+            .lines().toList();
+        List<String> appLines = Files.readString(project.resolve("src/main.deal"))
+            .lines().toList();
+        List<String> libLines = Files.readString(project.resolve("src/lib.deal"))
+            .lines().toList();
+
+        // The expected source positions, read from the fixture sources.
+        int parameterLine = lineContaining(appLines, "export function f(") + 1;
+        int parameterColumn = appLines.get(parameterLine - 1).indexOf("x:") + 1;
+        int classLine = lineContaining(libLines, "export class Point") + 1;
+        int classColumn = libLines.get(classLine - 1).indexOf("class") + 1;
+        int constructLine = lineContaining(appLines, "let p: lib.Point") + 1;
+        int constructColumn = appLines.get(constructLine - 1).indexOf("{ x:") + 1;
+
+        // (1) The directly emitted parameter transfer.
+        List<Integer> parameterGroups = matchingLines(lines, parameterPattern);
+        checkEq(1, parameterGroups.size(), artifactName
+            + " carries exactly one directly emitted parameter transfer: "
+            + parameterGroups);
+        if (parameterGroups.size() == 1) {
+            int statementLine = parameterGroups.get(0);
+            String comment = lines.get(statementLine - 1);
+            checkEq(commentMarker + "src/main.deal:" + parameterLine + ":"
+                    + parameterColumn,
+                comment.strip(),
+                artifactName + " precedes the parameter transfer with the "
+                    + "parameter's own source comment");
+            // The comment directly precedes the statement, so the
+            // statement's 0-based index is the comment's 1-based line.
+            checkSidecarMapping(outputRoot, "main.deal.map.json", statementLine,
+                comment, commentMarker, parameterLine, parameterColumn,
+                artifactName + " parameter transfer");
+        }
+
+        // (2) The owner-side class-factory group.
+        List<Integer> factoryStarts = matchingLines(lines, factoryGroupStart);
+        checkEq(1, factoryStarts.size(), artifactName
+            + " carries exactly one owner-side factory group: " + factoryStarts);
+        if (factoryStarts.size() != 1) {
+            return;
+        }
+        int factoryStart = factoryStarts.get(0);
+        String factoryComment = lines.get(factoryStart - 1);
+        checkEq(commentMarker + "src/lib.deal:" + classLine + ":" + classColumn,
+            factoryComment.strip(),
+            artifactName + " precedes the owner-side factory group with the "
+                + "class declaration comment of the owning module");
+        // The factory comment directly precedes the group's first statement
+        // (the 0-based statement index is the comment's 1-based line).
+        checkSidecarMapping(outputRoot, "lib.deal.map.json", factoryStart,
+            factoryComment, commentMarker, classLine, classColumn,
+            artifactName + " owner-side factory group");
+
+        // (3) The caller's attribution resumes after the group's module
+        // restore: the first source comment after the restore names the
+        // caller's own construction span and the entry sidecar maps it.
+        int factoryEnd = -1;
+        for (int candidate : matchingLines(lines, factoryGroupEnd)) {
+            if (candidate > factoryStart) {
+                factoryEnd = candidate;
+            }
+        }
+        check(factoryEnd > factoryStart, artifactName
+            + " restores the caller's module after the owner-side factory "
+            + "group");
+        if (factoryEnd <= factoryStart) {
+            return;
+        }
+        int callerComment = -1;
+        for (int i = factoryEnd + 1; i < lines.size(); i++) {
+            if (lines.get(i).strip().startsWith(commentMarker)) {
+                callerComment = i;
+                break;
+            }
+        }
+        check(callerComment > factoryEnd, artifactName
+            + " emits a source comment after the owner-side factory group");
+        if (callerComment <= factoryEnd) {
+            return;
+        }
+        String callerLine = lines.get(callerComment);
+        checkEq(commentMarker + "src/main.deal:" + constructLine + ":"
+                + constructColumn,
+            callerLine.strip(),
+            artifactName + " restores the caller's own source comment when "
+                + "the caller's statements resume");
+        checkSidecarMapping(outputRoot, "main.deal.map.json", callerComment + 1,
+            callerLine, commentMarker, constructLine, constructColumn,
+            artifactName + " caller restore");
+    }
+
+    /** The 0-based index of the first line containing the text, or -1. */
+    private static int lineContaining(List<String> lines, String needle) {
+        for (int i = 0; i < lines.size(); i++) {
+            if (lines.get(i).contains(needle)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** The 0-based indexes of the lines whose stripped text matches the pattern. */
+    private static List<Integer> matchingLines(List<String> lines, String pattern) {
+        List<Integer> matched = new ArrayList<>();
+        for (int i = 0; i < lines.size(); i++) {
+            if (lines.get(i).strip().matches(pattern)) {
+                matched.add(i);
+            }
+        }
+        return matched;
+    }
+
+    /**
+     * Verifies that the sidecar maps the comment line's own generated
+     * position (its 1-based line and its marker column) to the expected
+     * source position.
+     */
+    private static void checkSidecarMapping(Path outputRoot, String sidecarName,
+            int commentGeneratedLine, String commentLine, String commentMarker,
+            int sourceLine, int sourceColumn, String context) throws Exception {
+        List<int[]> mappings = parseSidecarMappings(
+            Files.readString(outputRoot.resolve(sidecarName)));
+        int generatedColumn = commentLine.indexOf(commentMarker) + 1;
+        boolean mapped = false;
+        for (int[] mapping : mappings) {
+            mapped = mapping[0] == commentGeneratedLine
+                && mapping[1] == generatedColumn
+                && mapping[2] == sourceLine
+                && mapping[3] == sourceColumn;
+            if (mapped) {
+                break;
+            }
+        }
+        check(mapped, context + ": " + sidecarName + " maps generated line "
+            + commentGeneratedLine + " column " + generatedColumn + " to "
+            + "source " + sourceLine + ":" + sourceColumn);
+    }
+
+    /**
      * The exhaustive serializer check: a path carrying every C0 control
      * character (U+0000..U+001F, not only the LF/CR/TAB short escapes) must
      * serialize into a sidecar the strict canonical JSON transport parses,
@@ -2541,6 +2815,7 @@ public class ProductionDispatchTest {
         testSourceMapDisposition();
         testSourceMapUnsafeSourcePathText();
         testSourceMapControlCharacterPaths();
+        testSourceMapDirectEmissionGroups();
         testSingleArmDispatch();
         testLegacyRejectionStagesNothingWithDumps();
         testRetainedTestScopeEmitters();

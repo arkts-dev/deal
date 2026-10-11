@@ -1341,6 +1341,10 @@ public final class LuaSemanticEmitter {
                 KindPayload.BindingAllocPayload payload =
                     (KindPayload.BindingAllocPayload) op.payload();
                 BindingCellKind kind = cellKindOf(payload.binding(), payload.generation());
+                // The parameter transfer is emitted directly (never through
+                // emitOp): it opens its own mapped group so the parameter's
+                // IR origin reaches the owning module's sidecar.
+                beginSourceMappedGroup(op, "    ");
                 out.append("    ").append(cell(payload.binding(), payload.generation())).append(" = ")
                     .append(kind == BindingCellKind.SHARED_CELL
                         ? "{__args[" + argIndex + "]}" : "__args[" + argIndex + "]")
@@ -4809,6 +4813,11 @@ public final class LuaSemanticEmitter {
                     + " publishes no ValueId result (producer defect)");
             }
             String ownerPath = factoryOpId.module().path();
+            // The owner-side factory group (the module transfer, the
+            // CLASS_FACTORY envelope, the defaults, and the transfer
+            // instance) opens its own mapped group in the owner module, so
+            // its statements are attributed to the owning source file.
+            beginSourceMappedGroup(factoryOp, "");
             emitModulePush();
             out.append("__module = ").append(luaString(ownerPath)).append("\n");
             out.append("__ev(").append(luaString(opKey(factoryOp.opId())))
@@ -4850,6 +4859,9 @@ public final class LuaSemanticEmitter {
                 // owner's module, the caller's CLASS_NEW FAILURE carries
                 // the caller's (the oracle's own tagging).
                 emitModulePop();
+                // Emission returns to the caller's statements: the caller's
+                // own terminal is attributed to the caller's source again.
+                beginSourceMappedGroup(op, "  ");
                 emitFailureEvent(op.opId(), op.kind().name(), op,
                     "__errtext(__resT)");
                 out.append("  error(__resT, 0)\n");
@@ -4891,6 +4903,9 @@ public final class LuaSemanticEmitter {
                 .append(", ").append(luaString(opKey(op.opId())))
                 .append(", {}, __atom(\"class\", __instT), nil)\n");
             emitModulePop();
+            // Emission returns to the caller's statements (the caller-side
+            // instance and the caller's own success terminal).
+            beginSourceMappedGroup(op, "");
         }
 
         /** The declared layout entry of one field name, or null. */

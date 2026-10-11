@@ -1165,6 +1165,10 @@ public final class JvmSemanticEmitter {
                 KindPayload.BindingAllocPayload payload =
                     (KindPayload.BindingAllocPayload) op.payload();
                 BindingCellKind kind = cellKindOf(payload.binding(), payload.generation());
+                // The parameter transfer is emitted directly (never through
+                // emitOp): it opens its own mapped group so the parameter's
+                // IR origin reaches the owning module's sidecar.
+                beginSourceMappedGroup(op, "      ");
                 out.append("      ").append(cell(payload.binding(), payload.generation())).append(" = ")
                     .append(kind == BindingCellKind.SHARED_CELL
                         ? "new Object[]{args[" + i + "]}" : "args[" + i + "]")
@@ -5164,6 +5168,11 @@ public final class JvmSemanticEmitter {
                     + " publishes no ValueId result (producer defect)");
             }
             String ownerPath = factoryOpId.module().path();
+            // The owner-side factory group (the module transfer, the
+            // CLASS_FACTORY envelope, the defaults, and the transfer
+            // instance) opens its own mapped group in the owner module, so
+            // its statements are attributed to the owning source file.
+            beginSourceMappedGroup(factoryOp, indent(indent));
             out.append(indent(indent)).append("String __prevMod_")
                 .append(op.opId().id()).append(" = MODULE;\n");
             out.append(indent(indent)).append("MODULE = ")
@@ -5225,6 +5234,9 @@ public final class JvmSemanticEmitter {
                 out.append(indent(indent)).append("  MODULE = __prevMod_")
                     .append(op.opId().id()).append(";\n");
                 out.append(indent(indent)).append("  JvmRuntime.setModule(MODULE);\n");
+                // Emission returns to the caller's statements: the caller's
+                // own terminal is attributed to the caller's source again.
+                beginSourceMappedGroup(op, indent(indent + 1));
                 emitFailureEvent(op.opId(), op.kind().name(), op,
                     "JvmRuntime.errtext(__e)", indent + 1);
                 out.append(indent(indent)).append("  throw __e;\n");
@@ -5262,6 +5274,9 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent)).append("MODULE = __prevMod_")
                 .append(op.opId().id()).append(";\n");
             out.append(indent(indent)).append("JvmRuntime.setModule(MODULE);\n");
+            // Emission returns to the caller's statements (the caller-side
+            // instance and the caller's own success terminal).
+            beginSourceMappedGroup(op, indent(indent));
         }
 
         /** The declared layout entry of one field name, or null. */
