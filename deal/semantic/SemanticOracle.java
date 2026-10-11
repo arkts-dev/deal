@@ -466,7 +466,10 @@ public final class SemanticOracle {
              * {@code number}, the DEAL language-null sentinel, bytes, arrays
              * and class instances project {@code table}, and the invalid
              * handle's own carrier kind is never lost or refined by the
-             * typed-boundary classification.
+             * typed-boundary classification. Array carriers classify by
+             * their outer kind without materializing element views, so a
+             * reference-cyclic host array projects {@code table} exactly
+             * like both target host classifiers.
              */
             record InvalidHandle(Value value) implements AsyncStartOutcome {
                 public InvalidHandle {
@@ -3638,8 +3641,35 @@ public final class SemanticOracle {
             return runBoundaryChild(cell, value, BoundaryContext.none());
         }
 
-        /** The runtime value → closed boundary view. */
+        /**
+         * The runtime value → closed boundary view. Array carriers
+         * materialize their element views recursively; every other kind's
+         * view is the shallow classification view
+         * ({@link #shallowViewOfValue}).
+         */
         private BoundaryValueView viewOfValue(Value value) {
+            if (value instanceof Value.ArrayValue array) {
+                List<BoundaryValueView> elements = new ArrayList<>();
+                for (Value element : array.elements()) {
+                    elements.add(viewOfValue(element));
+                }
+                return array.decodedArray()
+                    ? BoundaryValueView.ofDecodedArray(elements)
+                    : BoundaryValueView.ofArray(elements);
+            }
+            return shallowViewOfValue(value);
+        }
+
+        /**
+         * The shallow classification view of one value: the value's own
+         * outer carrier kind only, with no payload walk. An invalid async
+         * handle needs only that outer carrier kind, so a reference-cyclic
+         * host array is a legal carrier: both target host classifiers
+         * project it {@code table}, and materializing its element views
+         * would dive into the cycle instead of reproducing the same
+         * closed {@code ASYNC_SHAPE} tuple.
+         */
+        private BoundaryValueView shallowViewOfValue(Value value) {
             return switch (value) {
                 case Value.NullValue ignored -> BoundaryValueView.nullView();
                 case Value.MissingValue ignored -> BoundaryValueView.of(ActualKind.MISSING);
@@ -3671,15 +3701,9 @@ public final class SemanticOracle {
                     BoundaryValueView.ofFunction(callable.descriptor());
                 case Value.HostEntryValue entry ->
                     BoundaryValueView.ofFunction(entry.descriptor());
-                case Value.ArrayValue array -> {
-                    List<BoundaryValueView> elements = new ArrayList<>();
-                    for (Value element : array.elements()) {
-                        elements.add(viewOfValue(element));
-                    }
-                    yield array.decodedArray()
-                        ? BoundaryValueView.ofDecodedArray(elements)
-                        : BoundaryValueView.ofArray(elements);
-                }
+                case Value.ArrayValue array -> array.decodedArray()
+                    ? BoundaryValueView.ofDecodedArray(List.of())
+                    : BoundaryValueView.ofArray(List.of());
                 case Value.ClassValue classValue ->
                     BoundaryValueView.ofClass(classValue.classId().text());
                 case Value.SlotValue slot -> BoundaryValueView.of(ActualKind.INT);
@@ -5089,7 +5113,8 @@ public final class SemanticOracle {
                         "async operation", "nothing");
                 case HostResponder.AsyncStartOutcome.InvalidHandle invalid ->
                     throw armFailure(op, FailureArmId.ASYNC_SHAPE, "async operation",
-                        BoundaryExecutor.hostCarrierKind(viewOfValue(invalid.value())));
+                        BoundaryExecutor.hostCarrierKind(
+                            shallowViewOfValue(invalid.value())));
                 case HostResponder.AsyncStartOutcome.Operation operation -> {
                     hostOperations.put(token.tokenId(), operation.label());
                     tasks.put(token.tokenId(), new Task(token, null));

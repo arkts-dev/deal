@@ -93,7 +93,9 @@ import java.util.stream.Stream;
  *       three-consumer tuple identity. The oracle's host seam retains the
  *       invalid returned async handle's own actual projection (the
  *       non-operation async handle reaches the closed arm with the
- *       carrier's kind, never the absent handle's {@code nothing}). The host
+ *       carrier's kind, never the absent handle's {@code nothing}, and a
+ *       reference-cyclic array carrier classifies by its outer kind
+ *       exactly like both production artifacts). The host
  *       string-carrier producers drive the four closed carrier responses
  *       (lone surrogate, embedded surrogate, malformed non-surrogate, and
  *       valid) through a generated host-importing entry: every invalid
@@ -1242,6 +1244,7 @@ public class CanonicalProjectionParityTest {
             if ("host-abi/host-async-shape-bad".equals(spec.corpusPath())) {
                 assertAbsentAsyncHandle(compiled, pin);
                 assertAsyncHandleCarriers(compiled, pin);
+                assertCyclicAsyncHandle(compiled, pin);
                 assertHarnessNullLabelAbsentHandle(compiled, pin);
             }
         } finally {
@@ -1346,6 +1349,85 @@ public class CanonicalProjectionParityTest {
         checkEq(pin.line(), driven.line(), where + ": the pinned call-origin line");
         checkEq(pin.column(), driven.column(), where
             + ": the pinned call-origin column");
+    }
+
+    /**
+     * The cyclic host carriers of the async shape fixture: the Lua host
+     * returns a table that carries itself, and the JVM host returns a
+     * {@code JvmRuntime.Table} whose sole entry is the table itself. Both
+     * target host classifiers project the outer carrier kind ({@code
+     * table}) without walking the cycle.
+     */
+    private static final String CYCLIC_HOST_LUA = """
+        local t = {}
+        t[1] = t
+        return {
+          fetchValue = function()
+            return t
+          end,
+        }
+        """;
+
+    private static final String CYCLIC_HOST_JAVA = """
+        final class HostAsync_shape_bad {
+          public static Object fetchValue() {
+            deal.codegen.jvm.JvmRuntime.Table t =
+                new deal.codegen.jvm.JvmRuntime.Table();
+            t.write("self", t);
+            return t;
+          }
+        }
+        """;
+
+    /**
+     * The cyclic invalid-handle regression of the async shape fixture: a
+     * reference-cyclic array is a legal host carrier, so the oracle's
+     * program drive must classify the returned value's outer carrier kind
+     * shallowly and render the complete {@code ASYNC_SHAPE} tuple, and
+     * both production artifacts driven with the corresponding cyclic host
+     * carriers must render the identical tuple. The classification
+     * materialized array element views before this drive existed, so the
+     * cyclic carrier diverged from production and overflowed the walk
+     * instead of reaching the closed arm.
+     */
+    private static void assertCyclicAsyncHandle(Compiled compiled,
+            SidecarExpectations.ErrorExpectation pin) throws Exception {
+        List<SemanticOracle.Value> elements = new ArrayList<>();
+        SemanticOracle.Value cycle = new SemanticOracle.Value.ArrayValue(elements,
+            RuntimeDescriptor.parseCanonicalText("[string]"), false);
+        elements.add(cycle);
+        Tuple oracle = oracleTupleWith(compiled, new SemanticOracle.HostResponder() {
+            @Override
+            public AsyncStartOutcome startAsync(ModuleId module, String export,
+                    RuntimeDescriptor.Func descriptor,
+                    List<SemanticOracle.Value> args, String operationLabel) {
+                return new AsyncStartOutcome.InvalidHandle(cycle);
+            }
+        });
+        String where = compiled.spec().what()
+            + " (oracle, cyclic array carrier)";
+        checkEq("E8010", oracle.code(), where + ": the E8010 code");
+        checkEq("host async function must return an async operation, got table",
+            oracle.message(), where + ": the table message");
+        checkEq("async operation", oracle.expected(), where
+            + ": the expected token");
+        checkEq("table", oracle.actual(), where + ": the shallow table actual");
+        checkEq(pin.sourceFile(), oracle.file(), where
+            + ": the pinned call-origin file");
+        checkEq(pin.line(), oracle.line(), where
+            + ": the pinned call-origin line");
+        checkEq(pin.column(), oracle.column(), where
+            + ": the pinned call-origin column");
+        Tuple lua = luaArtifactWithHost(compiled, "async_shape_bad",
+            CYCLIC_HOST_LUA);
+        checkEq(null, firstDifferingField(oracle, lua), compiled.spec().what()
+            + ": the oracle and the LuaJIT artifact render the identical "
+            + "cyclic-carrier tuple");
+        Tuple jvm = jvmArtifactWithHost(compiled, "async_shape_bad",
+            CYCLIC_HOST_JAVA);
+        checkEq(null, firstDifferingField(oracle, jvm), compiled.spec().what()
+            + ": the oracle and the JVM artifact render the identical "
+            + "cyclic-carrier tuple");
     }
 
     /**
@@ -2557,12 +2639,27 @@ public class CanonicalProjectionParityTest {
     /** Runs the LuaJIT production artifact under the deferred-entry probe
      *  and returns the probe's raw output. */
     private static String luaArtifactOutput(Compiled compiled) throws Exception {
+        return luaArtifactOutput(compiled, Map.of());
+    }
+
+    /**
+     * Runs the LuaJIT production artifact under the deferred-entry probe
+     * with caller-owned host implementations staged for the named stems
+     * (the cyclic-carrier drive), returning the probe's raw output.
+     */
+    private static String luaArtifactOutput(Compiled compiled,
+            Map<String, String> hostOverrides) throws Exception {
         Path out = compiled.root().resolve("out");
         for (String stem : compiled.hostStems()) {
             Path host = out.resolve("host/" + stem + ".lua");
             Files.createDirectories(host.getParent());
-            Files.copy(Path.of("test", "conformance", "host-fixtures", stem + ".lua"),
-                host, StandardCopyOption.REPLACE_EXISTING);
+            String override = hostOverrides.get(stem);
+            if (override != null) {
+                Files.writeString(host, override, StandardCharsets.UTF_8);
+            } else {
+                Files.copy(Path.of("test", "conformance", "host-fixtures",
+                    stem + ".lua"), host, StandardCopyOption.REPLACE_EXISTING);
+            }
         }
         String artifact = out.resolve(compiled.checkedProject().entryModule().path()
             .replace('.', '/') + ".lua").toAbsolutePath().toString();
@@ -2686,6 +2783,17 @@ public class CanonicalProjectionParityTest {
      */
     private static String jvmArtifactOutput(Compiled compiled, String probeSource)
             throws Exception {
+        return jvmArtifactOutput(compiled, probeSource, Map.of());
+    }
+
+    /**
+     * Runs the JVM production artifact with the given {@code Probe.java}
+     * source and caller-owned host implementations staged for the named
+     * stems (the cyclic-carrier drive): the host class source replaces the
+     * corpus fixture's, so the emitted host ABI sees the caller's carrier.
+     */
+    private static String jvmArtifactOutput(Compiled compiled, String probeSource,
+            Map<String, String> hostOverrides) throws Exception {
         Path out = compiled.root().resolve("out-jvm");
         deal.module.ProductionProjectEmission.Result result = emit(compiled,
             Backend.JVM, out);
@@ -2700,11 +2808,16 @@ public class CanonicalProjectionParityTest {
             "-proc:none", "-cp", classpath, "-d", classes.toString()));
         for (String stem : compiled.hostStems()) {
             String hostClass = JvmBackend.classNameFor("host/" + stem);
-            Files.copy(Path.of("test", "conformance", "host-fixtures", stem + ".java"),
-                out.resolve(hostClass + ".java"),
-                StandardCopyOption.REPLACE_EXISTING);
-            javacArgs.add(out.resolve(hostClass + ".java").toAbsolutePath()
-                .toString());
+            Path hostSource = out.resolve(hostClass + ".java");
+            String override = hostOverrides.get(stem);
+            if (override != null) {
+                Files.writeString(hostSource, override, StandardCharsets.UTF_8);
+            } else {
+                Files.copy(Path.of("test", "conformance", "host-fixtures",
+                    stem + ".java"), hostSource,
+                    StandardCopyOption.REPLACE_EXISTING);
+            }
+            javacArgs.add(hostSource.toAbsolutePath().toString());
         }
         javacArgs.add(out.resolve(className + ".java").toAbsolutePath().toString());
         javacArgs.add(out.resolve("Probe.java").toAbsolutePath().toString());
@@ -2741,6 +2854,40 @@ public class CanonicalProjectionParityTest {
         Tuple tuple = parseJvmProbe(output, compiled);
         check(tuple != null, compiled.spec().what() + " (jvm): the probe captures "
             + "the failure: " + output);
+        return tuple;
+    }
+
+    /**
+     * Runs the LuaJIT production artifact with a caller-owned host
+     * implementation staged for one stem (the cyclic-carrier drive) and
+     * captures the failure tuple.
+     */
+    private static Tuple luaArtifactWithHost(Compiled compiled, String stem,
+            String hostSource) throws Exception {
+        String output = luaArtifactOutput(compiled, Map.of(stem, hostSource));
+        Tuple tuple = parseLuaProbe(output, compiled);
+        check(tuple != null, compiled.spec().what() + " (luajit, host " + stem
+            + "): the probe captures the failure: " + output);
+        return tuple;
+    }
+
+    /**
+     * Runs the JVM production artifact with a caller-owned host
+     * implementation staged for one stem (the cyclic-carrier drive) and
+     * captures the failure tuple.
+     */
+    private static Tuple jvmArtifactWithHost(Compiled compiled, String stem,
+            String hostSource) throws Exception {
+        String entryModule = compiled.checkedProject().entryModule().path();
+        String output = jvmArtifactOutput(compiled,
+            jvmProbe(JvmBackend.classNameFor(entryModule), entryModule, ""),
+            Map.of(stem, hostSource));
+        if (output == null) {
+            return null;
+        }
+        Tuple tuple = parseJvmProbe(output, compiled);
+        check(tuple != null, compiled.spec().what() + " (jvm, host " + stem
+            + "): the probe captures the failure: " + output);
         return tuple;
     }
 
