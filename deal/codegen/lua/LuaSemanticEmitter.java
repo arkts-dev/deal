@@ -2120,9 +2120,7 @@ public final class LuaSemanticEmitter {
                 .append(luaString(staticKind(payload.descriptor()))).append(", ")
                 .append(inputExpr).append(")}, nil, nil)\n");
             out.append("__okB, __chkB = pcall(__bcheck, ")
-                .append(luaString(descriptorText(payload.descriptor()))).append(", ")
-                .append(luaString(staticKind(payload.descriptor()))).append(", ")
-                .append(inputExpr).append(")\n");
+                .append(bcheckArgs(payload.descriptor(), inputExpr)).append(")\n");
             out.append("if not __okB then\n");
             out.append("  __chkB.o = ").append(luaString(originOf(boundary)))
                 .append("\n");
@@ -4369,10 +4367,8 @@ public final class LuaSemanticEmitter {
                 }
                 emitBoundaryStart(boundary, inputExpr, boundaryPayload.descriptor());
                 out.append("__okB, __chkB = pcall(__bcheck, ")
-                    .append(luaString(descriptorText(boundaryPayload.descriptor())))
-                    .append(", ")
-                    .append(luaString(staticKind(boundaryPayload.descriptor())))
-                    .append(", ").append(inputExpr).append(")\n");
+                    .append(bcheckArgs(boundaryPayload.descriptor(), inputExpr))
+                    .append(")\n");
                 out.append("if not __okB then\n");
                 out.append("  __chkB.o = ")
                     .append(luaString(originOf(boundary))).append("\n");
@@ -4438,10 +4434,8 @@ public final class LuaSemanticEmitter {
             String inputExpr = slot(boundaryPayload.input());
             emitBoundaryStart(boundary, inputExpr, boundaryPayload.descriptor());
             out.append("__okB, ").append(checked).append(" = pcall(__bcheck, ")
-                .append(luaString(descriptorText(boundaryPayload.descriptor())))
-                .append(", ")
-                .append(luaString(staticKind(boundaryPayload.descriptor())))
-                .append(", ").append(inputExpr).append(")\n");
+                .append(bcheckArgs(boundaryPayload.descriptor(), inputExpr))
+                .append(")\n");
             out.append("if not __okB then\n");
             out.append("  ").append(checked).append(".o = ")
                 .append(luaString(originOf(boundary))).append("\n");
@@ -8160,7 +8154,17 @@ end
     /** The prelude with the serialized closed arm table spliced in. */
     private static String preludeWithArms() {
         String head = PRELUDE.replace("__ARM_TABLE__", armTableLiteral());
-        return head + PRELUDE_ARM_RENDERER;
+        return head + PRELUDE_ARM_RENDERER + armRendererTail();
+    }
+
+    /**
+     * The arm-renderer tail operand of {@link #preludeWithArms()}: a
+     * method (not a direct concatenation of the two constants) because
+     * javac would otherwise fold the two halves into one over-limit
+     * class-file string constant.
+     */
+    private static String armRendererTail() {
+        return PRELUDE_ARM_RENDERER_TAIL;
     }
 
     private static final String PRELUDE = """
@@ -9326,6 +9330,17 @@ local function __jsonValidUtf8(s)
   end
   return true
 end
+""";
+
+    /**
+     * The tail of the closed-arm renderer half (the typed-boundary
+     * projection and the boundary check onward): a separate constant
+     * because a single Java string constant may not exceed the
+     * class-file's 65535-byte UTF-8 limit; the parts are appended
+     * consecutively, so the emitted chunk is byte-identical to the
+     * unsplit text.
+     */
+    private static final String PRELUDE_ARM_RENDERER_TAIL = """
 -- The typed-boundary projection (P2 item 1): the closed token of the
 -- failing value — the absent marker is nil, the language-null sentinel
 -- null, and a class instance its carried canonical class atom (never a
@@ -9625,7 +9640,11 @@ local function __bcheck(desc, staticKind, v, csig, completion)
         innerExpected = innerSig
       end
       for i = 1, v.__n do
-        local elem = v[i]
+        -- The element's own recorded numeric variant (the __nK mark a
+        -- decoded array carries) materializes before the recursive
+        -- validation and the failure projection; the stored value is
+        -- never rewritten.
+        local elem = __readVar(v, i, v[i])
         if elem == __NULL then elem = nil
         elseif elem == nil then elem = __MISSING end
         local ok, checked = pcall(__bcheck, inner,

@@ -4396,12 +4396,10 @@ public final class SemanticLowerer {
 
             List<KindPayload.ProvidedField> providedFields = new ArrayList<>();
             Map<String, ValueId> providedValues = new LinkedHashMap<>();
-            Map<String, Span> providedSpans = new LinkedHashMap<>();
             for (Property property : literal.properties()) {
                 ValueId value = lowerExpression(property.value());
                 providedFields.add(new KindPayload.ProvidedField(property.name(), value));
                 providedValues.put(property.name(), value);
-                providedSpans.put(property.name(), property.span());
             }
             ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
@@ -4414,8 +4412,14 @@ public final class SemanticLowerer {
             for (deal.semantic.ir.ClassLayout.FieldLayout field : layout.fields()) {
                 ValueId provided = providedValues.get(field.name());
                 if (provided != null) {
+                    // The provided field's boundary carries the class literal
+                    // expression's own origin (the closed projection table's
+                    // CLASS_LITERAL_FIELD cell, the same origin the omitted
+                    // field's CLASS_DEFAULT_FIELD child and the oracle's
+                    // construction failure projection use), never the
+                    // property's value span.
                     SemanticOp child = buildFieldBoundary(BoundaryKind.CLASS_LITERAL_FIELD,
-                        field.descriptor(), provided, providedSpans.get(field.name()), opId);
+                        field.descriptor(), provided, literal.span(), opId);
                     boundaries.add(new KindPayload.FieldBoundary(field.name(),
                         BoundaryKind.CLASS_LITERAL_FIELD, child.opId()));
                     children.add(child);

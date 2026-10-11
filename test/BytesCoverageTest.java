@@ -1615,6 +1615,236 @@ public class BytesCoverageTest {
         checkAtomicStaging();
     }
 
+    // =========================================================================
+    // 4e. The integral number-form JSON element at array boundaries
+    //     (ISSUE-0768)
+    // =========================================================================
+
+    /**
+     * The flat case (ISSUE-0768): a {@code number[]} class field decoded
+     * from {@code [1.0]} carries its slot's recorded number mark, so the
+     * same array admitted to a {@code string[]} boundary projects the
+     * number actual token — the oracle's retained NumValue and the JVM's
+     * retained Double alike — never the int token an integral bare Lua
+     * number suggests.
+     */
+    private static final String INTEGRAL_NUMBER_ELEMENT_SOURCE = """
+        // @jsonable
+        export class Doc {
+          values: number[] = [];
+        }
+
+        export function main(): null {
+          let d: Doc | null = Doc$fromJson("{\\"values\\":[1.0]}");
+          if (d !== null) {
+            let holder: table = { xs: d.values };
+            let ys: string[] = holder.xs;
+            return null;
+          }
+          return null;
+        }
+        """;
+
+    /**
+     * The nested case (ISSUE-0768): a decoded nested array (the empty
+     * inner array admitted at the {@code string[][]} element position)
+     * precedes the integral number-form element, so the array recursion
+     * keeps the number variant at depth and the outer element arm renders
+     * the number token at its own index.
+     */
+    private static final String NESTED_NUMBER_ELEMENT_SOURCE = """
+        // @jsonable
+        export class Nest {
+          values: table = {};
+        }
+
+        export function main(): null {
+          let d: Nest | null = Nest$fromJson("{\\"values\\":{\\"xs\\":[[],1.0]}}");
+          if (d !== null) {
+            let ys: string[][] = d.values.xs;
+            return null;
+          }
+          return null;
+        }
+        """;
+
+    /**
+     * The inner nested-array case (ISSUE-0768): the integral number-form
+     * element is the only element of an inner array; the boundary applies
+     * to that inner array at the outer index read, so the same recorded
+     * number mark projects the number token through the recursion.
+     */
+    private static final String NESTED_INNER_NUMBER_ELEMENT_SOURCE = """
+        // @jsonable
+        export class Deep {
+          values: number[][] = [];
+        }
+
+        export function main(): null {
+          let d: Deep | null = Deep$fromJson("{\\"values\\":[[1.0]]}");
+          if (d !== null) {
+            let holder: table = { xs: d.values[0] };
+            let ys: string[] = holder.xs;
+            return null;
+          }
+          return null;
+        }
+        """;
+
+    /**
+     * The nested-array admission control (ISSUE-0768): the same nested
+     * shape with matching element kinds runs to success on all three
+     * consumers, so the variant materialization never rejects a decoded
+     * nested array. The descriptor is the full nesting
+     * ({@code string[][]}) and the value is the decoded nested array.
+     */
+    private static final String NESTED_ADMISSION_SOURCE = """
+        // @jsonable
+        export class Ok {
+          values: table = {};
+        }
+
+        export function main(): null {
+          let d: Ok | null = Ok$fromJson("{\\"values\\":{\\"xs\\":[[\\"a\\"]]}}");
+          if (d !== null) {
+            let ys: string[][] = d.values.xs;
+            return null;
+          }
+          return null;
+        }
+        """;
+
+    /**
+     * The canonical numeric-variant projection at array boundaries
+     * (ISSUE-0768): an integral number-form element of a JSON-decoded
+     * array (the {@code __nK} mark the {@code @jsonable} decode transfers
+     * from the parser's lexical variant) projects the number token on the
+     * oracle, the LuaJIT production artifact, and the JVM production
+     * artifact alike — the emitted Lua {@code __bcheck} element recursion
+     * materializes each element's recorded variant before the recursive
+     * validation and the failure projection, and never rewrites the
+     * stored value. The nested shapes prove the materialization at every
+     * recursion depth and the admission control proves the fix does not
+     * reject matching nested arrays.
+     */
+    private static void testIntegralNumberFormArrayElements() throws Exception {
+        System.out.println("-- the integral number-form JSON element at array "
+            + "boundaries keeps its number variant on all three consumers --");
+
+        driveFocusedFailure("integral number-form element",
+            INTEGRAL_NUMBER_ELEMENT_SOURCE, null, null, 10, 13,
+            new Tuple("E8003", "array element 1 type mismatch", "string", "number"));
+
+        driveFocusedFailure("integral number-form element after a nested array",
+            NESTED_NUMBER_ELEMENT_SOURCE, null, null, 9, 13,
+            new Tuple("E8003", "array element 2 type mismatch", "[string]", "number"));
+
+        driveFocusedFailure("integral number-form element inside a nested array",
+            NESTED_INNER_NUMBER_ELEMENT_SOURCE, null, null, 10, 13,
+            new Tuple("E8003", "array element 1 type mismatch", "string", "number"));
+
+        Path root = Files.createTempDirectory("number-form-admission-");
+        try {
+            Compiled compiled = compileFocused(root, NESTED_ADMISSION_SOURCE, null, null);
+            if (compiled != null) {
+                BytesFixture spec = new BytesFixture(BYTES_DIR, "nested admission",
+                    "main", "null", List.of(), null, null, 0, 0);
+                Drive drive = lowerFocused(compiled, spec);
+                if (drive != null) {
+                    driveFocusedSuccess("nested decoded array admission", drive);
+                }
+            }
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    // =========================================================================
+    // 4f. The canonical function-signature argument at field/class
+    //     boundaries (ISSUE-0768)
+    // =========================================================================
+
+    /**
+     * The class-literal field boundary (ISSUE-0768): a function-typed
+     * declared field receives a mismatched function through the class
+     * literal, so the class construction's field cell publishes the
+     * canonical signature texts — the oracle's and the JVM's projection,
+     * never the Lua prelude's internal {@code function(int;int)} dialect.
+     */
+    private static final String CLASS_LITERAL_FUNCTION_MISMATCH_SOURCE = """
+        function identity(x: int): int {
+          return x;
+        }
+
+        class Box {
+          f: (x: int) => int = identity;
+        }
+
+        function asString(x: int): string {
+          return "s";
+        }
+
+        export function main(): null {
+          let holder: table = { g: asString };
+          let b: Box = { f: holder.g };
+          return null;
+        }
+        """;
+
+    /**
+     * The class-field assignment boundary (ISSUE-0768): the same declared
+     * function cell fails through the {@code CLASS_FIELD_ASSIGNMENT} cell
+     * with the identical canonical signature projection.
+     */
+    private static final String CLASS_FIELD_FUNCTION_MISMATCH_SOURCE = """
+        function identity(x: int): int {
+          return x;
+        }
+
+        class Box {
+          f: (x: int) => int = identity;
+        }
+
+        function asString(x: int): string {
+          return "s";
+        }
+
+        export function main(): null {
+          let b: Box = { f: identity };
+          let holder: table = { g: asString };
+          b.f = holder.g;
+          return null;
+        }
+        """;
+
+    /**
+     * The canonical function-signature projection at field/class
+     * boundaries (ISSUE-0768): the emitted Lua field and class boundary
+     * cells carry the descriptor's canonical spec text as the boundary
+     * check's trailing argument, so a mismatched carried signature
+     * projects {@code (int)->int} / {@code (int)->string} — the identical
+     * tuple the oracle's boundary engine and the JVM production artifact
+     * render — at the class literal expression and the assignment
+     * expression origins.
+     */
+    private static void testCanonicalFunctionSignatureFieldBoundaries()
+            throws Exception {
+        System.out.println("-- the canonical function-signature projection at "
+            + "field/class boundaries on all three consumers --");
+
+        driveFocusedFailure("class literal function field mismatch",
+            CLASS_LITERAL_FUNCTION_MISMATCH_SOURCE, null, null, 15, 16,
+            new Tuple("E8010",
+                "function signature mismatch: expected (int)->int, got (int)->string",
+                "(int)->int", "(int)->string"));
+
+        driveFocusedFailure("class field assignment function mismatch",
+            CLASS_FIELD_FUNCTION_MISMATCH_SOURCE, null, null, 16, 3,
+            new Tuple("E8010",
+                "function signature mismatch: expected (int)->int, got (int)->string",
+                "(int)->int", "(int)->string"));
+    }
+
     /**
      * Drives one focused failing program through the real production
      * pipeline: the oracle (with the optional host responder), the LuaJIT
@@ -4913,6 +5143,8 @@ public class BytesCoverageTest {
         testReadShapeAndWriteChain();
         testBytesBoundaryContext();
         testDecodedArrayMark();
+        testIntegralNumberFormArrayElements();
+        testCanonicalFunctionSignatureFieldBoundaries();
         testIndirectBytesAllocation();
         testFocusedRunnerContract();
         testOracleRealization();
