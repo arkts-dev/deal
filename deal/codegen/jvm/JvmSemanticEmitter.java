@@ -3078,6 +3078,10 @@ public final class JvmSemanticEmitter {
                         .append(", ")
                         .append(javaString(staticKind(payload.descriptor())))
                         .append(", ")
+                        .append(containsFunction(payload.descriptor())
+                            ? javaString(payload.descriptor().canonicalSpecText())
+                            : "null")
+                        .append(", ")
                         .append(payload.kind() == BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT
                             ? "true" : "false").append(", ")
                         .append(javaString(originOf(boundary))).append(");\n");
@@ -5547,7 +5551,12 @@ public final class JvmSemanticEmitter {
                         .append(javaString(op.contract().canonicalDigest())).append(", ")
                         .append(javaString(parentKey(op.origin().parentOpId()))).append(", ")
                         .append(javaString(descriptorText(elementDescriptorOf(op))))
-                        .append(", __elem, ").append(javaString(originOf(op))).append(");\n");
+                        .append(", ")
+                        .append(containsFunction(elementDescriptorOf(op))
+                            ? javaString(elementDescriptorOf(op).canonicalSpecText())
+                            : "null")
+                        .append(", __elem, ").append(javaString(originOf(op)))
+                        .append(");\n");
                     out.append(indent(indent)).append("    ").append(cellName)
                         .append(" = new Object[]{__elem};\n");
                     emitBlockOps(payload.body(), indent + 2);

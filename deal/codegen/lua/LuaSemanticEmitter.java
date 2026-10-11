@@ -1741,10 +1741,7 @@ public final class LuaSemanticEmitter {
                 .append(defersContextualCheck(boundaryPayload.descriptor())
                     ? "true, " + target
                     : "pcall(__bcheck, "
-                        + luaString(descriptorText(boundaryPayload.descriptor()))
-                        + ", "
-                        + luaString(staticKind(boundaryPayload.descriptor()))
-                        + ", " + target + ")")
+                        + bcheckArgs(boundaryPayload.descriptor(), target) + ")")
                 .append("\n");
             out.append("if not __okB then\n");
             out.append("  __chkB.o = ").append(luaString(originOf(boundary)))
@@ -2835,6 +2832,10 @@ public final class LuaSemanticEmitter {
                         .append(chainLengthExpr(chain)).append(", ")
                         .append(luaString(descriptorText(payload.descriptor()))).append(", ")
                         .append(luaString(staticKind(payload.descriptor()))).append(", ")
+                        .append(containsFunction(payload.descriptor())
+                            ? luaString(payload.descriptor().canonicalSpecText())
+                            : "nil")
+                        .append(", ")
                         .append(payload.kind() == BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT
                             ? "true" : "false").append(", ")
                         .append(luaString(originOf(boundary))).append(")\n");
@@ -4209,10 +4210,9 @@ public final class LuaSemanticEmitter {
                     .append(", ").append(slot(boundaryPayload.input()))
                     .append(")}, nil, nil)\n");
                 out.append("__okB, __chkB = pcall(__bcheck, ")
-                    .append(luaString(descriptorText(boundaryPayload.descriptor())))
-                    .append(", ")
-                    .append(luaString(staticKind(boundaryPayload.descriptor())))
-                    .append(", ").append(slot(boundaryPayload.input())).append(")\n");
+                    .append(bcheckArgs(boundaryPayload.descriptor(),
+                        slot(boundaryPayload.input())))
+                    .append(")\n");
                 out.append("if not __okB then\n");
                 out.append("  __chkB.o = ").append(luaString(originOf(boundary)))
                     .append("\n");
@@ -4263,10 +4263,8 @@ public final class LuaSemanticEmitter {
                     .append(", ").append(target)
                     .append(")}, nil, nil)\n");
                 out.append("__okB, __chkB = pcall(__bcheck, ")
-                    .append(luaString(descriptorText(boundaryPayload.descriptor())))
-                    .append(", ")
-                    .append(luaString(staticKind(boundaryPayload.descriptor())))
-                    .append(", ").append(target).append(")\n");
+                    .append(bcheckArgs(boundaryPayload.descriptor(), target))
+                    .append(")\n");
                 out.append("if not __okB then\n");
                 out.append("  __chkB.o = ").append(luaString(originOf(returnBoundary)))
                     .append("\n");
@@ -4908,7 +4906,10 @@ public final class LuaSemanticEmitter {
                         .append(luaString(opKey(op.opId()))).append(", ")
                         .append(luaString(op.contract().canonicalDigest())).append(", ")
                         .append(luaString(parentKey(op.origin().parentOpId()))).append(", ")
-                        .append(luaString(descriptorText(elementDescriptorOf(op))))
+                        .append(luaString(descriptorText(elementDescriptorOf(op)))).append(", ")
+                        .append(containsFunction(elementDescriptorOf(op))
+                            ? luaString(elementDescriptorOf(op).canonicalSpecText())
+                            : "nil")
                         .append(", __elemT, ").append(luaString(originOf(op))).append(")\n");
                     out.append("    ").append(cellName).append(" = {__elemT}\n");
                     emitLabeledBlock(payload.body());
@@ -5106,15 +5107,8 @@ public final class LuaSemanticEmitter {
             // identical error propagates (the semantic oracle's
             // runBoundaryChild + the owning-op FAILURE).
             out.append("__okB, __chkB = pcall(__bcheck, ")
-                .append(luaString(descriptorText(boundaryPayload.descriptor())))
-                .append(", ")
-                .append(luaString(staticKind(boundaryPayload.descriptor())))
-                .append(", __rvT");
-            if (containsFunction(boundaryPayload.descriptor())) {
-                out.append(", ")
-                    .append(luaString(boundaryPayload.descriptor().canonicalSpecText()));
-            }
-            out.append(")\n");
+                .append(bcheckArgs(boundaryPayload.descriptor(), "__rvT"))
+                .append(")\n");
             out.append("if not __okB then\n");
             out.append("  __chkB.o = ").append(luaString(originOf(boundary)))
                 .append("\n");
@@ -5397,10 +5391,9 @@ public final class LuaSemanticEmitter {
                         .append("])}, nil, nil)\n");
                 }
                 out.append("  __okB, __chkB = pcall(__bcheck, ")
-                    .append(luaString(descriptorText(boundaryPayload.descriptor())))
-                    .append(", ")
-                    .append(luaString(staticKind(boundaryPayload.descriptor())))
-                    .append(", __cargs[").append(i + 1).append("])\n");
+                    .append(bcheckArgs(boundaryPayload.descriptor(),
+                        "__cargs[" + (i + 1) + "]"))
+                    .append(")\n");
                 out.append("  if not __okB then\n");
                 out.append("    __chkB.o = ")
                     .append(luaString(originOf(boundary))).append("\n");
@@ -5534,10 +5527,8 @@ public final class LuaSemanticEmitter {
                     (KindPayload.BoundaryPayload) boundary.payload();
                 emitBoundaryStart(boundary, "__resT", boundaryPayload.descriptor());
                 out.append("  __okB, __chkB = pcall(__bcheck, ")
-                    .append(luaString(descriptorText(boundaryPayload.descriptor())))
-                    .append(", ")
-                    .append(luaString(staticKind(boundaryPayload.descriptor())))
-                    .append(", __resT)\n");
+                    .append(bcheckArgs(boundaryPayload.descriptor(), "__resT"))
+                    .append(")\n");
                 out.append("  if not __okB then\n");
                 out.append("    __chkB.o = ")
                     .append(luaString(originOf(boundary))).append("\n");
@@ -9493,13 +9484,42 @@ end
 -- The closed canonical spelling of one prelude-internal descriptor text
 -- (the semantic oracle's canonicalSpecText over the same descriptor): a
 -- boundary check emitted without the canonical trailer still projects the
--- canonical element text in its E8003 row.
+-- canonical element text in its E8003 row — the function positions
+-- included, so the internal function(params;return) dialect converts to
+-- the canonical (params)->return form recursively.
 local function __canonDesc(desc)
   if string.sub(desc, 1, 6) == "array(" then
     return "["..__canonDesc(string.sub(desc, 7, -2)).."]"
   end
   if string.sub(desc, 1, 9) == "nullable(" then
     return "?"..__canonDesc(string.sub(desc, 10, -2))
+  end
+  if string.sub(desc, 1, 9) == "function(" then
+    local inner = string.sub(desc, 10, -2)
+    local depth = 0
+    local semi = nil
+    for i = 1, #inner do
+      local c = string.sub(inner, i, i)
+      if c == "(" then depth = depth + 1
+      elseif c == ")" then depth = depth - 1
+      elseif c == ";" and depth == 0 then semi = i break end
+    end
+    if semi == nil then return desc end
+    local params = string.sub(inner, 1, semi - 1)
+    local out = {}
+    local pdepth = 0
+    local start = 1
+    for i = 1, #params + 1 do
+      local c = (i <= #params) and string.sub(params, i, i) or ","
+      if c == "(" then pdepth = pdepth + 1
+      elseif c == ")" then pdepth = pdepth - 1 end
+      if c == "," and pdepth == 0 then
+        out[#out + 1] = __canonDesc(string.sub(params, start, i - 1))
+        start = i + 1
+      end
+    end
+    return "("..table.concat(out, ",")..")->"
+      ..__canonDesc(string.sub(inner, semi + 1))
   end
   return desc
 end
@@ -9929,7 +9949,7 @@ local function __arrayRead(opKey, digest, parent, bKey, bDigest, bParent, desc, 
   return elem
 end
 local function __arrayBounds(bKey, bDigest, bParent, input, slotName, lengthSlot,
-                             desc, staticKind, isAssign, origin)
+                             desc, staticKind, csig, isAssign, origin)
   local index = slotName.i
   __ev(bKey, "START", "BOUNDARY", bDigest, bParent, {__atom(staticKind, input)},
     nil, nil)
@@ -9939,8 +9959,9 @@ local function __arrayBounds(bKey, bDigest, bParent, input, slotName, lengthSlot
     error(e, 0)
   end
   if isAssign then
-    local ok, checked = pcall(__bcheck, desc, staticKind, input)
+    local ok, checked = pcall(__bcheck, desc, staticKind, input, csig)
     if not ok then
+      checked.o = origin
       __ev(bKey, "FAILURE", "BOUNDARY", bDigest, bParent, {}, nil, __errtext(checked))
       error(checked, 0)
     end
@@ -9968,12 +9989,13 @@ local function __arrayBoundsSlot(bKey, bDigest, bParent, slotName, lengthSlot,
   end
   __ev(bKey, "SUCCESS", "BOUNDARY", bDigest, bParent, {}, __slotAtom(slotName), nil)
 end
-local function __foreachCheck(opKey, digest, parent, desc, elem, origin)
+local function __foreachCheck(opKey, digest, parent, desc, csig, elem, origin)
   -- The op's own TYPE_DESCRIPTOR terminal check renders the typed-boundary
   -- kind arm on every element: an absent (deleted) slot projects the
   -- suffix-less kind text with the absent marker's token, like every other
-  -- boundary of the check.
-  local ok, checked = pcall(__bcheck, desc, desc, elem)
+  -- boundary of the check. A function-bearing element descriptor keeps the
+  -- canonical signature texts of the function row.
+  local ok, checked = pcall(__bcheck, desc, desc, elem, csig)
   if not ok then
     -- The op's own origin is the failure's origin (the op-level boundary
     -- cell), never the prelude's internal placeholder.

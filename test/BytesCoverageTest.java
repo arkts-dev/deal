@@ -1846,6 +1846,111 @@ public class BytesCoverageTest {
     }
 
     /**
+     * The array-element assignment cell (ISSUE-0767): a mismatched
+     * function reaches an {@code ((x: int) => int)[]} element through the
+     * element assignment's descriptor check, so the cell must publish
+     * the canonical signature texts and the assignment expression's own
+     * origin on every consumer (the oracle's
+     * {@code ARRAY_ELEMENT_ASSIGNMENT} projection).
+     */
+    private static final String ARRAY_ELEMENT_FUNCTION_MISMATCH_SOURCE = """
+        function identity(x: int): int {
+          return x;
+        }
+
+        function asString(x: int): string {
+          return "s";
+        }
+
+        export function main(): null {
+          let xs: ((x: int) => int)[] = [identity];
+          let holder: table = { g: asString };
+          xs[0] = holder.g;
+          return null;
+        }
+        """;
+
+    /**
+     * The nullable-array-element position (ISSUE-0767): the element
+     * descriptor carries the function behind a nullable wrapper, so the
+     * canonical signature argument must survive the nullable recursion
+     * of the same element assignment cell.
+     */
+    private static final String ARRAY_ELEMENT_NULLABLE_FUNCTION_MISMATCH_SOURCE = """
+        function identity(x: int): int {
+          return x;
+        }
+
+        function asString(x: int): string {
+          return "s";
+        }
+
+        export function main(): null {
+          let xs: (((x: int) => int) | null)[] = [identity];
+          let holder: table = { g: asString };
+          xs[0] = holder.g;
+          return null;
+        }
+        """;
+
+    /**
+     * The recursive array position (ISSUE-0767): a class field declared
+     * {@code ((x: int) => int)[]} receives an array whose element is not a
+     * function (read from a dynamic table alias), so the field boundary's
+     * array recursion must project the canonical element text
+     * {@code (int)->int} in its E8003 row, never the internal
+     * {@code function(int;int)} dialect.
+     */
+    private static final String CLASS_FIELD_FUNCTION_ARRAY_ELEMENT_SOURCE = """
+        function identity(x: int): int {
+          return x;
+        }
+
+        class Box {
+          fs: ((x: int) => int)[] = [];
+        }
+
+        export function main(): null {
+          let holder: table = { xs: [1] };
+          let b: Box = { fs: holder.xs };
+          return null;
+        }
+        """;
+
+    /**
+     * The canonical function-signature projection at the remaining
+     * function-bearing production check sites (ISSUE-0767): the element
+     * assignment cell carries the canonical trailer into its descriptor
+     * check, and the recursive array position of a class field projects
+     * the canonical element text in its E8003 row. Every case asserts the
+     * exact tuple on the oracle, the LuaJIT production artifact, and the
+     * JVM production artifact.
+     */
+    private static void testCanonicalSignatureElementBoundaries()
+            throws Exception {
+        System.out.println("-- the canonical function-signature projection at "
+            + "array-element and recursive array positions on all three "
+            + "consumers --");
+
+        driveFocusedFailure("array element function mismatch",
+            ARRAY_ELEMENT_FUNCTION_MISMATCH_SOURCE, null, null, 12, 3,
+            new Tuple("E8010",
+                "function signature mismatch: expected (int)->int, got (int)->string",
+                "(int)->int", "(int)->string"));
+
+        driveFocusedFailure("array element nullable function mismatch",
+            ARRAY_ELEMENT_NULLABLE_FUNCTION_MISMATCH_SOURCE, null, null, 12, 3,
+            new Tuple("E8010",
+                "function signature mismatch: expected (int)->int, got (int)->string",
+                "(int)->int", "(int)->string"));
+
+        driveFocusedFailure("class field function array element mismatch",
+            CLASS_FIELD_FUNCTION_ARRAY_ELEMENT_SOURCE, null, null, 11, 16,
+            new Tuple("E8003", "array element 1 type mismatch",
+                "(int)->int", "int"));
+    }
+
+    /**
      * Drives one focused failing program through the real production
      * pipeline: the oracle (with the optional host responder), the LuaJIT
      * production artifact, and the JVM production artifact, and asserts the
@@ -5145,6 +5250,7 @@ public class BytesCoverageTest {
         testDecodedArrayMark();
         testIntegralNumberFormArrayElements();
         testCanonicalFunctionSignatureFieldBoundaries();
+        testCanonicalSignatureElementBoundaries();
         testIndirectBytesAllocation();
         testFocusedRunnerContract();
         testOracleRealization();

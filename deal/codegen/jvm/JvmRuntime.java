@@ -2903,7 +2903,10 @@ public final class JvmRuntime {
      * The closed canonical spelling of one runtime-internal descriptor text
      * (the semantic oracle's {@code canonicalSpecText} over the same
      * descriptor): a boundary check emitted without the canonical trailer
-     * still projects the canonical element text in its E8003 row.
+     * still projects the canonical element text in its E8003 row — the
+     * function positions included, so the internal
+     * {@code function(params;return)} dialect converts to the canonical
+     * {@code (params)->return} form recursively.
      */
     static String canonicalDesc(String desc) {
         if (desc.startsWith("array(") && desc.endsWith(")")) {
@@ -2912,13 +2915,54 @@ public final class JvmRuntime {
         if (desc.startsWith("nullable(") && desc.endsWith(")")) {
             return "?" + canonicalDesc(desc.substring(9, desc.length() - 1));
         }
+        if (desc.startsWith("function(") && desc.endsWith(")")) {
+            String inner = desc.substring(9, desc.length() - 1);
+            int depth = 0;
+            int semi = -1;
+            for (int i = 0; i < inner.length(); i++) {
+                char c = inner.charAt(i);
+                if (c == '(') {
+                    depth++;
+                } else if (c == ')') {
+                    depth--;
+                } else if (c == ';' && depth == 0) {
+                    semi = i;
+                    break;
+                }
+            }
+            if (semi < 0) {
+                return desc;
+            }
+            StringBuilder params = new StringBuilder();
+            int pdepth = 0;
+            int start = 0;
+            for (int i = 0; i <= semi; i++) {
+                boolean atEnd = i == semi;
+                char c = atEnd ? ',' : inner.charAt(i);
+                if (!atEnd && c == '(') {
+                    pdepth++;
+                } else if (!atEnd && c == ')') {
+                    pdepth--;
+                }
+                if (c == ',' && pdepth == 0) {
+                    if (params.length() > 0) {
+                        params.append(',');
+                    }
+                    params.append(canonicalDesc(inner.substring(start, i)));
+                    start = i + 1;
+                }
+            }
+            return "(" + params + ")->"
+                + canonicalDesc(inner.substring(semi + 1));
+        }
         return desc;
     }
 
     /** The ARRAY_ELEMENT_ASSIGNMENT/ARRAY_ELEMENT_DELETE cells. */
     public static void arrayBounds(String bKey, String bDigest, String bParent,
                                    Object input, long index, long length, String desc,
-                                   String staticKind, boolean isAssign, String origin) {
+                                   String staticKind, String canon, boolean isAssign,
+                                   String origin) {
         ev(currentModule(), bKey, "START", "BOUNDARY", bDigest, bParent,
             List.of(atom(input, staticKind)), null, null);
         if (index < 0 || index > length) {
@@ -2929,7 +2973,16 @@ public final class JvmRuntime {
             throw e;
         }
         if (isAssign) {
-            bcheck(desc, staticKind, input);
+            try {
+                bcheck(desc, staticKind, input, canon);
+            } catch (DealError leaf) {
+                // The element cell's own origin is the assignment
+                // expression (the closed projection table's
+                // ARRAY_ELEMENT_ASSIGNMENT cell), never the runtime
+                // matcher's internal placeholder.
+                throw new DealError(leaf.code, leaf.msg, origin, leaf.expected,
+                    leaf.actual, leaf.frames, leaf.cause);
+            }
         }
         ev(currentModule(), bKey, "SUCCESS", "BOUNDARY", bDigest, bParent, List.of(),
             atom(input, staticKind), null);
@@ -2956,9 +3009,10 @@ public final class JvmRuntime {
 
     /** The FOR_EACH op's own TYPE_DESCRIPTOR terminal check. */
     public static void foreachCheck(String opKey, String digest, String parent,
-                                    String desc, Object elem, String origin) {
+                                    String desc, String canon, Object elem,
+                                    String origin) {
         try {
-            bcheck(desc, desc, elem);
+            bcheck(desc, desc, elem, canon);
         } catch (DealError e) {
             // The op's own origin is the failure's origin (the op-level
             // boundary cell), never the prelude's internal placeholder.
