@@ -1275,6 +1275,233 @@ public class BytesCoverageTest {
     }
 
     // =========================================================================
+    // 4a-2. The byte-assignment element cell's lowerer-selected origin
+    // =========================================================================
+
+    /**
+     * The missing-RHS byte write: an in-bounds byte write whose int-typed
+     * RHS is a past-end int-array read. The array read deliberately passes
+     * the absent view through to its consuming boundary, so the write's
+     * BYTE_ELEMENT_ASSIGNMENT descriptor check renders the E8001
+     * {@code expected int} row with actual {@code nil} — at the boundary's
+     * own origin (the index expression), never at a matcher-internal
+     * placeholder.
+     */
+    private static final String MISSING_RHS_TUPLE_SOURCE = """
+        export function main(): null {
+          let b: bytes = bytes(1);
+          let xs: int[] = [];
+          b[0] = xs[1];
+          return null
+        }
+        """;
+
+    /** The raw source coordinate of the tuple fixture's write (the index expression). */
+    private static final int MISSING_RHS_LINE = 4;
+    private static final int MISSING_RHS_COLUMN = 3;
+
+    /**
+     * The storage program: the same missing-RHS write under a catch that
+     * pins the row and verifies the failed write changed no storage, so a
+     * consumer that mutates the buffer or projects another row fails its own
+     * assertion on every target.
+     */
+    private static final String MISSING_RHS_STORAGE_SOURCE = """
+        export function main(): null {
+          let b: bytes = bytes(1);
+          let xs: int[] = [];
+          try {
+            b[0] = xs[1];
+            throw { code: "TEST_FAIL", message: "the missing RHS must fail E8001" }
+          } catch (e) {
+            if (e.code !== "E8001" || e.message !== "expected int") {
+              throw { code: "TEST_FAIL", message: "unexpected row " + e.code + "|" + e.message }
+            }
+          }
+          if (b[0] !== 0) {
+            throw { code: "TEST_FAIL", message: "a failed byte write must not change storage" }
+          }
+          return null
+        }
+        """;
+
+    /** One inline (non-corpus) focused program compiled through the real orchestrator. */
+    private static Drive compileInlineDrive(Path root, String source, BytesFixture spec)
+            throws Exception {
+        Path src = root.resolve("src");
+        Files.createDirectories(src);
+        Path entry = src.resolve("main.deal");
+        Files.writeString(entry, source, StandardCharsets.UTF_8);
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entry.toAbsolutePath(), root.resolve("out"), false, false, false, false,
+            Backend.LUAJIT, null, List.of(src.toAbsolutePath()),
+            Path.of("std").toAbsolutePath().normalize(), null, productionInvocation());
+        check(orchestrator.compile(), spec.what() + ": the inline program compiles: "
+            + orchestrator.diagnostics());
+        CheckedProjectBuildResult built = orchestrator.checkedProject();
+        RequirementManifestResult manifests = orchestrator.requirementManifests();
+        if (built == null || built.input() == null || built.index() == null
+                || built.hasErrors() || manifests == null
+                || manifests.manifests() == null
+                || orchestrator.hostDeclarationSurface() == null) {
+            check(false, spec.what() + ": the inline checked project builds: "
+                + (built == null ? "null" : built.diagnostics()));
+            return null;
+        }
+        SemanticLowerer.ProjectLoweringResult result = SemanticLowerer.lowerProject(
+            productionInvocation(), built.input(), built.index(), manifests.manifests(),
+            orchestrator.hostDeclarationSurface(), Map.of(), Map.of(),
+            BuiltinErrorDeclaration.synthesized(
+                built.input().modules().get(0).ast().span()),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW), Set.of());
+        check(result.project() != null, spec.what() + ": the inline program lowers "
+            + "through the production entry: " + result.diagnostics());
+        if (result.project() == null) {
+            return null;
+        }
+        ModuleId module = built.input().entryModule();
+        LoweredModuleUnit unit = result.project().modules().get(module);
+        check(unit != null, spec.what() + ": the inline module is part of the "
+            + "closure: " + result.project().modules().keySet());
+        if (unit == null) {
+            return null;
+        }
+        String luaSource = Files.readString(root.resolve("out").resolve(
+            module.path().replace('.', '/') + ".lua"), StandardCharsets.UTF_8);
+        return new Drive(new Compiled(root, orchestrator, built.input(), built.index(),
+            manifests.manifests(), orchestrator.hostDeclarationSurface(), Map.of(), 0,
+            luaSource), result, module, unit, spec);
+    }
+
+    /**
+     * The byte-assignment element descriptor check carries the
+     * lowerer-selected byte-boundary origin on every consumer: the
+     * missing-RHS write projects the full E8001 tuple (code, message,
+     * origin, expected, actual) identically on the oracle, the production
+     * LuaJIT artifact, and the production JVM artifact, and the failed
+     * write changes no storage on any of them.
+     */
+    private static void testBytesElementAssignmentOrigin() throws Exception {
+        System.out.println("-- the byte-assignment element cell's lowerer-selected "
+            + "origin on the oracle, the LuaJIT artifact, and the JVM artifact --");
+        Path tupleRoot = Files.createTempDirectory("bytes-missing-rhs-tuple-");
+        Path storageRoot = Files.createTempDirectory("bytes-missing-rhs-storage-");
+        try {
+            BytesFixture tupleSpec = new BytesFixture("src", "missing-rhs-tuple",
+                "main", "null", List.of(), "E8001", "expected int", MISSING_RHS_LINE,
+                MISSING_RHS_COLUMN, "int", "nil");
+            Drive tupleDrive = compileInlineDrive(tupleRoot, MISSING_RHS_TUPLE_SOURCE,
+                tupleSpec);
+            if (tupleDrive == null) {
+                return;
+            }
+            String origin = tupleRoot.resolve("src").resolve("main.deal")
+                .toAbsolutePath() + ":" + MISSING_RHS_LINE + ":" + MISSING_RHS_COLUMN;
+
+            // The oracle attaches the boundary's own origin: the full tuple
+            // is the pin every target must reproduce.
+            SemanticRuntimeModel.ConsumerRun oracle =
+                SemanticOracle.executeProjectInits(tupleDrive.project(),
+                    tupleDrive.tables(), tupleDrive.registries(), null);
+            check(oracle.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure,
+                "the oracle fails the missing-RHS write: " + oracle.terminal());
+            if (oracle.terminal()
+                    instanceof SemanticRuntimeModel.Terminal.DealFailure failure) {
+                checkEq("E8001", failure.error().code(),
+                    "the oracle projects the E8001 row");
+                checkEq("expected int", failure.error().message(),
+                    "the oracle projects the typed-boundary kind text");
+                checkEq(origin, failure.error().origin(),
+                    "the oracle attaches the byte boundary's own origin");
+                checkEq("int", failure.error().expected(),
+                    "the oracle projects the expected token");
+                checkEq("nil", failure.error().actual(),
+                    "the oracle projects the absent view as nil");
+            }
+
+            // The three-consumer differential verdict: the same code at the
+            // same origin, event-for-event.
+            Path matrix = Files.createTempDirectory("bytes-missing-rhs-matrix-");
+            try {
+                SemanticDifferentialHarness.Verdict verdict =
+                    SemanticDifferentialHarness.runProject(tupleDrive.project(),
+                        tupleDrive.tables(), tupleDrive.registries(),
+                        SemanticDifferentialHarness.Expectation.failure(
+                            tupleSpec.what(), List.of(), "E8001", origin), matrix);
+                checkEq(3, verdict.runs().size(), "the missing-RHS drive produced the "
+                    + "three consumers: " + verdict.failures());
+                check(verdict.pass(), "the oracle and both shared artifacts agree on "
+                    + "the missing-RHS row and origin: " + verdict.failures());
+            } finally {
+                deleteRecursively(matrix);
+            }
+
+            // The production artifacts: the framed tuple line is pin-exact on
+            // both targets, and the direct terminal run is the pinned status
+            // and code line.
+            String pinnedTuple = "ERR:E8001|expected int|" + origin + "|int|nil\n";
+            ArtifactRun lua = luaProduction(tupleDrive);
+            ArtifactRun jvm = jvmProduction(tupleDrive);
+            assertTranscript(tupleSpec.what(), "luajit probe", lua.probe(), 0,
+                pinnedTuple);
+            assertTranscript(tupleSpec.what(), "jvm probe", jvm.probe(), 0,
+                pinnedTuple);
+            checkEq(pinnedTuple.trim(), lua.outcome(), tupleSpec.what()
+                + ": the LuaJIT production artifact reproduces the pinned "
+                + "expected/actual tuple at the boundary origin");
+            checkEq(pinnedTuple.trim(), jvm.outcome(), tupleSpec.what()
+                + ": the JVM production artifact reproduces the pinned "
+                + "expected/actual tuple at the boundary origin");
+            assertTranscript(tupleSpec.what(), "luajit terminal", lua.terminal(), 1,
+                "DEAL_ERROR_CODE: E8001\n");
+            assertTranscript(tupleSpec.what(), "jvm terminal", jvm.terminal(), 1,
+                "DEAL_ERROR_CODE: E8001\n");
+
+            // The failed write changes no storage on any consumer: the
+            // fixture's own post-catch read must observe the zero-filled
+            // buffer, and its assertions run on all three targets.
+            BytesFixture storageSpec = new BytesFixture("src", "missing-rhs-storage",
+                "main", "null", List.of(), null, null, 0, 0);
+            Drive storageDrive = compileInlineDrive(storageRoot,
+                MISSING_RHS_STORAGE_SOURCE, storageSpec);
+            if (storageDrive == null) {
+                return;
+            }
+            Path storageMatrix = Files.createTempDirectory("bytes-missing-rhs-store-matrix-");
+            try {
+                SemanticDifferentialHarness.Verdict verdict =
+                    SemanticDifferentialHarness.runProject(storageDrive.project(),
+                        storageDrive.tables(), storageDrive.registries(),
+                        SemanticDifferentialHarness.Expectation.success(
+                            storageSpec.what(), List.of(), "null"), storageMatrix);
+                checkEq(3, verdict.runs().size(), "the storage drive produced the three "
+                    + "consumers: " + verdict.failures());
+                check(verdict.pass(), "the failed byte write leaves the storage "
+                    + "unchanged on the oracle and both shared artifacts: "
+                    + verdict.failures());
+            } finally {
+                deleteRecursively(storageMatrix);
+            }
+            ArtifactRun storageLua = luaProduction(storageDrive);
+            ArtifactRun storageJvm = jvmProduction(storageDrive);
+            assertTranscript(storageSpec.what(), "luajit probe", storageLua.probe(), 0,
+                "OK\n");
+            assertTranscript(storageSpec.what(), "jvm probe", storageJvm.probe(), 0,
+                "OK\n");
+            checkEq("OK", storageLua.outcome(), storageSpec.what()
+                + ": the LuaJIT production artifact keeps the failed write's "
+                + "storage unchanged");
+            checkEq("OK", storageJvm.outcome(), storageSpec.what()
+                + ": the JVM production artifact keeps the failed write's "
+                + "storage unchanged");
+        } finally {
+            deleteRecursively(tupleRoot);
+            deleteRecursively(storageRoot);
+        }
+    }
+
+    // =========================================================================
     // 4b. The bytes element cells: {index, length} and the pinned rows
     // =========================================================================
 
@@ -5246,6 +5473,7 @@ public class BytesCoverageTest {
         testCorpusDrive();
         testJointBytesStagedProduction();
         testReadShapeAndWriteChain();
+        testBytesElementAssignmentOrigin();
         testBytesBoundaryContext();
         testDecodedArrayMark();
         testIntegralNumberFormArrayElements();

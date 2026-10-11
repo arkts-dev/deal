@@ -3321,6 +3321,11 @@ public final class JvmRuntime {
      * The {@code BYTE_ELEMENT_ASSIGNMENT} cell (K6 item 4): the pinned
      * E8012 bounds check first, then the element descriptor check; the
      * enclosing commit owns the E8013 range check and the single mutation.
+     * The cell's own origin is the lowerer-selected byte-boundary origin
+     * (the index expression), so a descriptor-check failure of an in-bounds
+     * write re-renders at that origin, never at the matcher's internal
+     * placeholder — exactly like the array assignment cell and the
+     * oracle's boundary-origin attachment.
      */
     public static void bytesBounds(String bKey, String bDigest, String bParent, Object input,
                                    long index, long length, String desc, String staticKind,
@@ -3338,9 +3343,11 @@ public final class JvmRuntime {
         try {
             bcheck(desc, staticKind, input);
         } catch (DealError e) {
+            DealError failure = new DealError(e.code, e.msg, origin, e.expected, e.actual,
+                e.frames, e.cause);
             ev(currentModule(), bKey, "FAILURE", "BOUNDARY", bDigest, bParent, List.of(),
-                null, errtext(e));
-            throw e;
+                null, errtext(failure));
+            throw failure;
         }
         ev(currentModule(), bKey, "SUCCESS", "BOUNDARY", bDigest, bParent, List.of(),
             inputAtom, null);
