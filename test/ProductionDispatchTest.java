@@ -126,6 +126,84 @@ public class ProductionDispatchTest {
         }
         """;
 
+    /**
+     * The source-map library module: the sync exports plus one async export,
+     * so the produced artifact carries an async-entry definition owned by
+     * this module (the source-map regression pins its preceding comment and
+     * sidecar mapping).
+     */
+    private static final String MAP_LIB_SOURCE = """
+        export function value(): int {
+          return 42
+        }
+
+        export function label(): string {
+          return "lib"
+        }
+
+        export async function load(): int {
+          return 7
+        }
+        """;
+
+    /**
+     * The source-map entry module: the probe main plus a cross-module async
+     * export, so both constituent modules own an async-entry definition.
+     */
+    private static final String MAP_APP_SOURCE = """
+        import * as lib from "./lib"
+        import * as console from "std/console"
+
+        export function main(): null {
+          console.log("PROBE|MAIN-ONCE")
+          return null
+        }
+
+        export function label(): string {
+          return "app"
+        }
+
+        export async function worker(): int {
+          return await lib.load()
+        }
+        """;
+
+    /**
+     * The source-map unsafe-path fixture manifest: the module root carries an
+     * embedded line terminator (the JSON escape the parser resolves to a real
+     * LF in the directory name), so the source display name of the emitted
+     * source comment is not a single comment line unless it is encoded.
+     */
+    private static final String DEAL_JSON_NEWLINE_ROOT = """
+        {
+          "languageVersion": "1.2",
+          "moduleRoots": ["src\\nline"],
+          "output": "out",
+          "backend": "luajit"
+        }
+        """;
+
+    /**
+     * The source-map unsafe-path fixture manifest: the module root carries a
+     * literal backslash-u000a sequence, the Java Unicode-escape hazard (the
+     * Java lexer translates the escape before it recognizes the comment).
+     */
+    private static final String DEAL_JSON_UNICODE_ROOT = """
+        {
+          "languageVersion": "1.2",
+          "moduleRoots": ["src\\\\u000aline"],
+          "output": "out",
+          "backend": "luajit"
+        }
+        """;
+
+    /** The unsafe-path fixture body: a trivial entry that returns null. */
+    private static final String TRIVIAL_MAIN_SOURCE = """
+        export function main(): null {
+          return null
+        }
+        """;
+
     /** The overflow fixture: the production DEAL_ERROR_CODE terminal. */
     private static final String OVERFLOW_SOURCE = """
         export function main(): null {
@@ -1194,8 +1272,8 @@ public class ProductionDispatchTest {
         Path project = Files.createTempDirectory("production-dispatch-map-");
         try {
             write(project, "deal.json", DEAL_JSON_JVM);
-            write(project, "src/lib.deal", LIB_SOURCE);
-            write(project, "src/main.deal", APP_SOURCE);
+            write(project, "src/lib.deal", MAP_LIB_SOURCE);
+            write(project, "src/main.deal", MAP_APP_SOURCE);
 
             // (1) The explicit --source-map: one sidecar per constituent
             // module mapping the one shared artifact, real generated/source
@@ -1224,6 +1302,9 @@ public class ProductionDispatchTest {
                 "src/main.deal", "build/out/Main.java", "Main.java", "// ");
             verifyPublishedSidecar(project, jvmOut, "lib.deal.map.json",
                 "src/lib.deal", "build/out/Main.java", "Main.java", "// ");
+            verifyAsyncEntryComments(project, jvmOut, "Main.java", "// ",
+                "public static Object ae", List.of("src/lib.deal",
+                    "src/main.deal"));
 
             String classpath = Path.of("build").toAbsolutePath().normalize()
                 .toString();
@@ -1254,7 +1335,7 @@ public class ProductionDispatchTest {
             checkTreeIdentical(publishedSet, jvmOut,
                 "the failing --source-map recompile preserves the published "
                     + "artifact and both sidecars");
-            write(project, "src/lib.deal", LIB_SOURCE);
+            write(project, "src/lib.deal", MAP_LIB_SOURCE);
 
             // (3) The effective --dump-ir-derived request emits the same set
             // without a warning (the one effective flag of both arms).
@@ -1296,6 +1377,8 @@ public class ProductionDispatchTest {
                 "src/main.deal", "build/lua/main.lua", "main.lua", "-- ");
             verifyPublishedSidecar(project, luaOut, "lib.deal.map.json",
                 "src/lib.deal", "build/lua/main.lua", "main.lua", "-- ");
+            verifyAsyncEntryComments(project, luaOut, "main.lua", "-- ",
+                "__asyncEntries[", List.of("src/lib.deal", "src/main.deal"));
             ProcessOutcome luaRun = runProcess(luaOut, "luajit", "main.lua");
             check(luaRun.exitCode() == 0
                     && countOccurrences(luaRun.output(), "PROBE|MAIN-ONCE") == 1,
@@ -1330,19 +1413,7 @@ public class ProductionDispatchTest {
         check(json.contains("\"generated\": \"" + expectedGenerated + "\""),
             sidecarName + " maps the one shared artifact: " + json);
 
-        List<int[]> mappings = new ArrayList<>();
-        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
-            "\\{ \"generatedLine\": ([0-9]+), \"generatedColumn\": ([0-9]+), "
-                + "\"sourceLine\": ([0-9]+), \"sourceColumn\": ([0-9]+) \\}")
-            .matcher(json);
-        while (matcher.find()) {
-            mappings.add(new int[] {
-                Integer.parseInt(matcher.group(1)),
-                Integer.parseInt(matcher.group(2)),
-                Integer.parseInt(matcher.group(3)),
-                Integer.parseInt(matcher.group(4)),
-            });
-        }
+        List<int[]> mappings = parseSidecarMappings(json);
         check(!mappings.isEmpty(),
             sidecarName + " carries real mappings: " + json);
         List<String> artifactLines = Files.readString(
@@ -1368,6 +1439,236 @@ public class ProductionDispatchTest {
                     sidecarName + " maps the comment start column");
             }
         }
+    }
+
+    /** The mapping tuples of one sidecar JSON, in recorded order. */
+    private static List<int[]> parseSidecarMappings(String json) {
+        List<int[]> mappings = new ArrayList<>();
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
+            "\\{ \"generatedLine\": ([0-9]+), \"generatedColumn\": ([0-9]+), "
+                + "\"sourceLine\": ([0-9]+), \"sourceColumn\": ([0-9]+) \\}")
+            .matcher(json);
+        while (matcher.find()) {
+            mappings.add(new int[] {
+                Integer.parseInt(matcher.group(1)),
+                Integer.parseInt(matcher.group(2)),
+                Integer.parseInt(matcher.group(3)),
+                Integer.parseInt(matcher.group(4)),
+            });
+        }
+        return mappings;
+    }
+
+    /**
+     * Verifies the async-entry definitions of one produced artifact: every
+     * {@code definitionPrefix} line is preceded by the entry op's own source
+     * comment, that comment names an expected owning module, and the comment
+     * line is exactly one mapping of the owning module's sidecar (the entry
+     * boundary the JVM arm already recorded). The comment's source
+     * coordinates must land on a real line of the module's source file.
+     */
+    private static void verifyAsyncEntryComments(Path project, Path outputRoot,
+            String artifactName, String commentMarker, String definitionPrefix,
+            List<String> expectedOwners) throws Exception {
+        List<String> lines = Files.readString(outputRoot.resolve(artifactName))
+            .lines().toList();
+        List<Integer> entryLines = new ArrayList<>();
+        for (int i = 0; i < lines.size(); i++) {
+            if (lines.get(i).strip().startsWith(definitionPrefix)) {
+                entryLines.add(i + 1);
+            }
+        }
+        checkEq(expectedOwners.size(), entryLines.size(), artifactName
+            + " carries one async-entry definition per constituent module: "
+            + entryLines);
+        List<String> owners = new ArrayList<>();
+        for (int entryLine : entryLines) {
+            check(entryLine >= 2, artifactName + " async entry at line "
+                + entryLine + " has a preceding line");
+            if (entryLine < 2) {
+                continue;
+            }
+            String commentLine = lines.get(entryLine - 2);
+            String comment = commentLine.strip();
+            java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
+                java.util.regex.Pattern.quote(commentMarker)
+                    + "(.+):([0-9]+):([0-9]+)$").matcher(comment);
+            check(matcher.matches(), artifactName + " async entry at line "
+                + entryLine + " is preceded by its source comment: "
+                + comment);
+            if (!matcher.matches()) {
+                continue;
+            }
+            String owner = matcher.group(1);
+            owners.add(owner);
+            int sourceLine = Integer.parseInt(matcher.group(2));
+            int sourceColumn = Integer.parseInt(matcher.group(3));
+            String[] sourceLines = Files.readString(project.resolve(owner))
+                .lines().toArray(String[]::new);
+            check(sourceLine >= 1 && sourceLine <= sourceLines.length
+                    && !sourceLines[sourceLine - 1].isBlank(),
+                artifactName + " maps a real source line of " + owner
+                    + " (line " + sourceLine + ")");
+            String sidecarName = owner.substring(owner.lastIndexOf('/') + 1)
+                + ".map.json";
+            List<int[]> mappings = parseSidecarMappings(
+                Files.readString(outputRoot.resolve(sidecarName)));
+            int commentColumn = commentLine.indexOf(commentMarker) + 1;
+            boolean mapped = false;
+            for (int[] mapping : mappings) {
+                mapped = mapping[0] == entryLine - 1
+                    && mapping[1] == commentColumn
+                    && mapping[2] == sourceLine
+                    && mapping[3] == sourceColumn;
+                if (mapped) {
+                    break;
+                }
+            }
+            check(mapped, artifactName + " async entry at line " + entryLine
+                + " is mapped by " + sidecarName + " at its comment line");
+        }
+        check(owners.containsAll(expectedOwners)
+                && owners.size() == expectedOwners.size(),
+            artifactName + " async entries cover every constituent module: "
+                + owners);
+    }
+
+    /**
+     * The unsafe-path-text regression of the source-map comments: a module
+     * root carrying an embedded line terminator and one carrying a literal
+     * backslash-u000a sequence (the Java Unicode-escape hazard) must still
+     * yield artifacts that compile and run on both targets under
+     * {@code --source-map}. The comment carries the encoded single-line
+     * spelling of the source path; the sidecar keeps the actual path.
+     */
+    private static void testSourceMapUnsafeSourcePathText() throws Exception {
+        System.out.println("-- source map: a module root carrying a line "
+            + "terminator or a literal backslash-u000a sequence still yields "
+            + "source-commented artifacts that compile and run on both "
+            + "targets --");
+
+        // (1) The embedded line terminator in the module root name.
+        Path newlineProject = Files.createTempDirectory(
+            "production-dispatch-map-nl-");
+        try {
+            Path newlineRoot = Path.of("src\nline");
+            write(newlineProject, "deal.json", DEAL_JSON_NEWLINE_ROOT);
+            write(newlineProject, newlineRoot.resolve("main.deal").toString(),
+                TRIVIAL_MAIN_SOURCE);
+            verifyUnsafePathArtifacts(newlineProject, newlineRoot,
+                "src\\nline/main.deal");
+        } finally {
+            deleteRecursively(newlineProject);
+        }
+
+        // (2) The literal backslash-u000a sequence in the module root name.
+        Path unicodeProject = Files.createTempDirectory(
+            "production-dispatch-map-uni-");
+        try {
+            Path unicodeRoot = Path.of("src\\u000aline");
+            write(unicodeProject, "deal.json", DEAL_JSON_UNICODE_ROOT);
+            write(unicodeProject, unicodeRoot.resolve("main.deal").toString(),
+                TRIVIAL_MAIN_SOURCE);
+            verifyUnsafePathArtifacts(unicodeProject, unicodeRoot,
+                "src\\\\u000aline/main.deal");
+        } finally {
+            deleteRecursively(unicodeProject);
+        }
+    }
+
+    /**
+     * Compiles one unsafe-path project through the public CLI on both targets
+     * with {@code --source-map} and verifies the emitted artifacts: the source
+     * comment carries the encoded single-line spelling of the module's source
+     * path, the sidecar keeps the actual path, and the commented artifact
+     * compiles and runs on its target.
+     */
+    private static void verifyUnsafePathArtifacts(Path project, Path moduleRoot,
+            String expectedCommentPath) throws Exception {
+        String entry = project.resolve(moduleRoot).resolve("main.deal")
+            .toAbsolutePath().toString();
+        String actualSourcePath = moduleRoot.toString()
+            .replace(File.separatorChar, '/') + "/main.deal";
+
+        Path jvmOut = project.resolve("build/jvm");
+        ProjectOutcome jvmCompile = runProductionCli("compile", entry,
+            "--backend", "jvm", "--source-map", "--output",
+            jvmOut.toAbsolutePath().toString());
+        check(jvmCompile.exitCode() == 0,
+            "the JVM unsafe-path compile succeeds: " + jvmCompile.stderr());
+        if (jvmCompile.exitCode() == 0) {
+            String java = Files.readString(jvmOut.resolve("Main.java"));
+            check(java.lines().anyMatch(line -> line.contains(
+                    "// " + expectedCommentPath + ":1:1")),
+                "the JVM comment encodes the unsafe source path on one line: "
+                    + expectedCommentPath);
+            checkEq(actualSourcePath, jsonStringField(Files.readString(
+                    jvmOut.resolve("main.deal.map.json")), "source"),
+                "the JVM sidecar keeps the actual source path");
+            String classpath = Path.of("build").toAbsolutePath().normalize()
+                .toString();
+            ProcessOutcome javac = runProcess(project, "javac", "--release",
+                "25", "-proc:none", "-cp", classpath, "-d",
+                jvmOut.toString(), jvmOut.resolve("Main.java").toString());
+            check(javac.exitCode() == 0,
+                "the JVM unsafe-path artifact compiles: " + javac.output());
+            if (javac.exitCode() == 0) {
+                ProcessOutcome run = runProcess(jvmOut, "java", "-cp",
+                    classpath + File.pathSeparator + jvmOut, "Main");
+                checkEq(0, run.exitCode(),
+                    "the JVM unsafe-path artifact runs: " + run.output());
+            }
+        }
+
+        Path luaOut = project.resolve("build/lua");
+        ProjectOutcome luaCompile = runProductionCli("compile", entry,
+            "--backend", "luajit", "--source-map", "--output",
+            luaOut.toAbsolutePath().toString());
+        check(luaCompile.exitCode() == 0,
+            "the LuaJIT unsafe-path compile succeeds: " + luaCompile.stderr());
+        if (luaCompile.exitCode() == 0) {
+            String lua = Files.readString(luaOut.resolve("main.lua"));
+            check(lua.lines().anyMatch(line -> line.contains(
+                    "-- " + expectedCommentPath + ":1:1")),
+                "the LuaJIT comment encodes the unsafe source path on one "
+                    + "line: " + expectedCommentPath);
+            checkEq(actualSourcePath, jsonStringField(Files.readString(
+                    luaOut.resolve("main.deal.map.json")), "source"),
+                "the LuaJIT sidecar keeps the actual source path");
+            ProcessOutcome run = runProcess(luaOut, "luajit", "main.lua");
+            checkEq(0, run.exitCode(),
+                "the LuaJIT unsafe-path artifact runs: " + run.output());
+        }
+    }
+
+    /**
+     * The unescaped value of one top-level string field of a sidecar JSON
+     * document, or {@code null} when the field is absent.
+     */
+    private static String jsonStringField(String json, String field) {
+        int key = json.indexOf("\"" + field + "\": \"");
+        if (key < 0) {
+            return null;
+        }
+        StringBuilder value = new StringBuilder();
+        for (int i = key + field.length() + 5; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (c == '"') {
+                return value.toString();
+            }
+            if (c == '\\' && i + 1 < json.length()) {
+                char next = json.charAt(++i);
+                switch (next) {
+                    case 'n' -> value.append('\n');
+                    case 'r' -> value.append('\r');
+                    case 't' -> value.append('\t');
+                    default -> value.append(next);
+                }
+            } else {
+                value.append(c);
+            }
+        }
+        return null;
     }
 
     // =========================================================================
@@ -2028,6 +2329,7 @@ public class ProductionDispatchTest {
         testAtomicFailureThroughDispatch();
         testFailClosedFamilies();
         testSourceMapDisposition();
+        testSourceMapUnsafeSourcePathText();
         testSingleArmDispatch();
         testLegacyRejectionStagesNothingWithDumps();
         testRetainedTestScopeEmitters();

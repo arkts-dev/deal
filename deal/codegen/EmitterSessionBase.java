@@ -229,7 +229,10 @@ public abstract class EmitterSessionBase {
      * {@code SourceMapGenerator} format). The comment carries the module's
      * one display source name and the op's source line/column, so the
      * generated artifact is self-describing and the sidecar mapping of the
-     * same position is directly verifiable against the emitted line.
+     * same position is directly verifiable against the emitted line. The
+     * display name is written in its target-safe single-line spelling
+     * ({@link #sourceCommentText}); the mapping and the sidecar keep the
+     * actual source name.
      *
      * <p>A no-op when the session carries no recorder: a compile without
      * the effective source-map request emits exactly the bytes it emitted
@@ -251,12 +254,44 @@ public abstract class EmitterSessionBase {
         ModuleId owner = opModule.get(op.opId());
         String file = sourceMapRecorder.displayName(owner, span.file());
         out.append(indent).append(sourceCommentMarker())
-            .append(file).append(':').append(span.startLine()).append(':')
+            .append(sourceCommentText(file)).append(':')
+            .append(span.startLine()).append(':')
             .append(span.startColumn()).append('\n');
         if (owner != null) {
             sourceMapRecorder.record(owner, generatedLine, generatedColumn,
                 span.startLine(), span.startColumn());
         }
+    }
+
+    /**
+     * The target-safe single-line comment spelling of one source display
+     * name. A module root or source path is arbitrary text (it can carry a
+     * line terminator or a literal Java Unicode-escape spelling), and the
+     * emitted comment must stay exactly one comment line in both target
+     * grammars: a backslash is doubled and each LF/CR is written as its
+     * two-character escape spelling.
+     *
+     * <p>The Java lexer translates a single-backslash-u sequence before it
+     * recognizes comments (JLS 3.3), so a module root name spelling one of
+     * those escapes would otherwise inject a line terminator into the
+     * comment and break the generated class. The doubled backslash is
+     * preceded by an odd number of contiguous backslashes, so it can never
+     * begin a Unicode escape; Lua has no escape processing in comments at
+     * all. Only the comment is escaped: the mapping and the sidecar's
+     * {@code source} field keep the actual source name.</p>
+     */
+    private static String sourceCommentText(String text) {
+        StringBuilder escaped = new StringBuilder(text.length());
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            switch (c) {
+                case '\\' -> escaped.append("\\\\");
+                case '\n' -> escaped.append("\\n");
+                case '\r' -> escaped.append("\\r");
+                default -> escaped.append(c);
+            }
+        }
+        return escaped.toString();
     }
 
     /**

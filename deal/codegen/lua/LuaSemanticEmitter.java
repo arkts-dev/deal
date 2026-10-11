@@ -933,6 +933,7 @@ public final class LuaSemanticEmitter {
             for (LoweredModuleUnit moduleUnit : units.values()) {
                 for (SemanticOp op : moduleUnit.ops()) {
                     if (op.kind() == SemanticOpKind.CALLBACK_INVOKE) {
+                        beginSourceMappedGroup(op, "");
                         emitCallbackInvoke(op);
                     }
                 }
@@ -942,6 +943,7 @@ public final class LuaSemanticEmitter {
                 for (SemanticOp op : moduleUnit.ops()) {
                     if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
                             && ((KindPayload.ExternalEntryPayload) op.payload()).async()) {
+                        beginSourceMappedGroup(op, "");
                         emitAsyncEntry(op, moduleUnit);
                     }
                 }
