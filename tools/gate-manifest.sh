@@ -176,4 +176,20 @@ WARNING: node not found, skipping standard library JS tests'
   'fg|=== Running Nested Group Production Tests (ISSUE-0731) ===|java -ea -cp build deal.test.NestedGroupProductionTest'
   'fg|=== Running Self-Alias Production Tests (ISSUE-0743) ===|java -ea -cp build deal.test.SelfAliasProductionTest'
   'fg|=== Running Declared-Body Carrier Production Tests (ISSUE-0757, ISSUE-0758) ===|java -ea -cp build deal.test.DeclaredBodyCarrierProductionTest'
+  # ISSUE-0702 (the fail-closed guard retargeting and the live negative-seed
+  # coverage; design source dispatched-corpus-production-realization R8 and
+  # the producer guard contract): the three rule identifiers and the
+  # HOST_MODULE_IMPORT/FFI_PROVIDER_GAP detail tokens stay landed with the
+  # closed BoundaryKind set (27 members, the two C-FFI reserved names); one
+  # live inconsistent/uncovered seed per guard (the stripped cross-module
+  # callee and the stripped imported-class owner on both production targets,
+  # and the corrupted extern-C provider fact on the LuaJIT extern-C emission)
+  # fails with exactly one named E6005, stages nothing, and leaves the
+  # previous artifact set byte-identical; and the realized bytes, @jsonable
+  # helper (same- and cross-module), residual local-body, capture, and
+  # transfer probes compile through the release-owned production invocation,
+  # execute under the real luajit and JVM toolchains, and agree with the
+  # semantic oracle's terminal and console-effect transcripts (status, stdout,
+  # and empty stderr asserted against the oracle).
+  'fg|=== Running Fail-Closed Guard Retargeting Tests (ISSUE-0702) ===|java -ea -cp build deal.test.FailClosedGuardRetargetingTest'
 )
