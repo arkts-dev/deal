@@ -221,10 +221,27 @@ public final class JvmRuntime {
     public static final class ErrorValue implements ClassInstance {
         public String code;
         public String message;
+        /**
+         * The failure this Error value reifies, or {@code null} for a
+         * constructed Error (the builtin Error class literal). The
+         * transport travels with the value: a rethrow of a caught error
+         * preserves its origin, expected/actual, frames and cause — never
+         * a synthesized replacement — and one failure reifies to exactly
+         * one value identity, so a rethrown error caught again is the
+         * identical Error value ({@code saved === again}). The field is
+         * not a declared class field: the class read surface exposes
+         * exactly code and message.
+         */
+        public JvmRuntime.DealError transport;
 
         public ErrorValue(String code, String message) {
+            this(code, message, null);
+        }
+
+        public ErrorValue(String code, String message, JvmRuntime.DealError transport) {
             this.code = code;
             this.message = message;
+            this.transport = transport;
         }
 
         @Override
@@ -371,7 +388,13 @@ public final class JvmRuntime {
         public final String signature;
         /** The canonical spec text (E8010 projections); null when unknown. */
         public final String spec;
-        /** The source function id text for frame pushes; null when absent. */
+        /**
+         * The stack-frame label of the function (the generated and
+         * original function names of the shared
+         * {@code FrameLabels} form, e.g. {@code lib#add@F3}); null when
+         * absent. The label is also the carrier's key in the artifact's
+         * function-to-module resolution.
+         */
         public final String fid;
 
         public FunctionValue(Fn fn, String signature) {
@@ -379,7 +402,26 @@ public final class JvmRuntime {
         }
 
         public FunctionValue(Fn fn, String signature, String spec, String fid) {
-            this.fn = fn;
+            if (fid == null) {
+                this.fn = fn;
+            } else {
+                // A DEAL body carrier owns its body's stack frame: the
+                // carrier is the single layer that pushes the label for
+                // its own activation and pops it on the success and the
+                // failure path alike. Every invocation — the in-project
+                // call paths and the host invoking a published callable —
+                // therefore contributes exactly one frame per active
+                // activation, repeated identical labels included, and no
+                // path can drop a frame or keep a stale one.
+                this.fn = args -> {
+                    pushFrame(fid);
+                    try {
+                        return fn.invoke(args);
+                    } finally {
+                        popFrame();
+                    }
+                };
+            }
             this.signature = signature;
             this.spec = spec;
             this.fid = fid;
@@ -437,6 +479,18 @@ public final class JvmRuntime {
         public final String actual;
         public final String frames;
         public final DealError cause;
+        /**
+         * Whether this failure was published by a rethrow of a
+         * transported Error value (never by a fresh runtime check, a
+         * constructed Error's THROW, or a boundary re-projection). The
+         * try/catch arm propagates such a failure unchanged — identity
+         * preserved, no invented cause — while a genuinely new failure
+         * raised while handling the caught one links the caught failure
+         * as its cause.
+         */
+        public boolean transported;
+        /** The Error value identity this failure reifies (one per failure). */
+        private JvmRuntime.ErrorValue reified;
 
         public DealError(String code, String msg, String origin, String expected,
                          String actual, String frames, DealError cause) {
@@ -449,6 +503,51 @@ public final class JvmRuntime {
             this.frames = frames;
             this.cause = cause;
         }
+
+        /**
+         * The Error value this failure reifies — one identity per
+         * failure, so a rethrown error caught again is the identical
+         * Error value and a mutable code/message rewrite stays visible
+         * through every alias of that identity.
+         */
+        public JvmRuntime.ErrorValue reify() {
+            JvmRuntime.ErrorValue value = reified;
+            if (value == null) {
+                value = new JvmRuntime.ErrorValue(code, msg, this);
+                reified = value;
+            }
+            return value;
+        }
+    }
+
+    /**
+     * The failure one rethrow of an Error value publishes. The value's
+     * own transport travels with the rethrow: when the value's current
+     * code/message are unchanged the identical failure is re-published
+     * (the host observes the identical DealError), and a rewritten
+     * code/message publishes a failure carrying the transport's origin,
+     * expected/actual, frames and cause with the value's current
+     * code/message. Either way the failure is marked transported, so an
+     * enclosing catch propagates it unchanged and never invents a cause,
+     * and the value's reified identity survives the rethrow.
+     */
+    public static DealError rethrow(ErrorValue value) {
+        DealError transport = value.transport;
+        if (sameText(value.code, transport.code)
+                && sameText(value.message, transport.msg)) {
+            transport.transported = true;
+            return transport;
+        }
+        DealError published = new DealError(value.code, value.message, transport.origin,
+            transport.expected, transport.actual, transport.frames, transport.cause);
+        published.transported = true;
+        published.reified = value;
+        value.transport = published;
+        return published;
+    }
+
+    private static boolean sameText(String left, String right) {
+        return left == null ? right == null : left.equals(right);
     }
 
     // =========================================================================
@@ -460,7 +559,13 @@ public final class JvmRuntime {
     static final IdentityHashMap<Object, String> ALLOC_IDS = new IdentityHashMap<>();
     static long allocNext = 1;
 
-    /** Pushes/pops the innermost active frame (function id text). */
+    /**
+     * Pushes/pops the innermost active frame (the stack-frame label) of
+     * one DEAL body activation. The body carrier is the only pusher (see
+     * {@link FunctionValue}), so every active invocation has exactly one
+     * entry, repeated labels included, and every push has its balanced
+     * pop on the success and the failure path.
+     */
     public static void pushFrame(String functionId) {
         FRAMES.get().add(0, functionId);
     }
@@ -1330,9 +1435,9 @@ public final class JvmRuntime {
      * capture mode (VALUE retains, SHARED_CELL re-reads the generation
      * cell, REEVALUATE_THUNK re-executes the thunk), the source-signature
      * check, then the source invocation with the leading M arguments
-     * only. A DEAL-body source pushes its function id onto the active
-     * frames for the invocation (popped on every path); the identical
-     * completion error propagates unchanged.
+     * only. A DEAL-body source owns its own stack frame (the carrier
+     * wrapper pushes and pops it); the identical completion error
+     * propagates unchanged.
      */
     public static Object invokeAdapter(AdapterValue adapter, String origin, Object[] args) {
         Object source = adapterSource(adapter);
@@ -1340,10 +1445,6 @@ public final class JvmRuntime {
         Object[] leading = new Object[adapter.arity];
         System.arraycopy(args, 0, leading, 0, adapter.arity);
         FunctionValue function = (FunctionValue) source;
-        boolean pushed = function.fid != null;
-        if (pushed) {
-            pushFrame(function.fid);
-        }
         // The invoking call's origin: a failure inside the adapted source
         // whose arm renders the call origin (the @jsonable toJson walk)
         // reads the innermost active call — the adapter call expression,
@@ -1359,9 +1460,6 @@ public final class JvmRuntime {
         } finally {
             if (pushedOrigin) {
                 callOrigins.pop();
-            }
-            if (pushed) {
-                popFrame();
             }
         }
     }

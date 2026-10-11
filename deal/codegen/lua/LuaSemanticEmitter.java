@@ -697,7 +697,8 @@ public final class LuaSemanticEmitter {
                     emitFunctionFactory(function);
 
                     out.append("__fnModules[")
-                        .append(function.functionId().id()).append("] = ")
+                        .append(luaString(frameLabel(function.functionId())))
+                        .append("] = ")
                         .append(luaString(moduleUnit.moduleId().path()))
                         .append("\n");
                 }
@@ -1196,7 +1197,13 @@ public final class LuaSemanticEmitter {
             }
             out.append(fnFactory(functionId)).append(" = function(")
                 .append(params).append(")\n");
-            out.append("  return function(...)\n");
+            // The body carries its own frame label through the balanced
+            // wrapper: every invocation of the carrier — the in-project
+            // call paths and the host invoking the published callable —
+            // pushes exactly one label for its own activation.
+            out.append("  return __frameWrap(")
+                .append(luaString(frameLabel(functionId)))
+                .append(", function(...)\n");
             emitBodyFunctionPreamble();
             int argIndex = 1;
             List<OpId> bodyOps = tableOfFunction(function).blockOps().get(function.body());
@@ -1230,7 +1237,7 @@ public final class LuaSemanticEmitter {
             // invalid — one uniform trampoline keeps every shape valid).
             out.append("::").append(returnLabel(functionId)).append("::\n");
             out.append("  return __rvcT\n");
-            out.append("  end\n");
+            out.append("  end)\n");
             out.append("end\n");
             currentFunctionId = null;
             currentFunction = null;
@@ -2499,7 +2506,7 @@ public final class LuaSemanticEmitter {
                 .append(", __csig = ")
                 .append(luaString(payload.signature().canonicalSpecText()))
                 .append(", __fid = ")
-                .append(payload.function().id()).append("}\n");
+                .append(luaString(frameLabel(payload.function()))).append("}\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
 
@@ -2633,7 +2640,7 @@ public final class LuaSemanticEmitter {
                     .append(", __csig = ")
                     .append(luaString(function.descriptor().canonicalSpecText()))
                     .append(", __fid = ")
-                    .append(functionId.id()).append("}\n");
+                    .append(luaString(frameLabel(functionId))).append("}\n");
             }
             for (int i = 0; i < payload.bindings().size(); i++) {
                 out.append(cell(payload.bindings().get(i), 0)).append("[1] = ")
@@ -2944,8 +2951,6 @@ public final class LuaSemanticEmitter {
                 case FunctionExecutionBinding.LoweredBody body -> {
                     FunctionId callee = body.functionId();
                     String savedState = emitInvocationStateSave(callee, op.opId());
-                    out.append("table.insert(__frames, 1, ")
-                        .append(luaString(String.valueOf(callee.id()))).append(")\n");
                     // The invoking call's origin: a failure inside the body
                     // whose arm renders the call origin (the @jsonable
                     // toJson walk) reads the innermost active call.
@@ -2984,7 +2989,6 @@ public final class LuaSemanticEmitter {
                     }
                     out.append(")\n");
                     out.append("__callOrigins[#__callOrigins] = nil\n");
-                    out.append("table.remove(__frames, 1)\n");
                     emitInvocationStateRestore(callee, savedState);
                     out.append("if not __okT then\n");
                     emitFailureEvent(op.opId(), op.kind().name(), op,
@@ -3074,9 +3078,6 @@ public final class LuaSemanticEmitter {
             }
             String savedState = emitInvocationStateSave(entryPayload.function(),
                 op.opId());
-            out.append("table.insert(__frames, 1, ")
-                .append(luaString(String.valueOf(entryPayload.function().id())))
-                .append(")\n");
             out.append("__callOrigins[#__callOrigins + 1] = ")
                 .append(luaString(originOf(op))).append("\n");
             out.append("__okT, __resT = pcall(")
@@ -3096,7 +3097,6 @@ public final class LuaSemanticEmitter {
             }
             out.append(")\n");
             out.append("__callOrigins[#__callOrigins] = nil\n");
-            out.append("table.remove(__frames, 1)\n");
             emitInvocationStateRestore(entryPayload.function(), savedState);
             out.append("if not __okT then\n");
             if (trace) {
@@ -3733,8 +3733,8 @@ public final class LuaSemanticEmitter {
             out.append("__dynC = ").append(slot(callee.callee())).append("\n");
             out.append("__dynK = __dynClass(__dynC)\n");
             // DEAL_BODY: the carrier's function id resolves its owning
-            // module; the frame and the module context are restored on
-            // every path.
+            // module; the module context is restored on every path and the
+            // carrier owns its own frame.
             out.append("if __dynK == \"DEAL_BODY\" then\n");
             out.append("  __dynM = __fnModules[__dynC.__fid]\n");
             out.append("  if __dynM == nil then\n");
@@ -3742,7 +3742,6 @@ public final class LuaSemanticEmitter {
             out.append("  end\n");
             out.append("  __modStack[#__modStack + 1] = __module\n");
             out.append("  __module = __dynM\n");
-            out.append("  table.insert(__frames, 1, tostring(__dynC.__fid))\n");
             // The invoking dynamic call's origin: a failure inside the
             // callee body whose arm renders the call origin (the
             // @jsonable toJson walk) reads the innermost active call —
@@ -3752,7 +3751,6 @@ public final class LuaSemanticEmitter {
             out.append("  __okT, __resT = pcall(__unfn(__dynC)").append(argList)
                 .append(")\n");
             out.append("  __callOrigins[#__callOrigins] = nil\n");
-            out.append("  table.remove(__frames, 1)\n");
             out.append("  __module = __modStack[#__modStack]\n");
             out.append("  __modStack[#__modStack] = nil\n");
             out.append("  if not __okT then\n");
@@ -3781,7 +3779,6 @@ public final class LuaSemanticEmitter {
             out.append("    end\n");
             out.append("    __modStack[#__modStack + 1] = __module\n");
             out.append("    __module = __dynM\n");
-            out.append("    table.insert(__frames, 1, tostring(__dynS.__fid))\n");
             out.append("    __dynA = {").append(argTable).append("}\n");
             // The invoking dynamic call's origin, as in the direct
             // DEAL_BODY row: the innermost active call is the f(w)
@@ -3791,7 +3788,6 @@ public final class LuaSemanticEmitter {
             out.append("    __okT, __resT = pcall(__unfn(__dynS), unpack(__dynA, 1, ")
                 .append("__dynC.__m))\n");
             out.append("    __callOrigins[#__callOrigins] = nil\n");
-            out.append("    table.remove(__frames, 1)\n");
             out.append("    __module = __modStack[#__modStack]\n");
             out.append("    __modStack[#__modStack] = nil\n");
             out.append("    if not __okT then\n");
@@ -3970,8 +3966,8 @@ public final class LuaSemanticEmitter {
             out.append("__dynC = ").append(slot(callee.callee())).append("\n");
             out.append("__dynK = __dynClass(__dynC)\n");
             // DEAL_BODY: the carrier's function id resolves its owning
-            // module; the frame and the module context are restored on
-            // every path.
+            // module; the module context is restored on every path and the
+            // carrier owns its own frame.
             out.append("if __dynK == \"DEAL_BODY\" then\n");
             out.append("  __dynM = __fnModules[__dynC.__fid]\n");
             out.append("  if __dynM == nil then\n");
@@ -3981,11 +3977,9 @@ public final class LuaSemanticEmitter {
                 .append(", \"DEAL_BODY_TASK\", coroutine.create(function()\n");
             out.append("    __modStack[#__modStack + 1] = __module\n");
             out.append("    __module = __dynM\n");
-            out.append("    table.insert(__frames, 1, tostring(__dynC.__fid))\n");
             out.append("    local __okA, __resA = pcall(__unfn(__dynC), unpack(")
                 .append(carrierArgs).append(", 1, #").append(carrierArgs)
                 .append("))\n");
-            out.append("    table.remove(__frames, 1)\n");
             out.append("    __module = __modStack[#__modStack]\n");
             out.append("    __modStack[#__modStack] = nil\n");
             out.append("    if not __okA then error(__resA, 0) end\n");
@@ -4041,10 +4035,8 @@ public final class LuaSemanticEmitter {
                 .append(", \"DEAL_BODY_TASK\", coroutine.create(function()\n");
             out.append("    __modStack[#__modStack + 1] = __module\n");
             out.append("    __module = __dynM\n");
-            out.append("    table.insert(__frames, 1, tostring(__dynS.__fid))\n");
             out.append("    local __okA, __resA = pcall(__unfn(__dynS), unpack(")
                 .append(carrierArgs).append(", 1, __dynC.__m))\n");
-            out.append("    table.remove(__frames, 1)\n");
             out.append("    __module = __modStack[#__modStack]\n");
             out.append("    __modStack[#__modStack] = nil\n");
             out.append("    if not __okA then error(__resA, 0) end\n");
@@ -4963,6 +4955,19 @@ public final class LuaSemanticEmitter {
             KindPayload.TryCatchPayload payload = (KindPayload.TryCatchPayload) op.payload();
             emitStart(op);
             String cellName = cell(payload.catchBinding(), 0);
+            // The caught failure's stable transport, captured beside the
+            // catch binding: the catch block's own failure links it as its
+            // cause when the failure is genuinely new, while a rethrow of
+            // any transported error (the __re mark below) keeps its own
+            // identity and gains no cause. The captured transport is a
+            // snapshot of the failure's fields at catch time, never the
+            // live reified Error identity: editing a retained Error alias
+            // (saved.code = ...) stays visible through the identity — a
+            // rethrow publishes the identity's current code/message — but
+            // never rewrites a cause that was already linked. The per-op
+            // locals survive a nested try/catch inside the catch block,
+            // which would otherwise clobber the shared scratch temps.
+            String caughtIdentity = "__ctT" + op.opId().id();
             tryDepth++;
             out.append("__okT, __resT = pcall(function()\n");
             emitBlockOps(payload.tryBlock());
@@ -4972,6 +4977,25 @@ public final class LuaSemanticEmitter {
             emitTransferDispatch(op, payload.tryBlock(), "  ", "__resT");
             out.append("  if type(__resT) == \"table\" and __resT.__d then\n");
 
+            // The DEAL error is an error identity from here on: the __re
+            // mark makes a rethrow of this value re-raise it verbatim
+            // (code/message, origin, expected/actual, frames, and any cause
+            // preserved unchanged), and it tells an enclosing catch that
+            // the rethrow is a transported failure — never a new failure
+            // that links that catch's own caught failure as its cause.
+            out.append("    __resT.__re = true\n");
+            // The stable transport snapshot: code/message are the live
+            // identity's current fields, while origin, expected/actual,
+            // frames and the nested cause are the failure's own at catch
+            // time. A cause linked from here never changes retroactively
+            // when the Error alias is edited (JVM/Oracle parity); the
+            // nested cause is itself a snapshot or absent (cause links are
+            // the only writer of the field and always link this snapshot
+            // form).
+            out.append("    local ").append(caughtIdentity)
+                .append(" = {__d = true, code = __resT.code, m = __resT.m, ")
+                .append("o = __resT.o, e = __resT.e, a = __resT.a, ")
+                .append("f = __resT.f, cause = __resT.cause}\n");
             out.append("    ").append(cellName).append(" = __resT\n");
             tryDepth++;
             out.append("    __okT, __terrT = pcall(function()\n");
@@ -4981,11 +5005,24 @@ public final class LuaSemanticEmitter {
             out.append("    if not __okT then\n");
 
             emitTransferDispatch(op, payload.catchBlock(), "      ", "__terrT");
-            out.append("      __wrappedT = {__d = true, code = __terrT.code, "
+            // A transported rethrow (any previously caught error, not
+            // only this handler's caught one) keeps its own identity and
+            // gains no cause; a new failure raised in the catch block is
+            // the replacement failure and links the caught failure as its
+            // cause (frames/code/message/origin unchanged).
+            out.append("      if type(__terrT) == \"table\" and __terrT.__re"
+                + " then\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op,
+                "__errtext(__terrT)");
+            out.append("        error(__terrT, 0)\n");
+            out.append("      else\n");
+            out.append("        __wrappedT = {__d = true, code = __terrT.code, "
                 + "m = __terrT.m, o = __terrT.o, e = __terrT.e, a = __terrT.a, "
-                + "f = __terrT.f, cause = __resT}\n");
-            emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__wrappedT)");
-            out.append("      error(__wrappedT, 0)\n");
+                + "f = __terrT.f, cause = " + caughtIdentity + "}\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op,
+                "__errtext(__wrappedT)");
+            out.append("        error(__wrappedT, 0)\n");
+            out.append("      end\n");
             out.append("    end\n");
             out.append("  else\n");
             emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__resT)");
@@ -5081,15 +5118,28 @@ public final class LuaSemanticEmitter {
         private void emitThrow(SemanticOp op) {
             KindPayload.ThrowPayload payload = (KindPayload.ThrowPayload) op.payload();
             emitStart(op);
+            // The supplied Error value's own origin and transport win
+            // whenever it is an error identity (a caught error, or an error
+            // that already crossed a return/parameter): the identical value
+            // is re-raised, so code/message, origin, expected/actual, frames
+            // and any cause are preserved unchanged and no cause is
+            // invented. A constructed Error carries no origin: the failure
+            // is synthesized at the THROW origin with no expected/actual and
+            // no cause (absent fields stay absent), frames active.
+            String value = slot(payload.errorValue());
+            out.append("if type(").append(value).append(") == \"table\" and ")
+                .append(value).append(".__re then\n");
             emitFailureEvent(op.opId(), op.kind().name(), op,
-                "__errtext({__d = true, code = " + slot(payload.errorValue())
-                    + ".code, m = " + slot(payload.errorValue()) + ".m, o = "
-                    + luaString(originOf(op)) + ", e = nil, a = nil, f = __framesText(), "
-                    + "cause = nil})");
-            out.append("error({__d = true, code = ").append(slot(payload.errorValue()))
-                .append(".code, m = ").append(slot(payload.errorValue()))
-                .append(".m, o = ").append(luaString(originOf(op)))
-                .append(", e = nil, a = nil, f = __framesText(), cause = nil}, 0)\n");
+                "__errtext(" + value + ")");
+            out.append("  error(").append(value).append(", 0)\n");
+            out.append("else\n");
+            String synthesized = "{__d = true, code = " + value + ".code, m = "
+                + value + ".m, o = " + luaString(originOf(op))
+                + ", e = nil, a = nil, f = __framesText(), cause = nil}";
+            emitFailureEvent(op.opId(), op.kind().name(), op,
+                "__errtext(" + synthesized + ")");
+            out.append("  error(").append(synthesized).append(", 0)\n");
+            out.append("end\n");
         }
 
         private void emitReturn(SemanticOp op) {
@@ -5429,9 +5479,6 @@ public final class LuaSemanticEmitter {
                         }
                         caps.append(captureArg(capture));
                     }
-                    out.append("  table.insert(__frames, 1, ")
-                        .append(luaString(String.valueOf(body.functionId().id())))
-                        .append(")\n");
                     out.append("  __okT, __resT = pcall(")
                         .append(fnFactory(body.functionId())).append("(")
                         .append(caps).append(")");
@@ -5439,7 +5486,6 @@ public final class LuaSemanticEmitter {
                         out.append(", __cargs[").append(i + 1).append("]");
                     }
                     out.append(")\n");
-                    out.append("  table.remove(__frames, 1)\n");
                     out.append("  if not __okT then\n");
                     if (trace) {
                         emitFailureEvent(op.opId(), op.kind().name(), op,
@@ -5708,9 +5754,6 @@ public final class LuaSemanticEmitter {
                     }
                     out.append("__asyncStartBodyTask(").append(token.tokenId())
                         .append(", \"DEAL_BODY_TASK\", coroutine.create(function()\n");
-                    out.append("  table.insert(__frames, 1, ")
-                        .append(luaString(String.valueOf(body.functionId().id())))
-                        .append(")\n");
                     // The task's body execution is the async counterpart of
                     // the synchronous invocation: a recursive await of the
                     // same body runs the nested task inline (the FIFO drain)
@@ -5735,7 +5778,6 @@ public final class LuaSemanticEmitter {
                     }
                     out.append(", unpack(S.__sa").append(op.opId().id())
                         .append(", 1, #S.__sa").append(op.opId().id()).append("))\n");
-                    out.append("  table.remove(__frames, 1)\n");
                     emitAsyncInvocationStateRestore(body.functionId(), savedState, "  ");
                     out.append("  if not __okA then error(__resA, 0) end\n");
                     out.append("  return __resA\n");
@@ -6097,14 +6139,10 @@ public final class LuaSemanticEmitter {
             // module itself and restores it on every path.
             emitModulePush();
             out.append("    __module = ").append(luaString(ownerPath)).append("\n");
-            out.append("    table.insert(__frames, 1, ")
-                .append(luaString(String.valueOf(payload.function().id())))
-                .append(")\n");
             String savedState = emitInvocationStateSave(payload.function(), op.opId());
             out.append("    local __okA, __resA = pcall(")
                 .append(fnFactory(payload.function())).append("(").append(caps)
                 .append("), unpack(__eargs, 1, #__eargs))\n");
-            out.append("    table.remove(__frames, 1)\n");
             emitInvocationStateRestore(payload.function(), savedState);
             emitModulePop();
             out.append("    if not __okA then error(__resA, 0) end\n");
@@ -8298,6 +8336,26 @@ local function __framesText()
   if #__frames == 0 then return "-" end
   return table.concat(__frames, ",")
 end
+-- The balanced frame wrapper of one generated DEAL body: the body
+-- carrier owns its own activation's frame, so every invocation — the
+-- in-project call paths and the host invoking a published callable —
+-- pushes exactly one label per active activation, repeated identical
+-- labels included. The push and its matching pop stay balanced on the
+-- success and the failure path. A chunk-global like the rest of the run
+-- state, never a new chunk-level local (the main chunk's local budget
+-- admits no more prelude helpers; the growing-factory guard loads the
+-- real chunk with an appended 12-local probe body).
+__frameWrap = function(__label, __fn)
+  return function(...)
+    table.insert(__frames, 1, __label)
+    local __ok, __r = pcall(__fn, ...)
+    table.remove(__frames, 1)
+    if not __ok then
+      error(__r, 0)
+    end
+    return __r
+  end
+end
 local function __allocId(v)
   local id = __allocIds[v]
   if id == nil then
@@ -10107,9 +10165,9 @@ end
 -- The D15 adapter invocation protocol: resolve the source per the
 -- closed capture mode (0 VALUE, 1 SHARED_CELL, 2 REEVALUATE_THUNK),
 -- the source-signature check, then the source invocation with the
--- leading M arguments only. A DEAL-body source pushes its function id
--- onto the active frames for the invocation (popped on every path); the
--- identical completion error propagates unchanged.
+-- leading M arguments only. A DEAL-body source owns its own frame (its
+-- carrier wrapper pushes and pops it); the identical completion error
+-- propagates unchanged.
 local function __adaptInvoke(w, origin, ...)
   local __cargs = {...}
   local src = __adaptSource(w)
@@ -10117,7 +10175,6 @@ local function __adaptInvoke(w, origin, ...)
   local __fid = nil
   if type(src) == "table" then __fid = src.__fid end
   if type(src) == "function" then __fid = src.__fid end
-  local __pushed = false
   local __savedModule = __module
   local __switched = false
   if __fid ~= nil then
@@ -10129,8 +10186,6 @@ local function __adaptInvoke(w, origin, ...)
       __module = __srcModule
       __switched = true
     end
-    table.insert(__frames, 1, tostring(__fid))
-    __pushed = true
   end
   -- The invoking call's origin: a failure inside the adapted source
   -- whose arm renders the call origin (the @jsonable toJson walk) reads
@@ -10141,7 +10196,6 @@ local function __adaptInvoke(w, origin, ...)
   if __originPushed then __callOrigins[#__callOrigins + 1] = origin end
   local __okA, __vA = pcall(__unfn(src), unpack(__cargs, 1, w.__m))
   if __originPushed then __callOrigins[#__callOrigins] = nil end
-  if __pushed then table.remove(__frames, 1) end
   if __switched then __module = __savedModule end
   if not __okA then error(__vA, 0) end
   return __vA

@@ -145,8 +145,17 @@ public class JvmProductionProjectEmissionTest {
     /** A real checked project with the given entry source and entry file. */
     private static Fixture compileProject(String entrySource, String entryRelative)
             throws Exception {
+        return compileProject(LIB_SOURCE, entrySource, entryRelative);
+    }
+
+    /**
+     * A real checked project with the given companion {@code src/lib.deal}
+     * and the given entry source and entry file.
+     */
+    private static Fixture compileProject(String libSource, String entrySource,
+                                          String entryRelative) throws Exception {
         Path root = Files.createTempDirectory("jvm-production-project");
-        writeFileIn(root, "src/lib.deal", LIB_SOURCE);
+        writeFileIn(root, "src/lib.deal", libSource);
         writeFileIn(root, entryRelative, entrySource);
         Path entry = root.resolve(entryRelative).toAbsolutePath();
         Path output = root.resolve("out").toAbsolutePath();
@@ -539,6 +548,515 @@ public class JvmProductionProjectEmissionTest {
         }
     }
 
+    // =========================================================================
+    // 3b. The host-visible DEALRuntimeError: complete transport and named frames
+    // =========================================================================
+
+    /**
+     * The host-error companion: a nested non-exported function raises the
+     * typed boundary failure (the E8001 with the expected/actual pair and
+     * the raising function's origin), the exported sync and async
+     * functions call it across the module boundary, and the E8004
+     * arithmetic overflow carries no expected/actual.
+     */
+    private static final String HOST_ERROR_LIB_SOURCE = """
+        function inner(): int {
+          let t: table = { value: "bad" };
+          let x: int = t.value;
+          return x;
+        }
+
+        export function fail(): int {
+          return inner();
+        }
+
+        async function ainner(): int {
+          let t: table = { value: "bad" };
+          let x: int = t.value;
+          return x;
+        }
+
+        export async function afail(): int {
+          return await ainner();
+        }
+
+        export function boom(): int {
+          return 2147483647 + 1;
+        }
+
+        export function echo(e: Error): int { throw e; }
+
+        export function alias(): boolean {
+          let first: Error = { code: "seed", message: "seed" };
+          try { throw { code: "X", message: "x" }; } catch (caught) { first = caught; }
+          first.code = "Z";
+          let again: Error = { code: "seed", message: "seed" };
+          try { throw first; } catch (caught) { again = caught; }
+          return first === again && again.code === "Z";
+        }
+        """;
+
+    /**
+     * The host-capture entry: {@code run} reaches the companion failure
+     * through a production call, {@code reraise} catches and rethrows it,
+     * {@code leafFail} raises directly inside the exported function itself,
+     * {@code swallow} handles a companion failure and returns normally
+     * (the frame-cleanup arm), {@code arun}/{@code areraise} drive the same
+     * shapes through {@code await}, {@code overflow} raises the
+     * expected/actual-less E8004, {@code replaced} throws a new Error while
+     * handling the caught one, {@code echo} rethrows its Error argument
+     * across the module boundary, {@code alias} answers the
+     * catch/rethrow/catch alias identity of a retained Error value, and
+     * {@code mutate} edits a retained E8001 alias after the OUTER
+     * replacement linked it as cause and then rethrows the OUTER error.
+     * {@code recur} drives the host re-entry arm: the host-supplied step
+     * calls the same published export back while two activations of it are
+     * live, so three identical frame labels stack and none is lost.
+     */
+    private static final String HOST_ERROR_APP_SOURCE = """
+        import * as helper from "./lib";
+
+        export function main(): null { return null; }
+
+        export function run(): int { return helper.fail(); }
+
+        export function reraise(): int {
+          try { return helper.fail(); } catch (e) { throw e; }
+        }
+
+        export function leafFail(): int {
+          let t: table = { value: "bad" };
+          let x: int = t.value;
+          return x;
+        }
+
+        export function recur(n: int, step: (n: int) => int): int {
+          if (n === 0) {
+            let t: table = { value: "bad" };
+            let x: int = t.value;
+            return x;
+          }
+          return step(n - 1);
+        }
+
+        export function swallow(): int {
+          try { return helper.fail(); } catch (e) { return 0; }
+        }
+
+        export async function arun(): int { return await helper.afail(); }
+
+        export async function areraise(): int {
+          try { return await helper.afail(); } catch (e) { throw e; }
+        }
+
+        export function overflow(): int { return helper.boom(); }
+
+        export function replaced(): int {
+          try { return helper.fail(); }
+          catch (e) { throw { code: "REPLACED", message: "handled" }; }
+        }
+
+        export function echo(e: Error): int { return helper.echo(e); }
+
+        export function alias(): boolean { return helper.alias(); }
+
+        export function mutate(): int {
+          let saved: Error = { code: "seed", message: "seed" };
+
+          function step(): int {
+            try {
+              try { return helper.fail(); }
+              catch (e) {
+                saved = e;
+                throw { code: "OUTER", message: "outer" };
+              }
+            } catch (o) {
+              saved.code = "CHANGED";
+              saved.message = "changed";
+              throw o;
+            }
+          }
+
+          return step();
+        }
+        """;
+
+    /** One host-captured error row: the artifact's own DEAL error fields. */
+    private record HostErrorRow(String code, String message, String origin,
+                                String expected, String actual, String frames,
+                                String cause) {
+    }
+
+    private static void testHostErrorTransport() throws Exception {
+        System.out.println("-- the host-visible DealError of the production "
+            + "artifact: the complete transport through calls, await, and "
+            + "catch/rethrow, with named frames --");
+        Fixture fixture = compileProject(HOST_ERROR_LIB_SOURCE,
+            HOST_ERROR_APP_SOURCE, "src/app.deal");
+        Path workspace = Files.createTempDirectory("jvm-production-project-hosterror");
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+            if (result.project() == null) {
+                fail("the host-error fixture lowers: " + result.diagnostics());
+                return;
+            }
+            ExecutableLoweredProject project = result.project();
+            String className = JvmBackend.classNameFor(project.entryModule().path());
+            JvmSemanticEmitter.EmissionResult emission =
+                JvmSemanticEmitter.emitProductionProject(project, result.tables(),
+                    result.registries(), className, fixture.surface());
+            Path source = workspace.resolve(className + ".java");
+            Files.writeString(source, emission.source(), StandardCharsets.UTF_8);
+            SemanticOp arun = asyncEntry(project.modules().get(new ModuleId("app")),
+                "arun");
+            SemanticOp areraise = asyncEntry(project.modules().get(new ModuleId("app")),
+                "areraise");
+            check(arun != null && areraise != null,
+                "the fixture records the async external entries of arun/areraise");
+            if (arun == null || areraise == null) {
+                return;
+            }
+            Path probe = workspace.resolve("HostProbe.java");
+            Files.writeString(probe, jvmHostErrorProbe(className, arun, areraise),
+                StandardCharsets.UTF_8);
+            Path classes = workspace.resolve("classes");
+            Files.createDirectories(classes);
+            String classpath = absoluteClasspath();
+            ProcessOutcome javacRun = runProcess(List.of("javac", "--release", "25",
+                "-proc:none", "-cp", classpath, "-d", classes.toString(),
+                source.toAbsolutePath().toString(), probe.toAbsolutePath().toString()),
+                workspace);
+            check(javacRun.exitCode() == 0,
+                "the host-error artifact and its host probe compile: "
+                    + javacRun.output());
+            if (javacRun.exitCode() != 0) {
+                return;
+            }
+            ProcessOutcome run = runProcess(List.of("java", "-cp",
+                classpath + java.io.File.pathSeparator + classes, "HostProbe"),
+                workspace);
+            checkEq(0, run.exitCode(), "the host-error probe exits 0: "
+                + run.output());
+            Map<String, HostErrorRow> rows = hostErrorRows(run.stdout());
+            checkEq(8, rows.size(),
+                "the probe captures one host error per closed probe row: "
+                    + run.output());
+
+            // The production call arm: code/message/origin, the applicable
+            // expected/actual pair, the named active frames, no cause. The
+            // direct host invocation of the published callable names the
+            // exported function too (app#run, the innermost production call
+            // below it).
+            HostErrorRow direct = rows.get("run");
+            check(direct != null, "the probe captured the run error");
+            if (direct == null) {
+                return;
+            }
+            checkEq("E8001", direct.code(), "the companion failure's code");
+            checkEq("expected int", direct.message(), "the companion failure's message");
+            check(direct.origin().endsWith("src/lib.deal:3:16"),
+                "the companion check's origin is the raising function's source "
+                    + "location: " + direct.origin());
+            checkEq("int", direct.expected(), "the applicable expected type");
+            checkEq("string", direct.actual(), "the applicable actual kind");
+            check(direct.frames().matches(
+                    "lib#inner@F\\d+,lib#fail@F\\d+,app#run@F\\d+"),
+                "the frames name the original and generated functions of every "
+                    + "active DEAL call including the directly invoked export, "
+                    + "innermost first: " + direct.frames());
+            checkEq("-", direct.cause(), "a primary failure carries no cause");
+
+            // Catch/rethrow: the original error identity survives the catch
+            // and the rethrow (code/message/origin/expected/actual and the
+            // frames captured at the raise), no cause is invented, and the
+            // active export is named in the rethrow's own frames.
+            HostErrorRow reraise = rows.get("reraise");
+            check(reraise != null, "the probe captured the reraise error");
+            if (reraise != null) {
+                checkEq(direct.code(), reraise.code(), "the rethrow keeps the code");
+                checkEq(direct.message(), reraise.message(),
+                    "the rethrow keeps the message");
+                checkEq(direct.origin(), reraise.origin(),
+                    "the rethrow keeps the original source location");
+                checkEq(direct.expected(), reraise.expected(),
+                    "the rethrow keeps the expected type");
+                checkEq(direct.actual(), reraise.actual(),
+                    "the rethrow keeps the actual kind");
+                check(reraise.frames().matches(
+                        "lib#inner@F\\d+,lib#fail@F\\d+,app#reraise@F\\d+"),
+                    "the rethrow keeps the frames captured at the raise, with "
+                        + "its own directly invoked export named: "
+                        + reraise.frames());
+                checkEq("-", reraise.cause(), "the rethrow invents no cause");
+            }
+
+            // The leaf-export arm: a failure raised directly inside the
+            // published callable is named by that callable's own frame — the
+            // generated and original names of the invoked export.
+            HostErrorRow leaf = rows.get("leafFail");
+            check(leaf != null, "the probe captured the leaf-export error");
+            if (leaf != null) {
+                checkEq("E8001", leaf.code(), "the leaf failure's code");
+                checkEq("expected int", leaf.message(),
+                    "the leaf failure's message");
+                check(leaf.origin().contains("src/app.deal:"),
+                    "the leaf failure's origin is its own raising site: "
+                        + leaf.origin());
+                checkEq("int", leaf.expected(),
+                    "the leaf failure's expected type");
+                checkEq("string", leaf.actual(),
+                    "the leaf failure's actual kind");
+                check(leaf.frames().matches("app#leafFail@F\\d+"),
+                    "the leaf failure's frames name the directly invoked export "
+                        + "alone: " + leaf.frames());
+                checkEq("-", leaf.cause(), "the leaf failure carries no cause");
+            }
+
+            // The success arm returns normally and leaves no active frame:
+            // the cleanup probe below re-invokes the leaf export after it.
+            check(run.stdout().contains("HOST-ERR|swallow|none|0"),
+                "the handling export returns its own value: " + run.output());
+
+            // The await arm: the awaited companion failure transports the
+            // same complete surface through the artifact's async-entry
+            // dispatch (the reserved entry the host invoker drives), and
+            // its rethrow preserves it.
+            HostErrorRow awaitDirect = rows.get("arun");
+            HostErrorRow awaitReraise = rows.get("areraise");
+            check(awaitDirect != null && awaitReraise != null,
+                "the probe captured the await errors");
+            if (awaitDirect != null) {
+                checkEq("E8001", awaitDirect.code(), "the awaited failure's code");
+                checkEq("expected int", awaitDirect.message(),
+                    "the awaited failure's message");
+                check(awaitDirect.origin().endsWith("src/lib.deal:13:16"),
+                    "the awaited failure's origin is the raising async function's "
+                        + "source location: " + awaitDirect.origin());
+                checkEq("int", awaitDirect.expected(),
+                    "the awaited failure's expected type");
+                checkEq("string", awaitDirect.actual(),
+                    "the awaited failure's actual kind");
+                check(awaitDirect.frames().matches(
+                        "lib#ainner@F\\d+,lib#afail@F\\d+,app#arun@F\\d+"),
+                    "the await frames name every active DEAL call including the "
+                        + "awaiting entry: " + awaitDirect.frames());
+                checkEq("-", awaitDirect.cause(),
+                    "the awaited failure carries no cause");
+            }
+            if (awaitReraise != null && awaitDirect != null) {
+                checkEq(awaitDirect.code(), awaitReraise.code(),
+                    "the await rethrow keeps the code");
+                checkEq(awaitDirect.origin(), awaitReraise.origin(),
+                    "the await rethrow keeps the original source location");
+                checkEq(awaitDirect.expected(), awaitReraise.expected(),
+                    "the await rethrow keeps the expected type");
+                checkEq(awaitDirect.actual(), awaitReraise.actual(),
+                    "the await rethrow keeps the actual kind");
+                checkEq("-", awaitReraise.cause(),
+                    "the await rethrow invents no cause");
+                check(awaitReraise.frames().matches(
+                        "lib#ainner@F\\d+,lib#afail@F\\d+,app#areraise@F\\d+"),
+                    "the await rethrow keeps the original active frames with its "
+                        + "own awaiting entry: " + awaitReraise.frames());
+            }
+
+            // The absent-field rule: the E8004 carries no expected/actual
+            // and no cause, and its frames stay named — the directly invoked
+            // export included.
+            HostErrorRow overflow = rows.get("overflow");
+            check(overflow != null, "the probe captured the overflow error");
+            if (overflow != null) {
+                checkEq("E8004", overflow.code(), "the overflow failure's code");
+                checkEq("int out of safe range", overflow.message(),
+                    "the overflow failure's message");
+                check(overflow.origin().endsWith("src/lib.deal:22:10"),
+                    "the overflow origin is the arithmetic site: "
+                        + overflow.origin());
+                checkEq("-", overflow.expected(),
+                    "the overflow carries no expected type (absent, not empty)");
+                checkEq("-", overflow.actual(),
+                    "the overflow carries no actual kind (absent, not empty)");
+                check(overflow.frames().matches(
+                        "lib#boom@F\\d+,app#overflow@F\\d+"),
+                    "the overflow frames name every active DEAL call: "
+                        + overflow.frames());
+                checkEq("-", overflow.cause(), "the overflow carries no cause");
+            }
+
+            // The applicable-cause rule: a new failure raised while handling
+            // the caught one links the caught failure as its cause and names
+            // the handler's own active frame.
+            HostErrorRow replaced = rows.get("replaced");
+            check(replaced != null, "the probe captured the replacement error");
+            if (replaced != null) {
+                checkEq("REPLACED", replaced.code(),
+                    "the replacement failure's code");
+                checkEq("handled", replaced.message(),
+                    "the replacement failure's message");
+                check(replaced.origin().contains("src/app.deal:"),
+                    "the replacement failure raises at its own THROW origin: "
+                        + replaced.origin());
+                checkEq("-", replaced.expected(),
+                    "the replacement failure carries no expected type");
+                checkEq("-", replaced.actual(),
+                    "the replacement failure carries no actual kind");
+                check(replaced.frames().matches("app#replaced@F\\d+"),
+                    "the replacement failure's frames name the handling export: "
+                        + replaced.frames());
+                checkEq("E8001", replaced.cause(),
+                    "the replacement failure links the caught failure as its "
+                        + "cause");
+            }
+
+            // The saved-cause-alias arm: the E8001 alias is edited after the
+            // OUTER replacement linked it as cause, and the OUTER error is
+            // rethrown; the linked cause keeps the transport captured at
+            // catch time (never the later mutation).
+            String mutated = hostFieldLine(run.stdout(), "HOST-CAUSE|mutate|");
+            check(mutated != null, "the probe recorded the mutated-cause row: "
+                + run.output());
+            if (mutated != null) {
+                String[] parts = mutated.split("\\|", -1);
+                checkEq(9, parts.length,
+                    "the mutated-cause row carries every compared field: " + mutated);
+                if (parts.length == 9) {
+                    checkEq("OUTER", parts[0],
+                        "the rethrown failure keeps its code: " + mutated);
+                    checkEq("outer", parts[1],
+                        "the rethrown failure keeps its message: " + mutated);
+                    checkEq("E8001", parts[2],
+                        "the linked cause stays the E8001, never the edited "
+                            + "alias: " + mutated);
+                    checkEq("expected int", parts[3],
+                        "the linked cause keeps its captured message: " + mutated);
+                    check(parts[4].endsWith("src/lib.deal:3:16"),
+                        "the linked cause keeps its captured source location: "
+                            + mutated);
+                    checkEq("int", parts[5],
+                        "the linked cause keeps its captured expected type: "
+                            + mutated);
+                    checkEq("string", parts[6],
+                        "the linked cause keeps its captured actual kind: "
+                            + mutated);
+                    check(parts[7].matches(
+                            "lib#inner@F\\d+,lib#fail@F\\d+,app#step@F\\d+,"
+                                + "app#mutate@F\\d+"),
+                        "the linked cause keeps its captured frames: " + mutated);
+                    checkEq("-", parts[8],
+                        "the linked cause gains no invented cause: " + mutated);
+                }
+            }
+
+            // The host re-entry arm: the host-supplied step invokes the
+            // same published export back while two activations of it are
+            // live, so the innermost failure names three identical active
+            // invocations — the label is never deduplicated against an
+            // earlier activation of the same function.
+            String reentry = hostFieldLine(run.stdout(), "HOST-REENTRY|recur|");
+            check(reentry != null, "the probe recorded the host re-entry row: "
+                + run.output());
+            if (reentry != null) {
+                String[] parts = reentry.split("\\|", -1);
+                checkEq(7, parts.length,
+                    "the host re-entry row carries every compared field: "
+                        + reentry);
+                if (parts.length == 7) {
+                    checkEq("E8001", parts[0],
+                        "the re-entered failure keeps its code: " + reentry);
+                    checkEq("expected int", parts[1],
+                        "the re-entered failure keeps its message: " + reentry);
+                    check(parts[2].contains("src/app.deal:"),
+                        "the re-entered failure keeps its own raising site: "
+                            + reentry);
+                    checkEq("int", parts[3],
+                        "the re-entered failure keeps its expected type: " + reentry);
+                    checkEq("string", parts[4],
+                        "the re-entered failure keeps its actual kind: " + reentry);
+                    check(parts[5].matches("app#recur@F\\d+,app#recur@F\\d+,"
+                            + "app#recur@F\\d+"),
+                        "the re-entered failure names every active invocation of "
+                            + "the same function: " + reentry);
+                    String[] frames = parts[5].split(",");
+                    check(frames.length == 3 && frames[0].equals(frames[1])
+                            && frames[1].equals(frames[2]),
+                        "the three re-entered invocations carry the identical "
+                            + "label: " + reentry);
+                    checkEq("-", parts[6],
+                        "the re-entered failure invents no cause: " + reentry);
+                }
+            }
+            // The frame stack is empty right after the re-entered failure:
+            // every re-entered activation popped its own frame as the error
+            // propagated out to the host.
+            String empty = hostFieldLine(run.stdout(), "HOST-EMPTY|recur|");
+            checkEq("-", empty,
+                "the re-entered activations leave no frame behind: "
+                    + run.output());
+
+            // The cleanup arm: after the failure and the success probes, a
+            // fresh direct invocation of the leaf export names exactly its
+            // own frame — every host-visible push was balanced by its pop,
+            // including the re-entered activations above.
+            String clean = hostFieldLine(run.stdout(), "HOST-CLEAN|leafFail|");
+            check(clean != null, "the probe recorded the frame-cleanup row: "
+                + run.output());
+            if (clean != null) {
+                check(clean.matches("app#leafFail@F\\d+"),
+                    "the frame stack is clean before the fresh invocation and "
+                        + "balanced after it: " + clean);
+            }
+
+            // The identity arm: the DEAL probe's own catch/rethrow/catch
+            // alias identity, and the host transport identity of an
+            // unchanged rethrow (the host observes the identical failure
+            // object and the identical reified Error value).
+            Map<String, String> identities = hostIdentityRows(run.stdout());
+            checkEq("true", identities.get("alias"),
+                "the catch/rethrow/catch alias identity holds on the artifact "
+                    + "(the rethrown error caught again is the identical Error "
+                    + "value): " + run.output());
+            String echo = identities.get("echo");
+            check(echo != null, "the probe recorded the echo identity: "
+                + run.output());
+            if (echo != null) {
+                String[] echoParts = echo.split("\\|", -1);
+                checkEq(5, echoParts.length,
+                    "the echo identity row carries every compared field: " + echo);
+                if (echoParts.length == 5) {
+                    checkEq("true", echoParts[0],
+                        "an unchanged rethrow escapes as the identical DealError "
+                            + "object: " + echo);
+                    checkEq("true", echoParts[1],
+                        "the rethrown error caught again reifies to the identical "
+                            + "Error value: " + echo);
+                    checkEq("E8001", echoParts[2],
+                        "the rethrown failure keeps its code: " + echo);
+                    check(echoParts[3].endsWith("src/lib.deal:3:16"),
+                        "the rethrown failure keeps its original source location: "
+                            + echo);
+                    checkEq("-", echoParts[4],
+                        "the rethrown failure invents no cause: " + echo);
+                }
+            }
+        } finally {
+            deleteRecursively(workspace);
+            deleteRecursively(fixture.root());
+        }
+    }
+
+    /** The async external entry op of one export name, or {@code null}. */
+    private static SemanticOp asyncEntry(LoweredModuleUnit unit, String exportName) {
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
+                    && op.payload() instanceof KindPayload.ExternalEntryPayload payload
+                    && payload.async() && payload.exportName().equals(exportName)) {
+                return op;
+            }
+        }
+        return null;
+    }
+
+    // =========================================================================
     // =========================================================================
     // 4. The non-entry module emission (ISSUE-0749 review)
     // =========================================================================
@@ -1036,6 +1554,206 @@ public class JvmProductionProjectEmissionTest {
         return new ProcessOutcome(exit, stdout, stderr);
     }
 
+    /**
+     * The generated JVM host probe: invokes every probe export once — the
+     * sync exports through the artifact's published surface, and the async
+     * exports through the artifact's reserved {@code ae<opId>} async-entry
+     * dispatch (the entry the host invoker drives) — and prints the raw
+     * {@code DealError} fields of the uncaught failure, with {@code -} for
+     * every absent field.
+     */
+    private static String jvmHostErrorProbe(String className, SemanticOp arun,
+            SemanticOp areraise) {
+        return "import deal.codegen.jvm.JvmRuntime;\n"
+            + "\n"
+            + "public final class HostProbe {\n"
+            + "  static final String[] SYNC = { \"run\", \"reraise\","
+            + " \"leafFail\", \"swallow\", \"overflow\", \"replaced\","
+            + " \"mutate\" };\n"
+            + "  public static void main(String[] args) throws Exception {\n"
+            + "    " + className + ".main(new String[0]);\n"
+            + "    JvmRuntime.Table surface = " + className
+            + ".EXPORT_SURFACES.get(\"app\");\n"
+            + "    for (String name : SYNC) {\n"
+            + "      JvmRuntime.FunctionValue fn =\n"
+            + "          (JvmRuntime.FunctionValue) surface.read(name);\n"
+            + "      try {\n"
+            + "        System.out.println(\"HOST-ERR|\" + name + \"|none|\"\n"
+            + "            + fn.fn.invoke(new Object[0]));\n"
+            + "      } catch (Throwable t) {\n"
+            + "        report(name, t);\n"
+            + "      }\n"
+            + "    }\n"
+            + "    drive(\"arun\", " + arun.opId().id() + "L);\n"
+            + "    drive(\"areraise\", " + areraise.opId().id() + "L);\n"
+            + "    checkIdentity(surface);\n"
+            + "    checkReentry(surface);\n"
+            + "    checkCleanup(surface);\n"
+            + "    checkMutatedCause(surface);\n"
+            + "  }\n"
+            + "\n"
+            + "  static void checkReentry(JvmRuntime.Table surface) throws Exception {\n"
+            + "    JvmRuntime.FunctionValue recur =\n"
+            + "        (JvmRuntime.FunctionValue) surface.read(\"recur\");\n"
+            + "    JvmRuntime.FunctionValue[] step = new JvmRuntime.FunctionValue[1];\n"
+            + "    step[0] = new JvmRuntime.FunctionValue(args -> recur.fn.invoke(\n"
+            + "            new Object[]{ args[0], step[0] }),\n"
+            + "        \"(int)->int\", \"(int)->int\", null);\n"
+            + "    try {\n"
+            + "      recur.fn.invoke(new Object[]{ 2L, step[0] });\n"
+            + "      System.out.println(\"HOST-REENTRY|recur|none\");\n"
+            + "    } catch (JvmRuntime.DealError e) {\n"
+            + "      System.out.println(\"HOST-REENTRY|recur|\" + e.code + \"|\"\n"
+            + "          + e.msg + \"|\" + e.origin + \"|\" + f(e.expected) + \"|\"\n"
+            + "          + f(e.actual) + \"|\" + f(e.frames) + \"|\"\n"
+            + "          + (e.cause == null ? \"-\" : e.cause.code));\n"
+            + "    }\n"
+            + "    System.out.println(\"HOST-EMPTY|recur|\" + JvmRuntime.framesText());\n"
+            + "  }\n"
+            + "\n"
+            + "  static void checkCleanup(JvmRuntime.Table surface) throws Exception {\n"
+            + "    try {\n"
+            + "      ((JvmRuntime.FunctionValue) surface.read(\"leafFail\"))\n"
+            + "          .fn.invoke(new Object[0]);\n"
+            + "      System.out.println(\"HOST-CLEAN|leafFail|none\");\n"
+            + "    } catch (JvmRuntime.DealError e) {\n"
+            + "      System.out.println(\"HOST-CLEAN|leafFail|\" + f(e.frames));\n"
+            + "    }\n"
+            + "  }\n"
+            + "\n"
+            + "  static void checkMutatedCause(JvmRuntime.Table surface) throws Exception {\n"
+            + "    try {\n"
+            + "      ((JvmRuntime.FunctionValue) surface.read(\"mutate\"))\n"
+            + "          .fn.invoke(new Object[0]);\n"
+            + "      System.out.println(\"HOST-CAUSE|mutate|none\");\n"
+            + "    } catch (JvmRuntime.DealError e) {\n"
+            + "      JvmRuntime.DealError c = e.cause;\n"
+            + "      System.out.println(\"HOST-CAUSE|mutate|\" + e.code + \"|\" + e.msg"
+            + " + \"|\" + (c == null ? \"-|-|-|-|-|-\" : c.code + \"|\" + c.msg"
+            + " + \"|\" + f(c.origin) + \"|\" + f(c.expected) + \"|\" + f(c.actual)"
+            + " + \"|\" + f(c.frames) + \"|\""
+            + " + (c.cause == null ? \"-\" : c.cause.code)));\n"
+            + "    }\n"
+            + "  }\n"
+            + "\n"
+            + "  static void checkIdentity(JvmRuntime.Table surface) throws Exception {\n"
+            + "    Object alias = ((JvmRuntime.FunctionValue) surface.read(\"alias\"))\n"
+            + "        .fn.invoke(new Object[0]);\n"
+            + "    System.out.println(\"HOST-ID|alias|\" + alias);\n"
+            + "    JvmRuntime.DealError captured = null;\n"
+            + "    try {\n"
+            + "      ((JvmRuntime.FunctionValue) surface.read(\"run\"))\n"
+            + "          .fn.invoke(new Object[0]);\n"
+            + "    } catch (JvmRuntime.DealError e) {\n"
+            + "      captured = e;\n"
+            + "    }\n"
+            + "    if (captured == null) {\n"
+            + "      System.out.println(\"HOST-ID|echo|nocapture\");\n"
+            + "      return;\n"
+            + "    }\n"
+            + "    JvmRuntime.ErrorValue value = captured.reify();\n"
+            + "    try {\n"
+            + "      ((JvmRuntime.FunctionValue) surface.read(\"echo\"))\n"
+            + "          .fn.invoke(new Object[]{ value });\n"
+            + "      System.out.println(\"HOST-ID|echo|none\");\n"
+            + "    } catch (JvmRuntime.DealError e) {\n"
+            + "      System.out.println(\"HOST-ID|echo|\" + (e == captured) + \"|\"\n"
+            + "          + (e.reify() == value) + \"|\" + e.code + \"|\" + e.origin\n"
+            + "          + \"|\" + (e.cause == null ? \"-\" : e.cause.code));\n"
+            + "    }\n"
+            + "  }\n"
+            + "\n"
+            + "  static void drive(String name, long opId) throws Exception {\n"
+            + "    java.lang.reflect.Method entry = " + className
+            + ".class.getMethod(\"ae\" + opId, String.class,\n"
+            + "        boolean.class, Object[].class);\n"
+            + "    try {\n"
+            + "      System.out.println(\"HOST-ERR|\" + name + \"|none|\"\n"
+            + "          + entry.invoke(null, \"-\", true, new Object[0]));\n"
+            + "    } catch (java.lang.reflect.InvocationTargetException e) {\n"
+            + "      report(name, e.getCause());\n"
+            + "    }\n"
+            + "  }\n"
+            + "\n"
+            + "  static void report(String name, Throwable t) {\n"
+            + "    Throwable c = t;\n"
+            + "    while (!(c instanceof JvmRuntime.DealError) && c.getCause() != null) {\n"
+            + "      c = c.getCause();\n"
+            + "    }\n"
+            + "    if (!(c instanceof JvmRuntime.DealError e)) {\n"
+            + "      System.out.println(\"HOST-ERR|\" + name + \"|raw|\" + t);\n"
+            + "      return;\n"
+            + "    }\n"
+            + "    System.out.println(\"HOST-ERR|\" + name + \"|\" + e.code + \"|\" + e.msg\n"
+            + "        + \"|\" + e.origin + \"|\" + f(e.expected) + \"|\" + f(e.actual)\n"
+            + "        + \"|\" + f(e.frames) + \"|\"\n"
+            + "        + (e.cause == null ? \"-\" : e.cause.code));\n"
+            + "  }\n"
+            + "\n"
+            + "  static String f(String v) { return v == null ? \"-\" : v; }\n"
+            + "}\n";
+    }
+
+    /**
+     * The captured host-error rows keyed by probe export; a row whose
+     * shape is not the closed {@code HOST-ERR} line is skipped (the caller
+     * reports the missing row).
+     */
+    private static Map<String, HostErrorRow> hostErrorRows(String stdout) {
+        Map<String, HostErrorRow> rows = new LinkedHashMap<>();
+        for (String line : stdout.split("\n", -1)) {
+            if (!line.startsWith("HOST-ERR|")) {
+                continue;
+            }
+            String[] parts = line.split("\\|", -1);
+            if (parts.length != 9) {
+                continue;
+            }
+            rows.put(parts[1], new HostErrorRow(parts[2], parts[3], parts[4],
+                parts[5], parts[6], parts[7], parts[8]));
+        }
+        return rows;
+    }
+
+    /**
+     * The payload of the single probe line with one prefix (the text after
+     * the prefix), or {@code null} when the line is absent.
+     */
+    private static String hostFieldLine(String stdout, String prefix) {
+        for (String line : stdout.split("\n", -1)) {
+            if (line.startsWith(prefix)) {
+                return line.substring(prefix.length());
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The probe's identity rows keyed by probe name: the payload of every
+     * {@code HOST-ID} line (the fields after the name) keyed by the name.
+     */
+    private static Map<String, String> hostIdentityRows(String stdout) {
+        Map<String, String> rows = new LinkedHashMap<>();
+        for (String line : stdout.split("\n", -1)) {
+            if (!line.startsWith("HOST-ID|")) {
+                continue;
+            }
+            String[] parts = line.split("\\|", -1);
+            if (parts.length < 3) {
+                continue;
+            }
+            StringBuilder payload = new StringBuilder();
+            for (int i = 2; i < parts.length; i++) {
+                if (i > 2) {
+                    payload.append('|');
+                }
+                payload.append(parts[i]);
+            }
+            rows.put(parts[1], payload.toString());
+        }
+        return rows;
+    }
+
     private static void writeFileIn(Path root, String relative, String content)
             throws Exception {
         Path file = root.resolve(relative);
@@ -1080,6 +1798,7 @@ public class JvmProductionProjectEmissionTest {
             testOverflowTerminal();
             testShadowingBindings();
             testDynamicTableRead();
+            testHostErrorTransport();
         } finally {
             deleteRecursively(fixture.root());
         }

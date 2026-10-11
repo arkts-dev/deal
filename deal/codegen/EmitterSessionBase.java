@@ -10,6 +10,7 @@ import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ClassLayout;
 import deal.semantic.ir.ExternalAsyncLink;
+import deal.semantic.ir.FrameLabels;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
@@ -149,6 +150,8 @@ public abstract class EmitterSessionBase {
     protected final Map<OpId, ModuleId> opModule = new HashMap<>();
     /** One lowered body's private-state keys (the invocation save/restore). */
     protected final Map<FunctionId, List<String>> bodyStateKeyCache = new HashMap<>();
+    /** The derived stack-frame label of every lowered function id. */
+    private final Map<FunctionId, String> frameLabels = new HashMap<>();
     protected final Set<OpId> ownedChildren = new HashSet<>();
     /**
      * The payload-owned children only (closure computation excludes
@@ -203,6 +206,27 @@ public abstract class EmitterSessionBase {
                 }
             }
         }
+    }
+
+    /**
+     * The stack-frame label of one lowered function id: the owning
+     * module's path, the function's original source name, and the
+     * generated function name, derived once per id from the session's
+     * unit closure (the shared {@link FrameLabels} form). An id outside
+     * the closure projects the generated name alone — never a guessed
+     * module or source name.
+     */
+    protected final String frameLabel(FunctionId functionId) {
+        return frameLabels.computeIfAbsent(functionId, id -> {
+            for (Map.Entry<ModuleId, LoweredModuleUnit> entry : units.entrySet()) {
+                LoweredFunction function = entry.getValue().functions().get(id);
+                if (function != null) {
+                    return FrameLabels.of(entry.getKey().path(), id,
+                        function.sourceName());
+                }
+            }
+            return FrameLabels.of(id);
+        });
     }
 
     /** Registers one module's unit/table/registry into the session closure. */

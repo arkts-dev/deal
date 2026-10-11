@@ -1798,14 +1798,8 @@ final class JvmHostAbiEmission {
             .append("JvmRuntime.invokeAdapter(__a, \"-\", ").append(args)
             .append(");\n");
         out.append("      } else {\n");
-        out.append("        boolean __pushed = this.$carrier.fid != null;\n");
-        out.append("        if (__pushed) JvmRuntime.pushFrame(this.$carrier.fid);\n");
-        out.append("        try {\n");
-        out.append("          ").append(voidReturn ? "" : "__r = ")
+        out.append("        ").append(voidReturn ? "" : "__r = ")
             .append("this.$carrier.fn.invoke(").append(args).append(");\n");
-        out.append("        } finally {\n");
-        out.append("          if (__pushed) JvmRuntime.popFrame();\n");
-        out.append("        }\n");
         out.append("      }\n");
         if (!voidReturn) {
             out.append("      return ").append(bridgeReturn(func)).append(";\n");

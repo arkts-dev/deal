@@ -528,7 +528,7 @@ public final class JvmSemanticEmitter {
             for (LoweredModuleUnit moduleUnit : units.values()) {
                 for (LoweredFunction function : moduleUnit.functions().values()) {
                     out.append("    if (").append(javaString(
-                            String.valueOf(function.functionId().id())))
+                            frameLabel(function.functionId())))
                         .append(".equals(fid)) return ")
                         .append(javaString(moduleUnit.moduleId().path()))
                         .append(";\n");
@@ -1183,7 +1183,7 @@ public final class JvmSemanticEmitter {
                 .append(", ")
                 .append(javaString(function.descriptor().canonicalSpecText()))
                 .append(", ")
-                .append(javaString(String.valueOf(functionId.id())))
+                .append(javaString(frameLabel(functionId)))
                 .append(");\n");
             out.append("  }\n");
             currentFunction = null;
@@ -3209,8 +3209,6 @@ public final class JvmSemanticEmitter {
                     out.append(indent(indent)).append("Object ").append(resultLocal)
                         .append(" = null;\n");
                     out.append(indent(indent)).append("try {\n");
-                    out.append(indent(indent + 1)).append("JvmRuntime.pushFrame(")
-                        .append(javaString(String.valueOf(callee.id()))).append(");\n");
                     // The invoking call's origin: a failure inside the body
                     // whose arm renders the call origin (the @jsonable toJson
                     // walk) reads the innermost active call.
@@ -3265,7 +3263,6 @@ public final class JvmSemanticEmitter {
                     out.append(indent(indent + 1)).append("} finally {\n");
                     out.append(indent(indent + 1))
                         .append("  JvmRuntime.callOrigins.pop();\n");
-                    out.append(indent(indent + 1)).append("  JvmRuntime.popFrame();\n");
                     out.append(indent(indent + 1)).append("}\n");
                     out.append(indent(indent)).append("} finally {\n");
                     emitInvocationStateRestore(callee, savedState, indent + 1);
@@ -3427,11 +3424,7 @@ public final class JvmSemanticEmitter {
                     .append(", ").append(javaString(opKey(op.opId())))
                     .append(", List.of(), null, null);\n");
             }
-            out.append(indent(indent + 2)).append("JvmRuntime.pushFrame(")
-                .append(javaString(String.valueOf(entryPayload.function().id())))
-                .append(");\n");
             out.append(indent(indent + 2)).append("try {\n");
-            out.append(indent(indent + 3)).append("try {\n");
             // The invoking call's origin: a failure inside the entry body
             // whose arm renders the call origin (the @jsonable toJson walk)
             // reads the innermost active call.
@@ -3470,9 +3463,6 @@ public final class JvmSemanticEmitter {
                         entryPayload.signature().returnType())))
                     .append("), null);\n");
             }
-            out.append(indent(indent + 2)).append("} finally {\n");
-            out.append(indent(indent + 3)).append("JvmRuntime.popFrame();\n");
-            out.append(indent(indent + 2)).append("}\n");
             out.append(indent(indent + 1)).append("} finally {\n");
             out.append(indent(indent + 2)).append("MODULE = ").append(prevMod)
                 .append(";\n");
@@ -3688,8 +3678,8 @@ public final class JvmSemanticEmitter {
             emitDynamicCarrierFailure(op, carrier, indent + 1);
             out.append(indent(indent)).append("}\n");
             // DEAL_BODY: the carrier's own invoker under the callee's
-            // module; the frame and the module context are restored on
-            // every path.
+            // module; the module context is restored on every path and the
+            // carrier owns its own frame.
             out.append(indent(indent)).append("if (\"DEAL_BODY\".equals(")
                 .append(cls).append(")) {\n");
             emitDynamicBodyInvoke(op, carrier, result,
@@ -3774,10 +3764,10 @@ public final class JvmSemanticEmitter {
         /**
          * One dynamically dispatched DEAL-body invocation: the carrier's
          * function id resolves its owning module through the emitted
-         * lookup, the frame is pushed, the module context is switched,
-         * and the carrier's own invoker runs; the invocation's private
-         * state is restored and the op's FAILURE terminal carries the
-         * caller's module when the callee fails.
+         * lookup, the module context is switched, and the carrier's own
+         * invoker runs (the carrier pushes its own frame); the
+         * invocation's private state is restored and the op's FAILURE
+         * terminal carries the caller's module when the callee fails.
          */
         private void emitDynamicBodyInvoke(SemanticOp op, String source, String result,
                                            String invokeArgs, String id, int indent) {
@@ -3800,8 +3790,6 @@ public final class JvmSemanticEmitter {
                 .append(" = JvmRuntime.currentModule();\n");
             out.append(indent(indent)).append("MODULE = __fm").append(id).append(";\n");
             out.append(indent(indent)).append("JvmRuntime.setModule(MODULE);\n");
-            out.append(indent(indent)).append("JvmRuntime.pushFrame(").append(fid)
-                .append(".fid);\n");
             // The invoking dynamic call's origin: a failure inside the
             // callee body whose arm renders the call origin (the
             // @jsonable toJson walk) reads the innermost active call —
@@ -3821,7 +3809,6 @@ public final class JvmSemanticEmitter {
                 .append(" = __e").append(id).append(";\n");
             out.append(indent(indent)).append("} finally {\n");
             out.append(indent(indent + 1)).append("JvmRuntime.callOrigins.pop();\n");
-            out.append(indent(indent + 1)).append("JvmRuntime.popFrame();\n");
             out.append(indent(indent + 1)).append("MODULE = __pm").append(id)
                 .append(";\n");
             out.append(indent(indent + 1)).append("JvmRuntime.setModule(__pr")
@@ -4030,8 +4017,6 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent + 2)).append("MODULE = ").append(sourceModule)
                 .append(";\n");
             out.append(indent(indent + 2)).append("JvmRuntime.setModule(MODULE);\n");
-            out.append(indent(indent + 2)).append("JvmRuntime.pushFrame("
-                + "((JvmRuntime.FunctionValue) ").append(source).append(").fid);\n");
             out.append(indent(indent + 2)).append("try {\n");
             if (callOwnedTaskCell) {
                 out.append(indent(indent + 3)).append("Object __dv").append(id)
@@ -4052,15 +4037,14 @@ public final class JvmSemanticEmitter {
                     .append(adapter).append(".arity));\n");
             }
             out.append(indent(indent + 2)).append("} finally {\n");
-            out.append(indent(indent + 3)).append("JvmRuntime.popFrame();\n");
             out.append(indent(indent + 3)).append("MODULE = __prevM;\n");
             out.append(indent(indent + 3)).append("JvmRuntime.setModule(__prevM);\n");
             out.append(indent(indent + 2)).append("}\n");
             out.append(indent(indent + 1)).append("});\n");
             out.append(indent(indent + 1)).append("}\n");
             // DEAL_BODY: the carrier's own invoker under the callee's
-            // module; the frame and the module context are restored on
-            // every path.
+            // module; the module context is restored on every path and the
+            // carrier owns its own frame.
             out.append(indent(indent)).append("} else if (").append(carrier)
                 .append(" instanceof JvmRuntime.FunctionValue ")
                 .append("__fv").append(id).append(" && __fv").append(id)
@@ -4080,8 +4064,6 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent + 2)).append("MODULE = __fm").append(id)
                 .append(";\n");
             out.append(indent(indent + 2)).append("JvmRuntime.setModule(MODULE);\n");
-            out.append(indent(indent + 2)).append("JvmRuntime.pushFrame(")
-                .append(functionValue).append(".fid);\n");
             out.append(indent(indent + 2)).append("try {\n");
             if (callOwnedTaskCell) {
                 out.append(indent(indent + 3)).append("Object __dv").append(id)
@@ -4099,7 +4081,6 @@ public final class JvmSemanticEmitter {
                     .append(String.join(", ", args)).append(" });\n");
             }
             out.append(indent(indent + 2)).append("} finally {\n");
-            out.append(indent(indent + 3)).append("JvmRuntime.popFrame();\n");
             out.append(indent(indent + 3)).append("MODULE = __prevM;\n");
             out.append(indent(indent + 3)).append("JvmRuntime.setModule(__prevM);\n");
             out.append(indent(indent + 2)).append("}\n");
@@ -5587,6 +5568,13 @@ public final class JvmSemanticEmitter {
                 (KindPayload.TryCatchPayload) op.payload();
             emitStart(op, indent);
             String cellName = cell(payload.catchBinding(), 0);
+            // The caught failure's identity, kept beside the catch binding
+            // so the catch block's own failure can tell a rethrow of the
+            // caught error (identity preserved, no invented cause) from a
+            // new failure raised while handling it (cause = the original
+            // failure). The per-op local survives a nested try/catch inside
+            // the catch block.
+            String caught = "__ct" + op.opId().id();
             out.append(indent(indent)).append("try {\n");
             tryDepth++;
             try {
@@ -5594,17 +5582,31 @@ public final class JvmSemanticEmitter {
                 emitBlockOps(payload.tryBlock(), indent + 2);
                 out.append(indent(indent))
                     .append("  } catch (JvmRuntime.DealError __terr) {\n");
+                // The caught failure reifies to its memoized Error value
+                // identity: catching the same rethrown failure again
+                // yields the identical Error value (saved === again).
                 out.append(indent(indent)).append("    ").append(cellName)
-                    .append(" = new JvmRuntime.ErrorValue(__terr.code, __terr.msg);\n");
+                    .append(" = __terr.reify();\n");
+                out.append(indent(indent)).append("    JvmRuntime.DealError ")
+                    .append(caught).append(" = __terr;\n");
                 out.append(indent(indent)).append("    try {\n");
                 emitBlockOps(payload.catchBlock(), indent + 3);
                 out.append(indent(indent))
                     .append("    } catch (JvmRuntime.DealError __cerr) {\n");
+                // A transported rethrow propagates unchanged (identity
+                // preserved, no invented cause); a genuinely new failure
+                // raised while handling the caught one links the caught
+                // failure as its cause.
+                out.append(indent(indent)).append("      if (__cerr.transported) {\n");
+                emitFailureEvent(op.opId(), op.kind().name(), op,
+                    "JvmRuntime.errtext(__cerr)", indent + 4);
+                out.append(indent(indent)).append("        throw __cerr;\n");
+                out.append(indent(indent)).append("      }\n");
                 out.append(indent(indent))
                     .append("      JvmRuntime.DealError __wrapped = new "
                         + "JvmRuntime.DealError(__cerr.code, __cerr.msg, "
                         + "__cerr.origin, __cerr.expected, __cerr.actual, "
-                        + "__cerr.frames, __terr);\n");
+                        + "__cerr.frames, " + caught + ");\n");
                 emitFailureEvent(op.opId(), op.kind().name(), op,
                     "JvmRuntime.errtext(__wrapped)", indent + 3);
                 out.append(indent(indent)).append("      throw __wrapped;\n");
@@ -5779,15 +5781,39 @@ public final class JvmSemanticEmitter {
         private void emitThrow(SemanticOp op, int indent) {
             KindPayload.ThrowPayload payload = (KindPayload.ThrowPayload) op.payload();
             emitStart(op, indent);
-            out.append(indent(indent)).append("JvmRuntime.DealError __thrown = new "
-                + "JvmRuntime.DealError(((").append("JvmRuntime.ErrorValue) ")
-                .append(slot(payload.errorValue())).append(").code, ((")
-                .append("JvmRuntime.ErrorValue) ").append(slot(payload.errorValue()))
-                .append(").message, ").append(javaString(originOf(op)))
+            String value = slot(payload.errorValue());
+            String id = String.valueOf(op.opId().id());
+            // The supplied Error value's own transport wins whenever it is
+            // an error identity (a caught error, or an error that already
+            // crossed a return/parameter): an unchanged rethrow publishes
+            // the identical failure and a rewritten code/message publishes
+            // the carried transport with the value's current fields, so
+            // origin, expected/actual, frames and any cause are preserved
+            // unchanged (no cause is invented) and the value's identity
+            // survives. A constructed Error carries no transport: the
+            // failure is synthesized at the THROW origin with no
+            // expected/actual and no cause (absent fields stay absent),
+            // frames active.
+            out.append(indent(indent)).append("JvmRuntime.ErrorValue __tv")
+                .append(id).append(" = (JvmRuntime.ErrorValue) ").append(value)
+                .append(";\n");
+            out.append(indent(indent)).append("JvmRuntime.DealError __thrown")
+                .append(id).append(";\n");
+            out.append(indent(indent)).append("if (__tv").append(id)
+                .append(".transport != null) {\n");
+            out.append(indent(indent)).append("  __thrown").append(id)
+                .append(" = JvmRuntime.rethrow(__tv").append(id).append(");\n");
+            out.append(indent(indent)).append("} else {\n");
+            out.append(indent(indent)).append("  __thrown").append(id)
+                .append(" = new JvmRuntime.DealError(__tv").append(id)
+                .append(".code, __tv").append(id).append(".message, ")
+                .append(javaString(originOf(op)))
                 .append(", null, null, JvmRuntime.framesText(), null);\n");
+            out.append(indent(indent)).append("}\n");
             emitFailureEvent(op.opId(), op.kind().name(), op,
-                "JvmRuntime.errtext(__thrown)", indent);
-            out.append(indent(indent)).append("throw __thrown;\n");
+                "JvmRuntime.errtext(__thrown" + id + ")", indent);
+            out.append(indent(indent)).append("throw __thrown").append(id)
+                .append(";\n");
         }
 
         /**
@@ -6059,9 +6085,6 @@ public final class JvmSemanticEmitter {
                         }
                         caps.append(captureArg(capture));
                     }
-                    out.append(indent(indent)).append("  JvmRuntime.pushFrame(")
-                        .append(javaString(String.valueOf(body.functionId().id())))
-                        .append(");\n");
                     out.append(indent(indent)).append("  try {\n");
                     out.append(indent(indent)).append("    __res = ")
                         .append(fnFactory(body.functionId())).append("(")
@@ -6081,8 +6104,6 @@ public final class JvmSemanticEmitter {
                             "JvmRuntime.errtext(__e)", indent + 1);
                     }
                     out.append(indent(indent)).append("    throw __e;\n");
-                    out.append(indent(indent)).append("  } finally {\n");
-                    out.append(indent(indent)).append("    JvmRuntime.popFrame();\n");
                     out.append(indent(indent)).append("  }\n");
                 }
                 case FunctionExecutionBinding.AdapterBinding adapter -> {
@@ -6420,9 +6441,6 @@ public final class JvmSemanticEmitter {
                     out.append(indent(indent + 1)).append("String __prevM = "
                         + "JvmRuntime.currentModule();\n");
                     out.append(indent(indent + 1)).append("JvmRuntime.setModule(MODULE);\n");
-                    out.append(indent(indent + 1)).append("JvmRuntime.pushFrame(")
-                        .append(javaString(String.valueOf(body.functionId().id())))
-                        .append(");\n");
                     // The task's body execution is the async counterpart of
                     // the synchronous invocation: a recursive await of the
                     // same body runs the nested task inline (the serial
@@ -6453,7 +6471,6 @@ public final class JvmSemanticEmitter {
                     }
                     out.append(String.join(", ", args)).append("});\n");
                     out.append(indent(indent + 1)).append("} finally {\n");
-                    out.append(indent(indent + 2)).append("JvmRuntime.popFrame();\n");
                     out.append(indent(indent + 2)).append("JvmRuntime.setModule(__prevM);\n");
                     emitAsyncInvocationStateRestore(body.functionId(), savedState,
                         indent + 2);
@@ -6830,9 +6847,6 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent + 2)).append("MODULE = ")
                 .append(javaString(ownerPath)).append(";\n");
             out.append(indent(indent + 2)).append("JvmRuntime.setModule(MODULE);\n");
-            out.append(indent(indent + 2)).append("JvmRuntime.pushFrame(")
-                .append(javaString(String.valueOf(payload.function().id())))
-                .append(");\n");
             // The entry task's body execution is the async counterpart of
             // the synchronous external-entry invocation: a recursive await
             // of the same entry runs the nested activation inline (the
@@ -6848,7 +6862,6 @@ public final class JvmSemanticEmitter {
                 .append(fnFactory(payload.function())).append("(").append(caps)
                 .append(").fn.invoke(__args);\n");
             out.append(indent(indent + 2)).append("} finally {\n");
-            out.append(indent(indent + 3)).append("JvmRuntime.popFrame();\n");
             out.append(indent(indent + 3)).append("MODULE = __prevModule;\n");
             out.append(indent(indent + 3)).append("JvmRuntime.setModule(__prevM);\n");
             emitAsyncInvocationStateRestore(payload.function(), savedState,
