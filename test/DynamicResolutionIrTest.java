@@ -1859,7 +1859,7 @@ public class DynamicResolutionIrTest {
             BlockId bodyBlock = new BlockId(3);
             SemanticOracle.HostResponder responder = new SemanticOracle.HostResponder() {
                 @Override
-                public String startAsync(ModuleId module, String export,
+                public AsyncStartOutcome startAsync(ModuleId module, String export,
                         RuntimeDescriptor.Func descriptor, List<SemanticOracle.Value> args,
                         String operationLabel) {
                     check(MOD.equals(module) && "f".equals(export) && SIG.equals(descriptor)
@@ -1868,7 +1868,7 @@ public class DynamicResolutionIrTest {
                             && "mod.a.f".equals(operationLabel),
                         "the HOST resolution derives the operation label mod.a.f and "
                             + "starts with the checked argument");
-                    return operationLabel;
+                    return new AsyncStartOutcome.Operation(operationLabel);
                 }
 
                 @Override
@@ -2300,7 +2300,7 @@ public class DynamicResolutionIrTest {
             BlockId bodyBlock = new BlockId(11);
             SemanticOracle.HostResponder responder = new SemanticOracle.HostResponder() {
                 @Override
-                public String startAsync(ModuleId module, String export,
+                public AsyncStartOutcome startAsync(ModuleId module, String export,
                         RuntimeDescriptor.Func descriptor, List<SemanticOracle.Value> args,
                         String operationLabel) {
                     check(MOD.equals(module) && "f".equals(export) && SIG.equals(descriptor)
@@ -2309,7 +2309,7 @@ public class DynamicResolutionIrTest {
                             && "mod.a.f".equals(operationLabel),
                         "the adapter HOST resolution derives the operation label mod.a.f "
                             + "and starts with the leading source argument");
-                    return operationLabel;
+                    return new AsyncStartOutcome.Operation(operationLabel);
                 }
 
                 @Override
@@ -2368,7 +2368,7 @@ public class DynamicResolutionIrTest {
             BlockId bodyBlock = new BlockId(12);
             SemanticOracle.HostResponder responder = new SemanticOracle.HostResponder() {
                 @Override
-                public String startAsync(ModuleId module, String export,
+                public AsyncStartOutcome startAsync(ModuleId module, String export,
                         RuntimeDescriptor.Func descriptor, List<SemanticOracle.Value> args,
                         String operationLabel) {
                     check(MOD.equals(module) && "@value#701".equals(export)
@@ -2377,7 +2377,7 @@ public class DynamicResolutionIrTest {
                             && "mod.a.@value".equals(operationLabel),
                         "the adapter HostFunctionValue resolution derives the operation "
                             + "label mod.a.@value and starts under the correlation export");
-                    return operationLabel;
+                    return new AsyncStartOutcome.Operation(operationLabel);
                 }
 
                 @Override

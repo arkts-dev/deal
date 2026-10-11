@@ -90,9 +90,10 @@ import java.util.stream.Stream;
  *       {@code std/json}, host parameter/return/nothing/string-carrier,
  *       async-shape, completion, class-construction, and host-load
  *       families; each drive asserts the sidecar pins per consumer and the
- *       three-consumer tuple identity. Where the oracle's host seam cannot
- *       carry the value the corpus host returns (the non-operation async
- *       handle), the oracle leg renders the same closed arm. The host
+ *       three-consumer tuple identity. The oracle's host seam retains the
+ *       invalid returned async handle's own actual projection (the
+ *       non-operation async handle reaches the closed arm with the
+ *       carrier's kind, never the absent handle's {@code nothing}). The host
  *       string-carrier producers drive the four closed carrier responses
  *       (lone surrogate, embedded surrogate, malformed non-surrogate, and
  *       valid) through a generated host-importing entry: every invalid
@@ -641,7 +642,12 @@ public class CanonicalProjectionParityTest {
 
     /** The oracle's program drive of one compiled case. */
     private static SemanticRuntimeModel.ConsumerRun oracleRun(Compiled compiled) {
-        SemanticOracle.HostResponder responder = responderFor(compiled.spec());
+        return oracleRun(compiled, responderFor(compiled.spec()));
+    }
+
+    /** The oracle's program drive of one compiled case under an explicit responder. */
+    private static SemanticRuntimeModel.ConsumerRun oracleRun(Compiled compiled,
+            SemanticOracle.HostResponder responder) {
         if (compiled.spec().entry() == Entry.ASYNC) {
             return SemanticOracle.invokeAsyncEntry(compiled.project(),
                 compiled.tables(), responder, compiled.checkedProject().entryModule(),
@@ -653,7 +659,18 @@ public class CanonicalProjectionParityTest {
 
     /** The oracle's program drive of one compiled case that must fail. */
     private static Tuple oracleTuple(Compiled compiled) {
-        SemanticRuntimeModel.ConsumerRun run = oracleRun(compiled);
+        return failureTuple(compiled, oracleRun(compiled));
+    }
+
+    /** The oracle's program drive of one compiled case under an explicit responder. */
+    private static Tuple oracleTupleWith(Compiled compiled,
+            SemanticOracle.HostResponder responder) {
+        return failureTuple(compiled, oracleRun(compiled, responder));
+    }
+
+    /** The failed drive's error snapshot on the corpus coordinates. */
+    private static Tuple failureTuple(Compiled compiled,
+            SemanticRuntimeModel.ConsumerRun run) {
         if (!(run.terminal()
                 instanceof SemanticRuntimeModel.Terminal.DealFailure failure)) {
             throw new IllegalStateException(compiled.spec().what()
@@ -666,10 +683,11 @@ public class CanonicalProjectionParityTest {
     private static final byte[] RAW_MALFORMED_STRING = { 0x61, (byte) 0x80, 0x62 };
 
     /**
-     * The closed E7 host seam of the async cases (the scripted bad handle
-     * for the shape fixture and the violating completion value for the
-     * completion fixture) and of the raw host string carriers (the
-     * backend-native carrier marks of the bad_string fixture).
+     * The closed E7 host seam of the async cases (the non-operation host
+     * handle carrying the corpus host's returned number for the shape
+     * fixture, and the violating completion value for the completion
+     * fixture) and of the raw host string carriers (the backend-native
+     * carrier marks of the bad_string fixture).
      */
     private static SemanticOracle.HostResponder responderFor(Case spec) {
         if ("bad_string".equals(spec.hostStem())) {
@@ -841,13 +859,16 @@ public class CanonicalProjectionParityTest {
         }
         return new SemanticOracle.HostResponder() {
             @Override
-            public String startAsync(ModuleId module, String export,
+            public AsyncStartOutcome startAsync(ModuleId module, String export,
                     deal.semantic.ir.RuntimeDescriptor.Func descriptor,
                     List<SemanticOracle.Value> args, String operationLabel) {
                 if ("async_shape_bad".equals(spec.hostStem())) {
-                    return null;
+                    // The corpus host returns the number 42: the invalid
+                    // handle's actual projection is retained, never collapsed
+                    // onto the absent handle's nothing.
+                    return new AsyncStartOutcome.BadHandle("number");
                 }
-                return operationLabel;
+                return new AsyncStartOutcome.Operation(operationLabel);
             }
 
             @Override
@@ -1186,33 +1207,18 @@ public class CanonicalProjectionParityTest {
                      "host-abi/host-nullable-function-param-bad",
                      "host-abi/host-rest-bad",
                      "host-abi/host-async-bad",
+                     "host-abi/host-async-shape-bad",
                      "host-abi/host-invalid-utf8-e8010",
                      "host-abi/host-surrogate-utf8-e8010" -> {
                     assertModuleExportOrigins(compiled);
-            Tuple oracle = oracleTuple(compiled);
+                    Tuple oracle = oracleTuple(compiled);
                     assertPinned(oracle, pin, spec, "oracle");
                     checkEq(null, firstDifferingField(oracle, lua), spec.what()
                         + ": the oracle and the LuaJIT artifact render the "
                         + "identical tuple");
-                }
-                case "host-abi/host-async-shape-bad" -> {
-                    // The oracle's host seam models a non-operation handle as
-                    // the absent handle (its ASYNC_OPERATION_HANDLE terminal
-                    // renders {@code nothing}); the value the corpus host
-                    // returns is the closed arm's own render, identical to
-                    // both production artifacts.
-                    BoundaryFailure arm = FailureContractRegistry.render(
-                        FailureArmId.ASYNC_SHAPE, Map.of("actual", "number"),
-                        "async operation", "number", null);
-                    checkEq(lua.message(), arm.message(), spec.what()
-                        + ": the oracle arm render and the artifacts render the "
-                        + "identical message");
-                    checkEq(lua.expected(), arm.expected(), spec.what()
-                        + ": the oracle arm render and the artifacts render the "
-                        + "identical expected field");
-                    checkEq(lua.actual(), arm.actual(), spec.what()
-                        + ": the oracle arm render and the artifacts render the "
-                        + "identical actual field");
+                    checkEq(null, firstDifferingField(oracle, jvm), spec.what()
+                        + ": the oracle and the JVM artifact render the "
+                        + "identical tuple");
                 }
                 case "host-abi/host-empty-return-bad" -> assertOracleCell(spec, lua,
                     FailurePolicyId.HOST_SYNC_RETURN, RuntimeDescriptor.Int.INSTANCE,
@@ -1227,9 +1233,47 @@ public class CanonicalProjectionParityTest {
                     // identity below); the artifacts carry the pinned tuples.
                 }
             }
+            if ("host-abi/host-async-shape-bad".equals(spec.corpusPath())) {
+                assertAbsentAsyncHandle(compiled, pin);
+            }
         } finally {
             deleteRecursively(compiled.root());
         }
+    }
+
+    /**
+     * The oracle's absent-handle control of the async shape fixture: a
+     * responder that scripts no async handle renders the same closed arm
+     * with the {@code nothing} actual at the same call origin. The typed
+     * seam therefore keeps the absent handle distinct from the invalid
+     * returned carrier (the non-operation value retains its own kind)
+     * instead of collapsing both onto one projection.
+     */
+    private static void assertAbsentAsyncHandle(Compiled compiled,
+            SidecarExpectations.ErrorExpectation pin) {
+        Tuple absent = oracleTupleWith(compiled, new SemanticOracle.HostResponder() {
+            @Override
+            public AsyncStartOutcome startAsync(ModuleId module, String export,
+                    RuntimeDescriptor.Func descriptor,
+                    List<SemanticOracle.Value> args, String operationLabel) {
+                return new AsyncStartOutcome.BadHandle("nothing");
+            }
+        });
+        checkEq("E8010", absent.code(), compiled.spec().what()
+            + " (oracle, absent async handle): the E8010 code");
+        checkEq("host async function must return an async operation, got nothing",
+            absent.message(), compiled.spec().what()
+                + " (oracle, absent async handle): the nothing message");
+        checkEq("async operation", absent.expected(), compiled.spec().what()
+            + " (oracle, absent async handle): the expected token");
+        checkEq("nothing", absent.actual(), compiled.spec().what()
+            + " (oracle, absent async handle): the absent handle's actual token");
+        checkEq(pin.sourceFile(), absent.file(), compiled.spec().what()
+            + " (oracle, absent async handle): the pinned call-origin file");
+        checkEq(pin.line(), absent.line(), compiled.spec().what()
+            + " (oracle, absent async handle): the pinned call-origin line");
+        checkEq(pin.column(), absent.column(), compiled.spec().what()
+            + " (oracle, absent async handle): the pinned call-origin column");
     }
 
     /**

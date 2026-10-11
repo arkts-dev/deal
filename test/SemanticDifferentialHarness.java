@@ -960,14 +960,22 @@ public final class SemanticDifferentialHarness {
         SemanticOracle.HostResponder responder = host == null ? null
             : new SemanticOracle.HostResponder() {
                 @Override
-                public String startAsync(deal.semantic.ir.ModuleId module, String export,
+                public AsyncStartOutcome startAsync(deal.semantic.ir.ModuleId module,
+                        String export,
                         RuntimeDescriptor.Func descriptor, List<SemanticOracle.Value> args,
                         String operationLabel) {
                     if (host.expectedExport() != null
                             && !host.expectedExport().equals(export)) {
-                        return null; // a mismatched export cell is a bad handle
+                        // A mismatched export cell scripts the absent handle
+                        // (the two target seams return nil/null alike); the
+                        // retained actual projection is the closed
+                        // {@code nothing} token.
+                        return new AsyncStartOutcome.BadHandle("nothing");
                     }
-                    return host.boundLabel();
+                    if (host.boundLabel() == null) {
+                        return new AsyncStartOutcome.BadHandle("nothing");
+                    }
+                    return new AsyncStartOutcome.Operation(host.boundLabel());
                 }
 
                 @Override

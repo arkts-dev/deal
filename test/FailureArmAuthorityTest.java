@@ -1244,11 +1244,11 @@ public class FailureArmAuthorityTest {
             private String started;
 
             @Override
-            public String startAsync(ModuleId module, String export,
+            public AsyncStartOutcome startAsync(ModuleId module, String export,
                     RuntimeDescriptor.Func descriptor,
                     List<SemanticOracle.Value> args, String operationLabel) {
                 started = export;
-                return operationLabel;
+                return new AsyncStartOutcome.Operation(operationLabel);
             }
 
             @Override
