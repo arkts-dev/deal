@@ -15,6 +15,13 @@ import java.util.stream.Stream;
 
 public final class AsyncExportEnvelope {
 
+    /**
+     * The shared stdout marker prefix of the async-export envelope
+     * protocol: the LuaJIT/JVM invokers and the runtime host surfaces all
+     * derive their marker from this one constant.
+     */
+    public static final String RESULT_PREFIX = "DEAL_ASYNC_EXPORT_RESULT:";
+
     public static final String STATUS_VALUE = "value";
     public static final String STATUS_DEAL_ERROR = "deal-error";
     public static final String STATUS_HOST_FAILURE = "host-failure";

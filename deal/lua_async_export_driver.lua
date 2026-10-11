@@ -23,10 +23,13 @@
 --       .. package.path
 --     so deal.runtime, generated module imports, stdlib imports, and
 --     staged host implementations resolve uniformly (D5).
---   * the entry chunk runs exactly once via dofile(entryArtifact), which
---     executes the module initialization and the chunk-end
---     exports.main.f() together (D4); this driver never calls main itself
---     and never re-loads the chunk.
+--   * the entry chunk runs exactly once via dofile(entryArtifact). With
+--     the invoker's DEAL_DEFER_MAIN marker the chunk publishes only its
+--     surfaces and this driver then drives the chunk's own __dealMain
+--     entry, which runs module initialization and the chunk-end main()
+--     together (D4); without the marker the chunk already ran both at
+--     load and the drive is the state guard's no-op. This driver never
+--     calls main itself and never re-loads the chunk.
 --   * __rt.invoke_async_export(exports, exportName, returnDescriptor) is
 --     called once with the dofile-published exports table and the argv
 --     name/descriptor verbatim (D9); the driver performs no descriptor or
@@ -34,9 +37,16 @@
 --     maps to the runtime's pinned host-failure reason, never a
 --     driver-side hard failure.
 --   * the checked completion is encoded as JSON text over the
---     JSON-encodable surface (D7): tables via json.stringify.f(value);
---     scalars via json.stringify.f({value}) with the surrounding array
---     brackets stripped; __NULL encodes null; numbers encode %.17g.
+--     JSON-encodable surface (D7) by the entry artifact's own shared value
+--     walk, which the chunk publishes as __dealAsyncExportEncode with
+--     the async-export wrapper: array carriers keep their JSON array
+--     shape at every depth (an empty array included), table carriers
+--     keep their insertion order, the language null renders null, and
+--     the walker's closed rejections (bytes, function carriers, class
+--     instances, cycles, non-finite numbers) are the representation
+--     failures. The committed std/json remains the envelope emitter, so
+--     the artifact's value algorithm never diverges from its own JSON
+--     surface.
 --   * exactly one stdout line DEAL_ASYNC_EXPORT_RESULT:<json> is emitted
 --     as the last write of the process (D6); exit 0 for value /
 --     deal-error / host-failure, exit 1 for representation-failure /
@@ -47,8 +57,10 @@
 --   (1) table with __hostInvocationFailure == true  -> host-failure
 --       envelope, reason = the runtime's pinned message verbatim, exit 0;
 --   (2) table with a non-nil string code            -> deal-error
---       envelope with code/message/file/line/column byte-for-byte and
---       absent location fields omitted, exit 0;
+--       envelope with the code/message and any present position fields
+--       byte-for-byte (the runtime half's `message`/file/line/column or
+--       the emitted artifact's `m` plus the `file:line:column` origin
+--       text in `o`, both mapped to the same envelope fields), exit 0;
 --   (3) anything else raised by dofile/invoke       -> infrastructure-
 --       failure envelope, exit 1;
 --   (4) any error raised by the completion-encoding step, regardless of
@@ -133,40 +145,57 @@ local entryArtifact = arg[1]
 local exportName = arg[3]
 local returnDescriptor = arg[4]
 
---- Completion encoding (D7). Any error raised here — including the
--- DEAL-shaped E8001 errors the encoder raises for bytes/cdata, function
--- wrappers, and unsupported types — is classified representation-failure
--- by the phase gate in the handler below, never a DEAL code.
+--- Completion encoding (D7): the entry artifact's own shared JSON text
+-- walk (`__dealAsyncExportEncode`, the chunk's JSON_STRINGIFY algorithm
+-- over the shared value model — array carriers keep their JSON array
+-- shape at every depth, table carriers their insertion order, a cycle is
+-- the walker's cycle rejection, and every non-encodable value is the
+-- walker's closed JSON_STRINGIFY_UNSUPPORTED rejection). Any error
+-- raised here — the DEAL-shaped arm carriers included — is classified
+-- representation-failure by the phase gate in the handler below, never a
+-- DEAL code.
 local function encode_completion(value)
-  if json == nil then
-    error({ message = "JSON envelope emitter unavailable" }, 0)
-  end
-  if type(value) == "table" then
-    return json.stringify.f(value)
-  end
-  -- Scalar path: wrap in a one-element array and strip the surrounding
-  -- brackets, leaving the exact encoded text (D7).
-  local wrapped = json.stringify.f({ value })
-  if type(wrapped) ~= "string" or #wrapped < 2
-      or string.sub(wrapped, 1, 1) ~= "["
-      or string.sub(wrapped, -1) ~= "]" then
-    error({ message =
-        "scalar completion encoding produced a malformed array frame" }, 0)
-  end
-  return string.sub(wrapped, 2, -2)
+  return __dealAsyncExportEncode(value)
 end
 
 -- One protected execution: runtime require, exactly one dofile of the
--- entry chunk (module initialization plus the chunk-end main call), one
--- runtime-entry call, then completion encoding. The phase flag
--- distinguishes operation errors from encoding errors in the handler.
+-- entry chunk (which publishes the module surfaces and, unless the
+-- invoker's DEAL_DEFER_MAIN marker is set, runs the chunk-end module
+-- initialization plus main call), the deferred-main drive when the
+-- chunk exposes the deferred entry, one runtime-entry call, then
+-- completion encoding. The phase flag distinguishes operation errors
+-- from encoding errors in the handler.
 local phase = "execute"
 
 local ok, payload = xpcall(function()
   local __rt = require("deal.runtime")
   local exports = dofile(entryArtifact)
+  -- The deferred-main drive: with DEAL_DEFER_MAIN set (the production
+  -- invoker always sets it), the chunk published its surfaces without
+  -- running module initialization or main, so this protected step runs
+  -- both exactly once in the same runtime instance and a DEAL error
+  -- raised by either classifies as a deal-error envelope instead of the
+  -- chunk's own DEAL_ERROR_CODE terminal (which would exit the process
+  -- before the envelope). The emitted chunk's own state guard makes a
+  -- repeated drive a no-op, so a chunk that already ran its terminal
+  -- stays correct; a chunk without the deferred entry already ran its
+  -- initialization and main at load.
+  if type(__dealMain) == "function" then
+    local __mainOk, __mainErr = __dealMain()
+    if not __mainOk then
+      error(__mainErr, 0)
+    end
+  end
   local value = __rt.invoke_async_export(exports, exportName,
       returnDescriptor)
+  -- The shared completion encoder the entry artifact publishes: it is
+  -- co-emitted with the async-export wrapper, so a value without it is a
+  -- non-production artifact — the phase stays "execute", so the hard
+  -- failure classifies infrastructure, never a value-representation
+  -- mismatch.
+  if type(__dealAsyncExportEncode) ~= "function" then
+    error("the entry artifact publishes no shared value walk", 0)
+  end
   phase = "encode"
   return encode_completion(value)
 end, function(e)
@@ -180,10 +209,19 @@ end
 
 -- Error classification (D8), in the pinned order.
 if phase == "encode" then
+  -- Both encoder failure shapes: the deployed std/json member carries
+  -- `message` (__rt._err), while the artifact's closed failure arms
+  -- carry the rendered message in `m` (__failExpr). The reason is the
+  -- rendered text either way.
+  local reason = nil
+  if type(payload) == "table" then
+    if payload.message ~= nil then reason = payload.message end
+    if reason == nil then reason = payload.m end
+  end
+  if reason == nil then reason = payload end
   emit({
     status = "representation-failure",
-    reason = (type(payload) == "table" and payload.message ~= nil)
-        and tostring(payload.message) or tostring(payload),
+    reason = tostring(reason),
   }, 1)
 elseif type(payload) == "table"
     and payload.__hostInvocationFailure == true then
@@ -193,14 +231,28 @@ elseif type(payload) == "table"
         or tostring(payload),
   }, 0)
 elseif type(payload) == "table" and type(payload.code) == "string" then
+  -- The two DEAL error shapes of the production path: the deployed
+  -- runtime half carries `message` plus optional file/line/column
+  -- positions (__rt._err), while the emitted artifact's closed failure
+  -- arms carry the rendered message in `m` and the origin text
+  -- `file:line:column` in `o` (__failExpr). Both map to the same
+  -- envelope fields; a runtime error that already carries positions
+  -- keeps them byte-for-byte.
   local fields = {
     status = "deal-error",
     code = payload.code,
-    message = payload.message,
+    message = payload.message ~= nil and payload.message or payload.m,
   }
-  if payload.file ~= nil then fields.file = payload.file end
-  if payload.line ~= nil then fields.line = payload.line end
-  if payload.column ~= nil then fields.column = payload.column end
+  local file, line, column = payload.file, payload.line, payload.column
+  if file == nil and type(payload.o) == "string" then
+    local oFile, oLine, oColumn = string.match(payload.o, "^(.*):(%d+):(%d+)$")
+    if oFile ~= nil then
+      file, line, column = oFile, tonumber(oLine), tonumber(oColumn)
+    end
+  end
+  if file ~= nil then fields.file = file end
+  if line ~= nil then fields.line = line end
+  if column ~= nil then fields.column = column end
   emit(fields, 0)
 else
   emit({

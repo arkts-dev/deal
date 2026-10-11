@@ -3211,4 +3211,188 @@ public final class JvmRuntime {
         }
         bytesReceiver(container, origin).data[(int) index] = (byte) written;
     }
+
+    // =========================================================================
+    // The reserved async-export host surface
+    // =========================================================================
+
+    /**
+     * The shared stdout marker prefix of the async-export envelope
+     * protocol: byte-equal to {@code AsyncExportEnvelope.RESULT_PREFIX},
+     * so the emitted host surface, the LuaJIT driver, and both invokers
+     * speak one frame.
+     */
+    public static final String ASYNC_EXPORT_RESULT_PREFIX =
+        deal.codegen.AsyncExportEnvelope.RESULT_PREFIX;
+
+    /**
+     * The trailing {@code file:line:column} origin text the emitted
+     * artifact threads into every {@link DealError} (the emitter's
+     * {@code originOf} form; the same text the LuaJIT lane's closed
+     * failure carrier holds in its {@code o} field). The pattern is
+     * DOTALL: a source path is an arbitrary legal filesystem name, so a
+     * line terminator inside it must not defeat the coordinate split (the
+     * greedy {@code (.*)} still takes the trailing pair).
+     */
+    private static final java.util.regex.Pattern ASYNC_EXPORT_ERROR_ORIGIN =
+        java.util.regex.Pattern.compile("^(.*):(\\d+):(\\d+)$",
+            java.util.regex.Pattern.DOTALL);
+
+    /**
+     * One registry row of the reserved async-export host surface (the
+     * emitted entry class's declared exports): the export name, the
+     * declaration's canonical spec text, the row kind ({@code "f"} for a
+     * function export, {@code "c"} for a class export), the selection
+     * failure class ({@code "sync"}/{@code "param"}/{@code "mismatch"}),
+     * the activation of the declaration's async {@code EXTERNAL_ENTRY}
+     * (null when the export is not a zero-argument async function), and
+     * the declared completion descriptor triple (the runtime-side
+     * descriptor text, the static kind, and the canonical spec text when
+     * the descriptor carries a function position).
+     */
+    public record AsyncExportRow(String name, String spec, String kind, String fail,
+                                 Fn invoke, String completionDesc,
+                                 String completionKind, String completionCanon) {
+    }
+
+    /**
+     * The reserved async-export selection and invocation (the runtime
+     * half's pinned host-failure reasons, byte-equal to the LuaJIT
+     * runtime's {@code invoke_async_export}): exactly one export whose
+     * carried canonical spec equals {@code "async()->" + returnDescriptor}
+     * is activated once through its own async entry and its completion is
+     * checked through the canonical matcher.
+     *
+     * <p>Returns {@code {reason}} when the export cannot be selected (it
+     * never activates an unselected export), or {@code {null, completion}}
+     * when the selected export completed and its completion passed the
+     * declared descriptor's check. A DEAL failure of the operation or of
+     * the completion matcher propagates as the identical
+     * {@link DealError} — never a reason and never a re-projection.</p>
+     */
+    public static Object[] invokeAsyncExport(List<AsyncExportRow> rows,
+                                             String exportName,
+                                             String returnDescriptor) {
+        if (exportName == null) {
+            return new Object[] {"exportName must be a string, got nil"};
+        }
+        if (returnDescriptor == null) {
+            return new Object[] {
+                "return descriptor is not a canonical descriptor: nil"};
+        }
+        String expected = "async()->" + returnDescriptor;
+        AsyncExportRow found = null;
+        int occurrences = 0;
+        for (AsyncExportRow row : rows) {
+            if (row.name().equals(exportName)) {
+                occurrences++;
+                found = row;
+            }
+        }
+        if (occurrences == 0) {
+            return new Object[] {"missing export '" + exportName + "'"};
+        }
+        if (occurrences > 1) {
+            return new Object[] {"duplicate export '" + exportName
+                + "': the same wrapper appears under multiple export keys"};
+        }
+        if (!"f".equals(found.kind())) {
+            return new Object[] {"export '" + exportName
+                + "' is not a function wrapper"};
+        }
+        if (!expected.equals(found.spec())) {
+            if ("sync".equals(found.fail())) {
+                return new Object[] {"export '" + exportName
+                    + "' is sync: expected '" + expected + "', got '"
+                    + found.spec() + "'"};
+            }
+            if ("param".equals(found.fail())) {
+                return new Object[] {"export '" + exportName
+                    + "' is parameterized: expected '" + expected + "', got '"
+                    + found.spec() + "'"};
+            }
+            return new Object[] {"export '" + exportName
+                + "' signature mismatch: expected '" + expected + "', got '"
+                + found.spec() + "'"};
+        }
+        if (found.invoke() == null) {
+            return new Object[] {"export '" + exportName
+                + "' is not a function wrapper"};
+        }
+        Object completion = found.invoke().invoke(new Object[] {});
+        Object checked = found.completionCanon() == null
+            ? bcheckCompletion(found.completionDesc(), found.completionKind(),
+                completion)
+            : bcheckCompletion(found.completionDesc(), found.completionKind(),
+                completion, found.completionCanon());
+        return new Object[] {null, checked};
+    }
+
+    /**
+     * The marker-prefixed envelope line of one status (the shared
+     * protocol of the LuaJIT driver and the JVM host surface): the status
+     * followed by the ordered key/value pairs, every value JSON-quoted.
+     */
+    public static String asyncExportEnvelope(String status, String... fields) {
+        StringBuilder sb = new StringBuilder(ASYNC_EXPORT_RESULT_PREFIX);
+        sb.append("{\"status\":");
+        appendJsonString(sb, String.valueOf(status));
+        for (int i = 0; i + 1 < fields.length; i += 2) {
+            sb.append(',');
+            appendJsonString(sb, String.valueOf(fields[i]));
+            sb.append(':');
+            appendJsonString(sb, String.valueOf(fields[i + 1]));
+        }
+        return sb.append('}').toString();
+    }
+
+    /**
+     * The {@code deal-error} envelope line of one propagated DEAL error
+     * (the shared protocol's one projection of a {@link DealError}): the
+     * runtime half's field set with the carried source origin preserved —
+     * the origin text's {@code file:line:column} split into the envelope's
+     * {@code file} string and the {@code line}/{@code column} JSON
+     * integers, so a production caller can locate the operation, await,
+     * or {@code main} failure. The location fields are omitted only for a
+     * genuinely absent origin ({@code null} or the emitter's {@code "-"}
+     * absence marker); an origin that does not carry the trailing
+     * line/column pair still projects its file text, never nothing.
+     */
+    public static String asyncExportDealErrorEnvelope(String code, String message,
+                                                      String origin) {
+        StringBuilder sb = new StringBuilder(ASYNC_EXPORT_RESULT_PREFIX);
+        sb.append("{\"status\":\"deal-error\",\"code\":");
+        appendJsonString(sb, String.valueOf(code));
+        sb.append(",\"message\":");
+        appendJsonString(sb, String.valueOf(message));
+        if (origin != null && !origin.isEmpty() && !"-".equals(origin)) {
+            java.util.regex.Matcher parsed = ASYNC_EXPORT_ERROR_ORIGIN.matcher(origin);
+            if (parsed.matches()) {
+                sb.append(",\"file\":");
+                appendJsonString(sb, parsed.group(1));
+                sb.append(",\"line\":").append(parsed.group(2));
+                sb.append(",\"column\":").append(parsed.group(3));
+            } else {
+                sb.append(",\"file\":");
+                appendJsonString(sb, origin);
+            }
+        }
+        return sb.append('}').toString();
+    }
+
+    /**
+     * The JSON text of one checked async-export completion over the
+     * JSON-encodable surface: the same production value walk the
+     * {@code JSON_STRINGIFY} stdlib row uses, so the host surface encodes
+     * with the artifact's one JSON algorithm. An unsupported value
+     * (bytes, a function carrier, an absent slot, a class instance, a
+     * cycle, a non-finite number) raises — the emitted host surface
+     * classifies that raise as a representation failure.
+     */
+    public static String jsonText(Object value) {
+        StringBuilder out = new StringBuilder();
+        stringifyValue(out, value, java.util.Collections.newSetFromMap(
+            new IdentityHashMap<>()));
+        return out.toString();
+    }
 }

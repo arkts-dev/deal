@@ -15,6 +15,10 @@ fi
 javac --release 25 -proc:none -d dist "${PROD_SOURCES[@]}"
 mkdir -p dist/std dist/bin
 cp deal/runtime.lua deal/runtime.js dist/deal/
+# The production LuaJIT async-export driver (the LuaJitAsyncExportInvoker
+# resource half): located classpath-first, so it ships beside the runtime
+# as one deployment unit.
+cp deal/lua_async_export_driver.lua dist/deal/
 cp std/*.d.deal std/*.lua std/*.js dist/std/
 install -m 755 tools/deal-launcher.sh dist/bin/deal
 

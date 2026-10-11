@@ -540,7 +540,66 @@ public class JvmProductionProjectEmissionTest {
     }
 
     // =========================================================================
-    // 4. The DEAL_ERROR_CODE terminal (E8004)
+    // 4. The non-entry module emission (ISSUE-0749 review)
+    // =========================================================================
+
+    /**
+     * The non-entry module emission contract: the emitted artifact carries
+     * no async-export host surface, so its production terminal must not
+     * reference one, and the source must compile and run under the real
+     * toolchain (the retained public {@code emitProductionModule} API).
+     */
+    private static void testNonEntryModuleEmissionCompiles(Baseline fixture)
+            throws Exception {
+        System.out.println("-- the non-entry module emission compiles and runs "
+            + "under the real toolchain --");
+        SemanticLowerer.ProjectLoweringResult result = fixture.result();
+        if (result.project() == null) {
+            fail("the fixture project lowers: " + result.diagnostics());
+            return;
+        }
+        LoweredModuleUnit libUnit = result.project().modules().get(LIB);
+        JvmSemanticEmitter.EmissionResult emission =
+            JvmSemanticEmitter.emitProductionModule(libUnit, result.tables().get(LIB),
+                false, "Library");
+        checkEq("Library", emission.className(),
+            "the non-entry emission keeps using its className argument");
+        check(!emission.source().contains("$asyncExportHost"),
+            "the non-entry artifact references no async-export host surface");
+        check(emission.source().contains(
+                "System.out.println(\"DEAL_ERROR_CODE: \" + e.code);"),
+            "the non-entry artifact keeps the retained DEAL_ERROR_CODE terminal");
+
+        Path workspace = Files.createTempDirectory("jvm-production-non-entry");
+        try {
+            Path source = workspace.resolve("Library.java");
+            Files.writeString(source, emission.source(), StandardCharsets.UTF_8);
+            Path classes = workspace.resolve("classes");
+            Files.createDirectories(classes);
+            String classpath = absoluteClasspath();
+            ProcessOutcome javacRun = runProcess(List.of("javac", "--release", "25",
+                "-proc:none", "-cp", classpath, "-d", classes.toString(),
+                source.toAbsolutePath().toString()), workspace);
+            checkEq(0, javacRun.exitCode(),
+                "the non-entry production artifact compiles with javac --release 25 "
+                    + "-proc:none: " + javacRun.output());
+            if (javacRun.exitCode() != 0) {
+                return;
+            }
+            ProcessOutcome direct = runProcess(List.of("java", "-cp",
+                classpath + java.io.File.pathSeparator + classes, "Library"), workspace);
+            checkEq(0, direct.exitCode(),
+                "the non-entry artifact runs its module walk and exits 0: "
+                    + direct.output());
+            checkEq("", direct.stdout(),
+                "the non-entry production run prints nothing on stdout");
+        } finally {
+            deleteRecursively(workspace);
+        }
+    }
+
+    // =========================================================================
+    // 5. The DEAL_ERROR_CODE terminal (E8004)
     // =========================================================================
 
     private static void testOverflowTerminal() throws Exception {
@@ -593,7 +652,7 @@ public class JvmProductionProjectEmissionTest {
     }
 
     // =========================================================================
-    // 5. The shadowing-binding probe (ISSUE-0717, defect snippet 65)
+    // 6. The shadowing-binding probe (ISSUE-0717, defect snippet 65)
     // =========================================================================
 
     /**
@@ -702,7 +761,7 @@ public class JvmProductionProjectEmissionTest {
     }
 
     // =========================================================================
-    // 6. The dynamic-key computed table read (ISSUE-0717 review)
+    // 7. The dynamic-key computed table read (ISSUE-0717 review)
     // =========================================================================
 
     /**
@@ -1017,6 +1076,7 @@ public class JvmProductionProjectEmissionTest {
             Baseline baseline = prepare(fixture);
             testEmittedTextShapes(baseline);
             testCompileAndRun(baseline);
+            testNonEntryModuleEmissionCompiles(baseline);
             testOverflowTerminal();
             testShadowingBindings();
             testDynamicTableRead();

@@ -569,6 +569,14 @@ public final class LuaSemanticEmitter {
             out.append(preludeWithArms());
             out.append(PRELUDE_ASYNC);
             out.append(JSON_PRELUDE);
+            if (carriesAsyncExportWrapper()) {
+                // The published async-export wrapper projects the
+                // declaration's completion into the deployed runtime's
+                // representation before the runtime half validates and the
+                // driver encodes it; the helper is emitted exactly when
+                // such a wrapper exists.
+                out.append(ASYNC_EXPORT_COMPLETION_PRELUDE);
+            }
             if (!trace) {
                 // Production: the event helpers are no-ops.
                 out.append("__ev = function() end\n");
@@ -5212,8 +5220,8 @@ public final class LuaSemanticEmitter {
                 .append("][").append(luaString(payload.name()))
                 .append("] = {__kind = \"function\", sig = ")
                 .append(luaString(payload.descriptor().canonicalSpecText()))
-                .append(", f = __unfn(").append(slot(payload.value()))
-                .append("), __val = ").append(slot(payload.value()))
+                .append(", f = ").append(exportCallable(op, payload))
+                .append(", __val = ").append(slot(payload.value()))
                 .append("}\n");
             // The publication records the entry's key in the surface's own
             // order discipline: the module's declared exports are its
@@ -5223,6 +5231,94 @@ public final class LuaSemanticEmitter {
                 .append(luaString(emittingModulePath(op))).append("], ")
                 .append(luaString(payload.name())).append(")\n");
             emitPlainSuccess(op);
+        }
+
+        /**
+         * The published {@code f} projection of one export (the
+         * retained-caller ABI). A sync export publishes its unwrapped
+         * closure. An exported async declaration publishes a variadic
+         * wrapper that captures its call arguments and forwards them
+         * with their exact count into the declaration's own async
+         * operation (the published callable ABI keeps delivering the
+         * declared parameters): the reserved {@code EXTERNAL_ENTRY}
+         * activation (the same dispatch key every in-project async link
+         * uses) is driven to completion through the deployed runtime's
+         * {@code async_start}, so the carried sig {@code async()->R} and
+         * the returned value agree with the runtime half's host contract
+         * — a raw body call would return the completion value of a
+         * synchronous execution and the host half would reject it as a
+         * non-operation. The activation's completion is projected into the
+         * deployed runtime's own representation ({@link
+         * #ASYNC_EXPORT_COMPLETION_PRELUDE}) before the runtime half's
+         * canonical matcher and the chunk-published encoder observe it.
+         * The declaration's declared scalar-number return is passed along
+         * with the completion: the projection hands the encoder the
+         * completion's own numeric variant (a numeric carrier's kind, the
+         * declared {@code number} type for a plain number), so a scalar
+         * number completion spells through the shared walker's canonical
+         * decimal like the JVM sibling's boxed double, never through the
+         * lossy default. The runtime is required lazily, inside the
+         * wrapper, so a chunk that only carries the export surface keeps
+         * loading without a deployed runtime.
+         */
+        private String exportCallable(SemanticOp op,
+                KindPayload.ExportPublishPayload payload) {
+            if (!(payload.descriptor() instanceof RuntimeDescriptor.Func func)
+                    || !func.isAsync()
+                    || asyncExportEntry(payload.module(), payload.name()) == null) {
+                return "__unfn(" + slot(payload.value()) + ")";
+            }
+            return "function(...) local __rtAsync = require(\"deal.runtime\");"
+                + " local __en = select(\"#\", ...); local __ea = {...};"
+                + " return __rtAsync.async_start(function() return"
+                + " __asyncExportCompletion(__rtAsync, __asyncEntries["
+                + luaString(payload.module().path() + "#" + payload.name())
+                + "](nil, true, unpack(__ea, 1, __en)), "
+                + (numberScalarReturn(func.returnType()) ? "true" : "false")
+                + ") end) end";
+        }
+
+        /**
+         * Whether the declaration's async return type is the {@code
+         * number} scalar (optionally nullable). A plain number completion
+         * of such a declaration carries the shared value model's number
+         * variant, so the completion encoder spells it through the
+         * walker's canonical decimal text — the JVM sibling's {@code
+         * Double} text — never through the default {@code tostring}
+         * spelling (a lossy {@code %.14g} for a top-level scalar). An
+         * {@code int} return keeps the integer spelling, and a container
+         * return carries its own per-slot variant marks.
+         */
+        private static boolean numberScalarReturn(RuntimeDescriptor descriptor) {
+            RuntimeDescriptor inner = descriptor
+                    instanceof RuntimeDescriptor.Nullable nullable
+                ? nullable.inner() : descriptor;
+            return inner == RuntimeDescriptor.Number.INSTANCE;
+        }
+
+        /**
+         * Whether the emitted chunk publishes at least one async-export
+         * wrapper: an exported async declaration carrying its recorded
+         * async {@code EXTERNAL_ENTRY}. The wrapper's completion
+         * projection helper is emitted exactly when one exists.
+         */
+        private boolean carriesAsyncExportWrapper() {
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                for (SemanticOp candidate : moduleUnit.ops()) {
+                    if (candidate.kind() != SemanticOpKind.EXPORT_PUBLISH) {
+                        continue;
+                    }
+                    KindPayload.ExportPublishPayload payload =
+                        (KindPayload.ExportPublishPayload) candidate.payload();
+                    if (payload.descriptor() instanceof RuntimeDescriptor.Func func
+                            && func.isAsync()
+                            && asyncExportEntry(payload.module(), payload.name())
+                                != null) {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         /**
@@ -9999,6 +10095,181 @@ end
 """;
 
     /**
+     * The async-export completion projection (the chunk-to-deployed-runtime
+     * representation bridge of the published wrapper). Emitted exactly
+     * when the chunk publishes at least one async-export wrapper.
+     */
+    private static final String ASYNC_EXPORT_COMPLETION_PRELUDE = """
+-- The completion projection of the published async-export wrapper: the
+-- deployed runtime's invoke_async_export validates the completion with the
+-- runtime's canonical matcher, so the wrapper hands over the ABI
+-- representation — the language null as the runtime's own __NULL
+-- sentinel, a numeric read carrier as the number it carries (its own
+-- variant recorded as the destination slot's number mark, so a parsed
+-- JSON leaf spells through the walker's canonical decimal like a typed
+-- number write), and the shared containers as the same carriers (the
+-- array carrier keeps its __n length, the table carrier its
+-- first-insertion order, and both keep their number-slot marks). The
+-- copy returns the projected value and, as its second result, whether
+-- the value carries the number variant (the caller records the
+-- corresponding destination slot mark). The copy is graph-preserving:
+-- one projected table per source table, so a shared reference stays
+-- shared and a cyclic completion reaches the encoder's cycle guard
+-- instead of exhausting the Lua stack. The absent markers (a deleted
+-- array slot, a missing field) stay absent — never a fabricated present
+-- null — while a genuine language null becomes the runtime's own
+-- sentinel, so the encoder's array walk keeps its absent-slot rejection
+-- and a table's present nil-valued field renders null. The shared class
+-- carrier (__c/__id) and the builtin Error carrier (__d) take the
+-- matcher's class shape (__kind/__classname), and the shared function
+-- carriers (__fn/__csig) the matcher's function shape (__kind/sig),
+-- while keeping their carrier marks, so canonical matching admits valid
+-- values and the shared encoder's rejection keeps its authority over
+-- the non-encodable surface. Scalars, bytes, host ABI wrappers, module
+-- namespace surfaces, and every other value pass through unchanged. The
+-- projection also records the top-level scalar number's own variant in
+-- the __dealAsyncExportVariant chunk global: a numeric carrier's kind,
+-- or the declaration's declared number type for a plain number (the
+-- wrapper passes __declaredNumber), so the encoder spells a top-level
+-- scalar number exactly like the shared walker's marked slots — the JVM
+-- sibling's boxed-double text — and leaves an int completion integral.
+local function __asyncExportCompletion(__rtAsync, v, __declaredNumber, __seen)
+  local __top = __seen == nil
+  if __top then __dealAsyncExportVariant = nil end
+  if v == nil then
+    -- The top-level value position spells the language null as a raw
+    -- nil (the emitted ScalarValue.Null), so a top-level nil is the
+    -- checked null; inside a container slot a raw nil is the absent
+    -- (deleted) slot the encoder's array walk rejects.
+    if __top then return __rtAsync.__NULL end
+    return nil
+  end
+  if v == __MISSING or v == __rtAsync.__MISSING then
+    if __top then return __rtAsync.__NULL end
+    return __MISSING
+  end
+  if v == __NULL or v == __rtAsync.__NULL then
+    return __rtAsync.__NULL
+  end
+  if type(v) ~= "table" then
+    if __top and __declaredNumber and type(v) == "number" then
+      __dealAsyncExportVariant = "number"
+      return v, true
+    end
+    return v
+  end
+  if v.__jn then
+    if __top then
+      __dealAsyncExportVariant = v.k == "number" and "number" or "int"
+    end
+    return v.d, (v.k == "number")
+  end
+  local seen = __seen
+  if seen == nil then seen = {} end
+  local projected = seen[v]
+  if projected ~= nil then return projected end
+  if v.__a then
+    local out = {__a = true, __n = v.__n}
+    seen[v] = out
+    local marks = v.__nK
+    if type(marks) ~= "table" then marks = nil end
+    for i = 1, v.__n do
+      local child, childNumber =
+          __asyncExportCompletion(__rtAsync, v[i], nil, seen)
+      if child ~= nil then
+        out[i] = child
+        if childNumber or (marks ~= nil and marks[i] == true) then
+          if out.__nK == nil then out.__nK = {} end
+          out.__nK[i] = true
+        end
+      end
+    end
+    return out
+  end
+  if v.__t then
+    local out = {__t = true, __keys = {}, __order = {}}
+    seen[v] = out
+    local marks = v.__nK
+    if type(marks) ~= "table" then marks = nil end
+    local order = v.__order
+    if type(order) == "table" then
+      for i = 1, #order do
+        local key = order[i]
+        local child, childNumber =
+            __asyncExportCompletion(__rtAsync, v[key], nil, seen)
+        out[key] = child
+        out.__keys[key] = true
+        out.__order[i] = key
+        if childNumber or (marks ~= nil and marks[key] == true) then
+          if out.__nK == nil then out.__nK = {} end
+          out.__nK[key] = true
+        end
+      end
+    end
+    return out
+  end
+  if v.__c then
+    local out = {__kind = "class", __c = true, __id = v.__id,
+                 __classname = v.__id}
+    seen[v] = out
+    return out
+  end
+  if v.__d then
+    local out = {__kind = "class", __d = true,
+                 __classname = "@$builtin/Error"}
+    seen[v] = out
+    return out
+  end
+  if v.__fn ~= nil or v.__f or v.__kind == "function" then
+    if v.__kind == "function" and v.sig ~= nil then
+      return v
+    end
+    local sig = v.__csig or v.sig
+    if sig == nil then return v end
+    local out = {__kind = "function", sig = sig, __fn = v.__fn,
+                 __csig = v.__csig, __sig = v.__sig}
+    seen[v] = out
+    return out
+  end
+  return v
+end
+-- The chunk-published completion encoder: the entry artifact's own shared
+-- JSON text walk — the JSON_STRINGIFY stdlib row, the one JSON algorithm
+-- of the emitted value model (the array carrier's __n length keeps an
+-- empty array's JSON array shape at every depth, the table carrier's
+-- first-insertion order stands, and the walker's cycle guard and closed
+-- JSON_STRINGIFY_UNSUPPORTED rejections carry the representation-
+-- failure surface). It is a chunk-global closure over the chunk's own
+-- locals (like the async machine's helper set) rather than a new
+-- chunk-level local, because the emitted module walk spends nearly the
+-- whole 200-local budget; the dedicated kind label keeps the failure
+-- event well-formed when a trace chunk ever calls it. The deployed
+-- runtime's own null sentinel is bound on first use, so the chunk still
+-- loads without a deployed runtime (like the wrapper's own lazy
+-- require).
+__dealAsyncExportEncode = function(v)
+  if __rtNull == nil then __rtNull = require("deal.runtime").__NULL end
+  -- A top-level scalar number whose recorded variant is the number
+  -- variant goes through the walker as a one-element marked array whose
+  -- JSON frame is then stripped: the walker's own canonical decimal
+  -- spelling (the marked-slot and JVM boxed-double text, never the
+  -- default tostring's lossy %.14g) and its non-finite rejection both
+  -- stay in force. An int-variant or unrecorded scalar, and every
+  -- container, keep the direct walk over their own variant marks.
+  if __dealAsyncExportVariant == "number" and type(v) == "number" then
+    return string.sub(__stdlib("JSON_STRINGIFY", "JSON_STRINGIFY",
+        "-", "-", "-", "-",
+        {__a = true, __n = 1, [1] = v, __nK = {[1] = true}}), 2, -2)
+  end
+  -- The "-" op-context tokens are the absent-op spelling: the completion
+  -- encoder runs outside any emitted op, and the production chunk's __ev
+  -- is the no-op event sink (a trace chunk's event line stays
+  -- well-formed rather than carrying nil fields).
+  return __stdlib("JSON_STRINGIFY", "JSON_STRINGIFY", "-", "-", "-", "-", v)
+end
+""";
+
+    /**
      * The second half of the runtime prelude (the D13 async machine
      * onward): a separate constant because a single Java string constant
      * may not exceed the class-file's 65535-byte UTF-8 limit; both halves
@@ -10805,7 +11076,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     -- position, a __jn carrier, or a slot no shared write path wrote)
     -- the int spelling stands, exactly the JSON_PARSE carrier split.
     sfValue = function(v, isNumber)
-      if v == nil then out[#out + 1] = "null"; return end
+      if v == nil or v == __rtNull then out[#out + 1] = "null"; return end
       if v == __MISSING then sfFail(v); return end
       local t = type(v)
       if t == "boolean" then

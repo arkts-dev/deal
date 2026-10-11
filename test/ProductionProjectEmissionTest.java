@@ -935,13 +935,19 @@ public class ProductionProjectEmissionTest {
                     + "#getValue\"]"),
                 "the chunk carries one async entry per async export of the "
                     + "callee closure module");
+            writeFileIn(cross.root(), "deal/runtime.lua",
+                Files.readString(Path.of("deal/runtime.lua"), StandardCharsets.UTF_8));
             writeFileIn(cross.root(), "probe.lua", """
                 local surfaces = dofile("out-luajit/app.lua")
                 local worker = surfaces.worker
                 assert(type(worker) == "table" and worker.__kind == "function",
                   "the entry surface publishes the cross-module async export")
-                local completion = worker.f()
-                assert(completion == 42,
+                local handle = worker.f()
+                assert(type(handle) == "table" and handle.__kind == "async",
+                  "the published async export produces an async operation")
+                require("deal.runtime").async_step(handle)
+                local completion = handle.__result
+                assert(handle.__done and completion == 42,
                   "the cross-module await completes with 42, got "
                     .. tostring(completion))
                 print("PROBE|ASYNC-RESULT|" .. tostring(completion))
@@ -1038,6 +1044,8 @@ public class ProductionProjectEmissionTest {
             }
             check(Files.isRegularFile(sameOut.resolve("app.lua")),
                 "the published same-module async chunk exists");
+            writeFileIn(same.root(), "deal/runtime.lua",
+                Files.readString(Path.of("deal/runtime.lua"), StandardCharsets.UTF_8));
             writeFileIn(same.root(), "probe.lua", """
                 local surfaces = dofile("out-luajit/app.lua")
                 assert(type(surfaces) == "table",
@@ -1045,8 +1053,12 @@ public class ProductionProjectEmissionTest {
                 local worker = surfaces.worker
                 assert(type(worker) == "table" and worker.__kind == "function",
                   "the entry surface publishes the same-module async export")
-                local completion = worker.f()
-                assert(completion == 1,
+                local handle = worker.f()
+                assert(type(handle) == "table" and handle.__kind == "async",
+                  "the published async export produces an async operation")
+                require("deal.runtime").async_step(handle)
+                local completion = handle.__result
+                assert(handle.__done and completion == 1,
                   "the awaiting call completes with 1, got "
                     .. tostring(completion))
                 print("PROBE|ASYNC-RESULT|" .. tostring(completion))

@@ -770,6 +770,40 @@ public abstract class EmitterSessionBase {
     }
 
     /**
+     * The recorded async {@code EXTERNAL_ENTRY} op of one exported
+     * declaration, or {@code null} when the export is not an async
+     * function declaration. The op is the host-facing async entry both
+     * emitters' export surfaces drive: the LuaJIT chunk's
+     * {@code __asyncEntries} dispatch key and the JVM artifact's
+     * {@code ae} method both resolve it. The producer records exactly
+     * one entry per exported function, so a name collision is a
+     * fail-closed producer defect.
+     */
+    protected final SemanticOp asyncExportEntry(ModuleId module, String exportName) {
+        LoweredModuleUnit moduleUnit = units.get(module);
+        if (moduleUnit == null) {
+            return null;
+        }
+        SemanticOp found = null;
+        for (SemanticOp op : moduleUnit.ops()) {
+            if (op.kind() != SemanticOpKind.EXTERNAL_ENTRY
+                    || !(op.payload()
+                        instanceof KindPayload.ExternalEntryPayload payload)
+                    || !payload.async()
+                    || !payload.exportName().equals(exportName)) {
+                continue;
+            }
+            if (found != null) {
+                throw new IllegalStateException("the exported declaration '"
+                    + module.path() + "#" + exportName + " records two async"
+                    + " EXTERNAL_ENTRY ops (producer defect)");
+            }
+            found = op;
+        }
+        return found;
+    }
+
+    /**
      * The intrinsic kind of one value identity under the strict
      * identity-preserving-load predicate (the seed and adapter carrier
      * sites): the registration must be an {@code IntrinsicFunction} and
