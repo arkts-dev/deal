@@ -33,8 +33,11 @@ import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.SemanticProfile;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -1108,9 +1111,12 @@ public class FailClosedGuardRetargetingTest {
 
     /**
      * The bounded-subprocess contract's focused checks: a hung child fails
-     * hard with the named token after the deadline (never a skip), and a
+     * hard with the named token after the deadline (never a skip), a
      * child writing past the cap on both streams completes with the retained
-     * prefix, the truncation marker, and the flags set.
+     * prefix, the truncation marker, and the flags set, and a completed
+     * child whose capture did not reach a clean EOF is refused by name in
+     * either stream position (its retained prefix is preserved for
+     * diagnostics but never read as a complete transcript).
      */
     private static void testBoundedProcessContract() throws Exception {
         System.out.println("-- the bounded test-process helper: a hung child "
@@ -1176,6 +1182,61 @@ public class FailClosedGuardRetargetingTest {
                 && flood.stderr().endsWith(BoundedProcess.TRUNCATION_MARKER),
             "both streams carry the launcher's truncation marker at the "
                 + "cut point");
+
+        // Capture honesty (the reproduced defect): a reader failure is
+        // recorded, and a completed child whose capture did not reach a
+        // clean EOF is refused by name even when the retained prefix already
+        // matches the expected probe transcript. Both stream positions are
+        // controlled, plus the clean-EOF control.
+        String probePrefixText = "PROBE|BYTES|ok\n";
+        byte[] probePrefix = probePrefixText.getBytes(StandardCharsets.UTF_8);
+        BoundedProcess.Drain failedBeforeOutput = new BoundedProcess.Drain(
+            new FailingStream(new byte[0], "reader-failed-before-output"));
+        failedBeforeOutput.run();
+        check(failedBeforeOutput.failure() != null
+                && !failedBeforeOutput.eofReached()
+                && failedBeforeOutput.text().isEmpty(),
+            "a stream failing before output records the read failure, no "
+                + "EOF, and no transcript: " + failedBeforeOutput.failure());
+        BoundedProcess.Drain failedAfterPrefix = new BoundedProcess.Drain(
+            new FailingStream(probePrefix, "reader-failed-after-prefix"));
+        failedAfterPrefix.run();
+        check(probePrefixText.equals(failedAfterPrefix.text())
+                && failedAfterPrefix.failure() != null
+                && !failedAfterPrefix.eofReached(),
+            "a stream failing after the expected probe prefix keeps the "
+                + "matching transcript but still records the failure and no "
+                + "EOF: " + failedAfterPrefix.failure());
+        BoundedProcess.Drain cleanEof = new BoundedProcess.Drain(
+            new ByteArrayInputStream(probePrefix));
+        cleanEof.run();
+        check(cleanEof.failure() == null && cleanEof.eofReached()
+                && probePrefixText.equals(cleanEof.text())
+                && !cleanEof.truncated(),
+            "the clean-EOF control reaches EOF with no read failure");
+        for (BoundedProcess.Drain failing
+                : List.of(failedBeforeOutput, failedAfterPrefix)) {
+            AssertionError stdoutRefusal =
+                BoundedProcess.captureFailure("probe", failing, cleanEof);
+            check(stdoutRefusal != null && stdoutRefusal.getMessage() != null
+                    && stdoutRefusal.getMessage()
+                        .startsWith("BOUNDED_PROCESS_DRAIN_FAILURE probe")
+                    && stdoutRefusal.getMessage().contains("stdout")
+                    && stdoutRefusal.getMessage()
+                        .contains(failing.failure().getMessage()),
+                "a stdout capture failure is refused by name: " + stdoutRefusal);
+            AssertionError stderrRefusal =
+                BoundedProcess.captureFailure("probe", cleanEof, failing);
+            check(stderrRefusal != null && stderrRefusal.getMessage() != null
+                    && stderrRefusal.getMessage()
+                        .startsWith("BOUNDED_PROCESS_DRAIN_FAILURE probe")
+                    && stderrRefusal.getMessage().contains("stderr")
+                    && stderrRefusal.getMessage()
+                        .contains(failing.failure().getMessage()),
+                "a stderr capture failure is refused by name: " + stderrRefusal);
+        }
+        check(BoundedProcess.captureFailure("probe", cleanEof, cleanEof) == null,
+            "the clean-EOF control is not refused (both streams complete)");
     }
 
     // =========================================================================
@@ -1214,6 +1275,31 @@ public class FailClosedGuardRetargetingTest {
         String output() {
             return "stdout=" + stdout.replace("\n", "\\n")
                 + " stderr=" + stderr.replace("\n", "\\n");
+        }
+    }
+
+    /**
+     * A stream that emits a fixed prefix and then throws instead of EOF
+     * (the focused control of the drain's clean-EOF contract): the retained
+     * prefix of the second shape is byte-exact for the probe transcript, so
+     * only the recorded reader failure can refuse it.
+     */
+    private static final class FailingStream extends InputStream {
+        private final byte[] prefix;
+        private final String reason;
+        private int index;
+
+        FailingStream(byte[] prefix, String reason) {
+            this.prefix = prefix;
+            this.reason = reason;
+        }
+
+        @Override
+        public int read() throws IOException {
+            if (index < prefix.length) {
+                return prefix[index++] & 0xff;
+            }
+            throw new IOException(reason);
         }
     }
 

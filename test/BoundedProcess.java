@@ -28,7 +28,10 @@ import java.util.concurrent.TimeUnit;
  * owned process group, and the direct child, then drains and reaps inside
  * its own bounded window. {@link BoundedProcessTimeoutException} is an
  * {@link AssertionError}, never a skip. A nonzero child exit is reported
- * verbatim.</p>
+ * verbatim. EOF is mandatory: every reader failure is recorded, and a
+ * completed child whose capture did not reach a clean EOF on both streams
+ * is refused with the named hard {@code BOUNDED_PROCESS_DRAIN_FAILURE}
+ * failure instead of a partially empty transcript.</p>
  */
 public final class BoundedProcess {
 
@@ -149,16 +152,23 @@ public final class BoundedProcess {
                 "interrupted while waiting for " + argv.get(0));
         }
         if (!finished) {
-            throw new BoundedProcessTimeoutException(
-                "BOUNDED_PROCESS_TIMEOUT " + argv.get(0));
+            throw timeout(argv.get(0),
+                captureFailure(argv.get(0), stdout, stderr));
         }
         if (!drained) {
             // The canonical message stays the bare token; the drainage
             // detail is diagnostic context, not part of the contract.
             System.err.println("bounded-process: the stream drainage "
                 + "exceeded the child deadline for " + argv.get(0));
-            throw new BoundedProcessTimeoutException(
-                "BOUNDED_PROCESS_TIMEOUT " + argv.get(0));
+            throw timeout(argv.get(0),
+                captureFailure(argv.get(0), stdout, stderr));
+        }
+        // EOF is mandatory: a completed child whose capture is incomplete
+        // (a reader failure before EOF) is a failed invocation, never a
+        // partially empty observation (the fail-closed drain contract).
+        AssertionError incomplete = captureFailure(argv.get(0), stdout, stderr);
+        if (incomplete != null) {
+            throw incomplete;
         }
         return new BoundedResult(process.exitValue(), stdout.text(), stderr.text(),
             stdout.truncated(), stderr.truncated());
@@ -184,6 +194,47 @@ public final class BoundedProcess {
         thread.setDaemon(true);
         thread.start();
         return thread;
+    }
+
+    /** The named timeout failure; when the timeout is primary and the
+     * capture also fell short, the capture detail is attached. */
+    private static BoundedProcessTimeoutException timeout(String child,
+            AssertionError capture) {
+        BoundedProcessTimeoutException timeout =
+            new BoundedProcessTimeoutException(
+                "BOUNDED_PROCESS_TIMEOUT " + child);
+        if (capture != null) {
+            timeout.addSuppressed(capture);
+        }
+        return timeout;
+    }
+
+    /**
+     * The clean-EOF refusal: {@code null} when both streams reached EOF
+     * without a read failure, otherwise the named hard
+     * {@code BOUNDED_PROCESS_DRAIN_FAILURE}. Package-visible with
+     * {@link Drain} so the registered harness battery exercises the same
+     * decision the runner applies.
+     */
+    static AssertionError captureFailure(String child, Drain stdout, Drain stderr) {
+        if (cleanEof(stdout) && cleanEof(stderr)) {
+            return null;
+        }
+        return new AssertionError("BOUNDED_PROCESS_DRAIN_FAILURE " + child
+            + " (stdout " + describe(stdout) + "; stderr " + describe(stderr)
+            + ")");
+    }
+
+    /** One stream's capture completeness: EOF reached, no read failure. */
+    private static boolean cleanEof(Drain drain) {
+        return drain.failure() == null && drain.eofReached();
+    }
+
+    private static String describe(Drain drain) {
+        if (drain.failure() != null) {
+            return String.valueOf(drain.failure());
+        }
+        return drain.eofReached() ? "clean EOF" : "no EOF";
     }
 
     /** Waits for the direct child inside the one deadline; {@code false}
@@ -290,11 +341,20 @@ public final class BoundedProcess {
         }
     }
 
-    /** One stream's capped, drain-to-EOF capture. */
-    private static final class Drain implements Runnable {
+    /**
+     * One stream's capped, drain-to-EOF capture. A reader failure is
+     * recorded, never swallowed: the retained prefix is kept for
+     * diagnostics, but the runner refuses the invocation unless the read
+     * loop ended at a clean EOF. Package-visible with the decision helpers
+     * above so the registered harness battery exercises the same state the
+     * runner consumes.
+     */
+    static final class Drain implements Runnable {
         private final InputStream stream;
         private final ByteArrayOutputStream kept = new ByteArrayOutputStream();
         private volatile boolean truncated;
+        private volatile boolean eofReached;
+        private volatile IOException failure;
 
         Drain(InputStream stream) {
             this.stream = stream;
@@ -315,9 +375,12 @@ public final class BoundedProcess {
                         truncated = true;
                     }
                 }
-            } catch (IOException ignored) {
-                // The stream closed under the cleanup path; the retained
-                // prefix is still the result.
+                eofReached = true;
+            } catch (IOException failed) {
+                // A reader failure is recorded and fails the invocation
+                // after bounded teardown; it is never read as a complete
+                // transcript.
+                failure = failed;
             }
         }
 
@@ -328,6 +391,16 @@ public final class BoundedProcess {
 
         boolean truncated() {
             return truncated;
+        }
+
+        /** The recorded reader failure, or {@code null} for a clean EOF. */
+        IOException failure() {
+            return failure;
+        }
+
+        /** Whether the read loop ended at EOF rather than on a failure. */
+        boolean eofReached() {
+            return eofReached;
         }
     }
 }
