@@ -5771,6 +5771,19 @@ public final class LuaSemanticEmitter {
                     out.append("  __fncheck(__srcA, ")
                         .append(luaString(adapter.sourceSignature().canonicalSpecText()))
                         .append(", ").append(luaString(originOf(op))).append(")\n");
+                    if (nested.payload() instanceof KindPayload.AsyncStartPayload nestedStart
+                            && nestedStart.callee()
+                                instanceof KindPayload.CallCallee.Indirect indirect) {
+                        // The value-carried nested source start (a declared
+                        // body source): the loaded D15 source carrier is
+                        // published under the source's own closure identity,
+                        // so the nested body task runs the source closure's
+                        // invoker with its creation-site captured cells —
+                        // never a call-site factory reconstruction from the
+                        // adapter caller's frame.
+                        out.append("  ").append(slot(indirect.callee()))
+                            .append(" = __srcA\n");
+                    }
                     emitAsyncStart(nested);
                     out.append("  return nil\n");
                     out.append("end), S.__sa").append(op.opId().id()).append(")\n");

@@ -8614,15 +8614,21 @@ public final class SemanticLowerer {
                 + "function-typed-value child's; producer defect)");
         }
 
-        /** The adapter's statically fixed source binding, or null (thunk/call-result sources). */
-        private FunctionExecutionBinding staticSourceBinding(
+        /** The adapter's statically fixed source identity, or null (thunk sources). */
+        private ValueId staticSourceIdentity(
                 FunctionExecutionBinding.AdapterBinding adapter) {
-            ValueId identity = switch (adapter.sourceRef()) {
+            return switch (adapter.sourceRef()) {
                 case AdaptSourceRef.SharedCell cell ->
                     identityOfIncarnation(cell.binding(), cell.generation());
                 case AdaptSourceRef.Value value -> value.value();
                 case AdaptSourceRef.Thunk ignored -> null;
             };
+        }
+
+        /** The adapter's statically fixed source binding, or null (thunk/call-result sources). */
+        private FunctionExecutionBinding staticSourceBinding(
+                FunctionExecutionBinding.AdapterBinding adapter) {
+            ValueId identity = staticSourceIdentity(adapter);
             if (identity == null) {
                 return null;
             }
@@ -9840,11 +9846,19 @@ public final class SemanticLowerer {
          * {@code ASYNC_START} (parented to the outer op) carries
          * {@code ELIDED_BY_ADAPTER}, zero parameter boundaries, the
          * leading M argument operands, and its own per-resolution
-         * terminal per the statically fixed source binding.
+         * terminal per the statically fixed source binding. A declared
+         * body source's nested start is value-carried over the loaded D15
+         * source carrier (the source's closure identity), so the
+         * invocation runs the source declaration's own creation-site
+         * captured cells.
          */
         private ValueId lowerAdapterOverAsync(CallExpr call, ValueId slot, Span awaitSpan,
                 FunctionExecutionBinding.AdapterBinding adapter, String calleeName) {
-            FunctionExecutionBinding source = staticSourceBinding(adapter);
+            ValueId sourceIdentity = staticSourceIdentity(adapter);
+            FunctionExecutionBinding source = sourceIdentity == null
+                ? null
+                : registry.bindings().get(
+                    new FunctionAllocationIdentity(sourceIdentity.id()));
             if (source == null) {
                 throw new ConstructUnlowered("adapter-over-async of '" + calleeName
                     + "' whose source identity is not statically fixed "
@@ -9880,8 +9894,14 @@ public final class SemanticLowerer {
             // The nested source op's callee binding: the statically fixed
             // source, or the exported body's recorded entry protocol (the
             // same-module SHARED_BODY binding) when the source is an
-            // entry-shaped declaration.
+            // entry-shaped declaration. A declared body source additionally
+            // records its published closure identity: the nested source start
+            // is value-carried over the loaded D15 source carrier, so the
+            // invocation runs the source declaration's own creation-site
+            // captured cells instead of reconstructing its factory from the
+            // adapter caller's frame.
             FunctionExecutionBinding nestedBinding = source;
+            ValueId nestedCalleeIdentity = null;
             FailurePolicyId nestedPolicy = FailurePolicyId.NO_DEAL_FAILURE;
             switch (source) {
                 case FunctionExecutionBinding.LoweredBody body -> {
@@ -9900,6 +9920,16 @@ public final class SemanticLowerer {
                         context.callSiteUsed = true;
                         nestedReturnBoundary = context.returnBoundaryOpId;
                         nestedSource = AsyncStartSource.DEAL_BODY;
+                        // The D15 source load is the invocation's callee: the
+                        // loaded carrier holds the source declaration's own
+                        // creation instance (its closure identity), so the
+                        // nested body task installs that instance's captured
+                        // cells — never a call-site factory reconstruction
+                        // that re-resolves the source's captures from the
+                        // adapter caller's frame. The source's reserved call
+                        // shape, body identity, token owner, and single
+                        // return cell stay the nested start's own.
+                        nestedCalleeIdentity = sourceIdentity;
                         sourceToken = new AsyncTokenId.Canonical(
                             ids.nextTokenId(module, nextOrdinal++, 0),
                             AsyncTokenOwner.DEAL_BODY_TASK);
@@ -10005,7 +10035,10 @@ public final class SemanticLowerer {
                 SourceOriginKind.SYNTHETIC, nestedAnchor, outerOpId);
             emit(buildOp(nestedOpId, SemanticOpKind.ASYNC_START,
                 new KindPayload.AsyncStartPayload(
-                    new KindPayload.CallCallee.Static(nestedBinding), nestedSource,
+                    nestedCalleeIdentity == null
+                        ? new KindPayload.CallCallee.Static(nestedBinding)
+                        : new KindPayload.CallCallee.Indirect(nestedCalleeIdentity),
+                    nestedSource,
                     ParameterBoundaryMode.ELIDED_BY_ADAPTER, List.of(),
                     sourceSignature.returnType(), nestedReturnBoundary, nestedHostLabel,
                     nestedLink),

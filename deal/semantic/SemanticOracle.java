@@ -5053,6 +5053,17 @@ public final class SemanticOracle {
             Value sourceValue = loadAdapterSource(op, adapter);
             checkAdapterSourceSignature(op, adapter, sourceValue);
             SemanticOp nested = nestedAsyncStartOf(op);
+            // The nested source start of a declared body source is
+            // value-carried: the loaded D15 source carrier is published
+            // under the nested start's own callee identity, so the source
+            // body task installs the resolved source closure's
+            // creation-site captured cells instead of reconstructing a
+            // factory at the call site.
+            if (nested.payload() instanceof KindPayload.AsyncStartPayload start
+                    && start.callee()
+                        instanceof KindPayload.CallCallee.Indirect indirect) {
+                putValue(indirect.callee(), sourceValue);
+            }
             execute(nested);
             return Value.NullValue.INSTANCE;
         }
