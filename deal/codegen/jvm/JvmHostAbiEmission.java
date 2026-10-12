@@ -836,14 +836,18 @@ final class JvmHostAbiEmission {
         Type ret = func.returnType();
         String desc = descriptorText(ret);
         if (func.isAsync()) {
-            // The presence rule of the async position: a host invocation
-            // that produced no result (the JVM host surface's zero-result
-            // form is Java null, exactly like the declared sync return
-            // positions) renders the closed ASYNC_SHAPE arm with the fixed
-            // {@code nothing} actual, matching the LuaJIT wrapper's
-            // zero-result branch and the oracle's absent handle. An
-            // explicit non-result value keeps its carrier-kind projection.
-            out.append("    if (__r == null) {\n");
+            // The presence rule of the async position: only a host
+            // invocation that produced no result at all (the reflective
+            // invocation of a void method, preserved by
+            // {@code __hostInvoke}) renders the closed ASYNC_SHAPE arm with
+            // the fixed {@code nothing} actual, matching the LuaJIT
+            // wrapper's zero-result branch and the oracle's absent handle. A
+            // present result — the language-null carrier included — keeps its
+            // carrier-kind projection, so an Object-returning method that
+            // returned null projects {@code table} exactly like the oracle's
+            // {@code InvalidHandle} and the LuaJIT wrapper receiving the
+            // runtime's null sentinel.
+            out.append("    if (__r == JvmRuntime.MISSING) {\n");
             out.append("      throw JvmRuntime.arm("
                 + "deal.semantic.ir.FailureArmId.ASYNC_SHAPE,"
                 + " java.util.Map.of(\"actual\", \"nothing\"), oFile + \":\""
@@ -861,13 +865,19 @@ final class JvmHostAbiEmission {
             out.append("    return __r;\n");
             return;
         }
+        boolean nullable = ret instanceof Type.Nullable;
+        // The JVM host surface's zero-result form is Java null (the corpus
+        // pins HOST_SYNC_RETURN_NOTHING for a null return of a mandatory
+        // position); the reflective invocation's own absent marker funnels
+        // into that same form, so the declared sync cells below read exactly
+        // the host's null carrier.
+        out.append("    if (__r == JvmRuntime.MISSING) { __r = null; }\n");
         if (ret instanceof Type.Null) {
             out.append("    __hostCheck(\"null\", __r, false, oFile, oLine,"
                 + " oCol);\n");
             out.append("    return;\n");
             return;
         }
-        boolean nullable = ret instanceof Type.Nullable;
         if (!nullable) {
             // The HOST_SYNC_RETURN_NOTHING arm's own render (the no-value
             // presence rule): the emitted wrapper holds no failure text.
@@ -1031,6 +1041,16 @@ final class JvmHostAbiEmission {
             + " java.lang.Object[] args, java.lang.String oFile, int oLine, int"
             + " oCol) {\n");
         out.append("    try {\n");
+        out.append("      // The no-result shape (a declared void method) is not the\n");
+        out.append("      // language-null carrier: the reflective invocation's null\n");
+        out.append("      // cannot distinguish a void return from a returned null, so\n");
+        out.append("      // the void shape yields the runtime's absent marker and every\n");
+        out.append("      // returned value — a present Java null included — keeps its\n");
+        out.append("      // own presence for the declared return cell.\n");
+        out.append("      if (m.getReturnType() == java.lang.Void.TYPE) {\n");
+        out.append("        m.invoke(null, args);\n");
+        out.append("        return JvmRuntime.MISSING;\n");
+        out.append("      }\n");
         out.append("      return m.invoke(null, args);\n");
         out.append("    } catch (java.lang.reflect.InvocationTargetException __e) {\n");
         out.append("      java.lang.Throwable __c = __e.getCause();\n");
