@@ -793,23 +793,30 @@ end)
 
 -- ==================== from_lua_function tests ====================
 
--- The emitted chunk registers the closed host failure-arm renderer
--- (__rt.__hostArm) on the deployed runtime at load; the loaded wrappers
--- delegate every mapped wrapper failure (the declared parameter cell, the
--- sync return cells, and the async-shape cell) to it with the supplied
--- call origin and the declared projections. The unit drives register a
--- recording stub: the arm id, the parameters, the projections and the
--- origin it receives are the observable delegation, and the stub's own
--- E8010 carrier keeps the assert_error drives' subject. The production
--- renderer's tuples are asserted by the artifact drives
+-- The emitted chunk registers the two artifact-owned host renderers
+-- (__rt.__hostArm and __rt.__hostInnerArm) on the deployed runtime at
+-- load; the loaded wrappers delegate every mapped wrapper failure (the
+-- declared parameter cell, the sync return cells, and the async-shape
+-- cell) to them with the supplied call origin, the declared expected
+-- descriptor, the failing subject value, and — for the cells whose inner
+-- reason the canonical matcher selects — the structured inner-arm
+-- selection (never a composed text). The unit drives register recording
+-- stubs: what they receive is the observable delegation, and the outer
+-- stub's own E8010 carrier keeps the assert_error drives' subject. The
+-- production renderers' tuples are asserted by the artifact drives
 -- (CanonicalProjectionParityTest).
 local host_arm_calls = {}
-__rt.__hostArm = function(id, values, file, line, column, expected, actual)
+local host_inner_calls = {}
+__rt.__hostInnerArm = function(id, values)
+  host_inner_calls[#host_inner_calls + 1] = { id = id, values = values }
+  return "inner:" .. id
+end
+__rt.__hostArm = function(id, values, file, line, column, expected, subject)
   host_arm_calls[#host_arm_calls + 1] = { id = id, values = values,
     file = file, line = line, column = column, expected = expected,
-    actual = actual }
+    subject = subject }
   return { code = "E8010", message = "arm:" .. id, file = file, line = line,
-    column = column, expected = expected, actual = actual }
+    column = column, expected = expected, actual = subject }
 end
 
 test("from_lua_function wraps with type checks", function()
@@ -826,16 +833,23 @@ test("from_lua_function delegates a wrong param type to the closed arm renderer"
   local raw = function(a, b) return a + b end
   local w = __rt.from_lua_function("(int,int)->int", raw)
   local before = #host_arm_calls
+  local before_inner = #host_inner_calls
   local err = assert_error(function() w.f("x", 2, "t.deal", 3, 4) end, "E8010")
   assert(err.message == "arm:HOST_PARAMETER_CELL")
   assert(#host_arm_calls == before + 1)
   local call = host_arm_calls[#host_arm_calls]
   assert(call.id == "HOST_PARAMETER_CELL")
   assert(call.values.index == 1)
-  assert(call.values.inner == "expected int")
+  assert(call.values.inner == "inner:TYPED_BOUNDARY_KIND")
   assert(call.expected == "int")
-  assert(call.actual == "string")
+  assert(call.subject == "x")
   assert(call.file == "t.deal" and call.line == 3 and call.column == 4)
+  -- The mapped inner reason crosses as the matcher's closed arm selection,
+  -- never as text.
+  assert(#host_inner_calls == before_inner + 1)
+  local inner = host_inner_calls[#host_inner_calls]
+  assert(inner.id == "TYPED_BOUNDARY_KIND")
+  assert(inner.values.kind == "int")
 end)
 
 test("from_lua_function rejects wrong arg count (too few)", function()
@@ -1657,37 +1671,48 @@ end)
 test("from_lua_function wrong return type delegates the closed arm", function()
   local raw = function() return "not_an_int" end
   local w = __rt.from_lua_function("()->int", raw)
+  local before_inner = #host_inner_calls
   local err = assert_error(function() w.f("t.deal", 3, 4) end, "E8010")
   assert(err.message == "arm:HOST_SYNC_RETURN_CELL")
   local call = host_arm_calls[#host_arm_calls]
   assert(call.id == "HOST_SYNC_RETURN_CELL")
-  assert(call.values.inner == "expected int")
+  assert(call.values.inner == "inner:TYPED_BOUNDARY_KIND")
   assert(call.expected == "int")
-  assert(call.actual == "string")
+  assert(call.subject == "not_an_int")
   assert(call.file == "t.deal" and call.line == 3 and call.column == 4)
+  assert(#host_inner_calls == before_inner + 1)
+  assert(host_inner_calls[#host_inner_calls].values.kind == "int")
 end)
 
 test("from_lua_function zero results delegates the nothing arm", function()
   local w = __rt.from_lua_function("()->int", function() end)
+  local before_inner = #host_inner_calls
   local err = assert_error(function() w.f("t.deal", 5, 6) end, "E8010")
   assert(err.message == "arm:HOST_SYNC_RETURN_NOTHING")
   local call = host_arm_calls[#host_arm_calls]
   assert(call.id == "HOST_SYNC_RETURN_NOTHING")
   assert(call.values.expected == "int")
   assert(call.expected == "int")
-  assert(call.actual == "nothing")
+  -- The no-value cell has no inner reason and no subject value: the
+  -- artifact's render projects the arm's fixed nothing token.
+  assert(call.subject == nil)
+  assert(#host_inner_calls == before_inner)
 end)
 
 test("from_lua_function async shape delegates the nothing arm", function()
   local w = __rt.from_lua_function("async()->int", function() end)
+  local before_inner = #host_inner_calls
   local err = assert_error(function() w.f("t.deal", 7, 8) end, "E8010")
   assert(err.message == "arm:ASYNC_SHAPE")
   local call = host_arm_calls[#host_arm_calls]
   assert(call.id == "ASYNC_SHAPE")
-  assert(call.values.actual == "nothing")
   assert(call.expected == "async operation")
-  assert(call.actual == "nothing")
+  -- The absent handle carries no subject and no message parameter: the
+  -- artifact's render projects the fixed nothing token.
+  assert(call.subject == nil)
+  assert(call.values.actual == nil)
   assert(call.file == "t.deal" and call.line == 7 and call.column == 8)
+  assert(#host_inner_calls == before_inner)
 end)
 
 test("from_lua_function async shape delegates the carrier-kind arm", function()
@@ -1698,9 +1723,10 @@ test("from_lua_function async shape delegates the carrier-kind arm", function()
   assert(err.message == "arm:ASYNC_SHAPE")
   local call = host_arm_calls[#host_arm_calls]
   assert(call.id == "ASYNC_SHAPE")
-  assert(call.values.actual == "string")
   assert(call.expected == "async operation")
-  assert(call.actual == "string")
+  -- The invalid handle crosses as the raw subject: the artifact's own
+  -- carrier-kind projection renders the token.
+  assert(call.subject == "not an async op")
 end)
 
 test("from_lua_function fails closed without the artifact renderer", function()
@@ -1714,6 +1740,65 @@ test("from_lua_function fails closed without the artifact renderer", function()
     .. type(err))
   assert(string.find(err, "not registered", 1, true) ~= nil,
     "the fail-closed report names the missing renderer: " .. tostring(err))
+end)
+
+test("from_lua_function fails closed without the inner renderer", function()
+  local saved = __rt.__hostInnerArm
+  __rt.__hostInnerArm = nil
+  local w = __rt.from_lua_function("()->int", function() return "junk" end)
+  local ok, err = pcall(function() w.f("t.deal", 1, 2) end)
+  __rt.__hostInnerArm = saved
+  assert(not ok, "the wrapper must not publish a composed reason")
+  assert(type(err) == "string", "the fail-closed report is a plain error: "
+    .. type(err))
+  assert(string.find(err, "not registered", 1, true) ~= nil,
+    "the fail-closed report names the missing inner renderer: "
+    .. tostring(err))
+end)
+
+test("the canonical matcher selects its closed arm on every mapped cell", function()
+  -- The mapped host cells render their inner reason from the matcher's own
+  -- closed arm selection (the raised table's `arm` field): the kind row,
+  -- the int refinement and range rows, the two string-carrier rows, the
+  -- signature row, the identity row, and the array-element row each carry
+  -- their arm id and closed named parameters beside the local delivery.
+  local function selection(fn, code)
+    local err = assert_error(fn, code)
+    assert(type(err.arm) == "table", "the matcher selects a closed arm")
+    return err.arm
+  end
+  local kind = selection(function() __rt.check_type("int", "x") end, "E8001")
+  assert(kind.id == "TYPED_BOUNDARY_KIND" and kind.values.kind == "int")
+  local bytes = selection(function() __rt.check_type("bytes", 5) end, "E8001")
+  assert(bytes.id == "TYPED_BOUNDARY_KIND" and bytes.values.kind == "bytes")
+  local klass = selection(function()
+    __rt.check_type("@$builtin/Error", {__kind = "class", __classname = "@src/A"})
+  end, "E8001")
+  assert(klass.id == "CLASS_IDENTITY")
+  assert(klass.values.expected == "@$builtin/Error")
+  assert(klass.values.actual == "@src/A")
+  local element = selection(function() __rt.check_type("[int]", {"x"}) end, "E8003")
+  assert(element.id == "ARRAY_ELEMENT_KIND" and element.values.oneBasedIndex == 1)
+  local refinement = selection(function() __rt.check_type("int", 0/0) end, "E8001")
+  assert(refinement.id == "INT_CONVERSION_NAN")
+  local signature = selection(function()
+    __rt.check_type("(int)->int", __rt.function_("(string)->int", function() end))
+  end, "E8010")
+  assert(signature.id == "FUNCTION_SIGNATURE_MISMATCH")
+  assert(signature.values.expected == "(int)->int")
+  assert(signature.values.actual == "(string)->int")
+  -- A malformed function carrier has no signature operand: the closed kind
+  -- arm renders (the JVM host check's own function row).
+  local carrier = selection(function()
+    __rt.check_type("()->int", {__kind = "function"})
+  end, "E8001")
+  assert(carrier.id == "TYPED_BOUNDARY_KIND" and carrier.values.kind == "function")
+  -- A producer defect carries no selection, so it can never become a host
+  -- inner reason.
+  local defect = assert_error(function()
+    __rt.check_type("int[]", {1, 2})
+  end, "E8001")
+  assert(defect.arm == nil)
 end)
 
 -- ==================== check_type descriptor edge cases ====================

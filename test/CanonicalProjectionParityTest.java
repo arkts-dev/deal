@@ -1386,98 +1386,593 @@ public class CanonicalProjectionParityTest {
      * renderer: the wrapper fails closed with the producer-defect report
      * instead of publishing a locally composed E8010 tuple.
      */
+    /**
+     * The production wrappers' mapped failure sites and their mapped inner
+     * reasons through the artifact-owned closed arm table (ISSUE-0696
+     * remediation; canonical failure-projection authority P1/P4). Every
+     * drive loads the real production artifact, records the two
+     * artifact-registered renderers, triggers the site through the
+     * production wrapper (the loaded host surface entry or the fixture's
+     * own export), and asserts the published tuple equals the registry's
+     * own render of the arm at the supplied origin. The controls inject
+     * invalid named-parameter/projection/inner bindings through the
+     * recorded renderer (each fail-closed, publishing no DEAL tuple) and
+     * replace the arm's serialized template in the artifact's own source
+     * (the published message must follow it).
+     */
     private static void assertHostWrapperArmDelegation(Compiled compiled,
             SidecarExpectations.ErrorExpectation pin) throws Exception {
-        BoundaryFailure arm = FailureContractRegistry.render(FailureArmId.ASYNC_SHAPE,
-            Map.of("actual", "nothing"), "async operation", "nothing", null);
         String entryModule = compiled.checkedProject().entryModule().path();
-        // The artifact carries the header-stripped mirror source, so the
-        // pinned raw corpus line rebases onto the artifact's own line.
+        Map<String, String> absentHost = Map.of("async_shape_bad",
+            "return {\n  fetchValue = function()\n  end,\n}\n");
+        String drive = "local probe = __exportSurfaces[__ENTRY__][\""
+            + "test_host_async_shape_bad\"]\n"
+            + "if probe == nil then fail(\"no probe export\") end\n"
+            + "return pcall(probe.f)\n";
+        WrapperPin valid = wrapperPin(FailureArmId.ASYNC_SHAPE,
+            Map.of("actual", "nothing"), "async operation", "nothing",
+            artifactOrigin(compiled, pin), "nil", false, null, null);
+        checkOutput(runWrapperProbe(compiled, absentHost, artifactPath(compiled),
+            wrapperRecorder(), drive, wrapperTuple(valid)), compiled.spec().what()
+            + " (luajit): the production wrapper delegates its mapped failure to "
+            + "the artifact-owned closed-arm renderer, publishes the registry's own "
+            + "absent-handle tuple at the supplied origin, and records the delegation");
+        // The site refuses invalid bindings: an extra named parameter, a
+        // projection outside the arm's declared shape, and an inner-only arm
+        // at the top-level site each fail closed with a named producer
+        // defect and publish no DEAL tuple.
+        checkOutput(runWrapperProbe(compiled, absentHost, artifactPath(compiled),
+            wrapperRecorder("    local mutated = {}\n"
+                + "    for k, v in pairs(values) do mutated[k] = v end\n"
+                + "    mutated.extra = \"x\"\n"
+                + "    return realArm(id, mutated, file, line, column, expected, "
+                + "subject)\n"), drive,
+            wrapperDefect("ASYNC_SHAPE", "extra parameter")),
+            compiled.spec().what() + " (luajit): the wrapper's site rejects an extra "
+            + "named parameter");
+        checkOutput(runWrapperProbe(compiled, absentHost, artifactPath(compiled),
+            wrapperRecorder("    return realArm(id, values, file, line, column, "
+                + "\"not an async operation\", subject)\n"), drive,
+            wrapperDefect("ASYNC_SHAPE", "async-operation token")),
+            compiled.spec().what() + " (luajit): the wrapper's site rejects an "
+            + "expected projection outside the arm's declared shape");
+        checkOutput(runWrapperProbe(compiled, absentHost, artifactPath(compiled),
+            wrapperRecorder("    return realArm(\"HOST_STRING_INVALID_UTF8\", "
+                + "values, file, line, column, expected, subject)\n"), drive,
+            wrapperDefect("HOST_STRING_INVALID_UTF8")),
+            compiled.spec().what() + " (luajit): the wrapper's site refuses an "
+            + "inner-only arm");
+        // The published message follows the artifact's serialized template:
+        // replacing the ASYNC_SHAPE template in the artifact's own source
+        // redirects the message, so no consumer holds a copied literal.
+        String mutated = "host async function must return an async operation, got "
+            + "{actual} (mutated)";
+        Path patched = patchedArtifact(compiled, armEntry(FailureArmId.ASYNC_SHAPE),
+            mutatedEntry(FailureArmId.ASYNC_SHAPE, mutated));
+        checkOutput(runWrapperProbe(compiled, absentHost, patched.toString(),
+            wrapperRecorder(), drive, wrapperTuple(valid.withMessage(
+                "host async function must return an async operation, got nothing "
+                    + "(mutated)"))),
+            compiled.spec().what() + " (luajit): the wrapper's site follows the "
+            + "artifact's serialized ASYNC_SHAPE template");
+    }
+
+    /**
+     * The mapped sync-return, nothing, and parameter cells of the production
+     * wrappers: each publishes the registry's own complete tuple at the
+     * supplied origin, delegates its mapped inner reason as a structured
+     * closed-arm selection (never text), and follows the artifact's
+     * serialized inner templates — so a copied matcher reason cannot pass by
+     * matching today's literals. Each control also injects invalid
+     * named-parameter, projection, and inner bindings at its site.
+     */
+    private static void testHostWrapperArmAuthority() throws Exception {
+        System.out.println("-- the production wrappers' parameter, sync-return, and "
+            + "nothing cells render through the artifact's closed arm table --");
+        wrapperParameterSite();
+        wrapperSyncReturnKindSite();
+        wrapperStringCarrierSite();
+        wrapperNothingSite();
+        wrapperInnerTemplateAuthority();
+    }
+
+    /**
+     * The parameter cell of the loaded host wrapper: the wrong-kind argument
+     * crosses the production wrapper's own declared-parameter rule (the
+     * artifact-side projection of the same call is the loaded wrapper's).
+     */
+    private static void wrapperParameterSite() throws Exception {
+        Compiled compiled = compile(mainEntry(
+            "host-abi/host-bytes-param-mismatch-e8010"));
+        try {
+            String drive = "local surface = __exportSurfaces[\"host.bytes_roundtrip\"]\n"
+                + "if surface == nil then fail(\"no host surface\") end\n"
+                + "local entry = surface.echoBytes\n"
+                + "if entry == nil then fail(\"no echoBytes export\") end\n"
+                + "return pcall(entry.f, 5, \"probe.deal\", 3, 4)\n";
+            WrapperPin valid = wrapperPin(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", FailureProjections.kindReason(
+                    RuntimeDescriptor.Bytes.INSTANCE)),
+                "bytes", "number", "probe.deal:3:4", "5", true,
+                FailureArmId.TYPED_BOUNDARY_KIND, "bytes");
+            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+                wrapperRecorder(), drive, wrapperTuple(valid)),
+                "host-abi/host-bytes-param-mismatch-e8010 (luajit): the loaded "
+                + "wrapper's parameter cell publishes the registry's tuple with the "
+                + "matcher-selected inner arm and the declared projections");
+            // Invalid bindings through the recorded renderer: a dropped named
+            // parameter, a foreign inner reason, and an expected projection
+            // outside the declared shape each fail closed, no tuple published.
+            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+                wrapperRecorder("    local mutated = {}\n"
+                    + "    for k, v in pairs(values) do\n"
+                    + "      if k ~= \"index\" then mutated[k] = v end\n"
+                    + "    end\n"
+                    + "    return realArm(id, mutated, file, line, column, expected, "
+                    + "subject)\n"), drive,
+                wrapperDefect("HOST_PARAMETER_CELL", "supplied 1")),
+                "host-abi/host-bytes-param-mismatch-e8010 (luajit): the parameter "
+                + "cell rejects a missing named parameter");
+            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+                wrapperRecorder(null, "  realInner(id, values)\n"
+                    + "  return \"a composed reason\"\n"), drive,
+                wrapperDefect("HOST_PARAMETER_CELL",
+                    "closed inner-reason vocabulary")),
+                "host-abi/host-bytes-param-mismatch-e8010 (luajit): the parameter "
+                + "cell rejects a composed inner reason");
+            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+                wrapperRecorder("    return realArm(id, values, file, line, column, "
+                    + "\"not a descriptor\", subject)\n"), drive,
+                wrapperDefect("HOST_PARAMETER_CELL", "canonical descriptor")),
+                "host-abi/host-bytes-param-mismatch-e8010 (luajit): the parameter "
+                + "cell rejects an expected projection outside its declared shape");
+            // The inner reason follows the artifact's serialized kind template.
+            String mutated = "wanted {kind} instead";
+            Path patched = patchedArtifact(compiled,
+                armEntry(FailureArmId.TYPED_BOUNDARY_KIND),
+                mutatedEntry(FailureArmId.TYPED_BOUNDARY_KIND, mutated));
+            checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
+                wrapperRecorder(), drive, wrapperTuple(valid.withMessage(
+                    "parameter 1 type mismatch: wanted bytes instead"))),
+                "host-abi/host-bytes-param-mismatch-e8010 (luajit): the parameter "
+                + "cell's inner reason follows the artifact's serialized kind template");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /** The sync return cell of the loaded host wrapper (the kind inner reason). */
+    private static void wrapperSyncReturnKindSite() throws Exception {
+        Compiled compiled = compile(host("host-abi/host-bad-return",
+            "test_host_bad_return", "bad_return"));
+        try {
+            SidecarExpectations.ErrorExpectation pin = luajitPin(compiled.spec());
+            check(pin != null, "host-abi/host-bad-return: the sidecar pins an error");
+            if (pin == null) {
+                return;
+            }
+            String drive = "";
+            WrapperPin valid = wrapperPin(FailureArmId.HOST_SYNC_RETURN_CELL,
+                Map.of("inner", FailureProjections.kindReason(
+                    RuntimeDescriptor.Int.INSTANCE)),
+                "int", "string", artifactOrigin(compiled, pin), "\"not a number\"",
+                false, FailureArmId.TYPED_BOUNDARY_KIND, "int");
+            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+                wrapperRecorder(), drive, wrapperTuple(valid)),
+                "host-abi/host-bad-return (luajit): the wrapper's sync return cell "
+                + "publishes the registry's tuple with the matcher-selected kind inner");
+            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+                wrapperRecorder(null, "  realInner(id, values)\n"
+                    + "  return \"a composed reason\"\n"), drive,
+                wrapperDefect("HOST_SYNC_RETURN_CELL",
+                    "closed inner-reason vocabulary")),
+                "host-abi/host-bad-return (luajit): the sync return cell rejects a "
+                + "composed inner reason and publishes no tuple");
+            // The outer template control: replacing the serialized
+            // HOST_SYNC_RETURN_CELL template redirects the published message.
+            String mutated = "return cell {inner}";
+            Path patched = patchedArtifact(compiled,
+                armEntry(FailureArmId.HOST_SYNC_RETURN_CELL),
+                mutatedEntry(FailureArmId.HOST_SYNC_RETURN_CELL, mutated));
+            checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
+                wrapperRecorder(), drive, wrapperTuple(valid.withMessage(
+                    "return cell expected int"))),
+                "host-abi/host-bad-return (luajit): the wrapper's sync return cell "
+                + "follows the artifact's serialized outer template");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /**
+     * The sync return cell with a fixed-text inner-only reason: the raw host
+     * returns a malformed UTF-8 string, so the deployed matcher selects the
+     * closed string-carrier arm and the artifact renders its template.
+     */
+    private static void wrapperStringCarrierSite() throws Exception {
+        Compiled compiled = compile(host("host-abi/host-invalid-utf8-e8010",
+            "test_host_bad_utf8", "bad_string"));
+        try {
+            SidecarExpectations.ErrorExpectation pin = luajitPin(compiled.spec());
+            check(pin != null, "host-abi/host-invalid-utf8-e8010: the sidecar pins "
+                + "an error");
+            if (pin == null) {
+                return;
+            }
+            String drive = "";
+            WrapperPin valid = wrapperPin(FailureArmId.HOST_SYNC_RETURN_CELL,
+                Map.of("inner", FailureContractRegistry.renderInner(
+                    FailureArmId.HOST_STRING_INVALID_UTF8, Map.of())),
+                "string", "string", artifactOrigin(compiled, pin), null, false,
+                FailureArmId.HOST_STRING_INVALID_UTF8, null);
+            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+                wrapperRecorder(), drive, wrapperTuple(valid)),
+                "host-abi/host-invalid-utf8-e8010 (luajit): the wrapper's sync return "
+                + "cell renders the matcher-selected string-carrier inner arm");
+            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+                wrapperRecorder("    return realArm(id, {}, file, line, column, "
+                    + "expected, subject)\n"), drive,
+                wrapperDefect("HOST_SYNC_RETURN_CELL", "supplied 0")),
+                "host-abi/host-invalid-utf8-e8010 (luajit): the sync return cell "
+                + "rejects a missing named parameter and publishes no tuple");
+            // The inner-only template control: replacing the serialized
+            // HOST_STRING_INVALID_UTF8 template redirects the inner reason.
+            String mutated = "malformed host string";
+            Path patched = patchedArtifact(compiled,
+                armEntry(FailureArmId.HOST_STRING_INVALID_UTF8),
+                mutatedEntry(FailureArmId.HOST_STRING_INVALID_UTF8, mutated));
+            checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
+                wrapperRecorder(), drive, wrapperTuple(valid.withMessage(
+                    "return value 1 type mismatch: malformed host string"))),
+                "host-abi/host-invalid-utf8-e8010 (luajit): the wrapper's inner "
+                + "reason follows the artifact's serialized inner-only template");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /** The no-value return cell of the loaded host wrapper. */
+    private static void wrapperNothingSite() throws Exception {
+        Compiled compiled = compile(host("host-abi/host-empty-return-bad",
+            "test_host_empty_return_bad", "empty_return"));
+        try {
+            SidecarExpectations.ErrorExpectation pin = luajitPin(compiled.spec());
+            check(pin != null, "host-abi/host-empty-return-bad: the sidecar pins an "
+                + "error");
+            if (pin == null) {
+                return;
+            }
+            String drive = "";
+            WrapperPin valid = wrapperPin(FailureArmId.HOST_SYNC_RETURN_NOTHING,
+                Map.of("expected", "int"), "int", "nothing",
+                artifactOrigin(compiled, pin), "nil", false, null, null);
+            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+                wrapperRecorder(), drive, wrapperTuple(valid)),
+                "host-abi/host-empty-return-bad (luajit): the wrapper's no-value "
+                + "return cell publishes the registry's nothing tuple");
+            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+                wrapperRecorder("    local mutated = {}\n"
+                    + "    for k, v in pairs(values) do mutated[k] = v end\n"
+                    + "    mutated.extra = \"x\"\n"
+                    + "    return realArm(id, mutated, file, line, column, expected, "
+                    + "subject)\n"), drive,
+                wrapperDefect("HOST_SYNC_RETURN_NOTHING", "extra parameter")),
+                "host-abi/host-empty-return-bad (luajit): the no-value cell rejects "
+                + "an extra named parameter and publishes no tuple");
+            // The outer template control at the nothing site.
+            String mutated = "nothing returned where {expected} was declared";
+            Path patched = patchedArtifact(compiled,
+                armEntry(FailureArmId.HOST_SYNC_RETURN_NOTHING),
+                mutatedEntry(FailureArmId.HOST_SYNC_RETURN_NOTHING, mutated));
+            checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
+                wrapperRecorder(), drive, wrapperTuple(valid.withMessage(
+                    "nothing returned where int was declared"))),
+                "host-abi/host-empty-return-bad (luajit): the wrapper's no-value "
+                + "cell follows the artifact's serialized outer template");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /**
+     * The inner-template authority control at the mapped kind site: with the
+     * artifact's serialized {@code TYPED_BOUNDARY_KIND} template replaced,
+     * the deployed matcher's own composed text ("expected bytes") is outside
+     * the replaced closed vocabulary, so a consumer forwarding that text
+     * would fail closed instead of publishing the tuple — the produced
+     * message can only come from the serialized template.
+     */
+    private static void wrapperInnerTemplateAuthority() throws Exception {
+        Compiled compiled = compile(mainEntry(
+            "host-abi/host-bytes-param-mismatch-e8010"));
+        try {
+            String drive = "local surface = __exportSurfaces[\"host.bytes_roundtrip\"]\n"
+                + "if surface == nil then fail(\"no host surface\") end\n"
+                + "return pcall(surface.echoBytes.f, 5, \"probe.deal\", 3, 4)\n";
+            String mutated = "the declared kind is {kind}";
+            Path patched = patchedArtifact(compiled,
+                armEntry(FailureArmId.TYPED_BOUNDARY_KIND),
+                mutatedEntry(FailureArmId.TYPED_BOUNDARY_KIND, mutated));
+            // The mutated template is the artifact's own authority, so the
+            // pin's message is the replaced template's instantiation while the
+            // code and the declared fields stay the registry's (the mutation
+            // replaces the text only).
+            WrapperPin replaced = wrapperPin(FailureArmId.HOST_PARAMETER_CELL,
+                Map.of("index", "1", "inner", FailureProjections.kindReason(
+                    RuntimeDescriptor.Bytes.INSTANCE)),
+                "bytes", "number", "probe.deal:3:4", "5", true,
+                FailureArmId.TYPED_BOUNDARY_KIND, "bytes")
+                .withMessage("parameter 1 type mismatch: the declared kind is bytes");
+            checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
+                wrapperRecorder(), drive, wrapperTuple(replaced)),
+                "host-abi/host-bytes-param-mismatch-e8010 (luajit): the inner "
+                + "template is the text authority — the replaced serialized template "
+                + "renders the published message");
+            checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
+                wrapperRecorder(null, "  return \"expected bytes\"\n"), drive,
+                wrapperDefect("HOST_PARAMETER_CELL",
+                    "closed inner-reason vocabulary")),
+                "host-abi/host-bytes-param-mismatch-e8010 (luajit): the stale matcher "
+                + "text no longer passes once the serialized template is replaced "
+                + "(no copied literal can stand in for the arm)");
+            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+                wrapperRecorder(null, "  return \"the declared kind is bytes\"\n"),
+                drive, wrapperDefect("HOST_PARAMETER_CELL",
+                    "closed inner-reason vocabulary")),
+                "host-abi/host-bytes-param-mismatch-e8010 (luajit): the replaced "
+                + "template's text is rejected against the unmodified artifact's "
+                + "serialized vocabulary");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+
+    /**
+     * One production-wrapper site drive (canonical failure-projection
+     * authority P1/P4; ISSUE-0696 remediation): the artifact is loaded, the
+     * deployed runtime's two host-arm renderers are recorded and forwarded
+     * unchanged, the drive body triggers the mapped failure, and the
+     * assertion body inspects the captured error and the recorded
+     * delegation. The probe ends with {@code PROBE-OK} only when every
+     * assertion holds.
+     */
+    private static String runWrapperProbe(Compiled compiled,
+            Map<String, String> hostOverrides, String artifact, String install,
+            String drive, String assertions) throws Exception {
+        String entryModule = compiled.checkedProject().entryModule().path();
+        // A DRIVER case's own entry main carries the fixture's probe call, so
+        // the drive is the entry main itself; every other entry runs its
+        // module init first (the artifact publishes the host surface there)
+        // and the drive body triggers the site explicitly.
+        boolean entryDrives = compiled.spec().entry() == Entry.DRIVER;
+        String init = entryDrives ? "" : """
+            local ok, err = __dealMain()
+            if not ok then
+              local why = type(err) == "table"
+                and (tostring(err.code) .. ": " .. tostring(err.m)) or tostring(err)
+              fail("the init failed: " .. why)
+            end
+            """;
+        String capture = entryDrives ? "return __dealMain()\n" : drive;
+        String template = """
+            local function fail(m) print("PROBE-FAIL: " .. tostring(m)) os.exit(1) end
+            dofile(__ARTIFACT__)
+            local rt = require("deal.runtime")
+            local realInner = rt.__hostInnerArm
+            local realArm = rt.__hostArm
+            if realInner == nil or realArm == nil then
+              fail("the artifact registered no host arm renderer")
+            end
+            local innerCalls, armCalls = {}, {}
+            __INSTALL__
+            __INIT__
+            local ok2, err2 = (function()
+            __DRIVE__
+            end)()
+            if ok2 then fail("the mapped failure did not fire") end
+            __ASSERTIONS__
+            print("PROBE-OK")
+            """;
+        String probe = template
+            .replace("__ARTIFACT__", luaString(artifact))
+            .replace("__INSTALL__", install)
+            .replace("__INIT__", init)
+            .replace("__DRIVE__", capture)
+            .replace("__ASSERTIONS__", assertions)
+            .replace("__ENTRY__", luaString(entryModule));
+        return luaArtifactOutput(compiled, hostOverrides, probe);
+    }
+
+    /** The recording renderer installation of one wrapper probe. */
+    private static String wrapperRecorder() {
+        return wrapperRecorder(null, null);
+    }
+
+    /** The recording renderer installation with a mutated outer forward. */
+    private static String wrapperRecorder(String armForward) {
+        return wrapperRecorder(armForward, null);
+    }
+
+    /**
+     * The recording renderer installation, with the caller's own Lua bodies
+     * spliced in: {@code armForward} replaces the outer renderer's forward
+     * statement (an invalid-binding injection) and {@code innerForward}
+     * replaces the inner renderer's return (a foreign-inner injection). An
+     * absent body keeps the identity forward.
+     */
+    private static String wrapperRecorder(String armForward, String innerForward) {
+        String armBody = armForward == null
+            ? "    return realArm(id, values, file, line, column, expected, subject)\n"
+            : armForward;
+        String innerBody = innerForward == null
+            ? "  return realInner(id, values)\n"
+            : innerForward;
+        return "rt.__hostInnerArm = function(id, values)\n"
+            + "  innerCalls[#innerCalls + 1] = {id = id, values = values}\n"
+            + innerBody
+            + "end\n"
+            + "rt.__hostArm = function(id, values, file, line, column, expected, "
+            + "subject)\n"
+            + "  armCalls[#armCalls + 1] = {id = id, values = values, file = file, "
+            + "line = line, column = column, expected = expected, subject = subject}\n"
+            + armBody
+            + "end\n";
+    }
+
+    /** One wrapper probe's fail-closed assertion: a named defect, no DEAL tuple. */
+    private static String wrapperDefect(String... fragments) {
+        StringBuilder out = new StringBuilder();
+        out.append("if type(err2) == \"table\" and err2.__d then fail(\"a DEAL tuple "
+            + "was published: \" .. tostring(err2.m)) end\n");
+        out.append("if type(err2) ~= \"string\" then fail(\"the fail-closed report: \" "
+            + ".. tostring(err2)) end\n");
+        for (String fragment : fragments) {
+            out.append("if string.find(err2, ").append(luaString(fragment))
+                .append(", 1, true) == nil then fail(\"the defect report: \" .. "
+                    + "tostring(err2)) end\n");
+        }
+        return out.toString();
+    }
+
+    /** One valid wrapper-site expectation (the registry's own render). */
+    private record WrapperPin(String armId, String code, String message,
+                              String expected, String actual, String origin,
+                              String subjectLua, boolean index, String innerArmId,
+                              String innerKind) {
+
+        WrapperPin withMessage(String mutatedMessage) {
+            return new WrapperPin(armId, code, mutatedMessage, expected, actual,
+                origin, subjectLua, index, innerArmId, innerKind);
+        }
+    }
+
+    /** The registry render of one mapped wrapper site at the supplied origin. */
+    private static WrapperPin wrapperPin(FailureArmId id, Map<String, String> values,
+            String expected, String actual, String origin, String subjectLua,
+            boolean index, FailureArmId innerArm, String innerKind) {
+        BoundaryFailure arm = FailureContractRegistry.render(id, values, expected,
+            actual, null);
+        return new WrapperPin(id.name(), arm.code().name(), arm.message(),
+            arm.expected(), arm.actual(), origin, subjectLua, index,
+            innerArm == null ? null : innerArm.name(), innerKind);
+    }
+
+    /**
+     * The artifact's own origin text of one pinned call cell: the mirror
+     * source path of the fixture and the pinned raw corpus line rebased onto
+     * the artifact's line.
+     */
+    private static String artifactOrigin(Compiled compiled,
+            SidecarExpectations.ErrorExpectation pin) {
         int originLine = pin.line() - compiled.strippedByCorpusPath()
             .getOrDefault(compiled.spec().fixtureFile(), 0);
-        StringBuilder probe = new StringBuilder();
-        probe.append("local function fail(m) print(\"PROBE-FAIL: \" .. tostring(m)) os.exit(1) end\n");
-        probe.append("dofile(__ARTIFACT__)\n");
-        probe.append("local rt = require(\"deal.runtime\")\n");
-        probe.append("local real = rt.__hostArm\n");
-        probe.append("if real == nil then fail(\"the artifact registered no "
-            + "host arm renderer\") end\n");
-        probe.append("local calls = {}\n");
-        probe.append("rt.__hostArm = function(id, values, file, line, column, "
-            + "expected, actual)\n");
-        probe.append("  calls[#calls + 1] = {id = id, values = values, file = file, "
-            + "line = line, column = column, expected = expected, "
-            + "actual = actual}\n");
-        probe.append("  return real(id, values, file, line, column, expected, "
-            + "actual)\n");
-        probe.append("end\n");
-        probe.append("local ok, err = __dealMain()\n");
-        probe.append("if not ok then fail(\"the init failed: \" .. "
-            + "tostring(err)) end\n");
-        probe.append("local probe = __exportSurfaces[__ENTRY__]["
-            + "\"test_host_async_shape_bad\"]\n");
-        probe.append("if probe == nil then fail(\"no probe export\") end\n");
-        probe.append("local ok2, err2 = pcall(probe.f)\n");
-        probe.append("if ok2 then fail(\"the wrapper failure did not fire\") end\n");
-        probe.append("if #calls ~= 1 then fail(\"the renderer calls: \" .. "
-            + "#calls) end\n");
-        probe.append("local c = calls[1]\n");
-        probe.append("if c.id ~= \"ASYNC_SHAPE\" then fail(\"the arm id: \" .. "
-            + "tostring(c.id)) end\n");
-        probe.append("if type(c.values) ~= \"table\" or c.values.actual ~= "
-            + "\"nothing\" then fail(\"the arm parameters: \" .. "
-            + "tostring(c.values and c.values.actual)) end\n");
-        probe.append("if c.expected ~= ")
-            .append(luaString(arm.expected()))
-            .append(" then fail(\"the expected projection: \" .. "
-                + "tostring(c.expected)) end\n");
-        probe.append("if c.actual ~= ")
-            .append(luaString(arm.actual()))
-            .append(" then fail(\"the actual projection: \" .. "
-                + "tostring(c.actual)) end\n");
-        probe.append("if c.line ~= ").append(originLine)
-            .append(" or c.column ~= ").append(pin.column())
-            .append(" then fail(\"the call origin: \" .. tostring(c.file) .. "
-                + "\":\" .. tostring(c.line) .. \":\" .. "
-                + "tostring(c.column)) end\n");
-        probe.append("if type(c.file) ~= \"string\" or #c.file == 0 then "
-            + "fail(\"the origin file: \" .. tostring(c.file)) end\n");
-        probe.append("if type(err2) ~= \"table\" or err2.__d ~= true then "
+        return compiled.mirror().resolve(compiled.spec().fixtureFile()).toString()
+            + ":" + originLine + ":" + pin.column();
+    }
+
+    /**
+     * The valid control's assertion block: the captured error is the closed
+     * arm's registry render at the supplied origin, and the recorded
+     * delegation carries the arm id, the declared expected descriptor, the
+     * raw failing subject, the supplied origin operands, and — where the
+     * site has one — the structured inner-arm selection the deployed
+     * matcher raised (never a text).
+     */
+    private static String wrapperTuple(WrapperPin pin) {
+        StringBuilder out = new StringBuilder();
+        out.append("if type(err2) ~= \"table\" or err2.__d ~= true then "
             + "fail(\"the carrier: \" .. tostring(err2)) end\n");
-        probe.append("if err2.code ~= ")
-            .append(luaString(arm.code().name()))
+        out.append("if err2.code ~= ").append(luaString(pin.code()))
             .append(" then fail(\"the code: \" .. tostring(err2.code)) end\n");
-        probe.append("if err2.m ~= ")
-            .append(luaString(arm.message()))
+        out.append("if err2.m ~= ").append(luaString(pin.message()))
             .append(" then fail(\"the message: \" .. tostring(err2.m)) end\n");
-        probe.append("if err2.o ~= tostring(c.file) .. \":\" .. "
-            + "tostring(c.line) .. \":\" .. tostring(c.column) then "
-            + "fail(\"the origin: \" .. tostring(err2.o)) end\n");
-        probe.append("if err2.e ~= ")
-            .append(luaString(arm.expected()))
+        out.append("if err2.o ~= ").append(luaString(pin.origin()))
+            .append(" then fail(\"the origin: \" .. tostring(err2.o)) end\n");
+        out.append("if err2.e ~= ").append(luaLiteral(pin.expected()))
             .append(" then fail(\"the expected field: \" .. tostring(err2.e)) end\n");
-        probe.append("if err2.a ~= ")
-            .append(luaString(arm.actual()))
+        out.append("if err2.a ~= ").append(luaLiteral(pin.actual()))
             .append(" then fail(\"the actual field: \" .. tostring(err2.a)) end\n");
-        probe.append("rt.__hostArm = nil\n");
-        probe.append("local ok3, err3 = pcall(probe.f)\n");
-        probe.append("if ok3 then fail(\"the wrapper succeeded without its "
-            + "renderer\") end\n");
-        probe.append("if type(err3) ~= \"string\" or string.find(err3, ")
-            .append(luaString("not registered"))
-            .append(", 1, true) == nil then fail(\"the fail-closed error: \" .. "
-                + "tostring(err3)) end\n");
-        probe.append("print(\"PROBE-OK\")\n");
-        String probeSource = probe.toString()
-            .replace("__ARTIFACT__", luaString(artifactPath(compiled)))
-            .replace("__ENTRY__", luaString(entryModule));
-        String output = luaArtifactOutput(compiled,
-            Map.of("async_shape_bad", "return {\n  fetchValue = function()\n  end,\n}\n"),
-            probeSource);
-        check(output.contains("PROBE-OK"), compiled.spec().what()
-            + " (luajit): the production wrapper delegates its mapped failure to "
-            + "the artifact-owned closed-arm renderer and fails closed without "
-            + "it: " + output);
+        out.append("if #armCalls ~= 1 then fail(\"the arm renderer calls: \" .. "
+            + "tostring(#armCalls)) end\n");
+        out.append("local c = armCalls[1]\n");
+        out.append("if c.id ~= ").append(luaString(pin.armId()))
+            .append(" then fail(\"the arm id: \" .. tostring(c.id)) end\n");
+        out.append("if c.expected ~= ").append(luaLiteral(pin.expected()))
+            .append(" then fail(\"the declared expected operand: \" .. "
+                + "tostring(c.expected)) end\n");
+        if (pin.subjectLua() == null) {
+            out.append("if type(c.subject) ~= \"string\" then fail(\"the failing "
+                + "subject: \" .. tostring(c.subject)) end\n");
+        } else {
+            out.append("if c.subject ~= ").append(pin.subjectLua())
+                .append(" then fail(\"the failing subject: \" .. "
+                    + "tostring(c.subject)) end\n");
+        }
+        out.append("if tostring(c.file) .. \":\" .. tostring(c.line) .. \":\" .. "
+            + "tostring(c.column) ~= ").append(luaString(pin.origin()))
+            .append(" then fail(\"the origin operands: \" .. tostring(c.file) .. \":\" "
+                + ".. tostring(c.line) .. \":\" .. tostring(c.column)) end\n");
+        if (pin.index()) {
+            out.append("if c.values.index ~= 1 then fail(\"the parameter index: \" .. "
+                + "tostring(c.values.index)) end\n");
+        }
+        if (pin.innerArmId() != null) {
+            out.append("if #innerCalls ~= 1 then fail(\"the inner renderer calls: \" "
+                + ".. tostring(#innerCalls)) end\n");
+            out.append("local i = innerCalls[1]\n");
+            out.append("if i.id ~= ").append(luaString(pin.innerArmId()))
+                .append(" then fail(\"the inner arm selection: \" .. tostring(i.id)) "
+                    + "end\n");
+            if (pin.innerKind() != null) {
+                out.append("if i.values.kind ~= ").append(luaString(pin.innerKind()))
+                    .append(" then fail(\"the inner kind operand: \" .. "
+                        + "tostring(i.values.kind)) end\n");
+            }
+        } else {
+            out.append("if #innerCalls ~= 0 then fail(\"unexpected inner renderer "
+                + "calls: \" .. tostring(#innerCalls)) end\n");
+        }
+        return out.toString();
+    }
+
+    /** One Lua literal: nil for an absent field, else the quoted text. */
+    private static String luaLiteral(String text) {
+        return text == null ? "nil" : luaString(text);
+    }
+
+    /** The serialized arm entry prefix of one arm in the emitted arm table. */
+    private static String armEntry(FailureArmId id) {
+        FailureArm arm = FailureContractRegistry.arm(id);
+        return "[" + luaString(id.name()) + "] = {c=" + luaString(
+            FailureContractRegistry.codeOf(arm)) + ", t="
+            + luaString(arm.template());
+    }
+
+    /** The serialized arm entry prefix of one arm with a replaced template. */
+    private static String mutatedEntry(FailureArmId id, String template) {
+        String entry = armEntry(id);
+        return entry.substring(0, entry.length() - luaString(
+            FailureContractRegistry.arm(id).template()).length())
+            + luaString(template);
+    }
+
+    /** One artifact copy with the serialized arm entry replaced. */
+    private static Path patchedArtifact(Compiled compiled, String needle,
+            String replacement) throws Exception {
+        Path artifact = Path.of(artifactPath(compiled));
+        String source = Files.readString(artifact, StandardCharsets.UTF_8);
+        check(source.contains(needle), compiled.spec().what()
+            + ": the artifact carries the serialized arm entry " + needle);
+        Path patched = artifact.getParent().resolve("patched_artifact.lua");
+        Files.writeString(patched, source.replace(needle, replacement),
+            StandardCharsets.UTF_8);
+        return patched;
+    }
+
+    /** Fails the check unless the probe completed all its assertions. */
+    private static void checkOutput(String output, String message) {
+        check(output.contains("PROBE-OK"), message + ": " + output);
     }
 
     /** The staged LuaJIT artifact path of one compiled case. */
@@ -4662,6 +5157,7 @@ public class CanonicalProjectionParityTest {
         testHostNestedArrayProjection();
         testHostNativeArrayCarriers();
         testMissingDeclaredAnnotationFailsClosed();
+        testHostWrapperArmAuthority();
         testSerializedArmTableIdentity();
         testMarkedArmsAndFieldShapes();
         testHostInnerReasonPassThroughs();

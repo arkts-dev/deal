@@ -636,20 +636,78 @@ public final class LuaSemanticEmitter {
                 out.append("  return __arm(id, values, tostring(file)..\":\""
                     + "..tostring(line)..\":\"..tostring(column), nil, nil)\n");
                 out.append("end\n");
-                // The host-wrapper arm renderer (canonical failure-projection
-                // authority P1/P4): the deployed runtime's
-                // `from_lua_function` wrappers delegate every mapped failure
-                // (the declared parameter cell, the sync return cells, and
-                // the async-shape cell) to this artifact-owned render at the
-                // supplied call origin, so the production failure is the
-                // closed arm's own instantiation with the arm's declared
-                // fields and projections — never a runtime-side template
-                // copy and never a locally composed text.
+                // The host-wrapper arm renderers (canonical
+                // failure-projection authority P1/P4): the deployed
+                // runtime's `from_lua_function` wrappers delegate every
+                // mapped failure (the declared parameter cell, the sync
+                // return cells, and the async-shape cell) to this
+                // artifact-owned render at the supplied call origin, so the
+                // production failure is the closed arm's own instantiation
+                // with the arm's declared fields and projections — never a
+                // runtime-side template copy and never a locally composed
+                // text. The wrapper hands over the failing subject value,
+                // never a projected token: the renderer projects it with
+                // the arm's own declared actual projection (the chunk's
+                // single carrier-kind projection, or the no-value cell's
+                // fixed nothing token), so no consumer holds a second
+                // projection implementation.
+                //
+                // Both entries are closures over the chunk's arm table; no
+                // chunk-level local is added (LuaJIT bounds one function at
+                // 200 locals and the emitted main body carries the
+                // program's own), so every operand resolves inside the
+                // closure bodies.
+                out.append("__rt.__hostInnerArm = function(id, values)\n");
+                out.append("  return __renderTemplate(id, values)\n");
+                out.append("end\n");
                 out.append("__rt.__hostArm = function(id, values, file, "
-                    + "line, column, expected, actual)\n");
-                out.append("  return __arm(id, values, tostring(file)..\":\""
-                    + "..tostring(line)..\":\"..tostring(column), expected, "
-                    + "actual)\n");
+                    + "line, column, expected, subject)\n");
+                out.append("  local arm = __arms[id]\n");
+                out.append("  if arm == nil then\n");
+                out.append("    error(\"unknown failure arm '\"..tostring(id)"
+                    + "..\"' (producer defect)\", 0)\n");
+                out.append("  end\n");
+                out.append("  local actual\n");
+                out.append("  if arm.a == \"NOTHING_TOKEN\" then\n");
+                out.append("    actual = \"nothing\"\n");
+                out.append("  elseif arm.a == \"CARRIER_KIND\" or arm.a == "
+                    + "\"TYPED_BOUNDARY\" then\n");
+                out.append("    -- The async-shape cell's absent handle (the "
+                    + "host invocation produced no result at all) is the\n");
+                out.append("    -- policy's fixed nothing token; every present "
+                    + "failing subject projects the chunk's\n");
+                out.append("    -- single carrier-kind projection.\n");
+                out.append("    local absent = id == \"ASYNC_SHAPE\" and "
+                    + "subject == nil\n");
+                out.append("    actual = absent and \"nothing\" or "
+                    + "__carrierKind(subject)\n");
+                out.append("  else\n");
+                out.append("    error(\"failure arm '\"..id..\"' declares the "
+                    + "actual projection '\"..tostring(arm.a)..\"', which the "
+                    + "host wrapper's render does not project (producer "
+                    + "defect)\", 0)\n");
+                out.append("  end\n");
+                out.append("  local resolved = {}\n");
+                out.append("  if values ~= nil then\n");
+                out.append("    for k, v in pairs(values) do resolved[k] = v "
+                    + "end\n");
+                out.append("  end\n");
+                out.append("  for entry in string.gmatch(arm.k or \"\", "
+                    + "\"[^,]+\") do\n");
+                out.append("    local eq = string.find(entry, \"=\", 1, "
+                    + "true)\n");
+                out.append("    if eq ~= nil then\n");
+                out.append("      local source = string.sub(entry, eq + 1)\n");
+                out.append("      if source == \"CARRIER_KIND_ACTUAL\" or "
+                    + "source == \"TYPED_BOUNDARY_ACTUAL\" then\n");
+                out.append("        resolved[string.sub(entry, 1, eq - 1)] = "
+                    + "actual\n");
+                out.append("      end\n");
+                out.append("    end\n");
+                out.append("  end\n");
+                out.append("  return __arm(id, resolved, "
+                    + "tostring(file)..\":\"..tostring(line)..\":\""
+                    + "..tostring(column), expected, actual)\n");
                 out.append("end\n");
                 out.append(HOST_BOUNDARY_PRELUDE);
             } else if (bindsBytesRuntime()) {
@@ -7904,7 +7962,17 @@ local function __hostParamCell(desc, index, v, origin)
     if checked == __rt.__NULL then return __NULL end
     return checked
   end
-  local inner = type(checked) == "table" and checked.message or tostring(checked)
+  -- The closed inner reason of the loaded matcher's failure: the arm the
+  -- matcher selected (the raised table's own selection), rendered by the
+  -- chunk's serialized arm table. A failure without a selection is a
+  -- producer defect, never copied text.
+  local selection = type(checked) == "table" and checked.arm or nil
+  if type(selection) ~= "table" then
+    error("the loaded boundary matcher raised a failure with no closed arm "
+      .. "selection (the chunk renders the selected arm's own template; a "
+      .. "producer defect)", 0)
+  end
+  local inner = __renderTemplate(selection.id, selection.values)
   return error(__arm("HOST_PARAMETER_CELL", {index = index, inner = inner},
     origin, desc, __carrierKind(v)), 0)
 end
@@ -7970,7 +8038,16 @@ local function __hostReturnCell(desc, v, origin, nothing)
   end
   local ok, checked = pcall(__rt.check_type, desc, v)
   if not ok then
-    local inner = type(checked) == "table" and checked.message or tostring(checked)
+    -- The closed inner reason of the loaded matcher's failure: the arm the
+    -- matcher selected, rendered by the chunk's serialized arm table. A
+    -- failure without a selection is a producer defect, never copied text.
+    local selection = type(checked) == "table" and checked.arm or nil
+    if type(selection) ~= "table" then
+      error("the loaded boundary matcher raised a failure with no closed arm "
+        .. "selection (the chunk renders the selected arm's own template; a "
+        .. "producer defect)", 0)
+    end
+    local inner = __renderTemplate(selection.id, selection.values)
     return error(__arm("HOST_SYNC_RETURN_CELL", {inner = inner}, origin, desc,
       __carrierKind(v)), 0)
   end

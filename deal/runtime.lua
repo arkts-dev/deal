@@ -42,6 +42,22 @@ function __rt._err(code, message, file, line, column, expected, actual)
   }
 end
 
+--- Create one canonical-matcher failure with its closed arm selection
+-- (canonical failure-projection authority P1/P2/P4). The table keeps the
+-- _err delivery shape for the runtime's own consumers (the stdlib checks
+-- and the retained runtime drives), and carries the arm id and the arm's
+-- named parameters under `arm`; a host-wrapper consumer renders the
+-- selected arm through the artifact-owned closed-arm renderer instead of
+-- publishing the locally composed text — the runtime holds no second
+-- authority for a mapped host failure. A failure with no closed arm (a
+-- producer defect such as an unparsable descriptor) carries no selection
+-- and never becomes a host inner reason.
+function __rt._armErr(arm_id, values, code, message, file, line, column, expected, actual)
+  local e = __rt._err(code, message, file, line, column, expected, actual)
+  e.arm = { id = arm_id, values = values }
+  return e
+end
+
 --- Reify a thrown/caught error value as a tagged builtin-Error class
 -- instance. The trailing file/line/column arguments are optional: omitted
 -- arguments leave the corresponding fields absent (nil), matching _err's
@@ -67,43 +83,54 @@ end
 
 function __rt.check_null(v, file, line, column)
   if v ~= __rt.__NULL then
-    error(__rt._err("E8001", "expected null", file, line, column, "null", type(v)))
+    error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "null" }, "E8001",
+      "expected null", file, line, column, "null", type(v)))
   end
   return v
 end
 
 function __rt.check_boolean(v, file, line, column)
   if type(v) ~= "boolean" then
-    error(__rt._err("E8001", "expected boolean", file, line, column, "boolean", type(v)))
+    error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "boolean" }, "E8001",
+      "expected boolean", file, line, column, "boolean", type(v)))
   end
   return v
 end
 
 function __rt.check_int(v, file, line, column)
   if type(v) ~= "number" then
-    error(__rt._err("E8001", "expected int", file, line, column, "int", type(v)))
+    error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "int" }, "E8001",
+      "expected int", file, line, column, "int", type(v)))
   end
   if v ~= v then  -- NaN check: NaN is the only value not equal to itself
-    error(__rt._err("E8001", "expected int, got NaN", file, line, column, "int", "NaN"))
+    error(__rt._armErr("INT_CONVERSION_NAN", {}, "E8001",
+      "expected int, got NaN", file, line, column, "int", "NaN"))
   end
   v = v + 0  -- normalize -0 to 0 (per spec.md lines 60-65, 2024)
   if v == math.huge or v == -math.huge then
-    error(__rt._err("E8001", "expected int, got infinity", file, line, column, "int", "infinity"))
+    error(__rt._armErr("INT_CONVERSION_INFINITY", {}, "E8001",
+      "expected int, got infinity", file, line, column, "int", "infinity"))
   end
   if v % 1 ~= 0 then
-    error(__rt._err("E8001", "expected int, got non-integer number", file, line, column, "int", "number"))
+    error(__rt._armErr("INT_CONVERSION_FRACTIONAL", {}, "E8001",
+      "expected int, got non-integer number", file, line, column, "int", "number"))
   end
   if __rt.__INT32 then
     -- int32 branch: the same signed32 gate with the pinned retained
     -- template (signed-int32 foundation I4; the LegacyErrorNormalization
     -- E8004 row pins "int out of safe range" for both retained targets).
     if v < -2147483648 or v > 2147483647 then
-      error(__rt._err("E8004", "int out of safe range", file, line, column, nil, nil))
+      error(__rt._armErr("INT32_RANGE", {}, "E8004", "int out of safe range",
+        file, line, column, nil, nil))
     end
   else
-    -- legacy branch (byte-identical landed ISSUE-0332 behavior).
+    -- legacy branch (byte-identical landed ISSUE-0332 behavior). The
+    -- deployed production artifact always sets __rt.__INT32 at load
+    -- before any wrapper exists, so the closed INT32_RANGE selection and
+    -- its v1.2 template are the only reachable host-crossing render.
     if v < -2147483648 or v > 2147483647 then
-      error(__rt._err("E8004", "int out of range", file, line, column, nil, nil))
+      error(__rt._armErr("INT32_RANGE", {}, "E8004", "int out of range",
+        file, line, column, nil, nil))
     end
   end
   return v
@@ -111,7 +138,8 @@ end
 
 function __rt.check_number(v, file, line, column)
   if type(v) ~= "number" then
-    error(__rt._err("E8001", "expected number", file, line, column, "number", type(v)))
+    error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "number" }, "E8001",
+      "expected number", file, line, column, "number", type(v)))
   end
   return v
 end
@@ -281,25 +309,33 @@ end
 
 function __rt.check_string(v, file, line, column)
   if type(v) ~= "string" then
-    error(__rt._err("E8001", "expected string", file, line, column, "string", type(v)))
+    error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "string" }, "E8001",
+      "expected string", file, line, column, "string", type(v)))
   end
   -- v1.2 boundary rule: strings accepted from untrusted or backend-native
   -- boundaries must reject invalid encodings (malformed UTF-8 byte
   -- sequences). A surrogate code point gets the specific pinned message
   -- (the host-surrogate-utf8-e8010 sidecar); every other malformed
-  -- encoding keeps the general message.
+  -- encoding keeps the general message. Both are the two INNER_ONLY
+  -- host string-carrier arms' own texts, selected here and rendered by
+  -- the artifact's closed arm table.
   local status = __rt.utf8_status(v)
   if status == "surrogate" then
-    error(__rt._err("E8001", "expected string, got UTF-16 surrogate code point", file, line, column, "string", "invalid UTF-8 string"))
+    error(__rt._armErr("HOST_STRING_SURROGATE", {}, "E8001",
+      "expected string, got UTF-16 surrogate code point", file, line, column,
+      "string", "invalid UTF-8 string"))
   elseif status == "invalid" then
-    error(__rt._err("E8001", "expected string, got invalid UTF-8 encoding", file, line, column, "string", "invalid UTF-8 string"))
+    error(__rt._armErr("HOST_STRING_INVALID_UTF8", {}, "E8001",
+      "expected string, got invalid UTF-8 encoding", file, line, column,
+      "string", "invalid UTF-8 string"))
   end
   return v
 end
 
 function __rt.check_table(v, file, line, column)
   if type(v) ~= "table" then
-    error(__rt._err("E8001", "expected table", file, line, column, "table", type(v)))
+    error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "table" }, "E8001",
+      "expected table", file, line, column, "table", type(v)))
   end
   return v
 end
@@ -392,7 +428,8 @@ local ffi = require("ffi")
 --- Fail-closed bytes object validation shared by the bytes entries.
 local function check_bytes(b, file, line, column)
   if type(b) ~= "table" or b.__kind ~= "bytes" then
-    error(__rt._err("E8001", "expected bytes", file, line, column, "bytes", type(b)))
+    error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "bytes" }, "E8001",
+      "expected bytes", file, line, column, "bytes", type(b)))
   end
   return b
 end
@@ -769,23 +806,38 @@ local function check_canonical_ast(ast, v, file, line, column)
   elseif kind == "class" then
     -- Byte-for-byte nominal identity: the runtime tag must equal the
     -- class atom's complete text (text-opaque — no path normalization,
-    -- no bare-name fallback).
+    -- no bare-name fallback). A class-marked value without its carried
+    -- canonical atom has no identity to compare and selects the closed
+    -- kind arm (the JVM host check's own disposition), never a composed
+    -- "unknown" atom.
     if type(v) ~= "table" or v.__kind ~= "class" then
-      error(__rt._err("E8001", "expected class instance", file, line, column, "class", type(v)))
+      error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "class instance" },
+        "E8001", "expected class instance", file, line, column, "class",
+        type(v)))
     end
     local actual_class = v.__classname
+    if actual_class == nil then
+      error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "class instance" },
+        "E8001", "expected class instance", file, line, column, "class",
+        type(v)))
+    end
     if actual_class ~= ast.name then
-      error(__rt._err("E8001", "expected instance of " .. ast.name .. ", got " .. tostring(actual_class or "unknown"), file, line, column, ast.name, actual_class))
+      error(__rt._armErr("CLASS_IDENTITY", { expected = ast.name, actual = actual_class },
+        "E8001", "expected instance of " .. ast.name .. ", got "
+          .. tostring(actual_class), file, line, column, ast.name, actual_class))
     end
     return v
   elseif kind == "array" then
     if type(v) ~= "table" then
-      error(__rt._err("E8001", "expected array", file, line, column, "array", type(v)))
+      error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "array" }, "E8001",
+        "expected array", file, line, column, "array", type(v)))
     end
     for i = 1, #v do
       local ok = pcall(check_canonical_ast, ast.element, v[i], file, line, column)
       if not ok then
-        error(__rt._err("E8003", "array element " .. i .. " type mismatch", file, line, column, ast.element.text, type(v[i])))
+        error(__rt._armErr("ARRAY_ELEMENT_KIND", { oneBasedIndex = i }, "E8003",
+          "array element " .. i .. " type mismatch", file, line, column,
+          ast.element.text, type(v[i])))
       end
     end
     return v
@@ -796,12 +848,24 @@ local function check_canonical_ast(ast, v, file, line, column)
     return check_canonical_ast(ast.inner, v, file, line, column)
   elseif kind == "function" then
     -- Function row: a wrapper whose carried descriptor equals the atom's
-    -- byte-exact text (the exact sync/async marker included).
+    -- byte-exact text (the exact sync/async marker included). A wrapper
+    -- carrying no signature text selects the closed kind arm, exactly
+    -- like the JVM host check's own function row, so a malformed carrier
+    -- is never projected through the signature arm's two descriptor
+    -- operands.
     if type(v) ~= "table" or v.__kind ~= "function" then
-      error(__rt._err("E8001", "expected function", file, line, column, "function", type(v)))
+      error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "function" }, "E8001",
+        "expected function", file, line, column, "function", type(v)))
+    end
+    if type(v.sig) ~= "string" then
+      error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "function" }, "E8001",
+        "expected function", file, line, column, "function", type(v)))
     end
     if v.sig ~= ast.text then
-      error(__rt._err("E8010", "function signature mismatch: expected " .. ast.text .. ", got " .. tostring(v.sig or "nil"), file, line, column, ast.text, v.sig))
+      error(__rt._armErr("FUNCTION_SIGNATURE_MISMATCH",
+        { expected = ast.text, actual = v.sig }, "E8010",
+        "function signature mismatch: expected " .. ast.text .. ", got "
+          .. tostring(v.sig), file, line, column, ast.text, v.sig))
     end
     return v
   end
@@ -890,24 +954,48 @@ local function is_function_type(descriptor)
   return false
 end
 
+--- The closed inner reason of one canonical-matcher failure: the arm the
+-- matcher selected (the failure table's `arm` selection), rendered by the
+-- artifact-owned inner renderer (`__rt.__hostInnerArm`) from the
+-- artifact's serialized closed arm table. A missing renderer or a
+-- matcher failure carrying no selection is a fail-closed producer defect
+-- — the wrapper never publishes a locally composed reason, and never
+-- recognizes an arm by its text.
+local function host_inner_reason(err)
+  local render = __rt.__hostInnerArm
+  if render == nil then
+    error("the host inner-arm renderer is not registered on the deployed "
+      .. "runtime (the emitted chunk registers it at load; a producer "
+      .. "defect)", 0)
+  end
+  local selection = type(err) == "table" and err.arm or nil
+  if type(selection) ~= "table" then
+    error("the boundary matcher raised a failure with no closed arm "
+      .. "selection (the host cell renders the selected arm's own template; "
+      .. "a producer defect)", 0)
+  end
+  return render(selection.id, selection.values)
+end
+
 --- One mapped host-wrapper failure (canonical failure-projection
 -- authority P1/P4): the emitted chunk registers its own closed-arm
 -- renderer on the deployed runtime at load (`__rt.__hostArm`), so the
 -- declared-parameter cell, the declared sync return cells, and the
 -- async-shape cell of `from_lua_function`'s wrappers render through the
 -- authority — the arm's own template instantiated with the closed named
--- parameters, its declared expected/actual fields, at the supplied call
--- origin — and compose no failure text of their own. An unregistered
--- renderer (the runtime driven outside a production artifact) is a
--- fail-closed producer defect, never a textual fallback.
-local function host_arm_failure(id, values, file, line, column, expected, actual)
+-- parameters, its declared expected/actual projections (the renderer
+-- projects the failing subject through the arm's own declaration), at the
+-- supplied call origin — and compose no failure text of their own. An
+-- unregistered renderer (the runtime driven outside a production
+-- artifact) is a fail-closed producer defect, never a textual fallback.
+local function host_arm_failure(id, values, file, line, column, expected, subject)
   local render = __rt.__hostArm
   if render == nil then
     error("the host failure-arm renderer is not registered on the deployed "
       .. "runtime (the emitted chunk registers it at load; a producer "
       .. "defect)", 0)
   end
-  error(render(id, values, file, line, column, expected, actual), 0)
+  error(render(id, values, file, line, column, expected, subject), 0)
 end
 
 --- Wrap a plain Lua function with runtime parameter and return type checks.
@@ -917,8 +1005,9 @@ end
 --
 -- The mapped failures (the declared parameter cell, the sync return
 -- cells, and the async-shape cell) render through the artifact-owned
--- closed-arm renderer (`__rt.__hostArm`), never through a local text
--- composition.
+-- closed-arm renderer (`__rt.__hostArm`) with their mapped inner reasons
+-- (the matcher-selected closed arms) rendered by the artifact's own arm
+-- table (`__rt.__hostInnerArm`), never through a local text composition.
 --
 -- Three-way return dispatch:
 -- 1. Async descriptor (parsed.isAsync == true): the call must produce at
@@ -999,15 +1088,15 @@ function __rt.from_lua_function(sig, raw_f)
     end
 
     -- Check required parameters (the closed HOST_PARAMETER_CELL arm with
-    -- the inner DEAL error's message as its inner reason).
+    -- the closed inner arm the matcher selected as its inner reason).
     for i = 1, required_params do
       local arg = user_args[i]
       local param_desc = param_descriptors[i]
       local ok, err = pcall(__rt.check_type, param_desc, arg, file, line, column)
       if not ok then
-        local inner = type(err) == "table" and err.message or tostring(err)
-        host_arm_failure("HOST_PARAMETER_CELL", {index = i, inner = inner},
-          file, line, column, param_desc, type(arg))
+        host_arm_failure("HOST_PARAMETER_CELL",
+          {index = i, inner = host_inner_reason(err)},
+          file, line, column, param_desc, arg)
       end
     end
 
@@ -1037,15 +1126,14 @@ function __rt.from_lua_function(sig, raw_f)
     if is_async then
       -- 1. Async: require an async operation result.
       if nresults < 1 then
-        host_arm_failure("ASYNC_SHAPE", {actual = "nothing"}, file, line, column,
-          "async operation", "nothing")
+        host_arm_failure("ASYNC_SHAPE", {}, file, line, column,
+          "async operation", nil)
       end
       for i = 1, nresults do
         local r = results[i]
         if type(r) ~= "table" or r.__kind ~= "async" then
-          local actual = type(r)
-          host_arm_failure("ASYNC_SHAPE", {actual = actual}, file, line, column,
-            "async operation", actual)
+          host_arm_failure("ASYNC_SHAPE", {}, file, line, column,
+            "async operation", r)
         end
       end
     elseif not is_null_ret then
@@ -1054,14 +1142,14 @@ function __rt.from_lua_function(sig, raw_f)
       if nresults < 1 then
         host_arm_failure("HOST_SYNC_RETURN_NOTHING",
           {expected = ret_descriptor}, file, line, column, ret_descriptor,
-          "nothing")
+          nil)
       end
       for i = 1, nresults do
         local ok, err = pcall(__rt.check_type, ret_descriptor, results[i], file, line, column)
         if not ok then
-          local inner = type(err) == "table" and err.message or tostring(err)
-          host_arm_failure("HOST_SYNC_RETURN_CELL", {inner = inner},
-            file, line, column, ret_descriptor, type(results[i]))
+          host_arm_failure("HOST_SYNC_RETURN_CELL",
+            {inner = host_inner_reason(err)},
+            file, line, column, ret_descriptor, results[i])
         end
       end
     else
@@ -1069,14 +1157,14 @@ function __rt.from_lua_function(sig, raw_f)
       -- must be the __rt.__NULL sentinel.
       if nresults < 1 then
         host_arm_failure("HOST_SYNC_RETURN_NOTHING", {expected = ret_descriptor},
-          file, line, column, ret_descriptor, "nothing")
+          file, line, column, ret_descriptor, nil)
       end
       for i = 1, nresults do
         local ok, err = pcall(__rt.check_null, results[i], file, line, column)
         if not ok then
-          local inner = type(err) == "table" and err.message or tostring(err)
-          host_arm_failure("HOST_SYNC_RETURN_CELL", {inner = inner},
-            file, line, column, ret_descriptor, type(results[i]))
+          host_arm_failure("HOST_SYNC_RETURN_CELL",
+            {inner = host_inner_reason(err)},
+            file, line, column, ret_descriptor, results[i])
         end
       end
     end
