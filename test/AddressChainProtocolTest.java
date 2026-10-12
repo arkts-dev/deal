@@ -1200,6 +1200,145 @@ public class AddressChainProtocolTest {
                     "the chain-owned count failure names the chain's own file");
             }
         }
+
+        // (e) The boundary's own value-reference failure: the boundary input
+        // names the wrong committed value, so the child-owned reference
+        // failure carries the offending boundary's own exact range — the
+        // reviewer's probe — never the enclosing chain's.
+        {
+            OpId chainId = nextOpId();
+            ValueId value = nextValue();
+            OpId valueOp = nextOpId();
+            OpId boundaryOp = nextOpId();
+            OpId commitOp = nextOpId();
+            SourceOrigin chainOrigin = sourceOrigin("chain.deal", 18, 3, 18, 8, 100, 105, null);
+            SourceOrigin boundaryOrigin = sourceOrigin("boundary.deal", 19, 5, 19, 10, 30, 35,
+                chainId);
+            List<SemanticOp> ops = new ArrayList<>();
+            ops.add(opWithOrigin(valueOp, SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(new ScalarValue.Int(7)), value, INT,
+                FailurePolicyId.NO_DEAL_FAILURE,
+                sourceOrigin("value.deal", 20, 1, 20, 2, 58, 59, chainId)));
+            ops.add(boundaryWithOrigin(boundaryOp, BoundaryKind.VARIABLE_ASSIGNMENT, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, chainId, new ValueId(99999), boundaryOrigin));
+            ops.add(opWithOrigin(commitOp, SemanticOpKind.BINDING_STORE,
+                new KindPayload.BindingStorePayload(new BindingId(94), 1, value),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE,
+                sourceOrigin("commit.deal", 21, 1, 21, 2, 68, 69, chainId)));
+            ops.add(opWithOrigin(chainId, SemanticOpKind.ASSIGN,
+                new KindPayload.AssignPayload(AssignTargetKind.VARIABLE,
+                    List.of(valueOp, boundaryOp, commitOp)),
+                value, INT, FailurePolicyId.NO_DEAL_FAILURE, chainOrigin));
+
+            Optional<CompilerDiagnostic> diagnostic = AddressChainProtocol.validate(unit(ops));
+            assertE6005(diagnostic, AddressChainProtocol.RULE_ADDRESS_CHAIN_SHAPE,
+                "op " + chainId,
+                "the VARIABLE_ASSIGNMENT boundary's input (the committed value) must "
+                    + "reference the resolved value " + value + ", got ValueId(99999)");
+            if (diagnostic.isPresent()) {
+                check(boundaryOrigin.span().range().equals(diagnostic.get().range()),
+                    "the boundary-owned reference failure carries the offending "
+                        + "boundary's own range: " + diagnostic.get().range());
+                checkEq("boundary.deal", diagnostic.get().range().file(),
+                    "the boundary-owned reference failure names the boundary's own file");
+                check(!chainOrigin.span().range().equals(diagnostic.get().range()),
+                    "the boundary-owned reference failure never carries the chain's range");
+            }
+        }
+
+        // (f) The commit-side reference failure: the BINDING_STORE's stored
+        // value names the wrong value, so the offending commit operation's
+        // own span supplies the range (the message keeps naming the chain).
+        {
+            OpId chainId = nextOpId();
+            ValueId value = nextValue();
+            OpId valueOp = nextOpId();
+            OpId boundaryOp = nextOpId();
+            OpId commitOp = nextOpId();
+            SourceOrigin chainOrigin = sourceOrigin("chain.deal", 22, 3, 22, 8, 110, 115, null);
+            SourceOrigin boundaryOrigin = sourceOrigin("boundary.deal", 23, 5, 23, 10, 40, 45,
+                chainId);
+            SourceOrigin commitOrigin = sourceOrigin("commit.deal", 24, 7, 24, 12, 70, 75,
+                chainId);
+            List<SemanticOp> ops = new ArrayList<>();
+            ops.add(opWithOrigin(valueOp, SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(new ScalarValue.Int(7)), value, INT,
+                FailurePolicyId.NO_DEAL_FAILURE,
+                sourceOrigin("value.deal", 25, 1, 25, 2, 60, 61, chainId)));
+            ops.add(boundaryWithOrigin(boundaryOp, BoundaryKind.VARIABLE_ASSIGNMENT, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, chainId, value, boundaryOrigin));
+            ops.add(opWithOrigin(commitOp, SemanticOpKind.BINDING_STORE,
+                new KindPayload.BindingStorePayload(new BindingId(95), 1, new ValueId(99998)),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, commitOrigin));
+            ops.add(opWithOrigin(chainId, SemanticOpKind.ASSIGN,
+                new KindPayload.AssignPayload(AssignTargetKind.VARIABLE,
+                    List.of(valueOp, boundaryOp, commitOp)),
+                value, INT, FailurePolicyId.NO_DEAL_FAILURE, chainOrigin));
+
+            Optional<CompilerDiagnostic> diagnostic = AddressChainProtocol.validate(unit(ops));
+            assertE6005(diagnostic, AddressChainProtocol.RULE_ADDRESS_CHAIN_SHAPE,
+                "op " + chainId,
+                "the BINDING_STORE commit's stored value must reference the resolved "
+                    + "value " + value + ", got ValueId(99998)");
+            if (diagnostic.isPresent()) {
+                check(commitOrigin.span().range().equals(diagnostic.get().range()),
+                    "the commit-owned reference failure carries the offending commit's "
+                        + "own range: " + diagnostic.get().range());
+                checkEq("commit.deal", diagnostic.get().range().file(),
+                    "the commit-owned reference failure names the commit's own file");
+                check(!chainOrigin.span().range().equals(diagnostic.get().range()),
+                    "the commit-owned reference failure never carries the chain's range");
+            }
+        }
+
+        // (g) The originless-chain control for reference failures: no
+        // identifiable chain anchor, an identifiable offending boundary —
+        // the boundary's own exact range still wins over the canonical
+        // empty-file synthetic projection.
+        {
+            OpId chainId = nextOpId();
+            ValueId value = nextValue();
+            OpId valueOp = nextOpId();
+            OpId boundaryOp = nextOpId();
+            OpId commitOp = nextOpId();
+            SourceOrigin chainOrigin = new SourceOrigin("", SourceSpan.synthetic(""),
+                SourceOriginKind.SYNTHETIC, new AnchorId(0), null);
+            SourceOrigin boundaryOrigin = sourceOrigin("boundary.deal", 26, 5, 26, 10, 30, 35,
+                chainId);
+            List<SemanticOp> ops = new ArrayList<>();
+            ops.add(opWithOrigin(valueOp, SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(new ScalarValue.Int(7)), value, INT,
+                FailurePolicyId.NO_DEAL_FAILURE,
+                sourceOrigin("value.deal", 27, 1, 27, 2, 62, 63, chainId)));
+            ops.add(boundaryWithOrigin(boundaryOp, BoundaryKind.VARIABLE_ASSIGNMENT, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, chainId, new ValueId(99997), boundaryOrigin));
+            ops.add(opWithOrigin(commitOp, SemanticOpKind.BINDING_STORE,
+                new KindPayload.BindingStorePayload(new BindingId(96), 1, value),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE,
+                sourceOrigin("commit.deal", 28, 1, 28, 2, 72, 73, chainId)));
+            ops.add(opWithOrigin(chainId, SemanticOpKind.ASSIGN,
+                new KindPayload.AssignPayload(AssignTargetKind.VARIABLE,
+                    List.of(valueOp, boundaryOp, commitOp)),
+                value, INT, FailurePolicyId.NO_DEAL_FAILURE, chainOrigin));
+
+            check(chainOrigin.span().range().isCanonicalSynthetic(),
+                "the reference-failure control chain is the canonical originless "
+                    + "anchor: " + chainOrigin.span().range());
+            Optional<CompilerDiagnostic> diagnostic = AddressChainProtocol.validate(unit(ops));
+            assertE6005(diagnostic, AddressChainProtocol.RULE_ADDRESS_CHAIN_SHAPE,
+                "got ValueId(99997)");
+            if (diagnostic.isPresent()) {
+                check(!diagnostic.get().range().isCanonicalSynthetic(),
+                    "an originless chain with an identifiable reference offender does not "
+                        + "fall back to the canonical synthetic range: "
+                        + diagnostic.get().range());
+                check(boundaryOrigin.span().range().equals(diagnostic.get().range()),
+                    "the identifiable boundary's own range wins under an originless chain: "
+                        + diagnostic.get().range());
+                checkEq("boundary.deal", diagnostic.get().range().file(),
+                    "the originless chain borrows no location: the boundary's file is named");
+            }
+        }
     }
 
     // =========================================================================

@@ -144,7 +144,7 @@ final class JvmHostAbiEmission {
                     continue;
                 }
                 HostDeclarationSurface.DeclarationFacts facts =
-                    surface.require(payload.resolvedModule());
+                    declarationFactsOf(op, surface, payload.resolvedModule());
                 if (facts.kind()
                         != HostDeclarationSurface.DeclarationKind.HOST) {
                     throw rejectedOp(op, "the declaration module '"
@@ -584,6 +584,29 @@ final class JvmHostAbiEmission {
     /** The source-bearing rejection of one explicitly rejected op (D4). */
     private static SharedEmissionFailure rejectedOp(SemanticOp op, String message) {
         return new SharedEmissionFailure(message, op.origin().span().range());
+    }
+
+    /** The same rejection with the failed lookup's own cause preserved. */
+    private static SharedEmissionFailure rejectedOp(SemanticOp op, String message,
+                                                    Throwable cause) {
+        return new SharedEmissionFailure(message, cause,
+            op.origin().span().range());
+    }
+
+    /**
+     * The declaration facts of one import's resolved module: an absent
+     * entry is a producer defect (the surface covers every declaration
+     * module of the compilation), so the identifying MODULE_IMPORT
+     * operation's own copied origin supplies the diagnostic range while
+     * the lookup's unchanged message and cause chain are preserved (D4).
+     */
+    private static HostDeclarationSurface.DeclarationFacts declarationFactsOf(
+            SemanticOp op, HostDeclarationSurface surface, ModuleId moduleId) {
+        try {
+            return surface.require(moduleId);
+        } catch (IllegalStateException missing) {
+            throw rejectedOp(op, missing.getMessage(), missing);
+        }
     }
 
     private static Type.Func findDeclaredFunction(Type type, String descriptorText) {

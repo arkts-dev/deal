@@ -6477,6 +6477,39 @@ public final class LuaSemanticEmitter {
             emitPlainSuccess(op);
         }
 
+        /**
+         * The declaration facts of one import's resolved module: an absent
+         * entry is a producer defect (the surface covers every declaration
+         * module of the compilation), so the identifying MODULE_IMPORT
+         * operation's own copied origin supplies the diagnostic range
+         * while the lookup's unchanged message and cause chain are
+         * preserved (D4).
+         */
+        private HostDeclarationSurface.DeclarationFacts requireDeclarationFacts(
+                SemanticOp op, ModuleId moduleId) {
+            try {
+                return hostSurface.require(moduleId);
+            } catch (IllegalStateException missing) {
+                throw rejectedOp(op, missing.getMessage(), missing);
+            }
+        }
+
+        /**
+         * The generated metadata of one extern-C declaration module: an
+         * absent entry is the fail-closed presence rule of the emission
+         * input, so the identifying MODULE_IMPORT operation's own copied
+         * origin supplies the diagnostic range while the lookup's
+         * unchanged message and cause chain are preserved (D4).
+         */
+        private FfiGeneratedModule requireFfiModule(SemanticOp op,
+                                                    ModuleId moduleId) {
+            try {
+                return ffiInput.require(moduleId);
+            } catch (IllegalStateException missing) {
+                throw rejectedOp(op, missing.getMessage(), missing);
+            }
+        }
+
         private void emitModuleImport(SemanticOp op) {
             KindPayload.ModuleImportPayload payload =
                 (KindPayload.ModuleImportPayload) op.payload();
@@ -6484,7 +6517,7 @@ public final class LuaSemanticEmitter {
             if (payload.kind() == ModuleImportKind.HOST && hostSurface != null) {
 
                 HostDeclarationSurface.DeclarationFacts facts =
-                    hostSurface.require(payload.resolvedModule());
+                    requireDeclarationFacts(op, payload.resolvedModule());
                 if (facts.kind() == HostDeclarationSurface.DeclarationKind.EXTERN_C) {
                     if (ffiInput != null) {
                         emitFfiLoad(op, payload);
@@ -6601,7 +6634,7 @@ public final class LuaSemanticEmitter {
         private void emitFfiLoad(SemanticOp op,
                                  KindPayload.ModuleImportPayload payload) {
             ModuleId moduleId = payload.resolvedModule();
-            FfiGeneratedModule module = ffiInput.require(moduleId);
+            FfiGeneratedModule module = requireFfiModule(op, moduleId);
             int ordinal = ++ffiImportCounter;
             String bindingsLocal = "__ffi_bindings_" + ordinal;
             String importPrefix = "__ffi_import_" + ordinal + "_";

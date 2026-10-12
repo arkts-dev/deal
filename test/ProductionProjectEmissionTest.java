@@ -4,6 +4,7 @@ import deal.checker.BuiltinErrorDeclaration;
 import deal.codegen.Backend;
 import deal.codegen.SharedEmissionFailure;
 import deal.codegen.jvm.JvmSemanticEmitter;
+import deal.codegen.lua.FfiEmissionInput;
 import deal.codegen.lua.LuaSemanticEmitter;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticRange;
@@ -1421,6 +1422,213 @@ public class ProductionProjectEmissionTest {
         }
     }
 
+    @FunctionalInterface
+    private interface EmitterDrive {
+        void emit() throws Exception;
+    }
+
+    /**
+     * The absent declaration-surface entry (ISSUE-0750 D4): both emitter
+     * boundaries that resolve an import's declaration module hold the
+     * identifying MODULE_IMPORT operation, so the fail-closed lookup throws
+     * the source-bearing shared signal carrying that import's own exact
+     * range — and the production arm's own projection merges it into the
+     * unchanged {@code SHARED_EMITTER_COVERAGE} E6005 — instead of the
+     * canonical empty-file synthetic anchor. A genuinely originless emitter
+     * refusal keeps the canonical synthetic projection.
+     */
+    private static void testAbsentDeclarationSurfaceEntries() throws Exception {
+        System.out.println("-- an absent declaration-surface entry carries the "
+            + "identifying MODULE_IMPORT's own exact range on both targets --");
+
+        Fixture host = hostFixture();
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(host);
+            check(!result.hasErrors(),
+                "the host-import fixture lowers: " + result.diagnostics());
+            if (!result.hasErrors()) {
+                LoweredModuleUnit entry = result.project()
+                    .modules().get(result.project().entryModule());
+                SemanticOp hostImport = null;
+                for (SemanticOp op : entry.ops()) {
+                    if (op.kind() == SemanticOpKind.MODULE_IMPORT
+                            && op.payload()
+                                instanceof KindPayload.ModuleImportPayload payload
+                            && payload.resolvedModule().equals(HOST_CFG)) {
+                        hostImport = op;
+                    }
+                }
+                check(hostImport != null,
+                    "the host fixture lowers the HOST MODULE_IMPORT");
+                if (hostImport != null) {
+                    DiagnosticRange expected = hostImport.origin().span().range();
+                    check(expected.origin() == RangeOrigin.SOURCE
+                            && expected.scalarLength() > 0,
+                        "the HOST MODULE_IMPORT carries a real SOURCE span: "
+                            + expected);
+                    String expectedMessage =
+                        "declaration module '" + HOST_CFG.path()
+                            + "' has no declaration-surface entry: the surface covers"
+                            + " every host and extern-C declaration module of the"
+                            + " compilation (producer defect)";
+                    HostDeclarationSurface empty = new HostDeclarationSurface(Map.of());
+
+                    SharedEmissionFailure luaRejection = assertAbsentEntryRejection(
+                        "LuaJIT", "the absent declaration-surface entry", expected,
+                        expectedMessage, () ->
+                            LuaSemanticEmitter.emitProductionProject(result.project(),
+                                result.tables(), result.registries(), empty, null));
+                    assertAbsentEntryRejection("JVM",
+                        "the absent declaration-surface entry", expected,
+                        expectedMessage, () ->
+                            JvmSemanticEmitter.emitProductionProject(result.project(),
+                                result.tables(), result.registries(), "FixtureProbe",
+                                empty));
+                    if (luaRejection != null) {
+                        assertProjectedAbsentEntry("the absent declaration-surface "
+                            + "entry", expected, expectedMessage, result,
+                            luaRejection);
+                    }
+                }
+            }
+        } finally {
+            deleteRecursively(host.root());
+        }
+
+        // The FFI emission input's absent generated-module entry: the same
+        // import boundary identifies the extern-C MODULE_IMPORT whose own
+        // range must survive the fail-closed lookup.
+        Fixture externC = externCFixture();
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(externC);
+            check(!result.hasErrors(),
+                "the extern-C fixture lowers: " + result.diagnostics());
+            if (!result.hasErrors()) {
+                LoweredModuleUnit entry = result.project()
+                    .modules().get(result.project().entryModule());
+                SemanticOp nativeImport = null;
+                for (SemanticOp op : entry.ops()) {
+                    if (op.kind() == SemanticOpKind.MODULE_IMPORT
+                            && op.payload()
+                                instanceof KindPayload.ModuleImportPayload payload
+                            && payload.resolvedModule().equals(NATIVE_MATH)) {
+                        nativeImport = op;
+                    }
+                }
+                check(nativeImport != null,
+                    "the extern-C fixture lowers the extern-C MODULE_IMPORT");
+                if (nativeImport != null) {
+                    DiagnosticRange expected = nativeImport.origin().span().range();
+                    check(expected.origin() == RangeOrigin.SOURCE
+                            && expected.scalarLength() > 0,
+                        "the extern-C MODULE_IMPORT carries a real SOURCE span: "
+                            + expected);
+                    String expectedMessage =
+                        "the extern-C declaration module '" + NATIVE_MATH.path()
+                            + "' carries no generated-module entry in the FFI"
+                            + " emission input: the input covers exactly the"
+                            + " compile's validated extern-C metadata (a producer"
+                            + " defect, never a silently omitted load)";
+                    SharedEmissionFailure rejection = assertAbsentEntryRejection(
+                        "LuaJIT", "the absent FFI generated-module entry", expected,
+                        expectedMessage, () ->
+                            LuaSemanticEmitter.emitProductionProject(result.project(),
+                                result.tables(), result.registries(),
+                                externC.surface(), new FfiEmissionInput(Map.of(),
+                                    "manifests")));
+                    if (rejection != null) {
+                        assertProjectedAbsentEntry("the absent FFI generated-module "
+                            + "entry", expected, expectedMessage, result, rejection);
+                    }
+                }
+            }
+        } finally {
+            deleteRecursively(externC.root());
+        }
+    }
+
+    /**
+     * One emitter drive of an absent lookup entry: the rejection must be the
+     * source-bearing shared signal with the unchanged complete message and
+     * the identifying import operation's own exact range.
+     */
+    private static SharedEmissionFailure assertAbsentEntryRejection(String target,
+            String what, DiagnosticRange expected, String expectedMessage,
+            EmitterDrive drive) throws Exception {
+        try {
+            drive.emit();
+            fail(what + " [" + target + "]: the emitter rejects the absent entry");
+            return null;
+        } catch (SharedEmissionFailure rejection) {
+            checkEq(expectedMessage, rejection.getMessage(),
+                what + " [" + target + "]: the rejection message is the unchanged"
+                    + " complete text");
+            checkEq(expected, rejection.diagnosticRange(),
+                what + " [" + target + "]: the rejection carries the identifying"
+                    + " MODULE_IMPORT's own exact range");
+            check(rejection.getCause() instanceof IllegalStateException
+                    && expectedMessage.equals(rejection.getCause().getMessage()),
+                what + " [" + target + "]: the failed lookup remains the rejection's"
+                    + " own cause with the unchanged message: " + rejection.getCause());
+            return rejection;
+        } catch (IllegalStateException other) {
+            fail(what + " [" + target + "]: the rejection is the source-bearing"
+                + " shared emitter signal: " + other);
+            return null;
+        }
+    }
+
+    /**
+     * The production arm's own projection of one absent-entry rejection (the
+     * real private {@code sharedEmitterCoverage} step of
+     * {@link ProductionProjectEmission#run}, invoked so the regression
+     * exercises the production projection instead of re-implementing it),
+     * plus the genuinely originless control.
+     */
+    private static void assertProjectedAbsentEntry(String what,
+            DiagnosticRange expected, String expectedMessage,
+            SemanticLowerer.ProjectLoweringResult lowering,
+            SharedEmissionFailure rejection) throws Exception {
+        String entryPath = lowering.project().entryModule().path();
+        CompilerDiagnostic projected = projectEmitterRejection(entryPath, rejection);
+        checkEq("E6005", projected.code(),
+            what + ": the projected emitter failure is E6005");
+        check(projected.message().contains(
+                ProductionProjectEmission.SHARED_EMITTER_COVERAGE),
+            what + ": the projected failure keeps the SHARED_EMITTER_COVERAGE"
+                + " classification: " + projected.message());
+        check(projected.message().contains(expectedMessage),
+            what + ": the projected E6005 keeps the complete emitter message");
+        checkEq(expected, projected.range(),
+            what + ": the projected E6005 carries the identifying import's own"
+                + " exact range");
+        check(projected.range().origin() == RangeOrigin.SOURCE,
+            what + ": the projected range is SOURCE, got "
+                + projected.range().origin());
+        check(projected.notes().isEmpty(),
+            what + ": the well-formed carried origin adds no note: "
+                + projected.notes());
+
+        CompilerDiagnostic originless = projectEmitterRejection(entryPath,
+            new IllegalStateException("an ordinary emitter refusal"));
+        check(originless.range().isCanonicalSynthetic(),
+            what + ": an ordinary emitter refusal keeps the canonical synthetic"
+                + " projection, got " + originless.range());
+        checkEq("", originless.range().file(),
+            what + ": the originless projection borrows no source file");
+    }
+
+    /** The production arm's own projection of one emitter rejection. */
+    private static CompilerDiagnostic projectEmitterRejection(String entryModulePath,
+            IllegalStateException rejection) throws Exception {
+        Method projection = ProductionProjectEmission.class.getDeclaredMethod(
+            "sharedEmitterCoverage", String.class, IllegalStateException.class,
+            CompilerInvocation.class);
+        projection.setAccessible(true);
+        return (CompilerDiagnostic) projection.invoke(null, entryModulePath,
+            rejection, productionInvocation());
+    }
+
     /**
      * Both shared targets reject the hand-built corrupted fact with the
      * unchanged complete message and the offending op's own exact range.
@@ -2146,6 +2354,7 @@ public class ProductionProjectEmissionTest {
             testFfiProviderGapOrigin();
             testRejectedOpEmissionOrigins();
             testIdentifiedSharedGuardOrigins();
+            testAbsentDeclarationSurfaceEntries();
             cross = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
             same = asyncFixture(ASYNC_LIB_SOURCE, SAME_ASYNC_APP_SOURCE);
             testCrossModuleAsyncEmission(cross, same);

@@ -326,7 +326,7 @@ public final class AddressChainProtocol {
                     + " for the declared descriptor " + boundary.descriptor().canonicalSpecText()
                     + ", got " + c[boundaryPos].failurePolicy().name());
         }
-        failure = requireEqual(unit, chain, boundary.input(), committed,
+        failure = requireEqual(unit, chain, c[boundaryPos], boundary.input(), committed,
             "the VARIABLE_ASSIGNMENT boundary's input (the committed value)");
         if (failure.isPresent()) {
             return failure;
@@ -345,7 +345,7 @@ public final class AddressChainProtocol {
         }
         KindPayload.BindingStorePayload store =
             (KindPayload.BindingStorePayload) c[commitPos].payload();
-        return requireEqual(unit, chain, store.value(), committed,
+        return requireEqual(unit, chain, c[commitPos], store.value(), committed,
             "the BINDING_STORE commit's stored value");
     }
 
@@ -389,12 +389,12 @@ public final class AddressChainProtocol {
             }
             KindPayload.MemberWritePayload write =
                 (KindPayload.MemberWritePayload) c[2].payload();
-            failure = requireEqual(unit, chain, write.table(), (ValueId) c[0].result(),
+            failure = requireEqual(unit, chain, c[2], write.table(), (ValueId) c[0].result(),
                 "the MEMBER_WRITE commit's resolved table reference");
             if (failure.isPresent()) {
                 return failure;
             }
-            return requireEqual(unit, chain, write.value(), (ValueId) c[1].result(),
+            return requireEqual(unit, chain, c[2], write.value(), (ValueId) c[1].result(),
                 "the MEMBER_WRITE commit's stored value");
         }
         if (children.size() == 5) {
@@ -450,17 +450,17 @@ public final class AddressChainProtocol {
             }
             KindPayload.IndexWritePayload write =
                 (KindPayload.IndexWritePayload) c[4].payload();
-            failure = requireEqual(unit, chain, write.container(), (ValueId) c[0].result(),
+            failure = requireEqual(unit, chain, c[4], write.container(), (ValueId) c[0].result(),
                 "the INDEX_WRITE commit's resolved container reference");
             if (failure.isPresent()) {
                 return failure;
             }
-            failure = requireEqual(unit, chain, write.slot(), (ValueId) c[3].result(),
+            failure = requireEqual(unit, chain, c[4], write.slot(), (ValueId) c[3].result(),
                 "the INDEX_WRITE commit's resolved slot reference");
             if (failure.isPresent()) {
                 return failure;
             }
-            return requireEqual(unit, chain, write.value(), (ValueId) c[2].result(),
+            return requireEqual(unit, chain, c[4], write.value(), (ValueId) c[2].result(),
                 "the INDEX_WRITE commit's stored value");
         }
         return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
@@ -508,7 +508,8 @@ public final class AddressChainProtocol {
         if (failure.isPresent()) {
             return failure;
         }
-        failure = requireEqual(unit, chain, normalize.rawKey(), (ValueId) c[1].result(),
+        failure = requireEqual(unit, chain, c[normalizePos],
+            normalize.rawKey(), (ValueId) c[1].result(),
             "the INDEX_NORMALIZE child's rawKey");
         if (failure.isPresent()) {
             return failure;
@@ -516,7 +517,8 @@ public final class AddressChainProtocol {
         // The closed payload's required currentLength operand references
         // the raw key identity and is unused — no length read occurs for
         // table targets (A-D3).
-        return requireEqual(unit, chain, normalize.currentLength(), (ValueId) c[1].result(),
+        return requireEqual(unit, chain, c[normalizePos],
+            normalize.currentLength(), (ValueId) c[1].result(),
             "the INDEX_NORMALIZE child's currentLength (unused for table targets; it must "
                 + "reference the raw key identity)");
     }
@@ -596,7 +598,7 @@ public final class AddressChainProtocol {
                 "the ARRAY_ELEMENT_ASSIGNMENT boundary at position 5 must carry policy "
                     + "ARRAY_WRITE_BOUNDS_THEN_ELEMENT, got " + c[5].failurePolicy().name());
         }
-        failure = requireEqual(unit, chain, boundary.input(), (ValueId) c[2].result(),
+        failure = requireEqual(unit, chain, c[5], boundary.input(), (ValueId) c[2].result(),
             "the ARRAY_ELEMENT_ASSIGNMENT boundary's input (the checked RHS value)");
         if (failure.isPresent()) {
             return failure;
@@ -611,17 +613,17 @@ public final class AddressChainProtocol {
             return failure;
         }
         KindPayload.IndexWritePayload write = (KindPayload.IndexWritePayload) c[6].payload();
-        failure = requireEqual(unit, chain, write.container(), (ValueId) c[0].result(),
+        failure = requireEqual(unit, chain, c[6], write.container(), (ValueId) c[0].result(),
             "the INDEX_WRITE commit's resolved container reference");
         if (failure.isPresent()) {
             return failure;
         }
-        failure = requireEqual(unit, chain, write.slot(), (ValueId) c[4].result(),
+        failure = requireEqual(unit, chain, c[6], write.slot(), (ValueId) c[4].result(),
             "the INDEX_WRITE commit's resolved slot reference");
         if (failure.isPresent()) {
             return failure;
         }
-        return requireEqual(unit, chain, write.value(), (ValueId) c[2].result(),
+        return requireEqual(unit, chain, c[6], write.value(), (ValueId) c[2].result(),
             "the INDEX_WRITE commit's stored value");
     }
 
@@ -710,7 +712,7 @@ public final class AddressChainProtocol {
                 "the BYTE_ELEMENT_ASSIGNMENT boundary at position 5 must carry policy "
                     + "BYTES_WRITE, got " + c[5].failurePolicy().name());
         }
-        failure = requireEqual(unit, chain, boundary.input(), (ValueId) c[2].result(),
+        failure = requireEqual(unit, chain, c[5], boundary.input(), (ValueId) c[2].result(),
             "the BYTE_ELEMENT_ASSIGNMENT boundary's input (the checked RHS value)");
         if (failure.isPresent()) {
             return failure;
@@ -725,17 +727,17 @@ public final class AddressChainProtocol {
             return failure;
         }
         KindPayload.IndexWritePayload write = (KindPayload.IndexWritePayload) c[6].payload();
-        failure = requireEqual(unit, chain, write.container(), (ValueId) c[0].result(),
+        failure = requireEqual(unit, chain, c[6], write.container(), (ValueId) c[0].result(),
             "the INDEX_WRITE commit's resolved container reference");
         if (failure.isPresent()) {
             return failure;
         }
-        failure = requireEqual(unit, chain, write.slot(), (ValueId) c[4].result(),
+        failure = requireEqual(unit, chain, c[6], write.slot(), (ValueId) c[4].result(),
             "the INDEX_WRITE commit's resolved slot reference");
         if (failure.isPresent()) {
             return failure;
         }
-        return requireEqual(unit, chain, write.value(), (ValueId) c[2].result(),
+        return requireEqual(unit, chain, c[6], write.value(), (ValueId) c[2].result(),
             "the INDEX_WRITE commit's stored value");
     }
 
@@ -782,7 +784,8 @@ public final class AddressChainProtocol {
         }
         KindPayload.ArrayLengthPayload length =
             (KindPayload.ArrayLengthPayload) c[lengthPos].payload();
-        failure = requireEqual(unit, chain, length.arrayValue(), (ValueId) c[0].result(),
+        failure = requireEqual(unit, chain, c[lengthPos],
+            length.arrayValue(), (ValueId) c[0].result(),
             "the ARRAY_LENGTH child's array reference (the resolved receiver)");
         if (failure.isPresent()) {
             return failure;
@@ -818,14 +821,16 @@ public final class AddressChainProtocol {
         if (failure.isPresent()) {
             return failure;
         }
-        failure = requireEqual(unit, chain, normalize.rawKey(), (ValueId) c[1].result(),
+        failure = requireEqual(unit, chain, c[normalizePos],
+            normalize.rawKey(), (ValueId) c[1].result(),
             "the INDEX_NORMALIZE child's rawKey");
         if (failure.isPresent()) {
             return failure;
         }
         // The length read pins at normalize time (after key and RHS): the
         // normalize's currentLength must be the length child's result.
-        return requireEqual(unit, chain, normalize.currentLength(), (ValueId) c[lengthPos].result(),
+        return requireEqual(unit, chain, c[normalizePos],
+            normalize.currentLength(), (ValueId) c[lengthPos].result(),
             "the INDEX_NORMALIZE child's currentLength (the length read at normalize time)");
     }
 
@@ -872,12 +877,12 @@ public final class AddressChainProtocol {
             return failure;
         }
         KindPayload.FieldWritePayload write = (KindPayload.FieldWritePayload) c[2].payload();
-        failure = requireEqual(unit, chain, write.classValue(), (ValueId) c[0].result(),
+        failure = requireEqual(unit, chain, c[2], write.classValue(), (ValueId) c[0].result(),
             "the FIELD_WRITE commit's resolved class value reference");
         if (failure.isPresent()) {
             return failure;
         }
-        return requireEqual(unit, chain, write.value(), (ValueId) c[1].result(),
+        return requireEqual(unit, chain, c[2], write.value(), (ValueId) c[1].result(),
             "the FIELD_WRITE commit's stored value");
     }
 
@@ -913,7 +918,7 @@ public final class AddressChainProtocol {
             }
             KindPayload.MemberDeletePayload delete =
                 (KindPayload.MemberDeletePayload) c[1].payload();
-            return requireEqual(unit, chain, delete.table(), (ValueId) c[0].result(),
+            return requireEqual(unit, chain, c[1], delete.table(), (ValueId) c[0].result(),
                 "the MEMBER_DELETE commit's resolved table reference");
         }
         if (children.size() == 4) {
@@ -961,12 +966,12 @@ public final class AddressChainProtocol {
             }
             KindPayload.IndexDeletePayload delete =
                 (KindPayload.IndexDeletePayload) c[3].payload();
-            failure = requireEqual(unit, chain, delete.container(), (ValueId) c[0].result(),
+            failure = requireEqual(unit, chain, c[3], delete.container(), (ValueId) c[0].result(),
                 "the INDEX_DELETE commit's resolved container reference");
             if (failure.isPresent()) {
                 return failure;
             }
-            return requireEqual(unit, chain, delete.slot(), (ValueId) c[2].result(),
+            return requireEqual(unit, chain, c[3], delete.slot(), (ValueId) c[2].result(),
                 "the INDEX_DELETE commit's resolved slot reference");
         }
         return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
@@ -1043,7 +1048,7 @@ public final class AddressChainProtocol {
                 "the ARRAY_ELEMENT_DELETE boundary at position 4 must carry policy "
                     + "ARRAY_DELETE_BOUNDS, got " + c[4].failurePolicy().name());
         }
-        failure = requireEqual(unit, chain, boundary.input(), (ValueId) c[3].result(),
+        failure = requireEqual(unit, chain, c[4], boundary.input(), (ValueId) c[3].result(),
             "the ARRAY_ELEMENT_DELETE boundary's input (the normalized index)");
         if (failure.isPresent()) {
             return failure;
@@ -1058,12 +1063,12 @@ public final class AddressChainProtocol {
             return failure;
         }
         KindPayload.IndexDeletePayload delete = (KindPayload.IndexDeletePayload) c[5].payload();
-        failure = requireEqual(unit, chain, delete.container(), (ValueId) c[0].result(),
+        failure = requireEqual(unit, chain, c[5], delete.container(), (ValueId) c[0].result(),
             "the INDEX_DELETE commit's resolved container reference");
         if (failure.isPresent()) {
             return failure;
         }
-        return requireEqual(unit, chain, delete.slot(), (ValueId) c[3].result(),
+        return requireEqual(unit, chain, c[5], delete.slot(), (ValueId) c[3].result(),
             "the INDEX_DELETE commit's resolved slot reference");
     }
 
@@ -1101,7 +1106,7 @@ public final class AddressChainProtocol {
             return failure;
         }
         KindPayload.FieldDeletePayload delete = (KindPayload.FieldDeletePayload) c[1].payload();
-        return requireEqual(unit, chain, delete.classValue(), (ValueId) c[0].result(),
+        return requireEqual(unit, chain, c[1], delete.classValue(), (ValueId) c[0].result(),
             "the FIELD_DELETE commit's resolved class value reference");
     }
 
@@ -1170,13 +1175,19 @@ public final class AddressChainProtocol {
                 + "chain op as its parentOpId, got " + child.origin().parentOpId());
     }
 
+    /**
+     * A child-owned value-reference check: the rejecting child's own copied
+     * origin supplies the diagnostic range (D2), while the complete message
+     * keeps naming the enclosing chain operation ({@code chain}).
+     */
     private static Optional<CompilerDiagnostic> requireEqual(LoweredModuleUnit unit,
-                                                             SemanticOp chain, ValueId actual,
+                                                             SemanticOp chain,
+                                                             SemanticOp defect, ValueId actual,
                                                              ValueId expected, String what) {
         if (expected.equals(actual)) {
             return Optional.empty();
         }
-        return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
+        return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain, defect,
             what + " must reference the resolved value " + expected + ", got " + actual);
     }
 

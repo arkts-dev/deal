@@ -812,6 +812,17 @@ public abstract class EmitterSessionBase {
         return new SharedEmissionFailure(message, op.origin().span().range());
     }
 
+    /**
+     * The same rejection with the failed lookup's own cause preserved: a
+     * fail-closed lookup boundary keeps the existing message and cause
+     * chain while carrying the identified operation's own range.
+     */
+    protected static SharedEmissionFailure rejectedOp(SemanticOp op,
+            String message, Throwable cause) {
+        return new SharedEmissionFailure(message, cause,
+            op.origin().span().range());
+    }
+
     protected final SemanticOp resolveExternalEntry(SemanticOp op,
             KindPayload.CallPayload payload,
             FunctionExecutionBinding.ExternalFunction external,
