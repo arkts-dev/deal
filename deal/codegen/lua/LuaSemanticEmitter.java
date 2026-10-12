@@ -4198,7 +4198,8 @@ public final class LuaSemanticEmitter {
             }
             out.append("  __okH, __resH = pcall(__dynC.f");
             for (int i = 1; i <= recordedArgCount(payload, op); i++) {
-                out.append(", ").append(carrierArgs).append("[").append(i).append("]");
+                out.append(", __hostNullArg(").append(carrierArgs)
+                    .append("[").append(i).append("])");
             }
             out.append(", ").append(spanTripletArgs(op)).append(")\n");
             out.append("  if not __okH then\n");
@@ -6066,10 +6067,15 @@ public final class LuaSemanticEmitter {
             // The converged host-boundary call shape, identical to the
             // sync arm: the trailing literal span triplet is how the
             // loaded wrapper's declared-async shape check reports the DEAL
-            // call site byte-exact (the pinned E8010 at the call origin).
+            // call site byte-exact (the pinned E8010 at the call origin),
+            // and every recorded argument normalizes the chunk's
+            // language-null representation (the raw nil the null literal
+            // emits and the chunk's own __NULL sentinel) to the deployed
+            // runtime's explicit null sentinel, exactly like the sync
+            // crossing's declared parameter cell.
             out.append("__okT, __resT = pcall((").append(target).append(").f");
             for (String arg : args) {
-                out.append(", ").append(arg);
+                out.append(", __hostNullArg(").append(arg).append(")");
             }
             out.append(", ").append(spanTripletArgs(op)).append(")\n");
             out.append("if not __okT then\n");
@@ -8016,10 +8022,13 @@ end
 -- The declared parameter cell of one host call: the loaded runtime's own
 -- matcher (the wrapper's cell), projected through the pinned E8010
 -- parameter template at the call origin. The crossing normalizes the
--- chunk's language-null sentinel to the deployed runtime's own (the two
--- sentinels are distinct values) and back on the return path.
+-- chunk's language-null representation — the raw nil the null literal
+-- emits and the chunk's own __NULL sentinel — to the deployed runtime's
+-- explicit null sentinel (the two sentinels are distinct values) and back
+-- on the return path. A genuine absence (the __MISSING marker) is never a
+-- language null: it stays the absent value the loaded matcher classifies.
 local function __hostParamCell(desc, index, v, origin)
-  if v == __NULL then v = __rt.__NULL end
+  if v == nil or v == __NULL then v = __rt.__NULL end
   if string.sub(desc, 1, 1) == "@" then
     return __hostClassCell(desc, index, v, origin, false)
   end
@@ -8130,6 +8139,21 @@ local function __dealFnValue(w, ...)
   if w.__mode ~= nil then return __adaptInvoke(w, "-", ...) end
   return w.__fn(...)
 end
+-- The language-null normalization of one recorded DEAL-to-host argument
+-- at the async-start crossing: the chunk's language-null representation —
+-- the raw nil the null literal emits and the chunk's own __NULL sentinel —
+-- becomes the deployed runtime's explicit null sentinel, so the loaded
+-- wrapper admits a declared null/nullable position and the raw host
+-- observes the sentinel, never a plain nil. The __MISSING absence marker
+-- is not a language null and stays the absent value the loaded matcher
+-- classifies. The helper is chunk-global (like the async-entry linkage's
+-- own helpers) rather than a chunk-level local: LuaJIT bounds one
+-- function at 200 locals and the emitted main body carries the program's
+-- own, so the fixed host prelude must not spend a main-chunk local here.
+__hostNullArg = function(v)
+  if v == nil or v == __NULL then return __rt.__NULL end
+  return v
+end
 -- The host-facing projection of one declared function position (H7): the
 -- declared host wrapper class's LuaJIT twin — a plain Lua function the
 -- host calls; a host-facing wrapper passes through unadapted and anything
@@ -8145,12 +8169,15 @@ end
 -- The declared host-facing projection of one checked parameter: a
 -- declared function position is bridged, every other position's carrier
 -- is the Lua value itself (the shared Lua table in both directions). The
--- crossing normalizes the chunk's language-null sentinel to the
--- deployed runtime's own for the loaded matcher.
+-- crossing normalizes the chunk's language-null representation — the
+-- raw nil the null literal emits and the chunk's own __NULL sentinel —
+-- to the deployed runtime's explicit null sentinel, so the loaded matcher
+-- admits a declared null/nullable position and the raw host observes the
+-- sentinel, never a plain nil; the __MISSING absence marker is not a
+-- language null and is left to the loaded matcher.
 local function __hostProjectArg(desc, inner, v)
-  if v == __NULL then return __rt.__NULL end
+  if v == nil or v == __NULL then return __rt.__NULL end
   if v == __rt.__NULL then return v end
-  if v == nil then return v end
   if inner ~= nil and (string.sub(inner, 1, 1) == "("
       or string.sub(inner, 1, 9) == "async(") then
     return __hostFnArg(desc, inner, v)

@@ -2582,6 +2582,464 @@ public class CanonicalProjectionParityTest {
             + "artifact's serialized ASYNC_SHAPE template");
     }
 
+    // =========================================================================
+    // The DEAL-to-host null crossing (ISSUE-0696 remediation)
+    // =========================================================================
+
+    /**
+     * The DEAL-to-host null crossing: a chunk language null — the
+     * {@code null} literal and the admitted host null of a declared
+     * null/nullable return — crosses a declared {@code null} and a declared
+     * nullable primitive host parameter as the deployed runtime's explicit
+     * null sentinel, never as an absence: every admitting raw host reports
+     * whether it observed the sentinel or a plain nil, so admission alone
+     * cannot pass. A wrong-kind result after the same crossing still
+     * renders the closed return cell's canonical tuple on all three
+     * consumers. The drive's declaration and host implementations are
+     * caller-owned, so no corpus or host-fixture membership changes.
+     */
+    private static final String NULL_CROSSING_DECLARATION = """
+        export function takeNull(value: null): string;
+        export function takeNullableInt(value: int | null): string;
+        export function takeNullBadReturn(value: null): string;
+        export function returnNull(): null;
+        export function returnNullableInt(): int | null;
+        export async function asyncTakeNull(value: null): string;
+        export async function asyncTakeNullableInt(value: int | null): string;
+        """;
+
+    /**
+     * The drive's entry module: one probe per crossing shape. Each probe
+     * requires the raw host's own report — {@code sentinel} is produced
+     * only for the explicit null sentinel, {@code plain-nil} for a plain
+     * Lua nil — so an admitted-but-unprojected null fails the probe. The
+     * bad-return probe runs the same null crossing and lets the raw host's
+     * wrong-kind result reach the closed return cell.
+     */
+    private static final String NULL_CROSSING_DRIVER = """
+        import * as host from "host/null_crossing"
+
+        export function test_take_null_literal(): null {
+          let seen: string = host.takeNull(null)
+          if (seen !== "sentinel") {
+            throw { code: "PROBE_NULL_CROSSING", message: "the null literal crossed the null parameter as a non-sentinel" }
+          }
+          return null
+        }
+
+        export function test_take_nullable_int_literal(): null {
+          let seen: string = host.takeNullableInt(null)
+          if (seen !== "sentinel") {
+            throw { code: "PROBE_NULL_CROSSING", message: "the null literal crossed the nullable primitive parameter as a non-sentinel" }
+          }
+          return null
+        }
+
+        export function test_take_null_from_host(): null {
+          let value: null = host.returnNull()
+          let seen: string = host.takeNull(value)
+          if (seen !== "sentinel") {
+            throw { code: "PROBE_NULL_CROSSING", message: "the admitted host null crossed the null parameter as a non-sentinel" }
+          }
+          return null
+        }
+
+        export function test_take_nullable_int_from_host(): null {
+          let value: int | null = host.returnNullableInt()
+          let seen: string = host.takeNullableInt(value)
+          if (seen !== "sentinel") {
+            throw { code: "PROBE_NULL_CROSSING", message: "the admitted host null crossed the nullable primitive parameter as a non-sentinel" }
+          }
+          return null
+        }
+
+        export function test_take_null_bad_return(): null {
+          host.takeNullBadReturn(null)
+          return null
+        }
+
+        export async function test_async_take_null(): null {
+          let seen: string = await host.asyncTakeNull(null)
+          if (seen !== "sentinel") {
+            throw { code: "PROBE_NULL_CROSSING", message: "the async null crossing delivered a non-sentinel" }
+          }
+          return null
+        }
+
+        export async function test_async_take_nullable_int(): null {
+          let seen: string = await host.asyncTakeNullableInt(null)
+          if (seen !== "sentinel") {
+            throw { code: "PROBE_NULL_CROSSING", message: "the async nullable crossing delivered a non-sentinel" }
+          }
+          return null
+        }
+
+        async function applyAsyncNull(f: async (value: null) => string): string {
+          return await f(null)
+        }
+
+        async function applyAsyncNullableInt(f: async (value: int | null) => string): string {
+          return await f(null)
+        }
+
+        export async function test_dynamic_async_take_null(): null {
+          let seen: string = await applyAsyncNull(host.asyncTakeNull)
+          if (seen !== "sentinel") {
+            throw { code: "PROBE_NULL_CROSSING", message: "the dynamic async null crossing delivered a non-sentinel" }
+          }
+          return null
+        }
+
+        export async function test_dynamic_async_take_nullable_int(): null {
+          let seen: string = await applyAsyncNullableInt(host.asyncTakeNullableInt)
+          if (seen !== "sentinel") {
+            throw { code: "PROBE_NULL_CROSSING", message: "the dynamic async nullable crossing delivered a non-sentinel" }
+          }
+          return null
+        }
+
+        function applyNull(f: (value: null) => string): string {
+          return f(null)
+        }
+
+        function applyNullableInt(f: (value: int | null) => string): string {
+          return f(null)
+        }
+
+        export function test_dynamic_take_null(): null {
+          let seen: string = applyNull(host.takeNull)
+          if (seen !== "sentinel") {
+            throw { code: "PROBE_NULL_CROSSING", message: "the dynamic null crossing delivered a non-sentinel" }
+          }
+          return null
+        }
+
+        export function test_dynamic_take_nullable_int(): null {
+          let seen: string = applyNullableInt(host.takeNullableInt)
+          if (seen !== "sentinel") {
+            throw { code: "PROBE_NULL_CROSSING", message: "the dynamic nullable crossing delivered a non-sentinel" }
+          }
+          return null
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
+    /**
+     * The LuaJIT null host: every accepting export distinguishes the
+     * deployed runtime's explicit null sentinel from a plain Lua nil, and
+     * every producer returns the sentinel. The bad-return export returns a
+     * real int for its declared string return.
+     */
+    private static String luaNullCrossingHost() {
+        return """
+            local rt = require("deal.runtime")
+
+            return {
+              takeNull = function(value)
+                if value == rt.__NULL then return "sentinel" end
+                if value == nil then return "plain-nil" end
+                return "other"
+              end,
+              takeNullableInt = function(value)
+                if value == rt.__NULL then return "sentinel" end
+                if value == nil then return "plain-nil" end
+                return "other"
+              end,
+              takeNullBadReturn = function(value)
+                return 7
+              end,
+              asyncTakeNull = function(value)
+                if value == rt.__NULL then
+                  return rt.async_start(function() return "sentinel" end)
+                end
+                if value == nil then
+                  return rt.async_start(function() return "plain-nil" end)
+                end
+                return rt.async_start(function() return "other" end)
+              end,
+              asyncTakeNullableInt = function(value)
+                if value == rt.__NULL then
+                  return rt.async_start(function() return "sentinel" end)
+                end
+                if value == nil then
+                  return rt.async_start(function() return "plain-nil" end)
+                end
+                return rt.async_start(function() return "other" end)
+              end,
+              returnNull = function()
+                return rt.__NULL
+              end,
+              returnNullableInt = function()
+                return rt.__NULL
+              end,
+            }
+            """;
+    }
+
+    /**
+     * The JVM null host: every accepting export distinguishes the present
+     * Java null — the JVM carrier of the language null — from a non-null
+     * value, and every producer returns a present Java null. The bad-return
+     * export returns a boxed int for its declared string return.
+     */
+    private static String jvmNullCrossingHost() {
+        return """
+            final class HostNull_crossing {
+              public static Object takeNull(Object value) {
+                return value == null ? "sentinel" : "other";
+              }
+              public static Object takeNullableInt(Integer value) {
+                return value == null ? "sentinel" : "other";
+              }
+              public static Object takeNullBadReturn(Object value) {
+                return java.lang.Integer.valueOf(7);
+              }
+              public static Object asyncTakeNull(Object value) {
+                return java.util.concurrent.CompletableFuture.completedFuture(
+                    value == null ? "sentinel" : "other");
+              }
+              public static Object asyncTakeNullableInt(Integer value) {
+                return java.util.concurrent.CompletableFuture.completedFuture(
+                    value == null ? "sentinel" : "other");
+              }
+              public static Object returnNull() {
+                return null;
+              }
+              public static Object returnNullableInt() {
+                return null;
+              }
+            }
+            """;
+    }
+
+    /**
+     * The null-crossing host seam: the accepting sync exports admit only
+     * the oracle's language null ({@code NullValue}) and report it as
+     * {@code sentinel}, the async exports record the observed argument for
+     * their completion, the producers return the language null, and the
+     * bad-return export returns a real int for its declared string return.
+     * The dynamic crossings read the module's loaded surface entries
+     * through the responder's own opaque host-entry carrier.
+     */
+    private static SemanticOracle.HostResponder nullCrossingResponder() {
+        return new SemanticOracle.HostResponder() {
+            @Override
+            public SemanticOracle.Value loadedExport(ModuleId module, String export,
+                    RuntimeDescriptor descriptor) {
+                // The loaded surface entries the dynamic function-valued
+                // crossings read: every declared export of the drive's own
+                // host module, as the oracle's opaque host-entry carrier.
+                if (!module.path().endsWith("null_crossing")
+                        || !(descriptor instanceof RuntimeDescriptor.Func func)) {
+                    return null;
+                }
+                return new SemanticOracle.Value.HostEntryValue(func);
+            }
+
+            private final Map<String, String> asyncSeen = new LinkedHashMap<>();
+
+            @Override
+            public AsyncStartOutcome startAsync(ModuleId module, String export,
+                    RuntimeDescriptor.Func descriptor,
+                    List<SemanticOracle.Value> args, String operationLabel) {
+                if (("asyncTakeNull".equals(export)
+                        || "asyncTakeNullableInt".equals(export)) && args.size() == 1) {
+                    asyncSeen.put(operationLabel,
+                        args.get(0) instanceof SemanticOracle.Value.NullValue
+                            ? "sentinel" : "other");
+                }
+                return new AsyncStartOutcome.Operation(operationLabel);
+            }
+
+            @Override
+            public SyncOutcome completeAsync(String operationLabel) {
+                return new SyncOutcome.Returned(new SemanticOracle.Value.StrValue(
+                    asyncSeen.getOrDefault(operationLabel, "other")));
+            }
+
+            @Override
+            public SyncOutcome call(ModuleId module, String export,
+                    RuntimeDescriptor.Func descriptor,
+                    List<SemanticOracle.Value> args) {
+                return switch (export) {
+                    case "takeNull", "takeNullableInt" -> new SyncOutcome.Returned(
+                        new SemanticOracle.Value.StrValue(
+                            args.size() == 1
+                                && args.get(0)
+                                    instanceof SemanticOracle.Value.NullValue
+                                ? "sentinel" : "other"));
+                    case "takeNullBadReturn" -> new SyncOutcome.Returned(
+                        new SemanticOracle.Value.IntValue(7L));
+                    case "returnNull", "returnNullableInt" -> new SyncOutcome.Returned(
+                        SemanticOracle.Value.NullValue.INSTANCE);
+                    default -> throw new IllegalStateException(
+                        "the null-crossing responder received the undeclared "
+                            + "export '" + export + "'");
+                };
+            }
+        };
+    }
+
+    /** The caller-owned null-crossing project (one declaration and driver). */
+    private static Compiled compileNullCrossing() throws Exception {
+        Case spec = new Case("host-abi/host-async-shape-bad", "test_take_null_literal",
+            Entry.MAIN, List.of(), null, null);
+        return compile(spec, NULL_CROSSING_DRIVER,
+            Map.of("null_crossing", NULL_CROSSING_DECLARATION));
+    }
+
+    /**
+     * The null-crossing drive: the admitted crossings — the null literal
+     * and the admitted host null against the null and the nullable primitive
+     * parameter through the declaring call shape, the same values through
+     * the dynamic function-valued call shape, and the null literal through
+     * the declaring and dynamic async host starts — complete without a
+     * failure event on the oracle, the LuaJIT artifact, and the JVM
+     * artifact (each raw host reporting that it observed the explicit null
+     * sentinel), and the wrong-kind return after the same crossing renders
+     * the closed return cell's tuple byte-exact and identical on the three
+     * consumers.
+     */
+    private static void testHostNullParameterCrossing() throws Exception {
+        System.out.println("-- the DEAL-to-host null crossing: the language "
+            + "null crosses a null and a nullable primitive host parameter as "
+            + "the explicit null sentinel, and the subsequent return failure "
+            + "renders the closed arm's canonical tuple --");
+        Compiled compiled = compileNullCrossing();
+        try {
+            safely("the null crossing admissions",
+                () -> driveNullCrossingAdmissions(compiled));
+            safely("the null crossing's subsequent failure projection",
+                () -> driveNullCrossingBadReturn(compiled));
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /** The admitted null crossings on all three consumers. */
+    private static void driveNullCrossingAdmissions(Compiled compiled)
+            throws Exception {
+        assertNullCrossingAdmission(compiled, "test_take_null_literal",
+            "the null literal at the null parameter");
+        assertNullCrossingAdmission(compiled, "test_take_nullable_int_literal",
+            "the null literal at the nullable primitive parameter");
+        assertNullCrossingAdmission(compiled, "test_take_null_from_host",
+            "the admitted host null at the null parameter");
+        assertNullCrossingAdmission(compiled, "test_take_nullable_int_from_host",
+            "the admitted host null at the nullable primitive parameter");
+        assertNullCrossingAdmission(compiled, "test_dynamic_take_null",
+            "the dynamic null literal at the null parameter");
+        assertNullCrossingAdmission(compiled, "test_dynamic_take_nullable_int",
+            "the dynamic null literal at the nullable primitive parameter");
+        assertAsyncNullCrossingAdmission(compiled, "test_async_take_null",
+            "the async null literal at the null parameter");
+        assertAsyncNullCrossingAdmission(compiled, "test_async_take_nullable_int",
+            "the async null literal at the nullable primitive parameter");
+        assertAsyncNullCrossingAdmission(compiled, "test_dynamic_async_take_null",
+            "the dynamic async null literal at the null parameter");
+        assertAsyncNullCrossingAdmission(compiled, "test_dynamic_async_take_nullable_int",
+            "the dynamic async null literal at the nullable primitive parameter");
+    }
+
+    /** One admitted crossing through the async host start. */
+    private static void assertAsyncNullCrossingAdmission(Compiled compiled,
+            String export, String what) throws Exception {
+        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeAsyncEntry(
+            compiled.project(), compiled.tables(), nullCrossingResponder(),
+            compiled.checkedProject().entryModule(), export, List.of());
+        check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+            what + " (oracle): the admitted crossing completes: " + run.terminal());
+        String lua = luaArtifactOutput(compiled,
+            Map.of("null_crossing", luaNullCrossingHost()),
+            luaExportProbe(compiled, export));
+        check(lua.contains("OK") && !lua.contains("ERR|"), what + " (luajit): "
+            + "the admitted crossing completes and the raw host observed the "
+            + "explicit null sentinel: " + lua);
+        String jvm = jvmArtifactOutput(compiled, jvmExportProbe(compiled, export),
+            Map.of("null_crossing", jvmNullCrossingHost()));
+        check(jvm != null && jvm.contains("OK") && !jvm.contains("ERR|"), what
+            + " (jvm): the admitted crossing completes and the raw host observed "
+            + "the language-null carrier: " + jvm);
+    }
+
+    /**
+     * One admitted crossing: the probe completes on the oracle, the LuaJIT
+     * artifact, and the JVM artifact. Each probe's own body rejects a raw
+     * host report other than {@code sentinel}, so the drive proves both the
+     * admission and the raw-host representation.
+     */
+    private static void assertNullCrossingAdmission(Compiled compiled, String export,
+            String what) throws Exception {
+        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeSyncEntry(
+            compiled.project(), compiled.tables(), compiled.registries(),
+            nullCrossingResponder(), compiled.checkedProject().entryModule(), export,
+            List.of());
+        check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+            what + " (oracle): the admitted crossing completes: " + run.terminal());
+        String lua = luaArtifactOutput(compiled,
+            Map.of("null_crossing", luaNullCrossingHost()),
+            luaExportProbe(compiled, export));
+        check(lua.contains("OK") && !lua.contains("ERR|"), what + " (luajit): "
+            + "the admitted crossing completes and the raw host observed the "
+            + "explicit null sentinel: " + lua);
+        String jvm = jvmArtifactOutput(compiled, jvmExportProbe(compiled, export),
+            Map.of("null_crossing", jvmNullCrossingHost()));
+        check(jvm != null && jvm.contains("OK") && !jvm.contains("ERR|"), what
+            + " (jvm): the admitted crossing completes and the raw host observed "
+            + "the language-null carrier: " + jvm);
+    }
+
+    /**
+     * The crossing's subsequent failure projection: the raw host returns a
+     * real int for the declared {@code string} return after the null
+     * parameter was admitted, so the closed {@code HOST_SYNC_RETURN_CELL}
+     * arm renders its own tuple at the call origin — byte-exact and
+     * identical on the oracle, the LuaJIT artifact, and the JVM artifact.
+     * An unnormalized parameter cell would fail earlier with a different
+     * tuple, so the projection also proves the admission.
+     */
+    private static void driveNullCrossingBadReturn(Compiled compiled)
+            throws Exception {
+        String export = "test_take_null_bad_return";
+        Tuple expected = hostReturnCellTuple("string",
+            FailureProjections.kindReason(RuntimeDescriptor.String.INSTANCE),
+            "number", 38, 3);
+        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeSyncEntry(
+            compiled.project(), compiled.tables(), compiled.registries(),
+            nullCrossingResponder(), compiled.checkedProject().entryModule(), export,
+            List.of());
+        Tuple oracle = failureTuple(compiled, run);
+        checkEq(expected, oracle, "the null crossing's subsequent failure "
+            + "(oracle): the closed return cell's own tuple at the call origin");
+        String luaOutput = luaArtifactOutput(compiled,
+            Map.of("null_crossing", luaNullCrossingHost()),
+            luaExportProbe(compiled, export));
+        Tuple lua = parseLuaProbe(luaOutput, compiled);
+        checkEq(expected, lua, "the null crossing's subsequent failure "
+            + "(luajit): the closed return cell's own tuple at the call origin: "
+            + luaOutput);
+        String jvmOutput = jvmArtifactOutput(compiled,
+            jvmExportProbe(compiled, export),
+            Map.of("null_crossing", jvmNullCrossingHost()));
+        Tuple jvm = jvmOutput == null ? null : parseJvmProbe(jvmOutput, compiled);
+        checkEq(expected, jvm, "the null crossing's subsequent failure "
+            + "(jvm): the closed return cell's own tuple at the call origin: "
+            + jvmOutput);
+        if (oracle != null && lua != null) {
+            checkEq(null, firstDifferingField(oracle, lua),
+                "the null crossing's subsequent failure: the oracle and the "
+                    + "LuaJIT artifact render the identical tuple");
+        }
+        if (oracle != null && jvm != null) {
+            checkEq(null, firstDifferingField(oracle, jvm),
+                "the null crossing's subsequent failure: the oracle and the "
+                    + "JVM artifact render the identical tuple");
+        }
+    }
+
     /**
      * The mapped sync-return, nothing, and parameter cells of the production
      * wrappers: each publishes the registry's own complete tuple at the
@@ -6264,6 +6722,7 @@ public class CanonicalProjectionParityTest {
         testHostNullCompletions();
         testHostSyncReturnPresence();
         testHostNumericReturnCarriers();
+        testHostNullParameterCrossing();
         testCallbackEntrySlot();
         testInvalidUnicodeBoundaryOriginDrive();
         testHostStringCarrierProducers();
