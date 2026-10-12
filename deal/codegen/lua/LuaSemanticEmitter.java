@@ -6125,6 +6125,17 @@ public final class LuaSemanticEmitter {
             out.append("      end\n");
             out.append("    else\n");
             out.append("      __tA.value = __tA.handle.__result\n");
+            // The completion cell consumes the language null (the runtime's
+            // own __rt.__NULL sentinel, a value distinct from this chunk's
+            // __NULL) as the neutral null the completion effect, the
+            // completion boundary and the admitted slot all observe: the
+            // production handle path is the one route that supplies the
+            // deployed runtime's sentinel, so it normalizes before the
+            // ASYNC_COMPLETE_RETURN effect atomization and before the
+            // __bcheck null/nullable admissions (a null or nullable cell
+            // admits nil, exactly like the oracle's NullValue and the JVM's
+            // null carrier; the await origin stays the lowering's own).
+            out.append("      if __tA.value == __rt.__NULL then __tA.value = nil end\n");
             if (trace) {
                 out.append("      io.stderr:write(\"F|ASYNC_COMPLETE_RETURN|-|\""
                     + "..__esc(__tA.label..\"=\"..__hostAtom(__tA.value))..\"\\n\")\n");
