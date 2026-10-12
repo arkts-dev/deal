@@ -1,0 +1,15 @@
+// @spec: Runtime execution model
+// @description: Corner-case subject ignored-arguments-effects — Ignored parameters do not imply skipped argument expressions; three effects before callee. (basis: Function type compatibility; Operational semantics summary rule 2)
+// @expected: runtime-ok
+// @features: v1.2, runtime, corner-case
+
+import * as c from "std/console";
+export function main(): null {
+ let trace: string = "";
+ function small(x: int): int { trace = trace + "F"; return x; }
+ function arg(s: string, x: int): int { trace = trace + s; return x; }
+ let extended: (x: int, y: int, z: int) => int = small;
+ let result: int = extended(arg("A", 4), arg("B", 5), arg("C", 6));
+ if(result !== 4 || trace !== "ABCF") {throw {message:"ignored args: " + trace};}
+ c.log("ignored-arguments-effects"); return null;
+}

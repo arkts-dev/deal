@@ -1,0 +1,6 @@
+// @spec: Lexical elements
+// @description: Raw-source subject directive-in-string — Directive-looking text inside string is data (basis: Compiler directive is line comment)
+// @expected: compile-ok
+// @features: v1.2, lexer, raw-source
+
+export function f(): string {return "// @not-a-directive";}

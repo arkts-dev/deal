@@ -1,0 +1,6 @@
+// @spec: Arrays
+// @description: Corner-case subject empty-array-return-context-reject — Return annotation provides context to empty literal. (basis: Inference vs contextual function return)
+// @expected: compile-error E3002
+// @features: v1.2, frontend, reject
+
+export function f(): null {let xs=[]; return null;}

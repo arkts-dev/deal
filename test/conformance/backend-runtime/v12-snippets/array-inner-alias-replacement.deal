@@ -1,0 +1,12 @@
+// @spec: Runtime execution model
+// @description: Corner-case subject array-inner-alias-replacement — Replacing nested slot changes outer aliases but leaves escaped old inner array independent. (basis: Arrays reference identity and nested arrays)
+// @expected: runtime-ok
+// @features: v1.2, runtime, corner-case
+
+import * as c from "std/console";
+export function main(): null {
+ let xs:int[][]=[[1]]; let old:int[]=xs[0]; let alias:int[][]=xs;
+ xs[0]=[2]; old[0]=9;
+ if(alias[0][0]!==2 || old[0]!==9 || xs[0]===old) {throw {message:"nested slot replacement mutated previous array"};}
+ c.log("array-inner-alias-replacement"); return null;
+}

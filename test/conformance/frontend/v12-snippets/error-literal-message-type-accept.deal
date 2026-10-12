@@ -1,0 +1,6 @@
+// @spec: Error handling
+// @description: Corner-case subject error-literal-message-type-accept — Builtin class literal field checking, not throw operand kind. (basis: Error message:string; contextual class field checking)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(): Error {return {message:"1"};}

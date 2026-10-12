@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "mode": "compile-error",
+  "diagnostic": {
+    "code": "E3018",
+    "line": 6,
+    "column": 49,
+    "message": "Table index key must have static type string, got int"
+  }
+}

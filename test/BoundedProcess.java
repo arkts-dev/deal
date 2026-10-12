@@ -1,9 +1,12 @@
 package deal.test;
 
 import java.io.ByteArrayOutputStream;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -18,15 +21,21 @@ import java.util.concurrent.TimeUnit;
  * grow without bound.
  *
  * <p>Contract: start the child in its own process group (through
- * {@code setsid} when available), drain both streams concurrently with a
- * 1 MiB per-stream cap plus the launcher's truncation marker (draining to
- * EOF past the cap, so a saturated child never deadlocks on a full pipe),
- * and let one monotonic deadline cover both the direct child and the
- * drainage of both streams. A child that exits while a descendant keeps
- * the inherited output pipes open therefore also ends the invocation with
- * the named hard failure: the cleanup terminates the descendants, the
- * owned process group, and the direct child, then drains and reaps inside
- * its own bounded window. {@link BoundedProcessTimeoutException} is an
+ * {@code setsid} when available), give it FIFOs for stdout and stderr,
+ * and drain both read ends concurrently with a 1 MiB per-stream cap plus
+ * the launcher's truncation marker (draining to EOF past the cap, so a
+ * saturated child never deadlocks), under one monotonic deadline that
+ * covers both the direct child and the drainage of both streams. The
+ * helper owns the FIFO read ends directly, so capture completeness is the
+ * kernel's EOF — every write end closed — and never the JVM's pipe
+ * reclamation at the direct child's exit: a descendant that outlives the
+ * direct child keeps its inherited write end open, the drains stay blocked
+ * in read, and its later output is captured instead of being dropped. A
+ * descendant that still holds the write ends at the deadline therefore
+ * ends the invocation with the named hard failure, and the cleanup
+ * terminates the descendants, the owned process group, and the direct
+ * child, then drains and reaps inside its own bounded window.
+ * {@link BoundedProcessTimeoutException} is an
  * {@link AssertionError}, never a skip. A nonzero child exit is reported
  * verbatim. EOF is mandatory: every reader failure is recorded, and a
  * completed child whose capture did not reach a clean EOF on both streams
@@ -58,6 +67,8 @@ public final class BoundedProcess {
         firstExecutable("/usr/bin/setsid", "/bin/setsid");
     private static final String KILL_BINARY =
         firstExecutable("/bin/kill", "/usr/bin/kill");
+    private static final String MKFIFO_BINARY =
+        firstExecutable("/usr/bin/mkfifo", "/bin/mkfifo");
 
     private BoundedProcess() {
     }
@@ -103,6 +114,10 @@ public final class BoundedProcess {
     static BoundedResult runCaptured(List<String> argv, Path workingDir,
             Map<String, String> environment, long budgetMs)
             throws IOException, InterruptedException {
+        if (MKFIFO_BINARY == null) {
+            throw new IOException("the bounded-process capture requires the"
+                + " mkfifo utility for its kernel-EOF stream transport");
+        }
         boolean ownGroup = SETSID_BINARY != null;
         List<String> command = new ArrayList<>();
         if (ownGroup) {
@@ -112,39 +127,63 @@ public final class BoundedProcess {
             command.add(SETSID_BINARY);
         }
         command.addAll(argv);
-        ProcessBuilder builder = new ProcessBuilder(command);
-        if (workingDir != null) {
-            builder.directory(workingDir.toFile());
-        }
-        if (environment != null) {
-            builder.environment().putAll(environment);
-        }
-        long deadlineNanos = System.nanoTime()
-            + TimeUnit.MILLISECONDS.toNanos(budgetMs);
-        Process process = builder.start();
-        Drain stdout = new Drain(process.getInputStream());
-        Drain stderr = new Drain(process.getErrorStream());
-        Thread stdoutThread = startDrain(stdout, "bounded-process-stdout");
-        Thread stderrThread = startDrain(stderr, "bounded-process-stderr");
+        Path captureDir = Files.createTempDirectory("bounded-process-");
+        Path fifoOut = captureDir.resolve("stdout.fifo");
+        Path fifoErr = captureDir.resolve("stderr.fifo");
+        Drain stdout = new Drain(fifoOut);
+        Drain stderr = new Drain(fifoErr);
+        Process process = null;
+        Thread stdoutThread = null;
+        Thread stderrThread = null;
         boolean[] interrupted = {false};
         boolean finished = false;
         boolean drained = false;
+        long deadlineNanos = System.nanoTime()
+            + TimeUnit.MILLISECONDS.toNanos(budgetMs);
         try {
+            makeFifos(fifoOut, fifoErr);
+            ProcessBuilder builder = new ProcessBuilder(command);
+            if (workingDir != null) {
+                builder.directory(workingDir.toFile());
+            }
+            if (environment != null) {
+                builder.environment().putAll(environment);
+            }
+            // Kernel EOF, never the JVM's pipe reclamation: the child's
+            // streams are FIFOs whose read ends this JVM holds directly, so
+            // the capture reaches EOF only when the child and every process
+            // that inherited its write ends have closed them. A descendant
+            // that outlives the direct child therefore keeps the capture
+            // open — its later output is read, never dropped — while the
+            // one deadline still bounds the wait.
+            builder.redirectOutput(fifoOut.toFile());
+            builder.redirectError(fifoErr.toFile());
+            // The readers open the FIFOs first (a read open blocks until a
+            // writer appears; the spawn's write open blocks until a reader
+            // appears), then the child runs and the same deadline covers it
+            // and the drainage of both streams.
+            stdoutThread = startDrain(stdout, "bounded-process-stdout");
+            stderrThread = startDrain(stderr, "bounded-process-stderr");
+            process = builder.start();
             finished = waitForChild(process, deadlineNanos, interrupted);
-            // The same deadline bounds the child and its stream drainage: a
-            // descendant holding the inherited pipes ends the invocation
-            // with the named timeout, never with an unbounded delay.
             drained = awaitDrains(stdoutThread, stderrThread, deadlineNanos,
                 interrupted);
         } finally {
             // The finally owns the whole tree before any outcome propagates:
-            // descendants, the owned process group, the direct child, then a
-            // drain and a reap inside their own bounded windows.
-            terminateTree(process, ownGroup, interrupted);
+            // descendants, the owned process group, the direct child, then
+            // the readers' EOF, a bounded reap, and the capture files.
+            if (process != null) {
+                terminateTree(process, ownGroup, interrupted);
+            }
+            unblockAbandonedReader(stdoutThread, stdout, fifoOut);
+            unblockAbandonedReader(stderrThread, stderr, fifoErr);
             awaitDrains(stdoutThread, stderrThread, System.nanoTime()
                 + TimeUnit.MILLISECONDS.toNanos(POST_KILL_DRAIN_BUDGET_MS),
                 interrupted);
-            reap(process, interrupted);
+            if (process != null) {
+                reap(process, interrupted);
+            }
+            deleteCapture(captureDir);
         }
         if (interrupted[0]) {
             Thread.interrupted();
@@ -157,21 +196,102 @@ public final class BoundedProcess {
         }
         if (!drained) {
             // The canonical message stays the bare token; the drainage
-            // detail is diagnostic context, not part of the contract.
+            // detail is diagnostic context, not part of the contract. A
+            // descendant still holding the inherited FIFO write ends at the
+            // deadline is this shape: the readers cannot reach EOF, so the
+            // capture is incomplete and the run is a hard failure — never
+            // the partial prefix as a transcript.
             System.err.println("bounded-process: the stream drainage "
                 + "exceeded the child deadline for " + argv.get(0));
             throw timeout(argv.get(0),
                 captureFailure(argv.get(0), stdout, stderr));
         }
-        // EOF is mandatory: a completed child whose capture is incomplete
-        // (a reader failure before EOF) is a failed invocation, never a
-        // partially empty observation (the fail-closed drain contract).
+        // Kernel EOF is mandatory: a drain reaches EOF only when every write
+        // end of the FIFO is closed, so a completed child whose capture did
+        // not reach a clean EOF on both streams (a reader failure or an
+        // abandoned read end) is a failed invocation, never a partially
+        // empty observation (the fail-closed drain contract).
         AssertionError incomplete = captureFailure(argv.get(0), stdout, stderr);
         if (incomplete != null) {
             throw incomplete;
         }
         return new BoundedResult(process.exitValue(), stdout.text(), stderr.text(),
             stdout.truncated(), stderr.truncated());
+    }
+
+    /** Creates the two capture FIFOs through the mkfifo utility; the
+     * writers' open cannot block an unreachable reader when creation
+     * fails. */
+    private static void makeFifos(Path fifoOut, Path fifoErr)
+            throws IOException {
+        Process mkfifo = new ProcessBuilder(MKFIFO_BINARY,
+            fifoOut.toString(), fifoErr.toString())
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
+            .start();
+        boolean done;
+        try {
+            done = mkfifo.waitFor(REAP_BUDGET_MS, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException interruptedWait) {
+            mkfifo.destroyForcibly();
+            Thread.currentThread().interrupt();
+            throw new IOException("interrupted while creating the capture "
+                + "FIFOs " + fifoOut + " and " + fifoErr);
+        }
+        if (!done) {
+            mkfifo.destroyForcibly();
+            throw new IOException("the capture FIFOs " + fifoOut + " and "
+                + fifoErr + " were not created inside the bounded window");
+        }
+        if (mkfifo.exitValue() != 0) {
+            throw new IOException("mkfifo for the capture FIFOs " + fifoOut
+                + " and " + fifoErr + " failed with exit "
+                + mkfifo.exitValue());
+        }
+    }
+
+    /**
+     * Unblocks one drain that is stuck with no writer: when the spawn never
+     * opened the FIFO's write end (a failed start), the reader's blocking
+     * read open would otherwise wait forever. An O_RDWR open of a FIFO
+     * never blocks, so it supplies the pending reader's missing counterpart
+     * and then closes, and the reader finishes at EOF. A reader that is
+     * already reading is unaffected (its FIFO has a writer, or the group
+     * kill just closed one).
+     */
+    private static void unblockAbandonedReader(Thread thread, Drain drain,
+            Path fifo) {
+        if (thread == null || !thread.isAlive() || drain.eofReached()
+                || drain.failure() != null) {
+            return;
+        }
+        try (RandomAccessFile seed = new RandomAccessFile(fifo.toFile(),
+                "rw")) {
+            // The read-write open completes immediately even when no other
+            // end exists; closing it leaves the pending reader at EOF once
+            // no other writer remains.
+        } catch (IOException | RuntimeException ignored) {
+            // The reader join below stays bounded; an unlinked FIFO is no
+            // longer a writer-blocked read.
+        }
+    }
+
+    /** Removes one invocation's capture FIFOs and directory (best effort:
+     * an already-unlinked capture is gone). */
+    private static void deleteCapture(Path captureDir) {
+        try (DirectoryStream<Path> entries =
+                Files.newDirectoryStream(captureDir)) {
+            for (Path entry : entries) {
+                Files.deleteIfExists(entry);
+            }
+        } catch (IOException ignored) {
+            // best effort
+        }
+        try {
+            Files.deleteIfExists(captureDir);
+        } catch (IOException ignored) {
+            // best effort
+        }
     }
 
     /** A representative version probe: runs the child, discards its output. */
@@ -254,11 +374,15 @@ public final class BoundedProcess {
     }
 
     /** Joins both capped drains to EOF inside the deadline; {@code false}
-     * means a drain was still alive at the deadline. */
+     * means a drain was still alive at the deadline. A drain that was
+     * never started (an early infrastructure failure) is already ended. */
     private static boolean awaitDrains(Thread stdoutThread, Thread stderrThread,
             long deadlineNanos, boolean[] interrupted) {
         boolean drained = true;
         for (Thread thread : new Thread[] {stdoutThread, stderrThread}) {
+            if (thread == null) {
+                continue;
+            }
             while (thread.isAlive()) {
                 long remaining = deadlineNanos - System.nanoTime();
                 if (remaining <= 0) {
@@ -345,12 +469,16 @@ public final class BoundedProcess {
      * One stream's capped, drain-to-EOF capture. A reader failure is
      * recorded, never swallowed: the retained prefix is kept for
      * diagnostics, but the runner refuses the invocation unless the read
-     * loop ended at a clean EOF. Package-visible with the decision helpers
-     * above so the registered harness battery exercises the same state the
-     * runner consumes.
+     * loop ended at a clean EOF. The input-stream constructor serves the
+     * registered harness battery's direct decision checks; the FIFO-path
+     * constructor defers the open into the drain thread, so the child's
+     * write open rendezvous with a pending reader open instead of
+     * blocking the runner. Package-visible with the decision helpers
+     * above so the battery exercises the same state the runner consumes.
      */
     static final class Drain implements Runnable {
         private final InputStream stream;
+        private final Path fifo;
         private final ByteArrayOutputStream kept = new ByteArrayOutputStream();
         private volatile boolean truncated;
         private volatile boolean eofReached;
@@ -358,12 +486,21 @@ public final class BoundedProcess {
 
         Drain(InputStream stream) {
             this.stream = stream;
+            this.fifo = null;
+        }
+
+        /** The FIFO path: the read end is opened inside the drain thread,
+         * whose blocking open is the writer's rendezvous. */
+        Drain(Path fifo) {
+            this.stream = null;
+            this.fifo = fifo;
         }
 
         @Override
         public void run() {
             byte[] buffer = new byte[8192];
-            try (InputStream in = stream) {
+            try (InputStream in = stream != null ? stream
+                    : new FileInputStream(fifo.toFile())) {
                 int read;
                 while ((read = in.read(buffer)) >= 0) {
                     int room = STREAM_CAP_BYTES - kept.size();

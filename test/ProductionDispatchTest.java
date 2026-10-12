@@ -51,6 +51,8 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Stream;
 
 public class ProductionDispatchTest {
@@ -534,6 +536,15 @@ public class ProductionDispatchTest {
           for (let x: codec.Ir = (x = {}); false; ) { }
           if (x.a === 7) { console.log("ok"); } else { console.log("wrong"); }
           return null;
+        }
+        """;
+
+    private static final String DEAL_JSON_JS = """
+        {
+          "languageVersion": "1.2",
+          "moduleRoots": ["src"],
+          "output": "out",
+          "backend": "js"
         }
         """;
 
@@ -4575,6 +4586,942 @@ public class ProductionDispatchTest {
      * the reference back nowhere, so no emission, staging, or comparison
      * step consumes it.
      */
+    // =========================================================================
+    // ISSUE-0756: the v1.2 corner-case corpus production drive
+    // =========================================================================
+
+    /**
+     * The registered v1.2 corner-case corpus under
+     * {@code test/conformance/backend-runtime/v12-snippets}. Each fixture
+     * carries its Structured Expectation Sidecar with the three-backend
+     * uniform runtime-ok expectation; this drive executes the LuaJIT and
+     * JVM legs through the release-owned production CLI on the real
+     * {@code luajit}/{@code java} processes and compares the exact
+     * transcript bytes and exit code through the landed comparator, so a
+     * LuaJIT/JVM semantic divergence is a named failure rather than an
+     * unexecuted pin. The discovered fixture set is the membership
+     * authority: the drive pins no fixed inventory count. Each fixture's
+     * original classification metadata is validated against the production
+     * profile before anything is stripped, materialized or compiled (CD3):
+     * a nonproduction, unknown, duplicate or late declaration is the named
+     * {@link ConformanceHarnessMetadata#HARNESS_DEFECT} outcome naming the
+     * fixture and the profile with no backend leg — no compile, no pass and
+     * no skip. Every child runs through the landed shared bounded-process
+     * helper ({@code deal.test.BoundedProcess}): each stream is capped at
+     * 1 MiB and drained concurrently to EOF, and a truncated or
+     * over-limit observation is refused before any comparison instead
+     * of being read as a transcript.
+     */
+    private static void testV12CornerCaseCorpusProductionDrive()
+            throws Exception {
+        System.out.println("-- the v1.2 corner-case corpus through the"
+            + " release-owned production CLI on LuaJIT and JVM");
+        List<V12CorpusRun> runs = runV12CornerCaseCorpus(
+            Path.of("test/conformance/backend-runtime/v12-snippets"),
+            "backend-runtime/v12-snippets", true);
+        check(!runs.isEmpty(), "the corpus discovery finds the registered"
+            + " v1.2 corner-case fixtures");
+        for (V12CorpusRun run : runs) {
+            check(run.defect() == null, run.locator() + ": the raw"
+                + " classification metadata is the production profile before"
+                + " any compile: "
+                + (run.defect() == null ? "accepted" : run.defect()));
+            for (V12CorpusLeg leg : run.legs()) {
+                check(leg.ok(), run.name() + " [" + leg.backend() + "]: "
+                    + leg.detail());
+            }
+        }
+        testV12CornerCaseCorpusRawProfileControls();
+    }
+
+    /**
+     * One fixture's run through the corner-case production drive: the CD3
+     * gate-input refusal — the named {@code HARNESS_DEFECT} naming the
+     * fixture and the profile — before any compilation, or the per-backend
+     * legs of the accepted fixture.
+     */
+    private record V12CorpusRun(String name, String locator, String defect,
+                                List<V12CorpusLeg> legs) {
+    }
+
+    /**
+     * One compared backend leg of one accepted fixture: the named
+     * infrastructure failure (the production compile, javac, or the shared
+     * bounded capture), or the exact transcript comparison's mismatch.
+     */
+    private record V12CorpusLeg(String backend, String failure,
+                                Optional<String> mismatch) {
+
+        boolean ok() {
+            return failure == null && mismatch.isEmpty();
+        }
+
+        String detail() {
+            return failure != null ? failure
+                : mismatch.isPresent() ? mismatch.get()
+                    : "the pinned transcript matches";
+        }
+    }
+
+    /**
+     * The actual drive consumer: it validates each discovered fixture's
+     * original classification metadata against the production profile (CD3)
+     * before anything is stripped or compiled, then executes the LuaJIT and
+     * JVM legs — and, when {@code jsEntry} is set, the JS production-entry
+     * leg of the entry-contract subject — through the release-owned
+     * production CLI. A refused declaration never allocates a scratch root,
+     * produces no leg, and can therefore neither compile nor pass nor be
+     * skipped: it is reported by its locator and its named defect.
+     */
+    private static List<V12CorpusRun> runV12CornerCaseCorpus(Path snippets,
+            String corpusDir, boolean jsEntry) throws Exception {
+        List<Path> fixtures;
+        try (Stream<Path> walk = Files.walk(snippets)) {
+            fixtures = walk.filter(p -> p.toString().endsWith(".deal"))
+                .sorted().toList();
+        }
+        List<V12CorpusRun> runs = new ArrayList<>();
+        for (Path fixture : fixtures) {
+            String raw = Files.readString(fixture);
+            String fileName = fixture.getFileName().toString();
+            String name = fileName.replace(".deal", "");
+            String locator = corpusDir + "/" + fileName;
+            String source;
+            try {
+                source = ConformanceHarnessMetadata.productionCorpusSource(
+                    raw, locator);
+            } catch (ConformanceHarnessMetadata.HarnessInputDefectException
+                    defect) {
+                // CD3: a nonproduction or malformed declaration is gate
+                // input error HARNESS_DEFECT naming fixture/profile with no
+                // compile, no pass and no skip.
+                runs.add(new V12CorpusRun(name, locator, defect.getMessage(),
+                    List.of()));
+                continue;
+            }
+            deal.test.conformance.SidecarExpectations
+                    .StructuredExpectationSidecar sidecar =
+                deal.test.conformance.SidecarExpectations
+                    .StructuredExpectationSidecar.parse(Files.readString(
+                        fixture.resolveSibling(name + ".expect.json")));
+            List<V12CorpusLeg> legs = new ArrayList<>();
+            for (String backend : List.of("luajit", "jvm")) {
+                Path project = Files.createTempDirectory(
+                    "v12-corner-case-" + name + "-" + backend + "-");
+                try {
+                    write(project, "src/main.deal", source);
+                    write(project, "deal.json", "jvm".equals(backend)
+                        ? DEAL_JSON_JVM : DEAL_JSON_LUA);
+                    ProjectOutcome compile = productionCompile(project,
+                        "src/main.deal", "out");
+                    if (compile.exitCode() != 0) {
+                        legs.add(new V12CorpusLeg(backend,
+                            "the production compile succeeds: "
+                                + compile.stderr(), Optional.empty()));
+                        continue;
+                    }
+                    Path out = project.resolve("out");
+                    BoundedProcess.BoundedResult executed;
+                    if ("luajit".equals(backend)) {
+                        // The deployed artifact resolves the shared runtime
+                        // and stdlib from the checkout root, the same way
+                        // every retained real-luajit test executes it.
+                        executed = runBounded(REPO_ROOT, "luajit",
+                            out.resolve("main.lua").toString());
+                    } else {
+                        String classpath = absoluteClasspath();
+                        List<String> javas;
+                        try (Stream<Path> walk = Files.list(out)) {
+                            javas = walk.filter(p -> p.toString()
+                                    .endsWith(".java"))
+                                .map(Path::toString).sorted().toList();
+                        }
+                        BoundedProcess.BoundedResult javac = runBounded(
+                            project, javacCommand(classpath, out, javas));
+                        Optional<String> javacRefusal =
+                            transcriptRefusal(javac);
+                        if (javacRefusal.isPresent()) {
+                            legs.add(new V12CorpusLeg(backend,
+                                "the javac capture stays inside the shared"
+                                    + " per-stream bound: "
+                                    + javacRefusal.get(), Optional.empty()));
+                            continue;
+                        }
+                        if (javac.exitCode() != 0) {
+                            legs.add(new V12CorpusLeg(backend,
+                                "javac accepts the emitted artifacts: "
+                                    + javac.stderr(), Optional.empty()));
+                            continue;
+                        }
+                        executed = runBounded(project, "java", "-cp",
+                            out + File.pathSeparator + classpath, "Main");
+                    }
+                    // The production-entry leg: the entry contract runs
+                    // main() once and never the unrelated exports, so
+                    // exact-main-and-export-output keeps its independent
+                    // production transcript (main once; alpha/beta never
+                    // execute) while every other fixture's sidecar pins
+                    // the same transcript on all three surfaces.
+                    Optional<String> mismatch;
+                    Optional<String> refused = transcriptRefusal(executed);
+                    if (refused.isPresent()) {
+                        mismatch = refused;
+                    } else if ("exact-main-and-export-output".equals(name)) {
+                        mismatch = mismatchAgainst(name, backend,
+                            executed, "main\n", "diagnostic \u03b2\n", 0);
+                    } else {
+                        mismatch = deal.test.conformance
+                            .StructuredExpectationComparator
+                            .compare(backend, sidecar.expectationFor(backend),
+                                new deal.test.conformance.LaneExecution.Executed(
+                                    executed.stdout()
+                                        .getBytes(StandardCharsets.UTF_8),
+                                    executed.stderr()
+                                        .getBytes(StandardCharsets.UTF_8),
+                                    executed.exitCode()))
+                            .map(deal.test.conformance.GateMismatch::message);
+                    }
+                    legs.add(new V12CorpusLeg(backend, null, mismatch));
+                } finally {
+                    deleteRecursively(project);
+                }
+            }
+            if (jsEntry && "exact-main-and-export-output".equals(name)) {
+                // The JS production-entry surface: the published entry
+                // artifact executed directly under real node — the entry
+                // contract runs main() once and never the unrelated
+                // exports, so the independent package transcript
+                // (stdout "main\n", stderr the diagnostic, exit 0) is
+                // observed on the artifact the production CLI published.
+                // The JS lane keeps the separate corpus-adapter
+                // transcript (main then alpha/beta), so a regression in
+                // the require.main entry guard fails here and not only
+                // through the corpus-order pin.
+                Path project = Files.createTempDirectory(
+                    "v12-corner-case-" + name + "-js-");
+                try {
+                    write(project, "src/main.deal", source);
+                    write(project, "deal.json", DEAL_JSON_JS);
+                    ProjectOutcome compile = productionCompile(project,
+                        "src/main.deal", "out");
+                    if (compile.exitCode() != 0) {
+                        legs.add(new V12CorpusLeg("js", "the production"
+                            + " compile succeeds: " + compile.stderr(),
+                            Optional.empty()));
+                    } else {
+                        BoundedProcess.BoundedResult executed = runBounded(
+                            project.resolve("out"), "node", "main.js");
+                        legs.add(new V12CorpusLeg("js", null,
+                            mismatchAgainst(name, "js", executed, "main\n",
+                                "diagnostic \u03b2\n", 0)));
+                    }
+                } finally {
+                    deleteRecursively(project);
+                }
+            }
+            runs.add(new V12CorpusRun(name, locator, null, legs));
+        }
+        return runs;
+    }
+
+    /**
+     * The gate-input controls of the corner-case production drive (CD3),
+     * through the actual drive consumer: a scratch copy of a real fixture
+     * whose raw classification metadata declares a nonproduction, unknown,
+     * duplicate or late (beyond the 40-line metadata window) profile must
+     * come back as the named {@code HARNESS_DEFECT} naming the fixture and
+     * the profile, with no backend leg and no owned scratch root — no
+     * compile, no pass and no skip — while the pristine copy of the same
+     * fixture stays accepted and keeps its two complete production legs.
+     */
+    private static void testV12CornerCaseCorpusRawProfileControls()
+            throws Exception {
+        System.out.println("-- the corner-case gate-input controls: a"
+            + " nonproduction, unknown, duplicate or late declaration is"
+            + " refused before any compile --");
+        String fileName = "short-circuit-abrupt.deal";
+        String name = fileName.replace(".deal", "");
+        Path source = Path.of("test/conformance/backend-runtime",
+            "v12-snippets").resolve(fileName);
+        String raw = Files.readString(source);
+        String sidecar = Files.readString(
+            source.resolveSibling(name + ".expect.json"));
+        record Injection(String label, String raw, String profile,
+                         String kind) {
+        }
+        List<Injection> injections = List.of(
+            new Injection("legacy profile", "// @profile: legacy-safe-int\n"
+                + raw, "LEGACY_SAFE_INT",
+                "declares the LEGACY_SAFE_INT profile"),
+            new Injection("unknown profile",
+                "// @profile: no-such-profile\n" + raw, "no-such-profile",
+                "unknown @profile 'no-such-profile'"),
+            new Injection("duplicate metadata",
+                "// @profile: deal-v1.2-int32\n// @profile: deal-v1.2-int32\n"
+                    + raw, "deal-v1.2-int32",
+                "duplicate corpus classification metadata"),
+            new Injection("profile after the 40-line window",
+                "\n".repeat(40) + "// @profile: legacy-safe-int\n" + raw,
+                "LEGACY_SAFE_INT",
+                "declares the LEGACY_SAFE_INT profile"));
+        Path root = Files.createTempDirectory("v12-profile-control-");
+        try {
+            Path snippets = root.resolve("v12-snippets");
+            Files.createDirectories(snippets);
+            Files.writeString(snippets.resolve(name + ".expect.json"),
+                sidecar, StandardCharsets.UTF_8);
+            Path tmp = Path.of(System.getProperty("java.io.tmpdir"));
+            for (Injection injection : injections) {
+                Files.writeString(snippets.resolve(fileName),
+                    injection.raw(), StandardCharsets.UTF_8);
+                Set<Path> before = v12CornerCaseScratchRoots(tmp);
+                List<V12CorpusRun> runs = runV12CornerCaseCorpus(snippets,
+                    "v12-snippets", false);
+                checkEq(1, runs.size(), "the " + injection.label()
+                    + " scratch corpus carries the one fixture");
+                V12CorpusRun run = runs.get(0);
+                check(run.defect() != null
+                        && run.defect().contains(
+                            ConformanceHarnessMetadata.HARNESS_DEFECT)
+                        && run.defect().contains(fileName)
+                        && run.defect().contains(injection.profile())
+                        && run.defect().contains(injection.kind()),
+                    "the " + injection.label() + " declaration is the named "
+                        + ConformanceHarnessMetadata.HARNESS_DEFECT
+                        + " naming the fixture and the profile: "
+                        + run.defect());
+                check(run.legs().isEmpty(), "the " + injection.label()
+                    + " declaration records no backend leg: no compile, no"
+                    + " pass and no skip");
+                checkEq(before, v12CornerCaseScratchRoots(tmp), "the "
+                    + injection.label() + " declaration allocates no"
+                    + " production scratch root");
+            }
+            // The pristine copy through the same consumer: the acceptance
+            // control that the refusal above is the declaration and not the
+            // scratch path.
+            Files.writeString(snippets.resolve(fileName), raw,
+                StandardCharsets.UTF_8);
+            List<V12CorpusRun> accepted = runV12CornerCaseCorpus(snippets,
+                "v12-snippets", false);
+            checkEq(1, accepted.size(), "the pristine scratch corpus carries"
+                + " the one fixture");
+            V12CorpusRun run = accepted.get(0);
+            check(run.defect() == null, "the pristine declaration is accepted"
+                + " before any compile: "
+                + (run.defect() == null ? "accepted" : run.defect()));
+            checkEq(2, run.legs().size(), "the pristine fixture keeps its"
+                + " LuaJIT and JVM production legs");
+            for (V12CorpusLeg leg : run.legs()) {
+                check(leg.ok(), "the pristine fixture [" + leg.backend()
+                    + "]: " + leg.detail());
+            }
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /** The owned {@code v12-corner-case-*} scratch roots in a directory. */
+    private static Set<Path> v12CornerCaseScratchRoots(Path parent)
+            throws Exception {
+        try (Stream<Path> listing = Files.list(parent)) {
+            return listing.filter(p -> p.getFileName().toString()
+                    .startsWith("v12-corner-case-"))
+                .collect(java.util.stream.Collectors.toSet());
+        }
+    }
+
+    /**
+     * The capture controls of the corner-case production drive, all through
+     * the landed shared bounded-process helper
+     * ({@code deal.test.BoundedProcess}) and its per-stream bound: the
+     * boundary matrix at the 1 MiB cap in both stream positions — the
+     * cap-minus-one and the exact-cap floods complete byte-exactly with no
+     * truncation flag, and the cap-plus-one flood is retained only as the
+     * bounded prefix plus the helper's truncation marker and must be
+     * refused by name before any transcript comparison, even though its
+     * retained streams still equal the expected bytes. The pressure
+     * child's flood far beyond the pipe
+     * capacity proves the concurrent capped drainage: a sequential
+     * read-to-EOF shape would deadlock on the full stderr pipe. The
+     * deadline is applied while the child runs, so a sleeping child ends
+     * with the helper's named hard timeout instead of hanging the suite. A
+     * child whose surviving descendant keeps the inherited output write
+     * ends open past the deadline is the incomplete-drainage shape: the
+     * helper's named hard timeout is the outcome (never a partial
+     * transcript), and the owned release kills the pipe-holding descendant
+     * in both shapes — the descendant the bounded wait can observe and the
+     * fast shell child that exits before any observation — and ends both
+     * capture readers before returning. A short-lived descendant that
+     * writes and closes before the deadline is instead a complete capture:
+     * the helper's kernel-EOF transport reads the descendant's later
+     * output, so only the full transcript is accepted and the prefix-only
+     * observation is rejected; the shape is repeated to demonstrate it is
+     * not a timing-dependent prefix.
+     */
+    private static void testV12SplitCaptureControls() throws Exception {
+        System.out.println("-- the split-capture controls: the shared"
+            + " per-stream bound, the bounded deadline, and the incomplete"
+            + " drainage");
+        Path scratch = Files.createTempDirectory("v12-split-capture-");
+        try {
+            int cap = BoundedProcess.STREAM_CAP_BYTES;
+            String marker = "PRESSURE-OK\n";
+            BoundedProcess.BoundedResult exactLimit = null;
+            for (int bytes : List.of(cap - 1, cap)) {
+                BoundedProcess.BoundedResult pressure = runBounded(120_000L,
+                    scratch, "java", "-cp", absoluteClasspath(),
+                    SplitCaptureChild.class.getName(), "pressure",
+                    Integer.toString(bytes));
+                check(!pressure.stdoutTruncated()
+                        && !pressure.stderrTruncated(),
+                    "the " + bytes + "-byte stderr flood stays inside the"
+                        + " shared per-stream bound: stdoutTruncated="
+                        + pressure.stdoutTruncated() + ", stderrTruncated="
+                        + pressure.stderrTruncated());
+                checkEq(0, pressure.exitCode(), "the " + bytes + "-byte"
+                    + " child exits 0 (the concurrent capped drains never"
+                    + " deadlock the full pipe)");
+                checkEq(marker, pressure.stdout(), "the " + bytes + "-byte"
+                    + " child's stdout stays a separate complete stream");
+                checkEq(bytes, byteLength(pressure.stderr()), "the complete"
+                    + " " + bytes + "-byte stderr flood is captured");
+                check(allBytes(pressure.stderr(), (byte) 'x'), "every"
+                    + " stderr byte of the " + bytes + "-byte flood"
+                    + " survives");
+                check(transcriptRefusal(pressure).isEmpty(), "the " + bytes
+                    + "-byte observation is inside the bound, not refused");
+                if (bytes == cap) {
+                    exactLimit = pressure;
+                }
+            }
+
+            // The exact-limit acceptance and its deliberate
+            // wrong-observation controls: the exact transcript is accepted
+            // byte-for-byte, while an extra expected byte and a wrong
+            // expected exit status are rejected.
+            if (exactLimit != null) {
+                String exactStderr = exactLimit.stderr();
+                Optional<String> accepted = mismatchAgainst("pressure-cap",
+                    "luajit", exactLimit, marker, exactStderr, 0);
+                check(accepted.isEmpty(), "the exact-limit transcript is"
+                    + " accepted byte-for-byte: "
+                    + accepted.orElse("match"));
+                Optional<String> extraByte = mismatchAgainst("pressure-cap",
+                    "luajit", exactLimit, marker, exactStderr + "x", 0);
+                check(extraByte.isPresent(), "an extra expected byte on the"
+                    + " exact-limit transcript is rejected: " + extraByte);
+                Optional<String> wrongExit = mismatchAgainst("pressure-cap",
+                    "luajit", exactLimit, marker, exactStderr, 1);
+                check(wrongExit.isPresent(), "a wrong expected exit status"
+                    + " on the exact-limit transcript is rejected: "
+                    + wrongExit);
+            }
+
+            // The limit-plus-one control: the helper retains the bounded
+            // prefix plus its truncation marker and flags the overflow; the
+            // drive's refusal must win before any exact comparison, even
+            // when the retained streams equal the expected bytes.
+            BoundedProcess.BoundedResult overLimit = runBounded(120_000L,
+                scratch, "java", "-cp", absoluteClasspath(),
+                SplitCaptureChild.class.getName(), "pressure",
+                Integer.toString(cap + 1));
+            check(!overLimit.stdoutTruncated()
+                    && overLimit.stderrTruncated(),
+                "the cap-plus-one child flags only the overflowing stream:"
+                    + " stdoutTruncated=" + overLimit.stdoutTruncated()
+                    + ", stderrTruncated=" + overLimit.stderrTruncated());
+            checkEq(0, overLimit.exitCode(), "the cap-plus-one child's own"
+                + " exit status is preserved verbatim");
+            checkEq(marker, overLimit.stdout(), "the cap-plus-one child's"
+                + " stdout stays its own complete stream");
+            checkEq(cap + BoundedProcess.TRUNCATION_MARKER.length(),
+                byteLength(overLimit.stderr()), "the retained overflow"
+                    + " stream is the bounded cap prefix plus the helper's"
+                    + " truncation marker");
+            check(overLimit.stderr().endsWith(
+                    BoundedProcess.TRUNCATION_MARKER),
+                "the retained prefix carries the shared helper's"
+                    + " truncation marker at the cut point");
+            Optional<String> overLimitRefusal = transcriptRefusal(overLimit);
+            check(overLimitRefusal.isPresent()
+                    && overLimitRefusal.get().contains("truncated")
+                    && overLimitRefusal.get()
+                        .contains(Integer.toString(cap)),
+                "the over-limit observation is refused by name before any"
+                    + " comparison: " + overLimitRefusal);
+            Optional<String> prefixNotBlessed = mismatchAgainst(
+                "pressure-overflow", "luajit", overLimit, marker,
+                overLimit.stderr(), 0);
+            check(prefixNotBlessed.isPresent()
+                    && prefixNotBlessed.get().contains("truncated"),
+                "the exact comparison refuses the truncated observation"
+                    + " even when its retained streams equal the expected"
+                    + " bytes: " + prefixNotBlessed);
+
+            // The same boundary matrix on the stdout position: the shared
+            // cap is per stream, so an overflowing stdout is refused the
+            // same way while its stderr stays its own complete stream.
+            String stdoutMarker = "STDOUT-PRESSURE-OK\n";
+            for (int bytes : List.of(cap - 1, cap)) {
+                BoundedProcess.BoundedResult stdoutFlood = runBounded(
+                    120_000L, scratch, "java", "-cp", absoluteClasspath(),
+                    SplitCaptureChild.class.getName(), "stdout-pressure",
+                    Integer.toString(bytes));
+                check(!stdoutFlood.stdoutTruncated()
+                        && !stdoutFlood.stderrTruncated(),
+                    "the " + bytes + "-byte stdout flood stays inside the"
+                        + " shared per-stream bound: stdoutTruncated="
+                        + stdoutFlood.stdoutTruncated()
+                        + ", stderrTruncated="
+                        + stdoutFlood.stderrTruncated());
+                checkEq(0, stdoutFlood.exitCode(), "the " + bytes + "-byte"
+                    + " stdout child exits 0");
+                checkEq(bytes, byteLength(stdoutFlood.stdout()), "the"
+                    + " complete " + bytes + "-byte stdout flood is"
+                    + " captured");
+                check(allBytes(stdoutFlood.stdout(), (byte) 'y'), "every"
+                    + " stdout byte of the " + bytes + "-byte flood"
+                    + " survives");
+                checkEq(stdoutMarker, stdoutFlood.stderr(), "the " + bytes
+                    + "-byte stdout child's stderr stays its own complete"
+                    + " stream");
+                check(transcriptRefusal(stdoutFlood).isEmpty(), "the "
+                    + bytes + "-byte stdout observation is inside the"
+                    + " bound, not refused");
+            }
+            BoundedProcess.BoundedResult stdoutOverLimit = runBounded(
+                120_000L, scratch, "java", "-cp", absoluteClasspath(),
+                SplitCaptureChild.class.getName(), "stdout-pressure",
+                Integer.toString(cap + 1));
+            check(stdoutOverLimit.stdoutTruncated()
+                    && !stdoutOverLimit.stderrTruncated(),
+                "the stdout cap-plus-one child flags only the overflowing"
+                    + " stream: stdoutTruncated="
+                    + stdoutOverLimit.stdoutTruncated()
+                    + ", stderrTruncated="
+                    + stdoutOverLimit.stderrTruncated());
+            checkEq(cap + BoundedProcess.TRUNCATION_MARKER.length(),
+                byteLength(stdoutOverLimit.stdout()), "the retained stdout"
+                    + " overflow is the bounded cap prefix plus the helper's"
+                    + " truncation marker");
+            checkEq(stdoutMarker, stdoutOverLimit.stderr(), "the stdout"
+                + " cap-plus-one child's stderr stays its own complete"
+                + " stream");
+            Optional<String> stdoutRefusal =
+                transcriptRefusal(stdoutOverLimit);
+            check(stdoutRefusal.isPresent()
+                    && stdoutRefusal.get().contains("truncated"),
+                "the stdout over-limit observation is refused by name before"
+                    + " any comparison: " + stdoutRefusal);
+            Optional<String> stdoutNotBlessed = mismatchAgainst(
+                "stdout-overflow", "luajit", stdoutOverLimit,
+                stdoutOverLimit.stdout(), stdoutMarker, 0);
+            check(stdoutNotBlessed.isPresent()
+                    && stdoutNotBlessed.get().contains("truncated"),
+                "the exact comparison refuses the truncated stdout even when"
+                    + " its retained streams equal the expected bytes: "
+                    + stdoutNotBlessed);
+
+            // The deadline control: the helper's one deadline covers the
+            // child wait and both streams, so the sleeping child is
+            // terminated and reaped with the named hard token instead of
+            // hanging the suite.
+            long sleepStart = System.nanoTime();
+            boolean sleepTimedOut = false;
+            try {
+                runBounded(2_000L, scratch, "java", "-cp",
+                    absoluteClasspath(),
+                    SplitCaptureChild.class.getName(), "sleep", "60000");
+            } catch (BoundedProcess.BoundedProcessTimeoutException timeout) {
+                sleepTimedOut = true;
+                checkEq("BOUNDED_PROCESS_TIMEOUT java", timeout.getMessage(),
+                    "the sleeping child ends with the shared helper's named"
+                        + " timeout token");
+            }
+            long sleepMillis =
+                (System.nanoTime() - sleepStart) / 1_000_000L;
+            check(sleepTimedOut, "the sleeping child is a hard named"
+                + " timeout, never a hang");
+            check(sleepMillis < 30_000L, "the timeout path returns promptly"
+                + " after the deadline: " + sleepMillis + " ms");
+            check(liveCaptureReaders().isEmpty(), "no capture reader"
+                + " survives the timed-out child's release: "
+                + liveCaptureReaders());
+
+            // The inherited-pipe/late-output control: the direct child
+            // prints its marker, leaves a descendant holding the stdout
+            // pipe for a minute (far past the control's deadline), records
+            // the descendant's pid, and exits 0. Its exit cannot make the
+            // capture complete — the readers cannot reach EOF inside the
+            // deadline — so the run must end with the helper's named hard
+            // timeout, never with the successful prefix as a transcript.
+            // The owned release must terminate the recorded descendant and
+            // end both capture readers before returning.
+            Path latePid = scratch.resolve("late-descendant.pid");
+            long lateStart = System.nanoTime();
+            boolean lateRefused = false;
+            try {
+                runBounded(3_000L, scratch, "java", "-cp",
+                    absoluteClasspath(),
+                    SplitCaptureChild.class.getName(), "late", "60000",
+                    latePid.toString());
+            } catch (BoundedProcess.BoundedProcessTimeoutException timeout) {
+                lateRefused = true;
+                check(timeout.getMessage() != null
+                        && timeout.getMessage()
+                            .startsWith("BOUNDED_PROCESS_TIMEOUT"),
+                    "the incomplete drainage names the shared helper's hard"
+                        + " timeout: " + timeout.getMessage());
+            }
+            long lateMillis = (System.nanoTime() - lateStart) / 1_000_000L;
+            check(lateRefused, "a child whose descendant keeps the stdout"
+                + " pipe open past the deadline is a non-passing"
+                + " incomplete capture, never a partial transcript");
+            check(lateMillis < 30_000L, "the late control returns inside a"
+                + " bounded wall window: " + lateMillis + " ms");
+            long lateDescendant = readPid(latePid);
+            check(lateDescendant > 0 && deadWithin(lateDescendant, 5_000L),
+                "the pipe-holding descendant is terminated by the owned"
+                    + " release: pid=" + lateDescendant + " alive="
+                    + processAlive(lateDescendant));
+            check(liveCaptureReaders().isEmpty(), "no capture reader"
+                + " survives the incomplete-drainage release: "
+                + liveCaptureReaders());
+
+            // The immediate-parent-exit shape, repeated: the direct child
+            // is a fast shell that starts a pipe-holding descendant and
+            // exits before the bounded wait can observe the tree, so only
+            // the owned process group keeps the descendant addressable and
+            // only the readers' kernel EOF — never the direct child's exit
+            // — can decide that the capture is complete. With a descendant
+            // that outlives the deadline, each round must end with the
+            // named hard timeout, never with the successful prefix as a
+            // transcript: the shape is repeated so a timing-dependent
+            // pipe-EOF outcome cannot pass as a transcript. The release
+            // must kill the descendant and end both readers inside the
+            // bounded window.
+            for (int round = 0; round < 8; round++) {
+                Path shellPid = scratch.resolve(
+                    "late-shell-descendant-" + round + ".pid");
+                long shellStart = System.nanoTime();
+                boolean shellRefused = false;
+                try {
+                    runBounded(3_000L, scratch, "sh", "-c",
+                        "(sleep 10; echo LATE_NOISE) & echo $! > \"$1\";"
+                            + " echo EXPECTED",
+                        "v12-late-shell", shellPid.toString());
+                } catch (BoundedProcess.BoundedProcessTimeoutException timeout) {
+                    shellRefused = true;
+                }
+                long shellMillis =
+                    (System.nanoTime() - shellStart) / 1_000_000L;
+                check(shellRefused, "the immediate-parent-exit child is a"
+                    + " non-passing incomplete capture, never a partial"
+                    + " transcript (round " + round + ")");
+                long shellDescendant = readPid(shellPid);
+                check(shellDescendant > 0
+                        && deadWithin(shellDescendant, 5_000L),
+                    "the unsampled pipe-holding descendant is terminated"
+                        + " by the owned process group (round " + round
+                        + "): pid=" + shellDescendant
+                        + " alive=" + processAlive(shellDescendant));
+                check(liveCaptureReaders().isEmpty(), "no capture reader"
+                    + " survives the immediate-parent-exit release (round "
+                    + round + "): " + liveCaptureReaders());
+                check(shellMillis < 7_000L, "the immediate-parent-exit"
+                    + " release returns inside a bounded wall window"
+                    + " (round " + round + "): " + shellMillis + " ms");
+            }
+
+            // The short-lived pipe-holder shape, repeated: the direct child
+            // prints its marker and exits while a descendant still holds
+            // the inherited write ends, and only the descendant's later
+            // output closes them. The kernel-EOF capture must return the
+            // complete transcript — never the prefix-only result a
+            // direct-child pipe reclamation would produce — so the exact
+            // comparison accepts the full transcript and rejects the prefix
+            // expectation. The review's just-after-exit write and a later
+            // short-lived write are both covered, and the shape is repeated
+            // so a timing-dependent prefix-only observation cannot pass as a
+            // capture.
+            int shortLivedRound = 0;
+            for (String delay : List.of("0.001", "0.05")) {
+                for (int round = 0; round < 6; round++, shortLivedRound++) {
+                    BoundedProcess.BoundedResult shortLived;
+                    try {
+                        shortLived = runBounded(10_000L, scratch, "sh", "-c",
+                            "(sleep " + delay + "; echo LATE_NOISE) & echo EXPECTED",
+                            "v12-short-lived");
+                    } catch (BoundedProcess.BoundedProcessTimeoutException timeout) {
+                        check(false, "the short-lived pipe-holder (" + delay
+                            + " s) must complete inside its deadline, never"
+                            + " return an incomplete infrastructure result"
+                            + " (round " + shortLivedRound + "): "
+                            + timeout.getMessage());
+                        continue;
+                    }
+                    checkEq("EXPECTED\nLATE_NOISE\n", shortLived.stdout(),
+                        "the short-lived pipe-holder's descendant output is"
+                            + " captured completely, never the successful prefix"
+                            + " (" + delay + " s, round " + shortLivedRound
+                            + ")");
+                    checkEq("", shortLived.stderr(), "the short-lived"
+                        + " pipe-holder keeps stderr its own empty stream"
+                        + " (" + delay + " s, round " + shortLivedRound + ")");
+                    checkEq(0, shortLived.exitCode(), "the short-lived"
+                        + " pipe-holder preserves the child's exit status"
+                        + " (" + delay + " s, round " + shortLivedRound + ")");
+                    check(!shortLived.stdoutTruncated()
+                            && !shortLived.stderrTruncated(), "the short-lived"
+                        + " pipe-holder stays inside the shared per-stream bound"
+                        + " (" + delay + " s, round " + shortLivedRound + ")");
+                    Optional<String> completeAccepted = mismatchAgainst(
+                        "short-lived-descendant", "luajit", shortLived,
+                        "EXPECTED\nLATE_NOISE\n", "", 0);
+                    check(completeAccepted.isEmpty(), "the complete"
+                        + " short-lived transcript is accepted by the exact"
+                        + " comparison (" + delay + " s, round "
+                        + shortLivedRound + "): "
+                        + completeAccepted.orElse("match"));
+                    Optional<String> prefixRefused = mismatchAgainst(
+                        "short-lived-descendant", "luajit", shortLived,
+                        "EXPECTED\n", "", 0);
+                    check(prefixRefused.isPresent(), "the prefix-only"
+                        + " expectation is rejected once the descendant output"
+                        + " is captured (" + delay + " s, round "
+                        + shortLivedRound + ")");
+                }
+            }
+        } finally {
+            deleteRecursively(scratch);
+        }
+    }
+
+    /** Reads one recorded control-child pid; 0 when unreadable. */
+    private static long readPid(Path pidFile) {
+        try {
+            return Long.parseLong(Files.readString(pidFile,
+                StandardCharsets.UTF_8).trim());
+        } catch (IOException | NumberFormatException unreadable) {
+            return 0L;
+        }
+    }
+
+    /** Whether one recorded pid is still a live process. */
+    private static boolean processAlive(long pid) {
+        return ProcessHandle.of(pid).map(ProcessHandle::isAlive)
+            .orElse(false);
+    }
+
+    /** Waits a bounded window for one recorded pid to disappear. */
+    private static boolean deadWithin(long pid, long budgetMillis) {
+        long deadlineNanos = System.nanoTime()
+            + java.util.concurrent.TimeUnit.MILLISECONDS
+                .toNanos(budgetMillis);
+        while (processAlive(pid) && System.nanoTime() < deadlineNanos) {
+            try {
+                Thread.sleep(20L);
+            } catch (InterruptedException interruptedWait) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        return !processAlive(pid);
+    }
+
+    /**
+     * The live readers of the shared bounded-process capture, by their
+     * fixed thread names. The helper joins both drains to EOF on every
+     * path, so a returning observation never leaves one running.
+     */
+    private static List<String> liveCaptureReaders() {
+        List<String> live = new java.util.ArrayList<>();
+        for (Thread thread : Thread.getAllStackTraces().keySet()) {
+            if (thread.isAlive()
+                    && ("bounded-process-stdout".equals(thread.getName())
+                        || "bounded-process-stderr".equals(
+                            thread.getName()))) {
+                live.add(thread.getName());
+            }
+        }
+        return live;
+    }
+
+    /**
+     * The split-capture control child: {@code pressure <bytes>} floods
+     * stderr with the given byte count and then writes one stdout marker;
+     * {@code stdout-pressure <bytes>} floods stdout with the given byte
+     * count and then writes one stderr marker (the stdout-position twin of
+     * the boundary matrix);
+     * {@code sleep <millis>} stays alive without any output;
+     * {@code late <millis> [pid-file]} writes its stdout marker, leaves a
+     * descendant (the same class, {@code late-sleep <millis>}) holding the
+     * inherited stdout pipe for the given time, records the descendant's
+     * pid when a file is given, and exits — the incomplete-drainage shape
+     * of the split-capture controls. It is a harness child of the
+     * controls, never a product surface.
+     */
+    public static final class SplitCaptureChild {
+
+        public static void main(String[] args) throws Exception {
+            if ("pressure".equals(args[0])) {
+                int remaining = Integer.parseInt(args[1]);
+                byte[] block = new byte[1024];
+                Arrays.fill(block, (byte) 'x');
+                while (remaining > 0) {
+                    int chunk = Math.min(block.length, remaining);
+                    System.err.write(block, 0, chunk);
+                    remaining -= chunk;
+                }
+                System.err.flush();
+                System.out.print("PRESSURE-OK\n");
+                System.out.flush();
+                return;
+            }
+            if ("stdout-pressure".equals(args[0])) {
+                int remaining = Integer.parseInt(args[1]);
+                byte[] block = new byte[1024];
+                Arrays.fill(block, (byte) 'y');
+                while (remaining > 0) {
+                    int chunk = Math.min(block.length, remaining);
+                    System.out.write(block, 0, chunk);
+                    remaining -= chunk;
+                }
+                System.out.flush();
+                System.err.print("STDOUT-PRESSURE-OK\n");
+                System.err.flush();
+                return;
+            }
+            if ("late".equals(args[0])) {
+                System.out.print("EXPECTED\n");
+                System.out.flush();
+                ProcessBuilder descendant = new ProcessBuilder(
+                    Path.of(System.getProperty("java.home"), "bin", "java")
+                        .toString(),
+                    "-cp", System.getProperty("java.class.path"),
+                    SplitCaptureChild.class.getName(), "late-sleep", args[1]);
+                // The descendant inherits this JVM's stdio — the pipe the
+                // harness drains — and outlives this direct child.
+                descendant.inheritIO();
+                Process spawned = descendant.start();
+                if (args.length > 2) {
+                    Files.writeString(Path.of(args[2]),
+                        Long.toString(spawned.pid()) + "\n",
+                        StandardCharsets.UTF_8);
+                }
+                return;
+            }
+            Thread.sleep(Long.parseLong(args[1]));
+            if ("late-sleep".equals(args[0])) {
+                System.out.print("LATE_NOISE\n");
+                System.out.flush();
+            }
+        }
+    }
+
+    /** The checkout root every retained real-process drive runs from. */
+    private static final Path REPO_ROOT = Path.of("").toAbsolutePath()
+        .normalize();
+
+    /** Javac over the emitted artifacts with the process classpath. */
+    private static String[] javacCommand(String classpath, Path out,
+            List<String> javas) {
+        List<String> command = new java.util.ArrayList<>();
+        command.add("javac");
+        command.add("-encoding");
+        command.add("UTF-8");
+        command.add("-cp");
+        command.add(out + File.pathSeparator + classpath);
+        command.add("-d");
+        command.add(out.toString());
+        command.addAll(javas);
+        return command.toArray(String[]::new);
+    }
+
+    /**
+     * One production child through the landed shared bounded-process
+     * helper's canonical budget — the same entry point every release-run
+     * child site uses: the per-stream 1 MiB cap, both streams drained
+     * concurrently to EOF, one deadline covering the child and both
+     * streams, the owned process-group release on the non-normal paths, and
+     * the named hard timeout token. The helper's streams stay separate for
+     * the exact transcript comparisons.
+     */
+    private static BoundedProcess.BoundedResult runBounded(Path directory,
+            String... command) throws Exception {
+        return BoundedProcess.runCaptured(List.of(command), directory);
+    }
+
+    /**
+     * The control-child variant of the same helper with a reduced explicit
+     * budget (the harness checks bound their own children); the drive
+     * itself always uses the canonical default above.
+     */
+    private static BoundedProcess.BoundedResult runBounded(long budgetMillis,
+            Path directory, String... command) throws Exception {
+        return BoundedProcess.runCaptured(List.of(command), directory,
+            Map.of(), budgetMillis);
+    }
+
+    /**
+     * The named refusal of one captured observation that must never be
+     * compared as a transcript: a stream that passed the shared helper's
+     * 1 MiB bound is retained with the helper's truncation marker for
+     * diagnostics only, and the exact comparison refuses it — a retained
+     * prefix or marker is never a successful exact transcript.
+     */
+    private static Optional<String> transcriptRefusal(
+            BoundedProcess.BoundedResult captured) {
+        if (!captured.stdoutTruncated() && !captured.stderrTruncated()) {
+            return Optional.empty();
+        }
+        return Optional.of("the captured stream passed the shared helper's "
+            + BoundedProcess.STREAM_CAP_BYTES + "-byte bound (stdout "
+            + captured.stdoutTruncated() + ", stderr "
+            + captured.stderrTruncated() + "): a truncated observation is"
+            + " never compared as a transcript");
+    }
+
+    /** The byte length of one captured stream. */
+    private static int byteLength(String captured) {
+        return captured.getBytes(StandardCharsets.UTF_8).length;
+    }
+
+    /** Whether every byte of one capture equals the expected filler byte. */
+    private static boolean allBytes(String captured, byte expected) {
+        for (byte actual : captured.getBytes(StandardCharsets.UTF_8)) {
+            if (actual != expected) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** The exact expected transcript of one production-entry execution. */
+    private static Optional<String> mismatchAgainst(String name,
+            String backend, BoundedProcess.BoundedResult executed,
+            String expectedStdout, String expectedStderr, int expectedExit) {
+        Optional<String> refused = transcriptRefusal(executed);
+        if (refused.isPresent()) {
+            return Optional.of("the bounded run is not a complete capture"
+                + " (" + name + "/" + backend + "): " + refused.get());
+        }
+        if (executed.exitCode() != expectedExit) {
+            return Optional.of("exitCode must be " + expectedExit + ", got "
+                + executed.exitCode());
+        }
+        if (!expectedStdout.equals(executed.stdout())) {
+            return Optional.of("stdout must be the production entry"
+                + " transcript (" + name + "/" + backend + ")");
+        }
+        if (!expectedStderr.equals(executed.stderr())) {
+            return Optional.of("stderr must be the production entry"
+                + " diagnostic (" + name + "/" + backend + ")");
+        }
+        return Optional.empty();
+    }
+
     private static void testProducedProjectAccessor(Path project,
             ArmCompile production) throws Exception {
         System.out.println("-- the produced-project accessor: the production "
@@ -4751,6 +5698,8 @@ public class ProductionDispatchTest {
         testSourceMapDirectEmissionGroups();
         testLegacyRejectionStagesNothingWithDumps();
         testRetainedTestScopeEmitters();
+        testV12SplitCaptureControls();
+        testV12CornerCaseCorpusProductionDrive();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

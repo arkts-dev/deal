@@ -1,0 +1,6 @@
+// @spec: Type system
+// @description: Corner-case subject while-test-must-boolean-accept — While condition path, not if path. (basis: While condition boolean)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(): null {while(true) {break;} return null;}

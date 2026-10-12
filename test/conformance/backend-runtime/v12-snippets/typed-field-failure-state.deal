@@ -1,0 +1,13 @@
+// @spec: Runtime execution model
+// @description: Corner-case subject typed-field-failure-state — Rejected dynamic field value preserves prior storage and instance identity. (basis: Typed boundaries: class field assignment)
+// @expected: runtime-ok
+// @features: v1.2, runtime, corner-case
+
+import * as c from "std/console";
+class Cell { value: int = 7; }
+export function main(): null {
+ let cell: Cell = {}; let alias: Cell = cell; let t: table = {bad:"not-int"}; let caught: boolean = false;
+ try {cell.value = t.bad;} catch(e) {if(e.code !== "E8001") {throw {message:"wrong type code"};} caught = true;}
+ if(!caught || alias.value !== 7 || alias !== cell) {throw {message:"failed field write changed instance"};}
+ c.log("typed-field-failure-state"); return null;
+}

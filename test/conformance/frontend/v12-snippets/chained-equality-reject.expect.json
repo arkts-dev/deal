@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "mode": "compile-error",
+  "diagnostic": {
+    "code": "E1056",
+    "line": 6,
+    "column": 52,
+    "message": "Chained comparison is not allowed; parenthesize the operands"
+  }
+}

@@ -1,0 +1,15 @@
+// @spec: Runtime execution model
+// @description: Corner-case subject catch-return-error-value — Caught Error crosses typed return/parameter and reference alias, retaining multiline Unicode fields. (basis: Error is builtin class; Class assignment references; try/catch)
+// @expected: runtime-ok
+// @features: v1.2, runtime, corner-case
+
+import * as c from "std/console";
+function echo(e: Error): Error {return e;}
+function recover(): Error {
+ try {throw {code:"USER",message:"a\nβ"};} catch(e) {return echo(e);}
+}
+export function main(): null {
+ let e: Error = recover(); if(e.code !== "USER" || e.message !== "a\nβ") {throw {message:"error fields"};}
+ let same: Error = echo(e); if(same !== e) {throw {message:"Error boundary copied class value"};}
+ c.log("catch-return-error-value"); return null;
+}

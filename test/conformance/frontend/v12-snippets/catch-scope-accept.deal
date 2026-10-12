@@ -1,0 +1,6 @@
+// @spec: Error handling
+// @description: Corner-case subject catch-scope-accept — Catch binding cannot escape its block. (basis: Scope: block variables only inside block; catch variable Error)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(): string {try {} catch(e) {return e.code;} return "";}

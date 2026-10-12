@@ -1,0 +1,7 @@
+// @spec: Lexical elements
+// @description: Raw-source subject directive-in-block-comment — Directive-looking text inside block comment is ordinary comment (basis: Compiler directive is line comment matching lexical grammar)
+// @expected: compile-ok
+// @features: v1.2, lexer, raw-source
+
+/* // @not-a-directive */
+export function f(): null {return null;}

@@ -1,0 +1,6 @@
+// @spec: Arrays
+// @description: Corner-case subject empty-array-call-context-reject — Call argument can be empty array without intermediate inferred untyped binding. (basis: Contextual call parameter; inference)
+// @expected: compile-error E3002
+// @features: v1.2, frontend, reject
+
+export function f(): null {function take(xs:int[]): null {return null;} let xs=[]; return take(xs);}

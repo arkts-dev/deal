@@ -1,0 +1,7 @@
+// @spec: Classes
+// @description: Corner-case subject optional-field-write-null-reject — Optionality is not nullable storage; delete vs assigning null. (basis: Class assignment optional T accepts only T; absence via delete)
+// @expected: compile-error E3001
+// @features: v1.2, frontend, reject
+
+class C {x?:int;}
+export function f(c:C): null {c.x=null; return null;}

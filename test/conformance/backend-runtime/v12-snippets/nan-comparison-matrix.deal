@@ -1,0 +1,12 @@
+// @spec: Runtime execution model
+// @description: Corner-case subject nan-comparison-matrix — All four relational operators, NaN on either side and against itself. (basis: Numeric overflow, NaN, and Infinity)
+// @expected: runtime-ok
+// @features: v1.2, runtime, corner-case
+
+import * as c from "std/console";
+export function main(): null {
+ let z: number = 0.0; let n: number = z / z; let a: number = 1.0;
+ if(n < a || n <= a || n > a || n >= a || a < n || a <= n || a > n || a >= n || n === n || !(n !== n)) {throw {message:"NaN ordered or equal"};}
+ if(n < n || n <= n || n > n || n >= n) {throw {message:"NaN self relation"};}
+ c.log("nan-comparison-matrix"); return null;
+}

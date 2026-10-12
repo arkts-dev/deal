@@ -51,6 +51,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
@@ -160,6 +161,9 @@ public class JsBackendTest {
             testIntrinsicFunctionValues();
             testAsyncCompletionAndErrors();
             testAsyncExportInvokerNode();
+            testProductionArityExtensionOrderNode();
+            testProductionCompanionDirectNode();
+            testProductionNodeCaptureBoundary();
             testOrchestratorJsBackend();
             testOrchestratorJsNestedModule();
             testOrchestratorJsRejectsUnsupported();
@@ -680,6 +684,599 @@ public class JsBackendTest {
         "  process.exit(1);",
         "});",
         "");
+
+    /**
+     * ISSUE-0756 subject {@code async-extended-argument-order} on the real
+     * v1.2 public path: the subject — its own
+     * {@code console.log("async-extended-argument-order")} output retained —
+     * is published through the public {@code deal compile} entry under the
+     * v1.2 manifest (the emitted artifact carries the
+     * {@code DEAL_V1_2_INT32} selector), and a real node process then
+     * requires the published artifact and invokes the export through the
+     * production host ABI {@code $rt.invokeAsyncExport}. The subject's own
+     * output is the only stdout write, so the node transcript is the
+     * package's exact stream expectation; the runner records the checked
+     * null completion in its result file. The legacy-profile in-memory
+     * generation path cannot satisfy this check.
+     */
+    private static void testProductionArityExtensionOrderNode()
+            throws Exception {
+        System.out.println("-- Node: the v1.2 published arity-extension"
+            + " subject through $rt.invokeAsyncExport --");
+        if (!nodeAvailable) {
+            skipNode("production arity-extension order");
+            return;
+        }
+        ProductionNodeRun run = runProductionInvokerNode("""
+            import * as c from "std/console";
+
+            export function main(): null { return null; }
+
+            export async function run(): null {
+              let trace: string = "";
+              async function value(s: string, x: int): int { trace = trace + s; return x; }
+              async function small(x: int): int { trace = trace + "F"; return x; }
+              let f: async (x: int, y: int) => int = small;
+              let r: int = await f(await value("A", 7), await value("B", 8));
+              if (r !== 7 || trace !== "ABF") {
+                throw { code: "ARITY_FAIL", message: "async extended arguments: " + trace };
+              }
+              c.log("async-extended-argument-order");
+              return null;
+            }
+            """, "production-arity-order", "run", "null");
+        check(run.v12Profile(), "the published artifact carries the"
+            + " DEAL_V1_2_INT32 selector (the real v1.2 compilation)");
+        check(run.exitCode() == 0, "the published subject's host process"
+            + " exits 0: exit=" + run.exitCode() + " stderr=<" + run.stderr()
+            + ">");
+        check(run.stdout().equals("async-extended-argument-order\n"),
+            "the published subject's own stdout is the exact package"
+                + " stream expectation: <" + run.stdout() + ">");
+        check(run.stderr().isEmpty(), "the published subject keeps the"
+            + " package's empty stderr: <" + run.stderr() + ">");
+        check(run.signal().equals("INVOKE_OK: null\n"), "the production"
+            + " host ABI reports the checked null completion: <"
+            + run.signal() + ">");
+    }
+
+    /**
+     * ISSUE-0756 subject {@code public-companion-direct} on the real v1.2
+     * public JS surface: the two-module project (the entry imports the
+     * companion module) is published through the public {@code deal
+     * compile} entry under the v1.2 manifest — the emitted artifact
+     * carries the {@code DEAL_V1_2_INT32} selector — and a real node
+     * process then requires the published entry and invokes the exported
+     * wrappers exactly as the package's exported-wrapper host does:
+     * {@code main} first, then the throwing exported {@code run} under
+     * try/catch. The escaped companion DEAL runtime error is the
+     * independent expectation: code {@code E8001}, a message reporting the
+     * int type failure, {@code expected int}, {@code actual string}, the
+     * companion origin {@code src/helper.deal} line 3 and the accepted
+     * check anchor column; the program streams stay empty and the host
+     * exits 0. The host records the observed fields in a private file, so
+     * the field comparison is exact and stdout/stderr stay the program's
+     * own streams; the same verdict rejects the wrong-field and
+     * wrong-origin controls.
+     */
+    private static void testProductionCompanionDirectNode() throws Exception {
+        System.out.println("-- Node: the v1.2 published public-companion-direct"
+            + " project through the exported-wrapper host --");
+        if (!nodeAvailable) {
+            skipNode("production public-companion-direct");
+            return;
+        }
+        Path root = Files.createTempDirectory("jstest_companion_direct_");
+        try {
+            Files.createDirectories(root.resolve("src"));
+            Files.writeString(root.resolve("deal.json"),
+                "{\"languageVersion\": \"1.2\","
+                    + " \"moduleRoots\": [\"src\"],"
+                    + " \"output\": \"out\","
+                    + " \"backend\": \"js\"}\n",
+                StandardCharsets.UTF_8);
+            Files.writeString(root.resolve("src/helper.deal"),
+                COMPANION_DIRECT_HELPER_SOURCE, StandardCharsets.UTF_8);
+            Path entry = root.resolve("src/main.deal");
+            Files.writeString(entry, COMPANION_DIRECT_MAIN_SOURCE,
+                StandardCharsets.UTF_8);
+            int exit = deal.Main.run(new String[] {"compile",
+                entry.toAbsolutePath().toString()});
+            check(exit == 0, "the public deal compile of the two-module"
+                + " public-companion-direct project succeeds: exit=" + exit);
+            if (exit != 0) {
+                return;
+            }
+            Path out = root.resolve("out");
+            Path artifact = out.resolve("main.js");
+            check(Files.isRegularFile(artifact), "the public compile"
+                + " publishes the entry artifact: " + artifact);
+            if (!Files.isRegularFile(artifact)) {
+                return;
+            }
+            boolean v12Profile = Files.readString(artifact,
+                StandardCharsets.UTF_8).contains("$rt.setInt32Mode(true)");
+            check(v12Profile, "the published artifact carries the"
+                + " DEAL_V1_2_INT32 selector (the real v1.2 compilation)");
+            Files.writeString(out.resolve("companion_host.js"),
+                COMPANION_DIRECT_HOST_SOURCE, StandardCharsets.UTF_8);
+            ProductionNodeRun run = runNodeSplit(out, "companion_host.js",
+                "companion_error.txt", v12Profile);
+            check(run.exitCode() == 0, "the exported-wrapper host process"
+                + " exits 0: exit=" + run.exitCode() + " stderr=<"
+                + run.stderr() + ">");
+            check(run.stdout().isEmpty(), "the independent stdout of the"
+                + " public program is empty: <" + run.stdout() + ">");
+            check(run.stderr().isEmpty(), "the independent stderr of the"
+                + " public program is empty: <" + run.stderr() + ">");
+            CompanionErrorRecord observed =
+                CompanionErrorRecord.parse(run.signal());
+            Optional<String> verdict = companionDirectMismatch(observed);
+            check(verdict.isEmpty(), "the escaped companion error matches"
+                + " the independent fields: " + verdict.orElse("match"));
+            check(companionDirectMismatch(observed.withCode("E8005"))
+                    .isPresent(),
+                "the verdict rejects a wrong error code");
+            check(companionDirectMismatch(observed.withMessage(
+                    "typed value rejected")).isPresent(),
+                "the verdict rejects a message that does not report the"
+                    + " int type failure");
+            check(companionDirectMismatch(observed.withExpected("string"))
+                    .isPresent(),
+                "the verdict rejects a wrong expected type");
+            check(companionDirectMismatch(observed.withActual("int"))
+                    .isPresent(),
+                "the verdict rejects a wrong actual type");
+            check(companionDirectMismatch(observed.withFile(
+                    "/tmp/other/src/main.deal")).isPresent(),
+                "the verdict rejects a wrong origin file");
+            check(companionDirectMismatch(observed.withLine("4"))
+                    .isPresent(),
+                "the verdict rejects a wrong origin line");
+            check(companionDirectMismatch(observed.withColumn("11"))
+                    .isPresent(),
+                "the verdict rejects a wrong origin column");
+        } finally {
+            deleteDir(root);
+        }
+    }
+
+    /**
+     * The public-host capture boundary controls in the node position: the
+     * shared bounded-process helper's per-stream 1 MiB cap. A host emitting
+     * one byte below the cap and exactly at the cap is a complete,
+     * untruncated observation and is accepted with its recorded host signal;
+     * one byte past the cap in either stream position is retained only as
+     * the bounded prefix plus the helper's truncation marker and is refused
+     * by name before any transcript comparison or signal acceptance, so a
+     * truncated or over-limit observation can never pass as a production
+     * transcript.
+     */
+    private static void testProductionNodeCaptureBoundary() throws Exception {
+        System.out.println("-- Node: the public-host capture boundary (the"
+            + " shared 1 MiB per-stream cap) --");
+        if (!nodeAvailable) {
+            skipNode("public-host capture boundary");
+            return;
+        }
+        Path dir = Files.createTempDirectory(
+            "jstest_node_capture_boundary_");
+        try {
+            int cap = BoundedProcess.STREAM_CAP_BYTES;
+            for (int bytes : List.of(cap - 1, cap)) {
+                writeNodeCaptureEmitter(dir, bytes, false);
+                ProductionNodeRun accepted = runNodeSplit(dir,
+                    "capture_emitter.js", true);
+                check(accepted.exitCode() == 0, "the node host emitting "
+                    + bytes + " bytes exits 0: exit=" + accepted.exitCode()
+                    + " stderr=<" + accepted.stderr() + ">");
+                check(accepted.stdout().length() == bytes,
+                    "the " + bytes + "-byte stdout is captured completely"
+                        + " with no truncation: got "
+                        + accepted.stdout().length() + " chars");
+                check(allFiller(accepted.stdout(), 'z'), "the " + bytes
+                    + "-byte stdout is the emitted filler bytes");
+                check(accepted.stderr().isEmpty(), "the " + bytes
+                    + "-byte host keeps the other stream empty: <"
+                    + accepted.stderr() + ">");
+                check("SIGNAL\n".equals(accepted.signal()),
+                    "the complete " + bytes + "-byte capture accepts the"
+                        + " recorded host signal: <" + accepted.signal()
+                        + ">");
+            }
+            for (boolean stderrPosition : List.of(false, true)) {
+                writeNodeCaptureEmitter(dir, cap + 1, stderrPosition);
+                BoundedProcess.BoundedResult over =
+                    BoundedProcess.runCaptured(
+                        List.of("node", "capture_emitter.js"), dir);
+                String position = stderrPosition ? "stderr" : "stdout";
+                check(over.stdoutTruncated() == !stderrPosition
+                        && over.stderrTruncated() == stderrPosition,
+                    "only the " + position + " position is flagged"
+                        + " truncated past the cap: stdout="
+                        + over.stdoutTruncated() + ", stderr="
+                        + over.stderrTruncated());
+                Optional<String> refused = nodeCaptureRefusal(over);
+                check(refused.isPresent() && refused.get()
+                        .startsWith("JS_PUBLIC_HOST_CAPTURE_TRUNCATED"),
+                    "the over-limit " + position + " observation is"
+                        + " refused by name before any comparison: "
+                        + refused);
+                String retained = stderrPosition
+                    ? over.stderr() : over.stdout();
+                check(retained.length() == cap
+                        + BoundedProcess.TRUNCATION_MARKER.length(),
+                    "the retained " + position + " is exactly the cap plus"
+                        + " the helper's truncation marker: got "
+                        + retained.length() + " chars");
+                check(retained.endsWith(BoundedProcess.TRUNCATION_MARKER),
+                    "the retained " + position + " ends with the helper's"
+                        + " truncation marker");
+                // The production node helper must refuse the truncated
+                // observation even though the child wrote its recorded host
+                // signal file: the signal is never accepted from an
+                // incomplete capture.
+                boolean refusedRun = false;
+                try {
+                    runNodeSplit(dir, "capture_emitter.js", true);
+                } catch (AssertionError hardRefusal) {
+                    refusedRun = true;
+                    check(hardRefusal.getMessage() != null
+                            && hardRefusal.getMessage().startsWith(
+                                "JS_PUBLIC_HOST_CAPTURE_TRUNCATED"),
+                        "the production node helper refuses the over-limit "
+                            + position + " capture by name: "
+                            + hardRefusal.getMessage());
+                }
+                check(refusedRun, "the over-limit " + position
+                    + " capture is a hard named refusal, never a partial"
+                    + " transcript");
+                check(Files.exists(dir.resolve("invoke_result.txt")),
+                    "the host signal file of the refused " + position
+                        + " capture exists but is not accepted");
+            }
+        } finally {
+            deleteDir(dir);
+        }
+    }
+
+    /** Writes the boundary emitter: {@code bytes} filler bytes on the
+     * selected stream, then the recorded host signal file. */
+    private static void writeNodeCaptureEmitter(Path dir, int bytes,
+            boolean stderrPosition) throws IOException {
+        Files.writeString(dir.resolve("capture_emitter.js"), String.join("\n",
+            "\"use strict\";",
+            "const fs = require(\"fs\");",
+            "process." + (stderrPosition ? "stderr" : "stdout")
+                + ".write(\"z\".repeat(" + bytes + "), () => {",
+            "  fs.writeFileSync(\"invoke_result.txt\", \"SIGNAL\\n\");",
+            "  process.exit(0);",
+            "});",
+            ""), StandardCharsets.UTF_8);
+    }
+
+    /** Whether every character of one captured stream is the filler. */
+    private static boolean allFiller(String captured, char expected) {
+        for (int i = 0; i < captured.length(); i++) {
+            if (captured.charAt(i) != expected) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The published {@code public-companion-direct} sources (the external
+     * package's bytes): the companion module performs the type-failing
+     * read on line 3 and the entry module re-exports {@code run} over it.
+     */
+    private static final String COMPANION_DIRECT_HELPER_SOURCE =
+        String.join("\n",
+            "export function fail(): int {",
+            "  let t: table = {value: \"bad\"};",
+            "  let x: int = t.value;",
+            "  return x;",
+            "}",
+            "");
+
+    private static final String COMPANION_DIRECT_MAIN_SOURCE =
+        String.join("\n",
+            "import * as c from \"std/console\";",
+            "import * as helper from \"./helper\";",
+            "export function main(): null {return null;}",
+            "export function run(): int {return helper.fail();}",
+            "");
+
+    /**
+     * The exported-wrapper host of the subject: it requires the published
+     * entry and the deployed runtime, initializes the module by invoking
+     * the exported {@code main} wrapper, invokes the exported throwing
+     * {@code run} wrapper and catches the escaped companion error, then
+     * writes the observed fields to {@code companion_error.txt}. It writes
+     * nothing to stdout or stderr, so both remain the program's own
+     * streams.
+     */
+    private static final String COMPANION_DIRECT_HOST_SOURCE =
+        String.join("\n",
+            "\"use strict\";",
+            "const fs = require(\"fs\");",
+            "const $rt = require(\"./deal/runtime\");",
+            "const $entry = require(\"./main\");",
+            "$entry.main.$f();",
+            "let error;",
+            "try { $entry.run.$f(); } catch (caught) { error = caught; }",
+            "if (!error || typeof error !== \"object\") {",
+            "  fs.writeFileSync(\"companion_error.txt\", \"NO_ERROR\\n\");",
+            "  process.exit(4);",
+            "}",
+            "fs.writeFileSync(\"companion_error.txt\", [",
+            "  \"code=\" + error.code,",
+            "  \"message=\" + error.message,",
+            "  \"file=\" + error.file,",
+            "  \"line=\" + error.line,",
+            "  \"column=\" + error.column,",
+            "  \"expected=\" + error.expected,",
+            "  \"actual=\" + error.actual,",
+            "].join(\"\\n\") + \"\\n\");",
+            "");
+
+    /** One observed public-companion-direct error field record. */
+    private record CompanionErrorRecord(String code, String message,
+            String file, String line, String column, String expected,
+            String actual) {
+
+        static CompanionErrorRecord parse(String transcript) {
+            String code = null;
+            String message = null;
+            String file = null;
+            String line = null;
+            String column = null;
+            String expected = null;
+            String actual = null;
+            for (String field : transcript.split("\n")) {
+                int split = field.indexOf('=');
+                if (split < 0) {
+                    continue;
+                }
+                String key = field.substring(0, split);
+                String value = field.substring(split + 1);
+                switch (key) {
+                    case "code" -> code = value;
+                    case "message" -> message = value;
+                    case "file" -> file = value;
+                    case "line" -> line = value;
+                    case "column" -> column = value;
+                    case "expected" -> expected = value;
+                    case "actual" -> actual = value;
+                    default -> { }
+                }
+            }
+            return new CompanionErrorRecord(code, message, file, line,
+                column, expected, actual);
+        }
+
+        CompanionErrorRecord withCode(String value) {
+            return new CompanionErrorRecord(value, message, file, line,
+                column, expected, actual);
+        }
+
+        CompanionErrorRecord withMessage(String value) {
+            return new CompanionErrorRecord(code, value, file, line,
+                column, expected, actual);
+        }
+
+        CompanionErrorRecord withFile(String value) {
+            return new CompanionErrorRecord(code, message, value, line,
+                column, expected, actual);
+        }
+
+        CompanionErrorRecord withLine(String value) {
+            return new CompanionErrorRecord(code, message, file, value,
+                column, expected, actual);
+        }
+
+        CompanionErrorRecord withColumn(String value) {
+            return new CompanionErrorRecord(code, message, file, line,
+                value, expected, actual);
+        }
+
+        CompanionErrorRecord withExpected(String value) {
+            return new CompanionErrorRecord(code, message, file, line,
+                column, value, actual);
+        }
+
+        CompanionErrorRecord withActual(String value) {
+            return new CompanionErrorRecord(code, message, file, line,
+                column, expected, value);
+        }
+    }
+
+    /**
+     * The independent public-companion-direct verdict over the observed
+     * public error record: the exact prescribed fields and the companion
+     * origin. The message keeps the package's constraint (it must report
+     * the int type failure); the exact column is the accepted compiler
+     * check anchor for the companion line 3 declaration read (the package
+     * leaves the exact column to the check-anchor contract), pinned as
+     * observed on the current canonical v1.2 compilation. The same
+     * function is the wrong-observation control.
+     */
+    private static Optional<String> companionDirectMismatch(
+            CompanionErrorRecord observed) {
+        if (!"E8001".equals(observed.code())) {
+            return Optional.of("error code must be E8001, got "
+                + observed.code());
+        }
+        if (observed.message() == null
+                || !observed.message().contains("int")) {
+            return Optional.of("the message must report the int type"
+                + " failure, got <" + observed.message() + ">");
+        }
+        if (!"int".equals(observed.expected())) {
+            return Optional.of("expected must be int, got "
+                + observed.expected());
+        }
+        if (!"string".equals(observed.actual())) {
+            return Optional.of("actual must be string, got "
+                + observed.actual());
+        }
+        String file = observed.file() == null ? ""
+            : observed.file().replace('\\', '/');
+        if (!file.endsWith("/src/helper.deal")) {
+            return Optional.of("the origin file must be the companion"
+                + " source src/helper.deal, got " + observed.file());
+        }
+        if (!"3".equals(observed.line())) {
+            return Optional.of("the origin line must be 3, got "
+                + observed.line());
+        }
+        if (!"10".equals(observed.column())) {
+            return Optional.of("the origin column must be the accepted"
+                + " check anchor 10, got " + observed.column());
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Publishes one subject through the public {@code deal compile} entry
+     * and drives it through the production JS host ABI in a real node
+     * process: the runner requires the published entry and the deployed
+     * runtime, invokes the selected export once through
+     * {@code $rt.invokeAsyncExport}, and records the result signal in
+     * {@code invoke_result.txt} — it writes nothing else, so stdout stays
+     * the subject's own output and stderr stays empty unless the host
+     * fails. Streams are captured separately through private files.
+     */
+    private static ProductionNodeRun runProductionInvokerNode(String source,
+            String name, String exportName, String returnDescriptor)
+            throws Exception {
+        Path root = Files.createTempDirectory("jstest_production_invoker_");
+        try {
+            Files.createDirectories(root.resolve("src"));
+            Files.writeString(root.resolve("deal.json"),
+                "{\"languageVersion\": \"1.2\","
+                    + " \"moduleRoots\": [\"src\"],"
+                    + " \"output\": \"out\","
+                    + " \"backend\": \"js\"}\n",
+                StandardCharsets.UTF_8);
+            Path entry = root.resolve("src/main.deal");
+            Files.writeString(entry, source, StandardCharsets.UTF_8);
+            int exit = deal.Main.run(new String[] {"compile",
+                entry.toAbsolutePath().toString()});
+            if (exit != 0) {
+                throw new RuntimeException("the public deal compile of "
+                    + name + " failed with exit " + exit);
+            }
+            Path out = root.resolve("out");
+            Path artifact = out.resolve("main.js");
+            if (!Files.isRegularFile(artifact)) {
+                throw new RuntimeException("the public compile published no"
+                    + " entry artifact for " + name + ": " + artifact);
+            }
+            boolean v12Profile = Files.readString(artifact,
+                StandardCharsets.UTF_8).contains("$rt.setInt32Mode(true)");
+            Files.writeString(out.resolve("invoker_runner.js"),
+                PRODUCTION_INVOKER_RUNNER_SOURCE
+                    .replace("EXPORT_NAME", exportName)
+                    .replace("RETURN_DESCRIPTOR", returnDescriptor),
+                StandardCharsets.UTF_8);
+            return runNodeSplit(out, "invoker_runner.js", v12Profile);
+        } finally {
+            deleteDir(root);
+        }
+    }
+
+    /**
+     * The production-invoker runner of the published-artifact drive: the
+     * subject's output is the only stdout write, the invocation result is
+     * recorded in {@code invoke_result.txt}, and a non-value, a non-null
+     * completion, or a thrown invoker failure exits non-zero after leaving
+     * the diagnostic on stderr.
+     */
+    private static final String PRODUCTION_INVOKER_RUNNER_SOURCE =
+        String.join("\n",
+            "\"use strict\";",
+            "const fs = require(\"fs\");",
+            "const $rt = require(\"./deal/runtime\");",
+            "const $entry = require(\"./main\");",
+            "$rt.invokeAsyncExport($entry, \"EXPORT_NAME\", \"RETURN_DESCRIPTOR\")",
+            "  .then((r) => {",
+            "    let signal;",
+            "    if (r.$ok !== true) {",
+            "      signal = \"INVOKE_NOT_OK: \" + JSON.stringify(r);",
+            "    } else if (r.$value !== null) {",
+            "      signal = \"INVOKE_NOT_NULL: \" + JSON.stringify(r.$value);",
+            "    } else {",
+            "      signal = \"INVOKE_OK: null\";",
+            "    }",
+            "    fs.writeFileSync(\"invoke_result.txt\", signal + \"\\n\");",
+            "    if (!signal.startsWith(\"INVOKE_OK:\")) { process.exit(2); }",
+            "  }, (err) => {",
+            "    fs.writeFileSync(\"invoke_result.txt\",",
+            "      \"INVOKE_THREW: \" + err + \"\\n\");",
+            "    process.stderr.write(\"INVOKER_THREW: \" + err + \"\\n\");",
+            "    process.exit(3);",
+            "  });",
+            "");
+
+    /** One published-artifact node run with separate exact streams. */
+    private record ProductionNodeRun(int exitCode, String stdout,
+                                     String stderr, String signal,
+                                     boolean v12Profile) {}
+
+    /** Executes node in {@code dir} with separately captured streams and
+     * the production invoker's result signal file. */
+    private static ProductionNodeRun runNodeSplit(Path dir,
+            String scriptFile, boolean v12Profile) throws Exception {
+        return runNodeSplit(dir, scriptFile, "invoke_result.txt",
+            v12Profile);
+    }
+
+    /**
+     * Executes node in {@code dir} through the landed shared bounded-process
+     * helper ({@code deal.test.BoundedProcess}): the canonical deadline, the
+     * per-stream 1 MiB cap, and the owned process-group release. A truncated
+     * or over-limit observation is refused by name before the streams are
+     * compared or the recorded host signal is accepted, so a retained
+     * prefix or truncation marker is never read as a production transcript.
+     */
+    private static ProductionNodeRun runNodeSplit(Path dir,
+            String scriptFile, String signalFile, boolean v12Profile)
+            throws Exception {
+        BoundedProcess.BoundedResult capture = BoundedProcess.runCaptured(
+            List.of("node", scriptFile), dir);
+        Optional<String> refused = nodeCaptureRefusal(capture);
+        if (refused.isPresent()) {
+            throw new AssertionError(refused.get());
+        }
+        Path signal = dir.resolve(signalFile);
+        return new ProductionNodeRun(capture.exitCode(), capture.stdout(),
+            capture.stderr(),
+            Files.exists(signal)
+                ? Files.readString(signal, StandardCharsets.UTF_8)
+                : "",
+            v12Profile);
+    }
+
+    /**
+     * The named refusal of a node capture that passed the shared helper's
+     * per-stream bound: the retained prefix plus the helper's truncation
+     * marker is diagnostics only and is never compared as a production
+     * transcript, nor is the recorded host signal accepted from it.
+     */
+    private static Optional<String> nodeCaptureRefusal(
+            BoundedProcess.BoundedResult capture) {
+        if (!capture.stdoutTruncated() && !capture.stderrTruncated()) {
+            return Optional.empty();
+        }
+        return Optional.of("JS_PUBLIC_HOST_CAPTURE_TRUNCATED: the node"
+            + " observation passed the shared helper's "
+            + BoundedProcess.STREAM_CAP_BYTES + "-byte per-stream bound"
+            + " (stdout " + capture.stdoutTruncated() + ", stderr "
+            + capture.stderrTruncated() + "); a truncated observation is"
+            + " never compared as a transcript or accepted as a host"
+            + " signal");
+    }
 
     /** A fixed-export module resolver for backend-level module probes. */
     private static final class FixedModuleResolver implements ModuleResolver {
@@ -4551,6 +5148,13 @@ public class JsBackendTest {
                 + "production oracle yields { $ok: true, $value: null } "
                 + "with the bytes closure content/identity assertions "
                 + "green inside the oracle: " + ok.output());
+
+        // ISSUE-0756 subject async-extended-argument-order: its faithful
+        // post-rebase home is the published-artifact drive
+        // (testProductionArityExtensionOrderNode), which exercises the
+        // real v1.2 public compilation and the production host ABI with
+        // the subject's own output; this legacy-profile invoker surface
+        // is not a v1.2 public-artifact regression.
 
         // Negative host-failure signals: a wrong export name, a sync
         // export, a parameterized export, a descriptor-mismatched

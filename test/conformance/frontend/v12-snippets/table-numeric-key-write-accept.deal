@@ -1,0 +1,6 @@
+// @spec: Tables
+// @description: Corner-case subject table-numeric-key-write-accept — Write-side key constraint, not read-side duplicate. (basis: Writing table fields: index must string)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(): null {let t: table = {}; t["1"] = 2; return null;}

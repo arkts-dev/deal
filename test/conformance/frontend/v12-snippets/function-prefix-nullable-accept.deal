@@ -1,0 +1,6 @@
+// @spec: Functions
+// @description: Corner-case subject function-prefix-nullable-accept — Nullable prefix mismatch combined with legal additional target parameter. (basis: Arity extension prefix types exact)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(): null {function a(x:int | null): int {if(x !== null) {return x;} return 0;} let b: (x:int | null,y:int) => int = a; return null;}

@@ -1,0 +1,6 @@
+// @spec: Lexical elements
+// @description: Corner-case subject unsupported-hex-escape-reject — Hex escape is not a supported source spelling. (basis: String escapes: no hexadecimal escapes)
+// @expected: compile-error E1052
+// @features: v1.2, frontend, reject
+
+export function f(): string {return "\x41";}

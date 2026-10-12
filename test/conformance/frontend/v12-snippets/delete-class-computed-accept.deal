@@ -1,0 +1,7 @@
+// @spec: Classes
+// @description: Corner-case subject delete-class-computed-accept — Optional deletion legal only through class member syntax, not table-style indexing. (basis: Class fields use declared member names; Indexing only arrays/bytes/tables)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+class C {x?: int;}
+export function f(c:C): null {delete c.x; return null;}

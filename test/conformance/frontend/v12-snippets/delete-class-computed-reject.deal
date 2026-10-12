@@ -1,0 +1,7 @@
+// @spec: Classes
+// @description: Corner-case subject delete-class-computed-reject — Optional deletion legal only through class member syntax, not table-style indexing. (basis: Class fields use declared member names; Indexing only arrays/bytes/tables)
+// @expected: compile-error E3007
+// @features: v1.2, frontend, reject
+
+class C {x?: int;}
+export function f(c:C): null {delete c["x"]; return null;}

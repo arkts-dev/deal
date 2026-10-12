@@ -1,0 +1,6 @@
+// @spec: Type system
+// @description: Corner-case subject while-test-must-boolean-reject — While condition path, not if path. (basis: While condition boolean)
+// @expected: compile-error E3007
+// @features: v1.2, frontend, reject
+
+export function f(): null {while(1) {break;} return null;}

@@ -1,0 +1,6 @@
+// @spec: Control flow
+// @description: Corner-case subject for-binding-scope-reject — Declared loop variable does not leak; outer assignment initializer survives. (basis: Scope; C-style for let initializer block binding)
+// @expected: compile-error E2001
+// @features: v1.2, frontend, reject
+
+export function f(): int {for(let i:int=0; i<1; i=i+1) {} return i;}

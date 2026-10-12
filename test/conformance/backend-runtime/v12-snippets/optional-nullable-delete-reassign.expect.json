@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {
+      "stdout": "optional-nullable-delete-reassign\n",
+      "stderr": ""
+    },
+    "exitCode": 0
+  }
+}

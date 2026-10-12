@@ -1,0 +1,7 @@
+// @spec: Classes
+// @description: Corner-case subject reserved-field-name-accept — Keyword restriction in field declaration (not only locals). (basis: async/await are keywords not names; class Field Identifier grammar)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+class C {waiting:int=0;}
+export function f(): null {return null;}

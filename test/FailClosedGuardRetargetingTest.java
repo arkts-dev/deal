@@ -993,9 +993,9 @@ public class FailClosedGuardRetargetingTest {
             + "the deadline: " + elapsedMs + " ms");
 
         // A direct child that exits while a descendant keeps its inherited
-        // output pipes open must not bypass the bound: the helper owns the
-        // child's process group, kills the surviving member, and reports the
-        // named timeout instead of waiting for the descendant.
+        // output write ends open must not bypass the bound: the helper owns
+        // the child's process group, kills the surviving member, and reports
+        // the named timeout instead of waiting for the descendant.
         long descendantBefore = System.nanoTime();
         boolean descendantTimedOut = false;
         try {
@@ -1010,11 +1010,48 @@ public class FailClosedGuardRetargetingTest {
         long descendantElapsedMs =
             (System.nanoTime() - descendantBefore) / 1_000_000L;
         check(descendantTimedOut,
-            "a child that exits while a descendant holds the output pipes "
-                + "still ends with the named timeout, not success");
+            "a child that exits while a descendant holds the output write "
+                + "ends still ends with the named timeout, not success");
         check(descendantElapsedMs < 30_000L,
             "the descendant path returns promptly after terminating the "
                 + "owned process group: " + descendantElapsedMs + " ms");
+
+        // A short-lived pipe-holding descendant must be drained, never
+        // lost: the direct child exits before the descendant writes, and
+        // the capture's kernel EOF arrives only once the descendant closes
+        // the inherited write ends. Both a just-after-exit write (the
+        // review's shape) and a later short-lived write are covered; the
+        // shapes are repeated so a timing-dependent prefix-only result (the
+        // JVM's pipe reclamation dropping the descendant's later output)
+        // cannot pass as a capture. A named non-passing result is a failed
+        // control, never the successful prefix.
+        int shortLivedRound = 0;
+        for (String delay : List.of("0.001", "0.05")) {
+            for (int round = 0; round < 4; round++, shortLivedRound++) {
+                BoundedProcess.BoundedResult shortLived;
+                try {
+                    shortLived = BoundedProcess.runCaptured(List.of("sh", "-c",
+                        "(sleep " + delay + "; echo LATE_NOISE) & echo EXPECTED"),
+                        null, Map.of(), 10_000L);
+                } catch (BoundedProcess.BoundedProcessTimeoutException timeout) {
+                    check(false, "the short-lived pipe-holder (" + delay + " s)"
+                        + " must be a complete capture, not an incomplete"
+                        + " infrastructure result (round " + shortLivedRound
+                        + "): " + timeout.getMessage());
+                    continue;
+                }
+                checkEq("EXPECTED\nLATE_NOISE\n", shortLived.stdout(),
+                    "the short-lived pipe-holder's descendant output is"
+                        + " captured completely, never the prefix (" + delay
+                        + " s, round " + shortLivedRound + ")");
+                check(shortLived.exitCode() == 0 && shortLived.stderr().isEmpty()
+                        && !shortLived.stdoutTruncated()
+                        && !shortLived.stderrTruncated(),
+                    "the short-lived pipe-holder is an untruncated capture"
+                        + " with its own exit status and empty stderr ("
+                        + delay + " s, round " + shortLivedRound + ")");
+            }
+        }
 
         BoundedProcess.BoundedResult flood = BoundedProcess.runCaptured(
             List.of("luajit", "-e",

@@ -1,0 +1,6 @@
+// @spec: Type system
+// @description: Corner-case subject boolean-mixed-or-reject — OR validation distinct from existing AND subject. (basis: Logical OR operands both boolean)
+// @expected: compile-error E3007
+// @features: v1.2, frontend, reject
+
+export function f(): boolean {return false || 1;}

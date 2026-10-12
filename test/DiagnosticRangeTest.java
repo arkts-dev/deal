@@ -1,8 +1,14 @@
 package deal.test;
 
+import deal.ast.ClassDeclaration;
+import deal.ast.ExportDeclaration;
+import deal.ast.FunctionDeclaration;
+import deal.ast.ProgramNode;
 import deal.ast.Span;
+import deal.ast.StatementNode;
 import deal.ast.TemplateLiteralExpr;
 import deal.ast.TokenType;
+import deal.ast.TypeNode;
 import deal.ast.VariableDeclaration;
 import deal.codegen.jvm.JvmBackend;
 import deal.diagnostics.CompilerDiagnostic;
@@ -13,19 +19,31 @@ import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.DiagnosticStructuredOutput;
 import deal.diagnostics.RangeOrigin;
 import deal.checker.CheckResult;
+import deal.checker.ModuleResolver;
 import deal.checker.NameResolver;
+import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
+import deal.identity.CanonicalModuleIdentity;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
 import deal.lexer.Token;
 import deal.module.CompilationOrchestrator;
+import deal.module.ExportExtractor;
+import deal.module.ModuleShapeValidator;
+import deal.module.StdlibModuleResolver;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
+import deal.semantic.ir.SemanticProfile;
 import deal.source.JsonRangeLexer;
 import deal.source.ScalarPosition;
 import deal.source.ScalarSourceCursor;
 import deal.source.SourceScalarRange;
+import deal.test.conformance.CorpusDiscovery;
+import deal.test.conformance.CorpusFfi;
+import deal.test.conformance.SidecarExpectations;
+import deal.test.conformance.SidecarSchemaValidator;
+import deal.types.Type;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -39,8 +57,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 public class DiagnosticRangeTest {
@@ -55,6 +75,12 @@ public class DiagnosticRangeTest {
             failed++;
             System.err.println("FAIL: " + message);
         }
+    }
+
+    private static void checkEq(Object expected, Object actual,
+            String message) {
+        check(java.util.Objects.equals(expected, actual), message + " (expected "
+            + expected + ", got " + actual + ")");
     }
 
     private static void fail(String message) {
@@ -84,6 +110,10 @@ public class DiagnosticRangeTest {
         testTemplateInterpolationRebasing();
         testCheckerProducerRanges();
         testProgramSpanAnchorsCombined();
+        testV12CornerCaseScalarCoordinatePins();
+        testV12CorpusFrontendGate();
+        testV12CorpusCompilePins();
+        testV12CompilePinProfileDiscrimination();
 
         testCarrierRecords();
         testRangeConversions();
@@ -1578,6 +1608,920 @@ public class DiagnosticRangeTest {
             }
         }
         return null;
+    }
+
+    // =========================================================================
+    // ISSUE-0756: the v1.2 scalar-coordinate frontend corner cases
+    // =========================================================================
+
+    /**
+     * The independent package expectation of the two adapted
+     * {@code scalar-coordinate-cr-reject}/{@code scalar-coordinate-crlf-reject}
+     * subjects: the source identity and the complete half-open diagnostic
+     * range, including the end column. The retained Compile Expectation
+     * Sidecars pin code, raw line, column, and message; the source
+     * identity and the range end are pinned here, in raw corpus-file
+     * coordinates, so the distinct reject regression these subjects
+     * carry — an unresolved name after a supplementary scalar and a tab
+     * must not shift the scalar coordinate system — cannot pass on a
+     * code-only or start-only verdict. Both raw adapted sources are
+     * compiled through the real frontend pipeline
+     * ({@link #frontendErrors}) with the corpus metadata's v1.2 profile
+     * and the classification headers stripped exactly as the corpus gate
+     * does.
+     */
+    private static void testV12CornerCaseScalarCoordinatePins()
+            throws Exception {
+        System.out.println("-- v1.2 corner-case scalar-coordinate diagnostic"
+            + " identity and exact range --");
+        Path corpus = Path.of("test", "conformance");
+        for (String name : List.of("scalar-coordinate-cr-reject",
+                "scalar-coordinate-crlf-reject")) {
+            String corpusPath = "frontend/v12-snippets/" + name + ".deal";
+            String raw = Files.readString(corpus.resolve(corpusPath),
+                StandardCharsets.UTF_8);
+            String source = ConformanceHarnessMetadata
+                .stripClassificationHeaders(raw);
+            int headerLines = raw.split("\n", -1).length
+                - source.split("\n", -1).length;
+            SemanticProfile profile = ConformanceHarnessMetadata
+                .profileFromMetadata(raw, corpusPath);
+            List<CompilerDiagnostic> diagnostics = frontendErrors(source,
+                corpusPath, profile, rejectingModuleResolver());
+            check(diagnostics.size() == 1, name + ": exactly one error"
+                + " diagnostic, got " + diagnostics.size() + ": "
+                + diagnostics);
+            if (diagnostics.size() != 1) {
+                continue;
+            }
+            CompilerDiagnostic diagnostic = diagnostics.get(0);
+            checkEq("E2001", diagnostic.code(),
+                name + ": the undeclared-identifier code");
+            checkEq("Undeclared identifier 'missing'", diagnostic.message(),
+                name + ": the exact message");
+            // The package pins line 2 of the original snippet; the
+            // adapted raw corpus file prefixes four classification header
+            // lines and the blank separator line the original also
+            // carried, so the raw corpus-file line is headerLines + 3
+            // (the same mapping the gate's Compile Diagnostic comparison
+            // applies) and the complete range ends at column 37.
+            SourceCoordinatePin pin = new SourceCoordinatePin(corpusPath,
+                headerLines + 3, 30, 37);
+            Optional<String> mismatch = scalarCoordinateMismatch(name, pin,
+                diagnostic, headerLines);
+            check(mismatch.isEmpty(), name + ": the normalized source"
+                + " identity and the complete expected range match the"
+                + " independent package expectation: "
+                + mismatch.orElse("match"));
+            check(Path.of(diagnostic.range().file()).getFileName().toString()
+                    .equals(name + ".deal"),
+                name + ": the diagnostic names the package's subject source"
+                    + " file: " + diagnostic.range().file());
+            check(scalarCoordinateMismatch(name,
+                    new SourceCoordinatePin(
+                        "frontend/v12-snippets/scalar-coordinate-other.deal",
+                        headerLines + 3, 30, 37), diagnostic, headerLines)
+                    .isPresent(),
+                name + ": the wrong-file control is rejected");
+            check(scalarCoordinateMismatch(name, new SourceCoordinatePin(
+                    corpusPath, headerLines + 3, 30, 38), diagnostic,
+                    headerLines).isPresent(),
+                name + ": the adjacent wrong-end control is rejected");
+        }
+    }
+
+    /**
+     * One independent source-identity and complete-range pin of a
+     * diagnostic in raw corpus-file coordinates (the Compile Expectation
+     * Sidecar's coordinate system: the header-stripped line plus the
+     * classification header lines the real frontend compile removed).
+     */
+    private record SourceCoordinatePin(String sourceFile, int line,
+                                       int column, int endColumn) {}
+
+    /**
+     * Compares one diagnostic against a source-identity and complete-range
+     * pin; empty means exact. The source identity comparison is
+     * path-normalized and the line comparison maps the diagnostic's
+     * header-stripped line into raw corpus-file coordinates, exactly as
+     * the gate's Compile Diagnostic comparison does, so a wrong source
+     * file and an adjacent wrong end column are rejected instead of
+     * passing on code or start position alone.
+     */
+    private static Optional<String> scalarCoordinateMismatch(String subject,
+            SourceCoordinatePin pin, CompilerDiagnostic diagnostic,
+            int headerLines) {
+        DiagnosticRange range = diagnostic.range();
+        String actualFile = Path.of(range.file()).normalize().toString();
+        String pinnedFile = Path.of(pin.sourceFile()).normalize().toString();
+        if (!pinnedFile.equals(actualFile)) {
+            return Optional.of(subject + ": diagnostic source must be "
+                + pinnedFile + ", got " + actualFile);
+        }
+        int rawLine = diagnostic.line() + headerLines;
+        if (pin.line() != rawLine) {
+            return Optional.of(subject + ": diagnostic line must be "
+                + pin.line() + ", got " + rawLine);
+        }
+        if (pin.column() != diagnostic.column()) {
+            return Optional.of(subject + ": diagnostic column must be "
+                + pin.column() + ", got " + diagnostic.column());
+        }
+        int rawEndLine = range.endLine() + headerLines;
+        if (pin.line() != rawEndLine) {
+            return Optional.of(subject + ": diagnostic end line must be "
+                + pin.line() + ", got " + rawEndLine);
+        }
+        if (pin.endColumn() != range.endColumn()) {
+            return Optional.of(subject + ": diagnostic endColumn must be "
+                + pin.endColumn() + ", got " + range.endColumn());
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * The stub resolver of the pin arm: every module import rejected. The
+     * pinned subjects import nothing, so the resolver keeps the compile
+     * the same real-frontend pipeline shape the corpus gate runs through
+     * {@link #frontendErrors}. A pinned fixture that did import a module
+     * would fail its pin loudly instead of passing unverified.
+     */
+    private static ModuleResolver rejectingModuleResolver() {
+        return new ModuleResolver() {
+            @Override
+            public Map<String, Type> resolveModule(String modulePath,
+                    String importingModule, Set<String> modulesInProgress)
+                    throws ModuleResolver.ModuleNotFoundException {
+                throw new ModuleResolver.ModuleNotFoundException(
+                    "Module not found: " + modulePath);
+            }
+
+            @Override
+            public Symbol.ClassSymbol resolveClassSymbol(String className,
+                    String modulePath, String importingModule)
+                    throws ModuleResolver.ModuleNotFoundException {
+                return null;
+            }
+        };
+    }
+
+    /**
+     * The registered compile-pin execution selects the fixture's validated
+     * {@code @profile} and the corpus resolver — the same comparison the
+     * removed corpus dispatcher performed — never the legacy-safe-int
+     * default. Evidence: the pinned
+     * {@code unary-minus-string-reject} subject, mutated with the v1.2-only
+     * out-of-range int literal, still satisfies its pin verbatim under the
+     * legacy-safe-int profile (one E3007 at the pin's position), while the
+     * fixture's v1.2 profile emits E1036 instead, so the registered
+     * profile-aware drive over the mutated scratch corpus reports the
+     * compile-diagnostic mismatch. A regression of the registered
+     * comparison to the legacy default would accept the mutated pin and
+     * fail this control; the sidecar schema and the on-disk pins are
+     * unchanged.
+     */
+    private static void testV12CompilePinProfileDiscrimination()
+            throws Exception {
+        System.out.println("-- v1.2 compile-pin execution selects the"
+            + " fixture's validated profile (not the legacy default) --");
+        Path corpus = Path.of("test", "conformance");
+        String corpusPath = "frontend/v12-snippets/"
+            + "unary-minus-string-reject.deal";
+        String raw = Files.readString(corpus.resolve(corpusPath),
+            StandardCharsets.UTF_8);
+        String mutation = "let limit: int = 2147483648; ";
+        int bodyOpen = raw.indexOf('{');
+        check(bodyOpen >= 0, "the pinned subject carries a function body");
+        if (bodyOpen < 0) {
+            return;
+        }
+        String mutatedRaw = raw.substring(0, bodyOpen + 1) + mutation
+            + raw.substring(bodyOpen + 1);
+        String source = ConformanceHarnessMetadata
+            .stripClassificationHeaders(mutatedRaw);
+        int headerLines = mutatedRaw.split("\n", -1).length
+            - source.split("\n", -1).length;
+        SemanticProfile profile = ConformanceHarnessMetadata
+            .profileFromMetadata(mutatedRaw, corpusPath);
+        checkEq(SemanticProfile.DEAL_V1_2_INT32, profile,
+            "the mutated subject's validated profile is v1.2");
+
+        // The fixture's v1.2 profile rejects the forbidden literal (E1036,
+        // not the pinned E3007); the legacy-safe-int profile still yields
+        // exactly the E3007 the pin would accept verbatim.
+        List<CompilerDiagnostic> v12 = frontendErrors(
+            source, corpusPath, profile, rejectingModuleResolver());
+        check(v12.size() == 1 && "E1036".equals(v12.get(0).code()),
+            "the mutated subject emits the v1.2 out-of-range literal"
+                + " diagnostic, got " + diagnosticCodes(v12));
+        List<CompilerDiagnostic> legacy = frontendErrors(source, corpusPath,
+            SemanticProfile.LEGACY_SAFE_INT, rejectingModuleResolver());
+        check(legacy.size() == 1 && "E3007".equals(legacy.get(0).code()),
+            "the mutated subject keeps the legacy-profile E3007 diagnostic,"
+                + " got " + diagnosticCodes(legacy));
+        if (legacy.size() != 1) {
+            return;
+        }
+        CompilerDiagnostic legacyDiagnostic = legacy.get(0);
+        String pinJson = "{\n"
+            + "  \"version\": 1,\n"
+            + "  \"mode\": \"compile-error\",\n"
+            + "  \"diagnostic\": {\n"
+            + "    \"code\": \"" + legacyDiagnostic.code() + "\",\n"
+            + "    \"line\": " + (legacyDiagnostic.line() + headerLines)
+            + ",\n"
+            + "    \"column\": " + legacyDiagnostic.column() + ",\n"
+            + "    \"message\": " + jsonQuote(legacyDiagnostic.message())
+            + "\n"
+            + "  }\n"
+            + "}\n";
+        SidecarExpectations.CompileDiagnosticPin pin =
+            SidecarExpectations.CompileDiagnosticPin.parse(pinJson);
+        check(compilePinMismatch(corpusPath, pin, legacy,
+                headerLines).isEmpty(),
+            "the pin is legacy-satisfiable verbatim (the discrimination is"
+                + " the selected profile, not the pin)");
+        check(compilePinMismatch(corpusPath, pin, v12,
+                headerLines).isPresent(),
+            "the same pin is rejected under the fixture's v1.2 profile");
+
+        Path scratch = Files.createTempDirectory("v12-pin-profile-");
+        try {
+            Path fixture = scratch.resolve(corpusPath);
+            Files.createDirectories(fixture.getParent());
+            Files.writeString(fixture, mutatedRaw, StandardCharsets.UTF_8);
+            Files.writeString(fixture.resolveSibling(
+                "unary-minus-string-reject.expect.json"), pinJson,
+                StandardCharsets.UTF_8);
+            List<String> mismatches = compilePinMismatches(scratch);
+            checkEq(1, mismatches.size(),
+                "the registered profile-aware drive reports exactly one"
+                    + " compile-diagnostic mismatch for the mutated pin: "
+                    + mismatches);
+            if (mismatches.size() == 1) {
+                String mismatch = mismatches.get(0);
+                check(mismatch.contains(corpusPath),
+                    "the mismatch names the pinned subject: " + mismatch);
+                check(mismatch.contains("E1036"),
+                    "the mismatch carries the v1.2 E1036 diagnostic: "
+                        + mismatch);
+            }
+        } finally {
+            deleteTree(scratch);
+        }
+    }
+
+    /**
+     * The registered compile-pin execution over the whole corpus: every
+     * {@code compile-error} fixture carrying a Compile Expectation Sidecar
+     * is validated against the sidecar schema and then compared field-exact
+     * against the real frontend pipeline compiled with the fixture's
+     * validated {@code @profile}. The discovered corpus is the membership
+     * authority (no fixed inventory count); discovery, schema validation,
+     * profile selection and the comparison all fail closed, so a missing
+     * pin, a wrong profile, code, line, column or message is a named
+     * failure instead of an unexecuted expectation.
+     */
+    private static void testV12CorpusCompilePins() throws Exception {
+        System.out.println("-- the corpus Compile Expectation Sidecars"
+            + " against the profile-aware frontend --");
+        Path corpus = Path.of("test", "conformance");
+        CorpusDiscovery.DiscoveryResult discovery =
+            CorpusDiscovery.discover(corpus);
+        checkEq(List.of(), discovery.failures(),
+            "the corpus discovery reports no classification failure");
+        Map<String, CorpusDiscovery.Fixture> byPath = discovery.corpusByPath();
+        int compared = 0;
+        for (CorpusDiscovery.Fixture fixture : discovery.fixtures()) {
+            if (fixture.classification() == null
+                    || !fixture.classification().exactCompileError()) {
+                continue;
+            }
+            Path sidecar = fixture.sidecarPath(corpus);
+            if (!Files.isRegularFile(sidecar)) {
+                continue;
+            }
+            String sidecarJson = Files.readString(sidecar,
+                StandardCharsets.UTF_8);
+            SidecarSchemaValidator.ValidationContext context =
+                new SidecarSchemaValidator.ValidationContext(
+                    fixture.corpusPath(), fixture.expected(),
+                    CorpusDiscovery.compilationSet(fixture, byPath, corpus),
+                    discovery.corpusModuleIndex());
+            Optional<SidecarSchemaValidator.ClassificationFailure> invalid =
+                SidecarSchemaValidator.validate(context, sidecarJson);
+            check(invalid.isEmpty(), fixture.corpusPath()
+                + ": the Compile Expectation Sidecar validates: "
+                + invalid.map(
+                    SidecarSchemaValidator.ClassificationFailure::message)
+                    .orElse("valid"));
+            if (invalid.isPresent()) {
+                continue;
+            }
+            SidecarExpectations.CompileDiagnosticPin pin =
+                SidecarExpectations.CompileDiagnosticPin.parse(sidecarJson);
+            List<CompilerDiagnostic> errors = frontendErrors(fixture.source(),
+                fixture.corpusPath(),
+                ConformanceHarnessMetadata.profileFromMetadata(
+                    fixture.rawSource(), fixture.corpusPath()),
+                new CorpusModuleResolver(fixture.corpusPath(), corpus,
+                    byPath, ConformanceHarnessMetadata.profileFromMetadata(
+                        fixture.rawSource(), fixture.corpusPath())));
+            Optional<String> mismatch = compilePinMismatch(
+                fixture.corpusPath(), pin, errors,
+                fixture.headerLinesStripped());
+            compared++;
+            check(mismatch.isEmpty(), fixture.corpusPath() + ": the pinned"
+                + " diagnostic matches the profile-aware frontend"
+                + " compilation: " + mismatch.orElse("match"));
+        }
+        check(compared > 0, "the corpus carries at least one compile pin");
+        System.out.println("Compile pins compared: " + compared);
+    }
+
+    /**
+     * Runs the profile-aware pin comparison over every
+     * {@code compile-error} sidecar of one corpus root (the corpus root in
+     * the registered drive; a scratch root in the profile-discrimination
+     * control) and returns one description per mismatch. Empty means every
+     * pinned diagnostic matched its sidecar field-exact.
+     */
+    private static List<String> compilePinMismatches(Path root)
+            throws IOException {
+        List<String> mismatches = new ArrayList<>();
+        List<Path> sidecars;
+        try (var walk = Files.walk(root)) {
+            sidecars = walk.filter(p -> p.toString()
+                    .endsWith(".expect.json")).sorted().toList();
+        }
+        for (Path sidecar : sidecars) {
+            String sidecarJson = Files.readString(sidecar,
+                StandardCharsets.UTF_8);
+            if (!sidecarJson.contains("\"compile-error\"")) {
+                continue;
+            }
+            String fixturePath = sidecar.toString().substring(0,
+                sidecar.toString().length() - ".expect.json".length())
+                + ".deal";
+            Path fixture = Path.of(fixturePath);
+            String raw = Files.readString(fixture, StandardCharsets.UTF_8);
+            String source = ConformanceHarnessMetadata
+                .stripClassificationHeaders(raw);
+            int headerLines = raw.split("\n", -1).length
+                - source.split("\n", -1).length;
+            SidecarExpectations.CompileDiagnosticPin pin =
+                SidecarExpectations.CompileDiagnosticPin.parse(sidecarJson);
+            List<CompilerDiagnostic> errors = frontendErrors(source,
+                fixturePath,
+                ConformanceHarnessMetadata.profileFromMetadata(raw,
+                    fixturePath),
+                rejectingModuleResolver());
+            Optional<String> mismatch = compilePinMismatch(fixturePath, pin,
+                errors, headerLines);
+            mismatch.ifPresent(detail -> mismatches.add(fixturePath + ": "
+                + detail));
+        }
+        return mismatches;
+    }
+
+    /**
+     * The registered frontend corpus gate: every compile-classified
+     * fixture discovered in the corpus is compiled through the real
+     * frontend pipeline with its validated {@code @profile} and the corpus
+     * module resolver — a {@code compile-ok} fixture must compile clean, a
+     * {@code compile-error} fixture must emit its classified code (the
+     * pinned fixtures are additionally compared field-exact by
+     * {@link #testV12CorpusCompilePins}). The discovered corpus is the
+     * membership authority (no fixed inventory count); discovery,
+     * classification and every verdict fail closed, so a fixture whose
+     * expected outcome no longer holds is a named failure rather than an
+     * unexecuted file.
+     */
+    private static void testV12CorpusFrontendGate() throws Exception {
+        System.out.println("-- the corpus frontend gate (compile-ok/"
+            + "compile-error) with the per-fixture validated profile --");
+        Path corpus = Path.of("test", "conformance");
+        FrontendGateRun run = frontendGateRun(corpus);
+        System.out.println("Frontend fixtures compiled: " + run.compiled());
+        checkEq(List.of(), run.discoveryFailures(),
+            "the corpus discovery reports no classification failure");
+        checkEq(List.of(), run.mismatches(), "the frontend corpus gate"
+            + " compiles every classified fixture to its expected outcome");
+        check(run.compiled() > 0,
+            "the corpus carries compile-classified fixtures");
+
+        // The deliberate wrong-observation controls: an accepted-form
+        // fixture mutated into a type error must lose its compile-ok
+        // verdict, and a reject fixture mutated into an accepted form must
+        // lose its compile-error verdict. A gate that ignored the profile
+        // compilation or accepted every fixture would fail these controls.
+        Path scratch = Files.createTempDirectory("v12-frontend-gate-");
+        try {
+            writeScratchFixture(scratch, "probe/accept-mutated.deal",
+                "// @spec: Type system\n"
+                + "// @description: scratch probe\n"
+                + "// @expected: compile-ok\n"
+                + "// @features: probe\n\n"
+                + "export function f(): null {\n"
+                + "  let y: int = 1;\n"
+                + "  y = 2.0;\n"
+                + "  return null;\n"
+                + "}\n");
+            writeScratchFixture(scratch, "probe/reject-mutated.deal",
+                "// @spec: Type system\n"
+                + "// @description: scratch probe\n"
+                + "// @expected: compile-error E3007\n"
+                + "// @features: probe\n\n"
+                + "export function f(): string { return \"ok\"; }\n");
+            FrontendGateRun mutated = frontendGateRun(scratch);
+            checkEq(List.of(), mutated.discoveryFailures(),
+                "the scratch probe corpus classifies clean");
+            checkEq(2, mutated.mismatches().size(),
+                "the frontend gate rejects both mutated expectations: "
+                    + mutated.mismatches());
+            check(mutated.mismatches().stream().anyMatch(m ->
+                    m.contains("accept-mutated.deal")
+                        && m.contains("E3001")),
+                "the accepted-form mutation loses its compile-ok verdict"
+                    + " with the named type diagnostic: "
+                    + mutated.mismatches());
+            check(mutated.mismatches().stream().anyMatch(m ->
+                    m.contains("reject-mutated.deal")),
+                "the reject mutation loses its compile-error verdict: "
+                    + mutated.mismatches());
+        } finally {
+            deleteTree(scratch);
+        }
+    }
+
+    /** One frontend-gate run over a corpus root. */
+    private record FrontendGateRun(int compiled,
+            List<String> discoveryFailures, List<String> mismatches) {}
+
+    /**
+     * Runs the profile-aware frontend verdict comparison over every
+     * compile-classified fixture of one corpus root; the mismatch list is
+     * empty only when every fixture reached its classified outcome. The
+     * discovered corpus is the membership authority (no fixed inventory
+     * count), and a pinned fixture is owned by the Compile Diagnostic
+     * comparison instead of this code-only verdict.
+     */
+    private static FrontendGateRun frontendGateRun(Path corpus)
+            throws IOException {
+        CorpusDiscovery.DiscoveryResult discovery =
+            CorpusDiscovery.discover(corpus);
+        Map<String, CorpusDiscovery.Fixture> byPath = discovery.corpusByPath();
+        List<String> discoveryFailures = new ArrayList<>();
+        for (SidecarSchemaValidator.ClassificationFailure failure
+                : discovery.failures()) {
+            discoveryFailures.add(failure.message());
+        }
+        Set<String> pinSubjects = new java.util.HashSet<>();
+        for (CorpusDiscovery.Fixture fixture : discovery.fixtures()) {
+            if (fixture.classification() != null
+                    && fixture.classification().exactCompileError()
+                    && Files.isRegularFile(fixture.sidecarPath(corpus))) {
+                pinSubjects.add(fixture.corpusPath());
+            }
+        }
+        List<String> mismatches = new ArrayList<>();
+        int compiled = 0;
+        for (CorpusDiscovery.Fixture fixture : discovery.fixtures()) {
+            CorpusDiscovery.Classification classification =
+                fixture.classification();
+            if (classification == null || (classification.kind()
+                    != CorpusDiscovery.Kind.COMPILE_OK
+                    && classification.kind()
+                        != CorpusDiscovery.Kind.COMPILE_ERROR)) {
+                continue;
+            }
+            if (classification.kind() == CorpusDiscovery.Kind.COMPILE_ERROR
+                    && pinSubjects.contains(fixture.corpusPath())) {
+                continue; // the Compile Diagnostic comparison owns the pin
+            }
+            SemanticProfile profile = ConformanceHarnessMetadata
+                .profileFromMetadata(fixture.rawSource(),
+                    fixture.corpusPath());
+            List<CompilerDiagnostic> errors = frontendErrors(fixture.source(),
+                fixture.corpusPath(), profile,
+                new CorpusModuleResolver(fixture.corpusPath(), corpus, byPath,
+                    profile));
+            compiled++;
+            List<String> codes = new ArrayList<>();
+            for (CompilerDiagnostic error : errors) {
+                codes.add(error.code());
+            }
+            if (classification.kind() == CorpusDiscovery.Kind.COMPILE_OK) {
+                if (!errors.isEmpty()) {
+                    mismatches.add(fixture.corpusPath()
+                        + ": the compile-ok fixture must compile clean, got "
+                        + codes);
+                }
+            } else if (!codes.contains(classification.code())) {
+                mismatches.add(fixture.corpusPath() + ": the compile-error"
+                    + " fixture must produce " + classification.code()
+                    + ", got " + codes);
+            }
+        }
+        return new FrontendGateRun(compiled, discoveryFailures, mismatches);
+    }
+
+    /** Writes one scratch corpus fixture (probe roots only). */
+    private static void writeScratchFixture(Path root, String relative,
+            String text) throws IOException {
+        Path target = root.resolve(relative);
+        Files.createDirectories(target.getParent());
+        Files.writeString(target, text, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * The corpus module resolver of the profile-aware frontend drives:
+     * the spec-listed stdlib exports, the corpus C FFI declaration
+     * modules, and the relative companion modules parsed from the
+     * discovered corpus. The resolution surface the removed corpus
+     * dispatcher's frontend phase used is realized here so the surviving
+     * registered suite owns the drive; every unresolved module stays a
+     * named {@link ModuleResolver.ModuleNotFoundException}.
+     */
+    private static final class CorpusModuleResolver implements ModuleResolver {
+        private final String fixtureCorpusPath;
+        private final Path conformanceRoot;
+        private final Map<String, CorpusDiscovery.Fixture> corpusByPath;
+        private final SemanticProfile profile;
+        private final Map<String, Map<String, Type>> stdlibExports;
+        private final List<CompilerDiagnostic> ffiDiagnostics =
+            new ArrayList<>();
+
+        CorpusModuleResolver(String fixtureCorpusPath, Path conformanceRoot,
+                Map<String, CorpusDiscovery.Fixture> corpusByPath,
+                SemanticProfile profile) {
+            this.fixtureCorpusPath = fixtureCorpusPath;
+            this.conformanceRoot = conformanceRoot.toAbsolutePath()
+                .normalize();
+            this.corpusByPath = corpusByPath;
+            this.profile = profile;
+            this.stdlibExports = StdlibModuleResolver.stdlibExports(
+                Path.of("std").toAbsolutePath().normalize().toString());
+        }
+
+        /** The FFI declaration-validation errors collected so far. */
+        List<CompilerDiagnostic> ffiDiagnostics() {
+            return ffiDiagnostics;
+        }
+
+        @Override
+        public Map<String, Type> resolveModule(String modulePath,
+                String importingModule, Set<String> modulesInProgress)
+                throws ModuleNotFoundException,
+                    CffiImportWithoutNativeLibraryException {
+            if (stdlibExports.containsKey(modulePath)) {
+                return stdlibExports.get(modulePath);
+            }
+            if (modulePath.startsWith("std/") && !modulePath.startsWith("./")
+                    && !modulePath.startsWith("../")) {
+                throw new ModuleNotFoundException(
+                    "Module not found: '" + modulePath
+                    + "' is not a spec-listed stdlib module");
+            }
+            if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
+                CorpusFfi.Module ffiModule = CorpusFfi.module(conformanceRoot,
+                    modulePath, profile);
+                for (CompilerDiagnostic diagnostic
+                        : ffiModule.validationDiagnostics()) {
+                    if ("error".equals(diagnostic.severity())) {
+                        ffiDiagnostics.add(diagnostic);
+                    }
+                }
+                return ffiModule.exports();
+            }
+            String resolved = CorpusDiscovery.resolveRelativeImport(
+                fixtureCorpusPath, modulePath, conformanceRoot);
+            CorpusDiscovery.Fixture dependency = resolved == null
+                ? null : corpusByPath.get(resolved);
+            if (dependency != null) {
+                ProgramNode dependencyProgram = parse(dependency).program();
+                // The v1.2 C FFI manifest policy: a C FFI declaration file
+                // — a .d.deal file whose effective @extern-c holds — may
+                // only be imported through a deal.json externals entry
+                // specifying nativeLibrary. The corpus frontend drive has
+                // no manifest, so such an import is an invalid project
+                // configuration: the named CffiImportWithoutNativeLibrary
+                // exception the checker maps to E2010 at the import span.
+                if (resolved.endsWith(".d.deal")
+                        && dependencyProgram.fileDirectives().externC()) {
+                    throw new CffiImportWithoutNativeLibraryException(
+                        modulePath);
+                }
+                ExportExtractor extractor = new ExportExtractor(resolved,
+                    resolved.endsWith(".d.deal"));
+                return extractor.extract(dependencyProgram);
+            }
+            throw new ModuleNotFoundException("Module not found: "
+                + modulePath);
+        }
+
+        @Override
+        public Symbol.ClassSymbol resolveClassSymbol(String className,
+                String modulePath, String importingModule)
+                throws ModuleNotFoundException {
+            if (modulePath == null || modulePath.isEmpty()) {
+                return null;
+            }
+            if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
+                return CorpusFfi.module(conformanceRoot, modulePath, profile)
+                    .classSymbols().get(className);
+            }
+            CorpusDiscovery.Fixture dependency = dependencyOf(modulePath);
+            if (dependency == null) {
+                return null;
+            }
+            return classSymbolsOf(dependency).get(className);
+        }
+
+        @Override
+        public Symbol.ClassSymbol resolveClassSymbol(String className,
+                CanonicalModuleIdentity declaringModule,
+                String importingModule) throws ModuleNotFoundException {
+            for (CorpusDiscovery.Fixture dependency : corpusByPath.values()) {
+                if (declaringModule.equals(
+                        IdentityTestFixtures.moduleIdentityOf(
+                            stem(dependency)))) {
+                    Symbol.ClassSymbol symbol =
+                        classSymbolsOf(dependency).get(className);
+                    if (symbol != null) {
+                        return symbol;
+                    }
+                }
+            }
+            return null;
+        }
+
+        @Override
+        public boolean isFunctionExportedFromModule(
+                CanonicalModuleIdentity declaringModule, String functionName,
+                String importingModule) throws ModuleNotFoundException {
+            if (CorpusFfi.declaresFunction(conformanceRoot, declaringModule,
+                    functionName, profile)) {
+                return true;
+            }
+            for (CorpusDiscovery.Fixture dependency : corpusByPath.values()) {
+                if (declaringModule.equals(
+                        IdentityTestFixtures.moduleIdentityOf(
+                            stem(dependency)))) {
+                    for (StatementNode statement
+                            : parse(dependency).program().statements()) {
+                        if (statement instanceof ExportDeclaration export
+                                && export.declaration()
+                                    instanceof FunctionDeclaration function
+                                && function.name().equals(functionName)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        @Override
+        public Type resolveTypeNodeInModule(TypeNode typeNode,
+                String modulePath, String importingModule)
+                throws ModuleNotFoundException {
+            if (modulePath == null || modulePath.isEmpty()) {
+                return null;
+            }
+            if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
+                return CorpusFfi.resolveTypeNode(typeNode,
+                    CorpusFfi.module(conformanceRoot, modulePath, profile)
+                        .classSymbols());
+            }
+            CorpusDiscovery.Fixture dependency = dependencyOf(modulePath);
+            if (dependency == null) {
+                return null;
+            }
+            try {
+                NameResolver nr = new NameResolver(dependency.corpusPath(),
+                    this);
+                nr.resolve(parse(dependency).program());
+                return nr.resolveTypeNode(typeNode);
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
+        /** Parses a discovered corpus module under the case profile. */
+        private ParseResult parse(CorpusDiscovery.Fixture fixture) {
+            LexResult lex = new Lexer(fixture.source(), fixture.corpusPath())
+                .tokenize();
+            Parser parser = new Parser(lex.tokens(), fixture.corpusPath(),
+                profile, lex.directiveEvents());
+            return parser.parse();
+        }
+
+        /** The companion a carried module path names. */
+        private CorpusDiscovery.Fixture dependencyOf(String modulePath) {
+            String resolved = CorpusDiscovery.resolveRelativeImport(
+                fixtureCorpusPath, modulePath, conformanceRoot);
+            return resolved == null ? null : corpusByPath.get(resolved);
+        }
+
+        /** The module-path stem of a discovered fixture (no extension). */
+        private static String stem(CorpusDiscovery.Fixture fixture) {
+            String name = fixture.corpusPath().substring(
+                fixture.corpusPath().lastIndexOf('/') + 1);
+            if (name.endsWith(".d.deal")) {
+                return name.substring(0, name.length() - ".d.deal".length());
+            }
+            return name.substring(0, name.length() - ".deal".length());
+        }
+
+        /** Synthesizes the class symbols of one parsed companion module. */
+        private Map<String, Symbol.ClassSymbol> classSymbolsOf(
+                CorpusDiscovery.Fixture dependency) {
+            Map<String, Symbol.ClassSymbol> symbols = new LinkedHashMap<>();
+            try {
+                ProgramNode program = parse(dependency).program();
+                if (program == null) {
+                    return symbols;
+                }
+                String dotted = stem(dependency);
+                for (StatementNode statement : program.statements()) {
+                    ClassDeclaration declaration = null;
+                    if (statement instanceof ClassDeclaration cd) {
+                        declaration = cd;
+                    } else if (statement instanceof ExportDeclaration export
+                            && export.declaration()
+                                instanceof ClassDeclaration cd) {
+                        declaration = cd;
+                    }
+                    if (declaration != null) {
+                        symbols.put(declaration.name(),
+                            new Symbol.ClassSymbol(declaration.name(),
+                                declaration.fields(), dotted,
+                                IdentityTestFixtures.identityOf(dotted,
+                                    declaration.name())));
+                    }
+                }
+            } catch (RuntimeException ignored) {
+                // Best-effort synthesis; the fixture's own diagnostics
+                // surface the defect.
+            }
+            return symbols;
+        }
+    }
+
+    /**
+     * Compares the frontend error diagnostics of one fixture against its
+     * Compile Expectation Sidecar pin; empty means exact. Line pins are
+     * authored in raw corpus-file coordinates, so the diagnostic's
+     * header-stripped line is mapped by the stripped header-line count.
+     */
+    private static Optional<String> compilePinMismatch(String fixturePath,
+            SidecarExpectations.CompileDiagnosticPin pin,
+            List<CompilerDiagnostic> errors, int headerLinesStripped) {
+        if (errors.size() != 1) {
+            if (errors.isEmpty()) {
+                return Optional.of(fixturePath + ": the fixture must emit"
+                    + " exactly one error diagnostic, got none");
+            }
+            CompilerDiagnostic second = errors.get(1);
+            return Optional.of(fixturePath + ": the fixture must emit"
+                + " exactly one error diagnostic, got " + errors.size()
+                + " (the second is " + second.code() + " at "
+                + second.line() + ":" + second.column() + ": "
+                + second.message() + ")");
+        }
+        CompilerDiagnostic diagnostic = errors.get(0);
+        if (!pin.code().equals(diagnostic.code())) {
+            return Optional.of(fixturePath + ": diagnostic.code must be "
+                + pin.code() + ", got " + diagnostic.code());
+        }
+        int rawLine = diagnostic.line() + headerLinesStripped;
+        if (pin.line().isPresent() && pin.line().getAsInt() != rawLine) {
+            return Optional.of(fixturePath + ": diagnostic.line must be "
+                + pin.line().getAsInt() + ", got " + rawLine);
+        }
+        if (pin.column().isPresent()
+                && pin.column().getAsInt() != diagnostic.column()) {
+            return Optional.of(fixturePath + ": diagnostic.column must be "
+                + pin.column().getAsInt() + ", got " + diagnostic.column());
+        }
+        if (pin.message().isPresent()
+                && !pin.message().get().equals(diagnostic.message())) {
+            return Optional.of(fixturePath + ": diagnostic.message must be "
+                + jsonQuote(pin.message().get()) + ", got "
+                + jsonQuote(diagnostic.message()));
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * The real frontend pipeline — lexer → parser (with the fixture's
+     * validated profile) → module shape validation → name resolution →
+     * type checking → the null-return fall-off gate — returning the error
+     * diagnostics in pipeline order. No backend executes.
+     */
+    @SuppressWarnings("deprecation")
+    private static List<CompilerDiagnostic> frontendErrors(String source,
+            String filename, SemanticProfile profile,
+            ModuleResolver resolver) {
+        List<CompilerDiagnostic> errors = new ArrayList<>();
+        LexResult lex = new Lexer(source, filename).tokenize();
+        collectErrors(lex.diagnostics(), errors);
+        if (lex.hasErrors()) {
+            return errors;
+        }
+        Parser parser = new Parser(lex.tokens(), filename, profile,
+            lex.directiveEvents());
+        ParseResult parseResult = parser.parse();
+        collectErrors(parseResult.diagnostics(), errors);
+        if (parseResult.hasErrors()) {
+            return errors;
+        }
+        collectErrors(ModuleShapeValidator.validate(parseResult.program(),
+            filename, filename.endsWith(".d.deal")), errors);
+        if (!errors.isEmpty()) {
+            return errors;
+        }
+        if (filename.endsWith(".d.deal")) {
+            ExportExtractor extractor = new ExportExtractor(filename, true);
+            extractor.extract(parseResult.program());
+            collectErrors(extractor.diagnostics(), errors);
+            return errors;
+        }
+        NameResolver nr = new NameResolver(filename, resolver);
+        SymbolTable symTable;
+        try {
+            symTable = nr.resolve(parseResult.program());
+        } catch (Exception e) {
+            errors.add(CompilerDiagnostic.synthetic("E9999", "error",
+                e.getMessage(), filename,
+                "missing anchor: fixture source '" + filename + "'"));
+            return errors;
+        }
+        collectErrors(nr.diagnostics(), errors);
+        CheckResult result = TypeChecker.check(filename, symTable, nr,
+            parseResult.program());
+        collectErrors(result.diagnostics(), errors);
+        collectErrors(deal.checker.NullReturnFallOff.diagnostics(
+            parseResult.program()), errors);
+        if (resolver instanceof CorpusModuleResolver corpusResolver) {
+            collectErrors(corpusResolver.ffiDiagnostics(), errors);
+        }
+        return errors;
+    }
+
+    /** Keeps the error diagnostics of one pipeline stage, in order. */
+    private static void collectErrors(List<CompilerDiagnostic> diagnostics,
+            List<CompilerDiagnostic> errors) {
+        for (CompilerDiagnostic diagnostic : diagnostics) {
+            if ("error".equals(diagnostic.severity())) {
+                errors.add(diagnostic);
+            }
+        }
+    }
+
+    /** The codes of a diagnostic list, in pipeline order. */
+    private static String diagnosticCodes(
+            List<CompilerDiagnostic> diagnostics) {
+        StringBuilder codes = new StringBuilder("[");
+        for (CompilerDiagnostic diagnostic : diagnostics) {
+            if (codes.length() > 1) {
+                codes.append(", ");
+            }
+            codes.append(diagnostic.code());
+        }
+        return codes.append(']').toString();
+    }
+
+    /** A JSON string literal of one value (the scratch pin's message). */
+    private static String jsonQuote(String value) {
+        StringBuilder quoted = new StringBuilder("\"");
+        for (char c : value.toCharArray()) {
+            switch (c) {
+                case '"' -> quoted.append("\\\"");
+                case '\\' -> quoted.append("\\\\");
+                case '\n' -> quoted.append("\\n");
+                case '\r' -> quoted.append("\\r");
+                case '\t' -> quoted.append("\\t");
+                default -> quoted.append(c);
+            }
+        }
+        return quoted.append('"').toString();
+    }
+
+    /** Deletes one scratch tree best-effort (the harness cleanup shape). */
+    private static void deleteTree(Path root) {
+        try (var walk = Files.walk(root)) {
+            walk.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException ignored) {
+                    // best-effort scratch cleanup
+                }
+            });
+        } catch (IOException ignored) {
+            // best-effort scratch cleanup
+        }
     }
 
     private static void testCarrierRecords() {

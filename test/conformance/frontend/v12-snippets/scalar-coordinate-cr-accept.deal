@@ -1,0 +1,6 @@
+// @spec: Lexical elements
+// @description: Corner-case subject scalar-coordinate-cr-accept — Same-line supplementary scalar and tab before unresolved name: must not shift error offset by UTF-16 width. (basis: Compile diagnostic source location; Unicode scalar source model; CRLF/CR line terminators)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(): string {	let s: string = "😀"; return s;}

@@ -1,0 +1,6 @@
+// @spec: Type system
+// @description: Corner-case subject equality-nullable-vs-value-accept — Nullable/non-null comparison rejected until narrowed. (basis: Equality type equality; only exception T|null vs null)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(a: int | null, b: int): boolean {if(a !== null) {return a === b;} return false;}

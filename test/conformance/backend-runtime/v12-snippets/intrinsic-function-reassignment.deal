@@ -1,0 +1,14 @@
+// @spec: Runtime execution model
+// @description: Corner-case subject intrinsic-function-reassignment — Store intrinsic in function local, then overwrite; dispatch must respect current binding. (basis: Function declarations/intrinsic conversions as first-class values; mutable bindings)
+// @expected: runtime-ok
+// @features: v1.2, runtime, corner-case
+
+import * as c from "std/console";
+export function main(): null {
+ let f:(x:number)=>int=int;
+ let before:int=f(2.0);
+ f=function(x:number): int {return 9;};
+ let after:int=f(2.0);
+ if(before!==2 || after!==9) {throw {message:"intrinsic folded past reassignment"};}
+ c.log("intrinsic-function-reassignment"); return null;
+}

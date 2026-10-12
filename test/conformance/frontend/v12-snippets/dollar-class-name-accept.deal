@@ -1,0 +1,7 @@
+// @spec: Classes
+// @description: Corner-case subject dollar-class-name-accept — Class declaration position, not variable/field/parameter. (basis: User class names cannot contain $)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+class Cbad {x:int=0;}
+export function f(): null {return null;}

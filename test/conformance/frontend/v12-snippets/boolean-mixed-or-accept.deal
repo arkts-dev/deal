@@ -1,0 +1,6 @@
+// @spec: Type system
+// @description: Corner-case subject boolean-mixed-or-accept — OR validation distinct from existing AND subject. (basis: Logical OR operands both boolean)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(): boolean {return false || true;}

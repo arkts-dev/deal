@@ -1,0 +1,6 @@
+// @spec: Type system
+// @description: Corner-case subject for-test-must-boolean-reject — C-style condition path, not if path. (basis: C-style for test boolean)
+// @expected: compile-error E3007
+// @features: v1.2, frontend, reject
+
+export function f(): null {for(let i:int=0; 1; i=i+1) {break;} return null;}

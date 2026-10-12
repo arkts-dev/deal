@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {
+      "stdout": "array-callee-before-arguments\n",
+      "stderr": ""
+    },
+    "exitCode": 0
+  }
+}

@@ -1,0 +1,6 @@
+// @spec: Type system
+// @description: Corner-case subject closure-narrowing-reject — Captured nullable binding vs explicit non-null snapshot. (basis: Closures: narrowed flow types not captured)
+// @expected: compile-error E5003
+// @features: v1.2, frontend, reject
+
+export function f(x: int | null): int {if(x !== null) {let g: () => int = function(): int {return x;}; return g();} return 0;}

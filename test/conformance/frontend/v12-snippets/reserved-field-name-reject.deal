@@ -1,0 +1,7 @@
+// @spec: Classes
+// @description: Corner-case subject reserved-field-name-reject — Keyword restriction in field declaration (not only locals). (basis: async/await are keywords not names; class Field Identifier grammar)
+// @expected: compile-error E1007
+// @features: v1.2, frontend, reject
+
+class C {await:int=0;}
+export function f(): null {return null;}

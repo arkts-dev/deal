@@ -1,0 +1,6 @@
+// @spec: Control flow
+// @description: Corner-case subject unreachable-still-checked-accept — Unreachable source type error, not lowering unreachable-tail acceptance. (basis: Assignment type checking applies to source declarations)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(): int {return 1; let x: int = 2;}

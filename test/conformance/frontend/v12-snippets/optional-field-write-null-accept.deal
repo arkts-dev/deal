@@ -1,0 +1,7 @@
+// @spec: Classes
+// @description: Corner-case subject optional-field-write-null-accept — Optionality is not nullable storage; delete vs assigning null. (basis: Class assignment optional T accepts only T; absence via delete)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+class C {x?:int;}
+export function f(c:C): null {delete c.x; return null;}

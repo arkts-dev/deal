@@ -1,0 +1,6 @@
+// @spec: Lexical elements
+// @description: Corner-case subject unsupported-escape-accept — Forbidden escape vs literal scalar; no backend normalization expectation. (basis: String escapes: no Unicode escapes)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(): string {return "A";}

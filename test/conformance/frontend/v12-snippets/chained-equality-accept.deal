@@ -1,0 +1,6 @@
+// @spec: Syntactic grammar
+// @description: Corner-case subject chained-equality-accept — Equalities need parentheses even with all boolean operands. (basis: EqualityExpression optional single operator; non-associative)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(): boolean {return (true === true) === true;}

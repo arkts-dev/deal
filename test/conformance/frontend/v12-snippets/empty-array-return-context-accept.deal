@@ -1,0 +1,6 @@
+// @spec: Arrays
+// @description: Corner-case subject empty-array-return-context-accept — Return annotation provides context to empty literal. (basis: Inference vs contextual function return)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(): int[] {return [];}

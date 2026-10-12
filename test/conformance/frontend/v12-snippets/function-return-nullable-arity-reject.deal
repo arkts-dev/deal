@@ -1,0 +1,6 @@
+// @spec: Functions
+// @description: Corner-case subject function-return-nullable-arity-reject — Nullable return mismatch remains illegal under otherwise legal arity extension. (basis: Function type compatibility return types identical including nullable)
+// @expected: compile-error E3001
+// @features: v1.2, frontend, reject
+
+export function f(): null {function a(): int {return 1;} let b:(x:int)=>int | null=a; return null;}

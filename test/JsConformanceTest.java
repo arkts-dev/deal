@@ -69,7 +69,16 @@ public class JsConformanceTest {
                                    List<CompilerDiagnostic> diagnostics,
                                    String capturedOutput) {}
 
-    private record NodeResult(int exitCode, String stdout, String stderr) {}
+    private record NodeResult(int exitCode, String stdout, String stderr,
+            boolean stdoutTruncated, boolean stderrTruncated) {
+
+        /** True when the shared bounded helper capped a stream: the
+         * retained prefix plus its truncation marker is diagnostic output,
+         * never a complete transcript. */
+        boolean captureIncomplete() {
+            return stdoutTruncated || stderrTruncated;
+        }
+    }
 
     /** A harness-defect failure (missing host declaration/implementation,
      * a manifest the harness generated that does not load): never a
@@ -197,6 +206,12 @@ public class JsConformanceTest {
             // wrong-shaped implementation is a harness failure, never a
             // pass).
             validateHostHarness();
+
+            // The corpus capture controls next: the bounded capture's
+            // cap boundary and the structured verdict's refusal of
+            // incomplete observations are exercised over real node
+            // children before any fixture runs.
+            validateCorpusCaptureControls();
 
             List<TestFile> tests = discoverTests();
             List<Classified> classified = classifyAll(tests);
@@ -1091,16 +1106,56 @@ public class JsConformanceTest {
             // subprocess.
             NodeResult result = runNode(outputRoot);
 
+            // The capture contract comes first: a capture that hit the
+            // shared helper's per-stream cap is an incomplete observation —
+            // its retained prefix and the helper's truncation marker are
+            // diagnostics, never the program's exact transcript. It is
+            // refused by the named non-passing infrastructure outcome
+            // before any comparison input is constructed, so a capped
+            // prefix can never be read as a complete execution (the
+            // same flags are refused by the LuaJIT/JVM and public-host
+            // drives).
+            String captureRefusal = captureRefusal(result);
+            if (captureRefusal != null) {
+                    applicableFailed.incrementAndGet();
+                    log("  [" + test.relativePath()
+                        + "] FAIL (capture infrastructure refusal — the "
+                        + "bounded prefix is never a transcript): "
+                        + captureRefusal);
+                return new Outcome(test, classified, false,
+                    "capture infrastructure refusal: " + captureRefusal);
+            }
+
             boolean runtimeOkMode = test.expected().startsWith("runtime-ok");
             if (runtimeOkMode) {
-                if (result.exitCode != 0) {
+                // The JS lane is a real structured-expectation lane: the
+                // runtime-ok transcript (exact stdout bytes, exact stderr
+                // bytes) and exit code are compared field-exact against
+                // the fixture's Structured Expectation Sidecar through the
+                // landed comparator, so a wrong observation is never a
+                // pass. A fixture without a sidecar is a corpus defect;
+                // the fallback keeps the legacy exit-code gate for it.
+                deal.test.conformance.SidecarExpectations
+                        .StructuredExpectationSidecar sidecar =
+                    sidecarOf(test.path());
+                Optional<String> mismatch = Optional.empty();
+                if (sidecar != null
+                        && sidecar.expectationFor("js") instanceof
+                            deal.test.conformance.SidecarExpectations
+                                .RuntimeExpectation.Executed pinned) {
+                    mismatch = structuredRuntimeVerdict(result, pinned);
+                } else if (result.exitCode != 0) {
+                    mismatch = Optional.of("runtime-ok test exited "
+                        + result.exitCode + ": " + result.stderr);
+                }
+                if (mismatch.isPresent()) {
                         applicableFailed.incrementAndGet();
                         log("  [" + test.relativePath()
-                            + "] FAIL (runtime-ok test exited "
-                            + result.exitCode + "): stdout: "
-                            + result.stdout + "\nstderr: " + result.stderr);
+                            + "] FAIL (runtime-ok structured expectation): "
+                            + mismatch.get());
                     return new Outcome(test, classified, false,
-                        "exited " + result.exitCode + ": " + result.stderr);
+                        "structured expectation mismatch: "
+                            + mismatch.get());
                 }
                     applicablePassed.incrementAndGet();
                     log("  [" + test.relativePath() + "] OK");
@@ -1544,43 +1599,54 @@ public class JsConformanceTest {
 
     /**
      * Builds the JS corpus runner source for a fixture: requires the
-     * entry artifact and the runtime, iterates the module's own export
-     * keys in declaration order (the {@code $rt.setProp} insertion
-     * order), SKIPS {@code $}-named exports (compiler-generated helper
-     * exports such as the hidden {@code C$new} closures), auto-invokes
-     * the remaining zero-arity exported wrappers (the zero-arity set
-     * derived from the real parser's export list) in declaration order,
-     * prints each non-null result, and AWAITS thenable results before
-     * moving on (async exports resolve before printing/rejection). A
-     * thrown error or a rejected Promise — including a module-load error
-     * inside the required entry artifact — routes through
-     * {@code $rt.reportUncaught} into the shared
+     * entry artifact and the runtime, then invokes the module's entry
+     * surface exactly as the shared lane contract does (G4.4) —
+     * {@code main} once first when exported (the emitted artifact's own
+     * {@code require.main === module} guard never runs it under
+     * {@code require}), then every remaining non-{@code $} zero-arity
+     * exported wrapper in declaration order, each exactly once, awaiting
+     * thenable results and discarding return values (no lane prints
+     * results). A thrown error or a rejected Promise — including a
+     * module-load error inside the required entry artifact — routes
+     * through {@code $rt.reportUncaught} into the shared
      * {@code DEAL_ERROR_CODE: <code> <message>} stderr + exit-1
      * contract.
      */
     private static String buildJsCorpusRunner(ProgramNode program,
             String entryModule) {
+        boolean hasMain = false;
         List<String> zeroAry = new ArrayList<>();
         for (StatementNode stmt : program.statements()) {
             if (stmt instanceof ExportDeclaration ed
                     && ed.declaration() instanceof FunctionDeclaration fd
                     && fd.params().isEmpty()
                     && !fd.name().contains("$")) {
-                zeroAry.add(fd.name());
+                if (fd.name().equals("main")) {
+                    hasMain = true;
+                } else {
+                    zeroAry.add(fd.name());
+                }
             }
         }
         StringBuilder sb = new StringBuilder();
         sb.append("// Generated by deal.test.JsConformanceTest — JS corpus runner.\n");
-        sb.append("// Requires the entry artifact, skips $-named exports, auto-invokes\n");
-        sb.append("// zero-arity exported wrappers in declaration order, prints non-null\n");
-        sb.append("// results, awaits thenable results, and maps uncaught errors into\n");
-        sb.append("// the DEAL_ERROR_CODE stderr + exit-1 contract.\n");
+        sb.append("// Requires the entry artifact, invokes main once first when\n");
+        sb.append("// exported, then the remaining zero-arity exported wrappers in\n");
+        sb.append("// declaration order (each exactly once, results discarded) and\n");
+        sb.append("// maps uncaught errors into the DEAL_ERROR_CODE stderr + exit-1\n");
+        sb.append("// contract.\n");
         sb.append("\"use strict\";\n");
         sb.append("const $rt = require(\"./deal/runtime\");\n");
-        sb.append("const $zeroAry = [");
-        for (int i = 0; i < zeroAry.size(); i++) {
-            if (i > 0) sb.append(", ");
-            sb.append("\"").append(zeroAry.get(i)).append("\"");
+        sb.append("const $order = [");
+        boolean firstEntry = true;
+        if (hasMain) {
+            sb.append("\"main\"");
+            firstEntry = false;
+        }
+        for (String name : zeroAry) {
+            if (!firstEntry) sb.append(", ");
+            sb.append("\"").append(name).append("\"");
+            firstEntry = false;
         }
         sb.append("];\n");
         // The entry require sits inside the async body so a load-time
@@ -1590,15 +1656,10 @@ public class JsConformanceTest {
         sb.append("(async () => {\n");
         sb.append("  const $entry = require(\"./").append(entryModule)
             .append("\");\n");
-        sb.append("  for (const $k of Object.keys($entry)) {\n");
-        sb.append("    if ($k.indexOf(\"$\") !== -1) { continue; }\n");
+        sb.append("  for (const $k of $order) {\n");
         sb.append("    const $v = $entry[$k];\n");
-        sb.append("    if ($v && $v.$kind === \"function\" "
-            + "&& $zeroAry.indexOf($k) !== -1) {\n");
-        sb.append("      const $r = await $v.$f();\n");
-        sb.append("      if ($r !== null && $r !== $rt.undefined) {\n");
-        sb.append("        console.log($r);\n");
-        sb.append("      }\n");
+        sb.append("    if ($v && $v.$kind === \"function\") {\n");
+        sb.append("      await $v.$f();\n");
         sb.append("    }\n");
         sb.append("  }\n");
         sb.append("})().catch((e) => {\n");
@@ -1615,7 +1676,8 @@ public class JsConformanceTest {
     }
 
     /** One bounded node subprocess run over the deployed artifact set
-     * with captured streams. */
+     * with captured streams. The shared helper's per-stream truncation
+     * flags are carried into the verdict input, never dropped. */
     private static NodeResult runNode(Path outputRoot)
             throws IOException, InterruptedException {
         nodeExecuted.incrementAndGet();
@@ -1623,13 +1685,276 @@ public class JsConformanceTest {
             BoundedProcess.BoundedResult result = BoundedProcess.runCaptured(
                 List.of("node", "JsConformanceRunner.js"), outputRoot,
                 Map.of(), TimeUnit.SECONDS.toMillis(SUBPROCESS_TIMEOUT_SECONDS));
-            return new NodeResult(result.exitCode(), result.stdout(), result.stderr());
+            return new NodeResult(result.exitCode(), result.stdout(),
+                result.stderr(), result.stdoutTruncated(),
+                result.stderrTruncated());
         } catch (BoundedProcess.BoundedProcessTimeoutException timeout) {
-            return new NodeResult(-1, "", "node subprocess timed out");
+            return new NodeResult(-1, "", "node subprocess timed out", false,
+                false);
         } catch (IOException failure) {
             nodeExecuted.decrementAndGet();
             throw failure;
         }
+    }
+
+    // =========================================================================
+    // Capture completeness and the corpus capture controls
+    // =========================================================================
+
+    /** The named non-passing outcome for an over-limit capture: the
+     * bounded helper's retained prefix plus truncation marker is
+     * diagnostics, never a complete transcript. */
+    static final String CAPTURE_REFUSAL = "JS_CORPUS_CAPTURE_TRUNCATED";
+
+    /** The named capture refusal, or {@code null} for a complete capture
+     * whose streams can be compared. */
+    private static String captureRefusal(NodeResult result) {
+        if (!result.captureIncomplete()) {
+            return null;
+        }
+        List<String> streams = new ArrayList<>();
+        if (result.stdoutTruncated()) {
+            streams.add("stdout");
+        }
+        if (result.stderrTruncated()) {
+            streams.add("stderr");
+        }
+        return CAPTURE_REFUSAL + " (" + String.join("+", streams)
+            + " over the " + BoundedProcess.STREAM_CAP_BYTES
+            + "-byte per-stream cap)";
+    }
+
+    /**
+     * The JS lane's structured runtime-ok verdict over one bounded
+     * capture: an incomplete (capped) capture is refused by its named
+     * non-passing infrastructure outcome before the comparison input
+     * exists; only a complete capture reaches the landed field-exact
+     * comparator.
+     */
+    private static Optional<String> structuredRuntimeVerdict(NodeResult result,
+            deal.test.conformance.SidecarExpectations.RuntimeExpectation.Executed
+                pinned) {
+        String refusal = captureRefusal(result);
+        if (refusal != null) {
+            return Optional.of(refusal);
+        }
+        return deal.test.conformance.StructuredExpectationComparator
+            .compare("js", pinned,
+                new deal.test.conformance.LaneExecution.Executed(
+                    result.stdout.getBytes(StandardCharsets.UTF_8),
+                    result.stderr.getBytes(StandardCharsets.UTF_8),
+                    result.exitCode))
+            .map(deal.test.conformance.GateMismatch::message);
+    }
+
+    /**
+     * The registered corpus capture controls: the same bounded capture
+     * the corpus lane runs ({@link BoundedProcess} over a real node
+     * child) and the same structured runtime-ok verdict the lane applies
+     * are exercised at the per-stream cap boundary in both stream
+     * positions. cap&minus;1 and exact-cap are complete captures and must
+     * match their exact transcripts; cap+1 is refused by the named
+     * infrastructure outcome even when the pinned expectation is exactly
+     * the retained prefix plus the helper's truncation marker; an
+     * ordinary wrong byte below the cap stays a transcript mismatch. Any
+     * failed control exits the suite non-zero — a capture false-pass is
+     * never a pass.
+     */
+    private static void validateCorpusCaptureControls() {
+        Path controlRoot = null;
+        boolean ok = true;
+        try {
+            controlRoot = Files.createTempDirectory(
+                "js-corpus-capture-control-");
+            Files.writeString(controlRoot.resolve("capture-producer.js"),
+                captureProducerSource());
+            for (String stream : List.of("stdout", "stderr")) {
+                ok &= checkCaptureBoundary(controlRoot, stream,
+                    BoundedProcess.STREAM_CAP_BYTES - 1);
+                ok &= checkCaptureBoundary(controlRoot, stream,
+                    BoundedProcess.STREAM_CAP_BYTES);
+                ok &= checkCaptureBoundary(controlRoot, stream,
+                    BoundedProcess.STREAM_CAP_BYTES + 1);
+            }
+            ok &= checkCaptureWrongByte(controlRoot);
+        } catch (IOException failure) {
+            System.out.println("FAIL: the corpus capture controls could not "
+                + "run: " + failure);
+            ok = false;
+        } finally {
+            if (controlRoot != null) {
+                try {
+                    Path root = controlRoot;
+                    Files.walk(root).sorted(Comparator.reverseOrder())
+                        .forEach(f -> { try { Files.deleteIfExists(f); }
+                            catch (IOException ignored) { } });
+                } catch (IOException ignored) { }
+            }
+        }
+        if (!ok) {
+            System.out.println("GATE FAILURE: corpus capture control(s) "
+                + "failed — an incomplete observation accepted as a "
+                + "transcript is never a pass");
+            System.exit(1);
+        }
+        System.out.println("Corpus capture controls: cap-1/cap/cap+1 in "
+            + "both stream positions refused or accepted exactly as the "
+            + "structured verdict requires (" + CAPTURE_REFUSAL + ")");
+    }
+
+    /** One cap-boundary control round in one stream position: a real
+     * node producer writes exactly {@code bytes} filler bytes to the
+     * named stream, and the structured verdict must accept the complete
+     * capture or refuse the capped one by name. */
+    private static boolean checkCaptureBoundary(Path controlRoot,
+            String stream, int bytes) {
+        boolean stdoutStream = "stdout".equals(stream);
+        boolean overLimit = bytes > BoundedProcess.STREAM_CAP_BYTES;
+        NodeResult captured;
+        try {
+            captured = captureControlChild(controlRoot, stream, bytes);
+        } catch (IOException | InterruptedException failure) {
+            System.out.println("FAIL: capture control (" + stream + ", "
+                + bytes + " bytes) did not run: " + failure);
+            return false;
+        }
+        byte[] expectedStream = expectedCaptureBytes(bytes);
+        byte[] expectedStdout = stdoutStream ? expectedStream : new byte[0];
+        byte[] expectedStderr = stdoutStream ? new byte[0] : expectedStream;
+        deal.test.conformance.SidecarExpectations.RuntimeExpectation.Executed pinned =
+            new deal.test.conformance.SidecarExpectations.RuntimeExpectation.Executed(
+                "runtime-ok", expectedStdout, expectedStderr, 0, null);
+        Optional<String> verdict = structuredRuntimeVerdict(captured, pinned);
+        boolean ok = true;
+        if (captured.exitCode() != 0) {
+            System.out.println("FAIL: capture control (" + stream + ", "
+                + bytes + " bytes) exited " + captured.exitCode()
+                + " instead of 0");
+            ok = false;
+        }
+        boolean flagged = stdoutStream ? captured.stdoutTruncated()
+            : captured.stderrTruncated();
+        boolean otherFlagged = stdoutStream ? captured.stderrTruncated()
+            : captured.stdoutTruncated();
+        if (otherFlagged) {
+            System.out.println("FAIL: capture control (" + stream + ", "
+                + bytes + " bytes) flagged the other stream");
+            ok = false;
+        }
+        if (overLimit) {
+            if (!flagged) {
+                System.out.println("FAIL: capture control (" + stream
+                    + ", " + bytes + " bytes) is over the cap but was "
+                    + "not flagged truncated");
+                ok = false;
+            }
+            if (verdict.isEmpty()
+                    || !verdict.get().startsWith(CAPTURE_REFUSAL)) {
+                System.out.println("FAIL: capture control (" + stream + ", "
+                    + bytes + " bytes) pinned the retained prefix plus "
+                    + "marker and the verdict still accepted it: "
+                    + verdict.orElse("<accepted>"));
+                ok = false;
+            }
+            String retained = stdoutStream ? captured.stdout()
+                : captured.stderr();
+            if (!retained.equals(new String(expectedStream,
+                    StandardCharsets.UTF_8))) {
+                System.out.println("FAIL: capture control (" + stream + ", "
+                    + bytes + " bytes) did not retain exactly the cap "
+                    + "prefix plus the truncation marker");
+                ok = false;
+            }
+        } else {
+            if (flagged) {
+                System.out.println("FAIL: capture control (" + stream
+                    + ", " + bytes + " bytes) is within the cap but was "
+                    + "flagged truncated");
+                ok = false;
+            }
+            if (verdict.isPresent()) {
+                System.out.println("FAIL: capture control (" + stream + ", "
+                    + bytes + " bytes) is a complete exact transcript but "
+                    + "was not accepted: " + verdict.get());
+                ok = false;
+            }
+        }
+        return ok;
+    }
+
+    /** An ordinary wrong-byte expectation below the cap stays a
+     * transcript mismatch, never a capture refusal. */
+    private static boolean checkCaptureWrongByte(Path controlRoot) {
+        int bytes = 4096;
+        NodeResult captured;
+        try {
+            captured = captureControlChild(controlRoot, "stdout", bytes);
+        } catch (IOException | InterruptedException failure) {
+            System.out.println("FAIL: the wrong-byte capture control did "
+                + "not run: " + failure);
+            return false;
+        }
+        byte[] expected = expectedCaptureBytes(bytes);
+        expected[2048] ^= 0x01;
+        deal.test.conformance.SidecarExpectations.RuntimeExpectation.Executed pinned =
+            new deal.test.conformance.SidecarExpectations.RuntimeExpectation.Executed(
+                "runtime-ok", expected, new byte[0], 0, null);
+        Optional<String> verdict = structuredRuntimeVerdict(captured, pinned);
+        if (verdict.isEmpty()
+                || !verdict.get().contains("TRANSCRIPT_MISMATCH")) {
+            System.out.println("FAIL: the wrong-byte capture control "
+                + "expected a transcript mismatch, got: "
+                + verdict.orElse("<accepted>"));
+            return false;
+        }
+        return true;
+    }
+
+    /** Runs one real node producer through the shared bounded capture
+     * and carries its truncation flags into the verdict input. */
+    private static NodeResult captureControlChild(Path controlRoot,
+            String stream, int bytes)
+            throws IOException, InterruptedException {
+        BoundedProcess.BoundedResult result = BoundedProcess.runCaptured(
+            List.of("node", "capture-producer.js", stream,
+                Integer.toString(bytes)), controlRoot);
+        return new NodeResult(result.exitCode(), result.stdout(),
+            result.stderr(), result.stdoutTruncated(),
+            result.stderrTruncated());
+    }
+
+    /** The independent expectation for one boundary round: the filler
+     * bytes (capped) plus the helper's verbatim truncation marker when
+     * the producer exceeded the cap. */
+    private static byte[] expectedCaptureBytes(int bytes) {
+        int retained = Math.min(bytes, BoundedProcess.STREAM_CAP_BYTES);
+        byte[] filler = new byte[retained];
+        Arrays.fill(filler, (byte) 'x');
+        if (bytes <= BoundedProcess.STREAM_CAP_BYTES) {
+            return filler;
+        }
+        byte[] marker = BoundedProcess.TRUNCATION_MARKER.getBytes(
+            StandardCharsets.UTF_8);
+        byte[] combined = Arrays.copyOf(filler, filler.length + marker.length);
+        System.arraycopy(marker, 0, combined, filler.length, marker.length);
+        return combined;
+    }
+
+    /** The capture control's real node producer: exactly N 'x' bytes to
+     * the named stream, exit 0. */
+    private static String captureProducerSource() {
+        return "\"use strict\";\n"
+            + "const stream = process.argv[2];\n"
+            + "const count = Number(process.argv[3]);\n"
+            + "const chunk = Buffer.alloc(65536, 0x78);\n"
+            + "const out = stream === \"stderr\" ? process.stderr\n"
+            + "  : process.stdout;\n"
+            + "let written = 0;\n"
+            + "while (written < count) {\n"
+            + "  const n = Math.min(chunk.length, count - written);\n"
+            + "  out.write(chunk.subarray(0, n));\n"
+            + "  written += n;\n"
+            + "}\n";
     }
 
     // =========================================================================

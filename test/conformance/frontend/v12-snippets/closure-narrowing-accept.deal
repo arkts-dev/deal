@@ -1,0 +1,6 @@
+// @spec: Type system
+// @description: Corner-case subject closure-narrowing-accept — Captured nullable binding vs explicit non-null snapshot. (basis: Closures: narrowed flow types not captured)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(x: int | null): int {if(x !== null) {let copy: int = x; let g: () => int = function(): int {return copy;}; return g();} return 0;}

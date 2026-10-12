@@ -1,0 +1,6 @@
+// @spec: Tables
+// @description: Corner-case subject table-logical-context-accept — Read inside operator vs explicit typed read. (basis: Table read allowed contexts; logical expression itself is not listed)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(): boolean {let t: table = {flag:true}; let flag: boolean = t.flag; return flag && true;}

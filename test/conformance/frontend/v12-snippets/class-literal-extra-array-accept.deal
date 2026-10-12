@@ -1,0 +1,7 @@
+// @spec: Classes
+// @description: Corner-case subject class-literal-extra-array-accept — Second class array element extra field, not just top-level object. (basis: Class assignment semantics reject extra fields in class array literals)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+class C {x:int=0;}
+export function f(): C[] {return [{x:1},{x:2}];}

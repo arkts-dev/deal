@@ -1,0 +1,8 @@
+// @spec: Classes
+// @description: Corner-case subject class-literal-extra-nested-accept — Reject extra field inside contextually typed nested class literal. (basis: Class assignment semantics reject extra nested fields)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+class Inner {x:int=0;}
+class Outer {inner:Inner={};}
+export function f(): Outer {return {inner:{x:1}};}

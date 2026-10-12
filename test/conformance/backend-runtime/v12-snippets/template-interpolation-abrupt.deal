@@ -1,0 +1,14 @@
+// @spec: Runtime execution model
+// @description: Corner-case subject template-interpolation-abrupt — Throwing interpolation suppresses later interpolation and final assignment. (basis: Template interpolation expressions; strict left-to-right evaluation)
+// @expected: runtime-ok
+// @features: v1.2, runtime, corner-case
+
+import * as c from "std/console";
+export function main(): null {
+ let trace:string="";
+ function mark(s:string): string {trace=trace+s; return s;}
+ function fail(): string {trace=trace+"B"; throw {code:"STOP",message:"template"};}
+ try {let text:string=`${mark("A")}${fail()}${mark("X")}`; trace=trace+"Y";} catch(e) {if(e.code!=="STOP") {throw {message:"wrong error"};} trace=trace+"C";}
+ if(trace!=="ABC") {throw {message:"interpolation order: "+trace};}
+ c.log("template-interpolation-abrupt"); return null;
+}

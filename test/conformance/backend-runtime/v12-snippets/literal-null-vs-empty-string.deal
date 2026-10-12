@@ -1,0 +1,14 @@
+// @spec: Runtime execution model
+// @description: Corner-case subject literal-null-vs-empty-string — Empty key AND empty string values must survive typed read/delete/rewrite (not host truthiness). (basis: Tables: string keys, null distinct from absence)
+// @expected: runtime-ok
+// @features: v1.2, runtime, corner-case
+
+import * as c from "std/console";
+export function main(): null {
+ let t: table = {key:null}; let key: string = ""; t[key] = "";
+ let empty: string = t[key]; let nil: string | null = t.key;
+ if(empty !== "" || nil !== null) {throw {message:"empty string or null collapsed"};}
+ delete t[key]; let gone: string | null = t[key]; if(gone !== null) {throw {message:"empty key deletion failed"};}
+ t[key] = "x"; let restored: string = t[key]; if(restored !== "x") {throw {message:"empty key rewrite"};}
+ c.log("literal-null-vs-empty-string"); return null;
+}

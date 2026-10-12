@@ -1,0 +1,6 @@
+// @spec: Arrays
+// @description: Corner-case subject null-to-array-element-accept — Nullable whole array does not permit null elements in non-null array. (basis: Array literal all elements same T; nullable array distinct)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(): int[] | null {return null;}

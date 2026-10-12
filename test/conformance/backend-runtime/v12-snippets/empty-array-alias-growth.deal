@@ -1,0 +1,13 @@
+// @spec: Runtime execution model
+// @description: Corner-case subject empty-array-alias-growth — Empty int array crosses several backing-capacity expansions without breaking source aliases. (basis: Arrays append at length; references)
+// @expected: runtime-ok
+// @features: v1.2, runtime, corner-case
+
+import * as c from "std/console";
+export function main(): null {
+ let xs: int[] = []; let alias: int[] = xs;
+ for(let i:int=0; i<65; i=i+1) {alias[alias.length] = i;}
+ if(xs !== alias || xs.length !== 65 || xs[0] !== 0 || xs[32] !== 32 || xs[64] !== 64) {throw {message:"append reallocated identity"};}
+ xs[64] = 99; if(alias[64] !== 99) {throw {message:"growth alias detached"};}
+ c.log("empty-array-alias-growth"); return null;
+}

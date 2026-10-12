@@ -1,0 +1,6 @@
+// @spec: Type system
+// @description: Corner-case subject for-test-must-boolean-accept — C-style condition path, not if path. (basis: C-style for test boolean)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(): null {for(let i:int=0; true; i=i+1) {break;} return null;}

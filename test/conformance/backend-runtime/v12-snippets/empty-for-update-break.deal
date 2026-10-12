@@ -1,0 +1,13 @@
+// @spec: Runtime execution model
+// @description: Corner-case subject empty-for-update-break — Omitted condition at runtime with effect-counted update; break must skip final update. (basis: C-style for optional test=true; continue update; break exits)
+// @expected: runtime-ok
+// @features: v1.2, runtime, corner-case
+
+import * as c from "std/console";
+export function main(): null {
+ let i:int=0; let updates:int=0;
+ function update(x:int): int {updates=updates+1; return x+1;}
+ for(; ; i=update(i)) {if(i===2) {break;} continue;}
+ if(i!==2 || updates!==2) {throw {message:"omitted test/update order"};}
+ c.log("empty-for-update-break"); return null;
+}

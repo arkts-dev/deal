@@ -1,0 +1,6 @@
+// @spec: Arrays
+// @description: Corner-case subject empty-nested-array-inference-accept — Empty inner arrays with and without nested target type. (basis: Inference rejects empty arrays without a target; contextual typed array structure)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(): int[][] {let xs:int[][]=[[],[]]; return xs;}

@@ -16,6 +16,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
@@ -807,6 +808,49 @@ public class AsyncExportInvokerProductionTest {
         }
         """;
 
+    /**
+     * ISSUE-0756 subject {@code async-extended-argument-order}: the
+     * awaited arity-extension adapter must evaluate the ignored awaited
+     * argument before the source async call. The export's own trace
+     * oracle raises unless the observed order is A, B, then the source
+     * F, and the subject keeps its own production output — the
+     * package's independent stdout expectation. Reused unchanged by the
+     * corpus-faithful drive below; the classification metadata of the
+     * package is not part of the subject source.
+     */
+    private static final String ARITY_EXTENSION_SOURCE = """
+        import * as c from "std/console";
+
+        export function main(): null { return null; }
+
+        export async function run(): null {
+          let trace: string = "";
+          async function value(s: string, x: int): int { trace = trace + s; return x; }
+          async function small(x: int): int { trace = trace + "F"; return x; }
+          let f: async (x: int, y: int) => int = small;
+          let r: int = await f(await value("A", 7), await value("B", 8));
+          if (r !== 7 || trace !== "ABF") {
+            throw { code: "ARITY_FAIL", message: "async extended arguments: " + trace };
+          }
+          c.log("async-extended-argument-order");
+          return null;
+        }
+        """;
+
+    /** The subject's own production stdout: the package's exact pin. */
+    private static final String ARITY_EXTENSION_MARKER =
+        "async-extended-argument-order\n";
+
+    /**
+     * The production host's value envelope of the checked null
+     * completion (the runtime half's matcher validated the completion
+     * before the envelope is written, so this frame is the host-side
+     * completion evidence of the direct drive).
+     */
+    private static final String ARITY_EXTENSION_ENVELOPE =
+        "DEAL_ASYNC_EXPORT_RESULT:{\"status\":\"value\","
+        + "\"descriptor\":\"null\",\"value\":\"null\"}\n";
+
     // =========================================================================
     // Scenarios
     // =========================================================================
@@ -829,6 +873,8 @@ public class AsyncExportInvokerProductionTest {
             testTypedCompletionRejectionBothTargets();
             testUnchangedErrorFieldsBothTargets();
             testLineTerminatorSourcePathBothTargets();
+            testAsyncArityExtensionArgumentOrderBothTargets();
+            testProductionHostCaptureBoundary();
             testInitializationAndMainOnceBothTargets();
             testParameterizedPublishedWrapper();
             testDealErrorEnvelopeProjection();
@@ -1552,6 +1598,130 @@ public class AsyncExportInvokerProductionTest {
             "an absent origin omits every location field");
     }
 
+    /**
+     * ISSUE-0756 subject {@code async-extended-argument-order}: a real
+     * published async export whose own trace oracle proves the awaited
+     * ignored argument evaluates before the source async call — the
+     * completion is a value only when the order is A, B, F. The subject
+     * keeps its own output (the package's exact stdout expectation), and
+     * the drive pins the checked null completion through the production
+     * invoker alongside the production host's exact separate streams and
+     * status, so the order oracle, the publication and the output are
+     * one regression.
+     */
+    private static void testAsyncArityExtensionArgumentOrderBothTargets()
+            throws Exception {
+        System.out.println("-- the awaited arity-extension argument order");
+        for (String backend : List.of("luajit", "jvm")) {
+            Project project = compile("arity-" + backend, backend,
+                String.format(PLAIN_MANIFEST, backend), ARITY_EXTENSION_SOURCE,
+                null, null);
+            try {
+                // The checked null completion through the production
+                // invoker: the matcher-validated Value, never an error,
+                // a host failure or an unvalidated completion.
+                Object result = invoke(project, "run", "null");
+                check(result instanceof LuaJitAsyncExportInvoker.Result.Value
+                        || result instanceof JvmAsyncExportInvoker.Result.Value,
+                    backend + ": the arity-extension export completes a value,"
+                        + " never an error or host failure: " + result);
+                String json = valueJson(result);
+                check(json == null || "null".equals(json),
+                    backend + ": the null completion stays the language null"
+                        + " (the trace oracle passed): " + json);
+
+                // The production host transcript: the published artifact
+                // executed by the same host surface the invoker drives,
+                // with the subject's own output as the exact stdout pin
+                // and the value envelope as the host-side completion.
+                ProcessOutcome transcript =
+                    productionHostTranscript(project, "run", "null");
+                checkEq(0, transcript.exitCode(), backend + ": the production"
+                    + " host exits 0: " + transcript.output());
+                checkEq(ARITY_EXTENSION_MARKER + ARITY_EXTENSION_ENVELOPE,
+                    transcript.stdout(), backend + ": the production host"
+                        + " stdout is the subject's own marker followed by"
+                        + " the checked-null value envelope");
+                checkEq("", transcript.stderr(), backend + ": the production"
+                    + " host stderr stays empty: " + transcript.output());
+            } finally {
+                deleteRecursively(project.root());
+            }
+        }
+    }
+
+    /**
+     * The production host transcript of one async-export invocation: the
+     * published artifact executed by the host surface the invoker drives
+     * — the committed LuaJIT driver under the deferred-main marker, or
+     * the emitted {@code <Entry>$$AsyncExportHost} launcher — with the
+     * invoker's own argv contract, so the subject's own output and the
+     * host's value envelope are observable byte-exact (the invoker's
+     * success path consumes the same child's streams internally). The
+     * host child runs through the landed shared bounded-process helper
+     * with the invoker's working directory and environment override, so
+     * a noisy host can never outgrow the shared per-stream bound.
+     */
+    private static ProcessOutcome productionHostTranscript(Project project,
+            String exportName, String returnDescriptor) throws Exception {
+        if ("luajit".equals(project.backend())) {
+            Path driver = Path.of(LuaJitAsyncExportInvoker.DRIVER_RESOURCE)
+                .toAbsolutePath().normalize();
+            check(Files.isRegularFile(driver), "the committed LuaJIT"
+                + " async-export driver resource exists: " + driver);
+            if (!Files.isRegularFile(driver)) {
+                throw new IllegalStateException("the committed LuaJIT"
+                    + " async-export driver resource is missing: " + driver);
+            }
+            Path artifactRoot = project.root().resolve("out");
+            return captureHostTranscript("luajit:" + exportName,
+                List.of("luajit",
+                    driver.toString(),
+                    project.entryArtifact().toAbsolutePath().toString(),
+                    artifactRoot.toAbsolutePath().toString(),
+                    exportName, returnDescriptor),
+                artifactRoot, Map.of("DEAL_DEFER_MAIN", "1"));
+        }
+        return captureHostTranscript("jvm:" + exportName,
+            List.of("java", "-cp",
+                project.classes() + File.pathSeparator + absoluteClasspath(),
+                "Main$" + JvmAsyncExportInvoker.HOST_CLASS_SUFFIX,
+                JvmAsyncExportInvoker.HOST_ARG, exportName, returnDescriptor),
+            project.classes(), Map.of());
+    }
+
+    /**
+     * The named refusal token of an over-limit production host capture.
+     */
+    private static final String HOST_CAPTURE_TRUNCATED =
+        "ASYNC_HOST_CAPTURE_TRUNCATED";
+
+    /**
+     * One production host transcript through the landed shared
+     * bounded-process helper ({@link BoundedProcess}): the working
+     * directory and the environment overrides are preserved, both streams
+     * stay separate and complete below the shared per-stream cap, and a
+     * truncated or over-limit observation is refused by name before any
+     * transcript comparison — the helper's retained prefix and truncation
+     * marker stay diagnostics, never a host result.
+     */
+    private static ProcessOutcome captureHostTranscript(String label,
+            List<String> command, Path directory,
+            Map<String, String> environment) throws Exception {
+        BoundedProcess.BoundedResult result =
+            BoundedProcess.runCaptured(command, directory, environment);
+        if (result.stdoutTruncated() || result.stderrTruncated()) {
+            throw new AssertionError(HOST_CAPTURE_TRUNCATED + ": the"
+                + " production host observation of " + label + " exceeded"
+                + " the shared per-stream bound (stdoutTruncated="
+                + result.stdoutTruncated() + ", stderrTruncated="
+                + result.stderrTruncated() + "); the retained prefix is"
+                + " diagnostics only, never a transcript");
+        }
+        return new ProcessOutcome(result.exitCode(), result.stdout(),
+            result.stderr());
+    }
+
     private static void testInitializationAndMainOnceBothTargets() throws Exception {
         System.out.println("-- module initialization and main() run exactly once per"
             + " invocation");
@@ -1780,7 +1950,8 @@ public class AsyncExportInvokerProductionTest {
         if (!process.waitFor(300, TimeUnit.SECONDS)) {
             process.destroyForcibly();
             process.waitFor();
-            throw new IllegalStateException("the child did not exit: " + argv);
+            throw new IllegalStateException("the child did not exit: "
+                + builder.command());
         }
         ProcessOutcome outcome = new ProcessOutcome(process.exitValue(),
             Files.readString(stdout, StandardCharsets.UTF_8),
@@ -1788,6 +1959,106 @@ public class AsyncExportInvokerProductionTest {
         Files.deleteIfExists(stdout);
         Files.deleteIfExists(stderr);
         return outcome;
+    }
+
+    /**
+     * The boundary controls of the production host capture
+     * ({@link #captureHostTranscript}): a real child flooding one stream
+     * at cap-minus-one and at the exact shared cap is a complete,
+     * untruncated observation with separate streams and its own exit
+     * status; at cap-plus-one the shared helper flags exactly the
+     * overflowing stream, retains the bounded prefix plus its truncation
+     * marker, and the host capture refuses the observation by name in
+     * both stream positions before any transcript comparison.
+     */
+    private static void testProductionHostCaptureBoundary()
+            throws Exception {
+        System.out.println("-- the production host capture boundary"
+            + " controls --");
+        Path scratch = Files.createTempDirectory("async-host-capture-");
+        try {
+            int cap = BoundedProcess.STREAM_CAP_BYTES;
+            for (String stream : List.of("stdout", "stderr")) {
+                for (int bytes : List.of(cap - 1, cap)) {
+                    ProcessOutcome flooded = captureHostTranscript(
+                        stream + "-flood-" + bytes, hostFloodCommand(stream,
+                            bytes), scratch, Map.of());
+                    checkEq(0, flooded.exitCode(), stream + " " + bytes
+                        + "-byte flood exits 0 (its own status verbatim)");
+                    String floodedStream = "stdout".equals(stream)
+                        ? flooded.stdout() : flooded.stderr();
+                    String otherStream = "stdout".equals(stream)
+                        ? flooded.stderr() : flooded.stdout();
+                    checkEq(bytes,
+                        floodedStream.getBytes(StandardCharsets.UTF_8).length,
+                        stream + " " + bytes + "-byte flood is captured"
+                            + " completely inside the shared bound");
+                    checkEq("", otherStream, stream + " " + bytes
+                        + "-byte flood keeps the other stream empty");
+                }
+                BoundedProcess.BoundedResult overLimit =
+                    BoundedProcess.runCaptured(hostFloodCommand(stream,
+                        cap + 1), scratch, Map.of());
+                boolean stdoutOverflow = "stdout".equals(stream);
+                checkEq(stdoutOverflow, overLimit.stdoutTruncated(),
+                    stream + " cap-plus-one flags the overflow on stdout only"
+                        + " when stdout is the flooded stream");
+                checkEq(!stdoutOverflow, overLimit.stderrTruncated(),
+                    stream + " cap-plus-one flags the overflow on stderr only"
+                        + " when stderr is the flooded stream");
+                String retained = stdoutOverflow
+                    ? overLimit.stdout() : overLimit.stderr();
+                check(retained.endsWith(BoundedProcess.TRUNCATION_MARKER),
+                    stream + " cap-plus-one retains the bounded prefix plus"
+                        + " the shared truncation marker");
+                checkEq(cap + BoundedProcess.TRUNCATION_MARKER.length(),
+                    retained.getBytes(StandardCharsets.UTF_8).length,
+                    stream + " cap-plus-one retains exactly the cap prefix"
+                        + " plus the marker");
+                try {
+                    ProcessOutcome refused = captureHostTranscript(
+                        stream + "-flood-over-limit",
+                        hostFloodCommand(stream, cap + 1), scratch, Map.of());
+                    check(false, "the " + stream + " over-limit observation"
+                        + " must be refused by name before any comparison,"
+                        + " got " + refused.output());
+                } catch (AssertionError expected) {
+                    check(expected.getMessage().contains(
+                            HOST_CAPTURE_TRUNCATED),
+                        "the " + stream + " over-limit refusal names the"
+                            + " host-capture token: " + expected.getMessage());
+                    check(expected.getMessage().contains(stream + "Truncated=true"),
+                        "the " + stream + " over-limit refusal names the"
+                            + " overflowing stream: " + expected.getMessage());
+                }
+            }
+        } finally {
+            deleteRecursively(scratch);
+        }
+    }
+
+    /** The boundary child's command: {stream, byte count} producers. */
+    private static List<String> hostFloodCommand(String stream, int bytes) {
+        return List.of("java", "-cp", absoluteClasspath(),
+            HostCaptureChild.class.getName(), stream,
+            Integer.toString(bytes));
+    }
+
+    /** The boundary control's child: writes filler bytes to one stream. */
+    static final class HostCaptureChild {
+        public static void main(String[] args) throws Exception {
+            String stream = args[0];
+            int count = Integer.parseInt(args[1]);
+            byte[] filler = new byte[count];
+            java.util.Arrays.fill(filler, (byte) 'x');
+            if ("stdout".equals(stream)) {
+                System.out.write(filler);
+                System.out.flush();
+            } else {
+                System.err.write(filler);
+                System.err.flush();
+            }
+        }
     }
 
     private static String absoluteClasspath() {

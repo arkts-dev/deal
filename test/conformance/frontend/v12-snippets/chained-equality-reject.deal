@@ -1,0 +1,6 @@
+// @spec: Syntactic grammar
+// @description: Corner-case subject chained-equality-reject — Equalities need parentheses even with all boolean operands. (basis: EqualityExpression optional single operator; non-associative)
+// @expected: compile-error E1056
+// @features: v1.2, frontend, reject
+
+export function f(): boolean {return true === true === true;}

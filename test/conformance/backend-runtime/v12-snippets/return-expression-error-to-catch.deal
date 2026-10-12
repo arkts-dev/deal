@@ -1,0 +1,12 @@
+// @spec: Runtime execution model
+// @description: Corner-case subject return-expression-error-to-catch — Error evaluating return operand reaches catch before return transfer. (basis: Strict expression evaluation; try/catch return; definite return)
+// @expected: runtime-ok
+// @features: v1.2, runtime, corner-case
+
+import * as c from "std/console";
+function fail(): int {throw {code:"RETURN",message:"expr"};}
+function recover(): int {try {return fail();} catch(e) {if(e.code!=="RETURN") {throw {message:"wrong error"};} return 9;}}
+export function main(): null {
+ if(recover()!==9) {throw {message:"return transferred before expression evaluated"};}
+ c.log("return-expression-error-to-catch"); return null;
+}

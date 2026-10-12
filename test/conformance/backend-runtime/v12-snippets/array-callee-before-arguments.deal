@@ -1,0 +1,15 @@
+// @spec: Runtime execution model
+// @description: Corner-case subject array-callee-before-arguments — Array-slot callee is fetched before an argument replaces that same slot; index once. (basis: Operational semantics summary, rules 1/2)
+// @expected: runtime-ok
+// @features: v1.2, runtime, corner-case
+
+import * as c from "std/console";
+export function main(): null {
+ let trace: string = "";
+ let fs: ((x: int) => int)[] = [function(x: int): int { trace = trace + "O"; return x + 10; }];
+ function index(): int { trace = trace + "I"; return 0; }
+ function argument(): int { trace = trace + "A"; fs[0] = function(x: int): int {trace = trace + "N"; return x + 20;}; return 3; }
+ let result: int = fs[index()](argument());
+ if (result !== 13 || trace !== "IAO") {throw {message:"callee capture: " + trace};}
+ c.log("array-callee-before-arguments"); return null;
+}

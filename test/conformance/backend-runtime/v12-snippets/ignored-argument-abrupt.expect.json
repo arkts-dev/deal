@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {
+      "stdout": "ignored-argument-abrupt\n",
+      "stderr": ""
+    },
+    "exitCode": 0
+  }
+}

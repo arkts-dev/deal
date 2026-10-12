@@ -1,0 +1,6 @@
+// @spec: Tables
+// @description: Corner-case subject table-condition-context-accept — Keep narrow contextual list, contrast if condition with while condition. (basis: Table read allowed contexts enumerate if(E), not while(E))
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(): boolean {let t: table = {flag:true}; if(t.flag) {return true;} return false;}

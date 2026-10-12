@@ -1,0 +1,6 @@
+// @spec: Error handling
+// @description: Corner-case subject error-literal-message-type-reject — Builtin class literal field checking, not throw operand kind. (basis: Error message:string; contextual class field checking)
+// @expected: compile-error E4003
+// @features: v1.2, frontend, reject
+
+export function f(): Error {return {message:1};}

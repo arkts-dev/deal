@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "mode": "compile-error",
+  "diagnostic": {
+    "code": "E1040",
+    "line": 7,
+    "column": 45,
+    "message": "Expected member access (obj.field) in has() expression"
+  }
+}

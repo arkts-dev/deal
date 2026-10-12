@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {
+      "stdout": "B\nA\ndefault-d\nprovided-field-source-order\n",
+      "stderr": ""
+    },
+    "exitCode": 0
+  }
+}

@@ -1,0 +1,10 @@
+// @spec: Runtime execution model
+// @description: Corner-case subject power-associativity-unary — Right-associative power; DEAL unary binds tighter than power (not JS exponent grammar). (basis: ExponentiationExpression / UnaryExpression grammar; Operator precedence table)
+// @expected: runtime-ok
+// @features: v1.2, runtime, corner-case
+
+import * as c from "std/console";
+export function main(): null {
+ if(2 ** 3 ** 2 !== 512 || -2 ** 2 !== 4 || -(2 ** 2) !== -4 || 20 / 3 / 2 !== 3) {throw {message:"operator grouping"};}
+ c.log("power-associativity-unary"); return null;
+}

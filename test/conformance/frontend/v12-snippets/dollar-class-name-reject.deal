@@ -1,0 +1,7 @@
+// @spec: Classes
+// @description: Corner-case subject dollar-class-name-reject — Class declaration position, not variable/field/parameter. (basis: User class names cannot contain $)
+// @expected: compile-error E2008
+// @features: v1.2, frontend, reject
+
+class C$bad {x:int=0;}
+export function f(): null {return null;}

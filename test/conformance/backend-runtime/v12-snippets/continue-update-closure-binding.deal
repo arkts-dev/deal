@@ -1,0 +1,16 @@
+// @spec: Runtime execution model
+// @description: Corner-case subject continue-update-closure-binding — Effectful update runs on continue without changing any previously captured iteration cell. (basis: Closures: fresh iteration binding; C-style for; Break / Continue)
+// @expected: runtime-ok
+// @features: v1.2, runtime, corner-case
+
+import * as c from "std/console";
+export function main(): null {
+ let fs: (() => int)[] = []; let updates: int = 0;
+ function next(x: int): int {updates = updates + 1; return x + 1;}
+ for(let i: int = 0; i < 3; i = next(i)) {
+  fs[fs.length] = function(): int {return i;};
+  if(i === 1) {continue;}
+ }
+ if(updates !== 3 || fs.length !== 3 || fs[0]() !== 0 || fs[1]() !== 1 || fs[2]() !== 2) {throw {message:"update mutated captured iteration"};}
+ c.log("continue-update-closure-binding"); return null;
+}

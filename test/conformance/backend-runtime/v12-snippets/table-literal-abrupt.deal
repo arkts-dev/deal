@@ -1,0 +1,16 @@
+// @spec: Runtime execution model
+// @description: Corner-case subject table-literal-abrupt — Abrupt element/property evaluation suppresses every later expression. (basis: Operational semantics summary: strict left-to-right; table rule 7)
+// @expected: runtime-ok
+// @features: v1.2, runtime, corner-case
+
+import * as c from "std/console";
+export function main(): null {
+ let trace: string = "";
+ function mark(s: string): int {trace = trace + s; return 1;}
+ function fail(): int {trace = trace + "B"; throw {code:"STOP",message:"literal"};}
+ try {let v: table = {a:mark("A"), b:fail(), z:mark("X")}; trace = trace + "Y";} catch(e) {
+  if(e.code !== "STOP") {throw {message:"wrong code"};} trace = trace + "C";
+ }
+ if(trace !== "ABC") {throw {message:"literal order: " + trace};}
+ c.log("table-literal-abrupt"); return null;
+}

@@ -1,0 +1,6 @@
+// @spec: Arrays
+// @description: Corner-case subject empty-array-call-context-accept — Call argument can be empty array without intermediate inferred untyped binding. (basis: Contextual call parameter; inference)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(): null {function take(xs:int[]): null {return null;} return take([]);}

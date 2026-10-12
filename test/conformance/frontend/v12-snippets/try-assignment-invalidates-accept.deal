@@ -1,0 +1,6 @@
+// @spec: Error handling
+// @description: Corner-case subject try-assignment-invalidates-accept — Join after assignment in try vs re-narrowing. (basis: Narrowing across try/catch)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(x: int | null): int {if(x !== null) {try {x = 2;} catch(e) {} if(x !== null) {return x;}} return 0;}

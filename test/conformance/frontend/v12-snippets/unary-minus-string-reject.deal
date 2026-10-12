@@ -1,0 +1,6 @@
+// @spec: Type system
+// @description: Corner-case subject unary-minus-string-reject — String operand avoids boolean-only validation hole. (basis: Unary minus requires int/number)
+// @expected: compile-error E3007
+// @features: v1.2, frontend, reject
+
+export function f(): string {return -"x";}

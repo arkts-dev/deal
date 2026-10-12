@@ -1,0 +1,19 @@
+// @spec: Runtime execution model
+// @description: Corner-case subject ignored-argument-abrupt — Throwing ignored argument suppresses later arguments and source callee. (basis: Function type compatibility; strict left-to-right evaluation)
+// @expected: runtime-ok
+// @features: v1.2, runtime, corner-case
+
+import * as c from "std/console";
+export function main(): null {
+ let trace: string = "";
+ function small(x: int): int { trace = trace + "F"; return x; }
+ function first(): int {trace = trace + "A"; return 1;}
+ function fail(): int {trace = trace + "B"; throw {code:"STOP",message:"ignored"};}
+ function last(): int {trace = trace + "X"; return 3;}
+ let extended: (x: int, y: int, z: int) => int = small;
+ try {let r: int = extended(first(), fail(), last()); trace = trace + "Y";} catch(e) {
+  if(e.code !== "STOP" || e.message !== "ignored") {throw {message:"wrong error"};} trace = trace + "C";
+ }
+ if(trace !== "ABC") {throw {message:"abrupt ignored arg: " + trace};}
+ c.log("ignored-argument-abrupt"); return null;
+}

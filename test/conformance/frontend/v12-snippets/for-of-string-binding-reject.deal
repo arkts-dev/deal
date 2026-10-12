@@ -1,0 +1,6 @@
+// @spec: Control flow
+// @description: Corner-case subject for-of-string-binding-reject — String iterable rather than array element mismatch. (basis: for-of string yields scalar string, not numeric codepoint)
+// @expected: compile-error E3015
+// @features: v1.2, frontend, reject
+
+export function f(): null {for(let ch:int of "abc") {} return null;}

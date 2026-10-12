@@ -1,0 +1,7 @@
+// @spec: Classes
+// @description: Corner-case subject has-computed-target-reject — has() does not accept computed target even for known optional field. (basis: HasExpression grammar: PostfixExpression dot Identifier)
+// @expected: compile-error E1040
+// @features: v1.2, frontend, reject
+
+class C {x?: int;}
+export function f(c:C): boolean {return has(c["x"]);}

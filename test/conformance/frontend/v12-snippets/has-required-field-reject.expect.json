@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "mode": "compile-error",
+  "diagnostic": {
+    "code": "E4005",
+    "line": 7,
+    "column": 41,
+    "message": "'has' argument must be an optional class field; 'x' is required"
+  }
+}

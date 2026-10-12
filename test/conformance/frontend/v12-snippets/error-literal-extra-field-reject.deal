@@ -1,0 +1,6 @@
+// @spec: Error handling
+// @description: Corner-case subject error-literal-extra-field-reject — Builtin Error must follow class literal schema, not accept arbitrary host fields. (basis: Error builtin class; class extra fields forbidden)
+// @expected: compile-error E4002
+// @features: v1.2, frontend, reject
+
+export function f(): Error {return {code:"X",message:"m",extra:1};}

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "mode": "compile-error",
+  "diagnostic": {
+    "code": "E1044",
+    "line": 7,
+    "column": 5,
+    "message": "Unrecognized compiler directive"
+  }
+}

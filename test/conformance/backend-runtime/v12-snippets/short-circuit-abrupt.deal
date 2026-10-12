@@ -1,0 +1,17 @@
+// @spec: Runtime execution model
+// @description: Corner-case subject short-circuit-abrupt — Skipped throwing RHS plus effectful chains; not just precedence/type checking. (basis: Operational semantics summary, rules 2/4)
+// @expected: runtime-ok
+// @features: v1.2, runtime, corner-case
+
+import * as c from "std/console";
+export function main(): null {
+ let trace: string = "";
+ function mark(s: string, value: boolean): boolean { trace = trace + s; return value; }
+ function fail(): boolean { throw {code:"BAD", message:"must not execute"}; }
+ let a: boolean = false && fail();
+ let b: boolean = true || fail();
+ let d: boolean = mark("A", true) && mark("B", false) && mark("X", true);
+ let e: boolean = mark("C", false) || mark("D", true) || mark("Y", false);
+ if (a || !b || d || !e || trace !== "ABCD") { throw {message:"short-circuit: " + trace}; }
+ c.log("short-circuit-abrupt"); return null;
+}

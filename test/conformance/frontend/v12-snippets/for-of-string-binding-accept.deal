@@ -1,0 +1,6 @@
+// @spec: Control flow
+// @description: Corner-case subject for-of-string-binding-accept — String iterable rather than array element mismatch. (basis: for-of string yields scalar string, not numeric codepoint)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(): null {for(let ch:string of "abc") {} return null;}

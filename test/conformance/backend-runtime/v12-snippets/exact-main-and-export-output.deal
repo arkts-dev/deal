@@ -1,0 +1,9 @@
+// @spec: Runtime execution model
+// @description: Corner-case subject exact-main-and-export-output — Production entry prints main once and does not execute unrelated exports. At this base require does NOT run main; corpus invokes alpha/beta/main once in source order. Do not assume a double-main defect. (basis: Entry program execution; std/console signatures; harness invocation policy)
+// @expected: runtime-ok
+// @features: v1.2, runtime, corner-case
+
+import * as c from "std/console";
+export function alpha(): null {c.log("alpha"); return null;}
+export function beta(): null {c.log("beta"); return null;}
+export function main(): null {c.log("main"); c.error("diagnostic β"); return null;}

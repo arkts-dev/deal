@@ -1,0 +1,6 @@
+// @spec: Type system
+// @description: Corner-case subject assignment-invalidates-narrowing-reject — Assignment of non-null value still invalidates prior flow fact; recheck restores it. (basis: Narrowing invalidation: assignment invalidates even when assigning T)
+// @expected: compile-error E3001
+// @features: v1.2, frontend, reject
+
+export function f(x: int | null): int {if(x !== null) {x = 2; let y: int = x; return y;} return 0;}

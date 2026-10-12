@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "mode": "compile-error",
+  "diagnostic": {
+    "code": "E4002",
+    "line": 7,
+    "column": 46,
+    "message": "Extra field 'extra' in class literal for 'C'"
+  }
+}

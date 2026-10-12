@@ -1,0 +1,10 @@
+// @spec: Lexical elements
+// @description: Raw-source subject comment-crlf — Comment terminated with CRLF rather than LF (basis: Line terminators LF/CRLF/CR)
+// @expected: compile-ok
+// @features: v1.2, lexer, raw-source
+
+// ordinary
+export function f(): int {
+// ignored
+return 3;
+}

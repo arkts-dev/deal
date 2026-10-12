@@ -1,0 +1,6 @@
+// @spec: Functions
+// @description: Corner-case subject async-marker-arity-reject — Zero-to-one arity extension must not erase async marker. (basis: Arity extension requires identical async marker)
+// @expected: compile-error E3001
+// @features: v1.2, frontend, reject
+
+export function f(): null {async function a(): int {return 1;} let b: (x:int) => int = a; return null;}

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "mode": "compile-error",
+  "diagnostic": {
+    "code": "E3007",
+    "line": 7,
+    "column": 40,
+    "message": "Array index must be int, got string"
+  }
+}

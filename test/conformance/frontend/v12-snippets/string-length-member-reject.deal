@@ -1,0 +1,6 @@
+// @spec: Type system
+// @description: Corner-case subject string-length-member-reject — String length requires std/string, not backend-native .length. (basis: Length intrinsic available only arrays and bytes)
+// @expected: compile-error E3003
+// @features: v1.2, frontend, reject
+
+export function f(): int {return "😀".length;}

@@ -1,0 +1,6 @@
+// @spec: Type system
+// @description: Corner-case subject unary-minus-string-accept — String operand avoids boolean-only validation hole. (basis: Unary minus requires int/number)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(): int {return -1;}

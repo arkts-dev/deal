@@ -1,0 +1,11 @@
+// @spec: Runtime execution model
+// @description: Corner-case subject template-backend-metacharacters — Non-interpolation dollar text, Lua long bracket terminator, quotes/backslash/format token are ordinary data. (basis: Template literals; string escapes and no implicit conversion)
+// @expected: runtime-ok
+// @features: v1.2, runtime, corner-case
+
+import * as c from "std/console";
+export function main(): null {
+ let x:string="β"; let text:string=`<${x}> $x %s \\ " ' ]=]`;
+ if(text!=="<β> $x %s \\ \" ' ]=]") {throw {message:"template escape or host interpolation"};}
+ c.log("template-backend-metacharacters"); return null;
+}

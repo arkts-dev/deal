@@ -1,0 +1,6 @@
+// @spec: Type system
+// @description: Corner-case subject equality-nullable-vs-value-reject — Nullable/non-null comparison rejected until narrowed. (basis: Equality type equality; only exception T|null vs null)
+// @expected: compile-error E3006
+// @features: v1.2, frontend, reject
+
+export function f(a: int | null, b: int): boolean {return a === b;}

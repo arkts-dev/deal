@@ -1,0 +1,6 @@
+// @spec: Type system
+// @description: Corner-case subject equality-functions-different-signature-accept — Cannot extend function signature to make equality operands comparable. (basis: Equality operand types identical; arity extension is assignment only)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(): boolean {let a: () => int = function(): int {return 1;}; let b: () => int = a; return a === b;}

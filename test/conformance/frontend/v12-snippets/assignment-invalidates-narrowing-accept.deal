@@ -1,0 +1,6 @@
+// @spec: Type system
+// @description: Corner-case subject assignment-invalidates-narrowing-accept — Assignment of non-null value still invalidates prior flow fact; recheck restores it. (basis: Narrowing invalidation: assignment invalidates even when assigning T)
+// @expected: compile-ok
+// @features: v1.2, frontend, accept-control
+
+export function f(x: int | null): int {if(x !== null) {x = 2; if(x !== null) {return x;}} return 0;}
