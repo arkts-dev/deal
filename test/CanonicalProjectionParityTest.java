@@ -2132,12 +2132,16 @@ public class CanonicalProjectionParityTest {
 
     /**
      * The JVM deferred-entry probe of one named sync export: the module
-     * entry runs once and the named export is invoked alone.
+     * entry runs once and the named export is invoked alone. The probe
+     * declares the harness's driver name ({@code
+     * CanonicalProjectionParityDriver}), which is the file name and main
+     * class {@code jvmArtifactOutput} writes and invokes for every probe
+     * source.
      */
     private static String jvmExportProbe(Compiled compiled, String export) {
         String entryModule = compiled.checkedProject().entryModule().path();
         return """
-            final class Probe {
+            final class CanonicalProjectionParityDriver {
               public static void main(String[] args) {
                 try {
                   %s.dealMain();
