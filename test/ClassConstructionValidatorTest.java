@@ -21,6 +21,7 @@ import deal.semantic.LoweringSupport;
 import deal.semantic.ModuleFact;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
+import deal.semantic.ir.AdaptSourceRef;
 import deal.semantic.ir.AnchorId;
 import deal.semantic.ir.BindingGeneration;
 import deal.semantic.ir.BindingId;
@@ -31,6 +32,7 @@ import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ClassInterface;
 import deal.semantic.ir.ClassLayout;
+import deal.semantic.ir.CaptureMode;
 import deal.semantic.ir.ClosedSelector;
 import deal.semantic.ir.ConstructKind;
 import deal.semantic.ir.ContractSnapshotCanonicalizer;
@@ -847,6 +849,292 @@ public class ClassConstructionValidatorTest {
     }
 
     // =========================================================================
+    // 5b. DEFAULT_BLOCK_ADMISSION origins (ISSUE-0750 review cycle 4)
+    // =========================================================================
+
+    /**
+     * ISSUE-0750: a rejected binding reference names the owning
+     * {@code CLASS_DEFAULT} in its message but carries the referencing
+     * operation's own file/span as its diagnostic range — never the
+     * enclosing default expression's. All three reference-bearing
+     * branches (BINDING_LOAD, CLOSURE_NEW, FUNCTION_ADAPT) are driven
+     * with a reference range distinct from the default's, plus the
+     * originless-default control whose identifiable reference still
+     * supplies the exact range. Codes, messages, and fail-closed
+     * behavior are unchanged.
+     */
+    private static void testDefaultBlockAdmissionReferenceOrigins() {
+        System.out.println("-- default-block admission origins: the rejected reference's "
+            + "own range survives, not the enclosing CLASS_DEFAULT's --");
+
+        final String source = """
+            let base: int = 5
+            let f: () => null = function(): null { };
+            export class Point {
+              x: int = base + 1;
+            }
+            """;
+        LoweredSlice lowered = lowerModule(source);
+        SemanticLowerer.ClassDeclarationCoreResult result =
+            lowered == null ? null : lowered.result();
+        check(result != null && !result.lowering().hasErrors()
+                && result.lowering().unit() != null,
+            "the admission-origin slice lowers");
+        if (result == null || result.lowering().hasErrors()
+                || result.lowering().unit() == null) {
+            return;
+        }
+        LoweredModuleUnit unit = result.lowering().unit();
+        StructuredBodyTable table = result.lowering().table();
+        ExternalModuleInterface own = lowered.ownInterface();
+
+        SemanticOp defaultOp = firstOfKind(unit, SemanticOpKind.CLASS_DEFAULT);
+        check(defaultOp != null, "the slice produces one CLASS_DEFAULT op");
+        if (defaultOp == null) {
+            return;
+        }
+        KindPayload.ClassDefaultPayload defaultPayload =
+            (KindPayload.ClassDefaultPayload) defaultOp.payload();
+        BlockId defaultBlock = defaultPayload.defaultBlock();
+        DiagnosticRange defaultRange = defaultOp.origin().span().range();
+        check(defaultRange.origin() == RangeOrigin.SOURCE
+                && SOURCE_ID.equals(defaultRange.file())
+                && defaultRange.startLine() == 4 && defaultRange.startColumn() == 12
+                && defaultRange.endLine() == 4 && defaultRange.endColumn() == 20
+                && defaultRange.startScalarOffset() == 92
+                && defaultRange.endScalarOffset() == 100,
+            "the enclosing CLASS_DEFAULT's own range is the default expression "
+                + "4:12-4:20 [92,100); got " + defaultRange);
+
+        Optional<CompilerDiagnostic> baseline = ClassConstructionValidator.validate(unit,
+            table, result.registry(), result.jsonDefaults(), own, Map.of());
+        check(baseline.isEmpty(), "the untampered slice validates cleanly: " + baseline);
+
+        // The BINDING_LOAD of `base` inside the default expression's
+        // block: the referencing op whose own span the failure must use.
+        SemanticOp loadOp = null;
+        for (SemanticOp member : unit.ops()) {
+            if (member.kind() == SemanticOpKind.BINDING_LOAD
+                    && defaultBlock.equals(table.opBlocks().get(member.opId()))) {
+                loadOp = member;
+            }
+        }
+        check(loadOp != null, "the default block carries the `base` BINDING_LOAD");
+        if (loadOp == null) {
+            return;
+        }
+        DiagnosticRange loadRange = loadOp.origin().span().range();
+        check(!loadRange.equals(defaultRange),
+            "the reference and default spans are distinct (reference " + loadRange
+                + ", default " + defaultRange + ")");
+
+        // (a) BINDING_LOAD: the reviewer's probe — a nonexistent binding
+        // identity makes the reference inadmissible; the load's own range
+        // (4:12-4:16 [92,96)) must be the diagnostic's, not the enclosing
+        // default expression's (4:12-4:20 [92,100)).
+        BindingId missingBinding = new BindingId(999_999);
+        KindPayload.BindingLoadPayload loadPayload =
+            (KindPayload.BindingLoadPayload) loadOp.payload();
+        SemanticOp tamperedLoad = rebuild(loadOp,
+            new KindPayload.BindingLoadPayload(missingBinding, loadPayload.generation()));
+        Optional<CompilerDiagnostic> loadFailure = ClassConstructionValidator.validate(
+            unitWithOp(unit, loadOp.opId(), tamperedLoad), table, result.registry(),
+            result.jsonDefaults(), own, Map.of());
+        expectE6005Range(loadFailure, ClassConstructionValidator.DEFAULT_BLOCK_ADMISSION,
+            SOURCE_ID, 4, 12, 4, 16, 92, 96);
+        if (loadFailure.isPresent()) {
+            check(loadFailure.get().range().equals(loadRange),
+                "the BINDING_LOAD failure carries the referencing op's own converted "
+                    + "span " + loadRange + "; got " + loadFailure.get().range());
+            check(!loadFailure.get().range().equals(defaultRange),
+                "the BINDING_LOAD failure never substitutes the enclosing default's "
+                    + "range " + defaultRange);
+            check(loadFailure.get().message().endsWith(admissionSubject(defaultOp,
+                    missingBinding, "is not a block member")),
+                "the BINDING_LOAD message still names the owning CLASS_DEFAULT "
+                    + defaultOp.opId() + " and the rejected binding; got "
+                    + loadFailure.get().message());
+        }
+
+        // (b) CLOSURE_NEW: the real module-level closure moved into the
+        // default closure with one foreign capture — the range is the
+        // closure expression's own span (2:21-2:42 [38,59)), not the
+        // default's.
+        SemanticOp closureOp = firstOfKind(unit, SemanticOpKind.CLOSURE_NEW);
+        check(closureOp != null, "the slice produces one CLOSURE_NEW op");
+        if (closureOp != null) {
+            KindPayload.ClosureNewPayload closurePayload =
+                (KindPayload.ClosureNewPayload) closureOp.payload();
+            BindingId foreignBinding = new BindingId(97_777);
+            SemanticOp tamperedClosure = rebuild(closureOp,
+                new KindPayload.ClosureNewPayload(closurePayload.function(),
+                    closurePayload.signature(),
+                    List.of(new BindingGeneration(foreignBinding, 0)),
+                    closurePayload.binding()));
+            Optional<CompilerDiagnostic> closureFailure =
+                ClassConstructionValidator.validate(
+                    unitWithOp(unit, closureOp.opId(), tamperedClosure),
+                    tableWithOpBlock(table, closureOp.opId(), defaultBlock),
+                    result.registry(), result.jsonDefaults(), own, Map.of());
+            expectE6005Range(closureFailure,
+                ClassConstructionValidator.DEFAULT_BLOCK_ADMISSION,
+                SOURCE_ID, 2, 21, 2, 42, 38, 59);
+            if (closureFailure.isPresent()) {
+                check(closureFailure.get().range()
+                        .equals(closureOp.origin().span().range()),
+                    "the CLOSURE_NEW failure carries the capturing closure's own "
+                        + "span; got " + closureFailure.get().range());
+                check(!closureFailure.get().range().equals(defaultRange),
+                    "the CLOSURE_NEW failure never substitutes the enclosing "
+                        + "default's range " + defaultRange);
+            }
+        }
+
+        // (c) FUNCTION_ADAPT(REEVALUATE_THUNK) with one foreign capture:
+        // the seeded reference op's own range (2:21-2:42 [38,59)) wins.
+        BlockId thunkBlock = new BlockId(97_780);
+        BindingId adaptForeign = new BindingId(97_781);
+        RuntimeDescriptor.Func adaptSignature = new RuntimeDescriptor.Func(
+            List.of(), RuntimeDescriptor.Int.INSTANCE, false);
+        KindPayload.FunctionAdaptPayload adaptPayload =
+            new KindPayload.FunctionAdaptPayload(adaptSignature, adaptSignature,
+                CaptureMode.REEVALUATE_THUNK,
+                new AdaptSourceRef.Thunk(thunkBlock,
+                    List.of(new BindingGeneration(adaptForeign, 0))), null);
+        SemanticOp adaptOp = seedOp(SemanticOpKind.FUNCTION_ADAPT,
+            new OpId(MODULE, 97_782),
+            new SourceOrigin(SOURCE_ID, new SourceSpan(SOURCE_ID, 2, 21, 2, 41, 38, 59),
+                SourceOriginKind.USER, new AnchorId(97_783), defaultOp.opId()),
+            new ValueId(97_784), adaptSignature, adaptPayload);
+        List<SemanticOp> adaptOps = new ArrayList<>(unit.ops());
+        adaptOps.add(adaptOp);
+        Optional<CompilerDiagnostic> adaptFailure = ClassConstructionValidator.validate(
+            unitWithOps(unit, adaptOps),
+            tableWithOpBlockAndBlock(table, adaptOp.opId(), defaultBlock, thunkBlock),
+            result.registry(), result.jsonDefaults(), own, Map.of());
+        expectE6005Range(adaptFailure, ClassConstructionValidator.DEFAULT_BLOCK_ADMISSION,
+            SOURCE_ID, 2, 21, 2, 42, 38, 59);
+        if (adaptFailure.isPresent()) {
+            check(adaptFailure.get().range().equals(adaptOp.origin().span().range()),
+                "the FUNCTION_ADAPT failure carries the capturing adapter's own "
+                    + "span; got " + adaptFailure.get().range());
+            check(!adaptFailure.get().range().equals(defaultRange),
+                "the FUNCTION_ADAPT failure never substitutes the enclosing "
+                    + "default's range " + defaultRange);
+            check(adaptFailure.get().message().endsWith(admissionSubject(defaultOp,
+                    adaptForeign, "is not a block member")),
+                "the FUNCTION_ADAPT message still names the owning CLASS_DEFAULT "
+                    + defaultOp.opId() + " and the rejected binding; got "
+                    + adaptFailure.get().message());
+        }
+
+        // (d) Originless-default control: a synthetic empty-file
+        // CLASS_DEFAULT origin with an identifiable reference still
+        // yields the reference's exact SOURCE range — the diagnostic never
+        // borrows the absent default anchor.
+        SemanticOp originlessDefault = withOrigin(defaultOp,
+            new SourceOrigin(SOURCE_ID, SourceSpan.synthetic(""),
+                SourceOriginKind.SYNTHETIC, defaultOp.origin().anchorId(), null));
+        List<SemanticOp> originlessOps = new ArrayList<>();
+        for (SemanticOp op : unit.ops()) {
+            if (op.opId().equals(defaultOp.opId())) {
+                originlessOps.add(originlessDefault);
+            } else if (op.opId().equals(loadOp.opId())) {
+                originlessOps.add(tamperedLoad);
+            } else {
+                originlessOps.add(op);
+            }
+        }
+        Optional<CompilerDiagnostic> originlessFailure =
+            ClassConstructionValidator.validate(unitWithOps(unit, originlessOps), table,
+                result.registry(), result.jsonDefaults(), own, Map.of());
+        expectE6005Range(originlessFailure,
+            ClassConstructionValidator.DEFAULT_BLOCK_ADMISSION,
+            SOURCE_ID, 4, 12, 4, 16, 92, 96);
+        if (originlessFailure.isPresent()) {
+            check(!originlessFailure.get().range().isCanonicalSynthetic(),
+                "the originless-default failure does not fall back to the canonical "
+                    + "empty-file synthetic range; got " + originlessFailure.get().range());
+            check(originlessFailure.get().message().endsWith(admissionSubject(defaultOp,
+                    missingBinding, "is not a block member")),
+                "the originless-default message still names the owning CLASS_DEFAULT "
+                    + defaultOp.opId() + " and the rejected binding; got "
+                    + originlessFailure.get().message());
+        }
+    }
+
+    /** The exact parenthesized subject tail of a DEFAULT_BLOCK_ADMISSION message. */
+    private static String admissionSubject(SemanticOp defaultOp, BindingId binding,
+                                           String reason) {
+        KindPayload.ClassDefaultPayload payload =
+            (KindPayload.ClassDefaultPayload) defaultOp.payload();
+        return "(CLASS_DEFAULT " + defaultOp.opId() + " of " + payload.classId() + "."
+            + payload.field() + " references binding " + binding
+            + " whose producing allocation " + reason
+            + ": a default block admits only allocations inside the default closure "
+            + "itself and module-level bindings resolved through the module-init "
+            + "block (an enclosing-region free reference is invalid — K-D3))";
+    }
+
+    /** Replaces one produced op by identity. */
+    private static LoweredModuleUnit unitWithOp(LoweredModuleUnit unit, OpId replaced,
+                                                SemanticOp replacement) {
+        List<SemanticOp> ops = new ArrayList<>();
+        for (SemanticOp op : unit.ops()) {
+            ops.add(op.opId().equals(replaced) ? replacement : op);
+        }
+        return unitWithOps(unit, ops);
+    }
+
+    /** One op re-origined (the contract snapshot excludes source coordinates). */
+    private static SemanticOp withOrigin(SemanticOp op, SourceOrigin origin) {
+        return new SemanticOp(op.opId(), op.kind(), origin, op.result(), op.resultType(),
+            op.operands(), op.operandTypes(), op.payload(), op.failurePolicy(),
+            op.contract());
+    }
+
+    /** The table with one op moved into the given membership block. */
+    private static StructuredBodyTable tableWithOpBlock(StructuredBodyTable table,
+                                                        OpId opId, BlockId block) {
+        Map<OpId, BlockId> opBlocks = new LinkedHashMap<>(table.opBlocks());
+        opBlocks.put(opId, block);
+        Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>(table.blockOps());
+        List<OpId> members = new ArrayList<>(blockOps.getOrDefault(block, List.of()));
+        if (!members.contains(opId)) {
+            members.add(opId);
+        }
+        blockOps.put(block, members);
+        return new StructuredBodyTable(blockOps, opBlocks);
+    }
+
+    /** The table with one op moved into a membership block and an empty added block. */
+    private static StructuredBodyTable tableWithOpBlockAndBlock(StructuredBodyTable table,
+                                                                OpId opId, BlockId block,
+                                                                BlockId added) {
+        StructuredBodyTable moved = tableWithOpBlock(table, opId, block);
+        Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>(moved.blockOps());
+        blockOps.putIfAbsent(added, List.of());
+        return new StructuredBodyTable(blockOps, moved.opBlocks());
+    }
+
+    /** One directly seeded produced op with its wired contract digest. */
+    private static SemanticOp seedOp(SemanticOpKind kind, OpId opId, SourceOrigin origin,
+                                     ValueId result, RuntimeDescriptor resultType,
+                                     KindPayload payload) {
+        ClosedSelector selector = payload instanceof KindPayload.SelectorCarrying carrying
+            ? carrying.selector() : null;
+        OperationContractSnapshot provisional = new OperationContractSnapshot(
+            OperationContractSnapshot.VERSION, kind, resultType, List.of(), selector,
+            payload, FailurePolicyId.NO_DEAL_FAILURE, List.of(), "placeholder");
+        String digest = ContractSnapshotCanonicalizer.digest(provisional);
+        return new SemanticOp(opId, kind, origin, result, resultType, List.of(), List.of(),
+            payload, FailurePolicyId.NO_DEAL_FAILURE,
+            new OperationContractSnapshot(OperationContractSnapshot.VERSION, kind,
+                resultType, List.of(), selector, payload, FailurePolicyId.NO_DEAL_FAILURE,
+                List.of(), digest));
+    }
+
+    // =========================================================================
     // 6. JSON_LAYOUT_COHERENCE negatives
     // =========================================================================
 
@@ -1211,6 +1499,7 @@ public class ClassConstructionValidatorTest {
         testConstructionNegatives();
         testFieldOperationNegatives();
         testDefaultBlockAdmissionNegatives();
+        testDefaultBlockAdmissionReferenceOrigins();
         testJsonNegatives();
         testDetailsDumpDeterminism();
         testFailureRangeOrigins();

@@ -1254,7 +1254,7 @@ public final class ClassConstructionValidator {
                             KindPayload.BindingLoadPayload load =
                                 (KindPayload.BindingLoadPayload) member.payload();
                             Optional<CompilerDiagnostic> failure = admitReference(op,
-                                load.binding(), producingBlocks, admitted);
+                                member, load.binding(), producingBlocks, admitted);
                             if (failure.isPresent()) {
                                 return failure;
                             }
@@ -1264,7 +1264,7 @@ public final class ClassConstructionValidator {
                                 (KindPayload.ClosureNewPayload) member.payload();
                             for (BindingGeneration capture : closurePayload.captures()) {
                                 Optional<CompilerDiagnostic> failure = admitReference(op,
-                                    capture.binding(), producingBlocks, admitted);
+                                    member, capture.binding(), producingBlocks, admitted);
                                 if (failure.isPresent()) {
                                     return failure;
                                 }
@@ -1278,7 +1278,7 @@ public final class ClassConstructionValidator {
                                 for (BindingGeneration capture
                                         : thunk.capturedBindings()) {
                                     Optional<CompilerDiagnostic> failure = admitReference(op,
-                                        capture.binding(), producingBlocks, admitted);
+                                        member, capture.binding(), producingBlocks, admitted);
                                     if (failure.isPresent()) {
                                         return failure;
                                     }
@@ -1294,8 +1294,16 @@ public final class ClassConstructionValidator {
             return Optional.empty();
         }
 
-        /** Admits one binding reference against the closed admission set. */
+        /**
+         * Admits one binding reference against the closed admission set.
+         * The message names the owning {@code CLASS_DEFAULT}
+         * ({@code defaultOp}); the diagnostic range belongs to the
+         * offending {@code reference} — the produced op that actually
+         * carries the rejected binding reference — never the enclosing
+         * default expression.
+         */
         private Optional<CompilerDiagnostic> admitReference(SemanticOp defaultOp,
+                                                            SemanticOp reference,
                                                             BindingId binding,
                                                             Map<BindingId, BlockId>
                                                                 producingBlocks,
@@ -1311,7 +1319,7 @@ public final class ClassConstructionValidator {
                         + producing) + ": a default block admits only allocations inside "
                     + "the default closure itself and module-level bindings resolved "
                     + "through the module-init block (an enclosing-region free "
-                    + "reference is invalid — K-D3)", defaultOp);
+                    + "reference is invalid — K-D3)", reference);
             }
             return Optional.empty();
         }
