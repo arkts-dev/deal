@@ -490,6 +490,53 @@ public class ProductionDispatchTest {
         }
         """;
 
+    /**
+     * The shadowing-initializer assignment collision (review 0005): the
+     * assignment inside a shadowing let's own initializer targets the
+     * enclosing binding — the pending declaration is not visible there
+     * (docs/spec-v1.2.md §Declaration order) — so the constructed
+     * literal keeps the enclosing binding's declared provider. The
+     * pre-fix recorder resolved the not-yet-visible inner declaration,
+     * so the identity-equal sibling's class was constructed and the
+     * import order decided the demanded default (7 versus 93) with no
+     * diagnostic.
+     */
+    private static final String SHADOW_IR_SOURCE = """
+        export class Ir { a: int = 7; }
+        export function make(): Ir { return {}; }
+        """;
+
+    private static final String SHADOW_CODEC_SOURCE = """
+        export class Ir { a: int = 93; }
+        export class Codec { b: int = 9; }
+        """;
+
+    private static final String SHADOW_MAIN_CODEC_FIRST = """
+        import * as console from "std/console";
+        import * as codec from "./m/codec";
+        import * as ir from "./m/ir";
+        export function main(): null {
+          let x: ir.Ir = {};
+          { let x: codec.Ir = (x = {}); }
+          for (let x: codec.Ir = (x = {}); false; ) { }
+          if (x.a === 7) { console.log("ok"); } else { console.log("wrong"); }
+          return null;
+        }
+        """;
+
+    private static final String SHADOW_MAIN_IR_FIRST = """
+        import * as console from "std/console";
+        import * as ir from "./m/ir";
+        import * as codec from "./m/codec";
+        export function main(): null {
+          let x: ir.Ir = {};
+          { let x: codec.Ir = (x = {}); }
+          for (let x: codec.Ir = (x = {}); false; ) { }
+          if (x.a === 7) { console.log("ok"); } else { console.log("wrong"); }
+          return null;
+        }
+        """;
+
     private static final String HOST_DEAL_JSON_LUA = """
         {
           "languageVersion": "1.2",
@@ -2271,6 +2318,135 @@ public class ProductionDispatchTest {
                 // The published artifact constructs every owner shape's
                 // own provider: the demanded default (7), never the
                 // sibling's (93).
+                checkJsArtifactRun(label, root.resolve("out"),
+                    irFirst ? "main_ir_first.js" : "main.js");
+            }
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * The shadowing-initializer assignment collision (review 0005): the
+     * assignment inside a shadowing let's own initializer targets the
+     * enclosing binding (the pending declaration is not visible there,
+     * docs/spec-v1.2.md §Declaration order), so the literal keeps that
+     * binding's declared provider — the enclosing annotation names
+     * {@code ir} even when the not-yet-visible inner declaration names
+     * the identity-equal sibling and the import that happens to come
+     * first. Asserted in both import orders for the enclosing block and
+     * the loop-head form, with the exact defining range, one
+     * import-order-independent digest, and the published artifact
+     * outcome.
+     */
+    private static void testProductionShadowingInitializerCollision()
+            throws Exception {
+        System.out.println("-- production invocation: an assignment inside"
+            + " a shadowing let's own initializer targets the enclosing"
+            + " binding and keeps its declared provider (both import orders;"
+            + " exact resource, digest, and artifact outcome) --");
+
+        Path root = Files.createTempDirectory("production-shadowing-");
+        try {
+            write(root, "deal.json", """
+                {
+                  "languageVersion": "1.2",
+                  "stdlib": "1.2",
+                  "moduleRoots": ["src"],
+                  "dependencies": {},
+                  "externals": {},
+                  "backend": "js",
+                  "output": "out"
+                }
+                """);
+            write(root, "src/m/ir.deal", SHADOW_IR_SOURCE);
+            write(root, "src/m/codec.deal", SHADOW_CODEC_SOURCE);
+            write(root, "src/main.deal", SHADOW_MAIN_CODEC_FIRST);
+            write(root, "src/main_ir_first.deal", SHADOW_MAIN_IR_FIRST);
+
+            String codecFirstDigest = null;
+            for (String entry : List.of("src/main.deal",
+                    "src/main_ir_first.deal")) {
+                String label = entry.contains("ir_first") ? "ir-first"
+                    : "codec-first";
+                boolean irFirst = label.equals("ir-first");
+                ArmCompile compile = compileWithInvocation(root, entry,
+                    productionInvocation());
+                check(compile.success(), "the " + label + " shadowing"
+                    + " collision compile succeeds through the production"
+                    + " invocation: " + compile.orchestrator()
+                        .diagnostics());
+                if (!compile.success()) {
+                    continue;
+                }
+                CompilationOrchestrator orchestrator =
+                    compile.orchestrator();
+                String mainUri = serializerModuleUri(orchestrator,
+                    "/" + entry);
+                String irUri = serializerModuleUri(orchestrator,
+                    "/src/m/ir.deal");
+                String codecUri = serializerModuleUri(orchestrator,
+                    "/src/m/codec.deal");
+                DiagnosticRange irDeclaration = mainUri == null
+                    || irUri == null || codecUri == null ? null
+                    : classDeclarationRange(SHADOW_IR_SOURCE,
+                        irUri.substring("file://".length()), "Ir");
+                DiagnosticRange codecIrDeclaration = mainUri == null
+                    || irUri == null || codecUri == null ? null
+                    : classDeclarationRange(SHADOW_CODEC_SOURCE,
+                        codecUri.substring("file://".length()), "Ir");
+                check(mainUri != null && irUri != null && codecUri != null
+                        && irDeclaration != null
+                        && codecIrDeclaration != null,
+                    "the " + label + " shadowing collision resolves every"
+                        + " module identity and declaration range");
+                if (mainUri == null || irUri == null || codecUri == null
+                        || irDeclaration == null
+                        || codecIrDeclaration == null) {
+                    continue;
+                }
+                // Both literals of the probe (the enclosing declaration's
+                // initializer and the assignment inside the shadowing
+                // initializer) are the ordinary walk's demanded
+                // construction of the enclosing binding's class: exactly
+                // one edge, on the enclosing provider, with the exact
+                // defining range and digest — never the identity-equal
+                // sibling the pending annotation names.
+                List<RuntimeImportDependency> edges = classEdges(
+                    orchestrator, mainUri, "Ir",
+                    RuntimeImportDependency.Reason.RUNTIME_USE);
+                checkEq(1, edges.size(), "the " + label + " shadowing"
+                    + " walk holds exactly one ordinary Ir edge");
+                if (edges.size() != 1) {
+                    continue;
+                }
+                RuntimeImportDependency edge = edges.get(0);
+                checkEq(irUri, edge.toSemanticModuleIdentity()
+                    .canonicalResolvedSourceUri(), "the " + label
+                    + " ordinary Ir edge targets the declaring module");
+                checkEq("ir", edge.importAlias(), "the " + label
+                    + " ordinary Ir edge keeps the spelled alias");
+                checkEq(irDeclaration, edge.semanticResourceIdentity()
+                    .lexicalDeclarationIdentity().sourceScalarRange(),
+                    "the " + label + " ordinary Ir edge carries the exact"
+                        + " defining declaration range");
+                check(!edge.semanticResourceIdentity()
+                    .lexicalDeclarationIdentity().sourceScalarRange()
+                    .equals(codecIrDeclaration), "the " + label
+                    + " ordinary Ir edge never binds the sibling"
+                    + " declaration");
+                if (irFirst) {
+                    checkEq(codecFirstDigest, edge.providerContractDigest(),
+                        "the shadowing Ir provider digest is"
+                            + " import-order independent");
+                } else {
+                    codecFirstDigest = edge.providerContractDigest();
+                }
+
+                // The published artifact constructs the enclosing
+                // binding's own provider: the demanded default (7) —
+                // never the sibling's (93), which is what the pre-fix
+                // recorder emitted under codec-first imports.
                 checkJsArtifactRun(label, root.resolve("out"),
                     irFirst ? "main_ir_first.js" : "main.js");
             }
@@ -4706,6 +4882,7 @@ public class ProductionDispatchTest {
         testProductionDeclaredContextSiblingCollision();
         testProductionIdentifierAssignmentCollision();
         testProductionMemberAssignmentCollision();
+        testProductionShadowingInitializerCollision();
         testConversionOverflowTerminal();
         testAtomicFailureThroughDispatch();
         testFailClosedFamilies();

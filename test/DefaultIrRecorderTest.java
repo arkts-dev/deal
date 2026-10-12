@@ -230,6 +230,7 @@ public final class DefaultIrRecorderTest {
         testDeclaredContextSiblingCollision();
         testIdentifierAssignmentSiblingCollision();
         testMemberAssignmentSiblingCollision();
+        testShadowingInitializerAssignmentCollision();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -893,6 +894,119 @@ public final class DefaultIrRecorderTest {
     }
 
     /**
+     * One shadowing-initializer assignment probe (review 0005): the
+     * outer declaration's annotation names one sibling and the inner
+     * (shadowing) declaration's annotation the other; the inner
+     * declaration's initializer assigns a literal to the name. The
+     * pending declaration is invisible to its own initializer, so the
+     * assignment targets the enclosing binding and both literals carry
+     * the outer annotation's provider. The checked scope shape mirrors
+     * the pass-1 resolver: the enclosing binding in the body scope, the
+     * pending declaration in the inner block's scope, both recorded in
+     * the scope map (the walk's pending-frame trigger). Returns the
+     * recorded occurrences.
+     */
+    private static List<DefaultResourceOccurrence>
+            siblingShadowingAssignmentRun(List<SiblingProvider> providers,
+                    String outerSpelling, String innerSpelling) {
+        StringBuilder source = new StringBuilder();
+        for (SiblingProvider provider : providers) {
+            source.append("import * as ").append(provider.alias())
+                .append(" from \"./").append(provider.alias())
+                .append("\"\n");
+        }
+        source.append("function make(): int {\n")
+            .append("  let x: ").append(outerSpelling)
+            .append(" = {};\n")
+            .append("  { let x: ").append(innerSpelling)
+            .append(" = (x = {}); }\n")
+            .append("  return x.a;\n")
+            .append("}\n");
+        LexResult lex = new Lexer(source.toString(), "main.deal").tokenize();
+        check(!lex.hasErrors(), "shadowing-initializer fixture lexes: "
+            + lex.diagnostics());
+        ParseResult parse = new Parser(lex.tokens(), "main.deal",
+            lex.directiveEvents()).parse();
+        check(!parse.hasErrors(), "shadowing-initializer fixture parses: "
+            + parse.diagnostics());
+        ProgramNode program = parse.program();
+        FunctionDeclaration make = null;
+        for (StatementNode stmt : program.statements()) {
+            if (stmt instanceof FunctionDeclaration fd
+                    && fd.body() != null) {
+                make = fd;
+            }
+        }
+        check(make != null, "the shadowing-initializer fixture declares"
+            + " a function");
+        if (make == null) {
+            return List.of();
+        }
+        VariableDeclaration outer = null;
+        Block innerBlock = null;
+        VariableDeclaration inner = null;
+        for (StatementNode stmt : make.body().statements()) {
+            if (stmt instanceof VariableDeclaration vd && outer == null) {
+                outer = vd;
+            } else if (stmt instanceof Block block) {
+                innerBlock = block;
+                for (StatementNode innerStmt : block.statements()) {
+                    if (innerStmt instanceof VariableDeclaration vd) {
+                        inner = vd;
+                    }
+                }
+            }
+        }
+        check(outer != null && innerBlock != null && inner != null,
+            "the shadowing-initializer fixture declares the enclosing"
+                + " binding, the inner block, and the shadowing "
+                + "declaration");
+        if (outer == null || innerBlock == null || inner == null) {
+            return List.of();
+        }
+        TypeNode outerAnnotation = outer.typeAnnotation().orElseThrow();
+        TypeNode innerAnnotation = inner.typeAnnotation().orElseThrow();
+        Type outerType = classTypeOf(outerAnnotation, providers);
+        Map<ExpressionNode, Type> typeMap = new HashMap<>();
+        // The checker contextualizes both literals by the enclosing
+        // binding's declared class: the assignment target is the
+        // enclosing binding, so the pending inner declaration's
+        // annotation never types the assigned value.
+        pinBodyLiterals(make.body().statements(), outerType, typeMap);
+        Map<String, DefaultPlanImport> imports = new LinkedHashMap<>();
+        Map<String, CanonicalModuleIdentity> classification =
+            new LinkedHashMap<>();
+        SymbolTable moduleScope = new SymbolTable();
+        for (SiblingProvider provider : providers) {
+            DefaultPlanImport planImport = provider.planImport();
+            imports.put(provider.alias(), planImport);
+            classification.put(provider.modulePath(), provider.identity());
+            moduleScope.define(provider.alias(), new deal.checker.Symbol
+                .ModuleSymbol(provider.alias(), planImport.exports(),
+                    new Span("main.deal", 1, 1, 1, 5)));
+        }
+        SymbolTable bodyScope = moduleScope.enterScope();
+        bodyScope.define(outer.name(), new deal.checker.Symbol
+            .VariableSymbol(outer.name(), outerType, false, null,
+                outerAnnotation));
+        SymbolTable innerScope = bodyScope.enterScope();
+        innerScope.define(inner.name(), new deal.checker.Symbol
+            .VariableSymbol(inner.name(),
+                classTypeOf(innerAnnotation, providers), false, null,
+                innerAnnotation));
+        Map<StatementNode, SymbolTable> scopeMap = new HashMap<>();
+        scopeMap.put(make.body(), bodyScope);
+        scopeMap.put(innerBlock, innerScope);
+        DefaultIrRecorder recorder = new DefaultIrRecorder(
+            typeMap, scopeMap, imports, classification,
+            CONSUMER_LOCATION, "src.main", program,
+            (typeNode, resolutionScope) -> classTypeOf(typeNode, providers),
+            Map.of());
+        recorder.recordFunctionBody(make, moduleScope);
+        return recorder.occurrences();
+    }
+
+    /**
      * Defines every annotated {@code let} of the given statements in the
      * walked scope as the checker's binding: the declared type and its
      * own annotation node travel on the symbol.
@@ -1487,6 +1601,44 @@ public final class DefaultIrRecorderTest {
                 siblingMemberAssignmentRun(order, "codec.Wrap", wrapper,
                     codec.classType()), codec,
                 "the member-assignment probe (codec.Wrap owner)");
+        }
+    }
+
+    /**
+     * The shadowing-initializer assignment collision (review 0005): the
+     * assignment inside a shadowing let's own initializer targets the
+     * enclosing binding — the pending declaration is not visible there
+     * (docs/spec-v1.2.md &sect;Declaration order), exactly like the
+     * checker's {@code resolveVisibleBinding} — so the literal keeps
+     * the enclosing binding's declared provider, never the
+     * not-yet-visible inner declaration's annotation and never the
+     * first identity-equal export. Asserted in both import orders and
+     * both sibling spellings.
+     */
+    private static void testShadowingInitializerAssignmentCollision() {
+        System.out.println("-- shadowing-initializer assignment: the"
+            + " pending let is invisible to its own initializer, so the"
+            + " enclosing binding owns the literal (both import orders)"
+            + " --");
+        CanonicalModuleIdentity sibling =
+            new CanonicalModuleIdentity.ProjectModule(SIBLING_IDENTITY);
+        SiblingProvider ir = siblingProvider("ir", "/proj/src/m/ir.deal",
+            "src.m.ir", sibling, "Ir");
+        SiblingProvider codec = siblingProvider("codec",
+            "/proj/src/m/codec.deal", "src.m.codec", sibling, "Ir");
+        check(codec.classIdentity().equals(ir.classIdentity()),
+            "the fixture's exported same-name siblings are identity-equal"
+                + " (the directory-keyed model)");
+
+        for (List<SiblingProvider> order : List.of(
+                List.of(ir, codec), List.of(codec, ir))) {
+            checkSiblingClassOccurrence(
+                siblingShadowingAssignmentRun(order, "ir.Ir", "codec.Ir"),
+                ir, "the shadowing-initializer probe (ir outer binding)");
+            checkSiblingClassOccurrence(
+                siblingShadowingAssignmentRun(order, "codec.Ir", "ir.Ir"),
+                codec, "the shadowing-initializer probe (codec outer"
+                    + " binding)");
         }
     }
 

@@ -55,12 +55,15 @@ import deal.diagnostics.DiagnosticRange;
 import deal.identity.CanonicalModuleIdentity;
 import deal.types.Type;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 final class DefaultIrRecorder {
 
@@ -129,6 +132,24 @@ final class DefaultIrRecorder {
      */
     private final Map<Symbol.VariableSymbol, DefaultPlanImport>
         bindingProviders = new java.util.IdentityHashMap<>();
+
+    /**
+     * The checker's non-hoisting let visibility (docs/spec-v1.2.md
+     * &sect;Declaration order and &sect;Scope) mirrored over this
+     * source-order walk: one frame per open statement list, holding the
+     * scope of that list and its own let-declared names not yet
+     * reached. A reference to such a name resolves against the
+     * enclosing scopes, so an assignment inside a shadowing
+     * declaration's own initializer (or a forward reference) names the
+     * enclosing binding exactly like the checker's
+     * {@code resolveVisibleBinding}. Walk state only: every push has a
+     * matching pop on the same code path.
+     */
+    private record PendingScope(SymbolTable scope, Set<String> remaining) {
+    }
+
+    private final ArrayDeque<PendingScope> pendingScopes =
+        new ArrayDeque<>();
 
     /**
      * The provider the enclosing declared function's return type node
@@ -452,7 +473,8 @@ final class DefaultIrRecorder {
         DefaultPlanImport owner = null;
         if (call.callee() instanceof MemberAccessExpr mae
                 && mae.object() instanceof IdentifierExpr id
-                && scope.resolve(id.name()) instanceof Symbol.ModuleSymbol) {
+                && visibleBinding(scope, id.name())
+                    instanceof Symbol.ModuleSymbol) {
             DefaultPlanImport provider = imports.get(id.name());
             FunctionDeclaration declaration = provider == null ? null
                 : AstDeclarations.findFunctionDeclaration(
@@ -464,7 +486,7 @@ final class DefaultIrRecorder {
                 owner = provider;
             }
         } else if (call.callee() instanceof IdentifierExpr cid
-                && scope.resolve(cid.name())
+                && visibleBinding(scope, cid.name())
                     instanceof Symbol.FunctionSymbol function) {
             // The declaration the callee name resolved to, never the
             // first top-level declaration carrying the name: a nested
@@ -487,6 +509,69 @@ final class DefaultIrRecorder {
             providers.add(providerForTypeNode(node, owner));
         }
         return providers;
+    }
+
+    /**
+     * Pushes one statement list's not-yet-declared let names over the
+     * scope that list was walked in, mirroring the checker's
+     * {@code pushPendingScope}: only the names this scope declares
+     * locally take part, and each is removed when its declaration
+     * statement is reached. A null scope or a scope that declares no
+     * direct let contributes an empty frame.
+     */
+    private void pushPendingScope(List<StatementNode> statements,
+            SymbolTable scope) {
+        Set<String> names = new LinkedHashSet<>();
+        if (scope != null) {
+            for (StatementNode child : statements) {
+                if (child instanceof VariableDeclaration vd
+                        && scope.containsLocally(vd.name())) {
+                    names.add(vd.name());
+                }
+            }
+        }
+        pendingScopes.push(new PendingScope(scope, names));
+    }
+
+    /**
+     * Resolves a name to the binding the declaration-order rules make
+     * visible at the current walk position (docs/spec-v1.2.md
+     * &sect;Declaration order): a let declaration is visible only after
+     * its declaration, so a reference from inside the declaring
+     * statement list's earlier statements — a shadowing declaration's
+     * own initializer, a forward reference — resolves against the
+     * enclosing scopes. This is the recorder's counterpart of the
+     * checker's {@code TypeChecker.resolveVisibleBinding}; the same
+     * resolution feeds every provider-provenance route (assignment
+     * targets, inferred initializers, contextual callees), so the
+     * pending declaration's annotation never captures the literal.
+     */
+    private Symbol visibleBinding(SymbolTable scope, String name) {
+        Symbol sym = scope.resolve(name);
+        for (PendingScope pending : pendingScopes) {
+            if (sym != null && pending.scope() != null
+                    && pending.remaining().contains(name)
+                    && pending.scope().resolveLocal(name) == sym) {
+                sym = pending.scope().parent() != null
+                    ? pending.scope().parent().resolve(name) : null;
+            }
+        }
+        return sym;
+    }
+
+    /**
+     * Removes one completed declaration's name from the pending frame
+     * of its own scope: the name is visible to the following statements
+     * of that list (the checker's
+     * {@code checkVariableDeclaration} removal).
+     */
+    private void declarationReached(SymbolTable scope, String name) {
+        for (PendingScope pending : pendingScopes) {
+            if (pending.scope() == scope) {
+                pending.remaining().remove(name);
+                return;
+            }
+        }
     }
 
     /**
@@ -719,12 +804,14 @@ final class DefaultIrRecorder {
         DefaultPlanImport savedReturnProvider = enclosingReturnProvider;
         enclosingReturnProvider = providerForTypeNode(fd.returnType(),
             null);
+        pushPendingScope(fd.body().statements(), bodyScope);
         try {
             for (StatementNode stmt : fd.body().statements()) {
                 statements.add(walkStatement(stmt, bodyScope, false));
             }
         } finally {
             enclosingReturnProvider = savedReturnProvider;
+            pendingScopes.pop();
         }
         return List.copyOf(statements);
     }
@@ -751,12 +838,14 @@ final class DefaultIrRecorder {
         DefaultPlanImport savedReturnProvider = enclosingReturnProvider;
         enclosingReturnProvider = providerForTypeNode(fe.returnType(),
             null);
+        pushPendingScope(fe.body().statements(), bodyScope);
         try {
             for (StatementNode stmt : fe.body().statements()) {
                 bodyChildren.add(walkStatement(stmt, bodyScope, false));
             }
         } finally {
             enclosingReturnProvider = savedReturnProvider;
+            pendingScopes.pop();
         }
         return node(DefaultIrNode.NodeKind.FUNCTION_EXPRESSION, null,
             typeMap.get(fe), contexts, bodyChildren, null, null, null,
@@ -777,9 +866,19 @@ final class DefaultIrRecorder {
         switch (stmt) {
             case Block b -> {
                 List<DefaultIrNode> children = new ArrayList<>();
-                for (StatementNode s : b.statements()) {
-                    children.add(walkStatement(s, effectiveScope,
-                        evaluatorScope));
+                boolean tracked = stmtScope != null;
+                if (tracked) {
+                    pushPendingScope(b.statements(), effectiveScope);
+                }
+                try {
+                    for (StatementNode s : b.statements()) {
+                        children.add(walkStatement(s, effectiveScope,
+                            evaluatorScope));
+                    }
+                } finally {
+                    if (tracked) {
+                        pendingScopes.pop();
+                    }
                 }
                 return node(DefaultIrNode.NodeKind.BLOCK, null, null,
                     List.of(), children, null, null, null, b,
@@ -811,6 +910,11 @@ final class DefaultIrRecorder {
                         effectiveScope, List.of(), declaredProvider,
                         evaluatorScope));
                 }
+                // The declaration is complete: the name is visible to
+                // the following statements of its own statement list,
+                // so a later assignment to it resolves to this binding
+                // (docs/spec-v1.2.md §Declaration order).
+                declarationReached(effectiveScope, vd.name());
                 return node(DefaultIrNode.NodeKind.VARIABLE_DECLARATION,
                     null, null, List.of(), children, null, null,
                     vd.name(), vd, vd.span().range());
@@ -875,9 +979,27 @@ final class DefaultIrRecorder {
                 List<DefaultIrNode> children = new ArrayList<>();
                 fs.init().ifPresent(init -> {
                     switch (init) {
-                        case ForInit.VarDecl vd ->
-                            children.add(walkStatement(vd.decl(),
-                                effectiveScope, evaluatorScope));
+                        case ForInit.VarDecl vd -> {
+                            // The loop-head let is not visible to its own
+                            // initializer (docs/spec-v1.2.md §Declaration
+                            // order): a self reference there names the
+                            // enclosing binding, exactly like the
+                            // checker's loop-head pending frame.
+                            SymbolTable loopScope = scopeMap.get(fs);
+                            boolean tracked = loopScope != null;
+                            if (tracked) {
+                                pushPendingScope(List.of(vd.decl()),
+                                    loopScope);
+                            }
+                            try {
+                                children.add(walkStatement(vd.decl(),
+                                    effectiveScope, evaluatorScope));
+                            } finally {
+                                if (tracked) {
+                                    pendingScopes.pop();
+                                }
+                            }
+                        }
                         case ForInit.AssignExpr ae ->
                             children.add(recordExpression(ae.expr(),
                                 effectiveScope, List.of(),
@@ -1158,7 +1280,7 @@ final class DefaultIrRecorder {
      */
     private DefaultPlanImport bindingContextProvider(IdentifierExpr id,
             SymbolTable scope) {
-        Symbol sym = scope.resolve(id.name());
+        Symbol sym = visibleBinding(scope, id.name());
         if (!(sym instanceof Symbol.VariableSymbol variable)) {
             return null;
         }
@@ -1181,7 +1303,7 @@ final class DefaultIrRecorder {
         if (!(typeMap.get(mae.object()) instanceof Type.Class owner)) {
             return null;
         }
-        Symbol sym = scope.resolve(owner.name());
+        Symbol sym = visibleBinding(scope, owner.name());
         if (sym instanceof Symbol.ClassSymbol cs
                 && cs.identity().equals(owner.identity())) {
             DefaultPlanImport declared = providerForDeclaredField(program,
@@ -1247,7 +1369,8 @@ final class DefaultIrRecorder {
             SymbolTable scope) {
         if (call.callee() instanceof MemberAccessExpr mae
                 && mae.object() instanceof IdentifierExpr id
-                && scope.resolve(id.name()) instanceof Symbol.ModuleSymbol) {
+                && visibleBinding(scope, id.name())
+                    instanceof Symbol.ModuleSymbol) {
             DefaultPlanImport provider = imports.get(id.name());
             if (provider == null) {
                 return null;
@@ -1259,7 +1382,7 @@ final class DefaultIrRecorder {
                 declaration.returnType(), provider);
         }
         if (call.callee() instanceof IdentifierExpr cid
-                && scope.resolve(cid.name())
+                && visibleBinding(scope, cid.name())
                     instanceof Symbol.FunctionSymbol function) {
             FunctionDeclaration declaration = functionDeclarationOf(
                 function, cid.name(), scope);
