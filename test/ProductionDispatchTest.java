@@ -905,14 +905,6 @@ public class ProductionDispatchTest {
     private record ProcessOutcome(int exitCode, String output) {
     }
 
-    private static String absoluteClasspath() {
-        return Arrays.stream(System.getProperty("java.class.path", "")
-                .split(File.pathSeparator))
-            .filter(entry -> !entry.isEmpty())
-            .map(entry -> Path.of(entry).toAbsolutePath().normalize().toString())
-            .collect(java.util.stream.Collectors.joining(File.pathSeparator));
-    }
-
     private static ProcessOutcome runProcess(Path directory, String... command)
             throws Exception {
         BoundedProcess.BoundedResult result = BoundedProcess.runCaptured(
