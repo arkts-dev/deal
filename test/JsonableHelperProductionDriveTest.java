@@ -6,6 +6,8 @@ import deal.codegen.jvm.JvmBackend;
 import deal.codegen.jvm.JvmSemanticEmitter;
 import deal.codegen.lua.LuaSemanticEmitter;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
 import deal.distribution.DistributionHome;
 import deal.module.CompilationOrchestrator;
 import deal.module.ProductionProjectEmission;
@@ -1935,8 +1937,9 @@ public class JsonableHelperProductionDriveTest {
      * Both production emitters fail closed on one hand-built inconsistent
      * helper fact with a named producer defect: exactly the
      * {@code IllegalStateException} the production arm maps to its
-     * registered {@code SHARED_EMITTER_COVERAGE} rule, leaving the staged
-     * set empty.
+     * registered {@code SHARED_EMITTER_COVERAGE} rule, carrying the
+     * identified offending operation's own exact source range (ISSUE-0750
+     * D4), leaving the staged set empty.
      */
     private static void assertEmitterRejectsMissingFact(String what,
             Lowered lowered, HostDeclarationSurface surface,
@@ -1945,7 +1948,7 @@ public class JsonableHelperProductionDriveTest {
             Path out = Files.createTempDirectory("jsonable-missing-fact-");
             PublicationStager stager = PublicationStager.forRoot(out);
             String rejection = null;
-            boolean carried = true;
+            DiagnosticRange carried = null;
             try {
                 if (target == Target.LUAJIT) {
                     LuaSemanticEmitter.emitProductionProject(lowered.project(),
@@ -1956,13 +1959,11 @@ public class JsonableHelperProductionDriveTest {
                 }
             } catch (IllegalStateException guard) {
                 rejection = guard.getMessage();
-                // The genuinely originless control (ISSUE-0750 D4): an
-                // ordinary emitter refusal identifies no source anchor, so
-                // the production arm keeps the canonical empty-file
-                // synthetic projection for it.
-                carried = guard instanceof deal.semantic.ir.DiagnosticOriginCarrier
-                    && ((deal.semantic.ir.DiagnosticOriginCarrier) guard)
-                        .diagnosticRange() != null;
+                // The source-bearing shared emitter signal (ISSUE-0750 D4)
+                // carries the explicit offending op's own copied range; an
+                // ordinary genuinely originless refusal carries none.
+                carried = guard instanceof deal.semantic.ir.DiagnosticOriginCarrier carrier
+                    ? carrier.diagnosticRange() : null;
             }
             boolean names = rejection != null;
             for (String detail : requiredDetails) {
@@ -1970,9 +1971,29 @@ public class JsonableHelperProductionDriveTest {
             }
             check(names, what + " [" + target.laneName() + "]: the emitter fails "
                 + "closed with the named producer defect (" + rejection + ")");
-            check(!carried, what + " [" + target.laneName() + "]: the ordinary "
-                + "emitter refusal carries no origin (the canonical synthetic "
-                + "projection is unchanged)");
+            check(carried != null && carried.origin() == RangeOrigin.SOURCE
+                    && carried.scalarLength() > 0,
+                what + " [" + target.laneName() + "]: the identified refusal "
+                    + "carries a real SOURCE range: " + carried);
+            // The carried range is the own copied span of the operation the
+            // unchanged message identifies (never the canonical synthetic
+            // anchor, an enclosing construct, or a last-visited fallback).
+            boolean ownRange = false;
+            if (rejection != null && carried != null) {
+                for (Map.Entry<ModuleId, LoweredModuleUnit> module
+                        : lowered.project().modules().entrySet()) {
+                    for (SemanticOp op : module.getValue().ops()) {
+                        if (rejection.contains(op.opId().toString())
+                                && carried.equals(op.origin().span().range())) {
+                            ownRange = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            check(ownRange, what + " [" + target.laneName() + "]: the carried "
+                + "range is the own range of the op the unchanged message "
+                + "identifies: " + carried);
             check(stager.stagedSet().relativePaths().isEmpty(),
                 what + " [" + target.laneName() + "]: the fail-closed emission "
                     + "stages nothing");
@@ -2127,6 +2148,42 @@ public class JsonableHelperProductionDriveTest {
             if (lowered == null) {
                 return;
             }
+            // The hand-built facts are reachable in the retained project:
+            // the entry module reads the helper export the missing-export
+            // fact retargets, and it really calls the callee entry the
+            // missing-entry fact removes. Each emitter refusal therefore
+            // carries the own range of the read/call operation its
+            // unchanged message identifies (ISSUE-0750 D4).
+            boolean readsHelperExport = false;
+            boolean callsRemovedEntry = false;
+            SemanticOp removedEntry = null;
+            for (SemanticOp op : lowered.project().modules().get(lib).ops()) {
+                if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
+                        && op.payload().toString().contains("Widget$fromJson")) {
+                    removedEntry = op;
+                }
+            }
+            for (SemanticOp op : lowered.project()
+                    .modules().get(lowered.entryModule()).ops()) {
+                if (op.kind() == SemanticOpKind.EXPORT_READ
+                        && op.payload() instanceof KindPayload.ExportReadPayload read
+                        && read.module().equals(lib)
+                        && read.name().equals("Widget$fromJson")) {
+                    readsHelperExport = true;
+                }
+                if (op.kind() == SemanticOpKind.CALL
+                        && removedEntry != null
+                        && op.payload() instanceof KindPayload.CallPayload call
+                        && removedEntry.opId().equals(call.externalEntryRef())) {
+                    callsRemovedEntry = true;
+                }
+            }
+            check(readsHelperExport,
+                "the entry module records the helper export read the missing "
+                    + "export fact retargets");
+            check(callsRemovedEntry,
+                "the entry module records the cross-module call the missing "
+                    + "callee-entry fact retargets");
             assertEmitterRejectsMissingFact("the missing helper export",
                 withoutUnitOps(lowered, lib,
                     op -> op.kind() == SemanticOpKind.EXPORT_PUBLISH

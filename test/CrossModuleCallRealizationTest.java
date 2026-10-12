@@ -903,7 +903,8 @@ public class CrossModuleCallRealizationTest {
     private static void testFailClosedSeeds(LoweredFixture baseline)
             throws Exception {
         System.out.println("-- the fail-closed seeds: a ref outside the closure, a "
-            + "non-entry ref, a RETAINED_ABI external, a foreign callee module, a "
+            + "non-entry ref, a missing entry ref, an entry/binding export "
+            + "mismatch, a RETAINED_ABI external, a foreign callee module, a "
             + "statically-unresolved binding, a non-boundary host crossing, a "
             + "structural MODULE_INIT parent, and the unresolved host export at "
             + "the CALL, CALLBACK_INVOKE, and ASYNC_START arms --");
@@ -919,26 +920,78 @@ public class CrossModuleCallRealizationTest {
             SemanticOp call = externalCalls(appUnit).get(0);
 
             // (a) The ref names a module outside the closure: retarget the
-            // call at a foreign module's op identity.
+            // call at a foreign module's op identity. The unresolved-entry
+            // guard identifies the offending CALL and carries its own
+            // exact range.
+            ModuleId lib = new ModuleId("lib");
+            LoweredModuleUnit libUnit = result.project().modules().get(lib);
             OpId foreign = new OpId(new ModuleId("outside"), 1);
             ExecutableLoweredProject outsideClosure = replaceProjectCall(
                 result.project(), appUnit, call, foreign);
             assertEmitterRejects("the ref naming a module outside the closure",
+                call,
+                "CALL " + call.opId() + "'s externalEntryRef " + foreign
+                    + " does not resolve to a recorded EXTERNAL_ENTRY of the"
+                    + " callee module " + lib + " (producer defect)",
                 outsideClosure, result.tables(), result.registries(), fixture);
 
             // (b) The ref resolves to a non-entry op of the callee unit.
-            ModuleId lib = new ModuleId("lib");
-            LoweredModuleUnit libUnit = result.project().modules().get(lib);
             SemanticOp nonEntry = ofKind(libUnit, SemanticOpKind.EXPORT_PUBLISH).get(0);
             ExecutableLoweredProject nonEntryRef = replaceProjectCall(
                 result.project(), appUnit, call, nonEntry.opId());
-            assertEmitterRejects("the ref resolving to a non-entry op",
+            assertEmitterRejects("the ref resolving to a non-entry op", call,
+                "CALL " + call.opId() + "'s externalEntryRef " + nonEntry.opId()
+                    + " does not resolve to a recorded EXTERNAL_ENTRY of the"
+                    + " callee module " + lib + " (producer defect)",
                 nonEntryRef, result.tables(), result.registries(), fixture);
 
             KindPayload.CallPayload probePayload = (KindPayload.CallPayload) call.payload();
             FunctionExecutionBinding.ExternalFunction shared =
                 (FunctionExecutionBinding.ExternalFunction)
                     ((KindPayload.CallCallee.Static) probePayload.callee()).binding();
+
+            // (j) The missing recorded entry reference: the payload records
+            // no externalEntryRef at all (the closed fact no checker-valid
+            // program produces at a SHARED_BODY external) while the CALL
+            // origin stays. The missing-reference guard identifies the
+            // offending CALL and carries its own exact range.
+            assertEmitterRejects("the missing externalEntryRef", call,
+                "CALL " + call.opId() + " carries a SHARED_BODY external"
+                    + " binding without a recorded externalEntryRef"
+                    + " (producer defect)",
+                replaceProjectCall(result.project(), appUnit, call, null),
+                result.tables(), result.registries(), fixture);
+
+            // (k) The entry naming another export: the payload's recorded
+            // entry is retargeted at the callee module's other sync entry
+            // (the closed fact no checker-valid program produces) while the
+            // CALL origin stays. The entry-mismatch guard identifies the
+            // offending CALL and carries its own exact range.
+            SemanticOp otherEntry = null;
+            String otherExport = null;
+            for (SemanticOp candidate : ofKind(libUnit, SemanticOpKind.EXTERNAL_ENTRY)) {
+                KindPayload.ExternalEntryPayload candidatePayload =
+                    (KindPayload.ExternalEntryPayload) candidate.payload();
+                if (!candidatePayload.async()
+                        && !candidatePayload.exportName().equals(shared.exportName())) {
+                    otherEntry = candidate;
+                    otherExport = candidatePayload.exportName();
+                    break;
+                }
+            }
+            check(otherEntry != null && otherExport != null,
+                "the callee unit records a second sync entry to retarget at");
+            if (otherEntry != null && otherExport != null) {
+                assertEmitterRejects("the entry naming another export", call,
+                    "CALL " + call.opId() + "'s externalEntryRef " + otherEntry.opId()
+                        + " names the sync entry of export '" + otherExport
+                        + "' but the binding names the sync export '"
+                        + shared.exportName() + "' (producer defect)",
+                    replaceProjectCall(result.project(), appUnit, call,
+                        otherEntry.opId()),
+                    result.tables(), result.registries(), fixture);
+            }
+
             KindPayload.CallPayload retained = new KindPayload.CallPayload(
                 probePayload.mode(),
                 new KindPayload.CallCallee.Static(
@@ -1308,36 +1361,19 @@ public class CrossModuleCallRealizationTest {
 
     /**
      * Both emitters and the oracle reject the hand-built inconsistent fact
-     * with a fail-closed producer defect naming the unresolved entry.
+     * with a fail-closed producer defect naming the unresolved entry; the
+     * source-bearing shared signal carries the offending CALL operation's
+     * own exact range (ISSUE-0750 D4) and the production arm's own
+     * projection merges it into the unchanged
+     * {@code SHARED_EMITTER_COVERAGE} E6005.
      */
-    private static void assertEmitterRejects(String what,
-            ExecutableLoweredProject project,
+    private static void assertEmitterRejects(String what, SemanticOp offending,
+            String expectedMessage, ExecutableLoweredProject project,
             Map<ModuleId, StructuredBodyTable> tables,
-            Map<ModuleId, ClassFactoryRegistry> registries, Fixture fixture) {
-        try {
-            LuaSemanticEmitter.emitProductionProject(project, tables, registries,
-                fixture.surface());
-            fail(what + ": the LuaJIT emitter rejects the inconsistent fact");
-        } catch (IllegalStateException rejection) {
-            check(rejection.getMessage() != null
-                    && (rejection.getMessage().contains("externalEntryRef")
-                        || rejection.getMessage().contains("outside the")
-                        || rejection.getMessage().contains("does not resolve")),
-                what + ": the LuaJIT rejection names the unresolved entry: "
-                    + rejection.getMessage());
-        }
-        try {
-            JvmSemanticEmitter.emitProductionProject(project, tables, registries,
-                "Probe", fixture.surface());
-            fail(what + ": the JVM emitter rejects the inconsistent fact");
-        } catch (IllegalStateException rejection) {
-            check(rejection.getMessage() != null
-                    && (rejection.getMessage().contains("externalEntryRef")
-                        || rejection.getMessage().contains("outside the")
-                        || rejection.getMessage().contains("does not resolve")),
-                what + ": the JVM rejection names the unresolved entry: "
-                    + rejection.getMessage());
-        }
+            Map<ModuleId, ClassFactoryRegistry> registries, Fixture fixture)
+            throws Exception {
+        assertEmitterFailureCarriesOrigin(what, offending, expectedMessage, project,
+            tables, registries, fixture);
         try {
             SemanticOracle.executeProjectInits(project, tables, registries, null);
             fail(what + ": the oracle rejects the inconsistent fact");

@@ -147,7 +147,7 @@ final class JvmHostAbiEmission {
                     surface.require(payload.resolvedModule());
                 if (facts.kind()
                         != HostDeclarationSurface.DeclarationKind.HOST) {
-                    throw new IllegalStateException("the declaration module '"
+                    throw rejectedOp(op, "the declaration module '"
                         + payload.resolvedModule().path() + "' of MODULE_IMPORT "
                         + op.opId() + " is kind " + facts.kind()
                         + ": the extern-C declaration load is the FFI child's"

@@ -1447,16 +1447,6 @@ public final class LuaSemanticEmitter {
             }
         }
 
-        /**
-         * The shared emitter rejection of one explicitly rejected op (D4):
-         * the existing message with the op's own copied origin range, so
-         * the production arm projects the identifiable offending span
-         * instead of the canonical synthetic anchor.
-         */
-        private static SharedEmissionFailure rejectedOp(SemanticOp op, String message) {
-            return new SharedEmissionFailure(message, op.origin().span().range());
-        }
-
         /** Emits a block's ops under a label section. */
         private void emitLabeledBlock(BlockId block) {
             out.append("::").append(label(block)).append("::\n");

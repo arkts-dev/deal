@@ -451,11 +451,15 @@ public abstract class EmitterSessionBase {
         if (published != null && published.contains(name)) {
             return;
         }
-        throw new IllegalStateException("the compiled EXPORT_READ " + readOp
+        String message = "the compiled EXPORT_READ " + readOp
             + " of export '" + name + "' of module '" + module.path()
             + "' names an export the module never publishes through an"
             + " EXPORT_PUBLISH op of its module-init walk (a publisher-less"
-            + " surface entry is a producer defect, never a fabricated value)");
+            + " surface entry is a producer defect, never a fabricated value)";
+        SemanticOp read = opsById.get(readOp);
+        throw read == null
+            ? new IllegalStateException(message)
+            : rejectedOp(read, message);
     }
 
     /** The STDLIB_PARAMETER children in one-based declared order. */
@@ -483,7 +487,7 @@ public abstract class EmitterSessionBase {
                 return candidate;
             }
         }
-        throw new IllegalStateException(op.kind() + " " + op.opId() + " has no "
+        throw rejectedOp(op, op.kind() + " " + op.opId() + " has no "
             + kind + " boundary child: the pinned field-op shape carries it "
             + "parented to the op (producer defect)");
     }
@@ -515,7 +519,7 @@ public abstract class EmitterSessionBase {
         OpId factoryOpId = ClassFactoryRegistry.ownerFactoryOp(registries,
             payload.classFactoryRef());
         if (factoryOpId == null) {
-            throw new IllegalStateException("CLASS_NEW " + op.opId()
+            throw rejectedOp(op, "CLASS_NEW " + op.opId()
                 + " classFactoryRef " + payload.classFactoryRef()
                 + " resolves in no module's ClassFactoryRegistry in the closure"
                 + " (producer defect)");
@@ -795,13 +799,26 @@ public abstract class EmitterSessionBase {
         }
     }
 
+    /**
+     * The shared emitter rejection of one explicitly identified operation
+     * (design {@code shared-lowering-diagnostic-origins} D4): the existing
+     * message with the op's own copied origin range, so the production arm
+     * projects the identifiable offending span instead of the canonical
+     * synthetic anchor. A genuinely originless emitter failure stays an
+     * ordinary {@link IllegalStateException}.
+     */
+    protected static SharedEmissionFailure rejectedOp(SemanticOp op,
+            String message) {
+        return new SharedEmissionFailure(message, op.origin().span().range());
+    }
+
     protected final SemanticOp resolveExternalEntry(SemanticOp op,
             KindPayload.CallPayload payload,
             FunctionExecutionBinding.ExternalFunction external,
             LoweredModuleUnit calleeUnit) {
         OpId entryRef = payload.externalEntryRef();
         if (entryRef == null) {
-            throw new IllegalStateException("CALL " + op.opId()
+            throw rejectedOp(op, "CALL " + op.opId()
                 + " carries a SHARED_BODY external binding without a recorded"
                 + " externalEntryRef (producer defect)");
         }
@@ -815,7 +832,7 @@ public abstract class EmitterSessionBase {
             }
         }
         if (entry == null || entry.kind() != SemanticOpKind.EXTERNAL_ENTRY) {
-            throw new IllegalStateException("CALL " + op.opId()
+            throw rejectedOp(op, "CALL " + op.opId()
                 + "'s externalEntryRef " + entryRef + " does not resolve to a"
                 + " recorded EXTERNAL_ENTRY of the callee module "
                 + calleeUnit.moduleId() + " (producer defect)");
@@ -824,7 +841,7 @@ public abstract class EmitterSessionBase {
             (KindPayload.ExternalEntryPayload) entry.payload();
         if (entryPayload.async() || !entryPayload.exportName()
                 .equals(external.exportName())) {
-            throw new IllegalStateException("CALL " + op.opId()
+            throw rejectedOp(op, "CALL " + op.opId()
                 + "'s externalEntryRef " + entryRef + " names the "
                 + (entryPayload.async() ? "async" : "sync") + " entry of export '"
                 + entryPayload.exportName() + "' but the binding names the sync"
@@ -876,7 +893,7 @@ public abstract class EmitterSessionBase {
             ExternalAsyncLink link) {
         LoweredModuleUnit calleeUnit = units.get(link.calleeModuleId());
         if (calleeUnit == null) {
-            throw new IllegalStateException("ASYNC_START " + op.opId()
+            throw rejectedOp(op, "ASYNC_START " + op.opId()
                 + " resolves the external callee module " + link.calleeModuleId()
                 + " outside the session's closure (producer defect)");
         }
@@ -888,7 +905,7 @@ public abstract class EmitterSessionBase {
                     instanceof KindPayload.ExternalEntryPayload entryPayload)
                 || !entryPayload.async()
                 || !entryPayload.exportName().equals(link.exportName())) {
-            throw new IllegalStateException("ASYNC_START " + op.opId()
+            throw rejectedOp(op, "ASYNC_START " + op.opId()
                 + " names the async external '" + link.calleeModuleId() + "'."
                 + link.exportName() + " whose ExternalAsyncLink token "
                 + entryRef + " resolves to no emitted async EXTERNAL_ENTRY"
@@ -922,7 +939,7 @@ public abstract class EmitterSessionBase {
                 continue;
             }
             if (found != null) {
-                throw new IllegalStateException("the exported declaration '"
+                throw rejectedOp(op, "the exported declaration '"
                     + module.path() + "#" + exportName + " records two async"
                     + " EXTERNAL_ENTRY ops (producer defect)");
             }

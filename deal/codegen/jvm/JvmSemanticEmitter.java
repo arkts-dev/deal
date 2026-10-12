@@ -3,7 +3,6 @@ package deal.codegen.jvm;
 import deal.codegen.EmitterSessionBase;
 import deal.codegen.SemanticEmitterShared;
 import deal.codegen.SourceMapRecorder;
-import deal.codegen.SharedEmissionFailure;
 import deal.semantic.HostDeclarationSurface;
 import deal.semantic.StdlibFunctionCatalog;
 import deal.semantic.ir.AdaptSourceRef;
@@ -1497,16 +1496,6 @@ public final class JvmSemanticEmitter {
         }
 
         // -- per-op emission ---------------------------------------------------------
-
-        /**
-         * The shared emitter rejection of one explicitly rejected op (D4):
-         * the existing message with the op's own copied origin range, so
-         * the production arm projects the identifiable offending span
-         * instead of the canonical synthetic anchor.
-         */
-        private static SharedEmissionFailure rejectedOp(SemanticOp op, String message) {
-            return new SharedEmissionFailure(message, op.origin().span().range());
-        }
 
         private void emitOp(SemanticOp op, int indent) {
             beginSourceMappedGroup(op, indent(indent));

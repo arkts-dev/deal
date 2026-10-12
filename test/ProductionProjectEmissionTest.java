@@ -27,8 +27,12 @@ import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticRequirementManifest;
 import deal.semantic.ir.CanonicalJson;
+import deal.semantic.ir.AnchorId;
 import deal.semantic.ir.BlockId;
+import deal.semantic.ir.ClassFactoryId;
+import deal.semantic.ir.DefaultOwner;
 import deal.semantic.ir.ExecutableLoweredProject;
+import deal.semantic.ir.ExternalAsyncLink;
 import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
@@ -37,7 +41,11 @@ import deal.semantic.ir.OpId;
 import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
+import deal.semantic.ir.SourceOrigin;
+import deal.semantic.ir.SourceOriginKind;
+import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.StructuredBodyTable;
+import deal.semantic.ir.ValueId;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.SemanticProfile;
 
@@ -1151,6 +1159,376 @@ public class ProductionProjectEmissionTest {
         }
     }
 
+    /** The imported-class fixture: a SHARED_FACTORY CLASS_NEW and class field reads. */
+    private static final String IMPORTED_CLASS_LIB_SOURCE = """
+        export class Point {
+          x: int = 0;
+          y: int = 0;
+        }
+        """;
+
+    private static final String IMPORTED_CLASS_APP_SOURCE = """
+        import * as Lib from "./lib"
+
+        export function main(): null {
+          let p: Lib.Point = { x: 1, y: 2 };
+          let s: int = p.x + p.y;
+          return null;
+        }
+        """;
+
+    /**
+     * The remaining identified shared emission guards keep the explicit
+     * offending operation's own exact range (ISSUE-0750 D4): the
+     * CLASS_NEW factory lookup, the missing field boundary child, the
+     * unresolved async external-entry link, the duplicate async entry, and
+     * the JVM declaration-kind mismatch. Each seed is the closed fact no
+     * checker-valid program produces (a direct corrupted-IR boundary),
+     * driven through both shared targets where the guard is shared.
+     */
+    private static void testIdentifiedSharedGuardOrigins() throws Exception {
+        System.out.println("-- the remaining identified shared emission guards "
+            + "carry the offending op's own exact range --");
+
+        // (a)/(b) The imported-class fixture: the SHARED_FACTORY CLASS_NEW
+        // whose factory reference resolves in no registry, and the
+        // FIELD_READ whose required boundary child is absent.
+        Fixture importedClass = compileProject(new LinkedHashMap<>(Map.of(
+                "src/lib.deal", IMPORTED_CLASS_LIB_SOURCE,
+                "src/app.deal", IMPORTED_CLASS_APP_SOURCE)), Map.of());
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(importedClass);
+            check(!result.hasErrors(),
+                "the imported-class fixture lowers: " + result.diagnostics());
+            if (!result.hasErrors()) {
+                LoweredModuleUnit entry = result.project()
+                    .modules().get(result.project().entryModule());
+                SemanticOp sharedFactory = null;
+                SemanticOp fieldRead = null;
+                for (SemanticOp op : entry.ops()) {
+                    if (op.kind() == SemanticOpKind.CLASS_NEW
+                            && op.payload()
+                                instanceof KindPayload.ClassNewPayload payload
+                            && payload.defaultOwner() == DefaultOwner.SHARED_FACTORY) {
+                        sharedFactory = op;
+                    }
+                    if (op.kind() == SemanticOpKind.FIELD_READ && fieldRead == null) {
+                        fieldRead = op;
+                    }
+                }
+                check(sharedFactory != null,
+                    "the imported-class fixture lowers the SHARED_FACTORY CLASS_NEW");
+                check(fieldRead != null,
+                    "the imported-class fixture lowers the FIELD_READ");
+                if (sharedFactory != null) {
+                    KindPayload.ClassNewPayload payload =
+                        (KindPayload.ClassNewPayload) sharedFactory.payload();
+                    ClassFactoryId bogus = new ClassFactoryId(Long.MAX_VALUE);
+                    KindPayload.ClassNewPayload replaced =
+                        new KindPayload.ClassNewPayload(payload.classId(),
+                            payload.layout(), payload.providedFields(),
+                            DefaultOwner.SHARED_FACTORY, payload.classDefaultOpIds(),
+                            bogus, payload.fieldBoundaries());
+                    assertSharedGuardOrigin(
+                        "the unregistered class-factory reference", sharedFactory,
+                        "CLASS_NEW " + sharedFactory.opId() + " classFactoryRef "
+                            + bogus + " resolves in no module's"
+                            + " ClassFactoryRegistry in the closure (producer defect)",
+                        replaceUnitOp(result.project(), entry, sharedFactory, replaced),
+                        result, importedClass);
+                }
+                if (fieldRead != null) {
+                    assertFieldBoundaryGuardOrigin(fieldRead, result, importedClass);
+                }
+            }
+        } finally {
+            deleteRecursively(importedClass.root());
+        }
+
+        // (c) The cross-module async fixture: the ASYNC_START(EXTERNAL)
+        // whose recorded link names a module outside the closure. The
+        // async external-entry guard identifies the start op and carries
+        // its own exact range.
+        Fixture crossAsync = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(crossAsync);
+            check(!result.hasErrors(),
+                "the cross-module async fixture lowers: " + result.diagnostics());
+            if (!result.hasErrors()) {
+                LoweredModuleUnit entry = result.project()
+                    .modules().get(result.project().entryModule());
+                SemanticOp asyncStart = null;
+                for (SemanticOp op : entry.ops()) {
+                    if (op.kind() == SemanticOpKind.ASYNC_START
+                            && op.payload()
+                                instanceof KindPayload.AsyncStartPayload payload
+                            && payload.externalAsyncLink() != null) {
+                        asyncStart = op;
+                    }
+                }
+                check(asyncStart != null,
+                    "the cross-module async fixture lowers the ASYNC_START(EXTERNAL)");
+                if (asyncStart != null) {
+                    KindPayload.AsyncStartPayload payload =
+                        (KindPayload.AsyncStartPayload) asyncStart.payload();
+                    ExternalAsyncLink bogus = new ExternalAsyncLink(
+                        new ModuleId("outside"),
+                        payload.externalAsyncLink().exportName(),
+                        payload.externalAsyncLink().calleeTokenId());
+                    KindPayload.AsyncStartPayload replaced =
+                        new KindPayload.AsyncStartPayload(payload.callee(),
+                            payload.source(), payload.parameterBoundaryMode(),
+                            payload.parameterBoundaryOpIds(),
+                            payload.completionDescriptor(),
+                            payload.returnBoundaryOpId(),
+                            payload.hostOperationLabel(), bogus);
+                    assertSharedGuardOrigin(
+                        "the async link naming a module outside the closure",
+                        asyncStart,
+                        "ASYNC_START " + asyncStart.opId()
+                            + " resolves the external callee module outside"
+                            + " outside the session's closure (producer defect)",
+                        replaceUnitOp(result.project(), entry, asyncStart, replaced),
+                        result, crossAsync);
+                }
+            }
+        } finally {
+            deleteRecursively(crossAsync.root());
+        }
+
+        // (d) The entry module's duplicated async EXTERNAL_ENTRY: the
+        // second recorded entry (a distinct origin) is the operation whose
+        // processing detects the collision, so the guard carries its own
+        // exact range on both targets.
+        Fixture duplicatedAsync =
+            asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(duplicatedAsync);
+            check(!result.hasErrors(),
+                "the duplicate-async-entry fixture lowers: " + result.diagnostics());
+            if (!result.hasErrors()) {
+                LoweredModuleUnit entry = result.project()
+                    .modules().get(result.project().entryModule());
+                SemanticOp asyncEntry = null;
+                for (SemanticOp op : entry.ops()) {
+                    if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
+                            && op.payload()
+                                instanceof KindPayload.ExternalEntryPayload payload
+                            && payload.async()) {
+                        asyncEntry = op;
+                    }
+                }
+                check(asyncEntry != null,
+                    "the async fixture's entry module records the async entry");
+                if (asyncEntry != null) {
+                    String exportName = ((KindPayload.ExternalEntryPayload)
+                        asyncEntry.payload()).exportName();
+                    SourceOrigin duplicateOrigin = new SourceOrigin(
+                        "duplicate.deal",
+                        new SourceSpan("duplicate.deal", 2, 3, 2, 8, 30, 35),
+                        SourceOriginKind.USER, new AnchorId(777), null);
+                    SemanticOp duplicate = new SemanticOp(
+                        new OpId(entry.moduleId(), 900001L), asyncEntry.kind(),
+                        duplicateOrigin, new ValueId(900001L), asyncEntry.resultType(),
+                        asyncEntry.operands(), asyncEntry.operandTypes(),
+                        asyncEntry.payload(), asyncEntry.failurePolicy(),
+                        asyncEntry.contract());
+                    List<SemanticOp> ops = new ArrayList<>(entry.ops());
+                    ops.add(duplicate);
+                    Map<ModuleId, LoweredModuleUnit> modules =
+                        new LinkedHashMap<>(result.project().modules());
+                    modules.put(entry.moduleId(), withUnitOps(entry, ops));
+                    ExecutableLoweredProject duplicated =
+                        new ExecutableLoweredProject(
+                            result.project().semanticProfile(),
+                            result.project().interfaceIndex(), modules,
+                            result.project().entryModule());
+                    assertSharedGuardOrigin("the duplicated async entry", duplicate,
+                        "the exported declaration '" + entry.moduleId().path()
+                            + "#" + exportName + " records two async"
+                            + " EXTERNAL_ENTRY ops (producer defect)",
+                        duplicated, result, duplicatedAsync);
+                }
+            }
+        } finally {
+            deleteRecursively(duplicatedAsync.root());
+        }
+
+        // (e) The JVM declaration-kind mismatch: the entry's HOST import is
+        // described by a declaration surface of the extern-C kind.
+        Fixture host = hostFixture();
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(host);
+            check(!result.hasErrors(),
+                "the host-import fixture lowers: " + result.diagnostics());
+            if (!result.hasErrors()) {
+                LoweredModuleUnit entry = result.project()
+                    .modules().get(result.project().entryModule());
+                SemanticOp hostImport = null;
+                for (SemanticOp op : entry.ops()) {
+                    if (op.kind() == SemanticOpKind.MODULE_IMPORT
+                            && op.payload()
+                                instanceof KindPayload.ModuleImportPayload payload
+                            && payload.resolvedModule().equals(HOST_CFG)) {
+                        hostImport = op;
+                    }
+                }
+                check(hostImport != null,
+                    "the host fixture lowers the HOST MODULE_IMPORT");
+                if (hostImport != null) {
+                    HostDeclarationSurface.DeclarationFacts facts =
+                        host.surface().require(HOST_CFG);
+                    Map<ModuleId, HostDeclarationSurface.DeclarationFacts> modules =
+                        new LinkedHashMap<>(host.surface().modules());
+                    modules.put(HOST_CFG,
+                        new HostDeclarationSurface.DeclarationFacts(HOST_CFG,
+                            HostDeclarationSurface.DeclarationKind.EXTERN_C,
+                            facts.exports(), facts.classes()));
+                    HostDeclarationSurface doctored =
+                        new HostDeclarationSurface(modules);
+                    DiagnosticRange expected = hostImport.origin().span().range();
+                    check(expected.origin() == RangeOrigin.SOURCE
+                            && expected.scalarLength() > 0,
+                        "the HOST MODULE_IMPORT carries a real SOURCE span: "
+                            + expected);
+                    try {
+                        JvmSemanticEmitter.emitProductionProject(result.project(),
+                            result.tables(), result.registries(), "FixtureProbe",
+                            doctored);
+                        fail("the JVM emitter rejects the declaration-kind "
+                            + "mismatch");
+                    } catch (SharedEmissionFailure rejection) {
+                        checkEq("the declaration module '" + HOST_CFG.path()
+                                + "' of MODULE_IMPORT " + hostImport.opId()
+                                + " is kind "
+                                + HostDeclarationSurface.DeclarationKind.EXTERN_C
+                                + ": the extern-C declaration load is the FFI"
+                                + " child's (fail-closed remnant)",
+                            rejection.getMessage(),
+                            "the declaration-kind rejection message is the"
+                                + " unchanged text");
+                        checkEq(expected, rejection.diagnosticRange(),
+                            "the declaration-kind rejection carries the HOST"
+                                + " MODULE_IMPORT's own exact range");
+                    } catch (IllegalStateException other) {
+                        fail("the declaration-kind rejection is the"
+                            + " source-bearing signal: " + other);
+                    }
+                }
+            }
+        } finally {
+            deleteRecursively(host.root());
+        }
+    }
+
+    /**
+     * Both shared targets reject the hand-built corrupted fact with the
+     * unchanged complete message and the offending op's own exact range.
+     */
+    private static void assertSharedGuardOrigin(String what, SemanticOp offending,
+            String expectedMessage, ExecutableLoweredProject project,
+            SemanticLowerer.ProjectLoweringResult lowering, Fixture fixture)
+            throws Exception {
+        DiagnosticRange expected = offending.origin().span().range();
+        check(expected.origin() == RangeOrigin.SOURCE && expected.scalarLength() > 0,
+            what + ": the offending op carries a real SOURCE span: " + expected);
+        for (String target : List.of("LuaJIT", "JVM")) {
+            try {
+                if ("JVM".equals(target)) {
+                    JvmSemanticEmitter.emitProductionProject(project,
+                        lowering.tables(), lowering.registries(), "FixtureProbe",
+                        fixture.surface());
+                } else {
+                    LuaSemanticEmitter.emitProductionProject(project,
+                        lowering.tables(), lowering.registries(), fixture.surface(),
+                        null);
+                }
+                fail(what + " [" + target + "]: the emitter rejects");
+            } catch (SharedEmissionFailure rejection) {
+                checkEq(expectedMessage, rejection.getMessage(),
+                    what + " [" + target + "]: the rejection message is the"
+                        + " unchanged text");
+                checkEq(expected, rejection.diagnosticRange(),
+                    what + " [" + target + "]: the rejection carries the"
+                        + " offending op's own exact range");
+            } catch (IllegalStateException other) {
+                fail(what + " [" + target + "]: the rejection is the"
+                    + " source-bearing shared signal: " + other);
+            }
+        }
+    }
+
+    /**
+     * The FIELD_READ whose required boundary child is removed from the
+     * unit: the boundary-child lookup identifies the read op and carries
+     * its own exact range on both targets.
+     */
+    private static void assertFieldBoundaryGuardOrigin(SemanticOp fieldRead,
+            SemanticLowerer.ProjectLoweringResult lowering, Fixture fixture)
+            throws Exception {
+        LoweredModuleUnit unit = lowering.project()
+            .modules().get(lowering.project().entryModule());
+        List<SemanticOp> ops = new ArrayList<>();
+        for (SemanticOp op : unit.ops()) {
+            boolean childOfRead = op.kind() == SemanticOpKind.BOUNDARY
+                && op.origin() != null
+                && fieldRead.opId().equals(op.origin().parentOpId());
+            if (!childOfRead) {
+                ops.add(op);
+            }
+        }
+        LoweredModuleUnit stripped = withUnitOps(unit, ops);
+        Map<ModuleId, LoweredModuleUnit> modules =
+            new LinkedHashMap<>(lowering.project().modules());
+        modules.put(unit.moduleId(), stripped);
+        ExecutableLoweredProject project = new ExecutableLoweredProject(
+            lowering.project().semanticProfile(),
+            lowering.project().interfaceIndex(), modules,
+            lowering.project().entryModule());
+        String expectedMessage = fieldRead.kind() + " " + fieldRead.opId()
+            + " has no UNTYPED_CLASS_INPUT boundary child: the pinned field-op"
+            + " shape carries it parented to the op (producer defect)";
+        assertSharedGuardOrigin("the missing field boundary child", fieldRead,
+            expectedMessage, project, lowering, fixture);
+    }
+
+    /** The project with one unit op rebuilt on a replaced payload. */
+    private static ExecutableLoweredProject replaceUnitOp(
+            ExecutableLoweredProject project, LoweredModuleUnit unit,
+            SemanticOp op, KindPayload replacedPayload) {
+        deal.semantic.ir.OperationContractSnapshot old = op.contract();
+        deal.semantic.ir.OperationContractSnapshot rewired =
+            new deal.semantic.ir.OperationContractSnapshot(old.version(),
+                old.opKind(), old.resultType(), old.operandTypes(), old.selector(),
+                replacedPayload, old.failurePolicy(), old.referencedSemanticIds(),
+                old.canonicalDigest());
+        List<SemanticOp> ops = new ArrayList<>();
+        for (SemanticOp candidate : unit.ops()) {
+            if (candidate.opId().equals(op.opId())) {
+                ops.add(new SemanticOp(candidate.opId(), candidate.kind(),
+                    candidate.origin(), candidate.result(), candidate.resultType(),
+                    candidate.operands(), candidate.operandTypes(), replacedPayload,
+                    candidate.failurePolicy(), rewired));
+            } else {
+                ops.add(candidate);
+            }
+        }
+        Map<ModuleId, LoweredModuleUnit> modules =
+            new LinkedHashMap<>(project.modules());
+        modules.put(unit.moduleId(), withUnitOps(unit, ops));
+        return new ExecutableLoweredProject(project.semanticProfile(),
+            project.interfaceIndex(), modules, project.entryModule());
+    }
+
+    private static LoweredModuleUnit withUnitOps(LoweredModuleUnit unit,
+            List<SemanticOp> ops) {
+        return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
+            unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
+            unit.requiredCapabilities(), unit.constructCoverage(),
+            unit.classLayouts(), unit.functions(), unit.moduleInit(),
+            unit.exportPlan(), unit.functionBindings(), ops);
+    }
+
     /** One emitter rejection of the doctored membership table, or null on no throw. */
     private static SharedEmissionFailure emitFailure(String target,
             ExecutableLoweredProject project,
@@ -1767,6 +2145,7 @@ public class ProductionProjectEmissionTest {
             testHostImportGuard();
             testFfiProviderGapOrigin();
             testRejectedOpEmissionOrigins();
+            testIdentifiedSharedGuardOrigins();
             cross = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
             same = asyncFixture(ASYNC_LIB_SOURCE, SAME_ASYNC_APP_SOURCE);
             testCrossModuleAsyncEmission(cross, same);
