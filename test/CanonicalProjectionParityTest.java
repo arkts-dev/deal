@@ -2606,6 +2606,8 @@ public class CanonicalProjectionParityTest {
         export function returnNullableInt(): int | null;
         export async function asyncTakeNull(value: null): string;
         export async function asyncTakeNullableInt(value: int | null): string;
+        export async function asyncTakeNullThenInt(value: null, count: int): string;
+        export async function asyncTakePair(value: int | null, count: int | null): string;
         """;
 
     /**
@@ -2674,6 +2676,22 @@ public class CanonicalProjectionParityTest {
           return null
         }
 
+        export async function test_async_take_null_then_int(): null {
+          let seen: string = await host.asyncTakeNullThenInt(null, 7)
+          if (seen !== "sentinel+7") {
+            throw { code: "PROBE_NULL_CROSSING", message: "the async null crossing shifted the arguments before a non-null parameter" }
+          }
+          return null
+        }
+
+        export async function test_async_take_pair(): null {
+          let seen: string = await host.asyncTakePair(null, 7)
+          if (seen !== "sentinel+7") {
+            throw { code: "PROBE_NULL_CROSSING", message: "the async nullable crossing shifted the null argument's position" }
+          }
+          return null
+        }
+
         async function applyAsyncNull(f: async (value: null) => string): string {
           return await f(null)
         }
@@ -2694,6 +2712,30 @@ public class CanonicalProjectionParityTest {
           let seen: string = await applyAsyncNullableInt(host.asyncTakeNullableInt)
           if (seen !== "sentinel") {
             throw { code: "PROBE_NULL_CROSSING", message: "the dynamic async nullable crossing delivered a non-sentinel" }
+          }
+          return null
+        }
+
+        async function applyAsyncNullThenInt(f: async (value: null, count: int) => string): string {
+          return await f(null, 7)
+        }
+
+        async function applyAsyncPair(f: async (value: int | null, count: int | null) => string): string {
+          return await f(null, 7)
+        }
+
+        export async function test_dynamic_async_take_null_then_int(): null {
+          let seen: string = await applyAsyncNullThenInt(host.asyncTakeNullThenInt)
+          if (seen !== "sentinel+7") {
+            throw { code: "PROBE_NULL_CROSSING", message: "the dynamic async null crossing shifted the arguments before a non-null parameter" }
+          }
+          return null
+        }
+
+        export async function test_dynamic_async_take_pair(): null {
+          let seen: string = await applyAsyncPair(host.asyncTakePair)
+          if (seen !== "sentinel+7") {
+            throw { code: "PROBE_NULL_CROSSING", message: "the dynamic async nullable crossing shifted the null argument's position" }
           }
           return null
         }
@@ -2737,6 +2779,15 @@ public class CanonicalProjectionParityTest {
         return """
             local rt = require("deal.runtime")
 
+            local function report(value, count)
+              if value == rt.__NULL and count == 7 then return "sentinel+7" end
+              if value == nil and count == 7 then return "plain-nil+7" end
+              if value == 7 and (count == rt.__NULL or count == nil) then
+                return "shifted"
+              end
+              return "other"
+            end
+
             return {
               takeNull = function(value)
                 if value == rt.__NULL then return "sentinel" end
@@ -2768,6 +2819,18 @@ public class CanonicalProjectionParityTest {
                   return rt.async_start(function() return "plain-nil" end)
                 end
                 return rt.async_start(function() return "other" end)
+              end,
+              asyncTakeNullThenInt = function(value, count)
+                if value == rt.__NULL and count == 7 then
+                  return rt.async_start(function() return "sentinel+7" end)
+                end
+                return rt.async_start(function() return report(value, count) end)
+              end,
+              asyncTakePair = function(value, count)
+                if value == rt.__NULL and count == 7 then
+                  return rt.async_start(function() return "sentinel+7" end)
+                end
+                return rt.async_start(function() return report(value, count) end)
               end,
               returnNull = function()
                 return rt.__NULL
@@ -2805,6 +2868,15 @@ public class CanonicalProjectionParityTest {
                 return java.util.concurrent.CompletableFuture.completedFuture(
                     value == null ? "sentinel" : "other");
               }
+              public static Object asyncTakeNullThenInt(Object value, int count) {
+                return java.util.concurrent.CompletableFuture.completedFuture(
+                    value == null && count == 7 ? "sentinel+7" : "other");
+              }
+              public static Object asyncTakePair(Integer value, Integer count) {
+                return java.util.concurrent.CompletableFuture.completedFuture(
+                    value == null && count != null && count == 7
+                        ? "sentinel+7" : "other");
+              }
               public static Object returnNull() {
                 return null;
               }
@@ -2819,10 +2891,12 @@ public class CanonicalProjectionParityTest {
      * The null-crossing host seam: the accepting sync exports admit only
      * the oracle's language null ({@code NullValue}) and report it as
      * {@code sentinel}, the async exports record the observed argument for
-     * their completion, the producers return the language null, and the
-     * bad-return export returns a real int for its declared string return.
-     * The dynamic crossings read the module's loaded surface entries
-     * through the responder's own opaque host-entry carrier.
+     * their completion — the two-argument exports record the whole ordered
+     * argument list, so a nil-dropped or shifted null cannot pass — the
+     * producers return the language null, and the bad-return export returns
+     * a real int for its declared string return. The dynamic crossings read
+     * the module's loaded surface entries through the responder's own
+     * opaque host-entry carrier.
      */
     private static SemanticOracle.HostResponder nullCrossingResponder() {
         return new SemanticOracle.HostResponder() {
@@ -2850,6 +2924,21 @@ public class CanonicalProjectionParityTest {
                     asyncSeen.put(operationLabel,
                         args.get(0) instanceof SemanticOracle.Value.NullValue
                             ? "sentinel" : "other");
+                } else if ("asyncTakeNullThenInt".equals(export)
+                        || "asyncTakePair".equals(export)) {
+                    // The null-before-non-null crossings: the oracle's own
+                    // ordered argument list carries the language null at
+                    // position 1 and the int 7 at position 2, so a shifted
+                    // or nil-dropped argument fails the probe exactly like
+                    // the raw hosts' own reports do.
+                    asyncSeen.put(operationLabel,
+                        args.size() == 2
+                                && args.get(0)
+                                    instanceof SemanticOracle.Value.NullValue
+                                && args.get(1)
+                                    instanceof SemanticOracle.Value.IntValue intValue
+                                && intValue.value() == 7
+                            ? "sentinel+7" : "other");
                 }
                 return new AsyncStartOutcome.Operation(operationLabel);
             }
@@ -2896,12 +2985,15 @@ public class CanonicalProjectionParityTest {
      * and the admitted host null against the null and the nullable primitive
      * parameter through the declaring call shape, the same values through
      * the dynamic function-valued call shape, and the null literal through
-     * the declaring and dynamic async host starts — complete without a
-     * failure event on the oracle, the LuaJIT artifact, and the JVM
-     * artifact (each raw host reporting that it observed the explicit null
-     * sentinel), and the wrong-kind return after the same crossing renders
-     * the closed return cell's tuple byte-exact and identical on the three
-     * consumers.
+     * the declaring and dynamic async host starts, including a null in
+     * front of a non-null argument (both declared parameters nullable, and
+     * a declared {@code null} before a declared {@code int}) so a
+     * nil-dropped or position-shifted argument cannot pass — complete
+     * without a failure event on the oracle, the LuaJIT artifact, and the
+     * JVM artifact (each raw host reporting that it observed the explicit
+     * null sentinel at the recorded position), and the wrong-kind return
+     * after the same crossing renders the closed return cell's tuple
+     * byte-exact and identical on the three consumers.
      */
     private static void testHostNullParameterCrossing() throws Exception {
         System.out.println("-- the DEAL-to-host null crossing: the language "
@@ -2942,6 +3034,14 @@ public class CanonicalProjectionParityTest {
             "the dynamic async null literal at the null parameter");
         assertAsyncNullCrossingAdmission(compiled, "test_dynamic_async_take_nullable_int",
             "the dynamic async null literal at the nullable primitive parameter");
+        assertAsyncNullCrossingAdmission(compiled, "test_async_take_null_then_int",
+            "the async null literal before a non-null int parameter");
+        assertAsyncNullCrossingAdmission(compiled, "test_async_take_pair",
+            "the async null literal before a non-null argument (both nullable)");
+        assertAsyncNullCrossingAdmission(compiled, "test_dynamic_async_take_null_then_int",
+            "the dynamic async null literal before a non-null int parameter");
+        assertAsyncNullCrossingAdmission(compiled, "test_dynamic_async_take_pair",
+            "the dynamic async null literal before a non-null argument (both nullable)");
     }
 
     /** One admitted crossing through the async host start. */

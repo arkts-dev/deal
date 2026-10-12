@@ -4106,8 +4106,8 @@ public final class LuaSemanticEmitter {
             out.append("    __modStack[#__modStack + 1] = __module\n");
             out.append("    __module = __dynM\n");
             out.append("    local __okA, __resA = pcall(__unfn(__dynC), unpack(")
-                .append(carrierArgs).append(", 1, #").append(carrierArgs)
-                .append("))\n");
+                .append(carrierArgs).append(", 1, ").append(carrierArgs)
+                .append(".__argn))\n");
             out.append("    __module = __modStack[#__modStack]\n");
             out.append("    __modStack[#__modStack] = nil\n");
             out.append("    if not __okA then error(__resA, 0) end\n");
@@ -5828,10 +5828,20 @@ public final class LuaSemanticEmitter {
             // per execution, captured by the task record. Each declared
             // parameter cell publishes its own FAILURE (with the owning
             // ASYNC_START's) at the boundary's origin before the error
-            // propagates, exactly the oracle's boundary-child pair.
+            // propagates, exactly the oracle's boundary-child pair. Every
+            // recorded argument is stored at its own one-based position —
+            // never appended through Lua's length operator, which cannot
+            // append a nil: an admitted language null is the chunk's raw
+            // nil, so an appended nil would leave no slot and every
+            // following argument would occupy the wrong position. The
+            // recorded count travels on the carrier's own __argn field,
+            // because a table holding a nil in a middle position has no
+            // reliable length.
             if (payload.parameterBoundaryMode() == ParameterBoundaryMode.RUN) {
                 out.append("S.__sa").append(op.opId().id()).append(" = {}\n");
+                int position = 0;
                 for (OpId boundaryId : payload.parameterBoundaryOpIds()) {
+                    position++;
                     SemanticOp boundary = opsById.get(boundaryId);
                     KindPayload.BoundaryPayload boundaryPayload =
                         (KindPayload.BoundaryPayload) boundary.payload();
@@ -5852,9 +5862,10 @@ public final class LuaSemanticEmitter {
                     out.append("end\n");
                     emitBoundarySuccess(boundary, "__chkB", boundaryPayload.descriptor());
                     out.append("S.__sa").append(op.opId().id())
-                        .append("[#S.__sa").append(op.opId().id())
-                        .append(" + 1] = __chkB\n");
+                        .append("[").append(position).append("] = __chkB\n");
                 }
+                out.append("S.__sa").append(op.opId().id())
+                    .append(".__argn = ").append(position).append("\n");
             } else {
                 out.append("S.__sa").append(op.opId().id()).append(" = {");
                 for (int i = 0; i < op.operands().size(); i++) {
@@ -5864,6 +5875,8 @@ public final class LuaSemanticEmitter {
                     out.append(slot(op.operands().get(i)));
                 }
                 out.append("}\n");
+                out.append("S.__sa").append(op.opId().id()).append(".__argn = ")
+                    .append(op.operands().size()).append("\n");
             }
             if (payload.callee() instanceof KindPayload.CallCallee.Dynamic dynamic) {
 
@@ -5923,7 +5936,8 @@ public final class LuaSemanticEmitter {
                             .append(caps).append(")");
                     }
                     out.append(", unpack(S.__sa").append(op.opId().id())
-                        .append(", 1, #S.__sa").append(op.opId().id()).append("))\n");
+                        .append(", 1, S.__sa").append(op.opId().id())
+                        .append(".__argn))\n");
                     emitAsyncInvocationStateRestore(body.functionId(), savedState, "  ");
                     out.append("  if not __okA then error(__resA, 0) end\n");
                     out.append("  return __resA\n");
@@ -6040,8 +6054,8 @@ public final class LuaSemanticEmitter {
                 .append(luaString(label)).append(", ")
                 .append(luaString(module)).append(", ")
                 .append(luaString(export)).append(", unpack(S.__sa")
-                .append(op.opId().id()).append(", 1, #S.__sa")
-                .append(op.opId().id()).append("))\n");
+                .append(op.opId().id()).append(", 1, S.__sa")
+                .append(op.opId().id()).append(".__argn))\n");
             out.append("if __handleH == nil then\n");
             out.append("  local __eH = __arm(\"ASYNC_SHAPE\", {actual = ")
                 .append(luaString("nothing")).append("}, ")
@@ -6134,8 +6148,8 @@ public final class LuaSemanticEmitter {
                 .append(luaString(link.calleeModuleId().path() + "#"
                     + link.exportName())).append("](")
                 .append(luaString(opKey(op.opId()))).append(", false, unpack(S.__sa")
-                .append(op.opId().id()).append(", 1, #S.__sa")
-                .append(op.opId().id()).append(")))\n");
+                .append(op.opId().id()).append(", 1, S.__sa")
+                .append(op.opId().id()).append(".__argn)))\n");
         }
 
         private void emitAwait(SemanticOp op) {
@@ -6284,6 +6298,7 @@ public final class LuaSemanticEmitter {
             emitModulePush();
             out.append("  __module = ").append(luaString(ownerPath)).append("\n");
             out.append("  local __eargs = {...}\n");
+            out.append("  __eargs.__argn = select(\"#\", ...)\n");
             if (trace) {
                 out.append("  __ev(").append(luaString(opKey(op.opId())))
                     .append(", \"START\", ").append(luaString(op.kind().name()))
@@ -6304,7 +6319,7 @@ public final class LuaSemanticEmitter {
             String savedState = emitInvocationStateSave(payload.function(), op.opId());
             out.append("    local __okA, __resA = pcall(")
                 .append(fnFactory(payload.function())).append("(").append(caps)
-                .append("), unpack(__eargs, 1, #__eargs))\n");
+                .append("), unpack(__eargs, 1, __eargs.__argn))\n");
             emitInvocationStateRestore(payload.function(), savedState);
             emitModulePop();
             out.append("    if not __okA then error(__resA, 0) end\n");
@@ -10726,7 +10741,8 @@ local function __asyncDrain()
     local t = __tasks[id]
     if t ~= nil and t.status == 0 then
       t.status = 1
-      local ok, v = coroutine.resume(t.co, unpack(t.args, 1, #t.args))
+      local ok, v = coroutine.resume(t.co,
+          unpack(t.args, 1, t.args.__argn or #t.args))
       if not ok then
         if type(v) == "table" and v.__d then
           t.err = v
