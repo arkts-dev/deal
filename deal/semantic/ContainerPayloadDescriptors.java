@@ -1,5 +1,7 @@
 package deal.semantic;
 
+import deal.diagnostics.DiagnosticRange;
+import deal.semantic.ir.DiagnosticOriginCarrier;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.LoweringFailureDetail;
 import deal.semantic.ir.ModuleId;
@@ -28,12 +30,44 @@ public final class ContainerPayloadDescriptors {
      * is internal control flow, never a crash and never an invented
      * descriptor.
      */
-    public static final class Defect extends RuntimeException {
+    public static final class Defect extends RuntimeException
+            implements DiagnosticOriginCarrier {
 
         private static final long serialVersionUID = 1L;
 
+        /**
+         * The offending expression's own copied source range, or
+         * {@code null} when the derivation was not tied to one source
+         * construct (a genuinely originless failure keeps the canonical
+         * synthetic E6005 range).
+         */
+        private final DiagnosticRange offendingRange;
+
         public Defect(String message, Throwable cause) {
+            this(message, cause, null);
+        }
+
+        public Defect(String message, Throwable cause, DiagnosticRange offendingRange) {
             super(message, cause);
+            this.offendingRange = offendingRange;
+        }
+
+        /**
+         * Returns this defect with the offending construct's range
+         * attached. An already-attached range always wins over an outer
+         * context (design D2): the innermost identified construct is the
+         * one the diagnostic names.
+         */
+        public Defect withRange(DiagnosticRange range) {
+            if (offendingRange != null || range == null) {
+                return this;
+            }
+            return new Defect(getMessage(), getCause(), range);
+        }
+
+        @Override
+        public DiagnosticRange diagnosticRange() {
+            return offendingRange;
         }
     }
 

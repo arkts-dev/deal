@@ -1692,20 +1692,22 @@ public final class FailureContractRegistry {
 
     /**
      * Builds the E6005 diagnostic for a submitted detail record with the
-     * offending source range its producer identified. The producer owns
-     * the identification: a range is supplied exactly when the failing
-     * construct's own file/span is known (never a guessed anchor), and a
-     * producer without one uses {@link #e6005(LoweringFailureDetail)} so
-     * the canonical synthetic range is preserved. The range is not part
-     * of the instantiated message; the diagnostic's code, severity, and
+     * offending source range its producer identified, or {@code null}
+     * when the producer identified none. The producer owns the
+     * identification: a range is supplied exactly when the failing
+     * construct's own file/span is known (never a guessed anchor), and an
+     * absent range selects exactly the legacy empty-file canonical
+     * synthetic range — the two-argument surface is equivalent to
+     * {@link #e6005(LoweringFailureDetail)} for {@code null}, without a
+     * null-range normalization defect or note. The range is not part of
+     * the instantiated message; the diagnostic's code, severity, and
      * message stay the registry-owned ones.
      *
      */
     public static CompilerDiagnostic e6005(LoweringFailureDetail detail,
                                            DiagnosticRange offendingRange) {
         Objects.requireNonNull(detail, "detail must not be null");
-        Objects.requireNonNull(offendingRange, "offendingRange must not be null");
         return CompilerDiagnostic.error(DiagnosticCode.E6005, instantiateMessage(detail),
-            offendingRange);
+            offendingRange == null ? DiagnosticRange.synthetic("") : offendingRange);
     }
 }

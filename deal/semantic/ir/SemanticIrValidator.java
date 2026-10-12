@@ -308,9 +308,49 @@ public final class SemanticIrValidator {
     private static Optional<CompilerDiagnostic> fail(RawUnit unit, ComparisonFacts facts,
                                                      String rule, SemanticCapability capability,
                                                      String origin) {
+        return fail((RawOrigin) null, unit, facts, rule, capability, origin);
+    }
+
+    /**
+     * The E6005 projection of one rule failure with the explicit failing
+     * subject the rule identified (D3): the failure detail, rule, message,
+     * and order are unchanged; only the carried range differs. A rule that
+     * fails on an operation passes that operation, a conflict discovered
+     * while processing a second operation passes the operation whose
+     * processing detects the violation, and {@code null} — an aggregate or
+     * genuinely originless failure — keeps the canonical empty-file
+     * synthetic range. Diagnostic-only origin metadata never changes
+     * whether or how the rule fails.
+     */
+    private static Optional<CompilerDiagnostic> fail(RawOrigin subject, RawUnit unit,
+                                                     ComparisonFacts facts,
+                                                     String rule, SemanticCapability capability,
+                                                     String origin) {
         LoweringFailureDetail detail = new LoweringFailureDetail(unit.modulePath(), capability,
             rule, facts.semanticProfile(), LoweredModuleUnit.FORMAT_VERSION, origin);
-        return Optional.of(FailureContractRegistry.e6005(detail));
+        return Optional.of(FailureContractRegistry.e6005(detail,
+            subject == null ? null : subject.diagnosticRange()));
+    }
+
+    /** The raw-operation tie: the subject's retained origin metadata. */
+    private static Optional<CompilerDiagnostic> fail(RawOp subject, RawUnit unit,
+                                                     ComparisonFacts facts,
+                                                     String rule, SemanticCapability capability,
+                                                     String origin) {
+        return fail(subject == null ? null : subject.origin(), unit, facts, rule, capability,
+            origin);
+    }
+
+    /**
+     * The typed-surface tie of the same projection: the closed tie checks
+     * run over the typed units, whose operations carry the produced
+     * {@link SourceOrigin} directly.
+     */
+    private static Optional<CompilerDiagnostic> fail(SemanticOp subject, RawUnit unit,
+                                                     ComparisonFacts facts,
+                                                     String rule, SemanticCapability capability,
+                                                     String origin) {
+        return fail(RawOrigin.of(subject.origin()), unit, facts, rule, capability, origin);
     }
 
     private static String origin(String rule, String what) {
@@ -372,7 +412,7 @@ public final class SemanticIrValidator {
             Optional<String> failure = dynamicCellFormFailure(unit, opsById, op, calleeValue,
                 cellOpId);
             if (failure.isPresent()) {
-                return fail(raw, facts, R_BOUNDARY_TRIPLE,
+                return fail(op, raw, facts, R_BOUNDARY_TRIPLE,
                     SemanticCapability.FOUNDATION_VALUES,
                     origin(R_BOUNDARY_TRIPLE, failure.get()));
             }
@@ -618,52 +658,52 @@ public final class SemanticIrValidator {
         if (op.selector() != null) {
             if (kind == SemanticOpKind.UNARY) {
                 if (enumByName(UnarySelector.class, op.selector()) == null) {
-                    return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                         origin(R_ENUM, "open value \"" + op.selector()
                             + "\" in a closed UnarySelector position"));
                 }
             } else if (kind == SemanticOpKind.BINARY) {
                 if (enumByName(BinarySelector.class, op.selector()) == null) {
-                    return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                         origin(R_ENUM, "open value \"" + op.selector()
                             + "\" in a closed BinarySelector position"));
                 }
             } else if (kind == SemanticOpKind.STDLIB_CALL) {
                 if (enumByName(StdlibFunctionId.class, op.selector()) == null
                         && !StdlibFunctionId.RESERVED_NAMES.contains(op.selector())) {
-                    return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                         origin(R_ENUM, "open value \"" + op.selector()
                             + "\" in a closed StdlibFunctionId position"));
                 }
             } else if (kind != null) {
-                return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_ENUM, "selector \"" + op.selector()
                         + "\" on a non-selector-carrying kind " + kind.name()));
             }
         }
         // Failure-policy positions (op-level and snapshot-level).
         if (policyOutOfSet(op.failurePolicy())) {
-            return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+            return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                 origin(R_ENUM, "open value \"" + op.failurePolicy()
                     + "\" in a closed FailurePolicyId position"));
         }
         String snapshotPolicy = optionalString(op.snapshot(), "failurePolicy");
         if (snapshotPolicy != null && policyOutOfSet(snapshotPolicy)) {
-            return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+            return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                 origin(R_ENUM, "open value \"" + snapshotPolicy
                     + "\" in a closed FailurePolicyId position"));
         }
         // Result type: descriptor text or closed internal sentinel.
         if (op.resultType() != null && parseResultType(op.resultType()) == null
                 && enumByName(InternalResultType.class, op.resultType()) == null) {
-            return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+            return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                 origin(R_ENUM, "open value \"" + op.resultType()
                     + "\" in a closed result-type position"));
         }
         // Operand descriptor texts.
         for (String operandType : op.operandTypes()) {
             if (parseDescriptorQuiet(operandType) == null) {
-                return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_ENUM, "open value \"" + operandType
                         + "\" in a closed descriptor position"));
             }
@@ -672,7 +712,7 @@ public final class SemanticIrValidator {
         if (op.resultToken() != null) {
             Optional<String> tokenFailure = tokenEnumFailure(op.resultToken());
             if (tokenFailure.isPresent()) {
-                return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_ENUM, "open value \"" + tokenFailure.get()
                         + "\" in a closed token position"));
             }
@@ -714,52 +754,52 @@ public final class SemanticIrValidator {
         Optional<CompilerDiagnostic> failure;
         switch (op.kind()) {
             case "UNARY" -> {
-                failure = checkSlotEnum(unit, facts, "selector", optionalString(payload, "selector"),
+                failure = checkSlotEnum(op, unit, facts, "selector", optionalString(payload, "selector"),
                     UnarySelector.class);
                 if (failure.isPresent()) {
                     return failure;
                 }
             }
             case "BINARY" -> {
-                failure = checkSlotEnum(unit, facts, "selector", optionalString(payload, "selector"),
+                failure = checkSlotEnum(op, unit, facts, "selector", optionalString(payload, "selector"),
                     BinarySelector.class);
                 if (failure.isPresent()) {
                     return failure;
                 }
                 String side = optionalString(payload, "side");
                 if (side != null) {
-                    failure = checkSlotEnum(unit, facts, "side", side, NullableSide.class);
+                    failure = checkSlotEnum(op, unit, facts, "side", side, NullableSide.class);
                     if (failure.isPresent()) {
                         return failure;
                     }
                 }
-                failure = checkSlotDescriptor(unit, facts, "innerDescriptor",
+                failure = checkSlotDescriptor(op, unit, facts, "innerDescriptor",
                     optionalString(payload, "innerDescriptor"));
                 if (failure.isPresent()) {
                     return failure;
                 }
             }
             case "ARRAY_NEW" -> {
-                failure = checkSlotDescriptor(unit, facts, "elementDescriptor",
+                failure = checkSlotDescriptor(op, unit, facts, "elementDescriptor",
                     optionalString(payload, "elementDescriptor"));
                 if (failure.isPresent()) {
                     return failure;
                 }
             }
             case "INDEX_NORMALIZE" -> {
-                failure = checkSlotEnum(unit, facts, "mode", optionalString(payload, "mode"),
+                failure = checkSlotEnum(op, unit, facts, "mode", optionalString(payload, "mode"),
                     IndexMode.class);
                 if (failure.isPresent()) {
                     return failure;
                 }
             }
             case "BOUNDARY" -> {
-                failure = checkSlotEnum(unit, facts, "kind", optionalString(payload, "kind"),
+                failure = checkSlotEnum(op, unit, facts, "kind", optionalString(payload, "kind"),
                     BoundaryKind.class);
                 if (failure.isPresent()) {
                     return failure;
                 }
-                failure = checkSlotDescriptor(unit, facts, "descriptor",
+                failure = checkSlotDescriptor(op, unit, facts, "descriptor",
                     optionalString(payload, "descriptor"));
                 if (failure.isPresent()) {
                     return failure;
@@ -769,42 +809,42 @@ public final class SemanticIrValidator {
                     String realizationType = optionalString(realizationObj, "type");
                     if (!"runtimeValidation".equals(realizationType)
                             && !"representationProof".equals(realizationType)) {
-                        return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                        return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                             origin(R_ENUM, "open value \"" + realizationType
                                 + "\" in a closed BoundaryRealization position"));
                     }
                 }
             }
             case "BINDING_ALLOC" -> {
-                failure = checkSlotEnum(unit, facts, "cellKind", optionalString(payload, "cellKind"),
+                failure = checkSlotEnum(op, unit, facts, "cellKind", optionalString(payload, "cellKind"),
                     BindingCellKind.class);
                 if (failure.isPresent()) {
                     return failure;
                 }
             }
             case "CLOSURE_NEW" -> {
-                failure = checkSlotDescriptor(unit, facts, "signature",
+                failure = checkSlotDescriptor(op, unit, facts, "signature",
                     optionalString(payload, "signature"));
                 if (failure.isPresent()) {
                     return failure;
                 }
-                failure = checkNestedBindingShape(unit, facts, payload, "binding");
+                failure = checkNestedBindingShape(op, unit, facts, payload, "binding");
                 if (failure.isPresent()) {
                     return failure;
                 }
             }
             case "FUNCTION_ADAPT" -> {
-                failure = checkSlotEnum(unit, facts, "mode", optionalString(payload, "mode"),
+                failure = checkSlotEnum(op, unit, facts, "mode", optionalString(payload, "mode"),
                     CaptureMode.class);
                 if (failure.isPresent()) {
                     return failure;
                 }
-                failure = checkSlotDescriptor(unit, facts, "sourceSignature",
+                failure = checkSlotDescriptor(op, unit, facts, "sourceSignature",
                     optionalString(payload, "sourceSignature"));
                 if (failure.isPresent()) {
                     return failure;
                 }
-                failure = checkSlotDescriptor(unit, facts, "targetSignature",
+                failure = checkSlotDescriptor(op, unit, facts, "targetSignature",
                     optionalString(payload, "targetSignature"));
                 if (failure.isPresent()) {
                     return failure;
@@ -814,44 +854,44 @@ public final class SemanticIrValidator {
                     String sourceType = optionalString(sourceObj, "type");
                     if (!"sharedCell".equals(sourceType) && !"thunk".equals(sourceType)
                             && !"value".equals(sourceType)) {
-                        return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                        return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                             origin(R_ENUM, "open value \"" + sourceType
                                 + "\" in a closed AdaptSourceRef position"));
                     }
                 }
             }
             case "ASSIGN" -> {
-                failure = checkSlotEnum(unit, facts, "targetKind",
+                failure = checkSlotEnum(op, unit, facts, "targetKind",
                     optionalString(payload, "targetKind"), AssignTargetKind.class);
                 if (failure.isPresent()) {
                     return failure;
                 }
             }
             case "DELETE" -> {
-                failure = checkSlotEnum(unit, facts, "targetKind",
+                failure = checkSlotEnum(op, unit, facts, "targetKind",
                     optionalString(payload, "targetKind"), DeleteTargetKind.class);
                 if (failure.isPresent()) {
                     return failure;
                 }
             }
             case "CALL" -> {
-                failure = checkSlotEnum(unit, facts, "mode", optionalString(payload, "mode"),
+                failure = checkSlotEnum(op, unit, facts, "mode", optionalString(payload, "mode"),
                     CallMode.class);
                 if (failure.isPresent()) {
                     return failure;
                 }
-                failure = checkSlotDescriptor(unit, facts, "signature",
+                failure = checkSlotDescriptor(op, unit, facts, "signature",
                     optionalString(payload, "signature"));
                 if (failure.isPresent()) {
                     return failure;
                 }
-                failure = checkCalleeEnum(unit, facts, payload);
+                failure = checkCalleeEnum(op, unit, facts, payload);
                 if (failure.isPresent()) {
                     return failure;
                 }
             }
             case "INTRINSIC_CALL" -> {
-                failure = checkSlotEnum(unit, facts, "kind", optionalString(payload, "kind"),
+                failure = checkSlotEnum(op, unit, facts, "kind", optionalString(payload, "kind"),
                     IntrinsicKind.class);
                 if (failure.isPresent()) {
                     return failure;
@@ -861,53 +901,53 @@ public final class SemanticIrValidator {
                 String function = optionalString(payload, "function");
                 if (function != null && enumByName(StdlibFunctionId.class, function) == null
                         && !StdlibFunctionId.RESERVED_NAMES.contains(function)) {
-                    return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                         origin(R_ENUM, "open value \"" + function
                             + "\" in a closed StdlibFunctionId position"));
                 }
-                failure = checkSlotEnum(unit, facts, "effectCapability",
+                failure = checkSlotEnum(op, unit, facts, "effectCapability",
                     optionalString(payload, "effectCapability"), SemanticCapability.class);
                 if (failure.isPresent()) {
                     return failure;
                 }
             }
             case "ASYNC_START" -> {
-                failure = checkSlotEnum(unit, facts, "source", optionalString(payload, "source"),
+                failure = checkSlotEnum(op, unit, facts, "source", optionalString(payload, "source"),
                     AsyncStartSource.class);
                 if (failure.isPresent()) {
                     return failure;
                 }
-                failure = checkSlotEnum(unit, facts, "parameterBoundaryMode",
+                failure = checkSlotEnum(op, unit, facts, "parameterBoundaryMode",
                     optionalString(payload, "parameterBoundaryMode"), ParameterBoundaryMode.class);
                 if (failure.isPresent()) {
                     return failure;
                 }
-                failure = checkSlotDescriptor(unit, facts, "completionDescriptor",
+                failure = checkSlotDescriptor(op, unit, facts, "completionDescriptor",
                     optionalString(payload, "completionDescriptor"));
                 if (failure.isPresent()) {
                     return failure;
                 }
-                failure = checkCalleeEnum(unit, facts, payload);
+                failure = checkCalleeEnum(op, unit, facts, payload);
                 if (failure.isPresent()) {
                     return failure;
                 }
             }
             case "BRANCH", "LOOP" -> {
-                failure = checkSlotEnum(unit, facts, "selector", optionalString(payload, "selector"),
+                failure = checkSlotEnum(op, unit, facts, "selector", optionalString(payload, "selector"),
                     ControlSelector.class);
                 if (failure.isPresent()) {
                     return failure;
                 }
             }
             case "FOR_EACH" -> {
-                failure = checkSlotEnum(unit, facts, "mode", optionalString(payload, "mode"),
+                failure = checkSlotEnum(op, unit, facts, "mode", optionalString(payload, "mode"),
                     IterationMode.class);
                 if (failure.isPresent()) {
                     return failure;
                 }
             }
             case "CLASS_NEW" -> {
-                failure = checkSlotEnum(unit, facts, "defaultOwner",
+                failure = checkSlotEnum(op, unit, facts, "defaultOwner",
                     optionalString(payload, "defaultOwner"), DefaultOwner.class);
                 if (failure.isPresent()) {
                     return failure;
@@ -918,7 +958,7 @@ public final class SemanticIrValidator {
                         if (!(item instanceof CanonicalJson.Obj boundary)) {
                             continue;
                         }
-                        failure = checkSlotEnum(unit, facts, "fieldBoundaries.kind",
+                        failure = checkSlotEnum(op, unit, facts, "fieldBoundaries.kind",
                             optionalString(boundary, "kind"), BoundaryKind.class);
                         if (failure.isPresent()) {
                             return failure;
@@ -927,14 +967,14 @@ public final class SemanticIrValidator {
                 }
             }
             case "MODULE_IMPORT" -> {
-                failure = checkSlotEnum(unit, facts, "kind", optionalString(payload, "kind"),
+                failure = checkSlotEnum(op, unit, facts, "kind", optionalString(payload, "kind"),
                     ModuleImportKind.class);
                 if (failure.isPresent()) {
                     return failure;
                 }
             }
             case "EXPORT_READ", "EXPORT_PUBLISH" -> {
-                failure = checkSlotDescriptor(unit, facts, "descriptor",
+                failure = checkSlotDescriptor(op, unit, facts, "descriptor",
                     optionalString(payload, "descriptor"));
                 if (failure.isPresent()) {
                     return failure;
@@ -948,7 +988,8 @@ public final class SemanticIrValidator {
         return Optional.empty();
     }
 
-    private static Optional<CompilerDiagnostic> checkCalleeEnum(RawUnit unit, ComparisonFacts facts,
+    private static Optional<CompilerDiagnostic> checkCalleeEnum(RawOp op, RawUnit unit,
+                                                                ComparisonFacts facts,
                                                                 CanonicalJson.Obj payload) {
         CanonicalJson.Value calleeValue = payloadValue(payload, "callee");
         if (!(calleeValue instanceof CanonicalJson.Obj callee)) {
@@ -957,17 +998,17 @@ public final class SemanticIrValidator {
         String calleeType = optionalString(callee, "type");
         if (!"static".equals(calleeType) && !"indirect".equals(calleeType)
                 && !"dynamic".equals(calleeType)) {
-            return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+            return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                 origin(R_ENUM, "open value \"" + calleeType
                     + "\" in a closed CallCallee position"));
         }
         if ("static".equals(calleeType)) {
-            return checkNestedBindingShape(unit, facts, callee, "binding");
+            return checkNestedBindingShape(op, unit, facts, callee, "binding");
         }
         return Optional.empty();
     }
 
-    private static Optional<CompilerDiagnostic> checkNestedBindingShape(RawUnit unit,
+    private static Optional<CompilerDiagnostic> checkNestedBindingShape(RawOp op, RawUnit unit,
                                                                         ComparisonFacts facts,
                                                                         CanonicalJson.Obj owner,
                                                                         String key) {
@@ -980,7 +1021,7 @@ public final class SemanticIrValidator {
                 && !"hostFunction".equals(shape) && !"hostFunctionValue".equals(shape)
                 && !"externalFunction".equals(shape)
                 && !"intrinsicFunction".equals(shape)) {
-            return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+            return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                 origin(R_ENUM, "open value \"" + shape
                     + "\" in a closed FunctionExecutionBinding shape position"));
         }
@@ -988,19 +1029,19 @@ public final class SemanticIrValidator {
 
             String nestedKind = optionalString(binding, "intrinsicKind");
             String nestedDescriptor = optionalString(binding, "descriptor");
-            Optional<CompilerDiagnostic> kindFailure = checkSlotEnum(unit, facts,
+            Optional<CompilerDiagnostic> kindFailure = checkSlotEnum(op, unit, facts,
                 "IntrinsicKind", nestedKind, IntrinsicKind.class);
             if (kindFailure.isPresent()) {
                 return kindFailure;
             }
             if (nestedKind == null || nestedDescriptor == null) {
-                return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_ENUM, "the intrinsicFunction shape at a nested binding "
                         + "position carries no intrinsic kind and descriptor text (the "
                         + "closed shape position is its kind plus its declared "
                         + "signature)"));
             }
-            Optional<CompilerDiagnostic> descriptorFailure = checkSlotDescriptor(unit, facts,
+            Optional<CompilerDiagnostic> descriptorFailure = checkSlotDescriptor(op, unit, facts,
                 "descriptor", nestedDescriptor);
             if (descriptorFailure.isPresent()) {
                 return descriptorFailure;
@@ -1008,36 +1049,37 @@ public final class SemanticIrValidator {
         }
         String captureMode = optionalString(binding, "captureMode");
         if (captureMode != null && enumByName(CaptureMode.class, captureMode) == null) {
-            return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+            return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                 origin(R_ENUM, "open value \"" + captureMode
                     + "\" in a closed CaptureMode position"));
         }
         String executionOwner = optionalString(binding, "executionOwner");
         if (executionOwner != null
                 && enumByName(ExternalExecutionOwner.class, executionOwner) == null) {
-            return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+            return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                 origin(R_ENUM, "open value \"" + executionOwner
                     + "\" in a closed ExternalExecutionOwner position"));
         }
         return Optional.empty();
     }
 
-    private static Optional<CompilerDiagnostic> checkSlotEnum(RawUnit unit, ComparisonFacts facts,
+    private static Optional<CompilerDiagnostic> checkSlotEnum(RawOp op, RawUnit unit,
+                                                              ComparisonFacts facts,
                                                               String position, String raw,
                                                               Class<? extends Enum<?>> closed) {
         if (raw != null && enumByName(closed, raw) == null) {
-            return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+            return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                 origin(R_ENUM, "open value \"" + raw + "\" in a closed " + position
                     + " position"));
         }
         return Optional.empty();
     }
 
-    private static Optional<CompilerDiagnostic> checkSlotDescriptor(RawUnit unit,
+    private static Optional<CompilerDiagnostic> checkSlotDescriptor(RawOp op, RawUnit unit,
                                                                     ComparisonFacts facts,
                                                                     String position, String raw) {
         if (raw != null && parseDescriptorQuiet(raw) == null) {
-            return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+            return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                 origin(R_ENUM, "open value \"" + raw + "\" in a closed " + position
                     + " position"));
         }
@@ -1170,7 +1212,7 @@ public final class SemanticIrValidator {
                     optionalString(op.payload(), "selector"));
                 if (selector != null && selector != ControlSelector.WHILE
                         && selector != ControlSelector.FOR) {
-                    yield fail(unit, facts, R_POLICY_KIND, SemanticCapability.FOUNDATION_VALUES,
+                    yield fail(op, unit, facts, R_POLICY_KIND, SemanticCapability.FOUNDATION_VALUES,
                         origin(R_POLICY_KIND, "ControlSelector " + selector.name()
                             + " not allowed for LOOP (WHILE|FOR only)"));
                 }
@@ -1186,7 +1228,7 @@ public final class SemanticIrValidator {
                 if (allowedPolicies(kind).contains(policy)) {
                     yield Optional.empty();
                 }
-                yield fail(unit, facts, R_POLICY_KIND, SemanticCapability.FOUNDATION_VALUES,
+                yield fail(op, unit, facts, R_POLICY_KIND, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_POLICY_KIND, "policy " + policy.name() + " not allowed for kind "
                         + kind.name()));
             }
@@ -1197,7 +1239,7 @@ public final class SemanticIrValidator {
                                                               RawOp op, FailurePolicyId actual,
                                                               FailurePolicyId expected, String what) {
         if (actual != expected) {
-            return fail(unit, facts, R_POLICY_KIND, SemanticCapability.FOUNDATION_VALUES,
+            return fail(op, unit, facts, R_POLICY_KIND, SemanticCapability.FOUNDATION_VALUES,
                 origin(R_POLICY_KIND, "policy " + actual.name() + " not allowed for " + what
                     + " (expected " + expected.name() + ")"));
         }
@@ -1313,7 +1355,7 @@ public final class SemanticIrValidator {
             }
             Optional<String> failure = cellOfBoundary(unit, op, closure);
             if (failure.isPresent()) {
-                return fail(unit, facts, R_BOUNDARY_TRIPLE, SemanticCapability.FOUNDATION_VALUES,
+                return fail(op, unit, facts, R_BOUNDARY_TRIPLE, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_BOUNDARY_TRIPLE, failure.get()));
             }
         }
@@ -1336,7 +1378,7 @@ public final class SemanticIrValidator {
                 default -> Optional.empty();
             };
             if (failure.isPresent()) {
-                return fail(unit, facts, R_BOUNDARY_TRIPLE, SemanticCapability.FOUNDATION_VALUES,
+                return fail(op, unit, facts, R_BOUNDARY_TRIPLE, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_BOUNDARY_TRIPLE, failure.get()));
             }
         }
@@ -2846,17 +2888,17 @@ public final class SemanticIrValidator {
             }
             RawOp parent = resolveParent(op, unit, Map.of());
             if (parent == null) {
-                return fail(unit, facts, R_ELIDED_PLACEMENT, SemanticCapability.FOUNDATION_VALUES,
+                return fail(op, unit, facts, R_ELIDED_PLACEMENT, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_ELIDED_PLACEMENT, "ELIDED_BY_ADAPTER with no parent op"));
             }
             if (enumByName(SemanticOpKind.class, parent.kind()) != SemanticOpKind.ASYNC_START) {
-                return fail(unit, facts, R_ELIDED_PLACEMENT, SemanticCapability.FOUNDATION_VALUES,
+                return fail(op, unit, facts, R_ELIDED_PLACEMENT, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_ELIDED_PLACEMENT, "ELIDED_BY_ADAPTER parented to "
                         + parent.kind() + ", not the outer ASYNC_START of an adapter-over-async task"));
             }
             BindingInfo binding = resolveCalleeBinding(unit, parent, Map.of());
             if (binding == null || !"adapter".equals(binding.shape())) {
-                return fail(unit, facts, R_ELIDED_PLACEMENT, SemanticCapability.FOUNDATION_VALUES,
+                return fail(op, unit, facts, R_ELIDED_PLACEMENT, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_ELIDED_PLACEMENT, "ELIDED_BY_ADAPTER outside the nested source "
                         + "ASYNC_START of an adapter-over-async task (the outer op's callee "
                         + "does not resolve to an AdapterBinding)"));
@@ -2885,7 +2927,8 @@ public final class SemanticIrValidator {
                 }
             }
             if (matches != 1) {
-                return fail(unit, facts, R_FUNCTION_BINDING, SemanticCapability.FOUNDATION_VALUES,
+                return fail(op, unit, facts, R_FUNCTION_BINDING,
+                    SemanticCapability.FOUNDATION_VALUES,
                     origin(R_FUNCTION_BINDING, "function-typed result ValueId " + id
                         + " without exactly one FunctionExecutionBinding"));
             }
@@ -2896,7 +2939,7 @@ public final class SemanticIrValidator {
                 continue;
             }
             if (binding.materializingBoundaryOpId() == null) {
-                return fail(unit, facts, R_FUNCTION_BINDING,
+                return fail((RawOp) null, unit, facts, R_FUNCTION_BINDING,
                     SemanticCapability.FOUNDATION_VALUES,
                     origin(R_FUNCTION_BINDING, "the HostFunctionValue registration key "
                         + binding.allocationId() + " carries no materializingBoundaryOpId "
@@ -2913,7 +2956,7 @@ public final class SemanticIrValidator {
                     || enumByName(SemanticOpKind.class, crossing.kind()) != SemanticOpKind.BOUNDARY
                     || enumByName(BoundaryKind.class, optionalString(crossing.payload(), "kind"))
                         != BoundaryKind.HOST_TO_DEAL) {
-                return fail(unit, facts, R_FUNCTION_BINDING,
+                return fail(crossing, unit, facts, R_FUNCTION_BINDING,
                     SemanticCapability.FOUNDATION_VALUES,
                     origin(R_FUNCTION_BINDING, "the HostFunctionValue registration key "
                         + binding.allocationId() + " names materializingBoundaryOpId "
@@ -2924,7 +2967,7 @@ public final class SemanticIrValidator {
                 optionalString(crossing.payload(), "descriptor"));
             if (!(descriptor instanceof RuntimeDescriptor.Func)
                     || !descriptor.canonicalSpecText().equals(binding.descriptor())) {
-                return fail(unit, facts, R_FUNCTION_BINDING,
+                return fail(crossing, unit, facts, R_FUNCTION_BINDING,
                     SemanticCapability.FOUNDATION_VALUES,
                     origin(R_FUNCTION_BINDING, "the HostFunctionValue registration key "
                         + binding.allocationId() + " descriptor does not equal its "
@@ -2932,7 +2975,7 @@ public final class SemanticIrValidator {
             }
             ValueId input = parseBoundaryInput(crossing);
             if (input == null || input.id() != binding.allocationId()) {
-                return fail(unit, facts, R_FUNCTION_BINDING,
+                return fail(crossing, unit, facts, R_FUNCTION_BINDING,
                     SemanticCapability.FOUNDATION_VALUES,
                     origin(R_FUNCTION_BINDING, "the HostFunctionValue registration key "
                         + binding.allocationId() + " materializing crossing does not carry "
@@ -2981,7 +3024,7 @@ public final class SemanticIrValidator {
             }
             ValueId input = parseBoundaryInput(op);
             if (input == null) {
-                return fail(unit, facts, R_FUNCTION_BINDING,
+                return fail(op, unit, facts, R_FUNCTION_BINDING,
                     SemanticCapability.FOUNDATION_VALUES,
                     origin(R_FUNCTION_BINDING, "the function-typed HOST_TO_DEAL crossing op "
                         + op.opId() + " carries no input allocation identity"));
@@ -2996,7 +3039,7 @@ public final class SemanticIrValidator {
                 }
             }
             if (matches != 1) {
-                return fail(unit, facts, R_FUNCTION_BINDING,
+                return fail(op, unit, facts, R_FUNCTION_BINDING,
                     SemanticCapability.FOUNDATION_VALUES,
                     origin(R_FUNCTION_BINDING, "the function-typed HOST_TO_DEAL crossing op "
                         + op.opId() + " materializing input identity " + input
@@ -3018,7 +3061,7 @@ public final class SemanticIrValidator {
                 continue;
             }
             if (binding.materializingBoundaryOpId() == null) {
-                return fail(unit, facts, R_FUNCTION_BINDING,
+                return fail((RawOp) null, unit, facts, R_FUNCTION_BINDING,
                     SemanticCapability.FOUNDATION_VALUES,
                     origin(R_FUNCTION_BINDING, "the DynamicFunctionValue registration key "
                         + binding.allocationId() + " carries no materializingBoundaryOpId "
@@ -3032,7 +3075,7 @@ public final class SemanticIrValidator {
                 }
             }
             if (producing == null) {
-                return fail(unit, facts, R_FUNCTION_BINDING,
+                return fail((RawOp) null, unit, facts, R_FUNCTION_BINDING,
                     SemanticCapability.FOUNDATION_VALUES,
                     origin(R_FUNCTION_BINDING, "the DynamicFunctionValue registration key "
                         + binding.allocationId() + " names materializingBoundaryOpId "
@@ -3041,7 +3084,7 @@ public final class SemanticIrValidator {
             }
             if (producing.resultValue() == null
                     || producing.resultValue().id() != binding.allocationId()) {
-                return fail(unit, facts, R_FUNCTION_BINDING,
+                return fail(producing, unit, facts, R_FUNCTION_BINDING,
                     SemanticCapability.FOUNDATION_VALUES,
                     origin(R_FUNCTION_BINDING, "the DynamicFunctionValue registration key "
                         + binding.allocationId() + " materializing op "
@@ -3051,7 +3094,7 @@ public final class SemanticIrValidator {
             RuntimeDescriptor descriptor = parseDescriptorQuiet(producing.resultType());
             if (!(descriptor instanceof RuntimeDescriptor.Func)
                     || !descriptor.canonicalSpecText().equals(binding.descriptor())) {
-                return fail(unit, facts, R_FUNCTION_BINDING,
+                return fail(producing, unit, facts, R_FUNCTION_BINDING,
                     SemanticCapability.FOUNDATION_VALUES,
                     origin(R_FUNCTION_BINDING, "the DynamicFunctionValue registration key "
                         + binding.allocationId() + " descriptor does not equal its "
@@ -3081,7 +3124,7 @@ public final class SemanticIrValidator {
             }
             BindingInfo callee = resolveCalleeBinding(unit, op, Map.of());
             if (callee != null && "dynamicFunctionValue".equals(callee.shape())) {
-                return fail(unit, facts, R_FUNCTION_BINDING,
+                return fail(op, unit, facts, R_FUNCTION_BINDING,
                     SemanticCapability.FOUNDATION_VALUES,
                     origin(R_FUNCTION_BINDING, "the " + kind + " op " + op.opId()
                         + " resolves its callee to a DynamicFunctionValue registration "
@@ -3128,7 +3171,8 @@ public final class SemanticIrValidator {
                 if (closure.isEmpty()) {
                     continue; // unit-level: foreign-module references are indeterminate.
                 }
-                return fail(unit, facts, R_EXTERNAL_ENTRY, SemanticCapability.FOUNDATION_VALUES,
+                return fail(op, unit, facts, R_EXTERNAL_ENTRY,
+                    SemanticCapability.FOUNDATION_VALUES,
                     origin(R_EXTERNAL_ENTRY, "externalEntryRef " + ref + " names a module "
                         + "outside the implementation closure"));
             }
@@ -3142,7 +3186,8 @@ public final class SemanticIrValidator {
             if (resolved == null
                     || enumByName(SemanticOpKind.class, resolved.kind()) != SemanticOpKind.EXTERNAL_ENTRY
                     || !exportName.equals(optionalString(resolved.payload(), "exportName"))) {
-                return fail(unit, facts, R_EXTERNAL_ENTRY, SemanticCapability.FOUNDATION_VALUES,
+                return fail(op, unit, facts, R_EXTERNAL_ENTRY,
+                    SemanticCapability.FOUNDATION_VALUES,
                     origin(R_EXTERNAL_ENTRY, "externalEntryRef " + ref + " does not resolve to "
                         + "a recorded EXTERNAL_ENTRY for export \"" + exportName + "\""));
             }
@@ -3159,7 +3204,8 @@ public final class SemanticIrValidator {
             if (closure.isEmpty()) {
                 return Optional.empty(); // unit-level: foreign-module bindings are indeterminate.
             }
-            return fail(unit, facts, R_EXTERNAL_ENTRY, SemanticCapability.FOUNDATION_VALUES,
+            return fail((RawOp) null, unit, facts, R_EXTERNAL_ENTRY,
+                SemanticCapability.FOUNDATION_VALUES,
                 origin(R_EXTERNAL_ENTRY, "SHARED_BODY ExternalFunction export \"" + exportName
                     + "\" names module \"" + modulePath + "\" outside the implementation closure"));
         }
@@ -3169,7 +3215,8 @@ public final class SemanticIrValidator {
                 return Optional.empty();
             }
         }
-        return fail(unit, facts, R_EXTERNAL_ENTRY, SemanticCapability.FOUNDATION_VALUES,
+        return fail((RawOp) null, unit, facts, R_EXTERNAL_ENTRY,
+            SemanticCapability.FOUNDATION_VALUES,
             origin(R_EXTERNAL_ENTRY, "SHARED_BODY ExternalFunction export \"" + exportName
                 + "\" in module \"" + modulePath
                 + "\" without a recorded EXTERNAL_ENTRY in the callee unit"));
@@ -3271,7 +3318,7 @@ public final class SemanticIrValidator {
             AsyncTokenId token = parseToken(tokenObj);
             for (AsyncTokenId prior : consumed) {
                 if (prior.equals(token)) {
-                    return fail(unit, facts, R_TOKEN_REUSE, SemanticCapability.FOUNDATION_VALUES,
+                    return fail(op, unit, facts, R_TOKEN_REUSE, SemanticCapability.FOUNDATION_VALUES,
                         origin(R_TOKEN_REUSE, "token " + token.tokenId()
                             + " consumed twice (one AWAIT per token)"));
                 }
@@ -3295,12 +3342,14 @@ public final class SemanticIrValidator {
         }
         for (RawOp op : unit.ops()) {
             if (enumByName(SemanticOpKind.class, op.kind()) == null) {
-                return fail(unit, facts, R_PRIVATE_STEP, SemanticCapability.FOUNDATION_VALUES,
+                return fail(op, unit, facts, R_PRIVATE_STEP,
+                    SemanticCapability.FOUNDATION_VALUES,
                     origin(R_PRIVATE_STEP, "consumer-private op kind \"" + op.kind() + "\""));
             }
             String snapshotKind = optionalString(op.snapshot(), "opKind");
             if (snapshotKind != null && enumByName(SemanticOpKind.class, snapshotKind) == null) {
-                return fail(unit, facts, R_PRIVATE_STEP, SemanticCapability.FOUNDATION_VALUES,
+                return fail(op, unit, facts, R_PRIVATE_STEP,
+                    SemanticCapability.FOUNDATION_VALUES,
                     origin(R_PRIVATE_STEP, "consumer-private op kind \"" + snapshotKind
                         + "\" in the contract snapshot"));
             }
@@ -3314,24 +3363,24 @@ public final class SemanticIrValidator {
                                                                   ComparisonFacts facts) {
         for (RawOp op : unit.ops()) {
             if (op.selector() != null && StdlibFunctionId.RESERVED_NAMES.contains(op.selector())) {
-                return fail(unit, facts, R_RESERVED_NAME, SemanticCapability.FOUNDATION_VALUES,
+                return fail(op, unit, facts, R_RESERVED_NAME, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_RESERVED_NAME, "reserved selector name \"" + op.selector() + "\""));
             }
             String function = enumByName(SemanticOpKind.class, op.kind()) == SemanticOpKind.STDLIB_CALL
                 ? optionalString(op.payload(), "function") : null;
             if (function != null && StdlibFunctionId.RESERVED_NAMES.contains(function)) {
-                return fail(unit, facts, R_RESERVED_NAME, SemanticCapability.FOUNDATION_VALUES,
+                return fail(op, unit, facts, R_RESERVED_NAME, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_RESERVED_NAME, "reserved selector name \"" + function + "\""));
             }
             if (op.failurePolicy() != null
                     && FailurePolicyId.RESERVED_NAMES.contains(op.failurePolicy())) {
-                return fail(unit, facts, R_RESERVED_NAME, SemanticCapability.FOUNDATION_VALUES,
+                return fail(op, unit, facts, R_RESERVED_NAME, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_RESERVED_NAME, "reserved policy name \"" + op.failurePolicy()
                         + "\" in a FailurePolicyId position"));
             }
             String snapshotPolicy = optionalString(op.snapshot(), "failurePolicy");
             if (snapshotPolicy != null && FailurePolicyId.RESERVED_NAMES.contains(snapshotPolicy)) {
-                return fail(unit, facts, R_RESERVED_NAME, SemanticCapability.FOUNDATION_VALUES,
+                return fail(op, unit, facts, R_RESERVED_NAME, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_RESERVED_NAME, "reserved policy name \"" + snapshotPolicy
                         + "\" in a FailurePolicyId position"));
             }
@@ -3345,7 +3394,7 @@ public final class SemanticIrValidator {
         for (RawOp op : unit.ops()) {
             String recomputed = ContractSnapshotCanonicalizer.recomputeSnapshotDigest(op.snapshot());
             if (!recomputed.equals(op.canonicalDigest())) {
-                return fail(unit, facts, R_DIGEST, SemanticCapability.FOUNDATION_VALUES,
+                return fail(op, unit, facts, R_DIGEST, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_DIGEST, "recomputed digest " + recomputed
                         + " differs from canonicalDigest " + op.canonicalDigest()));
             }

@@ -2,6 +2,7 @@ package deal.codegen.lua;
 
 import deal.codegen.EmitterSessionBase;
 import deal.codegen.SourceMapRecorder;
+import deal.codegen.SharedEmissionFailure;
 import deal.diagnostics.DiagnosticRange;
 import deal.ffi.FfiGeneratedModule;
 import deal.ffi.FfiFunctionDescriptor;
@@ -221,14 +222,11 @@ public final class LuaSemanticEmitter {
      * range is the import statement's own origin (the identifiable
      * offending span), never a bare generic gap.
      */
-    public static final class FfiProviderGap extends IllegalStateException {
+    public static final class FfiProviderGap extends SharedEmissionFailure {
         private static final long serialVersionUID = 1L;
 
         /** The module whose MODULE_IMPORT carries the extern-C import. */
         private final String consumingModulePath;
-
-        /** The extern-C import statement's offending source range. */
-        private final DiagnosticRange offendingRange;
 
         FfiProviderGap(String consumingModulePath, String detail) {
             this(consumingModulePath, detail, null);
@@ -236,10 +234,9 @@ public final class LuaSemanticEmitter {
 
         FfiProviderGap(String consumingModulePath, String detail,
                        DiagnosticRange offendingRange) {
-            super(detail);
+            super(detail, offendingRange);
             this.consumingModulePath = Objects.requireNonNull(
                 consumingModulePath, "consumingModulePath must not be null");
-            this.offendingRange = offendingRange;
         }
 
         /** The consuming (emitting) module of the extern-C import. */
@@ -253,7 +250,7 @@ public final class LuaSemanticEmitter {
          * synthetic range stays the E6005's own).
          */
         public DiagnosticRange offendingRange() {
-            return offendingRange;
+            return diagnosticRange();
         }
     }
 
@@ -1265,11 +1262,11 @@ public final class LuaSemanticEmitter {
             List<OpId> ops = ownerTable == null
                 ? null : ownerTable.blockOps().get(payload.defaultBlock());
             if (ops == null) {
-                throw new IllegalStateException("the class-default block "
+                throw rejectedOp(defaultOp, "the class-default block "
                     + payload.defaultBlock() + " has no membership row (producer defect)");
             }
             if (!(defaultOp.result() instanceof ValueId resultId)) {
-                throw new IllegalStateException("CLASS_DEFAULT " + defaultOp.opId()
+                throw rejectedOp(defaultOp, "CLASS_DEFAULT " + defaultOp.opId()
                     + " publishes no ValueId result (producer defect)");
             }
             out.append(defaultFn(defaultOp.opId())).append(" = function()\n");
@@ -1299,7 +1296,7 @@ public final class LuaSemanticEmitter {
             StructuredBodyTable ownerTable = blockTableOf.get(block);
             List<OpId> ops = ownerTable == null ? null : ownerTable.blockOps().get(block);
             if (ops == null) {
-                throw new IllegalStateException("the adapter thunk block " + block
+                throw rejectedOp(adaptOp, "the adapter thunk block " + block
                     + " has no membership row (producer defect)");
             }
             out.append(thunkFn(adaptOp.opId())).append(" = function()\n");
@@ -1317,7 +1314,7 @@ public final class LuaSemanticEmitter {
                 break;
             }
             if (produced == null) {
-                throw new IllegalStateException("the adapter thunk block " + block
+                throw rejectedOp(adaptOp, "the adapter thunk block " + block
                     + " has no final producing value (producer defect)");
             }
             out.append("  return ").append(slot(produced)).append("\n");
@@ -1449,6 +1446,16 @@ public final class LuaSemanticEmitter {
             }
         }
 
+        /**
+         * The shared emitter rejection of one explicitly rejected op (D4):
+         * the existing message with the op's own copied origin range, so
+         * the production arm projects the identifiable offending span
+         * instead of the canonical synthetic anchor.
+         */
+        private static SharedEmissionFailure rejectedOp(SemanticOp op, String message) {
+            return new SharedEmissionFailure(message, op.origin().span().range());
+        }
+
         /** Emits a block's ops under a label section. */
         private void emitLabeledBlock(BlockId block) {
             out.append("::").append(label(block)).append("::\n");
@@ -1513,15 +1520,15 @@ public final class LuaSemanticEmitter {
                 case JSON_FROM_CLASS -> emitJsonFromClass(op);
                 case JSON_TO_CLASS -> emitJsonToClass(op);
                 case CLASS_NEW -> emitClassNew(op);
-                case CLASS_DEFAULT -> throw new IllegalStateException("a CLASS_DEFAULT "
+                case CLASS_DEFAULT -> throw rejectedOp(op, "a CLASS_DEFAULT "
                     + "executes only under its triggering CLASS_NEW/CLASS_FACTORY "
                     + "(the detached default block's ops are the class-default "
                     + "function's; the block walk never runs the op itself)");
-                case CLASS_FACTORY -> throw new IllegalStateException("a CLASS_FACTORY "
+                case CLASS_FACTORY -> throw rejectedOp(op, "a CLASS_FACTORY "
                     + "is a detached owner-module entry executed only under the "
                     + "triggering caller's CLASS_NEW (cross-unit parent) — the "
                     + "block walk never runs it)");
-                default -> throw new IllegalStateException("op kind " + op.kind()
+                default -> throw rejectedOp(op, "op kind " + op.kind()
                     + " has no shared-LuaJIT emission in this decomposition-tail "
                     + "domain");
             }

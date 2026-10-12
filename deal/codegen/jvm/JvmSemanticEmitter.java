@@ -3,6 +3,7 @@ package deal.codegen.jvm;
 import deal.codegen.EmitterSessionBase;
 import deal.codegen.SemanticEmitterShared;
 import deal.codegen.SourceMapRecorder;
+import deal.codegen.SharedEmissionFailure;
 import deal.semantic.HostDeclarationSurface;
 import deal.semantic.StdlibFunctionCatalog;
 import deal.semantic.ir.AdaptSourceRef;
@@ -869,7 +870,7 @@ public final class JvmSemanticEmitter {
          */
         private static void requireParentlessModuleInit(SemanticOp op) {
             if (op.origin().parentOpId() != null) {
-                throw new IllegalStateException("MODULE_INIT " + op.opId()
+                throw rejectedOp(op, "MODULE_INIT " + op.opId()
                     + " records the structural parent " + op.origin().parentOpId()
                     + " (the module-level envelope op is parentless — a wrong parent is a "
                     + "producer defect, never a silent re-parenting)");
@@ -899,11 +900,11 @@ public final class JvmSemanticEmitter {
             List<OpId> ops = ownerTable == null
                 ? null : ownerTable.blockOps().get(payload.defaultBlock());
             if (ops == null) {
-                throw new IllegalStateException("the class-default block "
+                throw rejectedOp(defaultOp, "the class-default block "
                     + payload.defaultBlock() + " has no membership row (producer defect)");
             }
             if (!(defaultOp.result() instanceof ValueId resultId)) {
-                throw new IllegalStateException("CLASS_DEFAULT " + defaultOp.opId()
+                throw rejectedOp(defaultOp, "CLASS_DEFAULT " + defaultOp.opId()
                     + " publishes no ValueId result (producer defect)");
             }
             out.append("  private static Object ").append(defaultFn(defaultOp.opId()))
@@ -1129,7 +1130,7 @@ public final class JvmSemanticEmitter {
             StructuredBodyTable ownerTable = blockTableOf.get(block);
             List<OpId> ops = ownerTable == null ? null : ownerTable.blockOps().get(block);
             if (ops == null) {
-                throw new IllegalStateException("the adapter thunk block " + block
+                throw rejectedOp(adaptOp, "the adapter thunk block " + block
                     + " has no membership row (producer defect)");
             }
             out.append("  private static Object ").append(thunkFn(adaptOp.opId()))
@@ -1148,7 +1149,7 @@ public final class JvmSemanticEmitter {
                 break;
             }
             if (produced == null) {
-                throw new IllegalStateException("the adapter thunk block " + block
+                throw rejectedOp(adaptOp, "the adapter thunk block " + block
                     + " has no final producing value (producer defect)");
             }
             out.append("    return ").append(slot(produced)).append(";\n");
@@ -1497,6 +1498,16 @@ public final class JvmSemanticEmitter {
 
         // -- per-op emission ---------------------------------------------------------
 
+        /**
+         * The shared emitter rejection of one explicitly rejected op (D4):
+         * the existing message with the op's own copied origin range, so
+         * the production arm projects the identifiable offending span
+         * instead of the canonical synthetic anchor.
+         */
+        private static SharedEmissionFailure rejectedOp(SemanticOp op, String message) {
+            return new SharedEmissionFailure(message, op.origin().span().range());
+        }
+
         private void emitOp(SemanticOp op, int indent) {
             beginSourceMappedGroup(op, indent(indent));
             switch (op.kind()) {
@@ -1553,15 +1564,15 @@ public final class JvmSemanticEmitter {
                 case JSON_FROM_CLASS -> emitJsonFromClass(op, indent);
                 case JSON_TO_CLASS -> emitJsonToClass(op, indent);
                 case CLASS_NEW -> emitClassNew(op, indent);
-                case CLASS_DEFAULT -> throw new IllegalStateException("a CLASS_DEFAULT "
+                case CLASS_DEFAULT -> throw rejectedOp(op, "a CLASS_DEFAULT "
                     + "executes only under its triggering CLASS_NEW/CLASS_FACTORY "
                     + "(the detached default block's ops are the class-default "
                     + "method's; the block walk never runs the op itself)");
-                case CLASS_FACTORY -> throw new IllegalStateException("a CLASS_FACTORY "
+                case CLASS_FACTORY -> throw rejectedOp(op, "a CLASS_FACTORY "
                     + "is a detached owner-module entry executed only under the "
                     + "triggering caller's CLASS_NEW (cross-unit parent) — the "
                     + "block walk never runs it)");
-                default -> throw new IllegalStateException("op kind " + op.kind()
+                default -> throw rejectedOp(op, "op kind " + op.kind()
                     + " has no shared-JVM emission in this decomposition-tail domain");
             }
         }

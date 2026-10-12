@@ -267,6 +267,19 @@ public final class BindingsProductionValidator {
     // =========================================================================
 
     private static Optional<CompilerDiagnostic> fail(Model model, String rule, String what) {
+        return fail(null, model, rule, what);
+    }
+
+    /**
+     * The E6005 projection of one bindings failure with the explicit
+     * offending operation the rule identified (D3): the detail, rule,
+     * message, and rule order are unchanged; only the carried range
+     * differs. A failure on a registration key with no identified
+     * operation passes {@code null} and keeps the canonical empty-file
+     * synthetic range.
+     */
+    private static Optional<CompilerDiagnostic> fail(SemanticOp subject, Model model,
+                                                     String rule, String what) {
         LoweringFailureDetail detail = new LoweringFailureDetail(
             model.unit.moduleId().path(),
             SemanticCapability.BINDINGS,
@@ -274,7 +287,8 @@ public final class BindingsProductionValidator {
             model.unit.semanticProfile(),
             LoweredModuleUnit.FORMAT_VERSION,
             "BindingsProductionValidator " + rule + " (" + what + ")");
-        return Optional.of(FailureContractRegistry.e6005(detail));
+        return Optional.of(FailureContractRegistry.e6005(detail,
+            subject == null ? null : subject.origin().span().range()));
     }
 
     // =========================================================================
@@ -1190,35 +1204,35 @@ public final class BindingsProductionValidator {
             List<BindingId> bindings = group.bindings();
             List<FunctionId> functions = group.functions();
             if (bindings.isEmpty()) {
-                return fail(model, GROUP_SHAPE, "the group op " + op.opId()
+                return fail(op, model, GROUP_SHAPE, "the group op " + op.opId()
                     + " carries an empty bindings list");
             }
             if (functions.isEmpty()) {
-                return fail(model, GROUP_SHAPE, "the group op " + op.opId()
+                return fail(op, model, GROUP_SHAPE, "the group op " + op.opId()
                     + " carries an empty functions list");
             }
             if (bindings.size() != functions.size()) {
-                return fail(model, GROUP_SHAPE, "the group op " + op.opId()
+                return fail(op, model, GROUP_SHAPE, "the group op " + op.opId()
                     + " carries " + bindings.size() + " bindings and " + functions.size()
                     + " functions (the member lists must have the same length)");
             }
             for (FunctionId functionId : functions) {
                 LoweredFunction function = model.unit.functions().get(functionId);
                 if (function == null) {
-                    return fail(model, GROUP_SHAPE, "the group op " + op.opId()
+                    return fail(op, model, GROUP_SHAPE, "the group op " + op.opId()
                         + " member " + functionId + " has no LoweredFunction record");
                 }
                 Map.Entry<FunctionAllocationIdentity, FunctionExecutionBinding> registry =
                     model.registryByFunction.get(functionId);
                 if (registry == null) {
-                    return fail(model, GROUP_SHAPE, "the group op " + op.opId()
+                    return fail(op, model, GROUP_SHAPE, "the group op " + op.opId()
                         + " member " + functionId + " has no LoweredBody registration "
                         + "(exactly one per member, B5)");
                 }
                 FunctionExecutionBinding.LoweredBody body =
                     (FunctionExecutionBinding.LoweredBody) registry.getValue();
                 if (!body.blockId().equals(function.body())) {
-                    return fail(model, GROUP_SHAPE, "the group op " + op.opId()
+                    return fail(op, model, GROUP_SHAPE, "the group op " + op.opId()
                         + " member " + functionId + " registration names block "
                         + body.blockId() + " but the member body is " + function.body());
                 }
@@ -1231,7 +1245,7 @@ public final class BindingsProductionValidator {
                     }
                 }
                 if (registrations != 1) {
-                    return fail(model, GROUP_SHAPE, "the group op " + op.opId()
+                    return fail(op, model, GROUP_SHAPE, "the group op " + op.opId()
                         + " member " + functionId + " has " + registrations
                         + " LoweredBody registrations (exactly one per member, B5)");
                 }
@@ -1243,13 +1257,13 @@ public final class BindingsProductionValidator {
                     }
                     if (other.payload() instanceof KindPayload.BindingAllocPayload alloc
                             && alloc.binding().equals(binding)) {
-                        return fail(model, GROUP_SHAPE, "the group member binding " + binding
+                        return fail(op, model, GROUP_SHAPE, "the group member binding " + binding
                             + " has a separate BINDING_ALLOC op " + other.opId()
                             + " (member cells are SHARED_CELL by construction, B2)");
                     }
                     if (other.payload() instanceof KindPayload.BindingInitPayload init
                             && init.binding().equals(binding)) {
-                        return fail(model, GROUP_SHAPE, "the group member binding " + binding
+                        return fail(op, model, GROUP_SHAPE, "the group member binding " + binding
                             + " has a separate BINDING_INIT op " + other.opId()
                             + " (members have no separate INIT, B1/B4)");
                     }
@@ -1284,19 +1298,19 @@ public final class BindingsProductionValidator {
             for (BindingGeneration capture : function.captures()) {
                 BindingId binding = capture.binding();
                 if (detaching == null) {
-                    return fail(model, CAPTURE_RESOLUTION, "the body " + root + " of "
+                    return fail(null, model, CAPTURE_RESOLUTION, "the body " + root + " of "
                         + function.functionId() + " has capture entries but no detaching "
                         + "op (the detaching chain cannot close)");
                 }
                 Optional<ResolvedCapture> resolved =
                     model.resolveCaptureBinding(binding, detaching);
                 if (resolved.isEmpty()) {
-                    return fail(model, CAPTURE_RESOLUTION, "the capture " + binding
+                    return fail(detaching, model, CAPTURE_RESOLUTION, "the capture " + binding
                         + " of " + function.functionId() + " resolves to zero or multiple "
                         + "producing allocations at the detaching op's creation site");
                 }
                 if (resolved.get().generation != capture.generation()) {
-                    return fail(model, CAPTURE_RESOLUTION, "the capture " + binding
+                    return fail(detaching, model, CAPTURE_RESOLUTION, "the capture " + binding
                         + " of " + function.functionId() + " names generation "
                         + capture.generation() + " while the creation site resolves "
                         + "generation " + resolved.get().generation
@@ -1348,13 +1362,13 @@ public final class BindingsProductionValidator {
                 Optional<ResolvedCapture> resolved =
                     model.resolveCaptureBinding(capture.binding(), op);
                 if (resolved.isEmpty()) {
-                    return fail(model, CAPTURE_RESOLUTION, "the CLOSURE_NEW capture "
+                    return fail(op, model, CAPTURE_RESOLUTION, "the CLOSURE_NEW capture "
                         + capture.binding() + " of op " + op.opId()
                         + " resolves to zero or multiple "
                         + "producing allocations at the creation site");
                 }
                 if (resolved.get().generation != capture.generation()) {
-                    return fail(model, CAPTURE_RESOLUTION, "the CLOSURE_NEW capture "
+                    return fail(op, model, CAPTURE_RESOLUTION, "the CLOSURE_NEW capture "
                         + capture.binding() + " of op " + op.opId() + " names generation "
                         + capture.generation() + " while the creation site resolves "
                         + "generation " + resolved.get().generation
@@ -1374,7 +1388,7 @@ public final class BindingsProductionValidator {
         }
         List<Allocation> own = model.visibleAllocations(binding, site);
         if (own.isEmpty() && function.captureOf(binding) == null) {
-            return fail(model, CAPTURE_RESOLUTION, "the detached-body reference "
+            return fail(carrier, model, CAPTURE_RESOLUTION, "the detached-body reference "
                 + binding + " of op " + carrier.opId() + " is outside the captures "
                 + "list of " + function.functionId());
         }
@@ -1413,7 +1427,7 @@ public final class BindingsProductionValidator {
                 Optional<ResolvedCapture> resolved =
                     model.resolveCaptureBinding(entry.binding(), op);
                 if (resolved.isEmpty()) {
-                    return fail(model, CAPTURE_RESOLUTION, "the thunk capture {"
+                    return fail(op, model, CAPTURE_RESOLUTION, "the thunk capture {"
                         + entry.binding() + ", " + entry.generation() + "} of op "
                         + op.opId() + " resolves to zero or multiple producing "
                         + "allocations at the creation site");
@@ -1483,7 +1497,7 @@ public final class BindingsProductionValidator {
                 }
             }
             if (!pinned) {
-                return fail(model, CAPTURE_RESOLUTION, "the thunk-block reference "
+                return fail(carrier, model, CAPTURE_RESOLUTION, "the thunk-block reference "
                     + binding + " of op " + carrier.opId() + " is outside the pinned "
                     + "capturedBindings of thunk " + thunk.blockId());
             }
@@ -1502,7 +1516,7 @@ public final class BindingsProductionValidator {
                     Resolution resolution = model.resolveReference(load.binding(),
                         load.generation(), op);
                     if (resolution.allocation == null && !resolution.outOfScope) {
-                        return fail(model, BINDING_GENERATION_RESOLUTION, "the load {"
+                        return fail(op, model, BINDING_GENERATION_RESOLUTION, "the load {"
                             + load.binding() + ", " + load.generation() + "} of op "
                             + op.opId() + " resolves to zero or multiple producing "
                             + "allocations with equal generation (stale/unresolvable)");
@@ -1512,7 +1526,7 @@ public final class BindingsProductionValidator {
                     Resolution resolution = model.resolveReference(store.binding(),
                         store.generation(), op);
                     if (resolution.allocation == null && !resolution.outOfScope) {
-                        return fail(model, BINDING_GENERATION_RESOLUTION, "the store {"
+                        return fail(op, model, BINDING_GENERATION_RESOLUTION, "the store {"
                             + store.binding() + ", " + store.generation() + "} of op "
                             + op.opId() + " resolves to zero or multiple producing "
                             + "allocations with equal generation (stale/unresolvable)");
@@ -1523,7 +1537,7 @@ public final class BindingsProductionValidator {
                         Resolution resolution = model.resolveReference(shared.binding(),
                             shared.generation(), op);
                         if (resolution.allocation == null && !resolution.outOfScope) {
-                            return fail(model, BINDING_GENERATION_RESOLUTION,
+                            return fail(op, model, BINDING_GENERATION_RESOLUTION,
                                 "the SharedCell {" + shared.binding() + ", "
                                     + shared.generation() + "} of op " + op.opId()
                                     + " resolves to zero or multiple producing "
@@ -1535,7 +1549,7 @@ public final class BindingsProductionValidator {
                         Resolution resolution = model.resolveReference(
                             adapt.proof().binding(), adapt.proof().generation(), op);
                         if (resolution.allocation == null && !resolution.outOfScope) {
-                            return fail(model, BINDING_GENERATION_RESOLUTION,
+                            return fail(op, model, BINDING_GENERATION_RESOLUTION,
                                 "the proof {" + adapt.proof().binding() + ", "
                                     + adapt.proof().generation() + "} of op " + op.opId()
                                     + " resolves to zero or multiple producing "
@@ -1548,7 +1562,7 @@ public final class BindingsProductionValidator {
                             Resolution resolution = model.resolveReference(
                                 entry.binding(), entry.generation(), op);
                             if (resolution.allocation == null && !resolution.outOfScope) {
-                                return fail(model, BINDING_GENERATION_RESOLUTION,
+                                return fail(op, model, BINDING_GENERATION_RESOLUTION,
                                     "the thunk capture {" + entry.binding() + ", "
                                         + entry.generation() + "} of op " + op.opId()
                                         + " resolves to zero or multiple producing "
@@ -1575,7 +1589,10 @@ public final class BindingsProductionValidator {
                 : model.initsBySite.entrySet()) {
             List<SemanticOp> inits = entry.getValue();
             if (inits.size() != 1) {
-                return fail(model, BINDING_INIT_ONCE, "the incarnation {"
+                // No unique offending op exists for a zero-or-multiple INIT
+                // conflict (the incarnation key is the identified fact), so
+                // the failure stays originless.
+                return fail(null, model, BINDING_INIT_ONCE, "the incarnation {"
                     + entry.getKey().binding() + ", " + entry.getKey().generation()
                     + "} has " + inits.size() + " BINDING_INIT ops (exactly one per "
                     + "source-declaration incarnation)");
@@ -1583,7 +1600,7 @@ public final class BindingsProductionValidator {
             SemanticOp init = inits.get(0);
             List<SemanticOp> allocs = model.allocsBySite.get(entry.getKey());
             if (allocs == null || allocs.size() != 1) {
-                return fail(model, BINDING_INIT_ONCE, "the INIT of {" + entry.getKey()
+                return fail(init, model, BINDING_INIT_ONCE, "the INIT of {" + entry.getKey()
                     .binding() + ", " + entry.getKey().generation() + "} has no unique "
                     + "producing BINDING_ALLOC (a cell written by another pinned "
                     + "initializing write — a FOR_EACH iteration binding or a group "
@@ -1593,20 +1610,20 @@ public final class BindingsProductionValidator {
             BlockId initBlock = model.blockOf(init.opId());
             BlockId allocBlock = model.blockOf(alloc.opId());
             if (initBlock == null || allocBlock == null || !initBlock.equals(allocBlock)) {
-                return fail(model, BINDING_INIT_ONCE, "the INIT of {" + entry.getKey()
+                return fail(init, model, BINDING_INIT_ONCE, "the INIT of {" + entry.getKey()
                     .binding() + ", " + entry.getKey().generation() + "} sits in block "
                     + initBlock + " but its producing ALLOC sits in block " + allocBlock
                     + " (the INIT must be on the incarnation's block's path)");
             }
             if (model.parameters.contains(entry.getKey().binding())) {
-                return fail(model, BINDING_INIT_ONCE, "the INIT of {" + entry.getKey()
+                return fail(init, model, BINDING_INIT_ONCE, "the INIT of {" + entry.getKey()
                     .binding() + ", " + entry.getKey().generation()
                     + "} targets a parameter cell (the synthetic parameter-transfer "
                     + "entry write is the invoking machinery's pinned initializing "
                     + "write — a parameter never carries a BINDING_INIT)");
             }
             if (model.importAliases.contains(entry.getKey().binding())) {
-                return fail(model, BINDING_INIT_ONCE, "the INIT of {" + entry.getKey()
+                return fail(init, model, BINDING_INIT_ONCE, "the INIT of {" + entry.getKey()
                     .binding() + ", " + entry.getKey().generation()
                     + "} targets an import-alias cell (the MODULE_IMPORT op's "
                     + "completion write is the pinned initializing write — an import "
@@ -1615,7 +1632,7 @@ public final class BindingsProductionValidator {
             for (SemanticOp other : model.unit.ops()) {
                 if (other.payload() instanceof KindPayload.TryCatchPayload payload
                         && payload.catchBinding().equals(entry.getKey().binding())) {
-                    return fail(model, BINDING_INIT_ONCE, "the INIT of {" + entry.getKey()
+                    return fail(init, model, BINDING_INIT_ONCE, "the INIT of {" + entry.getKey()
                         .binding() + ", " + entry.getKey().generation()
                         + "} targets a catch binding's cell (the catch-entry write is "
                         + "TRY_CATCH's pinned initializing write)");
@@ -1662,14 +1679,14 @@ public final class BindingsProductionValidator {
             ModuleImportKind entryKind = entryKinds.putIfAbsent(payload.resolvedModule(),
                 payload.kind());
             if (entryKind != null && entryKind != payload.kind()) {
-                return fail(model, BINDING_INIT_ONCE, "the MODULE_IMPORT completion of "
+                return fail(op, model, BINDING_INIT_ONCE, "the MODULE_IMPORT completion of "
                     + payload.resolvedModule() + " carries the kind " + payload.kind()
                     + " but the module's registration entry kind is " + entryKind
                     + " (a completion's kind equals its entry's kind)");
             }
             for (BindingId cell : payload.aliasCells()) {
                 if (!aliases.contains(cell)) {
-                    return fail(model, BINDING_INIT_ONCE, "the MODULE_IMPORT op "
+                    return fail(op, model, BINDING_INIT_ONCE, "the MODULE_IMPORT op "
                         + op.opId() + " of " + payload.resolvedModule() + " names the cell "
                         + cell + " which is not an import-alias allocation of the unit "
                         + "(a completion names import-alias cells only)");
@@ -1679,13 +1696,13 @@ public final class BindingsProductionValidator {
                     KindPayload.ModuleImportPayload previousPayload =
                         (KindPayload.ModuleImportPayload) previous.payload();
                     if (!previousPayload.resolvedModule().equals(payload.resolvedModule())) {
-                        return fail(model, BINDING_INIT_ONCE, "the cell " + cell
+                        return fail(op, model, BINDING_INIT_ONCE, "the cell " + cell
                             + " is named by the MODULE_IMPORT completions of two modules ("
                             + previousPayload.resolvedModule() + " and "
                             + payload.resolvedModule()
                             + "; a cell is registered under exactly one module)");
                     }
-                    return fail(model, BINDING_INIT_ONCE, "the cell " + cell
+                    return fail(op, model, BINDING_INIT_ONCE, "the cell " + cell
                         + " is named by two MODULE_IMPORT completions (exactly one pinned "
                         + "initializing write per import-alias allocation)");
                 }
@@ -1693,7 +1710,7 @@ public final class BindingsProductionValidator {
         }
         for (BindingId alias : aliases) {
             if (!completions.containsKey(alias)) {
-                return fail(model, BINDING_INIT_ONCE, "the import-alias allocation " + alias
+                return fail(null, model, BINDING_INIT_ONCE, "the import-alias allocation " + alias
                     + " is named by no MODULE_IMPORT completion (the completion write is "
                     + "the import alias's pinned initializing write)");
             }
@@ -1727,13 +1744,13 @@ public final class BindingsProductionValidator {
                 }
             }
             if (allocation == null) {
-                return fail(model, INIT_DOMINATES_LOAD, "the load {" + load.binding() + ", "
+                return fail(op, model, INIT_DOMINATES_LOAD, "the load {" + load.binding() + ", "
                     + load.generation() + "} of op " + op.opId() + " resolves to an "
                     + "unknown producing allocation");
             }
             Write write = model.initializingWrite(allocation);
             if (write == null) {
-                return fail(model, INIT_DOMINATES_LOAD, "the load {" + load.binding() + ", "
+                return fail(op, model, INIT_DOMINATES_LOAD, "the load {" + load.binding() + ", "
                     + load.generation() + "} of op " + op.opId() + " names an "
                     + "incarnation with no initializing write (an uninitialized cell "
                     + "has no defined read)");
@@ -1741,7 +1758,7 @@ public final class BindingsProductionValidator {
             Set<String> visited = new LinkedHashSet<>();
             if (!loadValid(model, allocation, write, load.binding(), load.generation(), op,
                     false, visited)) {
-                return fail(model, INIT_DOMINATES_LOAD, "the load {" + load.binding() + ", "
+                return fail(op, model, INIT_DOMINATES_LOAD, "the load {" + load.binding() + ", "
                     + load.generation() + "} of op " + op.opId() + " is not dominated by "
                     + "its incarnation's initializing write (a load dominated only by "
                     + "the producing ALLOC reads an uninitialized cell)");
@@ -1924,7 +1941,7 @@ public final class BindingsProductionValidator {
             }
             if (!AdapterCreationRule.assignableButNotExact(adapt.sourceSignature(),
                     adapt.targetSignature())) {
-                return fail(model, ADAPTER_PAIR, "the FUNCTION_ADAPT op " + op.opId()
+                return fail(op, model, ADAPTER_PAIR, "the FUNCTION_ADAPT op " + op.opId()
                     + " pair " + adapt.sourceSignature().canonicalSpecText() + " → "
                     + adapt.targetSignature().canonicalSpecText() + " does not re-derive "
                     + "as assignable-but-not-exact (identical async marker, identical "
@@ -1953,7 +1970,7 @@ public final class BindingsProductionValidator {
                 case VALUE -> source instanceof AdaptSourceRef.Value;
             };
             if (!shapeMatches) {
-                return fail(model, ADAPTER_SOURCE_SHAPE, "the FUNCTION_ADAPT op "
+                return fail(op, model, ADAPTER_SOURCE_SHAPE, "the FUNCTION_ADAPT op "
                     + op.opId() + " mode " + mode + " carries the source shape "
                     + source.getClass().getSimpleName() + " (mode must match the source "
                     + "shape: SHARED_CELL↔SharedCell, REEVALUATE_THUNK↔Thunk, "
@@ -1961,7 +1978,7 @@ public final class BindingsProductionValidator {
             }
             if (mode == CaptureMode.VALUE) {
                 if (op.operands().size() != 1) {
-                    return fail(model, ADAPTER_SOURCE_SHAPE, "the VALUE adapter op "
+                    return fail(op, model, ADAPTER_SOURCE_SHAPE, "the VALUE adapter op "
                         + op.opId() + " carries " + op.operands().size()
                         + " operands (VALUE carries exactly one operand)");
                 }
@@ -1976,7 +1993,7 @@ public final class BindingsProductionValidator {
                             && (seeded == null
                                 || !adapt.proof().binding().equals(seeded.binding())
                                 || adapt.proof().generation() != seeded.generation())) {
-                        return fail(model, ADAPTER_SOURCE_SHAPE, "the VALUE adapter op "
+                        return fail(op, model, ADAPTER_SOURCE_SHAPE, "the VALUE adapter op "
                             + op.opId() + " over the seeded intrinsic identity " + operand
                             + " carries proof {" + adapt.proof().binding() + ", "
                             + adapt.proof().generation() + "} naming no seeded binding/"
@@ -1998,7 +2015,7 @@ public final class BindingsProductionValidator {
                 }
                 if (producingLoads.isEmpty()) {
                     if (adapt.proof() != null) {
-                        return fail(model, ADAPTER_SOURCE_SHAPE, "the VALUE adapter op "
+                        return fail(op, model, ADAPTER_SOURCE_SHAPE, "the VALUE adapter op "
                             + op.opId() + " carries a proof over a non-load operand "
                             + "(proof is present iff VALUE's operand is a binding load)");
                     }
@@ -2010,7 +2027,7 @@ public final class BindingsProductionValidator {
                     // tracked identity), so a mixed production set is not
                     // proof-requiring at this level.
                     if (producingOthers.isEmpty()) {
-                        return fail(model, ADAPTER_SOURCE_SHAPE, "the VALUE adapter op "
+                        return fail(op, model, ADAPTER_SOURCE_SHAPE, "the VALUE adapter op "
                             + op.opId() + " carries a binding-load operand " + operand
                             + " without its proof (VALUE over a binding is admissible "
                             + "only with the recorded BindingImmutabilityProof naming "
@@ -2033,7 +2050,7 @@ public final class BindingsProductionValidator {
                         }
                     }
                     if (!proofMatches) {
-                        return fail(model, ADAPTER_SOURCE_SHAPE, "the VALUE adapter op "
+                        return fail(op, model, ADAPTER_SOURCE_SHAPE, "the VALUE adapter op "
                             + op.opId() + " over the binding-load operand " + operand
                             + " carries proof {" + adapt.proof().binding() + ", "
                             + adapt.proof().generation() + "} naming no producing load "
@@ -2042,12 +2059,12 @@ public final class BindingsProductionValidator {
                 }
             } else {
                 if (!op.operands().isEmpty()) {
-                    return fail(model, ADAPTER_SOURCE_SHAPE, "the " + mode + " adapter op "
+                    return fail(op, model, ADAPTER_SOURCE_SHAPE, "the " + mode + " adapter op "
                         + op.opId() + " carries " + op.operands().size()
                         + " operands (SHARED_CELL/REEVALUATE_THUNK carry no operand)");
                 }
                 if (adapt.proof() != null) {
-                    return fail(model, ADAPTER_SOURCE_SHAPE, "the " + mode + " adapter op "
+                    return fail(op, model, ADAPTER_SOURCE_SHAPE, "the " + mode + " adapter op "
                         + op.opId() + " carries a proof (SHARED_CELL/REEVALUATE_THUNK "
                         + "carry no proof)");
                 }
@@ -2427,7 +2444,7 @@ public final class BindingsProductionValidator {
                 }
                 ValueId identity = producing.result() instanceof ValueId value ? value : null;
                 if (identity == null || identity.id() != key) {
-                    return fail(model, REGISTRY_ONE_TO_ONE, "the DynamicFunctionValue key "
+                    return fail(producing, model, REGISTRY_ONE_TO_ONE, "the DynamicFunctionValue key "
                         + entry.getKey() + " names materializing op "
                         + dynamic.materializingOpId() + " whose result identity is not "
                         + "that key (the recorded op is the registration's producing "
@@ -2481,41 +2498,41 @@ public final class BindingsProductionValidator {
                     if (!(op.result() instanceof ValueId value)
                             || !(op.payload() instanceof KindPayload.ClosureNewPayload
                                 closure)) {
-                        return fail(model, REGISTRY_ONE_TO_ONE, "the CLOSURE_NEW op "
+                        return fail(op, model, REGISTRY_ONE_TO_ONE, "the CLOSURE_NEW op "
                             + op.opId() + " carries no function-typed result identity");
                     }
                     FunctionExecutionBinding binding =
                         model.unit.functionBindings().get(
                             new FunctionAllocationIdentity(value.id()));
                     if (binding == null) {
-                        return fail(model, REGISTRY_ONE_TO_ONE, "the CLOSURE_NEW op "
+                        return fail(op, model, REGISTRY_ONE_TO_ONE, "the CLOSURE_NEW op "
                             + op.opId() + " has no registry entry keyed by its "
                             + "producing allocation identity (missing registration)");
                     }
                     if (!(binding instanceof FunctionExecutionBinding.LoweredBody body)
                             || !body.functionId().equals(closure.function())
                             || !body.blockId().equals(closure.binding().blockId())) {
-                        return fail(model, REGISTRY_ONE_TO_ONE, "the CLOSURE_NEW op "
+                        return fail(op, model, REGISTRY_ONE_TO_ONE, "the CLOSURE_NEW op "
                             + op.opId() + " registration does not match its LoweredBody "
                             + "payload (a mismatched registration is invalid IR)");
                     }
                 }
                 case FUNCTION_ADAPT -> {
                     if (!(op.result() instanceof ValueId value)) {
-                        return fail(model, REGISTRY_ONE_TO_ONE, "the FUNCTION_ADAPT op "
+                        return fail(op, model, REGISTRY_ONE_TO_ONE, "the FUNCTION_ADAPT op "
                             + op.opId() + " carries no result identity");
                     }
                     FunctionExecutionBinding binding =
                         model.unit.functionBindings().get(
                             new FunctionAllocationIdentity(value.id()));
                     if (binding == null) {
-                        return fail(model, REGISTRY_ONE_TO_ONE, "the FUNCTION_ADAPT op "
+                        return fail(op, model, REGISTRY_ONE_TO_ONE, "the FUNCTION_ADAPT op "
                             + op.opId() + " has no registry entry keyed by its "
                             + "producing allocation identity (missing registration)");
                     }
                     if (!(binding instanceof FunctionExecutionBinding.AdapterBinding
                             adapter) || !adapter.adaptOpId().equals(op.opId())) {
-                        return fail(model, REGISTRY_ONE_TO_ONE, "the FUNCTION_ADAPT op "
+                        return fail(op, model, REGISTRY_ONE_TO_ONE, "the FUNCTION_ADAPT op "
                             + op.opId() + " registration is not its AdapterBinding "
                             + "(a mismatched registration is invalid IR)");
                     }
@@ -2555,7 +2572,7 @@ public final class BindingsProductionValidator {
                 new FunctionAllocationIdentity(boundary.input().id()));
             if (!(binding instanceof FunctionExecutionBinding.HostFunctionValue value)
                     || !value.materializingBoundaryOpId().equals(op.opId())) {
-                return fail(model, REGISTRY_ONE_TO_ONE, "the HOST_TO_DEAL boundary op "
+                return fail(op, model, REGISTRY_ONE_TO_ONE, "the HOST_TO_DEAL boundary op "
                     + op.opId() + " materializing a function value has no matching "
                     + "HostFunctionValue registration (a function value materialized by "
                     + "a host crossing registers exactly one binding at the producing "
@@ -2596,7 +2613,7 @@ public final class BindingsProductionValidator {
             }
             SemanticOp next = model.nextOpInBlock(op);
             if (next == null) {
-                return fail(model, NO_ADAPTER_AT_BOUNDARY, "the FUNCTION_ADAPT result "
+                return fail(op, model, NO_ADAPTER_AT_BOUNDARY, "the FUNCTION_ADAPT result "
                     + adapterValue + " of op " + op.opId() + " is the last op of its "
                     + "block (the adapter result must wire into the adapted position's "
                     + "own boundary chain immediately after the creation)");
@@ -2611,7 +2628,7 @@ public final class BindingsProductionValidator {
             if (next.kind() != SemanticOpKind.BOUNDARY
                     || !(next.payload() instanceof KindPayload.BoundaryPayload boundary)
                     || !boundary.input().equals(adapterValue)) {
-                return fail(model, NO_ADAPTER_AT_BOUNDARY, "the FUNCTION_ADAPT result "
+                return fail(op, model, NO_ADAPTER_AT_BOUNDARY, "the FUNCTION_ADAPT result "
                     + adapterValue + " of op " + op.opId() + " is not the direct input "
                     + "of the adapted position's own boundary chain (the op after the "
                     + "creation must be exactly the position's own "
@@ -2620,7 +2637,7 @@ public final class BindingsProductionValidator {
             }
             if (boundary.kind() != BoundaryKind.VARIABLE_DECLARATION
                     && boundary.kind() != BoundaryKind.VARIABLE_ASSIGNMENT) {
-                return fail(model, NO_ADAPTER_AT_BOUNDARY, "the FUNCTION_ADAPT result "
+                return fail(op, model, NO_ADAPTER_AT_BOUNDARY, "the FUNCTION_ADAPT result "
                     + adapterValue + " of op " + op.opId() + " wires directly into a "
                     + boundary.kind() + " boundary op (an adapter result is the direct "
                     + "input of exactly the adapted position's own "
@@ -2639,7 +2656,7 @@ public final class BindingsProductionValidator {
                 committed = true;
             }
             if (!committed) {
-                return fail(model, NO_ADAPTER_AT_BOUNDARY, "the FUNCTION_ADAPT result "
+                return fail(op, model, NO_ADAPTER_AT_BOUNDARY, "the FUNCTION_ADAPT result "
                     + adapterValue + " of op " + op.opId() + " wires into the "
                     + boundary.kind() + " boundary of op " + next.opId() + " but the "
                     + "chain's single commit (the declaration BINDING_INIT or the "

@@ -715,7 +715,19 @@ public final class SemanticLowerer {
             case IntLiteralOutOfRange outOfRange -> outOfRange.span();
             default -> null;
         };
-        return span == null ? null : span.range();
+        if (span != null) {
+            return span.range();
+        }
+        // The descriptor and comparison producers attach their offending
+        // construct's own range at the expression/literal boundary (D2);
+        // an unattached defect stays genuinely originless.
+        return switch (defect) {
+            case ContainerPayloadDescriptors.Defect descriptorDefect ->
+                descriptorDefect.diagnosticRange();
+            case ComparisonSelectorLowering.Defect comparisonDefect ->
+                comparisonDefect.diagnosticRange();
+            default -> null;
+        };
     }
 
     /**
@@ -6604,6 +6616,18 @@ public final class SemanticLowerer {
          */
         public ValueId lowerExpression(ExpressionNode expr, ValueId slot) {
             Objects.requireNonNull(expr, "expr must not be null");
+            try {
+                return lowerExpressionCore(expr, slot);
+            } catch (ContainerPayloadDescriptors.Defect defect) {
+                // The expression's checked fact corrupted a descriptor
+                // derivation: the expression being lowered is the
+                // identifiable offending construct, and an already
+                // attached (inner) range always wins over this one (D2).
+                throw defect.withRange(expr.span().range());
+            }
+        }
+
+        private ValueId lowerExpressionCore(ExpressionNode expr, ValueId slot) {
             return switch (expr) {
                 case LiteralExpr literal -> lowerConst(literal, slot);
                 case IdentifierExpr identifier -> lowerBindingLoad(identifier, slot);
@@ -6741,17 +6765,23 @@ public final class SemanticLowerer {
          * the single {@link ContainerPayloadDescriptors} bridge over the
          * checked element type, bytes included at every depth.
          */
-        private RuntimeDescriptor containerElementDescriptor(Type element) {
+        private RuntimeDescriptor containerElementDescriptor(Type element, Span offending) {
             // K6 item 8: a container element position whose checked type
             // contains bytes derives its descriptor through the single
             // DescriptorService bridge (the bytes descriptor member is
             // representable at every depth); the lowered bytes value is
-            // carried by the target runtime's bytes representation.
-            return ContainerPayloadDescriptors.elementDescriptorOf(element);
+            // carried by the target runtime's bytes representation. A
+            // corrupted checked fact fails closed with the offending
+            // container position's own range attached (D2).
+            try {
+                return ContainerPayloadDescriptors.elementDescriptorOf(element);
+            } catch (ContainerPayloadDescriptors.Defect defect) {
+                throw defect.withRange(offending.range());
+            }
         }
 
         private OpId lowerArrayForOf(ForOfStatement stmt, Type.Array arrayType) {
-            containerElementDescriptor(arrayType.element());
+            containerElementDescriptor(arrayType.element(), stmt.iterable().span());
             BlockId bodyBlock = allocateBlock();
             ValueId iterable = lowerExpression(stmt.iterable());
             ForEachFrame frame = openForEachScope(stmt.varName());
@@ -7301,7 +7331,7 @@ public final class SemanticLowerer {
         private ValueId lowerArrayIndexAssign(AssignmentExpr assignment, IndexExpr index,
                                               Type.Array arrayType, ValueId slot) {
             RuntimeDescriptor elementDescriptor =
-                containerElementDescriptor(arrayType.element());
+                containerElementDescriptor(arrayType.element(), index.array().span());
             OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
             chainParents.push(chainOpId);
             ValueId value;
@@ -7637,7 +7667,7 @@ public final class SemanticLowerer {
         private void lowerArrayIndexDelete(DeleteStatement delete, IndexExpr index,
                                            Type.Array arrayType) {
             RuntimeDescriptor elementDescriptor =
-                containerElementDescriptor(arrayType.element());
+                containerElementDescriptor(arrayType.element(), index.array().span());
             OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
             chainParents.push(chainOpId);
             OpId containerOp;
@@ -11645,7 +11675,7 @@ public final class SemanticLowerer {
                         literal.span());
             }
             RuntimeDescriptor elementDescriptor =
-                containerElementDescriptor(arrayType.element());
+                containerElementDescriptor(arrayType.element(), literal.span());
             List<ValueId> values = new ArrayList<>();
             for (ExpressionNode element : literal.elements()) {
                 values.add(lowerExpression(element));

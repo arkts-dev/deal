@@ -2,6 +2,7 @@ package deal.test;
 
 import deal.ast.AwaitExpression;
 import deal.ast.ArrayLiteralExpr;
+import deal.ast.BinaryOp;
 import deal.ast.AssignmentExpr;
 import deal.ast.BinaryExpr;
 import deal.ast.Block;
@@ -55,6 +56,7 @@ import deal.parser.Parser;
 import deal.semantic.CapabilityRegistry;
 import deal.semantic.CheckedModuleInput;
 import deal.semantic.CheckedModuleKind;
+import deal.semantic.ComparisonSelectorLowering;
 import deal.semantic.ContainerPayloadDescriptors;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.StdlibFunctionCatalog;
@@ -91,8 +93,10 @@ import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.SemanticTable;
+import deal.semantic.ir.AnchorId;
 import deal.semantic.ir.SourceOrigin;
 import deal.semantic.ir.SourceOriginKind;
+import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.ValueId;
 import deal.types.Type;
 
@@ -1803,9 +1807,10 @@ public class ContainerLoweringArmsTest {
                     + (defect == null ? "lowered" : defect.getMessage()));
         }
 
-        // (b) Type.Error at the element-descriptor position (same projection).
+        // (b) Type.Error at the element-descriptor position (same projection):
+        // the offending array literal's own span survives the shared E6005.
         {
-            Span span = new Span(SOURCE_ID, 1, 1, 1, 5);
+            Span span = new Span(SOURCE_ID, 4, 5, 4, 10, 30, 35);
             ArrayLiteralExpr literal = new ArrayLiteralExpr(span, List.of());
             CheckResult checks = new CheckResult(
                 Map.of(literal, new Type.Array(Type.Error.INSTANCE)),
@@ -1825,7 +1830,121 @@ public class ContainerLoweringArmsTest {
                 check(ContainerPayloadDescriptors.DESCRIPTOR_UNREPRESENTABLE
                         .equals(detail.validatorRule()),
                     "Type.Error converts to DESCRIPTOR_UNREPRESENTABLE through the same seam");
+                check(span.range().equals(defect.diagnosticRange()),
+                    "the defect carries the offending literal's own range, never an outer "
+                        + "or last-visited anchor: " + defect.diagnosticRange());
+                CompilerDiagnostic diagnostic = SemanticLowerer.loweringFailure(MODULE, defect);
+                check("E6005".equals(diagnostic.code())
+                        && diagnostic.diagnosticCode() == DiagnosticCode.E6005
+                        && "error".equals(diagnostic.severity()),
+                    "the descriptor defect converts to an error-severity E6005");
+                check(diagnostic.message().equals(
+                        FailureContractRegistry.instantiateMessage(detail)),
+                    "the descriptor-defect message is the unchanged registry "
+                        + "instantiation: " + diagnostic.message());
+                check(diagnostic.range().origin() == RangeOrigin.SOURCE
+                        && SOURCE_ID.equals(diagnostic.range().file())
+                        && diagnostic.range().startLine() == 4
+                        && diagnostic.range().startColumn() == 5
+                        && diagnostic.range().endLine() == 4
+                        && diagnostic.range().endColumn() == 11
+                        && diagnostic.range().startScalarOffset() == 30
+                        && diagnostic.range().endScalarOffset() == 35
+                        && diagnostic.range().scalarLength() == 5,
+                    "the E6005 range is the offending literal's own half-open "
+                        + "SOURCE range: " + diagnostic.range());
+                check(lowerer.ops().isEmpty(),
+                    "the descriptor defect produces no ops (hard failure, never a "
+                        + "partial unit)");
             }
+
+            // Control: the same classification without an identified source
+            // construct keeps the canonical empty-file synthetic range.
+            CompilerDiagnostic originless = SemanticLowerer.loweringFailure(MODULE,
+                new ContainerPayloadDescriptors.Defect(
+                    "elementDescriptorOf: a producer fact without one source construct",
+                    null));
+            check(originless.range().isCanonicalSynthetic()
+                    && "".equals(originless.range().file()),
+                "an originless descriptor defect keeps the canonical empty-file "
+                    + "synthetic range: " + originless.range());
+        }
+    }
+
+    /**
+     * The comparison producer's own failure origins (ISSUE-0750): the
+     * exact offending comparison expression's span survives the shared
+     * COMPARISON_SELECTOR E6005, and a defect raised without an identified
+     * construct keeps the canonical empty-file synthetic range.
+     */
+    static void testComparisonSelectorOrigin() {
+        System.out.println("-- ComparisonSelectorLowering origins: the offending "
+            + "expression's own span, the unchanged message, the originless control --");
+
+        SourceOrigin origin = new SourceOrigin(SOURCE_ID,
+            new SourceSpan(SOURCE_ID, 4, 5, 4, 10, 30, 35),
+            SourceOriginKind.USER, new AnchorId(0), null);
+        SemanticIdAllocator allocator = SemanticIdAllocator.over(List.of(MODULE));
+
+        ComparisonSelectorLowering.Defect defect = null;
+        try {
+            ComparisonSelectorLowering.produce(MODULE, BinaryOp.LT,
+                Type.Boolean.INSTANCE, Type.Boolean.INSTANCE,
+                new ValueId(1), new ValueId(2), origin, allocator, 0, 0);
+        } catch (ComparisonSelectorLowering.Defect raised) {
+            defect = raised;
+        }
+        check(defect != null,
+            "the closed comparison map rejects a boolean LT boolean pair");
+        if (defect != null) {
+            check(origin.span().range().equals(defect.diagnosticRange()),
+                "the comparison defect carries the offending expression's own range: "
+                    + defect.diagnosticRange());
+            LoweringFailureDetail detail =
+                ComparisonSelectorLowering.loweringFailureDetail(MODULE, defect);
+            check(ComparisonSelectorLowering.COMPARISON_SELECTOR
+                    .equals(detail.validatorRule()),
+                "the boolean pair converts to COMPARISON_SELECTOR through the seam");
+            CompilerDiagnostic diagnostic =
+                ComparisonSelectorLowering.e6005(MODULE, defect);
+            check("E6005".equals(diagnostic.code())
+                    && diagnostic.diagnosticCode() == DiagnosticCode.E6005
+                    && "error".equals(diagnostic.severity()),
+                "the comparison defect converts to an error-severity E6005");
+            check(diagnostic.message().equals(
+                    FailureContractRegistry.instantiateMessage(detail)),
+                "the comparison message is the unchanged registry instantiation: "
+                    + diagnostic.message());
+            check(diagnostic.range().origin() == RangeOrigin.SOURCE
+                    && SOURCE_ID.equals(diagnostic.range().file())
+                    && diagnostic.range().startLine() == 4
+                    && diagnostic.range().startColumn() == 5
+                    && diagnostic.range().endColumn() == 11
+                    && diagnostic.range().startScalarOffset() == 30
+                    && diagnostic.range().endScalarOffset() == 35
+                    && diagnostic.range().scalarLength() == 5,
+                "the COMPARISON_SELECTOR E6005 range is the offending "
+                    + "expression's own half-open SOURCE range: " + diagnostic.range());
+        }
+
+        // Control: the selector map itself identifies no source construct,
+        // so its defect keeps the canonical empty-file synthetic range.
+        ComparisonSelectorLowering.Defect mappingDefect = null;
+        try {
+            ComparisonSelectorLowering.payloadOf(BinaryOp.LT,
+                Type.Boolean.INSTANCE, Type.Boolean.INSTANCE);
+        } catch (ComparisonSelectorLowering.Defect raised) {
+            mappingDefect = raised;
+        }
+        check(mappingDefect != null && mappingDefect.diagnosticRange() == null,
+            "the bare selector-map defect identifies no source construct");
+        if (mappingDefect != null) {
+            CompilerDiagnostic originless =
+                ComparisonSelectorLowering.e6005(MODULE, mappingDefect);
+            check(originless.range().isCanonicalSynthetic()
+                    && "".equals(originless.range().file()),
+                "an originless comparison defect keeps the canonical empty-file "
+                    + "synthetic range: " + originless.range());
         }
     }
 
@@ -2155,6 +2274,7 @@ public class ContainerLoweringArmsTest {
         testConstructUnloweredNegatives();
         testImportMemberCatalogMissOrigin();
         testDescriptorNegatives();
+        testComparisonSelectorOrigin();
         testCombinedDependencyStep();
         testModuleCorpusDeterminism();
 

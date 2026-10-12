@@ -1,6 +1,8 @@
 package deal.test;
 
 import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
 import deal.diagnostics.DiagnosticCode;
 import deal.semantic.ir.AdaptSourceRef;
 import deal.semantic.ir.AnchorId;
@@ -15,6 +17,7 @@ import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.BoundaryRealization;
 import deal.semantic.ir.CallMode;
 import deal.semantic.ir.CanonicalJson;
+import deal.semantic.ir.RawUnit;
 import deal.semantic.ir.CapabilityRequirementCatalog;
 import deal.semantic.ir.CaptureMode;
 import deal.semantic.ir.ClassId;
@@ -88,6 +91,11 @@ public class SemanticIrValidatorTest {
     private static void fail(String message) {
         failed++;
         System.err.println("FAIL: " + message);
+    }
+
+    private static void checkEq(Object expected, Object actual, String message) {
+        check(java.util.Objects.equals(expected, actual),
+            message + " (expected " + expected + ", got " + actual + ")");
     }
 
     // =========================================================================
@@ -260,6 +268,62 @@ public class SemanticIrValidatorTest {
     private static SemanticOp constOp() {
         return op(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Int(1)),
             nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null);
+    }
+
+    /**
+     * The real copied USER origin of the retained-origin battery: the
+     * offending.deal-style coordinates the ISSUE-0750 contract names.
+     */
+    private static final SourceSpan REAL_SPAN =
+        new SourceSpan("test.deal", 4, 5, 4, 10, 30, 35);
+
+    private static SourceOrigin userOrigin(String file, OpId parent) {
+        return new SourceOrigin(file,
+            new SourceSpan(file, REAL_SPAN.startLine(), REAL_SPAN.startColumn(),
+                REAL_SPAN.endLine(), REAL_SPAN.endColumn(), REAL_SPAN.startScalarOffset(),
+                REAL_SPAN.endScalarOffset()),
+            SourceOriginKind.USER, new AnchorId(7), parent);
+    }
+
+    /** The same op with a different origin (all other components unchanged). */
+    private static SemanticOp withOrigin(SemanticOp op, SourceOrigin origin) {
+        return new SemanticOp(op.opId(), op.kind(), origin, op.result(), op.resultType(),
+            op.operands(), op.operandTypes(), op.payload(), op.failurePolicy(), op.contract());
+    }
+
+    /** Replaces the first op's origin object with the supplied one. */
+    private static String substituteOrigin(String text, CanonicalJson.Obj origin) {
+        CanonicalJson.Obj root = parseObj(text);
+        CanonicalJson.Obj op = firstOp(root);
+        return serialize(withOps(root, withEntry(op, "origin", origin)));
+    }
+
+    /** Replaces the first op's origin span object with the supplied one. */
+    private static String substituteOriginSpan(String text, CanonicalJson.Obj span) {
+        CanonicalJson.Obj root = parseObj(text);
+        CanonicalJson.Obj op = firstOp(root);
+        CanonicalJson.Obj origin = (CanonicalJson.Obj) at(op, "origin");
+        return serialize(withOps(root,
+            withEntry(op, "origin", withEntry(origin, "span", span))));
+    }
+
+    /** The prior neutral synthetic origin (the pre-ISSUE-0750 serialized shape). */
+    private static CanonicalJson.Obj neutralOrigin() {
+        return CanonicalJson.obj(
+            CanonicalJson.e("sourceId", CanonicalJson.str("semantic-ir")),
+            CanonicalJson.e("span", CanonicalJson.obj(
+                CanonicalJson.e("file", CanonicalJson.str("semantic-ir")),
+                CanonicalJson.e("startLine", CanonicalJson.intValue(1)),
+                CanonicalJson.e("startColumn", CanonicalJson.intValue(1)),
+                CanonicalJson.e("endLine", CanonicalJson.intValue(1)),
+                CanonicalJson.e("endColumn", CanonicalJson.intValue(1)),
+                CanonicalJson.e("startScalarOffset", CanonicalJson.intValue(-1)),
+                CanonicalJson.e("endScalarOffset", CanonicalJson.intValue(-1)))),
+            CanonicalJson.e("kind", CanonicalJson.str("SYNTHETIC")),
+            CanonicalJson.e("anchorId", CanonicalJson.obj(
+                CanonicalJson.e("id", CanonicalJson.intValue(0)),
+                CanonicalJson.e("type", CanonicalJson.str("anchor")))),
+            CanonicalJson.e("parentOpId", CanonicalJson.nullValue()));
     }
 
     // =========================================================================
@@ -1984,6 +2048,170 @@ public class SemanticIrValidatorTest {
         }
     }
 
+    // =========================================================================
+    // 9. Retained origin metadata and source-attributed validation (D3)
+    // =========================================================================
+
+    private static void testOriginTransport() {
+        System.out.println("-- Retained origin metadata + source-attributed validation --");
+
+        LoweredModuleUnit base = unit(List.of(
+            withOrigin(constOp(), userOrigin("test.deal", null))));
+        assertPass(SemanticIrValidator.validate(base, FACTS),
+            "the real-origin base unit validates");
+
+        String text = SemanticIrValidator.toUnitText(base);
+        check(text.contains("\"sourceId\":\"test.deal\"")
+                && text.contains("\"file\":\"test.deal\"")
+                && text.contains("\"startLine\":4")
+                && text.contains("\"startColumn\":5")
+                && text.contains("\"endColumn\":10")
+                && text.contains("\"startScalarOffset\":30")
+                && text.contains("\"endScalarOffset\":35")
+                && text.contains("\"kind\":\"USER\""),
+            "typed-to-text conversion retains the complete origin metadata: " + text);
+
+        // Text-to-raw: the supplied origin object survives parsing and
+        // re-serialization byte-identically.
+        RawUnit parsed = ContractSnapshotCanonicalizer.parseUnit(parseObj(text));
+        checkEq(REAL_SPAN.range(), parsed.ops().get(0).origin().diagnosticRange(),
+            "text parsing retains the supplied origin coordinates");
+        String reText = CanonicalJson.serializeText(
+            ContractSnapshotCanonicalizer.toJson(parsed));
+        checkEq(text, reText,
+            "text parsing and re-serialization preserve the supplied origin values");
+
+        // Source-attributed validation: the offending op's supplied origin
+        // reaches the projected E6005 on the text surface.
+        Optional<CompilerDiagnostic> typed = SemanticIrValidator.validateText(text, FACTS);
+        assertPass(typed, "the retained-origin text validates unchanged");
+        String bad = substitutePolicy(text, "NO_DEAL_FAILURE", "BAD_POLICY");
+        Optional<CompilerDiagnostic> failure = SemanticIrValidator.validateText(bad, FACTS);
+        assertE6005(failure, "R-ENUM", "BAD_POLICY");
+        check(failure.isPresent() && REAL_SPAN.range().equals(failure.get().range()),
+            "the R-ENUM failure carries the offending operation's own SOURCE range: "
+                + (failure.isEmpty() ? "no failure" : failure.get().range()));
+        check(failure.isPresent() && failure.get().notes().isEmpty(),
+            "the well-formed origin adds no normalization note");
+
+        // Coordinates supplied only in the text drive the projection.
+        String supplied = substitutePolicy(
+            text.replace("\"file\":\"test.deal\"", "\"file\":\"offending.deal\""),
+            "NO_DEAL_FAILURE", "BAD_POLICY");
+        Optional<CompilerDiagnostic> suppliedFailure =
+            SemanticIrValidator.validateText(supplied, FACTS);
+        assertE6005(suppliedFailure, "R-ENUM", "BAD_POLICY");
+        check(suppliedFailure.isPresent()
+                && "offending.deal".equals(suppliedFailure.get().range().file())
+                && suppliedFailure.get().range().origin() == RangeOrigin.SOURCE
+                && suppliedFailure.get().range().startScalarOffset() == 30
+                && suppliedFailure.get().range().endScalarOffset() == 35
+                && suppliedFailure.get().range().scalarLength() == 5
+                && suppliedFailure.get().range().startLine() == 4
+                && suppliedFailure.get().range().startColumn() == 5
+                && suppliedFailure.get().range().endColumn() == 11,
+            "the supplied offending origin is the projected SOURCE range: "
+                + (suppliedFailure.isEmpty() ? "no failure"
+                    : suppliedFailure.get().range()));
+
+        // The prior neutral synthetic origin stays synthetic (the known
+        // file is retained, never turned into a SOURCE anchor).
+        String neutral = substitutePolicy(substituteOrigin(text, neutralOrigin()),
+            "NO_DEAL_FAILURE", "BAD_POLICY");
+        Optional<CompilerDiagnostic> neutralFailure =
+            SemanticIrValidator.validateText(neutral, FACTS);
+        assertE6005(neutralFailure, "R-ENUM", "BAD_POLICY");
+        check(neutralFailure.isPresent()
+                && neutralFailure.get().range().origin() == RangeOrigin.SYNTHETIC
+                && neutralFailure.get().range().isCanonicalSynthetic()
+                && "semantic-ir".equals(neutralFailure.get().range().file()),
+            "a neutral synthetic supplied origin stays synthetic with its known file: "
+                + (neutralFailure.isEmpty() ? "no failure"
+                    : neutralFailure.get().range()));
+
+        // Malformed diagnostic-only coordinates normalize rather than
+        // changing the semantic failure selection: the rule and message
+        // stay identical, only the range is normalized.
+        String badPositions = substitutePolicy(
+            text.replace("\"startLine\":4", "\"startLine\":0"),
+            "NO_DEAL_FAILURE", "BAD_POLICY");
+        Optional<CompilerDiagnostic> positionsFailure =
+            SemanticIrValidator.validateText(badPositions, FACTS);
+        check(positionsFailure.isPresent() && failure.isPresent()
+                && positionsFailure.get().message().equals(failure.get().message()),
+            "a malformed supplied position keeps the same first failure and message");
+        check(positionsFailure.isPresent() && !positionsFailure.get().notes().isEmpty()
+                && !positionsFailure.get().range().equals(failure.get().range()),
+            "a malformed supplied position normalizes the range with the existing "
+                + "note: " + (positionsFailure.isEmpty() ? "no failure"
+                    : positionsFailure.get().range() + " " + positionsFailure.get().notes()));
+
+        CanonicalJson.Obj invertedSpan = CanonicalJson.obj(
+            CanonicalJson.e("file", CanonicalJson.str("test.deal")),
+            CanonicalJson.e("startLine", CanonicalJson.intValue(4)),
+            CanonicalJson.e("startColumn", CanonicalJson.intValue(5)),
+            CanonicalJson.e("endLine", CanonicalJson.intValue(4)),
+            CanonicalJson.e("endColumn", CanonicalJson.intValue(10)),
+            CanonicalJson.e("startScalarOffset", CanonicalJson.intValue(35)),
+            CanonicalJson.e("endScalarOffset", CanonicalJson.intValue(30)));
+        String invertedOffsets = substitutePolicy(
+            substituteOriginSpan(text, invertedSpan), "NO_DEAL_FAILURE", "BAD_POLICY");
+        Optional<CompilerDiagnostic> invertedFailure =
+            SemanticIrValidator.validateText(invertedOffsets, FACTS);
+        check(invertedFailure.isPresent() && failure.isPresent()
+                && invertedFailure.get().message().equals(failure.get().message()),
+            "inverted supplied offsets keep the same first failure and message");
+        check(invertedFailure.isPresent()
+                && invertedFailure.get().range().origin() == RangeOrigin.SYNTHETIC
+                && !invertedFailure.get().notes().isEmpty(),
+            "inverted supplied offsets normalize to the synthetic range, never an "
+                + "invented SOURCE anchor");
+
+        // Coordinate-only mutations leave the snapshot digest, validity, and
+        // message selection unchanged.
+        LoweredModuleUnit shifted = unit(List.of(
+            withOrigin(constOp(), userOrigin("other.deal", null))));
+        checkEq(ContractSnapshotCanonicalizer.digest(base.ops().get(0).contract()),
+            ContractSnapshotCanonicalizer.digest(shifted.ops().get(0).contract()),
+            "a coordinate-only origin change leaves the snapshot digest unchanged");
+        assertPass(SemanticIrValidator.validate(shifted, FACTS),
+            "a coordinate-only origin change leaves validity unchanged");
+        check(!SemanticIrValidator.toUnitText(base)
+                .equals(SemanticIrValidator.toUnitText(shifted)),
+            "a coordinate-only origin change is visible in the transported text alone");
+
+        // The parent-op link keeps its own decoding, independent of the
+        // retained diagnostic metadata.
+        SemanticOp parent = withOrigin(constOp(), userOrigin("test.deal", null));
+        SemanticOp child = withOrigin(nextConst(), userOrigin("test.deal", parent.opId()));
+        RawUnit twoOps = ContractSnapshotCanonicalizer.parseUnit(parseObj(
+            SemanticIrValidator.toUnitText(unit(List.of(parent, child)))));
+        checkEq(parent.opId(), twoOps.ops().get(1).parentOpId(),
+            "the parent-op link decodes unchanged beside the retained origin");
+        checkEq(REAL_SPAN.range(), twoOps.ops().get(1).origin().diagnosticRange(),
+            "the retained origin metadata stays independent of the parent link");
+
+        // Aggregate failures identify no operation and stay originless.
+        LoweredModuleUnit aggregate = unit("mod.a",
+            Set.of(SemanticCapability.STDLIB_TIME_CONFLICT), Map.of(), Map.of(),
+            List.of(withOrigin(constOp(), userOrigin("test.deal", null))));
+        Optional<CompilerDiagnostic> aggregateFailure =
+            SemanticIrValidator.validate(aggregate, FACTS);
+        assertE6005(aggregateFailure, "R-CAPABILITY", "STDLIB_TIME_CONFLICT");
+        check(aggregateFailure.isPresent()
+                && aggregateFailure.get().range().isCanonicalSynthetic()
+                && "".equals(aggregateFailure.get().range().file()),
+            "an aggregate capability failure borrows no operation origin (the "
+                + "canonical empty-file synthetic range): "
+                + (aggregateFailure.isEmpty() ? "no failure"
+                    : aggregateFailure.get().range()));
+    }
+
+    private static SemanticOp nextConst() {
+        return op(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Int(2)),
+            nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null);
+    }
+
     private static boolean enumMember(Class<? extends Enum<?>> closed, String name) {
         for (Enum<?> value : closed.getEnumConstants()) {
             if (value.name().equals(name)) {
@@ -2113,6 +2341,7 @@ public class SemanticIrValidatorTest {
         testConstructRows();
         testNegatives();
         testTextNegatives();
+        testOriginTransport();
         testDeterminism();
         testLockPins();
 

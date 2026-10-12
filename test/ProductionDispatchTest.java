@@ -13,6 +13,7 @@ import deal.codegen.jvm.JvmBackend;
 import deal.codegen.jvm.JvmNames;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.DiagnosticStructuredOutput;
 import deal.diagnostics.RangeOrigin;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
@@ -829,6 +830,41 @@ public class ProductionDispatchTest {
             + "export function main(): null {\n"
             + "  { class A { n: int = 9; } }\n"
             + "  return null;\n"
+            + "}\n";
+
+    /**
+     * The imported-module duplicate-class seed (ISSUE-0750 nested
+     * specificity): the entry module only imports the implementation
+     * module whose inner block redeclares its own module-level class.
+     */
+    private static final String IMPORTED_DUPLICATE_MAIN =
+        "import * as lib from \"./lib\"\n"
+            + "\n"
+            + "export function main(): null {\n"
+            + "  return null;\n"
+            + "}\n";
+
+    private static final String IMPORTED_DUPLICATE_LIB =
+        "class A { n: int = 7; }\n"
+            + "\n"
+            + "export function f(): null {\n"
+            + "  { class A { n: int = 9; } }\n"
+            + "  return null;\n"
+            + "}\n";
+
+    /**
+     * The supplementary-scalar/tab capture seed (ISSUE-0750 coordinate
+     * variants): a leading comment carrying one supplementary scalar and
+     * tab indentation, so the scalar cursor and the reported offsets
+     * differ from the plain fixture.
+     */
+    private static final String SUPPLEMENTARY_TAB_CAPTURE_SOURCE =
+        "// " + new String(Character.toChars(0x1F600)) + "\n"
+            + "export function main(): null {\n"
+            + "\tlet x: int = 3;\n"
+            + "\tclass Local { n: int = x; }\n"
+            + "\tlet c: Local = {};\n"
+            + "\treturn null;\n"
             + "}\n";
 
     /** The cross-module async library. */
@@ -2986,93 +3022,285 @@ public class ProductionDispatchTest {
     }
 
     /**
-     * The preserved-origin public-compilation drives (ISSUE-0750): the two
-     * canonical fail-closed lowering defects whose producer identifies the
-     * offending construct — the default-block capture reference and the
-     * duplicate class declaration — carry that construct's own exact
-     * file/span in the one E6005, with the registry-owned message and the
-     * fail-closed staging behavior unchanged. The genuinely originless
-     * control is the profile-guard row
-     * ({@link #checkLegacyFailClosedRow}); the release-owned CLI leg proves
-     * the same anchor on the public compile surface.
+     * The preserved-origin public-compilation drives (ISSUE-0750): the
+     * fail-closed lowering defects whose producer identifies the offending
+     * construct — the default-block capture reference, the duplicate class
+     * declaration, an imported implementation module, and the scalar/CRLF
+     * coordinate variants — carry that construct's own exact file/span in
+     * the one E6005, with the complete registry-owned message, the
+     * SOURCE origin, the empty notes, and the fail-closed staging behavior
+     * unchanged. Every case runs on both shared production targets, drives
+     * the release-owned CLI with {@code --diagnostics-json}, pins the
+     * complete human line and the complete structured range, repeats the
+     * report for byte-identical determinism, and proves the previous
+     * artifact set is byte-identical. The genuinely originless control is
+     * the profile-guard row ({@link #checkLegacyFailClosedRow}).
      */
     private static void testPreservedLoweringOrigins() throws Exception {
         System.out.println("-- preserved lowering origins: the offending "
             + "construct's exact span, the unchanged message, the "
-            + "fail-closed compile --");
+            + "fail-closed compile on both targets --");
 
         checkPreservedLoweringOrigin("default-block capture",
-            DEFAULT_CAPTURE_SOURCE, SemanticLowerer.CLASS_DEFAULT_CAPTURE,
-            "default-block free reference 'x'", 3, 26, 27, 1);
+            Map.of("src/main.deal", DEFAULT_CAPTURE_SOURCE), "main", "src/main.deal",
+            "CLASSES", SemanticLowerer.CLASS_DEFAULT_CAPTURE,
+            "SemanticLowerer CLASS_DEFAULT_CAPTURE (default-block free reference "
+                + "'x' resolves to an enclosing-region binding (a detached "
+                + "CLASS_DEFAULT block admits only block-internal allocations and "
+                + "module-level bindings resolved through the module-init block; "
+                + "the closed payload records no captures))",
+            3, 26, 3, 27, 74, 75, 1);
+
         checkPreservedLoweringOrigin("duplicate class declaration",
-            DUPLICATE_CLASS_SOURCE, SemanticLowerer.CONSTRUCT_UNLOWERED,
-            "duplicate class declaration 'A'", 3, 5, 28, 23);
+            Map.of("src/main.deal", DUPLICATE_CLASS_SOURCE), "main", "src/main.deal",
+            "CONTAINERS_AND_STRINGS", SemanticLowerer.CONSTRUCT_UNLOWERED,
+            "SemanticLowerer CONSTRUCT_UNLOWERED (duplicate class declaration 'A' "
+                + "(the checker rejects duplicate class names; a second layout for "
+                + "@src/A is a fact defect))",
+            3, 5, 3, 28, 59, 82, 23);
+
+        // The nested specificity: the rejected construct lives in an
+        // imported implementation module, so the range names that file and
+        // the inner offender — never the entry module.
+        Map<String, String> imported = new java.util.LinkedHashMap<>();
+        imported.put("src/main.deal", IMPORTED_DUPLICATE_MAIN);
+        imported.put("src/lib.deal", IMPORTED_DUPLICATE_LIB);
+        checkPreservedLoweringOrigin("duplicate class declaration in an imported module",
+            imported, "lib", "src/lib.deal", "CONTAINERS_AND_STRINGS",
+            SemanticLowerer.CONSTRUCT_UNLOWERED,
+            "SemanticLowerer CONSTRUCT_UNLOWERED (duplicate class declaration 'A' "
+                + "(the checker rejects duplicate class names; a second layout for "
+                + "@src/A is a fact defect))",
+            4, 5, 4, 28, 57, 80, 23);
+
+        // The coordinate variants: a supplementary scalar in a leading
+        // comment, tab indentation, and CRLF line endings all keep the
+        // decoded-Unicode-scalar cursor and the half-open conversion.
+        checkPreservedLoweringOrigin("supplementary scalar and tab indentation",
+            Map.of("src/main.deal", SUPPLEMENTARY_TAB_CAPTURE_SOURCE), "main",
+            "src/main.deal", "CLASSES", SemanticLowerer.CLASS_DEFAULT_CAPTURE,
+            "SemanticLowerer CLASS_DEFAULT_CAPTURE (default-block free reference "
+                + "'x' resolves to an enclosing-region binding (a detached "
+                + "CLASS_DEFAULT block admits only block-internal allocations and "
+                + "module-level bindings resolved through the module-init block; "
+                + "the closed payload records no captures))",
+            4, 25, 4, 26, 77, 78, 1);
+
+        checkPreservedLoweringOrigin("CRLF line endings",
+            Map.of("src/main.deal",
+                DEFAULT_CAPTURE_SOURCE.replace("\n", "\r\n")), "main",
+            "src/main.deal", "CLASSES", SemanticLowerer.CLASS_DEFAULT_CAPTURE,
+            "SemanticLowerer CLASS_DEFAULT_CAPTURE (default-block free reference "
+                + "'x' resolves to an enclosing-region binding (a detached "
+                + "CLASS_DEFAULT block admits only block-internal allocations and "
+                + "module-level bindings resolved through the module-init block; "
+                + "the closed payload records no captures))",
+            3, 26, 3, 27, 76, 77, 1);
     }
 
     /**
-     * One preserved-origin drive: the orchestrator compile and the
-     * release-owned CLI compile of the fixture both fail closed with
-     * exactly one E6005 whose range is the offending construct's own
-     * SOURCE span (file, start/end position, scalar length), and neither
-     * stages an artifact.
+     * One preserved-origin drive on both shared production targets: the
+     * dispatch compile and the release-owned CLI compile of the fixture
+     * fail closed with exactly one E6005 whose complete message and range
+     * are the pinned offending construct's own SOURCE span, the structured
+     * document agrees exactly, repeated reports are byte-identical, no
+     * project is produced, and the previous artifact set is unchanged.
      */
-    private static void checkPreservedLoweringOrigin(String name, String source,
-            String expectedRule, String expectedText, int startLine,
-            int startColumn, int endColumn, int scalarLength) throws Exception {
+    private static void checkPreservedLoweringOrigin(String name,
+            Map<String, String> sources, String offendingModule,
+            String offendingRelative, String capability, String rule,
+            String originText, int startLine, int startColumn, int endLine,
+            int endColumn, int startOffset, int endOffset, int scalarLength)
+            throws Exception {
+        checkPreservedLoweringOriginOnTarget("luajit", DEAL_JSON_LUA, name, sources,
+            offendingModule, offendingRelative, capability, rule, originText,
+            startLine, startColumn, endLine, endColumn, startOffset, endOffset,
+            scalarLength);
+        checkPreservedLoweringOriginOnTarget("jvm", DEAL_JSON_JVM, name, sources,
+            offendingModule, offendingRelative, capability, rule, originText,
+            startLine, startColumn, endLine, endColumn, startOffset, endOffset,
+            scalarLength);
+    }
+
+    private static void checkPreservedLoweringOriginOnTarget(String target,
+            String manifest, String name, Map<String, String> sources,
+            String offendingModule, String offendingRelative, String capability,
+            String rule, String originText, int startLine, int startColumn,
+            int endLine, int endColumn, int startOffset, int endOffset,
+            int scalarLength) throws Exception {
         Path project = Files.createTempDirectory("production-dispatch-origin-");
         try {
-            write(project, "deal.json", DEAL_JSON_LUA);
-            write(project, "src/main.deal", source);
+            String context = name + " [" + target + "]";
+            write(project, "deal.json", manifest);
+            for (Map.Entry<String, String> source : sources.entrySet()) {
+                write(project, source.getKey(), source.getValue());
+            }
             Path entry = project.resolve("src/main.deal").toAbsolutePath()
                 .normalize();
+            Path offending = project.resolve(offendingRelative).toAbsolutePath()
+                .normalize();
+            Path out = project.resolve("out");
+            String expectedMessage = "Common semantic lowering failed: module '"
+                + offendingModule + "', capability " + capability
+                + ", validatorRule " + rule
+                + ", semanticProfile DEAL_V1_2_INT32, irVersion deal.semantic-ir/1"
+                + ", origin " + originText;
+            String humanLine = offending + ":" + startLine + ":" + startColumn
+                + "-" + endLine + ":" + endColumn + ": ERROR E6005: "
+                + expectedMessage + " [span " + scalarLength + "]";
+
+            // A previous artifact set in the live output root.
+            write(out, "main.lua", "-- previous artifact\n");
+            write(out, "keep.txt", "prior-publication\n");
+            Map<String, byte[]> before = snapshotTree(out);
+
+            // The dispatch arm: one E6005 with the offending construct's own
+            // range, the complete message, and no produced project.
             ArmCompile arm = compileWithInvocation(project, "src/main.deal",
                 productionInvocation());
-            check(!arm.success(), name + ": the compile fails closed");
+            check(!arm.success(), context + ": the compile fails closed");
             List<CompilerDiagnostic> errors = arm.orchestrator().diagnostics()
                 .stream().filter(d -> "error".equals(d.severity())).toList();
-            checkEq(1, errors.size(), name + ": exactly one error diagnostic: "
+            checkEq(1, errors.size(), context + ": exactly one error diagnostic: "
                 + arm.orchestrator().diagnostics());
             if (errors.size() == 1) {
                 CompilerDiagnostic diagnostic = errors.get(0);
                 checkEq("E6005", diagnostic.code(),
-                    name + ": the failure is E6005");
-                check(diagnostic.message().contains(expectedRule)
-                        && diagnostic.message().contains(expectedText),
-                    name + ": the E6005 message is the unchanged registry text: "
-                        + diagnostic.message());
-                check(diagnostic.range().origin() == RangeOrigin.SOURCE,
-                    name + ": the E6005 range is SOURCE, got "
-                        + diagnostic.range().origin());
-                checkEq(entry.toString(), diagnostic.range().file(),
-                    name + ": the E6005 range names the offending file");
+                    context + ": the failure is E6005");
+                checkEq(expectedMessage, diagnostic.message(),
+                    context + ": the complete pinned E6005 message");
+                checkEq(offending.toString(), diagnostic.range().file(),
+                    context + ": the E6005 range names the offending file");
                 checkEq(startLine, diagnostic.range().startLine(),
-                    name + ": the E6005 range starts at the offending line");
+                    context + ": the E6005 range starts at the offending line");
                 checkEq(startColumn, diagnostic.range().startColumn(),
-                    name + ": the E6005 range starts at the offending column");
-                checkEq(startLine, diagnostic.range().endLine(),
-                    name + ": the E6005 range ends on the offending line");
+                    context + ": the E6005 range starts at the offending column");
+                checkEq(endLine, diagnostic.range().endLine(),
+                    context + ": the E6005 range ends on the offending line");
                 checkEq(endColumn, diagnostic.range().endColumn(),
-                    name + ": the E6005 range ends after the offending construct");
+                    context + ": the E6005 range ends after the offending construct");
+                checkEq(startOffset, diagnostic.range().startScalarOffset(),
+                    context + ": the E6005 range starts at the offending offset");
+                checkEq(endOffset, diagnostic.range().endScalarOffset(),
+                    context + ": the E6005 range ends at the offending offset");
                 checkEq(scalarLength, diagnostic.range().scalarLength(),
-                    name + ": the E6005 range covers exactly the offending "
+                    context + ": the E6005 range covers exactly the offending "
                         + "construct");
+                check(diagnostic.range().origin() == RangeOrigin.SOURCE,
+                    context + ": the E6005 range is SOURCE, got "
+                        + diagnostic.range().origin());
+                check(diagnostic.notes().isEmpty(),
+                    context + ": the well-formed origin adds no note: "
+                        + diagnostic.notes());
+                checkEq(0, arm.orchestrator().semanticEmissionCount(),
+                    context + ": the fail-closed lowering produces no project");
             }
-            check(!Files.exists(project.resolve("out")),
-                name + ": the orchestrator compile stages no artifact");
+            checkTreeIdentical(before, out,
+                context + ": the dispatch failure preserves the previous set");
 
-            ProjectOutcome cli = productionCompile(project, "src/main.deal",
-                "out");
+            // The release-owned CLI with structured diagnostics: the same
+            // code, message, and exact range on both rendering surfaces.
+            Path diagnosticsJson = project.resolve("diagnostics.json");
+            ProjectOutcome cli = runProductionCli("compile", entry.toString(),
+                "--backend", target, "--output", out.toAbsolutePath().toString(),
+                "--diagnostics-json", diagnosticsJson.toAbsolutePath().toString());
             check(cli.exitCode() != 0,
-                name + ": the release-owned CLI compile fails closed");
-            check(cli.stderr().contains(entry + ":" + startLine + ":"
-                    + startColumn + "-" + startLine + ":" + endColumn),
-                name + ": the CLI reports the offending construct's exact "
-                    + "anchor: " + cli.stderr());
-            check(!Files.exists(project.resolve("out")),
-                name + ": the CLI failure stages no artifact");
+                context + ": the release-owned CLI fails closed");
+            check(cli.stderr().contains(humanLine),
+                context + ": the human line is the pinned complete diagnostic: "
+                    + cli.stderr());
+            String structured = Files.readString(diagnosticsJson);
+            checkStructuredOrigin(context, structured, expectedMessage, offending,
+                startLine, startColumn, endLine, endColumn, startOffset,
+                endOffset, scalarLength);
+            checkEq(DiagnosticStructuredOutput.toJson(errors), structured,
+                context + ": the structured document is exactly the error's "
+                    + "structured diagnostic");
+            checkTreeIdentical(before, out,
+                context + ": the CLI failure preserves the previous set");
+
+            // Repeated compilation of the unchanged project is
+            // byte-identical on both surfaces.
+            ProjectOutcome repeat = runProductionCli("compile", entry.toString(),
+                "--backend", target, "--output", out.toAbsolutePath().toString(),
+                "--diagnostics-json", diagnosticsJson.toAbsolutePath().toString());
+            checkEq(cli.stderr(), repeat.stderr(),
+                context + ": repeated CLI reports are byte-identical");
+            checkEq(structured, Files.readString(diagnosticsJson),
+                context + ": repeated structured reports are byte-identical");
+            checkTreeIdentical(before, out,
+                context + ": the repeated failure preserves the previous set");
         } finally {
             deleteRecursively(project);
         }
+    }
+
+    /**
+     * The structured-document pins: version 1, one error diagnostic with
+     * the complete message and the exact SOURCE range, and no notes.
+     */
+    private static void checkStructuredOrigin(String context, String structured,
+            String expectedMessage, Path offending, int startLine, int startColumn,
+            int endLine, int endColumn, int startOffset, int endOffset,
+            int scalarLength) {
+        CanonicalJson.Value root = CanonicalJson.parse(structured);
+        CanonicalJson.Obj rootObj = (CanonicalJson.Obj) root;
+        checkEq(1, jsonInt(jsonField(rootObj, "version")),
+            context + ": the structured document version");
+        CanonicalJson.Arr diagnostics =
+            (CanonicalJson.Arr) jsonField(rootObj, "diagnostics");
+        checkEq(1, diagnostics.items().size(),
+            context + ": exactly one structured diagnostic");
+        if (diagnostics.items().size() != 1) {
+            return;
+        }
+        CanonicalJson.Obj diagnostic = (CanonicalJson.Obj) diagnostics.items().get(0);
+        checkEq("E6005", jsonString(jsonField(diagnostic, "code")),
+            context + ": the structured code");
+        checkEq("error", jsonString(jsonField(diagnostic, "severity")),
+            context + ": the structured severity");
+        checkEq(expectedMessage, jsonString(jsonField(diagnostic, "message")),
+            context + ": the structured complete message");
+        CanonicalJson.Obj range = (CanonicalJson.Obj) jsonField(diagnostic, "range");
+        checkEq(offending.toString(), jsonString(jsonField(range, "file")),
+            context + ": the structured range file");
+        checkEq(startLine, jsonInt(jsonField(range, "startLine")),
+            context + ": the structured range start line");
+        checkEq(startColumn, jsonInt(jsonField(range, "startColumn")),
+            context + ": the structured range start column");
+        checkEq(endLine, jsonInt(jsonField(range, "endLine")),
+            context + ": the structured range end line");
+        checkEq(endColumn, jsonInt(jsonField(range, "endColumn")),
+            context + ": the structured range end column");
+        checkEq(startOffset, jsonInt(jsonField(range, "startScalarOffset")),
+            context + ": the structured range start offset");
+        checkEq(endOffset, jsonInt(jsonField(range, "endScalarOffset")),
+            context + ": the structured range end offset");
+        checkEq(scalarLength, jsonInt(jsonField(range, "scalarLength")),
+            context + ": the structured range scalar length");
+        checkEq("SOURCE", jsonString(jsonField(range, "origin")),
+            context + ": the structured range origin");
+        CanonicalJson.Arr notes = (CanonicalJson.Arr) jsonField(diagnostic, "notes");
+        checkEq(0, notes.items().size(),
+            context + ": the structured diagnostic carries no note");
+    }
+
+    private static CanonicalJson.Value jsonField(CanonicalJson.Obj obj, String key) {
+        for (CanonicalJson.Entry entry : obj.entries()) {
+            if (entry.key().equals(key)) {
+                return entry.value();
+            }
+        }
+        fail("the structured document misses field \"" + key + "\"");
+        return CanonicalJson.nullValue();
+    }
+
+    private static String jsonString(CanonicalJson.Value value) {
+        return value instanceof CanonicalJson.Str str ? str.value() : "<not a string>";
+    }
+
+    private static int jsonInt(CanonicalJson.Value value) {
+        return value instanceof CanonicalJson.Int i ? i.value() : Integer.MIN_VALUE;
     }
 
     private static void checkLaterSliceConstruct(String name,

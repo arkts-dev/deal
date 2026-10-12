@@ -11,7 +11,12 @@ import java.util.Objects;
  * {@link ContractSnapshotCanonicalizer#payloadJson} mapping on the typed
  * surface and the parsed payload object on the text surface);
  * {@code snapshot} is the raw 8-field operation-contract object without
- * {@code canonicalDigest}, which is carried separately.
+ * {@code canonicalDigest}, which is carried separately;
+ * {@code origin} is the {@link RawOrigin} metadata retained for
+ * diagnostic attribution (D3). The two origin surfaces are independent:
+ * {@code parentOpId} is the semantic link the rules consume, and
+ * {@code origin} is the complete copied key set the failure projection
+ * reads. Changing origin coordinates changes neither.
  *
  */
 public record RawOp(
@@ -27,7 +32,8 @@ public record RawOp(
     CanonicalJson.Obj payload,
     String selector,
     String canonicalDigest,
-    CanonicalJson.Obj snapshot
+    CanonicalJson.Obj snapshot,
+    RawOrigin origin
 ) {
 
     public RawOp {
@@ -39,5 +45,6 @@ public record RawOp(
         Objects.requireNonNull(payload, "payload must not be null");
         Objects.requireNonNull(canonicalDigest, "canonicalDigest must not be null");
         Objects.requireNonNull(snapshot, "snapshot must not be null");
+        Objects.requireNonNull(origin, "origin must not be null");
     }
 }

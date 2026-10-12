@@ -1251,27 +1251,98 @@ public final class ContractSnapshotCanonicalizer {
             CanonicalJson.e("contract", CanonicalJson.obj(contractEntries)));
     }
 
+    /**
+     * Renders one op's retained origin metadata (D3): the complete key set
+     * the raw model preserves, so typed-to-text and text-to-text round
+     * trips keep the supplied diagnostic coordinates instead of
+     * neutralizing them. The parent-op link stays the semantic link the
+     * rules consume.
+     */
     private static CanonicalJson.Value originJson(RawOp op) {
-        // The raw model carries the parent-op link only; the remaining
-        // origin coordinates render as pinned neutral synthetic values
-        // (the validation protocol does not consult them).
+        RawOrigin origin = op.origin();
         return CanonicalJson.obj(
-            CanonicalJson.e("sourceId", CanonicalJson.str("semantic-ir")),
+            CanonicalJson.e("sourceId", origin.sourceId() == null
+                ? CanonicalJson.nullValue() : CanonicalJson.str(origin.sourceId())),
             CanonicalJson.e("span", CanonicalJson.obj(
-                CanonicalJson.e("file", CanonicalJson.str("semantic-ir")),
-                CanonicalJson.e("startLine", CanonicalJson.intValue(1)),
-                CanonicalJson.e("startColumn", CanonicalJson.intValue(1)),
-                CanonicalJson.e("endLine", CanonicalJson.intValue(1)),
-                CanonicalJson.e("endColumn", CanonicalJson.intValue(1)),
-                CanonicalJson.e("startScalarOffset", CanonicalJson.intValue(-1)),
-                CanonicalJson.e("endScalarOffset", CanonicalJson.intValue(-1)))),
-            CanonicalJson.e("kind", CanonicalJson.str("SYNTHETIC")),
+                CanonicalJson.e("file", origin.file() == null
+                    ? CanonicalJson.nullValue() : CanonicalJson.str(origin.file())),
+                CanonicalJson.e("startLine", CanonicalJson.intValue(origin.startLine())),
+                CanonicalJson.e("startColumn", CanonicalJson.intValue(origin.startColumn())),
+                CanonicalJson.e("endLine", CanonicalJson.intValue(origin.endLine())),
+                CanonicalJson.e("endColumn", CanonicalJson.intValue(origin.endColumn())),
+                CanonicalJson.e("startScalarOffset",
+                    CanonicalJson.intValue(origin.startScalarOffset())),
+                CanonicalJson.e("endScalarOffset",
+                    CanonicalJson.intValue(origin.endScalarOffset())))),
+            CanonicalJson.e("kind", origin.kind() == null
+                ? CanonicalJson.nullValue() : CanonicalJson.str(origin.kind())),
             CanonicalJson.e("anchorId", CanonicalJson.obj(
-                CanonicalJson.e("id", CanonicalJson.intValue(0)),
+                CanonicalJson.e("id", CanonicalJson.intValue((int) origin.anchorId())),
                 CanonicalJson.e("type", CanonicalJson.str("anchor")))),
             CanonicalJson.e("parentOpId", op.parentOpId() == null
                 ? CanonicalJson.nullValue()
                 : semanticIdJson(op.parentOpId())));
+    }
+
+    /**
+     * Decodes one op origin object into the retained diagnostic metadata.
+     * The origin is diagnostic-only data: missing or malformed values are
+     * carried as-is, never as a transport or semantic rejection (the
+     * existing {@link deal.diagnostics.CompilerDiagnostic} normalization
+     * owns every malformed range downstream). The parent-op link keeps its
+     * own pinned decoding in {@link #opFromText}.
+     */
+    private static RawOrigin originFromText(CanonicalJson.Obj origin) {
+        String sourceId = lenientString(origin, "sourceId");
+        String file = null;
+        int startLine = 0;
+        int startColumn = 0;
+        int endLine = 0;
+        int endColumn = 0;
+        int startScalarOffset = SourceSpan.UNKNOWN_OFFSET;
+        int endScalarOffset = SourceSpan.UNKNOWN_OFFSET;
+        CanonicalJson.Value spanValue = lenientValue(origin, "span");
+        if (spanValue instanceof CanonicalJson.Obj span) {
+            file = lenientString(span, "file");
+            startLine = lenientInt(span, "startLine", 0);
+            startColumn = lenientInt(span, "startColumn", 0);
+            endLine = lenientInt(span, "endLine", 0);
+            endColumn = lenientInt(span, "endColumn", 0);
+            startScalarOffset = lenientInt(span, "startScalarOffset",
+                SourceSpan.UNKNOWN_OFFSET);
+            endScalarOffset = lenientInt(span, "endScalarOffset",
+                SourceSpan.UNKNOWN_OFFSET);
+        }
+        String kind = lenientString(origin, "kind");
+        long anchorId = 0;
+        CanonicalJson.Value anchorValue = lenientValue(origin, "anchorId");
+        if (anchorValue instanceof CanonicalJson.Obj anchor) {
+            anchorId = lenientInt(anchor, "id", 0);
+        }
+        return new RawOrigin(sourceId, file, startLine, startColumn, endLine, endColumn,
+            startScalarOffset, endScalarOffset, kind, anchorId);
+    }
+
+    /** A field value of a leniently decoded object, or {@code null} when absent. */
+    private static CanonicalJson.Value lenientValue(CanonicalJson.Obj obj, String key) {
+        for (CanonicalJson.Entry entry : obj.entries()) {
+            if (entry.key().equals(key)) {
+                return entry.value();
+            }
+        }
+        return null;
+    }
+
+    /** A string field of a leniently decoded object, or {@code null}. */
+    private static String lenientString(CanonicalJson.Obj obj, String key) {
+        CanonicalJson.Value value = lenientValue(obj, key);
+        return value instanceof CanonicalJson.Str str ? str.value() : null;
+    }
+
+    /** A signed32 integer field of a leniently decoded object, or the fallback. */
+    private static int lenientInt(CanonicalJson.Obj obj, String key, int fallback) {
+        CanonicalJson.Value value = lenientValue(obj, key);
+        return value instanceof CanonicalJson.Int i ? i.value() : fallback;
     }
 
     private static RawOp opFromText(CanonicalJson.Obj op) {
@@ -1288,6 +1359,7 @@ public final class ContractSnapshotCanonicalizer {
         if (!(parent instanceof CanonicalJson.Null)) {
             parentOpId = parseOpId(requireObjectValue(parent, "origin.parentOpId"));
         }
+        RawOrigin retainedOrigin = originFromText(origin);
 
         ValueId resultValue = null;
         AsyncTokenId resultToken = null;
@@ -1355,7 +1427,8 @@ public final class ContractSnapshotCanonicalizer {
                     + jsonKindName(selectorValue));
         }
         return new RawOp(opId, kind, failurePolicy, parentOpId, resultValue, resultToken,
-            resultType, operands, operandTypes, payload, selector, canonicalDigest, snapshot);
+            resultType, operands, operandTypes, payload, selector, canonicalDigest, snapshot,
+            retainedOrigin);
     }
 
     // =========================================================================

@@ -135,6 +135,7 @@ public record RawUnit(
         return new RawOp(op.opId(), op.kind().name(), op.failurePolicy().name(),
             op.origin().parentOpId(), resultValue, resultToken, resultType,
             op.operands(), operandTypes, payload, selector, contract.canonicalDigest(),
-            (CanonicalJson.Obj) ContractSnapshotCanonicalizer.toJson(contract));
+            (CanonicalJson.Obj) ContractSnapshotCanonicalizer.toJson(contract),
+            RawOrigin.of(op.origin()));
     }
 }

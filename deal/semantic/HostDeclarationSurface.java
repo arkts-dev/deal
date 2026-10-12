@@ -188,6 +188,9 @@ public record HostDeclarationSurface(
                     try {
                         DescriptorService.describe(field.type());
                     } catch (DescriptorService.Defect defect) {
+                        // The offending field declaration's own span is
+                        // in hand: the failure carries it (D3), never the
+                        // declaration module's first source character.
                         return new Production(null, List.of(
                             DescriptorService.e6005(module.moduleId(),
                                 new DescriptorService.Defect(
@@ -196,7 +199,8 @@ public record HostDeclarationSurface(
                                         + field.declaration().name()
                                         + "' of declaration module '"
                                         + module.moduleId().path() + "': "
-                                        + defect.getMessage()))));
+                                        + defect.getMessage()),
+                                field.declaration().span().range())));
                     }
                 }
             }

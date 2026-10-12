@@ -1945,6 +1945,7 @@ public class JsonableHelperProductionDriveTest {
             Path out = Files.createTempDirectory("jsonable-missing-fact-");
             PublicationStager stager = PublicationStager.forRoot(out);
             String rejection = null;
+            boolean carried = true;
             try {
                 if (target == Target.LUAJIT) {
                     LuaSemanticEmitter.emitProductionProject(lowered.project(),
@@ -1955,6 +1956,13 @@ public class JsonableHelperProductionDriveTest {
                 }
             } catch (IllegalStateException guard) {
                 rejection = guard.getMessage();
+                // The genuinely originless control (ISSUE-0750 D4): an
+                // ordinary emitter refusal identifies no source anchor, so
+                // the production arm keeps the canonical empty-file
+                // synthetic projection for it.
+                carried = guard instanceof deal.semantic.ir.DiagnosticOriginCarrier
+                    && ((deal.semantic.ir.DiagnosticOriginCarrier) guard)
+                        .diagnosticRange() != null;
             }
             boolean names = rejection != null;
             for (String detail : requiredDetails) {
@@ -1962,6 +1970,9 @@ public class JsonableHelperProductionDriveTest {
             }
             check(names, what + " [" + target.laneName() + "]: the emitter fails "
                 + "closed with the named producer defect (" + rejection + ")");
+            check(!carried, what + " [" + target.laneName() + "]: the ordinary "
+                + "emitter refusal carries no origin (the canonical synthetic "
+                + "projection is unchanged)");
             check(stager.stagedSet().relativePaths().isEmpty(),
                 what + " [" + target.laneName() + "]: the fail-closed emission "
                     + "stages nothing");

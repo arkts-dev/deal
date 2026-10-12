@@ -11,6 +11,7 @@ import deal.codegen.lua.FfiEmissionInput;
 import deal.codegen.lua.LuaSemanticEmitter;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.diagnostics.DiagnosticRange;
 import deal.distribution.DistributionHome;
 import deal.ffi.FfiGeneratedModule;
 import deal.identity.CanonicalModuleIdentity;
@@ -21,6 +22,7 @@ import deal.semantic.CompilerInvocation;
 import deal.semantic.HostDeclarationSurface;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticRequirementManifest;
+import deal.semantic.ir.DiagnosticOriginCarrier;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ExternalModuleKind;
 import deal.semantic.ir.FailureContractRegistry;
@@ -351,7 +353,16 @@ public final class ProductionProjectEmission {
     private static CompilerDiagnostic sharedEmitterCoverage(
             String entryModulePath, IllegalStateException gap,
             CompilerInvocation invocation) {
+        // The production arm owns classification and projection, not source
+        // selection: a source-bearing emitter rejection signal carries the
+        // range of its explicit rejected op (or detached body), and an
+        // ordinary genuinely originless IllegalStateException keeps the
+        // canonical empty-file synthetic range.
+        DiagnosticRange carried = gap instanceof DiagnosticOriginCarrier carrier
+            ? carrier.diagnosticRange() : null;
         if (gap instanceof LuaSemanticEmitter.FfiProviderGap providerGap) {
+            // The specialized provider gap keeps its consuming-module detail
+            // and its extern-C import statement's own origin.
             LoweringFailureDetail detail = new LoweringFailureDetail(
                 providerGap.consumingModulePath(), SemanticCapability.MODULES,
                 SHARED_EMITTER_COVERAGE, invocation.semanticProfile(),
@@ -359,18 +370,13 @@ public final class ProductionProjectEmission {
                 "ProductionProjectEmission " + SHARED_EMITTER_COVERAGE + " "
                     + FFI_PROVIDER_GAP + " (" + providerGap.getMessage()
                     + ")");
-            // The provider gap identifies the extern-C import statement's
-            // own origin; the E6005 carries it instead of the empty-file
-            // synthetic anchor.
-            return providerGap.offendingRange() == null
-                ? FailureContractRegistry.e6005(detail)
-                : FailureContractRegistry.e6005(detail, providerGap.offendingRange());
+            return FailureContractRegistry.e6005(detail, carried);
         }
         return FailureContractRegistry.e6005(new LoweringFailureDetail(
             entryModulePath, SemanticCapability.MODULES, SHARED_EMITTER_COVERAGE,
             invocation.semanticProfile(), LoweredModuleUnit.FORMAT_VERSION,
             "ProductionProjectEmission " + SHARED_EMITTER_COVERAGE + " ("
-                + gap.getMessage() + ")"));
+                + gap.getMessage() + ")"), carried);
     }
 
     /**

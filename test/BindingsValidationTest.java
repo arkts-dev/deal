@@ -7,6 +7,7 @@ import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.diagnostics.RangeOrigin;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
 import deal.parser.ParseResult;
@@ -256,6 +257,103 @@ public class BindingsValidationTest {
     private static SourceOrigin origin(OpId parent) {
         return new SourceOrigin("test.deal", SourceSpan.synthetic("test.deal"),
             SourceOriginKind.SYNTHETIC, new AnchorId(0), parent);
+    }
+
+    /** The offending operation's own copied USER origin (ISSUE-0750 D3). */
+    private static SourceOrigin userOrigin(OpId parent) {
+        return new SourceOrigin("test.deal",
+            new SourceSpan("test.deal", 5, 3, 5, 8, 40, 43),
+            SourceOriginKind.USER, new AnchorId(11), parent);
+    }
+
+    /** The same op with a different origin (all other components unchanged). */
+    private static SemanticOp withOrigin(SemanticOp op, SourceOrigin origin) {
+        return new SemanticOp(op.opId(), op.kind(), origin, op.result(), op.resultType(),
+            op.operands(), op.operandTypes(), op.payload(), op.failurePolicy(), op.contract());
+    }
+
+    /**
+     * The bindings failure origins (ISSUE-0750): a per-op rule carries the
+     * offending operation's own SOURCE range; an offsetless known-file
+     * origin keeps its file but stays SYNTHETIC; and a rule conflict with
+     * no unique offending operation keeps the canonical empty-file
+     * synthetic range.
+     */
+    private static void testFailureOriginProjection() {
+        System.out.println("-- bindings failure origins: the offending op's exact range, "
+            + "the known-file offsetless control, the originless conflict --");
+
+        // The offending load's own origin survives the shared E6005.
+        BindingId x = nextBindingId();
+        ValueId constValue = nextValue();
+        SemanticOp alloc = allocOp(x, INIT_BLOCK, 0);
+        SemanticOp init = initOp(x, 0, constValue);
+        SemanticOp stale = withOrigin(opWith(nextOpId(), SemanticOpKind.BINDING_LOAD,
+            new KindPayload.BindingLoadPayload(x, 5), nextValue(), INT, List.of(), List.of(),
+            FailurePolicyId.NO_DEAL_FAILURE, null), userOrigin(null));
+        LoweredModuleUnit unit = unit(Map.of(), Map.of(), List.of(alloc, init, stale));
+        StructuredBodyTable table = tableOf(Map.of(INIT_BLOCK, List.of(alloc, init, stale)));
+        Optional<CompilerDiagnostic> failure =
+            BindingsProductionValidator.validate(unit, table);
+        assertE6005(failure, "BINDING_GENERATION_RESOLUTION", "the stale-generation load",
+            "stale/unresolvable");
+        check(failure.isPresent()
+                && userOrigin(null).span().range().equals(failure.get().range()),
+            "the BINDING_GENERATION_RESOLUTION failure carries the offending load's own "
+                + "SOURCE range: " + (failure.isEmpty() ? "none" : failure.get().range()));
+        check(failure.isPresent() && failure.get().range().origin() == RangeOrigin.SOURCE
+                && "test.deal".equals(failure.get().range().file())
+                && failure.get().range().startLine() == 5
+                && failure.get().range().startColumn() == 3
+                && failure.get().range().endColumn() == 9
+                && failure.get().range().startScalarOffset() == 40
+                && failure.get().range().endScalarOffset() == 43
+                && failure.get().range().scalarLength() == 3,
+            "the failure range is the offending load's own exact half-open span: "
+                + (failure.isEmpty() ? "none" : failure.get().range()));
+        check(failure.isPresent() && failure.get().notes().isEmpty(),
+            "the well-formed origin adds no normalization note");
+
+        // The known-file offsetless control: the same failure on an op whose
+        // origin carries no offsets keeps the file but stays SYNTHETIC.
+        BindingId y = nextBindingId();
+        SemanticOp allocY = allocOp(y, INIT_BLOCK, 0);
+        SemanticOp initY = initOp(y, 0, nextValue());
+        SemanticOp staleY = opWith(nextOpId(), SemanticOpKind.BINDING_LOAD,
+            new KindPayload.BindingLoadPayload(y, 5), nextValue(), INT, List.of(), List.of(),
+            FailurePolicyId.NO_DEAL_FAILURE, null);
+        LoweredModuleUnit unitY = unit(Map.of(), Map.of(), List.of(allocY, initY, staleY));
+        StructuredBodyTable tableY = tableOf(Map.of(INIT_BLOCK, List.of(allocY, initY, staleY)));
+        Optional<CompilerDiagnostic> offsetless =
+            BindingsProductionValidator.validate(unitY, tableY);
+        assertE6005(offsetless, "BINDING_GENERATION_RESOLUTION",
+            "the offsetless-origin stale-generation load", "stale/unresolvable");
+        check(offsetless.isPresent()
+                && offsetless.get().range().origin() == RangeOrigin.SYNTHETIC
+                && offsetless.get().range().isCanonicalSynthetic()
+                && "test.deal".equals(offsetless.get().range().file()),
+            "an offsetless span keeps its known file but stays SYNTHETIC, never a "
+                + "SOURCE anchor: "
+                + (offsetless.isEmpty() ? "none" : offsetless.get().range()));
+
+        // The genuinely originless conflict: two INIT ops of one incarnation
+        // identify no unique offending op, so the canonical empty-file
+        // synthetic range stays.
+        BindingId z = nextBindingId();
+        SemanticOp allocZ = allocOp(z, INIT_BLOCK, 0);
+        SemanticOp initZ1 = initOp(z, 0, nextValue());
+        SemanticOp initZ2 = initOp(z, 0, nextValue());
+        LoweredModuleUnit unitZ = unit(Map.of(), Map.of(), List.of(allocZ, initZ1, initZ2));
+        StructuredBodyTable tableZ =
+            tableOf(Map.of(INIT_BLOCK, List.of(allocZ, initZ1, initZ2)));
+        Optional<CompilerDiagnostic> originless =
+            BindingsProductionValidator.validate(unitZ, tableZ);
+        assertE6005(originless, "BINDING_INIT_ONCE", "the duplicate-INIT conflict");
+        check(originless.isPresent() && originless.get().range().isCanonicalSynthetic()
+                && "".equals(originless.get().range().file()),
+            "a conflict with no unique offending operation keeps the canonical "
+                + "empty-file synthetic range: "
+                + (originless.isEmpty() ? "none" : originless.get().range()));
     }
 
     private static OperationContractSnapshot contractFor(SemanticOpKind kind, KindPayload payload,
@@ -1640,6 +1738,7 @@ public class BindingsValidationTest {
         testSourceLevelNegatives();
         testIrLevelNegatives();
         testIrLevelPositives();
+        testFailureOriginProjection();
         testCombinedCorpusAndDeterminism();
 
         System.out.println("\nBindings production validation: " + passed + " passed, "

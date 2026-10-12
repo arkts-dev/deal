@@ -499,11 +499,14 @@ public record ClassRegistrationSeeds(
             HostDeclarationSurface.DeclaredClass declaredClass,
             HostDeclarationSurface.DeclaredField field,
             DescriptorService.Defect defect) {
+        // The offending field declaration's own span is in hand: the
+        // failure carries it (D3).
         return new Production(null, List.of(DescriptorService.e6005(moduleId,
             new DescriptorService.Defect("declared class field '"
                 + declaredClass.name() + "." + field.declaration().name()
                 + "' of declaration module '" + moduleId.path() + "': "
-                + defect.getMessage()))));
+                + defect.getMessage()),
+            field.declaration().span().range())));
     }
 
     /** The first failure: E6005 with the rule, the module, and no seeds. */

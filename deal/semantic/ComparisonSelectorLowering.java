@@ -3,8 +3,10 @@ package deal.semantic;
 import deal.ast.BinaryOp;
 import deal.checker.TypeChecker;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticRange;
 import deal.semantic.ir.BinarySelector;
 import deal.semantic.ir.ContractSnapshotCanonicalizer;
+import deal.semantic.ir.DiagnosticOriginCarrier;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.KindPayload;
@@ -47,16 +49,47 @@ public final class ComparisonSelectorLowering {
      * exception is internal control flow, never a crash and never a
      * guessed selector.
      */
-    public static final class Defect extends RuntimeException {
+    public static final class Defect extends RuntimeException
+            implements DiagnosticOriginCarrier {
 
         private static final long serialVersionUID = 1L;
 
+        /**
+         * The offending comparison expression's own copied source range, or
+         * {@code null} when the defect was raised outside the
+         * producer's identified construct (a genuinely originless failure
+         * keeps the canonical synthetic E6005 range).
+         */
+        private final DiagnosticRange offendingRange;
+
         public Defect(String message) {
-            super(message);
+            this(message, null, null);
         }
 
         public Defect(String message, Throwable cause) {
+            this(message, cause, null);
+        }
+
+        public Defect(String message, Throwable cause, DiagnosticRange offendingRange) {
             super(message, cause);
+            this.offendingRange = offendingRange;
+        }
+
+        /**
+         * Returns this defect with the offending construct's range
+         * attached. An already-attached range always wins over an outer
+         * context (design D2).
+         */
+        public Defect withRange(DiagnosticRange range) {
+            if (offendingRange != null || range == null) {
+                return this;
+            }
+            return new Defect(getMessage(), getCause(), range);
+        }
+
+        @Override
+        public DiagnosticRange diagnosticRange() {
+            return offendingRange;
         }
     }
 
@@ -318,9 +351,20 @@ public final class ComparisonSelectorLowering {
                 "syntheticOrdinal must be >= 0, got " + syntheticOrdinal);
         }
 
-        KindPayload.BinaryPayload payload = payloadOf(op, leftType, rightType);
-        RuntimeDescriptor leftDescriptor = describeOperand(leftType);
-        RuntimeDescriptor rightDescriptor = describeOperand(rightType);
+        // The producer holds the offending comparison expression's own
+        // copied origin: every defect this call raises carries its range
+        // (D2), never an outer or last-visited anchor.
+        DiagnosticRange offendingRange = origin.span().range();
+        KindPayload.BinaryPayload payload;
+        RuntimeDescriptor leftDescriptor;
+        RuntimeDescriptor rightDescriptor;
+        try {
+            payload = payloadOf(op, leftType, rightType);
+            leftDescriptor = describeOperand(leftType);
+            rightDescriptor = describeOperand(rightType);
+        } catch (Defect defect) {
+            throw defect.withRange(offendingRange);
+        }
         RuntimeDescriptor booleanDescriptor = DescriptorService.describe(Type.Boolean.INSTANCE);
 
         ValueId result = allocator.nextValueId(module, sourceOrdinal, syntheticOrdinal);
@@ -413,7 +457,10 @@ public final class ComparisonSelectorLowering {
     public static CompilerDiagnostic e6005(ModuleId module, Defect defect) {
         Objects.requireNonNull(module, "module must not be null");
         Objects.requireNonNull(defect, "defect must not be null");
-        return FailureContractRegistry.e6005(loweringFailureDetail(module, defect));
+        // The identifiable offending span wins over the canonical synthetic
+        // range; a defect without one keeps the legacy projection.
+        return FailureContractRegistry.e6005(loweringFailureDetail(module, defect),
+            defect.diagnosticRange());
     }
 
     /** A short canonical spelling of a checked type for defect messages. */

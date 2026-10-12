@@ -35,6 +35,11 @@ public class FailureContractRegistryTest {
         System.err.println("FAIL: " + message);
     }
 
+    private static void checkEq(Object expected, Object actual, String message) {
+        check(java.util.Objects.equals(expected, actual),
+            message + " (expected " + expected + ", got " + actual + ")");
+    }
+
     private static void expectThrows(Class<? extends Throwable> type, Runnable action,
                                      String message) {
         try {
@@ -390,9 +395,28 @@ public class FailureContractRegistryTest {
         check(offending.equals(ranged.range()),
             "the ranged E6005 carries the producer-identified offending range; got "
                 + ranged.range());
-        expectThrows(NullPointerException.class,
-            () -> FailureContractRegistry.e6005(detail, null),
-            "a null offending range fails closed");
+
+        // The optional-range contract: an absent (null) range selects the
+        // exact legacy synthetic range of the one-argument surface, with no
+        // added normalization note — a producer using the optional-range
+        // interface never crashes and never acquires a fabricated anchor.
+        CompilerDiagnostic absentRange = FailureContractRegistry.e6005(detail, null);
+        checkEq(diagnostic.code(), absentRange.code(),
+            "the null-range E6005 keeps the code");
+        checkEq(diagnostic.diagnosticCode(), absentRange.diagnosticCode(),
+            "the null-range E6005 keeps the diagnosticCode");
+        checkEq(diagnostic.severity(), absentRange.severity(),
+            "the null-range E6005 keeps the severity");
+        checkEq(diagnostic.message(), absentRange.message(),
+            "the null-range E6005 keeps the registry-instantiated message");
+        checkEq(diagnostic.range(), absentRange.range(),
+            "the null-range E6005 keeps the exact legacy synthetic range");
+        checkEq(diagnostic.notes(), absentRange.notes(),
+            "the null-range E6005 adds no normalization note");
+        check(absentRange.range().isCanonicalSynthetic()
+                && "".equals(absentRange.range().file()),
+            "the null-range E6005 is the empty-file canonical synthetic range; got "
+                + absentRange.range());
 
         // Fail closed: null detail or a null detail field never renders.
         expectThrows(NullPointerException.class,

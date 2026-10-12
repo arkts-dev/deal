@@ -4,6 +4,7 @@ import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalModuleIdentity;
 
 import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticRange;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.LoweredModuleUnit;
@@ -105,6 +106,19 @@ public final class DescriptorService {
      *
      */
     public static CompilerDiagnostic e6005(ModuleId module, Defect defect) {
+        return e6005(module, defect, null);
+    }
+
+    /**
+     * The same conversion seam for a failure whose producer identified the
+     * offending declaration or field (ISSUE-0750 D3): the detail, rule,
+     * and message are exactly the two-argument surface's; only the carried
+     * range differs. A {@code null} range keeps the canonical empty-file
+     * synthetic projection.
+     *
+     */
+    public static CompilerDiagnostic e6005(ModuleId module, Defect defect,
+                                           DiagnosticRange offendingRange) {
         Objects.requireNonNull(module, "module must not be null");
         Objects.requireNonNull(defect, "defect must not be null");
         LoweringFailureDetail detail = new LoweringFailureDetail(
@@ -115,6 +129,6 @@ public final class DescriptorService {
             LoweredModuleUnit.FORMAT_VERSION,
             "DescriptorService " + DESCRIPTOR_UNREPRESENTABLE
                 + " (" + defect.getMessage() + ")");
-        return FailureContractRegistry.e6005(detail);
+        return FailureContractRegistry.e6005(detail, offendingRange);
     }
 }

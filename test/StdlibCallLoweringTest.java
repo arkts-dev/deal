@@ -1075,7 +1075,7 @@ public class StdlibCallLoweringTest {
                     opOnlyModified.add(new RawOp(op.opId(), op.kind(), "NO_DEAL_FAILURE",
                         op.parentOpId(), op.resultValue(), op.resultToken(),
                         op.resultType(), op.operands(), op.operandTypes(), op.payload(),
-                        op.selector(), op.canonicalDigest(), op.snapshot()));
+                        op.selector(), op.canonicalDigest(), op.snapshot(), op.origin()));
                 } else {
                     opOnlyModified.add(op);
                 }
@@ -1111,7 +1111,7 @@ public class StdlibCallLoweringTest {
         String digest = ContractSnapshotCanonicalizer.recomputeSnapshotDigest(snapshot);
         return new RawOp(op.opId(), op.kind(), policyName, op.parentOpId(), op.resultValue(),
             op.resultToken(), op.resultType(), op.operands(), op.operandTypes(), op.payload(),
-            op.selector(), digest, snapshot);
+            op.selector(), digest, snapshot, op.origin());
     }
 
     // =========================================================================

@@ -2,6 +2,9 @@ package deal.test;
 
 import deal.checker.BuiltinErrorDeclaration;
 import deal.codegen.Backend;
+import deal.codegen.SharedEmissionFailure;
+import deal.codegen.jvm.JvmSemanticEmitter;
+import deal.codegen.lua.LuaSemanticEmitter;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
@@ -21,11 +24,20 @@ import deal.semantic.CompilerProfileProvider;
 import deal.semantic.HostDeclarationSurface;
 import deal.semantic.ReleaseConfiguration;
 import deal.semantic.RequirementManifestResult;
+import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticRequirementManifest;
 import deal.semantic.ir.CanonicalJson;
+import deal.semantic.ir.BlockId;
+import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.IntrinsicKind;
+import deal.semantic.ir.KindPayload;
+import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
+import deal.semantic.ir.OpId;
 import deal.semantic.ir.ProjectInterfaceIndex;
+import deal.semantic.ir.SemanticOp;
+import deal.semantic.ir.SemanticOpKind;
+import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.SemanticProfile;
 
@@ -150,6 +162,20 @@ public class ProductionProjectEmissionTest {
 
         export function main(): null {
           return null;
+        }
+        """;
+
+    /**
+     * The exported class with one field default: the CLASS_DEFAULT op the
+     * rejected-op emission boundaries identify.
+     */
+    private static final String CLASS_DEFAULT_APP_SOURCE = """
+        export function main(): null {
+          return null;
+        }
+
+        export class Point {
+          x: int = 42;
         }
         """;
 
@@ -400,6 +426,19 @@ public class ProductionProjectEmissionTest {
     // =========================================================================
     // The unit driver
     // =========================================================================
+
+    /** The one project lowering of the fixture over the production inputs. */
+    private static SemanticLowerer.ProjectLoweringResult lower(Fixture fixture)
+            throws Exception {
+        return SemanticLowerer.lowerProject(productionInvocation(),
+            fixture.checkedProject(), fixture.index(), fixture.manifests(),
+            fixture.surface(), fixture.declarationIdentities(), fixture.externCModules(),
+            BuiltinErrorDeclaration.synthesized(
+                fixture.checkedProject().modules().get(0).ast().span()),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW),
+            Set.of());
+    }
 
     private static ProductionProjectEmission.Result emit(Fixture fixture,
             Backend backend, PublicationStager stager, boolean sourceMapExplicit)
@@ -998,6 +1037,140 @@ public class ProductionProjectEmissionTest {
         }
     }
 
+    /**
+     * The rejected-op emission origins (ISSUE-0750 D4): both shared
+     * production emitters refuse an explicitly rejected op and a detached
+     * body with the {@link SharedEmissionFailure} signal carrying that
+     * op's own copied origin — the production arm then projects exactly
+     * that range through the unchanged SHARED_EMITTER_COVERAGE
+     * classification. A detached default body with no membership row and a
+     * CLASS_DEFAULT op reached by the block walk are the explicit op and
+     * detached-body rejection boundaries; the ordinary originless
+     * IllegalStateException surface stays unchanged.
+     */
+    private static void testRejectedOpEmissionOrigins() throws Exception {
+        System.out.println("-- rejected-op emission origins: both shared targets carry "
+            + "the rejected op's own origin at the op and detached-body boundaries --");
+
+        Fixture fixture = compileProject(
+            Map.of("src/app.deal", CLASS_DEFAULT_APP_SOURCE), Map.of());
+        try {
+            SemanticLowerer.ProjectLoweringResult lowering = lower(fixture);
+            check(!lowering.hasErrors(),
+                "the exported-class fixture lowers: " + lowering.diagnostics());
+            if (lowering.hasErrors()) {
+                return;
+            }
+            ExecutableLoweredProject project = lowering.project();
+            LoweredModuleUnit entry = project.modules().get(project.entryModule());
+            SemanticOp classDefault = null;
+            for (SemanticOp op : entry.ops()) {
+                if (op.kind() == SemanticOpKind.CLASS_DEFAULT) {
+                    classDefault = op;
+                    break;
+                }
+            }
+            check(classDefault != null,
+                "the lowered entry module carries the CLASS_DEFAULT op");
+            if (classDefault == null) {
+                return;
+            }
+            DiagnosticRange expected = classDefault.origin().span().range();
+            check(expected.origin() == RangeOrigin.SOURCE
+                    && expected.scalarLength() > 0,
+                "the rejected op's own origin is a real SOURCE span: " + expected);
+            StructuredBodyTable table = lowering.tables().get(entry.moduleId());
+            BlockId initBlock = entry.moduleInit().initBlock();
+
+            // (a) The explicit op rejection: the CLASS_DEFAULT op is reached
+            // by the block walk (a doctored membership row) and the emitOp
+            // dispatch refuses it.
+            Map<BlockId, List<OpId>> walkedRows = new LinkedHashMap<>();
+            for (Map.Entry<BlockId, List<OpId>> row : table.blockOps().entrySet()) {
+                List<OpId> ops = new ArrayList<>(row.getValue());
+                if (row.getKey().equals(initBlock)) {
+                    ops.add(classDefault.opId());
+                }
+                walkedRows.put(row.getKey(), ops);
+            }
+            StructuredBodyTable walked =
+                new StructuredBodyTable(walkedRows, table.opBlocks());
+
+            // (b) The detached-body rejection: the class-default block's
+            // membership row is absent, so the detached default function
+            // cannot be emitted.
+            BlockId defaultBlock =
+                ((KindPayload.ClassDefaultPayload) classDefault.payload())
+                    .defaultBlock();
+            Map<BlockId, List<OpId>> detachedRows =
+                new LinkedHashMap<>(table.blockOps());
+            detachedRows.remove(defaultBlock);
+            StructuredBodyTable detached =
+                new StructuredBodyTable(detachedRows, table.opBlocks());
+
+            for (String target : List.of("LuaJIT", "JVM")) {
+                SharedEmissionFailure opRejection = emitFailure(target, project,
+                    Map.of(entry.moduleId(), walked), lowering, fixture);
+                check(opRejection != null,
+                    target + ": the walked CLASS_DEFAULT op is rejected");
+                if (opRejection != null) {
+                    checkEq(expected, opRejection.diagnosticRange(),
+                        target + ": the op rejection carries the rejected op's own "
+                            + "exact range");
+                    check(opRejection.getMessage().contains(
+                            "a CLASS_DEFAULT executes only under"),
+                        target + ": the op rejection message is the unchanged text: "
+                            + opRejection.getMessage());
+                }
+
+                SharedEmissionFailure detachedRejection = emitFailure(target, project,
+                    Map.of(entry.moduleId(), detached), lowering, fixture);
+                check(detachedRejection != null,
+                    target + ": the missing default-block membership rejects the "
+                        + "detached body");
+                if (detachedRejection != null) {
+                    checkEq(expected, detachedRejection.diagnosticRange(),
+                        target + ": the detached-body rejection carries the "
+                            + "CLASS_DEFAULT op's own exact range");
+                    check(detachedRejection.getMessage().contains(
+                            "has no membership row"),
+                        target + ": the detached-body message is the unchanged text: "
+                            + detachedRejection.getMessage());
+                }
+            }
+
+            // The ordinary genuinely originless emitter exception surface is
+            // unchanged: it implements no origin carrier.
+            IllegalStateException originless =
+                new IllegalStateException("an ordinary emitter refusal");
+            check(!(originless instanceof deal.semantic.ir.DiagnosticOriginCarrier),
+                "an ordinary IllegalStateException carries no origin (the canonical "
+                    + "synthetic projection is unchanged)");
+        } finally {
+            deleteRecursively(fixture.root());
+        }
+    }
+
+    /** One emitter rejection of the doctored membership table, or null on no throw. */
+    private static SharedEmissionFailure emitFailure(String target,
+            ExecutableLoweredProject project,
+            Map<ModuleId, StructuredBodyTable> tables,
+            SemanticLowerer.ProjectLoweringResult lowering, Fixture fixture)
+            throws Exception {
+        try {
+            if ("JVM".equals(target)) {
+                JvmSemanticEmitter.emitProductionProject(project, tables,
+                    lowering.registries(), "FixtureProbe", fixture.surface());
+            } else {
+                LuaSemanticEmitter.emitProductionProject(project, tables,
+                    lowering.registries(), fixture.surface(), null);
+            }
+            return null;
+        } catch (SharedEmissionFailure rejection) {
+            return rejection;
+        }
+    }
+
     private static void testCrossModuleAsyncEmission(Fixture cross, Fixture same)
             throws Exception {
         System.out.println("-- the cross-module async call emits through the "
@@ -1593,6 +1766,7 @@ public class ProductionProjectEmissionTest {
             testAtomicFailures(failing);
             testHostImportGuard();
             testFfiProviderGapOrigin();
+            testRejectedOpEmissionOrigins();
             cross = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
             same = asyncFixture(ASYNC_LIB_SOURCE, SAME_ASYNC_APP_SOURCE);
             testCrossModuleAsyncEmission(cross, same);
