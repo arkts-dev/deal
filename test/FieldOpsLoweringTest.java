@@ -481,16 +481,10 @@ public class FieldOpsLoweringTest {
     // (d) the class-field assignment arm
     // =========================================================================
 
-    private static void testFieldWriteArm() {
+    private static void testFieldWriteArm(SemanticLowerer.ClassDeclarationCoreResult result) {
         System.out.println("-- class field assignment: [containerOp, valueOp, FIELD_WRITE] "
             + "with UNTYPED_CLASS_INPUT + CLASS_FIELD_ASSIGNMENT children --");
 
-        SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
-            class Point { x: int; y?: int = 0; }
-            let p: Point = {x: 1};
-            p.x = 9;
-            p.y = 3
-            """);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null,
             "the write slice lowers to a validated unit: "
@@ -596,15 +590,10 @@ public class FieldOpsLoweringTest {
     // (e) the class-field delete arm
     // =========================================================================
 
-    private static void testFieldDeleteArm() {
+    private static void testFieldDeleteArm(SemanticLowerer.ClassDeclarationCoreResult result) {
         System.out.println("-- class field delete: [containerOp, FIELD_DELETE] with one "
             + "UNTYPED_CLASS_INPUT child --");
 
-        SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
-            class Point { x: int; y?: int = 0; }
-            let p: Point = {x: 1}
-            delete p.y
-            """);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null,
             "the delete slice lowers to a validated unit: "
@@ -674,15 +663,10 @@ public class FieldOpsLoweringTest {
     // (f) the has arm
     // =========================================================================
 
-    private static void testHasFieldArm() {
+    private static void testHasFieldArm(SemanticLowerer.ClassDeclarationCoreResult result) {
         System.out.println("-- has(obj.field): HAS_FIELD with the static key, no "
             + "children, boolean result --");
 
-        SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
-            class Point { x: int; y?: int = 0; }
-            let p: Point = {x: 1}
-            let b: boolean = has(p.y)
-            """);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null,
             "the has slice lowers to a validated unit: "
@@ -1156,9 +1140,17 @@ public class FieldOpsLoweringTest {
         testFieldReadArm();
         testOptionalFieldReadArm();
         testCrossModuleNullableReadArm();
-        testFieldWriteArm();
-        testFieldDeleteArm();
-        testHasFieldArm();
+        SemanticLowerer.ClassDeclarationCoreResult fieldMutations = lowerModule("""
+            class Point { x: int; y?: int = 0; }
+            let p: Point = {x: 1};
+            p.x = 9;
+            p.y = 3;
+            delete p.y;
+            let b: boolean = has(p.y)
+            """);
+        testFieldWriteArm(fieldMutations);
+        testFieldDeleteArm(fieldMutations);
+        testHasFieldArm(fieldMutations);
         testCombinedT1T2T3ExecutorDrive();
         testDeterminism();
 

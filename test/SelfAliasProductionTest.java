@@ -633,7 +633,7 @@ public class SelfAliasProductionTest {
             Path artifact = out.resolve(JvmNames.classNameFor("main") + ".java");
             check(Files.isRegularFile(artifact), testCase.name()
                 + " [jvm]: the project artifact is staged: " + artifact);
-            if (Files.isRegularFile(artifact)) {
+            if (Files.isRegularFile(artifact) && testCase.asyncExport() == null) {
                 compileStagedJvm(testCase, out, artifact);
             }
         }
@@ -1026,11 +1026,8 @@ public class SelfAliasProductionTest {
         check(entryId != null, testCase.name() + " [jvm]: the unit records the async "
             + "export's EXTERNAL_ENTRY over the production entry surface");
         Path classes = jvmOut.resolve("classes");
-        boolean artifactCompiled = Files.isRegularFile(
-            classes.resolve(JvmNames.classNameFor("main") + ".class"));
-        check(artifactCompiled, testCase.name()
-            + " [jvm]: the staged artifact is compiled for the async drive");
-        if (Files.isRegularFile(artifact) && entryId != null && artifactCompiled) {
+        if (Files.isRegularFile(artifact) && entryId != null) {
+            Files.createDirectories(classes);
             String probeClass = "SelfAliasAsyncProbe_"
                 + UUID.randomUUID().toString().replace("-", "");
             Path probe = jvmOut.resolve(probeClass + ".java");
@@ -1048,11 +1045,11 @@ public class SelfAliasProductionTest {
             ProcessBuilder javac = new ProcessBuilder("javac", "--release", "25",
                 "-proc:none", "-sourcepath", "", "-cp",
                 classes + File.pathSeparator + absoluteClasspath(),
-                "-d", classes.toString(), probe.toString());
+                "-d", classes.toString(), artifact.toString(), probe.toString());
             javac.directory(jvmOut.toFile());
             ProcessOutput compile = runProcess(javac);
-            check(compile.exit() == 0, testCase.name() + " [jvm]: the async probe "
-                + "compiles against the staged classes under javac --release 25 -proc:none: "
+            check(compile.exit() == 0, testCase.name() + " [jvm]: the staged artifact and async probe "
+                + "compile under javac --release 25 -proc:none: "
                 + compile.describe());
             if (compile.exit() == 0) {
                 ProcessBuilder java = new ProcessBuilder("java", "-cp",

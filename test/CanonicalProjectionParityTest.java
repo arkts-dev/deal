@@ -418,7 +418,20 @@ public class CanonicalProjectionParityTest {
         Map<ModuleId, ClassFactoryRegistry> registries,
         Set<String> hostStems,
         Map<String, String> modulePathToCorpus,
-        Map<String, String> moduleDirToCorpus) {
+        Map<String, String> moduleDirToCorpus,
+        JvmPreparation jvmPreparation) {
+    }
+
+    private record JvmDrive(String probeSource, Map<String, String> hostSources) {
+        JvmDrive {
+            hostSources = Map.copyOf(hostSources);
+        }
+    }
+
+    private static final class JvmPreparation {
+        private boolean emitted;
+        private Path artifactClasses;
+        private final Map<JvmDrive, Path> drives = new LinkedHashMap<>();
     }
 
     /** The release-owned production invocation. */
@@ -616,7 +629,7 @@ public class CanonicalProjectionParityTest {
             built.index(), manifests.manifests(),
             orchestrator.hostDeclarationSurface(), identities, externC, stripped,
             lowering.project(), lowering.tables(), lowering.registries(), hostStems,
-            modulePathToCorpus, moduleDirToCorpus);
+            modulePathToCorpus, moduleDirToCorpus, new JvmPreparation());
     }
 
     private static void deleteRecursively(Path path) {
@@ -1277,6 +1290,13 @@ public class CanonicalProjectionParityTest {
                     // identity below); the artifacts carry the pinned tuples.
                 }
             }
+            switch (spec.corpusPath()) {
+                case "host-abi/host-bad-return" -> wrapperSyncReturnKindSite(compiled);
+                case "host-abi/host-invalid-utf8-e8010" -> wrapperStringCarrierSite(compiled);
+                case "host-abi/host-empty-return-bad" -> wrapperNothingSite(compiled);
+                default -> {
+                }
+            }
             if ("host-abi/host-async-shape-bad".equals(spec.corpusPath())) {
                 assertAbsentAsyncHandle(compiled, pin);
                 assertAsyncHandlePresence(compiled, pin);
@@ -1672,16 +1692,6 @@ public class CanonicalProjectionParityTest {
     }
 
     /**
-     * The production Lua wrapper's delegation control: a mapped wrapper
-     * failure calls the artifact-registered closed-arm renderer with the
-     * arm id, its named parameters, the declared expected/actual
-     * projections and the supplied call origin, and the published tuple is
-     * that renderer's output — the wrapper composes no text of its own.
-     * The same drive's negative control removes the artifact-owned
-     * renderer: the wrapper fails closed with the producer-defect report
-     * instead of publishing a locally composed E8010 tuple.
-     */
-    /**
      * The production wrappers' mapped failure sites and their mapped inner
      * reasons through the artifact-owned closed arm table (ISSUE-0696
      * remediation; canonical failure-projection authority P1/P4). Every
@@ -1764,11 +1774,14 @@ public class CanonicalProjectionParityTest {
     private static void testHostWrapperArmAuthority() throws Exception {
         System.out.println("-- the production wrappers' parameter, sync-return, and "
             + "nothing cells render through the artifact's closed arm table --");
-        wrapperParameterSite();
-        wrapperSyncReturnKindSite();
-        wrapperStringCarrierSite();
-        wrapperNothingSite();
-        wrapperInnerTemplateAuthority();
+        Compiled compiled = compile(mainEntry(
+            "host-abi/host-bytes-param-mismatch-e8010"));
+        try {
+            wrapperParameterSite(compiled);
+            wrapperInnerTemplateAuthority(compiled);
+        } finally {
+            deleteRecursively(compiled.root());
+        }
     }
 
     /**
@@ -1776,107 +1789,89 @@ public class CanonicalProjectionParityTest {
      * crosses the production wrapper's own declared-parameter rule (the
      * artifact-side projection of the same call is the loaded wrapper's).
      */
-    private static void wrapperParameterSite() throws Exception {
-        Compiled compiled = compile(mainEntry(
-            "host-abi/host-bytes-param-mismatch-e8010"));
-        try {
-            String drive = "local surface = __exportSurfaces[\"host.bytes_roundtrip\"]\n"
-                + "if surface == nil then fail(\"no host surface\") end\n"
-                + "local entry = surface.echoBytes\n"
-                + "if entry == nil then fail(\"no echoBytes export\") end\n"
-                + "return pcall(entry.f, 5, \"probe.deal\", 3, 4)\n";
-            WrapperPin valid = wrapperPin(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", FailureProjections.kindReason(
-                    RuntimeDescriptor.Bytes.INSTANCE)),
-                "bytes", "number", "probe.deal:3:4", "5", true,
-                FailureArmId.TYPED_BOUNDARY_KIND, "bytes");
-            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
-                wrapperRecorder(), drive, wrapperTuple(valid)),
-                "host-abi/host-bytes-param-mismatch-e8010 (luajit): the loaded "
-                + "wrapper's parameter cell publishes the registry's tuple with the "
-                + "matcher-selected inner arm and the declared projections");
-            // Invalid bindings through the recorded renderer: a dropped named
-            // parameter, a foreign inner reason, and an expected projection
-            // outside the declared shape each fail closed, no tuple published.
-            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
-                wrapperRecorder("    local mutated = {}\n"
-                    + "    for k, v in pairs(values) do\n"
-                    + "      if k ~= \"index\" then mutated[k] = v end\n"
-                    + "    end\n"
-                    + "    return realArm(id, mutated, file, line, column, expected, "
-                    + "subject)\n"), drive,
-                wrapperDefect("HOST_PARAMETER_CELL", "supplied 1")),
-                "host-abi/host-bytes-param-mismatch-e8010 (luajit): the parameter "
-                + "cell rejects a missing named parameter");
-            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
-                wrapperRecorder(null, "  realInner(id, values)\n"
-                    + "  return \"a composed reason\"\n"), drive,
-                wrapperDefect("HOST_PARAMETER_CELL",
-                    "closed inner-reason vocabulary")),
-                "host-abi/host-bytes-param-mismatch-e8010 (luajit): the parameter "
-                + "cell rejects a composed inner reason");
-            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
-                wrapperRecorder("    return realArm(id, values, file, line, column, "
-                    + "\"not a descriptor\", subject)\n"), drive,
-                wrapperDefect("HOST_PARAMETER_CELL", "canonical descriptor")),
-                "host-abi/host-bytes-param-mismatch-e8010 (luajit): the parameter "
-                + "cell rejects an expected projection outside its declared shape");
-            // The inner reason follows the artifact's serialized kind template.
-            String mutated = "wanted {kind} instead";
-            Path patched = patchedArtifact(compiled,
-                armEntry(FailureArmId.TYPED_BOUNDARY_KIND),
-                mutatedEntry(FailureArmId.TYPED_BOUNDARY_KIND, mutated));
-            checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
-                wrapperRecorder(), drive, wrapperTuple(valid.withMessage(
-                    "parameter 1 type mismatch: wanted bytes instead"))),
-                "host-abi/host-bytes-param-mismatch-e8010 (luajit): the parameter "
-                + "cell's inner reason follows the artifact's serialized kind template");
-        } finally {
-            deleteRecursively(compiled.root());
-        }
+    private static void wrapperParameterSite(Compiled compiled) throws Exception {
+        String drive = "local surface = __exportSurfaces[\"host.bytes_roundtrip\"]\n"
+            + "if surface == nil then fail(\"no host surface\") end\n"
+            + "local entry = surface.echoBytes\n"
+            + "if entry == nil then fail(\"no echoBytes export\") end\n"
+            + "return pcall(entry.f, 5, \"probe.deal\", 3, 4)\n";
+        WrapperPin valid = wrapperPin(FailureArmId.HOST_PARAMETER_CELL,
+            Map.of("index", "1", "inner", FailureProjections.kindReason(
+                RuntimeDescriptor.Bytes.INSTANCE)),
+            "bytes", "number", "probe.deal:3:4", "5", true,
+            FailureArmId.TYPED_BOUNDARY_KIND, "bytes");
+        checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+            wrapperRecorder(), drive, wrapperTuple(valid)),
+            "host-abi/host-bytes-param-mismatch-e8010 (luajit): the loaded "
+            + "wrapper's parameter cell publishes the registry's tuple with the "
+            + "matcher-selected inner arm and the declared projections");
+        checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+            wrapperRecorder("    local mutated = {}\n"
+                + "    for k, v in pairs(values) do\n"
+                + "      if k ~= \"index\" then mutated[k] = v end\n"
+                + "    end\n"
+                + "    return realArm(id, mutated, file, line, column, expected, "
+                + "subject)\n"), drive,
+            wrapperDefect("HOST_PARAMETER_CELL", "supplied 1")),
+            "host-abi/host-bytes-param-mismatch-e8010 (luajit): the parameter "
+            + "cell rejects a missing named parameter");
+        checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+            wrapperRecorder(null, "  realInner(id, values)\n"
+                + "  return \"a composed reason\"\n"), drive,
+            wrapperDefect("HOST_PARAMETER_CELL",
+                "closed inner-reason vocabulary")),
+            "host-abi/host-bytes-param-mismatch-e8010 (luajit): the parameter "
+            + "cell rejects a composed inner reason");
+        checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+            wrapperRecorder("    return realArm(id, values, file, line, column, "
+                + "\"not a descriptor\", subject)\n"), drive,
+            wrapperDefect("HOST_PARAMETER_CELL", "canonical descriptor")),
+            "host-abi/host-bytes-param-mismatch-e8010 (luajit): the parameter "
+            + "cell rejects an expected projection outside its declared shape");
+        String mutated = "wanted {kind} instead";
+        Path patched = patchedArtifact(compiled,
+            armEntry(FailureArmId.TYPED_BOUNDARY_KIND),
+            mutatedEntry(FailureArmId.TYPED_BOUNDARY_KIND, mutated));
+        checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
+            wrapperRecorder(), drive, wrapperTuple(valid.withMessage(
+                "parameter 1 type mismatch: wanted bytes instead"))),
+            "host-abi/host-bytes-param-mismatch-e8010 (luajit): the parameter "
+            + "cell's inner reason follows the artifact's serialized kind template");
     }
 
     /** The sync return cell of the loaded host wrapper (the kind inner reason). */
-    private static void wrapperSyncReturnKindSite() throws Exception {
-        Compiled compiled = compile(host("host-abi/host-bad-return",
-            "test_host_bad_return", "bad_return"));
-        try {
-            SidecarExpectations.ErrorExpectation pin = luajitPin(compiled.spec());
-            check(pin != null, "host-abi/host-bad-return: the sidecar pins an error");
-            if (pin == null) {
-                return;
-            }
-            String drive = "";
-            WrapperPin valid = wrapperPin(FailureArmId.HOST_SYNC_RETURN_CELL,
-                Map.of("inner", FailureProjections.kindReason(
-                    RuntimeDescriptor.Int.INSTANCE)),
-                "int", "string", artifactOrigin(compiled, pin), "\"not a number\"",
-                false, FailureArmId.TYPED_BOUNDARY_KIND, "int");
-            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
-                wrapperRecorder(), drive, wrapperTuple(valid)),
-                "host-abi/host-bad-return (luajit): the wrapper's sync return cell "
-                + "publishes the registry's tuple with the matcher-selected kind inner");
-            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
-                wrapperRecorder(null, "  realInner(id, values)\n"
-                    + "  return \"a composed reason\"\n"), drive,
-                wrapperDefect("HOST_SYNC_RETURN_CELL",
-                    "closed inner-reason vocabulary")),
-                "host-abi/host-bad-return (luajit): the sync return cell rejects a "
-                + "composed inner reason and publishes no tuple");
-            // The outer template control: replacing the serialized
-            // HOST_SYNC_RETURN_CELL template redirects the published message.
-            String mutated = "return cell {inner}";
-            Path patched = patchedArtifact(compiled,
-                armEntry(FailureArmId.HOST_SYNC_RETURN_CELL),
-                mutatedEntry(FailureArmId.HOST_SYNC_RETURN_CELL, mutated));
-            checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
-                wrapperRecorder(), drive, wrapperTuple(valid.withMessage(
-                    "return cell expected int"))),
-                "host-abi/host-bad-return (luajit): the wrapper's sync return cell "
-                + "follows the artifact's serialized outer template");
-        } finally {
-            deleteRecursively(compiled.root());
+    private static void wrapperSyncReturnKindSite(Compiled compiled) throws Exception {
+        SidecarExpectations.ErrorExpectation pin = luajitPin(compiled.spec());
+        check(pin != null, "host-abi/host-bad-return: the sidecar pins an error");
+        if (pin == null) {
+            return;
         }
+        String drive = "";
+        WrapperPin valid = wrapperPin(FailureArmId.HOST_SYNC_RETURN_CELL,
+            Map.of("inner", FailureProjections.kindReason(
+                RuntimeDescriptor.Int.INSTANCE)),
+            "int", "string", artifactOrigin(compiled, pin), "\"not a number\"",
+            false, FailureArmId.TYPED_BOUNDARY_KIND, "int");
+        checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+            wrapperRecorder(), drive, wrapperTuple(valid)),
+            "host-abi/host-bad-return (luajit): the wrapper's sync return cell "
+            + "publishes the registry's tuple with the matcher-selected kind inner");
+        checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+            wrapperRecorder(null, "  realInner(id, values)\n"
+                + "  return \"a composed reason\"\n"), drive,
+            wrapperDefect("HOST_SYNC_RETURN_CELL",
+                "closed inner-reason vocabulary")),
+            "host-abi/host-bad-return (luajit): the sync return cell rejects a "
+            + "composed inner reason and publishes no tuple");
+        String mutated = "return cell {inner}";
+        Path patched = patchedArtifact(compiled,
+            armEntry(FailureArmId.HOST_SYNC_RETURN_CELL),
+            mutatedEntry(FailureArmId.HOST_SYNC_RETURN_CELL, mutated));
+        checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
+            wrapperRecorder(), drive, wrapperTuple(valid.withMessage(
+                "return cell expected int"))),
+            "host-abi/host-bad-return (luajit): the wrapper's sync return cell "
+            + "follows the artifact's serialized outer template");
     }
 
     /**
@@ -1884,89 +1879,74 @@ public class CanonicalProjectionParityTest {
      * returns a malformed UTF-8 string, so the deployed matcher selects the
      * closed string-carrier arm and the artifact renders its template.
      */
-    private static void wrapperStringCarrierSite() throws Exception {
-        Compiled compiled = compile(host("host-abi/host-invalid-utf8-e8010",
-            "test_host_bad_utf8", "bad_string"));
-        try {
-            SidecarExpectations.ErrorExpectation pin = luajitPin(compiled.spec());
-            check(pin != null, "host-abi/host-invalid-utf8-e8010: the sidecar pins "
-                + "an error");
-            if (pin == null) {
-                return;
-            }
-            String drive = "";
-            WrapperPin valid = wrapperPin(FailureArmId.HOST_SYNC_RETURN_CELL,
-                Map.of("inner", FailureContractRegistry.renderInner(
-                    FailureArmId.HOST_STRING_INVALID_UTF8, Map.of())),
-                "string", "string", artifactOrigin(compiled, pin), null, false,
-                FailureArmId.HOST_STRING_INVALID_UTF8, null);
-            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
-                wrapperRecorder(), drive, wrapperTuple(valid)),
-                "host-abi/host-invalid-utf8-e8010 (luajit): the wrapper's sync return "
-                + "cell renders the matcher-selected string-carrier inner arm");
-            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
-                wrapperRecorder("    return realArm(id, {}, file, line, column, "
-                    + "expected, subject)\n"), drive,
-                wrapperDefect("HOST_SYNC_RETURN_CELL", "supplied 0")),
-                "host-abi/host-invalid-utf8-e8010 (luajit): the sync return cell "
-                + "rejects a missing named parameter and publishes no tuple");
-            // The inner-only template control: replacing the serialized
-            // HOST_STRING_INVALID_UTF8 template redirects the inner reason.
-            String mutated = "malformed host string";
-            Path patched = patchedArtifact(compiled,
-                armEntry(FailureArmId.HOST_STRING_INVALID_UTF8),
-                mutatedEntry(FailureArmId.HOST_STRING_INVALID_UTF8, mutated));
-            checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
-                wrapperRecorder(), drive, wrapperTuple(valid.withMessage(
-                    "return value 1 type mismatch: malformed host string"))),
-                "host-abi/host-invalid-utf8-e8010 (luajit): the wrapper's inner "
-                + "reason follows the artifact's serialized inner-only template");
-        } finally {
-            deleteRecursively(compiled.root());
+    private static void wrapperStringCarrierSite(Compiled compiled) throws Exception {
+        SidecarExpectations.ErrorExpectation pin = luajitPin(compiled.spec());
+        check(pin != null, "host-abi/host-invalid-utf8-e8010: the sidecar pins "
+            + "an error");
+        if (pin == null) {
+            return;
         }
+        String drive = "";
+        WrapperPin valid = wrapperPin(FailureArmId.HOST_SYNC_RETURN_CELL,
+            Map.of("inner", FailureContractRegistry.renderInner(
+                FailureArmId.HOST_STRING_INVALID_UTF8, Map.of())),
+            "string", "string", artifactOrigin(compiled, pin), null, false,
+            FailureArmId.HOST_STRING_INVALID_UTF8, null);
+        checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+            wrapperRecorder(), drive, wrapperTuple(valid)),
+            "host-abi/host-invalid-utf8-e8010 (luajit): the wrapper's sync return "
+            + "cell renders the matcher-selected string-carrier inner arm");
+        checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+            wrapperRecorder("    return realArm(id, {}, file, line, column, "
+                + "expected, subject)\n"), drive,
+            wrapperDefect("HOST_SYNC_RETURN_CELL", "supplied 0")),
+            "host-abi/host-invalid-utf8-e8010 (luajit): the sync return cell "
+            + "rejects a missing named parameter and publishes no tuple");
+        String mutated = "malformed host string";
+        Path patched = patchedArtifact(compiled,
+            armEntry(FailureArmId.HOST_STRING_INVALID_UTF8),
+            mutatedEntry(FailureArmId.HOST_STRING_INVALID_UTF8, mutated));
+        checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
+            wrapperRecorder(), drive, wrapperTuple(valid.withMessage(
+                "return value 1 type mismatch: malformed host string"))),
+            "host-abi/host-invalid-utf8-e8010 (luajit): the wrapper's inner "
+            + "reason follows the artifact's serialized inner-only template");
     }
 
     /** The no-value return cell of the loaded host wrapper. */
-    private static void wrapperNothingSite() throws Exception {
-        Compiled compiled = compile(host("host-abi/host-empty-return-bad",
-            "test_host_empty_return_bad", "empty_return"));
-        try {
-            SidecarExpectations.ErrorExpectation pin = luajitPin(compiled.spec());
-            check(pin != null, "host-abi/host-empty-return-bad: the sidecar pins an "
-                + "error");
-            if (pin == null) {
-                return;
-            }
-            String drive = "";
-            WrapperPin valid = wrapperPin(FailureArmId.HOST_SYNC_RETURN_NOTHING,
-                Map.of("expected", "int"), "int", "nothing",
-                artifactOrigin(compiled, pin), "nil", false, null, null);
-            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
-                wrapperRecorder(), drive, wrapperTuple(valid)),
-                "host-abi/host-empty-return-bad (luajit): the wrapper's no-value "
-                + "return cell publishes the registry's nothing tuple");
-            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
-                wrapperRecorder("    local mutated = {}\n"
-                    + "    for k, v in pairs(values) do mutated[k] = v end\n"
-                    + "    mutated.extra = \"x\"\n"
-                    + "    return realArm(id, mutated, file, line, column, expected, "
-                    + "subject)\n"), drive,
-                wrapperDefect("HOST_SYNC_RETURN_NOTHING", "extra parameter")),
-                "host-abi/host-empty-return-bad (luajit): the no-value cell rejects "
-                + "an extra named parameter and publishes no tuple");
-            // The outer template control at the nothing site.
-            String mutated = "nothing returned where {expected} was declared";
-            Path patched = patchedArtifact(compiled,
-                armEntry(FailureArmId.HOST_SYNC_RETURN_NOTHING),
-                mutatedEntry(FailureArmId.HOST_SYNC_RETURN_NOTHING, mutated));
-            checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
-                wrapperRecorder(), drive, wrapperTuple(valid.withMessage(
-                    "nothing returned where int was declared"))),
-                "host-abi/host-empty-return-bad (luajit): the wrapper's no-value "
-                + "cell follows the artifact's serialized outer template");
-        } finally {
-            deleteRecursively(compiled.root());
+    private static void wrapperNothingSite(Compiled compiled) throws Exception {
+        SidecarExpectations.ErrorExpectation pin = luajitPin(compiled.spec());
+        check(pin != null, "host-abi/host-empty-return-bad: the sidecar pins an "
+            + "error");
+        if (pin == null) {
+            return;
         }
+        String drive = "";
+        WrapperPin valid = wrapperPin(FailureArmId.HOST_SYNC_RETURN_NOTHING,
+            Map.of("expected", "int"), "int", "nothing",
+            artifactOrigin(compiled, pin), "nil", false, null, null);
+        checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+            wrapperRecorder(), drive, wrapperTuple(valid)),
+            "host-abi/host-empty-return-bad (luajit): the wrapper's no-value "
+            + "return cell publishes the registry's nothing tuple");
+        checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+            wrapperRecorder("    local mutated = {}\n"
+                + "    for k, v in pairs(values) do mutated[k] = v end\n"
+                + "    mutated.extra = \"x\"\n"
+                + "    return realArm(id, mutated, file, line, column, expected, "
+                + "subject)\n"), drive,
+            wrapperDefect("HOST_SYNC_RETURN_NOTHING", "extra parameter")),
+            "host-abi/host-empty-return-bad (luajit): the no-value cell rejects "
+            + "an extra named parameter and publishes no tuple");
+        String mutated = "nothing returned where {expected} was declared";
+        Path patched = patchedArtifact(compiled,
+            armEntry(FailureArmId.HOST_SYNC_RETURN_NOTHING),
+            mutatedEntry(FailureArmId.HOST_SYNC_RETURN_NOTHING, mutated));
+        checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
+            wrapperRecorder(), drive, wrapperTuple(valid.withMessage(
+                "nothing returned where int was declared"))),
+            "host-abi/host-empty-return-bad (luajit): the wrapper's no-value "
+            + "cell follows the artifact's serialized outer template");
     }
 
     /**
@@ -1977,49 +1957,39 @@ public class CanonicalProjectionParityTest {
      * would fail closed instead of publishing the tuple — the produced
      * message can only come from the serialized template.
      */
-    private static void wrapperInnerTemplateAuthority() throws Exception {
-        Compiled compiled = compile(mainEntry(
-            "host-abi/host-bytes-param-mismatch-e8010"));
-        try {
-            String drive = "local surface = __exportSurfaces[\"host.bytes_roundtrip\"]\n"
-                + "if surface == nil then fail(\"no host surface\") end\n"
-                + "return pcall(surface.echoBytes.f, 5, \"probe.deal\", 3, 4)\n";
-            String mutated = "the declared kind is {kind}";
-            Path patched = patchedArtifact(compiled,
-                armEntry(FailureArmId.TYPED_BOUNDARY_KIND),
-                mutatedEntry(FailureArmId.TYPED_BOUNDARY_KIND, mutated));
-            // The mutated template is the artifact's own authority, so the
-            // pin's message is the replaced template's instantiation while the
-            // code and the declared fields stay the registry's (the mutation
-            // replaces the text only).
-            WrapperPin replaced = wrapperPin(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", FailureProjections.kindReason(
-                    RuntimeDescriptor.Bytes.INSTANCE)),
-                "bytes", "number", "probe.deal:3:4", "5", true,
-                FailureArmId.TYPED_BOUNDARY_KIND, "bytes")
-                .withMessage("parameter 1 type mismatch: the declared kind is bytes");
-            checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
-                wrapperRecorder(), drive, wrapperTuple(replaced)),
-                "host-abi/host-bytes-param-mismatch-e8010 (luajit): the inner "
-                + "template is the text authority — the replaced serialized template "
-                + "renders the published message");
-            checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
-                wrapperRecorder(null, "  return \"expected bytes\"\n"), drive,
-                wrapperDefect("HOST_PARAMETER_CELL",
-                    "closed inner-reason vocabulary")),
-                "host-abi/host-bytes-param-mismatch-e8010 (luajit): the stale matcher "
-                + "text no longer passes once the serialized template is replaced "
-                + "(no copied literal can stand in for the arm)");
-            checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
-                wrapperRecorder(null, "  return \"the declared kind is bytes\"\n"),
-                drive, wrapperDefect("HOST_PARAMETER_CELL",
-                    "closed inner-reason vocabulary")),
-                "host-abi/host-bytes-param-mismatch-e8010 (luajit): the replaced "
-                + "template's text is rejected against the unmodified artifact's "
-                + "serialized vocabulary");
-        } finally {
-            deleteRecursively(compiled.root());
-        }
+    private static void wrapperInnerTemplateAuthority(Compiled compiled) throws Exception {
+        String drive = "local surface = __exportSurfaces[\"host.bytes_roundtrip\"]\n"
+            + "if surface == nil then fail(\"no host surface\") end\n"
+            + "return pcall(surface.echoBytes.f, 5, \"probe.deal\", 3, 4)\n";
+        String mutated = "the declared kind is {kind}";
+        Path patched = patchedArtifact(compiled,
+            armEntry(FailureArmId.TYPED_BOUNDARY_KIND),
+            mutatedEntry(FailureArmId.TYPED_BOUNDARY_KIND, mutated));
+        WrapperPin replaced = wrapperPin(FailureArmId.HOST_PARAMETER_CELL,
+            Map.of("index", "1", "inner", FailureProjections.kindReason(
+                RuntimeDescriptor.Bytes.INSTANCE)),
+            "bytes", "number", "probe.deal:3:4", "5", true,
+            FailureArmId.TYPED_BOUNDARY_KIND, "bytes")
+            .withMessage("parameter 1 type mismatch: the declared kind is bytes");
+        checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
+            wrapperRecorder(), drive, wrapperTuple(replaced)),
+            "host-abi/host-bytes-param-mismatch-e8010 (luajit): the inner "
+            + "template is the text authority — the replaced serialized template "
+            + "renders the published message");
+        checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
+            wrapperRecorder(null, "  return \"expected bytes\"\n"), drive,
+            wrapperDefect("HOST_PARAMETER_CELL",
+                "closed inner-reason vocabulary")),
+            "host-abi/host-bytes-param-mismatch-e8010 (luajit): the stale matcher "
+            + "text no longer passes once the serialized template is replaced "
+            + "(no copied literal can stand in for the arm)");
+        checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
+            wrapperRecorder(null, "  return \"the declared kind is bytes\"\n"),
+            drive, wrapperDefect("HOST_PARAMETER_CELL",
+                "closed inner-reason vocabulary")),
+            "host-abi/host-bytes-param-mismatch-e8010 (luajit): the replaced "
+            + "template's text is rejected against the unmodified artifact's "
+            + "serialized vocabulary");
     }
 
 
@@ -3876,45 +3846,64 @@ public class CanonicalProjectionParityTest {
     private static String jvmArtifactOutput(Compiled compiled, String probeSource,
             Map<String, String> hostOverrides) throws Exception {
         Path out = compiled.root().resolve("out-jvm");
-        deal.module.ProductionProjectEmission.Result result = emit(compiled,
-            Backend.JVM, out);
-        String className = JvmBackend.classNameFor(
-            compiled.checkedProject().entryModule().path());
-        Path classes = compiled.root().resolve("classes");
-        Files.createDirectories(classes);
-        Files.writeString(out.resolve("Probe.java"), probeSource,
-            StandardCharsets.UTF_8);
-        String classpath = absoluteClasspath();
-        List<String> javacArgs = new ArrayList<>(List.of("javac", "--release", "25",
-            "-proc:none", "-cp", classpath, "-d", classes.toString()));
-        for (String stem : compiled.hostStems()) {
-            String hostClass = JvmBackend.classNameFor("host/" + stem);
-            Path hostSource = out.resolve(hostClass + ".java");
-            String override = hostOverrides.get(stem);
-            if (override != null) {
-                Files.writeString(hostSource, override, StandardCharsets.UTF_8);
-            } else {
-                Files.copy(Path.of("test", "conformance", "host-fixtures",
-                    stem + ".java"), hostSource,
-                    StandardCopyOption.REPLACE_EXISTING);
-            }
-            javacArgs.add(hostSource.toAbsolutePath().toString());
+        JvmPreparation preparation = compiled.jvmPreparation();
+        if (!preparation.emitted) {
+            emit(compiled, Backend.JVM, out);
+            preparation.emitted = true;
         }
-        javacArgs.add(out.resolve(className + ".java").toAbsolutePath().toString());
-        javacArgs.add(out.resolve("Probe.java").toAbsolutePath().toString());
-        ProcessBuilder javac = new ProcessBuilder(javacArgs).redirectErrorStream(true);
-        javac.directory(out.toFile());
-        Process javacProcess = javac.start();
-        String javacOutput = new String(javacProcess.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        int javacExit = javacProcess.waitFor();
-        check(javacExit == 0, compiled.spec().what() + " (jvm): the production "
-            + "artifact compiles: " + javacOutput);
-        if (javacExit != 0) {
-            return null;
+        Map<String, String> hostSources = new LinkedHashMap<>();
+        for (String stem : compiled.hostStems()) {
+            String override = hostOverrides.get(stem);
+            hostSources.put(stem, override != null ? override
+                : Files.readString(Path.of("test", "conformance", "host-fixtures",
+                    stem + ".java"), StandardCharsets.UTF_8));
+        }
+        String driverName = "CanonicalProjectionParityDriver";
+        JvmDrive drive = new JvmDrive(probeSource, hostSources);
+        Path classes = preparation.drives.get(drive);
+        String classpath = absoluteClasspath();
+        if (classes == null) {
+            Path workspace = Files.createTempDirectory(compiled.root(), "jvm-drive-");
+            classes = workspace.resolve("classes");
+            Files.createDirectories(classes);
+            boolean first = preparation.artifactClasses == null;
+            String compileClasspath = first ? classpath
+                : preparation.artifactClasses + File.pathSeparator + classpath;
+            List<String> javacArgs = new ArrayList<>(List.of("javac", "--release",
+                "25", "-proc:none", "-cp", compileClasspath, "-d", classes.toString()));
+            if (first) {
+                String className = JvmBackend.classNameFor(
+                    compiled.checkedProject().entryModule().path());
+                javacArgs.add(out.resolve(className + ".java").toAbsolutePath().toString());
+            }
+            for (Map.Entry<String, String> host : hostSources.entrySet()) {
+                Path source = workspace.resolve(
+                    JvmBackend.classNameFor("host/" + host.getKey()) + ".java");
+                Files.writeString(source, host.getValue(), StandardCharsets.UTF_8);
+                javacArgs.add(source.toString());
+            }
+            Path driver = workspace.resolve(driverName + ".java");
+            Files.writeString(driver, probeSource, StandardCharsets.UTF_8);
+            javacArgs.add(driver.toString());
+            ProcessBuilder javac = new ProcessBuilder(javacArgs).redirectErrorStream(true);
+            javac.directory(workspace.toFile());
+            Process javacProcess = javac.start();
+            String javacOutput = new String(javacProcess.getInputStream().readAllBytes(),
+                StandardCharsets.UTF_8);
+            int javacExit = javacProcess.waitFor();
+            check(javacExit == 0, compiled.spec().what() + " (jvm): the production "
+                + "artifact and drive compile: " + javacOutput);
+            if (javacExit != 0) {
+                return null;
+            }
+            if (first) {
+                preparation.artifactClasses = classes;
+            }
+            preparation.drives.put(drive, classes);
         }
         ProcessBuilder java = new ProcessBuilder("java", "-cp",
-            classpath + File.pathSeparator + classes, "Probe");
+            classes + File.pathSeparator + preparation.artifactClasses
+                + File.pathSeparator + classpath, driverName);
         java.directory(out.toFile());
         java.redirectErrorStream(true);
         Process javaProcess = java.start();
@@ -3995,7 +3984,7 @@ public class CanonicalProjectionParityTest {
     private static String jvmProbe(String className, String entryModulePath,
             String afterFailure) {
         return """
-            final class Probe {
+            final class CanonicalProjectionParityDriver {
               public static void main(String[] args) {
                 try {
                   %s.dealMain();

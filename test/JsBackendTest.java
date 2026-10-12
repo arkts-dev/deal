@@ -112,8 +112,10 @@ public class JsBackendTest {
                   return 1;
                 }
                 """, "nestedclass-export");
-            testNestedClassEmissionPins(nestedExport);
-            testNestedClassNodeSemantics(nestedExport);
+            PreparedJs nestedShadow = prepareJs(nestedClassShadowSubject(),
+                "nestedclass-shadow-base");
+            testNestedClassEmissionPins(nestedExport, nestedShadow);
+            testNestedClassNodeSemantics(nestedExport, nestedShadow);
             testEntryShimAndE6004();
             testSourceLocationArguments();
             testOwnPropertySafeProtoEmission();
@@ -1280,7 +1282,25 @@ public class JsBackendTest {
         }
     }
 
-    private static void testNestedClassEmissionPins(PreparedJs nestedExport) {
+    private static String nestedClassShadowSubject() {
+        return """
+            class Outer { v: int = 1; }
+            export function test(): int {
+              let a: Outer = {};
+              {
+                class Outer { w: string = "s"; }
+                a = { v: 9 };
+                let b: Outer = {};
+                if (b.w !== "s") { return 0; }
+              }
+              if (a.v !== 9) { return 0; }
+              return 1;
+            }
+            """;
+    }
+
+    private static void testNestedClassEmissionPins(PreparedJs nestedExport,
+                                                   PreparedJs nestedShadow) {
         System.out.println("-- Nested class declarations: scope-local artifacts (ISSUE-0318) --");
 
         // The former D6 rejection case now generates clean: a block-level
@@ -1409,20 +1429,7 @@ public class JsBackendTest {
         // the module-level declaration constructs through the plain
         // {@code Outer$new}, while the shadowing declaration's own
         // construction names {@code Outer$1$new}.
-        JsBackend.JsCodegenResult shadowBase = generate("""
-            class Outer { v: int = 1; }
-            export function test(): int {
-              let a: Outer = {};
-              {
-                class Outer { w: string = "s"; }
-                a = { v: 9 };
-                let b: Outer = {};
-                if (b.w !== "s") { return 0; }
-              }
-              if (a.v !== 9) { return 0; }
-              return 1;
-            }
-            """, "nestedclass-shadow-base");
+        JsBackend.JsCodegenResult shadowBase = nestedShadow.emission();
         check(shadowBase != null && !shadowBase.hasErrors(),
             "a shadowing nested class generates with no diagnostics: "
                 + (shadowBase == null ? "<null>" : shadowBase.diagnostics()));
@@ -1443,7 +1450,8 @@ public class JsBackendTest {
         }
     }
 
-    private static void testNestedClassNodeSemantics(PreparedJs nestedExport)
+    private static void testNestedClassNodeSemantics(PreparedJs nestedExport,
+                                                    PreparedJs nestedShadow)
             throws Exception {
         System.out.println("-- Node: nested-class defaults scope and per-construction evaluation --");
         if (!nodeAvailable) { skipNode("nested-class defaults scope"); return; }
@@ -1531,20 +1539,7 @@ public class JsBackendTest {
         // target's exact declaration is the module-level class) runs
         // through the outer closure, and the shadowing class's own
         // construction keeps its own layout.
-        NodeResult shadowConstruct = runDealNode("""
-            class ShadowTarget { v: int = 1; }
-            export function test(): int {
-              let a: ShadowTarget = {};
-              {
-                class ShadowTarget { w: string = "inner"; }
-                a = { v: 9 };
-                let b: ShadowTarget = {};
-                if (b.w !== "inner") { return 0; }
-              }
-              if (a.v !== 9) { return 0; }
-              return 1;
-            }
-            """, "nestedclass-shadow-construction");
+        NodeResult shadowConstruct = runDealArtifact(nestedShadow);
         check(shadowConstruct.exitCode() == 0
                 && shadowConstruct.output().equals("1"),
             "a target-context construction under a shadowing declaration "

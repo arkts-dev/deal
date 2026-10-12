@@ -1185,16 +1185,11 @@ public class ContainerLoweringArmsTest {
     // 8. MEMBER_READ arm — checked contextual positions
     // =========================================================================
 
-    static void testMemberReadArm() {
+    static void testMemberReadArm(CheckedSlice reads) {
         System.out.println("-- MEMBER_READ arm: checked contextual positions --");
 
         // (a) The if-condition read: contextual type boolean → TYPE_DESCRIPTOR.
-        CheckedSlice boolSlice = checkSlice("""
-            function f(t: table): null {
-              if (t.k) {}
-              return null
-            }
-            """);
+        CheckedSlice boolSlice = reads;
         if (boolSlice != null) {
             MemberAccessExpr access = first(boolSlice.program(), MemberAccessExpr.class);
             check(access != null && "k".equals(access.field()),
@@ -1251,14 +1246,12 @@ public class ContainerLoweringArmsTest {
 
         // (b) The function-descriptor read: contextual type () => int →
         // FUNCTION_SIGNATURE by the descriptor-kind rule.
-        CheckedSlice funcSlice = checkSlice("""
-            function f(t: table): null {
-              let g: () => int = t.g
-              return null
-            }
-            """);
+        CheckedSlice funcSlice = reads;
         if (funcSlice != null) {
-            MemberAccessExpr access = first(funcSlice.program(), MemberAccessExpr.class);
+            FunctionDeclaration function = (FunctionDeclaration) funcSlice.program()
+                .statements().get(1);
+            MemberAccessExpr access = (MemberAccessExpr) ((VariableDeclaration)
+                function.body().statements().get(0)).initializer();
             check(access != null && "g".equals(access.field()),
                 "the function-context slice carries t.g");
             if (access != null) {
@@ -1291,16 +1284,10 @@ public class ContainerLoweringArmsTest {
      * {@code CONTEXTUAL_TABLE_READ} boundary child — the literal member
      * read's contextual validation, execution order, and key identity.
      */
-    static void testDynamicTableIndexReadArm() {
+    static void testDynamicTableIndexReadArm(CheckedSlice slice) {
         System.out.println("-- Dynamic-key computed table read: the normalize + "
             + "contextual read shape --");
 
-        CheckedSlice slice = checkSlice("""
-            function f(t: table, k: string): null {
-              let n: int = t[k]
-              return null
-            }
-            """);
         if (slice == null) {
             return;
         }
@@ -2056,8 +2043,22 @@ public class ContainerLoweringArmsTest {
         testStringPlusArm();
         testTemplateArms();
         testArrayLengthArm();
-        testMemberReadArm();
-        testDynamicTableIndexReadArm();
+        CheckedSlice tableReads = checkSlice("""
+            function booleanMemberRead(t: table): null {
+              if (t.k) {}
+              return null
+            }
+            function functionMemberRead(t: table): null {
+              let g: () => int = t.g
+              return null
+            }
+            function dynamicIndexRead(t: table, k: string): null {
+              let n: int = t[k]
+              return null
+            }
+            """);
+        testMemberReadArm(tableReads);
+        testDynamicTableIndexReadArm(tableReads);
         testForEachArm(nested);
         testConstructUnloweredNegatives();
         testDescriptorNegatives();

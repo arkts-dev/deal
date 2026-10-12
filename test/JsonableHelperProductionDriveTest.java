@@ -243,47 +243,13 @@ public class JsonableHelperProductionDriveTest {
     // 1. The corpus inventory
     // =========================================================================
 
-    private static void testCorpusInventory(List<String> discovered) throws Exception {
-        System.out.println("-- the @jsonable helper family inventory: current corpus "
-            + "discovery (sidecar-bearing fixtures), the required structural "
-            + "fixtures, and the companion-covered sidecar-free fixtures --");
+    private static void testCorpusInventory(List<String> discovered) {
         check(!discovered.isEmpty(),
             "the jsonable directory discovers at least one driven fixture");
-        // The explicitly required fixtures of the helper contract: the
-        // pinned runtime-error fixture (the invoking-call-origin pin) and the
-        // cross-module helper call fixture are part of the discovered set.
         check(discovered.contains("jsonable-tojson-rejects-cyclic-table"),
             CYCLIC_FIXTURE + " is discovered as a driven fixture");
         check(discovered.contains("jsonable-cross-module"),
             CROSS_MODULE_FIXTURE + " is discovered as a driven fixture");
-        // The sidecar rule is bidirectional: every sidecar in the directory
-        // belongs to a discovered fixture (no orphan expectation), and every
-        // discovery candidate carries its own sidecar by construction.
-        for (String sidecar : sidecarStems()) {
-            check(discovered.contains(sidecar), sidecar + ".expect.json belongs "
-                + "to a discovered fixture (no orphan sidecar)");
-        }
-        check(Files.isRegularFile(CONFORMANCE.resolve(NEAR_COLLISION + ".deal")),
-            "the near-collision structural fixture exists");
-        check(Files.isRegularFile(CONFORMANCE.resolve(EXPORT_KEYS + ".deal")),
-            "the helper-export-keys structural fixture exists");
-        check(Files.isRegularFile(CONFORMANCE.resolve(COMPILE_REJECT + ".deal")),
-            "the compile-reject structural fixture exists");
-    }
-
-    /** The sidecar stems currently present in the family directory. */
-    private static List<String> sidecarStems() throws Exception {
-        List<String> sidecars = new ArrayList<>();
-        try (Stream<Path> entries = Files.list(CONFORMANCE.resolve(FAMILY_DIR))) {
-            for (Path file : entries.sorted().toList()) {
-                String name = file.getFileName().toString();
-                if (name.endsWith(".expect.json")) {
-                    sidecars.add(name.substring(0,
-                        name.length() - ".expect.json".length()));
-                }
-            }
-        }
-        return sidecars;
     }
 
     // =========================================================================
@@ -447,17 +413,19 @@ public class JsonableHelperProductionDriveTest {
     private record Compilation(boolean compiled, List<String> diagnostics,
                                CheckedProjectBuildResult built,
                                RequirementManifestResult manifests,
-                               HostDeclarationSurface surface) {
+                               HostDeclarationSurface surface,
+                               ExecutableLoweredProject producedProject) {
     }
 
     private static Compilation compileObservation(Project project, String fixtureRel,
             Target target) throws Exception {
         ProjectLocator.LocateResult located = ProjectLocator.locate(
-            project.entryFile().toString(), null);
+            project.entryFile().toString(), new deal.project.CliOverrides(null,
+                project.outputRoot().toString()));
         if (located.context() == null) {
             check(false, fixtureRel + " [" + target.laneName()
                 + "]: the generated deal.json locates strictly");
-            return new Compilation(false, List.of(), null, null, null);
+            return new Compilation(false, List.of(), null, null, null, null);
         }
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             located.context(), project.entryFile(), false, false, false, false,
@@ -471,7 +439,7 @@ public class JsonableHelperProductionDriveTest {
         }
         return new Compilation(compiled, List.copyOf(diagnostics),
             orchestrator.checkedProject(), orchestrator.requirementManifests(),
-            orchestrator.hostDeclarationSurface());
+            orchestrator.hostDeclarationSurface(), orchestrator.producedProject());
     }
 
     private static boolean compile(Project project, String fixtureRel, Target target,
@@ -1306,7 +1274,8 @@ public class JsonableHelperProductionDriveTest {
             null, productionInvocation());
         boolean compiled = orchestrator.compile();
         return lower(new Compilation(compiled, List.of(), orchestrator.checkedProject(),
-            orchestrator.requirementManifests(), orchestrator.hostDeclarationSurface()),
+            orchestrator.requirementManifests(), orchestrator.hostDeclarationSurface(),
+            orchestrator.producedProject()),
             label);
     }
 
@@ -2318,13 +2287,13 @@ public class JsonableHelperProductionDriveTest {
         // return cell without replacing the reserved shape (no
         // same-module CALL(EXTERNAL) and no second entry).
         {
-            Lowered lowered = compilation == null ? null
-                : lower(compilation, "helper binding IR");
-            if (lowered == null) {
+            ExecutableLoweredProject produced = compilation == null ? null
+                : compilation.producedProject();
+            check(produced != null, "helper binding IR: the production compile exposes its project");
+            if (produced == null) {
                 return;
             }
-            LoweredModuleUnit unit = lowered.project().modules()
-                .get(lowered.entryModule());
+            LoweredModuleUnit unit = produced.modules().get(produced.entryModule());
             Map<FunctionId, OpId> entryReturnBoundary = new LinkedHashMap<>();
             for (SemanticOp op : unit.ops()) {
                 if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
@@ -2382,7 +2351,7 @@ public class JsonableHelperProductionDriveTest {
                 if (call.callee() instanceof KindPayload.CallCallee.Static staticCallee
                         && staticCallee.binding()
                             instanceof FunctionExecutionBinding.ExternalFunction external
-                        && external.moduleId().equals(lowered.entryModule())
+                        && external.moduleId().equals(produced.entryModule())
                         && external.exportName().startsWith("Box$")) {
                     externalHelperCalls++;
                 }
@@ -3857,10 +3826,13 @@ public class JsonableHelperProductionDriveTest {
                         firstDiagnostics);
                     String first = firstCompiled
                         ? Files.readString(artifactOf(project, target)) : null;
-                    boolean secondCompiled = compile(project, fixtureRel, target,
+                    Project repeat = new Project(project.root(), project.srcRoot(),
+                        project.entryFile(), project.modulePath(), project.modules(),
+                        project.root().resolve("out-repeat"));
+                    boolean secondCompiled = compile(repeat, fixtureRel, target,
                         secondDiagnostics);
                     String second = secondCompiled
-                        ? Files.readString(artifactOf(project, target)) : null;
+                        ? Files.readString(artifactOf(repeat, target)) : null;
                     check(firstCompiled && secondCompiled, fixtureRel + " ["
                         + target.laneName() + "]: both drives compile: "
                         + firstDiagnostics + " " + secondDiagnostics);

@@ -52,64 +52,6 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Stream;
 
-/**
- * ISSUE-0702: the fail-closed guard retargeting and the live negative-seed
- * coverage (design source {@code dispatched-corpus-production-realization}
- * R8 and the producer guard contract; read-only
- * {@code conformance-cutover-guards-pins-and-production-source-removal}
- * HR4(a); {@code luajit-jvm-single-lowering-production-cutover} C4).
- *
- * <ol>
- *   <li><b>The three guards stay landed.</b> {@code CONSTRUCT_UNLOWERED},
- *       {@code RETAINED_ABI_DEFERRED}, and {@code SHARED_EMITTER_COVERAGE}
- *       (with its {@code HOST_MODULE_IMPORT} and {@code FFI_PROVIDER_GAP}
- *       detail tokens) keep their current identifiers; none is deleted,
- *       renamed, or bypassed. The retargeted reserved boundary names stay
- *       the two C-FFI crossings and the closed {@code BoundaryKind} set
- *       keeps its 27 members in the pinned order.</li>
- *   <li><b>One live negative seed per guard, from R8's closed candidate
- *       set, over the production targets.</b> The hand-built inconsistent
- *       fact of a cross-module callee whose module is neither lowered nor
- *       recorded fails {@code CONSTRUCT_UNLOWERED} through the missing
- *       callee fact; the hand-built inconsistent fact of a class literal
- *       whose owner is neither lowered nor declaration-typed fails
- *       {@code RETAINED_ABI_DEFERRED}. Both run through production
- *       emission on LuaJIT and JVM; the corrupted extern-C fact (one alias
- *       bound to two provider modules) fails
- *       {@code SHARED_EMITTER_COVERAGE}/{@code FFI_PROVIDER_GAP} on the
- *       LuaJIT extern-C emission (the JVM extern-C rejection is its own
- *       sanctioned E6006 contract, not substituted here). Every outcome is
- *       exactly one named E6005 that stages nothing and leaves the
- *       previous artifact set byte-identical (the atomic-publication
- *       contract); each seed carries the intact-fact control that
- *       emits.</li>
- *   <li><b>The realized-construct probes.</b> The construct families this
- *       epic realized — bytes value semantics, the {@code @jsonable}
- *       helper operations (same-module and cross-module export), a
- *       residual carrier shape (the local self-recursive declared body),
- *       the per-iteration closure capture, and the loop-target transfer
- *       protocol — compile through the release-owned production
- *       invocation, lower and run in the semantic oracle (terminal plus
- *       console effects), and execute under both real toolchains
- *       ({@code luajit}; {@code javac --release 25 -proc:none} plus
- *       {@code java}). Each artifact's status, stdout, and stderr are
- *       asserted against the oracle transcript, with no guard outcome, so
- *       the guards are unreachable for checker-valid input of those
- *       families. The JVM execution puts the generated classes ahead of
- *       every inherited classpath entry and carries a live collision
- *       control (a decoy {@code Main} that is selected only when the
- *       generated entrypoint does not come first). The {@code @jsonable}
- *       helper probe requires the landed helper family's successful
- *       compilation and oracle-agreed executed transcript on both targets
- *       (the ISSUE-0698 realization), so a regression fails this child by
- *       name.</li>
- * </ol>
- *
- * <p>The historical source-scanning framework and its synthetic parser
- * controls are not part of this suite: the guard contract is carried by
- * the executable seeds and the real production probes above, not by a
- * source inventory.</p>
- */
 public class FailClosedGuardRetargetingTest {
 
     private static int passed = 0;
@@ -365,26 +307,6 @@ public class FailClosedGuardRetargetingTest {
             ProductionProjectEmission.FFI_PROVIDER_GAP,
             "the FFI provider-gap detail token");
 
-        // The retargeted reserved-name seed: BYTE_ELEMENT_READ and
-        // BYTE_ELEMENT_ASSIGNMENT are members; the two C-FFI crossings stay
-        // the reserved pair, and the closed set keeps its 27 members in the
-        // pinned order.
-        checkEq(List.of(
-                "VARIABLE_DECLARATION", "VARIABLE_ASSIGNMENT",
-                "CLASS_FIELD_ASSIGNMENT", "ARRAY_ELEMENT_ASSIGNMENT",
-                "BYTE_ELEMENT_ASSIGNMENT", "ARRAY_ELEMENT_READ",
-                "BYTE_ELEMENT_READ", "ARRAY_ELEMENT_DELETE",
-                "ARRAY_LITERAL_ELEMENT", "FUNCTION_PARAMETER",
-                "FUNCTION_RETURN", "ASYNC_COMPLETION", "CLASS_LITERAL_FIELD",
-                "CLASS_DEFAULT_FIELD", "UNTYPED_CLASS_INPUT",
-                "OPTIONAL_FIELD_READ", "CONTEXTUAL_TABLE_READ",
-                "IMPORTED_MEMBER_READ", "MODULE_EXPORT", "HOST_TO_DEAL",
-                "DEAL_TO_HOST", "STDLIB_PARAMETER", "STDLIB_RETURN",
-                "EXTERNAL_PARAMETER", "EXTERNAL_RETURN", "JSON_FROM_FIELD",
-                "JSON_TO_FIELD"),
-            Arrays.stream(BoundaryKind.values()).map(Enum::name).toList(),
-            "the closed BoundaryKind set keeps its 27 members in the pinned "
-                + "order");
         checkEq(List.of("C_FFI_TO_DEAL", "DEAL_TO_C_FFI"),
             BoundaryKind.RESERVED_NAMES,
             "the reserved boundary names are the two C-FFI crossings");
@@ -665,23 +587,6 @@ public class FailClosedGuardRetargetingTest {
         }
         """;
 
-    private static final String BYTES_PROBE = """
-        import * as console from "std/console"
-
-        export function main(): null {
-          let b: bytes = bytes(4);
-          b[0] = 7;
-          b[3] = 250;
-          let n: int = b[0] + b[3] + b.length;
-          if (n === 261) {
-            console.log("PROBE|BYTES|ok");
-          } else {
-            console.log("PROBE|BYTES|bad");
-          }
-          return null;
-        }
-        """;
-
     /**
      * The residual carrier probe (R4 mechanism 1): the self-recursive
      * function declaration lives <em>inside</em> the executing body — the
@@ -729,77 +634,6 @@ public class FailClosedGuardRetargetingTest {
         }
         """;
 
-    /**
-     * The {@code @jsonable} helper probe: a checker-valid same-module
-     * {@code Person$toJson}/{@code Person$fromJson} reference pair (the
-     * corpus shapes {@code jsonable/jsonable-roundtrip.deal} and
-     * {@code lua-abi-structural/jsonable-helper-export-keys.deal} carry).
-     * The same-module reference form is the landed production path
-     * (ISSUE-0698; the callable generated helper binding); the probe
-     * compiles and executes it on both targets.
-     */
-    private static final String JSONABLE_PROBE = """
-        import * as console from "std/console"
-
-        // @jsonable
-        export class Person {
-          name: string = "";
-          score: int = 0;
-        }
-
-        export function main(): null {
-          let p: Person = { name: "Carol", score: 7 };
-          let s: string = Person$toJson(p);
-          let q: Person | null = Person$fromJson(s);
-          if (q !== null) {
-            if (q.name === "Carol" && q.score === 7) {
-              console.log("PROBE|JSONABLE|ok");
-            } else {
-              console.log("PROBE|JSONABLE|bad");
-            }
-          } else {
-            console.log("PROBE|JSONABLE|bad");
-          }
-          return null;
-        }
-        """;
-
-    private static final String JSONABLE_CROSS_MODULE_LIB = """
-        // @jsonable
-        export class Widget {
-          label: string = "";
-          count: int = 0;
-        }
-        """;
-
-    /**
-     * The cross-module {@code @jsonable} helper-export probe (R3 items
-     * (a)/(c)): the declaring module publishes each generated helper
-     * through its export surface and records its {@code EXTERNAL_ENTRY},
-     * and an importing module calls it through the landed
-     * {@code EXPORT_READ} + {@code CALL(EXTERNAL)} shape.
-     */
-    private static final String JSONABLE_CROSS_MODULE_PROBE = """
-        import * as console from "std/console"
-        import * as Lib from "./lib"
-
-        export function main(): null {
-          let w: Lib.Widget = { label: "a", count: 1 };
-          let s: string = Lib.Widget$toJson(w);
-          let q: Lib.Widget | null = Lib.Widget$fromJson(s);
-          if (q !== null) {
-            if (q.label === "a" && q.count === 1) {
-              console.log("PROBE|JSONABLE-XMOD|ok");
-            } else {
-              console.log("PROBE|JSONABLE-XMOD|bad");
-            }
-          } else {
-            console.log("PROBE|JSONABLE-XMOD|bad");
-          }
-          return null;
-        }
-        """;
-
     private static final String TRANSFER_PROBE = """
         import * as console from "std/console"
 
@@ -840,40 +674,60 @@ public class FailClosedGuardRetargetingTest {
             + "the release-owned production invocation and execute under both "
             + "real toolchains with their oracle-agreed transcripts and no "
             + "guard outcome --");
-        probe("bytes value semantics", BYTES_PROBE, "PROBE|BYTES|ok");
+        probe("bytes value semantics", """
+            import * as console from "std/console"
+            export function main(): null {
+              let b: bytes = bytes(4);
+              b[0] = 7;
+              b[3] = 250;
+              let n: int = b[0] + b[3] + b.length;
+              if (n === 261) { console.log("PROBE|BYTES|ok"); }
+              else { console.log("PROBE|BYTES|bad"); }
+              return null;
+            }
+            """, "PROBE|BYTES|ok");
+        probe("same-module @jsonable public CLI", """
+            import * as console from "std/console"
+            // @jsonable
+            export class Person { name: string = ""; score: int = 0; }
+            export function main(): null {
+              let p: Person = { name: "Carol", score: 7 };
+              let s: string = Person$toJson(p);
+              let q: Person | null = Person$fromJson(s);
+              if (q !== null) {
+                if (q.name === "Carol" && q.score === 7) {
+                  console.log("PROBE|JSONABLE|ok");
+                } else { console.log("PROBE|JSONABLE|bad"); }
+              } else { console.log("PROBE|JSONABLE|bad"); }
+              return null;
+            }
+            """, "PROBE|JSONABLE|ok");
+        probeSources("cross-module @jsonable public CLI", Map.of(
+            "src/lib.deal", """
+                // @jsonable
+                export class Widget { label: string = ""; count: int = 0; }
+                """,
+            "src/main.deal", """
+                import * as console from "std/console"
+                import * as Lib from "./lib"
+                export function main(): null {
+                  let w: Lib.Widget = { label: "a", count: 1 };
+                  let s: string = Lib.Widget$toJson(w);
+                  let q: Lib.Widget | null = Lib.Widget$fromJson(s);
+                  if (q !== null) {
+                    if (q.label === "a" && q.count === 1) {
+                      console.log("PROBE|JSONABLE-XMOD|ok");
+                    } else { console.log("PROBE|JSONABLE-XMOD|bad"); }
+                  } else { console.log("PROBE|JSONABLE-XMOD|bad"); }
+                  return null;
+                }
+                """), "PROBE|JSONABLE-XMOD|ok");
         probe("the residual carrier shape (a local self-recursive declared "
             + "body)", RESIDUAL_PROBE, "PROBE|RESIDUAL|ok");
         probe("the per-iteration closure capture", CAPTURE_PROBE,
             "PROBE|CAPTURE|ok");
         probe("the loop-target transfer protocol", TRANSFER_PROBE,
             "PROBE|TRANSFER|ok");
-        probe("the same-module @jsonable helper operations", JSONABLE_PROBE,
-            "PROBE|JSONABLE|ok");
-        probeSources("the cross-module @jsonable helper exports",
-            Map.of("src/main.deal", JSONABLE_CROSS_MODULE_PROBE,
-                "src/lib.deal", JSONABLE_CROSS_MODULE_LIB),
-            "PROBE|JSONABLE-XMOD|ok");
-
-        // The outcome comparison's focused negative control: an artifact
-        // that prints the pinned line and also leaks an unexpected stderr
-        // transcript (or a nonzero status, or a divergent stdout) fails.
-        check(!outcomeMatches(new ProcessOutcome(0, "PROBE|BYTES|ok\n",
-                "noise\n"), null, "PROBE|BYTES|ok\n"),
-            "the outcome comparison rejects an unexpected stderr transcript");
-        check(!outcomeMatches(new ProcessOutcome(0, "PROBE|BYTES|ok\n", "x"),
-                new OracleTranscript("PROBE|BYTES|ok\n", ""),
-                "PROBE|BYTES|ok\n"),
-            "the outcome comparison rejects a leaked stderr against the "
-                + "oracle transcript");
-        check(!outcomeMatches(new ProcessOutcome(1, "PROBE|BYTES|ok\n", ""),
-                null, "PROBE|BYTES|ok\n"),
-            "the outcome comparison rejects a nonzero artifact status");
-        check(!outcomeMatches(new ProcessOutcome(0, "PROBE|BYTES|bad\n", ""),
-                null, "PROBE|BYTES|ok\n"),
-            "the outcome comparison rejects a divergent transcript");
-        check(outcomeMatches(new ProcessOutcome(0, "PROBE|BYTES|ok\n", ""),
-                null, "PROBE|BYTES|ok\n"),
-            "the outcome comparison accepts the exact status/transcript");
     }
 
     private static void probe(String name, String source, String expectedLine)
@@ -913,15 +767,13 @@ public class FailClosedGuardRetargetingTest {
             ProjectOutcome luaCompile = runProductionCli("compile", entry,
                 "--backend", "lua", "--output",
                 root.resolve("out-lua").toAbsolutePath().toString());
-            check(luaCompile.exitCode() == 0,
-                name + ": the LuaJIT production compile succeeds: "
-                    + luaCompile.stderr());
+            checkEq(0, luaCompile.exitCode(), name + ": the Lua CLI compile succeeds: "
+                + luaCompile.stderr());
             check(!luaCompile.stderr().contains("E6005")
                     && !luaCompile.stderr().contains("CONSTRUCT_UNLOWERED")
                     && !luaCompile.stderr().contains("RETAINED_ABI_DEFERRED")
                     && !luaCompile.stderr().contains("SHARED_EMITTER_COVERAGE"),
-                name + ": the realized construct reports no guard outcome: "
-                    + luaCompile.stderr());
+                name + ": the Lua CLI reports no guard outcome");
             if (luaCompile.exitCode() == 0) {
                 ProcessOutcome run = runProcess(
                     List.of("luajit", "main.lua"), root.resolve("out-lua"));

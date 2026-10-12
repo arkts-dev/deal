@@ -492,21 +492,30 @@ public class CompositeTerminatorAnalysisTest {
                       }
                     }
                     """), "LOOP"));
-        for (Positive positive : positives) {
-            Lowered lowered = lowerProbe(positive.name(), positive.source());
-            if (lowered == null) {
-                continue;
-            }
-            check(lowered.implicitReturns().isEmpty(), positive.name()
-                + ": the terminated body carries no implicit trailing synthetic "
-                + "null return");
-            List<BlockId> bodies = lowered.declaredBodyBlocks();
-            checkEq(2, bodies.size(), positive.name()
-                + ": the unit carries the probe body and the entry main body");
-            if (bodies.size() != 2) {
-                continue;
-            }
-            BlockId probeBody = bodies.get(0);
+        StringBuilder source = new StringBuilder();
+        for (int i = 0; i < positives.size(); i++) {
+            String program = positives.get(i).source();
+            source.append(program.substring(0, program.indexOf("export function main"))
+                .replace("function probe(", "function positiveProbe" + i + "("));
+        }
+        Lowered lowered = lowerProbe("composite positive battery",
+            probeProgram(source.toString()));
+        if (lowered == null) {
+            return;
+        }
+        List<BlockId> bodies = lowered.declaredBodyBlocks();
+        checkEq(positives.size() + 1, bodies.size(),
+            "the unit carries every positive probe and the entry main body");
+        checkEq((long) bodies.size(), bodies.stream().distinct().count(),
+            "the positive probes have distinct body blocks");
+        check(lowered.implicitReturns().isEmpty(),
+            "the terminated positive bodies carry no implicit trailing null return");
+        if (bodies.size() != positives.size() + 1) {
+            return;
+        }
+        for (int i = 0; i < positives.size(); i++) {
+            Positive positive = positives.get(i);
+            BlockId probeBody = bodies.get(i);
             List<SemanticOp> ops = lowered.blockOps(probeBody);
             check(!ops.isEmpty(), positive.name() + ": the probe body block is "
                 + "non-empty");

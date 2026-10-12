@@ -55,8 +55,6 @@ import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.SourceOrigin;
 import deal.semantic.ir.ValueId;
-import deal.test.conformance.JvmLane;
-import deal.test.conformance.LuaLane;
 import deal.test.conformance.ProducedProjectIdentityAudit;
 import deal.types.Type;
 
@@ -220,14 +218,14 @@ public class BodyInvocationIdentityTest {
             + "the closed chain value child is the creation op --");
         RealProject project = compileProject(ASSIGNED_EXPRESSION_SOURCE);
         try {
-            SemanticLowerer.ProjectLoweringResult result = lower(project);
-            check(result.project() != null && result.diagnostics().isEmpty(),
-                "the assigned never-invoked function expression lowers with zero "
-                    + "diagnostics: " + result.diagnostics());
-            if (result.project() == null) {
+            ExecutableLoweredProject produced = project.orchestrator().producedProject();
+            check(produced != null && project.orchestrator().diagnostics().isEmpty(),
+                "the assigned never-invoked function expression produces a project: "
+                    + project.orchestrator().diagnostics());
+            if (produced == null) {
                 return;
             }
-            LoweredModuleUnit unit = onlyModule(result.project());
+            LoweredModuleUnit unit = onlyModule(produced);
             assertChainChildrenResolve(unit);
             check(chainChildIsCreationOp(unit, AssignTargetKind.VARIABLE),
                 "the VARIABLE assignment chain names the function expression's "
@@ -244,7 +242,7 @@ public class BodyInvocationIdentityTest {
                     "the assigned expression's identity is its CLOSURE_NEW; got "
                         + (creation == null ? "unresolved" : creation.kind().name()));
                 if (creation != null) {
-                    assertBodyLocalCell(result, unit, payload.function(), creation);
+                    assertBodyLocalCell(produced, unit, payload.function(), creation);
                     check(creation.opId().equals(payload.enclosingInvocationOpId()),
                         "the body's RETURN names the creation op's own op id (every "
                             + "chain reference to it stays resolvable)");
@@ -289,14 +287,14 @@ public class BodyInvocationIdentityTest {
             + "write: the closed chain value child is the creation op --");
         RealProject project = compileProject(SLOT_WRITTEN_EXPRESSION_SOURCE);
         try {
-            SemanticLowerer.ProjectLoweringResult result = lower(project);
-            check(result.project() != null && result.diagnostics().isEmpty(),
-                "the slot-written never-invoked function expressions lower with zero "
-                    + "diagnostics: " + result.diagnostics());
-            if (result.project() == null) {
+            ExecutableLoweredProject produced = project.orchestrator().producedProject();
+            check(produced != null && project.orchestrator().diagnostics().isEmpty(),
+                "the slot-written never-invoked function expressions produce a project: "
+                    + project.orchestrator().diagnostics());
+            if (produced == null) {
                 return;
             }
-            LoweredModuleUnit unit = onlyModule(result.project());
+            LoweredModuleUnit unit = onlyModule(produced);
             assertChainChildrenResolve(unit);
             check(chainChildIsCreationOp(unit, AssignTargetKind.TABLE_SLOT),
                 "the TABLE_SLOT assignment chain names the function expression's "
@@ -318,7 +316,7 @@ public class BodyInvocationIdentityTest {
                 check(creation != null && creation.kind() == SemanticOpKind.CLOSURE_NEW,
                     "each slot-written expression's identity is its CLOSURE_NEW");
                 if (creation != null) {
-                    assertBodyLocalCell(result, unit, payload.function(), creation);
+                    assertBodyLocalCell(produced, unit, payload.function(), creation);
                 }
             }
         } finally {
@@ -351,14 +349,14 @@ public class BodyInvocationIdentityTest {
             + "RECURSIVE_GROUP_INIT publication carries the member identities --");
         RealProject project = compileProject(RECURSIVE_GROUP_SOURCE);
         try {
-            SemanticLowerer.ProjectLoweringResult result = lower(project);
-            check(result.project() != null && result.diagnostics().isEmpty(),
-                "the never-invoked recursive-group member lowers with zero "
-                    + "CONSTRUCT_UNLOWERED: " + result.diagnostics());
-            if (result.project() == null) {
+            ExecutableLoweredProject produced = project.orchestrator().producedProject();
+            check(produced != null && project.orchestrator().diagnostics().isEmpty(),
+                "the never-invoked recursive-group member produces a project: "
+                    + project.orchestrator().diagnostics());
+            if (produced == null) {
                 return;
             }
-            LoweredModuleUnit unit = onlyModule(result.project());
+            LoweredModuleUnit unit = onlyModule(produced);
             List<SemanticOp> groups = opsOfKind(unit, SemanticOpKind.RECURSIVE_GROUP_INIT);
             checkEq(1, groups.size(),
                 "exactly one RECURSIVE_GROUP_INIT publishes the pair; got " + groups.size());
@@ -387,7 +385,7 @@ public class BodyInvocationIdentityTest {
             checkEq(new LinkedHashSet<>(groupPayload.functions()), members,
                 "every published member carries its body-local cell");
             for (FunctionId member : groupPayload.functions()) {
-                assertBodyLocalCell(result, unit, member, group);
+                assertBodyLocalCell(produced, unit, member, group);
             }
         } finally {
             deleteRecursively(project.root());
@@ -538,6 +536,11 @@ public class BodyInvocationIdentityTest {
      */
     private static void assertBodyLocalCell(SemanticLowerer.ProjectLoweringResult result,
             LoweredModuleUnit unit, FunctionId function, SemanticOp creation) {
+        assertBodyLocalCell(result.project(), unit, function, creation);
+    }
+
+    private static void assertBodyLocalCell(ExecutableLoweredProject project,
+            LoweredModuleUnit unit, FunctionId function, SemanticOp creation) {
         int occurrences = 0;
         for (SemanticOp op : unit.ops()) {
             if (op.opId().equals(creation.opId())) {
@@ -558,7 +561,7 @@ public class BodyInvocationIdentityTest {
                 (KindPayload.ReturnPayload) returned.payload();
             checkEq(creation.opId(), payload.enclosingInvocationOpId(),
                 "the body's RETURN names the materialized identity");
-            check(resolvesInProject(result.project(), payload.enclosingInvocationOpId()),
+            check(resolvesInProject(project, payload.enclosingInvocationOpId()),
                 "the RETURN identity resolves in the project closure");
             boundaries.add(payload.returnBoundaryOpId());
         }
@@ -802,9 +805,10 @@ public class BodyInvocationIdentityTest {
         }
         check(returnOps > 0,
             "the produced project carries RETURN ops (the audit is non-empty)");
-        check(ProducedProjectIdentityAudit.audit(project).isEmpty(),
-            "the guard passes the produced project: "
-                + ProducedProjectIdentityAudit.audit(project));
+        List<ProducedProjectIdentityAudit.Violation> violations =
+            ProducedProjectIdentityAudit.audit(project);
+        check(violations.isEmpty(),
+            "the guard passes the produced project: " + violations);
 
         BodyLocalCell cell = firstBodyLocalCell(project);
         check(cell != null,
@@ -823,13 +827,13 @@ public class BodyInvocationIdentityTest {
         // The lane-facing audit consumes the produced project, never a
         // re-lowering; a lane that ran no production arm has nothing to
         // audit.
-        check(JvmLane.laneIdentityFailure(project, "fixture.deal").isEmpty(),
+        check(ProducedProjectIdentityAudit.laneFailure(project, "fixture.deal").isEmpty(),
             "the JVM lane's audit accepts the produced project");
-        check(LuaLane.laneIdentityFailure(project, "fixture.deal").isEmpty(),
+        check(ProducedProjectIdentityAudit.laneFailure(project, "fixture.deal").isEmpty(),
             "the LuaJIT lane's audit accepts the produced project");
-        check(JvmLane.laneIdentityFailure(null, "fixture.deal").isEmpty(),
+        check(ProducedProjectIdentityAudit.laneFailure(null, "fixture.deal").isEmpty(),
             "a lane that ran no production arm has nothing to audit");
-        check(LuaLane.laneIdentityFailure(null, "fixture.deal").isEmpty(),
+        check(ProducedProjectIdentityAudit.laneFailure(null, "fixture.deal").isEmpty(),
             "a lane that ran no production arm has nothing to audit");
 
         // (a) The reserved identity the never-called guard used to
@@ -852,7 +856,7 @@ public class BodyInvocationIdentityTest {
             checkEq(cell.identity().toString(), first.get().opId(),
                 "the dangling identity names the unresolved op id");
         }
-        String laneFailure = JvmLane.laneIdentityFailure(dangling,
+        String laneFailure = ProducedProjectIdentityAudit.laneFailure(dangling,
             "fixture.deal").orElse(null);
         check(laneFailure != null && laneFailure.contains("fixture.deal")
                 && laneFailure.contains(cell.unit().moduleId().path())

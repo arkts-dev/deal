@@ -156,7 +156,8 @@ public class LuaProductionProjectEmissionTest {
         List<SemanticRequirementManifest> manifests,
         HostDeclarationSurface surface,
         Map<ModuleId, FfiGeneratedModule> externCModules,
-        Map<ModuleId, CanonicalModuleIdentity> declarationIdentities) {
+        Map<ModuleId, CanonicalModuleIdentity> declarationIdentities,
+        ExecutableLoweredProject producedProject, String lua) {
     }
 
     private record Baseline(
@@ -168,9 +169,7 @@ public class LuaProductionProjectEmissionTest {
     private static Baseline prepare(Fixture fixture, List<Path> roots) {
         roots.add(fixture.root());
         SemanticLowerer.ProjectLoweringResult result = lower(fixture);
-        String lua = result.project() == null ? null
-            : LuaSemanticEmitter.emitProductionProject(result.project(), result.tables(),
-                result.registries(), fixture.surface());
+        String lua = fixture.lua();
         return new Baseline(result, fixture.surface(), lua);
     }
 
@@ -205,7 +204,8 @@ public class LuaProductionProjectEmissionTest {
         }
         return new Fixture(root, built.input(), built.index(), manifests.manifests(),
             orchestrator.hostDeclarationSurface(), new LinkedHashMap<>(),
-            new LinkedHashMap<>());
+            new LinkedHashMap<>(), orchestrator.producedProject(),
+            Files.readString(output.resolve("app.lua"), StandardCharsets.UTF_8));
     }
 
     /** The one project lowering over the real checked project. */
@@ -567,7 +567,7 @@ public class LuaProductionProjectEmissionTest {
     //    conversion-overflow terminal
     // =========================================================================
 
-    private static void testUnderLuaJit(Baseline fixture, Baseline quiet)
+    private static void testUnderLuaJit(Baseline fixture, Fixture quiet)
             throws Exception {
         System.out.println("-- the production chunk under real luajit: the one-main "
             + "observable, the clean run, and the E8004 terminal --");
@@ -600,11 +600,6 @@ public class LuaProductionProjectEmissionTest {
         // (b) The covered-construct fixture: exit 0 with empty output.
         Path quietWorkspace = Files.createTempDirectory("lua-production-project-quiet");
         try {
-            SemanticLowerer.ProjectLoweringResult result = quiet.result();
-            if (result.project() == null) {
-                fail("the quiet fixture lowers: " + result.diagnostics());
-                return;
-            }
             Path artifact = quietWorkspace.resolve("project.lua");
             Files.writeString(artifact, quiet.lua(), StandardCharsets.UTF_8);
             deployRuntime(quietWorkspace);
@@ -634,16 +629,8 @@ public class LuaProductionProjectEmissionTest {
         Fixture growth = compileProject(growthSource.toString());
         Path growthWorkspace = Files.createTempDirectory("lua-production-project-growth");
         try {
-            SemanticLowerer.ProjectLoweringResult result = lower(growth);
-            if (result.project() == null) {
-                fail("the chunk-local growth fixture lowers: " + result.diagnostics());
-                return;
-            }
             Path artifact = growthWorkspace.resolve("project.lua");
-            Files.writeString(artifact, LuaSemanticEmitter.emitProductionProject(
-                result.project(), result.tables(), result.registries(),
-                growth.surface()),
-                StandardCharsets.UTF_8);
+            Files.writeString(artifact, growth.lua(), StandardCharsets.UTF_8);
             deployRuntime(growthWorkspace);
             ProcessOutcome run = runProcess(List.of("luajit",
                 artifact.toAbsolutePath().toString()), growthWorkspace);
@@ -719,16 +706,8 @@ public class LuaProductionProjectEmissionTest {
         Fixture shadow = compileProject(shadowSource);
         Path shadowWorkspace = Files.createTempDirectory("lua-production-project-shadow");
         try {
-            SemanticLowerer.ProjectLoweringResult result = lower(shadow);
-            if (result.project() == null) {
-                fail("the shadowing-binding fixture lowers: " + result.diagnostics());
-                return;
-            }
             Path artifact = shadowWorkspace.resolve("project.lua");
-            Files.writeString(artifact, LuaSemanticEmitter.emitProductionProject(
-                result.project(), result.tables(), result.registries(),
-                shadow.surface()),
-                StandardCharsets.UTF_8);
+            Files.writeString(artifact, shadow.lua(), StandardCharsets.UTF_8);
             deployRuntime(shadowWorkspace);
             ProcessOutcome run = runProcess(List.of("luajit",
                 artifact.toAbsolutePath().toString()), shadowWorkspace);
@@ -772,16 +751,8 @@ public class LuaProductionProjectEmissionTest {
         Fixture dynamicTable = compileProject(LIB_SOURCE, dynamicTableSource);
         Path dynamicWorkspace = Files.createTempDirectory("lua-production-project-dyntable");
         try {
-            SemanticLowerer.ProjectLoweringResult result = lower(dynamicTable);
-            if (result.project() == null) {
-                fail("the dynamic-table-read fixture lowers: " + result.diagnostics());
-                return;
-            }
             Path artifact = dynamicWorkspace.resolve("project.lua");
-            Files.writeString(artifact, LuaSemanticEmitter.emitProductionProject(
-                result.project(), result.tables(), result.registries(),
-                dynamicTable.surface()),
-                StandardCharsets.UTF_8);
+            Files.writeString(artifact, dynamicTable.lua(), StandardCharsets.UTF_8);
             deployRuntime(dynamicWorkspace);
             ProcessOutcome run = runProcess(List.of("luajit",
                 artifact.toAbsolutePath().toString()), dynamicWorkspace);
@@ -800,16 +771,8 @@ public class LuaProductionProjectEmissionTest {
         Fixture overflow = compileProject(OVERFLOW_APP_SOURCE);
         Path overflowWorkspace = Files.createTempDirectory("lua-production-project-ovf");
         try {
-            SemanticLowerer.ProjectLoweringResult result = lower(overflow);
-            if (result.project() == null) {
-                fail("the overflow fixture lowers: " + result.diagnostics());
-                return;
-            }
             Path artifact = overflowWorkspace.resolve("project.lua");
-            Files.writeString(artifact, LuaSemanticEmitter.emitProductionProject(
-                result.project(), result.tables(), result.registries(),
-                overflow.surface()),
-                StandardCharsets.UTF_8);
+            Files.writeString(artifact, overflow.lua(), StandardCharsets.UTF_8);
             deployRuntime(overflowWorkspace);
             ProcessOutcome run = runProcess(List.of("luajit",
                 artifact.toAbsolutePath().toString()), overflowWorkspace);
@@ -832,17 +795,12 @@ public class LuaProductionProjectEmissionTest {
     //    each module's exports
     // =========================================================================
 
-    private static void testExecutedSurfaces(Baseline fixture) throws Exception {
+    private static void testExecutedSurfaces(Fixture fixture) throws Exception {
         System.out.println("-- the executed chunk's per-module surfaces hold each "
             + "module's exports (the T1 dependency) --");
         Path workspace = Files.createTempDirectory("lua-production-project-surface");
         try {
-            SemanticLowerer.ProjectLoweringResult result = fixture.result();
-            if (result.project() == null) {
-                fail("the fixture lowers: " + result.diagnostics());
-                return;
-            }
-            ExecutableLoweredProject project = result.project();
+            ExecutableLoweredProject project = fixture.producedProject();
             Path artifact = workspace.resolve("project.lua");
             Files.writeString(artifact, fixture.lua(), StandardCharsets.UTF_8);
 
@@ -1015,15 +973,8 @@ public class LuaProductionProjectEmissionTest {
         Fixture fixture = compileProject(HOST_ERROR_LIB_SOURCE, HOST_ERROR_APP_SOURCE);
         Path workspace = Files.createTempDirectory("lua-production-project-hosterror");
         try {
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
-            if (result.project() == null) {
-                fail("the host-error fixture lowers: " + result.diagnostics());
-                return;
-            }
             Path artifact = workspace.resolve("project.lua");
-            Files.writeString(artifact, LuaSemanticEmitter.emitProductionProject(
-                result.project(), result.tables(), result.registries(),
-                fixture.surface()), StandardCharsets.UTF_8);
+            Files.writeString(artifact, fixture.lua(), StandardCharsets.UTF_8);
             deployRuntime(workspace);
             Path probe = workspace.resolve("host-error-probe.lua");
             Files.writeString(probe, luaHostErrorProbe(artifact), StandardCharsets.UTF_8);
@@ -1322,12 +1273,7 @@ public class LuaProductionProjectEmissionTest {
         Fixture fixture = compileProject(LIB_WITH_MAIN_SOURCE, CONSOLE_APP_SOURCE);
         Path workspace = Files.createTempDirectory("lua-production-project-nonentry");
         try {
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
-            if (result.project() == null) {
-                fail("the fixture lowers: " + result.diagnostics());
-                return;
-            }
-            ExecutableLoweredProject project = result.project();
+            ExecutableLoweredProject project = fixture.producedProject();
             // The non-vacuity check: both units carry their own lowered
             // ENTRY_INVOKE delegation op, so the skip is exercised.
             int libEntryOps = 0;
@@ -1347,8 +1293,7 @@ public class LuaProductionProjectEmissionTest {
             checkEq(1, appEntryOps,
                 "the fixture's entry unit carries its ENTRY_INVOKE delegation op");
 
-            String lua = LuaSemanticEmitter.emitProductionProject(project,
-                result.tables(), result.registries(), fixture.surface());
+            String lua = fixture.lua();
             checkEq(1, countOccurrences(lua, "\"START\", \"ENTRY_INVOKE\""),
                 "the production chunk emits exactly one ENTRY_INVOKE delegation "
                     + "(the entry module's)");
@@ -1728,7 +1673,8 @@ public class LuaProductionProjectEmissionTest {
         List<Path> roots = new ArrayList<>();
         try {
             Baseline console = prepare(compileProject(CONSOLE_APP_SOURCE), roots);
-            Baseline quiet = prepare(compileProject(QUIET_APP_SOURCE), roots);
+            Fixture quiet = compileProject(QUIET_APP_SOURCE);
+            roots.add(quiet.root());
             testEmittedChunkText(console);
             testUnderLuaJit(console, quiet);
             testExecutedSurfaces(quiet);

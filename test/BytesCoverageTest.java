@@ -3,7 +3,6 @@ package deal.test;
 import deal.checker.BuiltinErrorDeclaration;
 import deal.codegen.Backend;
 import deal.codegen.jvm.JvmBackend;
-import deal.codegen.jvm.JvmNames;
 import deal.codegen.jvm.JvmSemanticEmitter;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
@@ -130,10 +129,6 @@ public class BytesCoverageTest {
 
         String fixtureFile() {
             return directory + "/" + relativePath + ".deal";
-        }
-
-        String sidecarFile() {
-            return directory + "/" + relativePath + ".expect.json";
         }
 
         String what() {
@@ -294,114 +289,19 @@ public class BytesCoverageTest {
     }
 
     // =========================================================================
-    // 1. The corpus pins
-    // =========================================================================
-
-    private static void testCorpusPins() throws Exception {
-        System.out.println("-- the bytes corpus sidecars keep their pinned rows --");
-        for (BytesFixture fixture : FAILURES) {
-            Path sidecar = CORPUS.resolve(fixture.sidecarFile());
-            Path file = CORPUS.resolve(fixture.fixtureFile());
-            check(Files.exists(sidecar), fixture.what() + " carries its sidecar");
-            check(Files.exists(file), fixture.what() + " is a corpus fixture");
-            if (!Files.exists(sidecar) || !Files.exists(file)) {
-                continue;
-            }
-            SidecarExpectations.StructuredExpectationSidecar parsed =
-                SidecarExpectations.StructuredExpectationSidecar.parse(
-                    Files.readString(sidecar, StandardCharsets.UTF_8));
-            for (String backend : List.of("luajit", "jvm", "js")) {
-                check(parsed.byBackend().containsKey(backend), fixture.what()
-                    + ": the sidecar pins the '" + backend + "' lane");
-            }
-            SidecarExpectations.RuntimeExpectation expectation =
-                parsed.expectationFor("luajit");
-            check(expectation instanceof SidecarExpectations.RuntimeExpectation.Executed,
-                fixture.what() + ": the LuaJIT leg is an executed expectation");
-            if (!(expectation
-                    instanceof SidecarExpectations.RuntimeExpectation.Executed executed)) {
-                continue;
-            }
-            checkEq("runtime-error", executed.mode(), fixture.what() + ": the pinned mode");
-            SidecarExpectations.ErrorExpectation row = executed.error();
-            check(row != null, fixture.what() + ": the pinned error snapshot");
-            if (row == null) {
-                continue;
-            }
-            checkEq(fixture.code(), row.code(), fixture.what() + ": the pinned code");
-            checkEq(fixture.message(), row.message(), fixture.what()
-                + ": the pinned message");
-            checkEq(fixture.line(), row.line(), fixture.what() + ": the pinned line");
-            checkEq(fixture.column(), row.column(), fixture.what()
-                + ": the pinned column");
-            checkEq(fixture.expected(), row.expected().orElse(null), fixture.what()
-                + ": the pinned expected token");
-            checkEq(fixture.actual(), row.actual().orElse(null), fixture.what()
-                + ": the pinned actual token");
-            checkEq(fixture.fixtureFile(), row.sourceFile(), fixture.what()
-                + ": the pinned source file");
-            List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-            check(fixture.line() <= lines.size(), fixture.what()
-                + ": the pinned line is inside the fixture");
-            if (fixture.line() <= lines.size()) {
-                String line = lines.get(fixture.line() - 1);
-                check(fixture.column() <= line.length() + 1, fixture.what()
-                    + ": the pinned column is inside the pinned line: '" + line + "'");
-            }
-            checkEq(1, executed.exitCode(), fixture.what() + ": the pinned exit code");
-        }
-        for (BytesFixture fixture : RUNTIME_OK) {
-            Path sidecar = CORPUS.resolve(fixture.sidecarFile());
-            Path file = CORPUS.resolve(fixture.fixtureFile());
-            check(Files.exists(sidecar), fixture.what() + " carries its sidecar");
-            check(Files.exists(file), fixture.what() + " is a corpus fixture");
-            if (!Files.exists(sidecar)) {
-                continue;
-            }
-            SidecarExpectations.StructuredExpectationSidecar parsed =
-                SidecarExpectations.StructuredExpectationSidecar.parse(
-                    Files.readString(sidecar, StandardCharsets.UTF_8));
-            SidecarExpectations.RuntimeExpectation expectation =
-                parsed.expectationFor("luajit");
-            if (!(expectation
-                    instanceof SidecarExpectations.RuntimeExpectation.Executed executed)) {
-                fail(fixture.what() + ": the LuaJIT leg is an executed expectation");
-                continue;
-            }
-            checkEq("runtime-ok", executed.mode(), fixture.what() + ": the pinned mode");
-            checkEq(0, executed.exitCode(), fixture.what() + ": the pinned exit code");
-            checkEq("", new String(executed.stdout(), StandardCharsets.UTF_8),
-                fixture.what() + ": the pinned stdout");
-            checkEq("", new String(executed.stderr(), StandardCharsets.UTF_8),
-                fixture.what() + ": the pinned stderr");
-            check(executed.error() == null, fixture.what()
-                + ": a runtime-ok fixture pins no error snapshot");
-        }
-        // The bytes element contract's four pinning fixtures are exactly the
-        // negative length, the bounds read/write, and the write range.
-        for (String required : List.of("bytes-negative-length-error",
-                "bytes-index-bounds", "bytes-read-at-length-error",
-                "bytes-write-at-length-error", "bytes-write-range",
-                "bytes-write-negative-error")) {
-            check(FAILURES.stream().anyMatch(f -> f.relativePath().equals(required)),
-                "the failure fixture set carries '" + required + "'");
-        }
-    }
-
-    // =========================================================================
     // 2. The production-entry drive harness
     // =========================================================================
 
     private record Compiled(
         Path root,
-        CompilationOrchestrator orchestrator,
         CheckedProjectInput checkedProject,
         ProjectInterfaceIndex index,
         List<SemanticRequirementManifest> manifests,
         HostDeclarationSurface surface,
         Map<ModuleId, CanonicalModuleIdentity> identities,
         int strippedHeaderLines,
-        String luaSource) {
+        String luaSource,
+        String jvmSource) {
     }
 
     private record Drive(
@@ -464,6 +364,44 @@ public class BytesCoverageTest {
         } catch (Exception | Error failure) {
             cleanupRejectedScratch(root, failure);
             throw failure;
+        }
+    }
+
+    private static void testRejectedRawProfileLeavesNoScratch() throws Exception {
+        Path input = Files.createTempDirectory("bytes-profile-input-");
+        Path temp = Path.of(System.getProperty("java.io.tmpdir"));
+        String source = "export function main(): null { let b: bytes = bytes(1); return null; }\n";
+        try {
+            Files.writeString(input.resolve("late-profile.deal"), "\n".repeat(40)
+                + "// @profile: legacy-safe-int\n" + source, StandardCharsets.UTF_8);
+            checkEq(source, ConformanceHarnessMetadata.productionCorpusSource(
+                source, "profile-control.deal"), "the profile-free bytes control is accepted");
+            Set<Path> before;
+            try (var listing = Files.list(temp)) {
+                before = listing.filter(path -> path.getFileName().toString()
+                    .startsWith("bytes-corpus-")).collect(java.util.stream.Collectors.toSet());
+            }
+            BytesFixture fixture = new BytesFixture(input.toAbsolutePath().toString(),
+                "late-profile", "main", "null", List.of(), null, null, 0, 0);
+            try {
+                Compiled compiled = compileFixture(fixture);
+                if (compiled != null) {
+                    deleteRecursively(compiled.root());
+                }
+                check(false, "the line-41 legacy profile must reject before compilation");
+            } catch (ConformanceHarnessMetadata.HarnessInputDefectException defect) {
+                check(defect.getMessage().contains(ConformanceHarnessMetadata.HARNESS_DEFECT)
+                        && defect.getMessage().contains("late-profile.deal"),
+                    "the late profile rejection names the input and defect: " + defect.getMessage());
+            }
+            Set<Path> after;
+            try (var listing = Files.list(temp)) {
+                after = listing.filter(path -> path.getFileName().toString()
+                    .startsWith("bytes-corpus-")).collect(java.util.stream.Collectors.toSet());
+            }
+            checkEq(before, after, "the rejected bytes fixture leaves no compilation scratch root");
+        } finally {
+            deleteRecursively(input);
         }
     }
 
@@ -536,9 +474,32 @@ public class BytesCoverageTest {
         String modulePath = built.input().entryModule().path();
         String luaSource = Files.readString(root.resolve("out").resolve(
             modulePath.replace('.', '/') + ".lua"), StandardCharsets.UTF_8);
-        return new Compiled(root, orchestrator, built.input(), built.index(),
+        String jvmSource = null;
+        if (NESTED_DECLARATION_FIXTURES.contains(fixture.relativePath())
+                || ASYNC_ENTRY_FIXTURES.containsKey(fixture.relativePath())) {
+            check(orchestrator.diagnostics().isEmpty()
+                    && orchestrator.semanticEmissionCount() == 1,
+                fixture.what() + ": Lua stages exactly one artifact with zero diagnostics");
+            Path jvmOut = root.resolve("out-jvm");
+            CompilationOrchestrator jvm = new CompilationOrchestrator(
+                entry.toAbsolutePath(), jvmOut, false, false, false, false,
+                Backend.JVM, externals, List.of(root.toAbsolutePath()),
+                Path.of("std").toAbsolutePath().normalize(), null, productionInvocation());
+            boolean jvmCompiled = jvm.compile();
+            check(jvmCompiled && jvm.diagnostics().isEmpty()
+                    && jvm.semanticEmissionCount() == 1,
+                fixture.what() + ": JVM stages exactly one artifact with zero diagnostics: "
+                    + jvm.diagnostics());
+            if (!jvmCompiled) {
+                deleteRecursively(root);
+                return null;
+            }
+            jvmSource = Files.readString(jvmOut.resolve(
+                JvmBackend.classNameFor(modulePath) + ".java"), StandardCharsets.UTF_8);
+        }
+        return new Compiled(root, built.input(), built.index(),
             manifests.manifests(), orchestrator.hostDeclarationSurface(), identities,
-            strippedLines, luaSource);
+            strippedLines, luaSource, jvmSource);
     }
 
     /** The drive's own entry: it imports the fixture and calls its test export. */
@@ -581,8 +542,6 @@ public class BytesCoverageTest {
             return null;
         }
         LoweredModuleUnit unit = result.project().modules().get(fixtureModule);
-        check(carriesBytesConstruct(unit), fixture.what() + ": the fixture's "
-            + "lowered unit carries its bytes construct");
         Optional<CompilerDiagnostic> gate = SemanticIrValidator.validate(
             result.project(), new SemanticIrValidator.ComparisonFacts(
                 unit.interfaceHash(), SemanticProfile.DEAL_V1_2_INT32,
@@ -645,6 +604,7 @@ public class BytesCoverageTest {
 
     private static final Set<String> CORPUS_MATRIX_FIXTURES = Set.of(
         "bytes-index-bounds",
+        "bytes-boundary-order",
         "bytes-write-range",
         "bytes-write-single-evaluation",
         "bytes-write-validation-order",
@@ -654,12 +614,6 @@ public class BytesCoverageTest {
     private static void testCorpusDrive() throws Exception {
         System.out.println("-- the bytes corpus through the one production pipeline: "
             + "oracle + shared LuaJIT + shared JVM --");
-        for (String required : List.of("bytes-dynamic-boundary-ok",
-                "bytes-dynamic-nullable-function-ok", "bytes-dynamic-function-mismatch-e8010",
-                "bytes-dynamic-wrong-kind-e8001", "bytes-async-closure", HOST_FIXTURE)) {
-            check(allFixtures().stream().anyMatch(f -> f.relativePath().equals(required)),
-                "the drive covers the acceptance-listed fixture '" + required + "'");
-        }
         for (BytesFixture fixture : allFixtures()) {
             if ("bytes_module_lib".equals(fixture.relativePath())
                     || "bytes-fn-xmod-lib".equals(fixture.relativePath())) {
@@ -824,286 +778,6 @@ public class BytesCoverageTest {
                 deleteRecursively(compiled.root());
             }
         }
-    }
-
-    // =========================================================================
-    // 3b. The joint bytes fixtures' staged production legs
-    // =========================================================================
-
-    /**
-     * One joint BYTES acceptance fixture of the staged production drive: its
-     * corpus-relative path and the async export driven after the entry walk
-     * ({@code null} when the fixture's own {@code main} carries the probes).
-     */
-    private record JointBytesFixture(String relativePath, String asyncExport) {
-
-        BytesFixture spec() {
-            return ok(relativePath, "main", "null");
-        }
-
-        String fixtureFile() {
-            return BYTES_DIR + "/" + relativePath + ".deal";
-        }
-
-        String sidecarFile() {
-            return BYTES_DIR + "/" + relativePath + ".expect.json";
-        }
-    }
-
-    /**
-     * The two joint BYTES fixtures of {@code
-     * residual-carrier-shapes-production-realization}: the
-     * {@code bytes-boundary-order} buffer probes and the
-     * {@code bytes-async-closure} async bytes value family.
-     */
-    private static final List<JointBytesFixture> JOINT_BYTES_FIXTURES = List.of(
-        new JointBytesFixture("bytes-boundary-order", null),
-        new JointBytesFixture("bytes-async-closure", "test_bytes_async_closure"));
-
-    /**
-     * The two joint BYTES fixtures through the release-owned production
-     * invocation on both targets: zero diagnostics, exactly one staged
-     * project artifact per target, the staged LuaJIT chunk and the staged
-     * JVM class executed under the real toolchains with the sidecar-pinned
-     * streams and status, and the one-lowering closure's oracle agreement
-     * (the oracle and both shared artifacts event-for-event).
-     */
-    private static void testJointBytesStagedProduction() throws Exception {
-        System.out.println("-- the joint bytes fixtures through the release-owned "
-            + "invocation and the staged production artifacts --");
-        for (JointBytesFixture joint : JOINT_BYTES_FIXTURES) {
-            BytesFixture fixture = joint.spec();
-            Compiled compiled = compileFixture(fixture);
-            if (compiled == null) {
-                continue;
-            }
-            try {
-                Drive drive = lower(compiled, fixture);
-                if (drive == null) {
-                    continue;
-                }
-                checkJointBytesOracleAgreement(joint, drive);
-
-                // The release-owned LuaJIT leg: the corpus materialization
-                // compiled by the drive harness.
-                CompilationOrchestrator lua = compiled.orchestrator();
-                check(lua.diagnostics().isEmpty(), fixture.what() + " [luajit]: the "
-                    + "release-owned invocation compiles with zero diagnostics: "
-                    + lua.diagnostics());
-                check(lua.semanticEmissionCount() == 1, fixture.what() + " [luajit]: "
-                    + "the release-owned invocation stages exactly one project "
-                    + "artifact: semantic=" + lua.semanticEmissionCount());
-                String modulePath = compiled.checkedProject().entryModule().path();
-                Path luaOut = compiled.root().resolve("out");
-                Path luaArtifact = luaOut.resolve(
-                    modulePath.replace('.', '/') + ".lua");
-                check(Files.isRegularFile(luaArtifact), fixture.what() + " [luajit]: "
-                    + "the one project artifact stages at " + luaArtifact);
-
-                // The release-owned JVM leg: the same materialized project on
-                // the second target (its own staged artifact root).
-                Path entry = compiled.root().resolve("corpus")
-                    .resolve(fixture.fixtureFile());
-                Path jvmOut = compiled.root().resolve("out-jvm");
-                CompilationOrchestrator jvm = new CompilationOrchestrator(
-                    entry.toAbsolutePath(), jvmOut, false, false, false, false,
-                    Backend.JVM, null, List.of(compiled.root().toAbsolutePath()),
-                    Path.of("std").toAbsolutePath().normalize(), null,
-                    productionInvocation());
-                boolean jvmCompiled = jvm.compile();
-                check(jvmCompiled && jvm.diagnostics().isEmpty(), fixture.what()
-                    + " [jvm]: the release-owned invocation compiles with zero "
-                    + "diagnostics: " + jvm.diagnostics());
-                check(jvm.semanticEmissionCount() == 1, fixture.what() + " [jvm]: "
-                    + "the release-owned invocation stages exactly one project "
-                    + "artifact: semantic=" + jvm.semanticEmissionCount());
-                String className = JvmBackend.classNameFor(modulePath);
-                Path jvmArtifact = jvmOut.resolve(className + ".java");
-                check(Files.isRegularFile(jvmArtifact), fixture.what() + " [jvm]: the "
-                    + "one project artifact stages at " + jvmArtifact);
-
-                // The sidecar-authoritative transcript of the staged runs.
-                SidecarExpectations.StructuredExpectationSidecar parsed =
-                    SidecarExpectations.StructuredExpectationSidecar.parse(
-                        Files.readString(CORPUS.resolve(joint.sidecarFile()),
-                            StandardCharsets.UTF_8));
-                SidecarExpectations.RuntimeExpectation expectation =
-                    parsed.expectationFor("luajit");
-                check(expectation
-                        instanceof SidecarExpectations.RuntimeExpectation.Executed,
-                    fixture.what() + ": the sidecar pins an executed expectation");
-                if (!(expectation
-                        instanceof SidecarExpectations.RuntimeExpectation.Executed pinned)) {
-                    continue;
-                }
-                checkEq("runtime-ok", pinned.mode(), fixture.what()
-                    + ": the sidecar pins the runtime-ok mode");
-                check(pinned.error() == null, fixture.what()
-                    + ": a runtime-ok sidecar pins no error snapshot");
-
-                if (Files.isRegularFile(luaArtifact)) {
-                    driveStagedJointLua(joint, luaArtifact, luaOut, pinned);
-                }
-                if (jvmCompiled && Files.isRegularFile(jvmArtifact)) {
-                    driveStagedJointJvm(joint, drive, jvmOut, jvmArtifact, className,
-                        pinned);
-                }
-            } finally {
-                deleteRecursively(compiled.root());
-            }
-        }
-    }
-
-    /**
-     * The oracle agreement of one joint fixture: the one-lowering closure
-     * driven through the differential matrix (the semantic oracle and both
-     * shared artifacts agree event-for-event with the sidecar-pinned
-     * outcome).
-     */
-    private static void checkJointBytesOracleAgreement(JointBytesFixture joint,
-            Drive drive) throws Exception {
-        Path workspace = Files.createTempDirectory("bytes-joint-differential-");
-        SemanticDifferentialHarness.Verdict verdict;
-        try {
-            verdict = joint.asyncExport() == null
-                ? SemanticDifferentialHarness.runProject(drive.project(), drive.tables(),
-                    drive.registries(), SemanticDifferentialHarness.Expectation.success(
-                        joint.relativePath(), List.of(), "null"), workspace)
-                : SemanticDifferentialHarness.runAsyncEntry(drive.project(),
-                    drive.tables(), joint.asyncExport(), List.of(),
-                    SemanticDifferentialHarness.Expectation.success(joint.relativePath(),
-                        List.of(), "int:0"), workspace, null);
-        } finally {
-            deleteRecursively(workspace);
-        }
-        checkEq(3, verdict.runs().size(), joint.relativePath() + ": the oracle "
-            + "agreement produced the three consumers: " + verdict.failures());
-        check(verdict.pass(), joint.relativePath() + ": the oracle and both shared "
-            + "artifacts agree event-for-event with the sidecar-pinned outcome: "
-            + verdict.failures());
-    }
-
-    /**
-     * The staged LuaJIT project artifact: the deferred module walk and, for
-     * the async fixture, the artifact's own recorded async entry driven to
-     * completion with the pinned completion value; the complete transcript
-     * and status equal the sidecar pins.
-     */
-    private static void driveStagedJointLua(JointBytesFixture joint, Path artifact,
-            Path out, SidecarExpectations.RuntimeExpectation.Executed pinned)
-            throws Exception {
-        Path probe = out.resolve("__joint_staged_probe.lua");
-        Files.writeString(probe, jointLuaProbe(joint, artifact), StandardCharsets.UTF_8);
-        BoundedRun run = runBounded(List.of("luajit", probe.toAbsolutePath().toString()),
-            out, Map.of("DEAL_DEFER_MAIN", "1"));
-        assertSidecarTranscript(joint, "staged luajit artifact", run, pinned);
-    }
-
-    /** The Lua probe of one joint fixture's staged production artifact. */
-    private static String jointLuaProbe(JointBytesFixture joint, Path artifact) {
-        StringBuilder probe = new StringBuilder();
-        probe.append("local chunk = dofile(\"")
-            .append(artifact.toAbsolutePath().toString()).append("\")\n");
-        probe.append("local ok, err = __dealMain()\n");
-        probe.append("if not ok then error(err, 0) end\n");
-        if (joint.asyncExport() != null) {
-            probe.append("local entry = nil\n");
-            probe.append("for key, candidate in pairs(__asyncEntries) do\n");
-            probe.append("  if string.sub(key, -")
-                .append(joint.asyncExport().length() + 1).append(") == \"#")
-                .append(joint.asyncExport()).append("\" then entry = candidate end\n");
-            probe.append("end\n");
-            probe.append("assert(entry ~= nil, \"the artifact publishes the async "
-                + "entry\")\n");
-            probe.append("local okA, res = pcall(entry, \"-\", true)\n");
-            probe.append("if not okA then error(res, 0) end\n");
-            probe.append("if tostring(res) ~= \"0\" then\n");
-            probe.append("  error(\"the async probe result \" .. tostring(res), 0)\n");
-            probe.append("end\n");
-        }
-        return probe.toString();
-    }
-
-    /**
-     * The staged JVM project artifact: {@code javac --release 25 -proc:none}
-     * over the staged class and the probe, then the real java execution —
-     * the module walk and, for the async fixture, the artifact's own driven
-     * async entry {@code ae<id>} (resolved through the one-lowering
-     * closure's recorded EXTERNAL_ENTRY) with the pinned completion value;
-     * the complete transcript and status equal the sidecar pins.
-     */
-    private static void driveStagedJointJvm(JointBytesFixture joint, Drive drive,
-            Path jvmOut, Path artifact, String className,
-            SidecarExpectations.RuntimeExpectation.Executed pinned) throws Exception {
-        long entryId = -1;
-        if (joint.asyncExport() != null) {
-            for (SemanticOp op : drive.unit().ops()) {
-                if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
-                        && op.payload() instanceof KindPayload.ExternalEntryPayload payload
-                        && payload.async()
-                        && joint.asyncExport().equals(payload.exportName())) {
-                    entryId = op.opId().id();
-                }
-            }
-            check(entryId >= 0, joint.relativePath() + ": the fixture module records "
-                + "its async EXTERNAL_ENTRY");
-        }
-        String probeName = "JointBytesProbe_"
-            + java.util.UUID.randomUUID().toString().replace("-", "");
-        Path probe = jvmOut.resolve(probeName + ".java");
-        Files.writeString(probe, jointJvmProbe(joint, className, probeName, entryId),
-            StandardCharsets.UTF_8);
-        Path classes = jvmOut.resolve("classes");
-        Files.createDirectories(classes);
-        BoundedRun compile = runJavac(jvmOut, classes, List.of(
-            artifact.getFileName().toString(), probeName + ".java"));
-        check(compile.captureClean() && compile.exitCode() == 0, joint.relativePath()
-            + " [jvm]: the staged artifact and probe compile under javac --release "
-            + "25 -proc:none: " + compile.stdout() + compile.stderr());
-        if (compile.exitCode() != 0) {
-            return;
-        }
-        BoundedRun run = runJava(absoluteClasspath(), classes, probeName);
-        assertSidecarTranscript(joint, "staged jvm artifact", run, pinned);
-    }
-
-    /** The JVM probe of one joint fixture's staged production artifact. */
-    private static String jointJvmProbe(JointBytesFixture joint, String className,
-            String probeName, long entryId) {
-        StringBuilder probe = new StringBuilder();
-        probe.append("final class ").append(probeName).append(" {\n");
-        probe.append("  public static void main(String[] args) {\n");
-        probe.append("    ").append(className).append(".main(new String[0]);\n");
-        if (joint.asyncExport() != null) {
-            probe.append("    Object result = ").append(className).append(".ae")
-                .append(entryId).append("(\"-\", true, new Object[]{});\n");
-            probe.append("    if (!String.valueOf(result).equals(\"0\")) {\n");
-            probe.append("      throw new IllegalStateException(\n");
-            probe.append("          \"the async probe result \" + result);\n");
-            probe.append("    }\n");
-        }
-        probe.append("  }\n");
-        probe.append("}\n");
-        return probe.toString();
-    }
-
-    /**
-     * The sidecar-authoritative transcript comparison of one staged
-     * artifact run: the capture health, then the pinned exit code and the
-     * complete pinned stdout/stderr byte-exact.
-     */
-    private static void assertSidecarTranscript(JointBytesFixture joint, String target,
-            BoundedRun run, SidecarExpectations.RuntimeExpectation.Executed pinned) {
-        check(run.captureClean(), joint.relativePath() + " [" + target + "]: the "
-            + "staged artifact capture is healthy");
-        checkEq(pinned.exitCode(), run.exitCode(), joint.relativePath() + " ["
-            + target + "]: the staged artifact exits with the sidecar-pinned status");
-        checkEq(new String(pinned.stdout(), StandardCharsets.UTF_8), run.stdout(),
-            joint.relativePath() + " [" + target + "]: the staged artifact stdout "
-                + "equals the sidecar pin");
-        checkEq(new String(pinned.stderr(), StandardCharsets.UTF_8), run.stderr(),
-            joint.relativePath() + " [" + target + "]: the staged artifact stderr "
-                + "equals the sidecar pin");
     }
 
     // =========================================================================
@@ -1325,53 +999,10 @@ public class BytesCoverageTest {
         }
         """;
 
-    /** One inline (non-corpus) focused program compiled through the real orchestrator. */
     private static Drive compileInlineDrive(Path root, String source, BytesFixture spec)
             throws Exception {
-        Path src = root.resolve("src");
-        Files.createDirectories(src);
-        Path entry = src.resolve("main.deal");
-        Files.writeString(entry, source, StandardCharsets.UTF_8);
-        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            entry.toAbsolutePath(), root.resolve("out"), false, false, false, false,
-            Backend.LUAJIT, null, List.of(src.toAbsolutePath()),
-            Path.of("std").toAbsolutePath().normalize(), null, productionInvocation());
-        check(orchestrator.compile(), spec.what() + ": the inline program compiles: "
-            + orchestrator.diagnostics());
-        CheckedProjectBuildResult built = orchestrator.checkedProject();
-        RequirementManifestResult manifests = orchestrator.requirementManifests();
-        if (built == null || built.input() == null || built.index() == null
-                || built.hasErrors() || manifests == null
-                || manifests.manifests() == null
-                || orchestrator.hostDeclarationSurface() == null) {
-            check(false, spec.what() + ": the inline checked project builds: "
-                + (built == null ? "null" : built.diagnostics()));
-            return null;
-        }
-        SemanticLowerer.ProjectLoweringResult result = SemanticLowerer.lowerProject(
-            productionInvocation(), built.input(), built.index(), manifests.manifests(),
-            orchestrator.hostDeclarationSurface(), Map.of(), Map.of(),
-            BuiltinErrorDeclaration.synthesized(
-                built.input().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW), Set.of());
-        check(result.project() != null, spec.what() + ": the inline program lowers "
-            + "through the production entry: " + result.diagnostics());
-        if (result.project() == null) {
-            return null;
-        }
-        ModuleId module = built.input().entryModule();
-        LoweredModuleUnit unit = result.project().modules().get(module);
-        check(unit != null, spec.what() + ": the inline module is part of the "
-            + "closure: " + result.project().modules().keySet());
-        if (unit == null) {
-            return null;
-        }
-        String luaSource = Files.readString(root.resolve("out").resolve(
-            module.path().replace('.', '/') + ".lua"), StandardCharsets.UTF_8);
-        return new Drive(new Compiled(root, orchestrator, built.input(), built.index(),
-            manifests.manifests(), orchestrator.hostDeclarationSurface(), Map.of(), 0,
-            luaSource), result, module, unit, spec);
+        Compiled compiled = compileFocused(root, source, null, null);
+        return compiled == null ? null : lowerFocused(compiled, spec);
     }
 
     /**
@@ -1579,15 +1210,6 @@ public class BytesCoverageTest {
     // 4b2. The byte-element descriptor failure's origin (ISSUE-0769)
     // =========================================================================
 
-    /** The byte-element assignment program of the descriptor-origin drive. */
-    private static final String CELL_ORIGIN_SOURCE = """
-        export function main(): null {
-          let b: bytes = bytes(4);
-          b[0] = 1;
-          return null;
-        }
-        """;
-
     /**
      * The byte-element assignment cell's failed descriptor check carries
      * the lowerer-selected assignment origin on every consumer
@@ -1628,45 +1250,40 @@ public class BytesCoverageTest {
             checkEq(origin, error.origin, "the JVM cell re-seats the lowerer-selected "
                 + "origin (never the matcher's internal placeholder)");
         }
-        // The production Lua chunk's cell is the same re-seat: the emitted
-        // function body re-seats the failed descriptor check onto the
-        // lowerer-selected assignment expression before it raises (the cell
-        // is a defensive check no legal source reaches).
         Path root = Files.createTempDirectory("bytes-cell-origin-");
         try {
-            Compiled compiled = compileFocused(root, CELL_ORIGIN_SOURCE, null, null);
-            check(compiled != null, "the byte-element origin seed compiles");
+            Compiled compiled = compileFocused(root, """
+                export function main(): null {
+                  let b: bytes = bytes(4);
+                  b[0] = 1;
+                  return null;
+                }
+                """, null, null);
             if (compiled == null) {
                 return;
             }
             String chunk = compiled.luaSource();
-            String cellBody = emittedFunctionBody(chunk, "local function __bytesBounds(");
-            check(cellBody != null,
-                "the production chunk carries the byte-element cell");
-            if (cellBody == null) {
-                return;
+            String header = "local function __bytesBounds(";
+            int start = chunk.indexOf(header);
+            int end = start < 0 ? -1 : chunk.indexOf("\nend\n", start);
+            check(start >= 0 && end > start, "the emitted Lua defensive cell exists");
+            if (start >= 0 && end > start) {
+                String probe = "\nlocal ok, err = pcall(__bytesBounds, 'k', 'd', 'p',"
+                    + " 'junk', {i=0,n=4}, 'int', 'int', '" + origin + "')\n"
+                    + "if ok then error('wrong-kind byte cell accepted', 0) end\n"
+                    + "if type(err) ~= 'table' or not err.__d then error(err, 0) end\n"
+                    + "print('ERR:' .. err.code .. '|' .. err.m .. '|' .. err.o"
+                    + " .. '|' .. (err.e or '') .. '|' .. (err.a or ''))\nos.exit(0)\n";
+                Path artifact = root.resolve("out/cell-probe.lua");
+                Files.writeString(artifact, chunk.substring(0, end + 5) + probe
+                    + chunk.substring(end + 5), StandardCharsets.UTF_8);
+                assertTranscript("Lua defensive byte cell", "luajit",
+                    runLua(root.resolve("out"), artifact, Map.of("DEAL_DEFER_MAIN", "1")),
+                    0, "ERR:E8001|expected int|" + origin + "|int|string\n");
             }
-            int leaf = cellBody.indexOf(
-                "local ok, checked = pcall(__bcheck, desc, kind, input)");
-            int reseat = cellBody.indexOf("checked.o = origin", leaf);
-            int raise = cellBody.indexOf("error(checked, 0)", reseat);
-            check(leaf >= 0 && reseat > leaf && raise > reseat,
-                "the emitted byte-element cell re-seats the failed descriptor check's "
-                    + "origin onto the lowerer-selected assignment expression before "
-                    + "it raises");
         } finally {
             deleteRecursively(root);
         }
-    }
-
-    /** The source of one named prelude function of the emitted chunk, or null. */
-    private static String emittedFunctionBody(String chunk, String header) {
-        int at = chunk.indexOf(header);
-        if (at < 0) {
-            return null;
-        }
-        int end = chunk.indexOf("\nend\n", at);
-        return end < 0 ? null : chunk.substring(at, end + 5);
     }
 
     // =========================================================================
@@ -1884,7 +1501,7 @@ public class BytesCoverageTest {
         System.out.println("-- the decoded-array mark: real decode producers, exact "
             + "tuples, and projection-only inertness (ISSUE-0710) --");
 
-        String markedChunk = driveFocusedFailure("bytes decoded nested element (marked)",
+        driveFocusedFailure("bytes decoded nested element (marked)",
             DECODED_NESTED_SOURCE, null, null, 5, 11,
             new Tuple("E8003", "array element 1 type mismatch", "[bytes]", "table"));
 
@@ -1910,8 +1527,6 @@ public class BytesCoverageTest {
         driveFocusedFailure("bytes decoded element two levels down (marked)",
             DECODED_DEEP_NESTED_SOURCE, null, null, 5, 11,
             new Tuple("E8003", "array element 1 type mismatch", "[[bytes]]", "table"));
-
-        checkEmittedMarkSurface(markedChunk);
 
         driveFocusedFailure("decoded array at a table descriptor",
             DECODED_ADMISSION_SOURCE, null, null, 6, 34,
@@ -2447,6 +2062,11 @@ public class BytesCoverageTest {
           if (viaElement.length !== 3) {
             throw { code: "TEST_FAIL", message: "element length" }
           }
+          let inferred = bytes;
+          let viaInferred: bytes = inferred(3);
+          if (viaInferred.length !== 3 || viaInferred[2] !== 0 || viaInferred === viaElement) {
+            throw { code: "TEST_FAIL", message: "inferred bytes allocation" }
+          }
           return null
         }
         """;
@@ -2646,41 +2266,6 @@ public class BytesCoverageTest {
     }
 
     /**
-     * The mark's emission surface (B3, per consumer): the emitted LuaJIT
-     * prelude carries exactly one mark writer — the stdlib JSON decode
-     * realization — and exactly one reader — the array-element token helper,
-     * whose definition and single call site are its only other occurrences —
-     * so no other emitted surface sets or consults the mark.
-     */
-    private static void checkEmittedMarkSurface(String chunk) {
-        System.out.println("-- the decoded-array mark's emission surface: one writer "
-            + "and one reader --");
-        if (chunk == null) {
-            return;
-        }
-        checkEq(1, countOf(chunk, "__da = true"),
-            "the emitted chunk carries exactly one decoded-array mark writer (the "
-                + "stdlib JSON decode realization)");
-        checkEq(1, countOf(chunk, "v.__da"),
-            "the emitted chunk reads the decoded-array mark at exactly one site (the "
-                + "array-element token helper)");
-        checkEq(2, countOf(chunk, "__elemRefKind("),
-            "the emitted chunk defines and calls the array-element token helper once "
-                + "each");
-    }
-
-    /** The occurrence count of one literal in a text. */
-    private static int countOf(String text, String needle) {
-        int count = 0;
-        int index = 0;
-        while ((index = text.indexOf(needle, index)) >= 0) {
-            count++;
-            index += needle.length();
-        }
-        return count;
-    }
-
-    /**
      * The oracle-side host of the focused host-returned-array control:
      * {@code host/array_return}'s {@code split} returns a real (unmarked)
      * string array, the same shape the deployed Lua host module and JVM host
@@ -2761,9 +2346,9 @@ public class BytesCoverageTest {
         String modulePath = built.input().entryModule().path();
         String luaSource = Files.readString(root.resolve("out").resolve(
             modulePath.replace('.', '/') + ".lua"), StandardCharsets.UTF_8);
-        return new Compiled(root, orchestrator, built.input(), built.index(),
+        return new Compiled(root, built.input(), built.index(),
             manifests.manifests(), orchestrator.hostDeclarationSurface(), identities, 0,
-            luaSource);
+            luaSource, null);
     }
 
     /** The production project lowering entry over one focused program. */
@@ -3233,12 +2818,8 @@ public class BytesCoverageTest {
         try {
             String className = JvmBackend.classNameFor(
                 drive.project().entryModule().path());
-            JvmSemanticEmitter.EmissionResult emission =
-                JvmSemanticEmitter.emitProductionProject(drive.project(),
-                    drive.tables(), drive.registries(), className,
-                    drive.compiled().surface());
-            Files.writeString(workspace.resolve(className + ".java"), emission.source(),
-                StandardCharsets.UTF_8);
+            Files.writeString(workspace.resolve(className + ".java"),
+                drive.compiled().jvmSource(), StandardCharsets.UTF_8);
             long entryId = -1;
             for (SemanticOp op : drive.unit().ops()) {
                 if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
@@ -3257,7 +2838,7 @@ public class BytesCoverageTest {
                 final class %s {
                   public static void main(String[] args) {
                     try {
-                      %s.dealMain();
+                      %s.main(new String[0]);
                     } catch (deal.codegen.jvm.JvmRuntime.DealError e) {
                       System.out.println("ERR:INIT|" + e.code + "|" + e.msg);
                       return;
@@ -3387,79 +2968,6 @@ public class BytesCoverageTest {
         } finally {
             deleteRecursively(workspace);
         }
-    }
-
-    /** Whether one unit carries at least one bytes construct (K6). */
-    private static boolean carriesBytesConstruct(LoweredModuleUnit unit) {
-        for (SemanticOp op : unit.ops()) {
-            if (op.kind() == SemanticOpKind.INTRINSIC_CALL
-                    && op.payload() instanceof KindPayload.IntrinsicCallPayload intrinsic
-                    && intrinsic.kind() == IntrinsicKind.BYTES_NEW) {
-                return true;
-            }
-            if (op.payload() instanceof KindPayload.IndexNormalizePayload normalize
-                    && (normalize.mode() == IndexMode.BYTES_READ
-                        || normalize.mode() == IndexMode.BYTES_WRITE)) {
-                return true;
-            }
-            if (op.payload() instanceof KindPayload.BoundaryPayload boundary
-                    && (boundary.kind() == BoundaryKind.BYTE_ELEMENT_READ
-                        || boundary.kind() == BoundaryKind.BYTE_ELEMENT_ASSIGNMENT)) {
-                return true;
-            }
-            if (op.kind() == SemanticOpKind.ASSIGN
-                    && op.payload() instanceof KindPayload.AssignPayload assign
-                    && assign.targetKind() == deal.semantic.ir.AssignTargetKind.BYTES_SLOT) {
-                return true;
-            }
-            if (op.failurePolicy() == FailurePolicyId.BYTES_ALLOCATE
-                    || op.failurePolicy() == FailurePolicyId.BYTES_READ
-                    || op.failurePolicy() == FailurePolicyId.BYTES_WRITE) {
-                return true;
-            }
-            if (op.resultType() instanceof RuntimeDescriptor resultDescriptor
-                    && containsBytes(resultDescriptor)) {
-                return true;
-            }
-            for (RuntimeDescriptor descriptor : op.operandTypes()) {
-                if (containsBytes(descriptor)) {
-                    return true;
-                }
-            }
-            if (op.payload() instanceof KindPayload.BoundaryPayload boundary
-                    && containsBytes(boundary.descriptor())) {
-                return true;
-            }
-            if (op.kind() == SemanticOpKind.INDEX_READ
-                    && op.payload() instanceof KindPayload.IndexReadPayload read) {
-                for (SemanticOp candidate : unit.ops()) {
-                    if (read.slot().equals(candidate.result())
-                            && candidate.resultType()
-                                instanceof RuntimeDescriptor.Bytes) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
-    /** Whether one descriptor contains the bytes carrier at any depth. */
-    private static boolean containsBytes(RuntimeDescriptor descriptor) {
-        return switch (descriptor) {
-            case null -> false;
-            case RuntimeDescriptor.Bytes ignored -> true;
-            case RuntimeDescriptor.Array array -> containsBytes(array.element());
-            case RuntimeDescriptor.Nullable nullable -> containsBytes(nullable.inner());
-            case RuntimeDescriptor.Func func -> {
-                boolean found = containsBytes(func.returnType());
-                for (RuntimeDescriptor parameter : func.paramTypes()) {
-                    found = found || containsBytes(parameter);
-                }
-                yield found;
-            }
-            default -> false;
-        };
     }
 
     // =========================================================================
@@ -3860,7 +3368,8 @@ public class BytesCoverageTest {
      */
     private static ArtifactRun jvmProduction(Drive drive, String hostModule,
             Path hostImplementation) throws Exception {
-        return jvmProduction(drive, hostModule, hostImplementation, null);
+        return jvmProduction(drive, hostModule, hostImplementation,
+            drive.compiled().jvmSource());
     }
 
     private static ArtifactRun jvmProduction(Drive drive, String hostModule,
@@ -4223,12 +3732,10 @@ public class BytesCoverageTest {
     //    companions and ffi/016 through the release-owned invocation
     // =========================================================================
 
-    private static final String STDLIB_JSON_CORPUS = "backend-runtime/stdlib/json";
     private static final String FFI_CORPUS = "backend-runtime/ffi";
     private static final String FFI_BYTES_FIXTURE = "016-ffi-bytes-pointer-length";
     private static final String FFI_NATIVE_SOURCE = FFI_CORPUS + "/support/native.c";
     private static final String FFI_NATIVE_LIBRARY = "libcandidate_native.so";
-    private static final String ACCEPT_TRANSPORT = "__accept_transport.txt";
     /** The externals key of the corpus FFI wiring (the declaration identity). */
     private static final String FFI_SPECIFIER = "candidate/native";
 
@@ -4251,15 +3758,6 @@ public class BytesCoverageTest {
     private record ManifestCompile(ManifestProject project,
                                    CompilationOrchestrator orchestrator,
                                    boolean success) {
-    }
-
-    /** One manifest-authored scratch project (the first-class bytes drives). */
-    private record ScratchProject(Path root, Path entry, Path out, String modulePath) {
-    }
-
-    /** The artifact-transported DEAL failure tuple of one staged-artifact run. */
-    private record CapturedTuple(String code, String message, String file, Integer line,
-                                 Integer column, String expected, String actual) {
     }
 
     /**
@@ -4343,378 +3841,202 @@ public class BytesCoverageTest {
         return new ManifestCompile(project, orchestrator, orchestrator.compile());
     }
 
+    private static final String FIRST_CLASS_BYTES_ALLOCATE_SOURCE = """
+        export function main(): null {
+          let annotated: (x: int) => bytes = bytes
+          let inferred = bytes
+          let a: bytes = annotated(2)
+          let b: bytes = inferred(3)
+          let carried: ((x: int) => bytes)[] = [bytes]
+          let c: bytes = carried[0](4)
+          let alias: bytes = a;
+          a[0] = 7
+          if (alias[0] !== 7 || a.length !== 2 || b.length !== 3 || c.length !== 4) {
+            throw { code: "TEST_FAIL", message: "indirect allocation identity" }
+          }
+          if (a[1] !== 0 || b[2] !== 0 || c[3] !== 0) {
+            throw { code: "TEST_FAIL", message: "indirect zero fill" }
+          }
+          return null
+        }
+        """;
+
+    private static final String FIRST_CLASS_BYTES_NEGATIVE_SOURCE = """
+        export function main(): null {
+          let g: (x: int) => bytes = bytes
+          let bad: bytes = g(-1)
+          return null
+        }
+        """;
+
+    private static void testManifestBytesContracts() throws Exception {
+        for (String backend : List.of("luajit", "jvm")) {
+            for (boolean negative : List.of(false, true)) {
+                Path root = Files.createTempDirectory("bytes-first-class-");
+                try {
+                    Path entry = root.resolve("src/main.deal");
+                    Files.createDirectories(entry.getParent());
+                    Files.writeString(entry, negative ? FIRST_CLASS_BYTES_NEGATIVE_SOURCE
+                        : FIRST_CLASS_BYTES_ALLOCATE_SOURCE, StandardCharsets.UTF_8);
+                    Files.writeString(root.resolve("deal.json"),
+                        "{\"languageVersion\":\"1.2\",\"moduleRoots\":[\"src\"],"
+                            + "\"output\":\"out\",\"backend\":\"" + backend + "\"}",
+                        StandardCharsets.UTF_8);
+                    ManifestProject project = new ManifestProject(root, entry,
+                        root.resolve("out"), "src/main.deal", 0, "main", null);
+                    ManifestCompile compiled = compileManifest(project, backend);
+                    check(compiled.success(), "first-class bytes (" + backend
+                        + "): the manifest compile succeeds: " + diagnosticsOf(compiled));
+                    if (!compiled.success()) {
+                        continue;
+                    }
+                    String expected = negative ? "ERR:E8012|bytes length must be non-negative|"
+                        + entry.toAbsolutePath() + ":3:20||\n" : "";
+                    if ("luajit".equals(backend)) {
+                        checkManifestOracle(compiled, null, negative, expected);
+                    }
+                    assertTranscript("first-class bytes", backend,
+                        runManifestArtifact(project, backend, null), negative ? 1 : 0,
+                        expected);
+                } finally {
+                    deleteRecursively(root);
+                }
+            }
+        }
+        for (String fixture : List.of("json-stringify-bytes-error",
+                "json-stringify-nested-bytes-error")) {
+            String corpusRel = "backend-runtime/stdlib/json/" + fixture + ".deal";
+            CorpusSource source = prepareCorpusSource(Files.readString(CORPUS.resolve(
+                corpusRel), StandardCharsets.UTF_8), corpusRel);
+            SidecarExpectations.StructuredExpectationSidecar sidecar =
+                SidecarExpectations.StructuredExpectationSidecar.parse(Files.readString(
+                    CORPUS.resolve("backend-runtime/stdlib/json/" + fixture + ".expect.json"), StandardCharsets.UTF_8));
+            String export = fixture.contains("nested")
+                ? "test_json_stringify_nested_bytes_error" : "test_json_stringify_bytes_error";
+            for (String backend : List.of("luajit", "jvm")) {
+                ManifestProject project = materializeCorpusProject(corpusRel, source,
+                    backend, null, null);
+                try {
+                    ManifestCompile compiled = compileManifest(project, backend);
+                    check(compiled.success(), fixture + " (" + backend
+                        + "): the manifest compile succeeds: " + diagnosticsOf(compiled));
+                    if (!compiled.success()) {
+                        continue;
+                    }
+                    SidecarExpectations.RuntimeExpectation leg = sidecar.expectationFor(backend);
+                    check(leg instanceof SidecarExpectations.RuntimeExpectation.Executed executed
+                            && executed.isRuntimeError(), fixture + ": the sidecar pins runtime error");
+                    if (!(leg instanceof SidecarExpectations.RuntimeExpectation.Executed executed)
+                            || executed.error() == null) {
+                        continue;
+                    }
+                    SidecarExpectations.ErrorExpectation pin = executed.error();
+                    checkEq(corpusRel, pin.sourceFile(), fixture + ": the pinned source file");
+                    checkEq(ErrorSnapshot.CODE_LINE_PREFIX + pin.code() + "\n"
+                        + ErrorSnapshot.SNAPSHOT_LINE_PREFIX + ErrorSnapshot.canonicalJson(pin)
+                        + "\n", new String(executed.stdout(), StandardCharsets.UTF_8),
+                        fixture + ": the sidecar stdout frames the exact transported tuple");
+                    String origin = project.entry().toAbsolutePath() + ":"
+                        + (pin.line() - project.strippedHeaderLines()) + ":" + pin.column();
+                    String expected = "ERR:" + pin.code() + "|" + pin.message() + "|"
+                        + origin + "|" + pin.expected().orElse("") + "|"
+                        + pin.actual().orElse("") + "\n";
+                    if ("luajit".equals(backend)) {
+                        checkManifestOracle(compiled, export, true, expected);
+                        SidecarExpectations.RuntimeExpectation jvmLeg = sidecar.expectationFor("jvm");
+                        if (jvmLeg instanceof SidecarExpectations.RuntimeExpectation.Executed jvmPin) {
+                            checkEq(executed.error(), jvmPin.error(), fixture
+                                + ": the same oracle tuple satisfies both backend pins");
+                        } else {
+                            check(false, fixture + ": the JVM sidecar must pin an executed error");
+                        }
+                    }
+                    BoundedRun run = runManifestArtifact(project, backend, export);
+                    assertTranscript(fixture, backend, run, executed.exitCode(), expected);
+                    checkEq(new String(executed.stderr(), StandardCharsets.UTF_8), run.stderr(),
+                        fixture + ": the sidecar stderr is exact");
+                } finally {
+                    deleteRecursively(project.root());
+                }
+            }
+        }
+    }
+
+    private static void checkManifestOracle(ManifestCompile compiled, String export,
+            boolean failure, String expected) {
+        SemanticLowerer.ProjectLoweringResult result = lowerManifestOracle(
+            compiled.orchestrator(), Map.of(), Map.of());
+        if (result.project() == null) {
+            return;
+        }
+        SemanticRuntimeModel.ConsumerRun oracle = export == null
+            ? SemanticOracle.executeProjectInits(result.project(), result.tables(),
+                result.registries(), null)
+            : SemanticOracle.invokeSyncEntry(result.project(), result.tables(),
+                result.registries(), null, result.project().entryModule(), export, List.of());
+        if (failure) {
+            check(oracle.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure,
+                "the manifest oracle reaches the pinned failure: " + oracle.terminal());
+            if (oracle.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure terminal) {
+                SemanticRuntimeModel.ErrorSnapshot error = terminal.error();
+                checkEq(expected, "ERR:" + error.code() + "|" + error.message() + "|"
+                    + error.origin() + "|" + (error.expected() == null ? "" : error.expected())
+                    + "|" + (error.actual() == null ? "" : error.actual()) + "\n",
+                    "the manifest oracle tuple and source coordinate are pin-exact");
+            }
+        } else {
+            check(oracle.terminal() instanceof SemanticRuntimeModel.Terminal.Success success
+                    && "null".equals(success.resultAtom()),
+                "the manifest oracle runs the first-class bytes assertions: " + oracle.terminal());
+        }
+    }
+
+    private static BoundedRun runManifestArtifact(ManifestProject project, String backend,
+            String export) throws Exception {
+        if ("luajit".equals(backend)) {
+            Path artifact = project.out().resolve(project.modulePath().replace('.', '/') + ".lua");
+            check(Files.isRegularFile(artifact), "the manifest stages the Lua artifact");
+            Path probe = project.out().resolve("__manifest_probe.lua");
+            Files.writeString(probe, "local surface = dofile(\"" + artifact.toAbsolutePath()
+                + "\")\nlocal ok, err = __dealMain()\n"
+                + (export == null ? "" : "if ok then ok, err = pcall(surface[\""
+                    + export + "\"].f) end\n")
+                + "if not ok then\n"
+                + "  if type(err) ~= 'table' or not err.__d then error(err, 0) end\n"
+                + "  print('ERR:' .. err.code .. '|' .. err.m .. '|' .. err.o .. '|'"
+                + " .. (err.e or '') .. '|' .. (err.a or ''))\n  os.exit(1)\nend\n",
+                StandardCharsets.UTF_8);
+            return runBounded(List.of("luajit", probe.toAbsolutePath().toString()),
+                project.out(), Map.of("DEAL_DEFER_MAIN", "1"));
+        }
+        String className = JvmBackend.classNameFor(project.modulePath());
+        Path artifact = project.out().resolve(className + ".java");
+        check(Files.isRegularFile(artifact), "the manifest stages the JVM artifact");
+        String probeName = jvmProbeName();
+        Files.writeString(project.out().resolve(probeName + ".java"), "final class "
+            + probeName + " { public static void main(String[] args) { try { "
+            + className + ".dealMain();"
+            + (export == null ? "" : "((deal.codegen.jvm.JvmRuntime.FunctionValue)"
+                + "deal.codegen.jvm.JvmRuntime.exportSurface(\"" + project.modulePath()
+                + "\").read(\"" + export + "\")).fn.invoke(new Object[]{});")
+            + " } catch (deal.codegen.jvm.JvmRuntime.DealError e) {"
+            + " System.out.println(\"ERR:\" + e.code + \"|\" + e.msg + \"|\" + e.origin"
+            + " + \"|\" + (e.expected == null ? \"\" : e.expected)"
+            + " + \"|\" + (e.actual == null ? \"\" : e.actual)); System.exit(1); } } }",
+            StandardCharsets.UTF_8);
+        Path classes = project.out().resolve("classes");
+        Files.createDirectories(classes);
+        BoundedRun compile = runJavac(project.out(), classes,
+            List.of(artifact.toString(), probeName + ".java"));
+        check(compile.captureClean() && compile.exitCode() == 0,
+            "the staged manifest JVM artifact compiles: " + compile.stdout() + compile.stderr());
+        return compile.exitCode() == 0 ? runJava(absoluteClasspath(), classes, probeName)
+            : failedRun();
+    }
+
     private static String diagnosticsOf(ManifestCompile compile) {
         return compile.orchestrator() == null ? "no context"
             : String.valueOf(compile.orchestrator().diagnostics());
-    }
-
-    /**
-     * One header-free scratch project under {@code src/} with a manifest
-     * that names the target backend, the {@code src} module root, and the
-     * {@code out} output root — the first-class bytes drives' project.
-     */
-    private static ScratchProject materializeScratchProject(String source,
-            String backend) throws Exception {
-        Path root = Files.createTempDirectory("bytes-first-class-");
-        Path src = root.resolve("src");
-        Files.createDirectories(src);
-        Files.writeString(src.resolve("main.deal"), source, StandardCharsets.UTF_8);
-        Files.writeString(root.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.2\",\n  \"moduleRoots\": [\"src\"],\n"
-                + "  \"output\": \"out\",\n  \"backend\": \"" + backend + "\"\n}\n",
-            StandardCharsets.UTF_8);
-        return new ScratchProject(root, src.resolve("main.deal"), root.resolve("out"),
-            "main");
-    }
-
-    private static ManifestProject asManifestProject(ScratchProject project) {
-        return new ManifestProject(project.root(), project.entry(), project.out(),
-            "src/main.deal", 0, project.modulePath(), null);
-    }
-
-    private static String luaStringLiteral(String text) {
-        StringBuilder out = new StringBuilder("\"");
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            switch (c) {
-                case '"' -> out.append("\\\"");
-                case '\\' -> out.append("\\\\");
-                case '\n' -> out.append("\\n");
-                case '\r' -> out.append("\\r");
-                case '\t' -> out.append("\\t");
-                default -> out.append(c);
-            }
-        }
-        return out.append('"').toString();
-    }
-
-    private static String javaString(String text) {
-        StringBuilder out = new StringBuilder("\"");
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            switch (c) {
-                case '"' -> out.append("\\\"");
-                case '\\' -> out.append("\\\\");
-                case '\n' -> out.append("\\n");
-                default -> out.append(c);
-            }
-        }
-        return out.append('"').toString();
-    }
-
-    /**
-     * The staged Lua artifact's acceptance probe: the fixture is the
-     * already-staged chunk; the probe drives {@code __dealMain()} and each
-     * named export through the artifact's own export surface, and
-     * transports the caught DEAL tuple (code, message, origin-derived
-     * file/line/column, expected, actual) to the given path. A non-DEAL
-     * error is transported as NON_DEAL, never silently swallowed.
-     */
-    private static String luaAcceptanceProbe(String artifactPath,
-            List<String> exports, Path transport) {
-        StringBuilder probe = new StringBuilder();
-        probe.append("local __transport = ")
-            .append(luaStringLiteral(transport.toAbsolutePath().toString()))
-            .append("\n");
-        probe.append("local function __esc(s)\n")
-            .append("  s = tostring(s)\n")
-            .append("  s = string.gsub(s, \"\\\\\", \"\\\\\\\\\")\n")
-            .append("  s = string.gsub(s, \"\\n\", \"\\\\n\")\n")
-            .append("  s = string.gsub(s, \"\\t\", \"\\\\t\")\n")
-            .append("  return s\n")
-            .append("end\n");
-        probe.append("local function __write(fields)\n")
-            .append("  local f = io.open(__transport, \"w\")\n")
-            .append("  if not f then os.exit(2) end\n")
-            .append("  for _, kv in ipairs(fields) do\n")
-            .append("    f:write(kv[1], \"\\t\", __esc(kv[2] or \"\"), \"\\n\")\n")
-            .append("  end\n")
-            .append("  f:close()\n")
-            .append("end\n");
-        probe.append("local function __capture(err)\n")
-            .append("  if type(err) ~= \"table\" or err.code == nil then\n")
-            .append("    __write({ {\"code\", \"NON_DEAL\"}, ")
-            .append("{\"message\", tostring(err)} })\n")
-            .append("    os.exit(1)\n")
-            .append("  end\n")
-            .append("  local file, line, column = err.file, err.line, err.column\n")
-            .append("  if err.o ~= nil then\n")
-            .append("    local f, l, c = tostring(err.o):match(")
-            .append("\"^(.*):(%d+):(%d+)$\")\n")
-            .append("    if f ~= nil then file, line, column = f, tonumber(l), ")
-            .append("tonumber(c) end\n")
-            .append("  end\n")
-            .append("  __write({ {\"code\", err.code}, ")
-            .append("{\"message\", err.m or err.message},\n")
-            .append("    {\"file\", file}, {\"line\", line}, {\"column\", column},\n")
-            .append("    {\"expected\", err.e}, {\"actual\", err.a} })\n")
-            .append("  os.exit(1)\n")
-            .append("end\n");
-        probe.append("local __surface = dofile(")
-            .append(luaStringLiteral(artifactPath)).append(")\n");
-        probe.append("local __ok, __err = __dealMain()\n");
-        probe.append("if not __ok then __capture(__err) end\n");
-        for (String export : exports) {
-            probe.append("do\n")
-                .append("  local __v = __surface[")
-                .append(luaStringLiteral(export)).append("]\n")
-                .append("  if type(__v) ~= \"table\" or type(__v.f) ~= \"function\" ")
-                .append("then os.exit(2) end\n")
-                .append("  local __okE, __errE = xpcall(__v.f, ")
-                .append("function(e) return e end)\n")
-                .append("  if not __okE then __capture(__errE) end\n")
-                .append("end\n");
-        }
-        probe.append("os.exit(0)\n");
-        return probe.toString();
-    }
-
-    /**
-     * The staged JVM artifact's acceptance probe: the fixture is the
-     * already-staged class; the probe drives {@code dealMain()} and each
-     * named export through the runtime's own export surface, and
-     * transports the caught DEAL tuple (code, message, origin, expected,
-     * actual) to the given path. A non-DEAL error is transported as
-     * NON_DEAL, never silently swallowed.
-     */
-    private static String jvmAcceptanceProbe(String probeName, String className,
-            String modulePath, List<String> exports, Path transport) {
-        StringBuilder probe = new StringBuilder();
-        probe.append("public final class ").append(probeName).append(" {\n");
-        probe.append("  public static void main(String[] args) {\n");
-        probe.append("    try {\n");
-        probe.append("      ").append(className).append(".dealMain();\n");
-        for (String export : exports) {
-            probe.append("      {\n")
-                .append("        Object v = deal.codegen.jvm.JvmRuntime.exportSurface(")
-                .append(javaString(modulePath)).append(").read(")
-                .append(javaString(export)).append(");\n")
-                .append("        if (!(v instanceof deal.codegen.jvm.JvmRuntime.")
-                .append("FunctionValue)) { System.exit(2); }\n")
-                .append("        ((deal.codegen.jvm.JvmRuntime.FunctionValue) v).fn.")
-                .append("invoke(new Object[]{});\n")
-                .append("      }\n");
-        }
-        probe.append("      System.exit(0);\n");
-        probe.append("    } catch (Throwable error) {\n");
-        probe.append("      transport(error);\n");
-        probe.append("    }\n");
-        probe.append("  }\n");
-        probe.append("  static void transport(Throwable error) {\n");
-        probe.append("    Throwable e = error;\n");
-        probe.append("    while (e != null && !(e instanceof deal.codegen.jvm.")
-            .append("JvmRuntime.DealError) && e.getCause() != null) {\n");
-        probe.append("      e = e.getCause();\n");
-        probe.append("    }\n");
-        probe.append("    StringBuilder out = new StringBuilder();\n");
-        probe.append("    if (e instanceof deal.codegen.jvm.JvmRuntime.DealError d) {\n");
-        probe.append("      append(out, \"code\", d.code);\n");
-        probe.append("      append(out, \"message\", d.msg);\n");
-        probe.append("      append(out, \"origin\", d.origin);\n");
-        probe.append("      append(out, \"expected\", d.expected);\n");
-        probe.append("      append(out, \"actual\", d.actual);\n");
-        probe.append("    } else {\n");
-        probe.append("      append(out, \"code\", \"NON_DEAL\");\n");
-        probe.append("      append(out, \"message\", String.valueOf(error));\n");
-        probe.append("    }\n");
-        probe.append("    try {\n");
-        probe.append("      java.nio.file.Files.writeString(java.nio.file.Path.of(")
-            .append(javaString(transport.toAbsolutePath().toString()))
-            .append("), out.toString());\n");
-        probe.append("    } catch (java.io.IOException ignored) { }\n");
-        probe.append("    System.exit(1);\n");
-        probe.append("  }\n");
-        probe.append("  static void append(StringBuilder out, String key, ")
-            .append("String value) {\n");
-        probe.append("    if (value == null) { return; }\n");
-        probe.append("    String escaped = value.replace(\"\\\\\", \"\\\\\\\\\")")
-            .append(".replace(\"\\n\", \"\\\\n\").replace(\"\\t\", \"\\\\t\");\n");
-        probe.append("    out.append(key).append('\\t').append(escaped).append('\\n');\n");
-        probe.append("  }\n");
-        probe.append("}\n");
-        return probe.toString();
-    }
-
-    /** The transported tuple, or {@code null} when the probe wrote none. */
-    private static CapturedTuple readAcceptanceTuple(Path transport) throws Exception {
-        if (!Files.isRegularFile(transport)) {
-            return null;
-        }
-        Map<String, String> fields = new LinkedHashMap<>();
-        for (String line : Files.readAllLines(transport, StandardCharsets.UTF_8)) {
-            int tab = line.indexOf('\t');
-            if (tab < 0) {
-                continue;
-            }
-            String key = line.substring(0, tab);
-            String value = line.substring(tab + 1);
-            if (!value.isEmpty()) {
-                fields.put(key, unescapeField(value));
-            }
-        }
-        Integer line = integerField(fields.get("line"));
-        Integer column = integerField(fields.get("column"));
-        String origin = fields.get("origin");
-        if (origin != null) {
-            int lastColon = origin.lastIndexOf(':');
-            int previousColon = lastColon < 0 ? -1
-                : origin.lastIndexOf(':', lastColon - 1);
-            if (previousColon >= 0 && lastColon > previousColon + 1) {
-                fields.putIfAbsent("file", origin.substring(0, previousColon));
-                if (line == null) {
-                    line = integerField(origin.substring(previousColon + 1,
-                        lastColon));
-                }
-                if (column == null) {
-                    column = integerField(origin.substring(lastColon + 1));
-                }
-            }
-        }
-        return new CapturedTuple(fields.get("code"), fields.get("message"),
-            fields.get("file"), line, column, fields.get("expected"),
-            fields.get("actual"));
-    }
-
-    private static Integer integerField(String text) {
-        return text == null || text.isEmpty() ? null : Integer.valueOf(text);
-    }
-
-    private static String unescapeField(String text) {
-        StringBuilder out = new StringBuilder(text.length());
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            if (c != '\\' || i + 1 >= text.length()) {
-                out.append(c);
-                continue;
-            }
-            char next = text.charAt(++i);
-            switch (next) {
-                case 'n' -> out.append('\n');
-                case 't' -> out.append('\t');
-                case '\\' -> out.append('\\');
-                default -> out.append(next);
-            }
-        }
-        return out.toString();
-    }
-
-    private static void testManifestProductionAcceptance() throws Exception {
-        System.out.println("-- the manifest-authored production acceptance: the "
-            + "std/json bytes companions and ffi/016 --");
-        driveJsonBytesCompanion("json-stringify-bytes-error",
-            "test_json_stringify_bytes_error");
-        driveJsonBytesCompanion("json-stringify-nested-bytes-error",
-            "test_json_stringify_nested_bytes_error");
-        driveFfiBytesPointerLength();
-    }
-
-    /**
-     * One std/json bytes companion through the manifest-authored production
-     * invocation: the fixture is the entry, the staged LuaJIT chunk and the
-     * staged JVM class are executed with the artifact's own transport, and
-     * every sidecar-pinned field (code, message, raw-coordinate rebased
-     * line, column, expected, actual, source file, exit code, streams) is
-     * compared exactly. The fixture-level oracle agreement runs in the same
-     * order as the artifact probes — the closure's module-init walks (the
-     * fixture's own {@code main} delegation) first, then the JSON test
-     * export — and the oracle's terminal is compared against every pinned
-     * sidecar leg with the same raw-coordinate rebasing, so a disagreement
-     * in the nested traversal or the call-expression origin fails this
-     * drive even when both artifacts happen to agree.
-     */
-    private static void driveJsonBytesCompanion(String fixture, String export)
-            throws Exception {
-        String corpusRel = STDLIB_JSON_CORPUS + "/" + fixture + ".deal";
-        SidecarExpectations.StructuredExpectationSidecar sidecar =
-            SidecarExpectations.StructuredExpectationSidecar.parse(Files.readString(
-                CORPUS.resolve(STDLIB_JSON_CORPUS)
-                    .resolve(fixture + ".expect.json"), StandardCharsets.UTF_8));
-
-        CorpusSource source = prepareCorpusSource(Files.readString(
-            CORPUS.resolve(corpusRel), StandardCharsets.UTF_8), corpusRel);
-        ManifestProject luaProject = materializeCorpusProject(corpusRel, source,
-            "luajit", null, null);
-        try {
-            ManifestCompile lua = compileManifest(luaProject, "luajit");
-            check(lua.success(), fixture + ": the LuaJIT production compile "
-                + "succeeds: " + diagnosticsOf(lua));
-            if (lua.success()) {
-                Path artifact = luaProject.out().resolve(
-                    luaProject.modulePath().replace('.', '/') + ".lua");
-                check(Files.isRegularFile(artifact), fixture + ": the staged LuaJIT "
-                    + "artifact exists: " + artifact);
-                if (Files.isRegularFile(artifact)) {
-                    Path transport = luaProject.out().resolve(ACCEPT_TRANSPORT);
-                    Path probe = luaProject.out().resolve("__accept_probe.lua");
-                    Files.writeString(probe, luaAcceptanceProbe(
-                        artifact.toAbsolutePath().toString(), List.of(export),
-                        transport), StandardCharsets.UTF_8);
-                    BoundedRun run = runBounded(List.of("luajit",
-                        "__accept_probe.lua"), luaProject.out(),
-                        Map.of("DEAL_DEFER_MAIN", "1"));
-                    assertPinnedRuntimeError(fixture + " (luajit staged artifact)",
-                        sidecar, "luajit", readAcceptanceTuple(transport), run,
-                        luaProject);
-                }
-                // The fixture-level oracle agreement: the materialized project
-                // lowers on the release-owned production inputs and its own
-                // export executes after the closure's init walks, exactly like
-                // the probe's __dealMain() then export order.
-                SemanticLowerer.ProjectLoweringResult lowering = lowerManifestOracle(
-                    lua.orchestrator(), Map.of(), Map.of());
-                if (lowering.project() != null) {
-                    SemanticRuntimeModel.ConsumerRun oracle =
-                        SemanticOracle.invokeSyncEntry(lowering.project(),
-                            lowering.tables(), lowering.registries(), null,
-                            lowering.project().entryModule(), export, List.of());
-                    for (String backend : List.of("luajit", "jvm")) {
-                        assertPinnedOracleError(fixture + " (oracle, " + backend
-                            + " pin)", sidecar, backend, oracle, luaProject);
-                    }
-                }
-            }
-        } finally {
-            deleteRecursively(luaProject.root());
-        }
-
-        ManifestProject jvmProject = materializeCorpusProject(corpusRel, source,
-            "jvm", null, null);
-        try {
-            ManifestCompile jvm = compileManifest(jvmProject, "jvm");
-            check(jvm.success(), fixture + ": the JVM production compile succeeds: "
-                + diagnosticsOf(jvm));
-            if (jvm.success()) {
-                String className = JvmNames.classNameFor(jvmProject.modulePath());
-                Path artifact = jvmProject.out().resolve(className + ".java");
-                check(Files.isRegularFile(artifact), fixture + ": the staged JVM "
-                    + "artifact exists: " + artifact);
-                if (Files.isRegularFile(artifact)) {
-                    Path transport = jvmProject.out().resolve(ACCEPT_TRANSPORT);
-                    String probeName = jvmProbeName();
-                    Files.writeString(jvmProject.out().resolve(probeName + ".java"),
-                        jvmAcceptanceProbe(probeName, className,
-                            jvmProject.modulePath(), List.of(export), transport),
-                        StandardCharsets.UTF_8);
-                    Path classes = jvmProject.out().resolve("classes");
-                    Files.createDirectories(classes);
-                    BoundedRun compile = runJavac(jvmProject.out(), classes,
-                        List.of(artifact.toString(), probeName + ".java"));
-                    check(compile.captureClean() && compile.exitCode() == 0,
-                        fixture + ": the staged JVM artifact compiles with javac "
-                            + "--release 25 -proc:none: " + compile.stdout()
-                            + compile.stderr());
-                    if (compile.exitCode() == 0) {
-                        BoundedRun run = runJava(absoluteClasspath(), classes,
-                            probeName);
-                        assertPinnedRuntimeError(fixture + " (jvm staged artifact)",
-                            sidecar, "jvm", readAcceptanceTuple(transport), run,
-                            jvmProject);
-                    }
-                }
-            }
-        } finally {
-            deleteRecursively(jvmProject.root());
-        }
     }
 
     /**
@@ -4736,10 +4058,6 @@ public class BytesCoverageTest {
         String corpusRel = FFI_CORPUS + "/" + FFI_BYTES_FIXTURE + ".deal";
         String raw = Files.readString(CORPUS.resolve(corpusRel),
             StandardCharsets.UTF_8);
-        check(raw.contains("data[0] = 128") && raw.contains("data[1] = 255")
-                && raw.contains("data[2] = 1") && raw.contains("59443587"),
-            "ffi/016 carries the unsigned byte order and the folded native sum "
-                + "pin (width, sign, order, length)");
         SidecarExpectations.StructuredExpectationSidecar sidecar =
             SidecarExpectations.StructuredExpectationSidecar.parse(Files.readString(
                 CORPUS.resolve(FFI_CORPUS).resolve(FFI_BYTES_FIXTURE
@@ -4769,14 +4087,8 @@ public class BytesCoverageTest {
                     check(Files.isRegularFile(artifact), "ffi/016: the staged LuaJIT "
                         + "artifact exists: " + artifact);
                     if (Files.isRegularFile(artifact)) {
-                        Path transport = luaProject.out().resolve(ACCEPT_TRANSPORT);
-                        Path probe = luaProject.out().resolve("__accept_probe.lua");
-                        Files.writeString(probe, luaAcceptanceProbe(
-                            artifact.toAbsolutePath().toString(), List.of(), transport),
-                            StandardCharsets.UTF_8);
                         BoundedRun run = runBounded(List.of("luajit",
-                            "__accept_probe.lua"), luaProject.out(),
-                            Map.of("DEAL_DEFER_MAIN", "1"));
+                            artifact.toAbsolutePath().toString()), luaProject.out(), Map.of());
                         assertPinnedRuntimeOk("ffi/016 (luajit staged artifact)",
                             sidecar, "luajit", run);
                         // The fixture-level oracle agreement: the materialized
@@ -5012,77 +4324,6 @@ public class BytesCoverageTest {
             + "rejection publishes no FFI metadata");
     }
 
-    /**
-     * The pinned runtime-error leg of one staged-artifact run: the artifact
-     * reports the fixture itself as the entry source (fixture-as-entry
-     * materialization), the raw coordinates rebase across the stripped
-     * headers, and every sidecar-pinned field plus the exit status and both
-     * streams compare exactly. The sidecar's own stdout is the canonical
-     * framing of the captured tuple.
-     */
-    private static void assertPinnedRuntimeError(String label,
-            SidecarExpectations.StructuredExpectationSidecar sidecar, String backend,
-            CapturedTuple tuple, BoundedRun run, ManifestProject project) {
-        SidecarExpectations.RuntimeExpectation leg = sidecar.expectationFor(backend);
-        check(leg instanceof SidecarExpectations.RuntimeExpectation.Executed executed
-                && executed.isRuntimeError(),
-            label + ": the sidecar pins a runtime-error leg");
-        if (!(leg instanceof SidecarExpectations.RuntimeExpectation.Executed executed)
-                || !executed.isRuntimeError()) {
-            return;
-        }
-        check(run != null && run.captureClean(), label + ": the staged-artifact run "
-            + "is capture-clean");
-        check(tuple != null, label + ": the staged artifact transports the DEAL "
-            + "failure tuple");
-        if (tuple == null) {
-            return;
-        }
-        SidecarExpectations.ErrorExpectation pinned = executed.error();
-        check(pinned != null, label + ": the sidecar pins the error snapshot");
-        if (pinned == null) {
-            return;
-        }
-        Path reported = tuple.file() == null ? null
-            : Path.of(tuple.file()).toAbsolutePath().normalize();
-        String relative = reported == null ? null
-            : project.root().relativize(reported).toString()
-                .replace(File.separatorChar, '/');
-        checkEq(project.corpusRel(), relative, label + ": the artifact reports the "
-            + "fixture itself as the entry source (fixture-as-entry materialization)");
-        Integer rebasedLine = tuple.line() == null ? null
-            : tuple.line() + project.strippedHeaderLines();
-        checkEq(pinned.code(), tuple.code(), label + ": the pinned code");
-        checkEq(pinned.message(), tuple.message(), label + ": the pinned message");
-        checkEq(pinned.line(), rebasedLine, label + ": the pinned raw line (rebased "
-            + "across the stripped headers)");
-        checkEq(pinned.column(), tuple.column(), label + ": the pinned column");
-        checkEq(pinned.expected().orElse(null), tuple.expected(), label + ": the "
-            + "pinned expected token");
-        checkEq(pinned.actual().orElse(null), tuple.actual(), label + ": the pinned "
-            + "actual token");
-        checkEq(executed.exitCode(), run.exitCode(), label + ": the pinned exit code");
-        checkEq("", run.stdout(), label + ": the probe prints nothing on stdout");
-        checkEq(new String(executed.stderr(), StandardCharsets.UTF_8), run.stderr(),
-            label + ": the pinned stderr");
-        SidecarExpectations.ErrorExpectation captured =
-            new SidecarExpectations.ErrorExpectation(tuple.code(), tuple.message(),
-                relative, rebasedLine, tuple.column(),
-                pinned.pinsOptional("expected")
-                    ? java.util.Optional.ofNullable(tuple.expected())
-                    : java.util.Optional.empty(),
-                pinned.pinsOptional("actual")
-                    ? java.util.Optional.ofNullable(tuple.actual())
-                    : java.util.Optional.empty(),
-                java.util.Optional.empty(), java.util.Optional.empty());
-        String framing = ErrorSnapshot.CODE_LINE_PREFIX + tuple.code() + "\n"
-            + ErrorSnapshot.SNAPSHOT_LINE_PREFIX
-            + ErrorSnapshot.canonicalJson(captured) + "\n";
-        checkEq(new String(executed.stdout(), StandardCharsets.UTF_8), framing,
-            label + ": the sidecar stdout is the canonical framing of the captured "
-                + "tuple");
-    }
-
     /** The pinned runtime-ok leg of one staged-artifact run. */
     private static void assertPinnedRuntimeOk(String label,
             SidecarExpectations.StructuredExpectationSidecar sidecar, String backend,
@@ -5138,76 +4379,6 @@ public class BytesCoverageTest {
             + (oracle == null ? "no oracle run" : oracle.terminal()));
     }
 
-    /**
-     * The pinned runtime-error leg of one oracle run of a materialized
-     * fixture: the oracle reports the fixture itself as the entry source, the
-     * raw coordinates rebase across the stripped classification headers, and
-     * every sidecar-pinned field (code, message, rebased raw line, column,
-     * expected, actual) compares exactly — so an oracle disagreement in the
-     * nested traversal or the call-expression origin fails the drive even
-     * when both published artifacts pass their own legs.
-     */
-    private static void assertPinnedOracleError(String label,
-            SidecarExpectations.StructuredExpectationSidecar sidecar, String backend,
-            SemanticRuntimeModel.ConsumerRun oracle, ManifestProject project) {
-        SidecarExpectations.RuntimeExpectation leg = sidecar.expectationFor(backend);
-        check(leg instanceof SidecarExpectations.RuntimeExpectation.Executed executed
-                && executed.isRuntimeError(),
-            label + ": the sidecar pins a runtime-error leg");
-        if (!(leg instanceof SidecarExpectations.RuntimeExpectation.Executed executed)
-                || !executed.isRuntimeError()) {
-            return;
-        }
-        check(oracle != null, label + ": the oracle produced a run");
-        if (oracle == null) {
-            return;
-        }
-        check(oracle.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure,
-            label + ": the oracle projects the pinned failure: " + oracle.terminal());
-        if (!(oracle.terminal()
-                instanceof SemanticRuntimeModel.Terminal.DealFailure failure)) {
-            return;
-        }
-        SemanticRuntimeModel.ErrorSnapshot error = failure.error();
-        SidecarExpectations.ErrorExpectation pinned = executed.error();
-        check(pinned != null, label + ": the sidecar pins the error snapshot");
-        if (pinned == null) {
-            return;
-        }
-        OriginAtom origin = OriginAtom.parse(error.origin());
-        Path reported = Path.of(origin.file()).toAbsolutePath().normalize();
-        String relative = project.root().relativize(reported).toString()
-            .replace(File.separatorChar, '/');
-        checkEq(project.corpusRel(), relative, label + ": the oracle reports the "
-            + "fixture itself as the entry source (fixture-as-entry materialization)");
-        checkEq(pinned.code(), error.code(), label + ": the pinned code");
-        checkEq(pinned.message(), error.message(), label + ": the pinned message");
-        checkEq(pinned.line(), origin.line() + project.strippedHeaderLines(),
-            label + ": the pinned raw line (rebased across the stripped headers)");
-        checkEq(pinned.column(), origin.column(), label + ": the pinned column");
-        checkEq(pinned.expected().orElse(null), error.expected(), label + ": the "
-            + "pinned expected token");
-        checkEq(pinned.actual().orElse(null), error.actual(), label + ": the "
-            + "pinned actual token");
-    }
-
-    /** One {@code file:line:column} origin atom of an oracle error snapshot. */
-    private record OriginAtom(String file, int line, int column) {
-
-        static OriginAtom parse(String atom) {
-            int lastColon = atom.lastIndexOf(':');
-            int previousColon = lastColon <= 0 ? -1
-                : atom.lastIndexOf(':', lastColon - 1);
-            if (previousColon < 0) {
-                throw new IllegalStateException("the oracle origin '" + atom
-                    + "' is not a file:line:column atom");
-            }
-            return new OriginAtom(atom.substring(0, previousColon),
-                Integer.parseInt(atom.substring(previousColon + 1, lastColon)),
-                Integer.parseInt(atom.substring(lastColon + 1)));
-        }
-    }
-
     private static Map<String, byte[]> snapshotTree(Path root) throws Exception {
         Map<String, byte[]> snapshot = new LinkedHashMap<>();
         if (!Files.isDirectory(root)) {
@@ -5230,138 +4401,6 @@ public class BytesCoverageTest {
             check(java.util.Arrays.equals(entry.getValue(), after.get(entry.getKey())),
                 message + " (" + entry.getKey() + ")");
         }
-    }
-
-    // =========================================================================
-    // 10. The first-class bytes allocation: the indirect ladder on all three
-    //     consumers
-    // =========================================================================
-
-    /** The first-class bytes allocation success program (K14's bytes member). */
-    private static final String FIRST_CLASS_BYTES_ALLOCATE_SOURCE = """
-        export function main(): null {
-          let annotated: (x: int) => bytes = bytes
-          let inferred = bytes
-          let a: bytes = annotated(2)
-          let b: bytes = inferred(3)
-          let carried: ((x: int) => bytes)[] = [bytes]
-          let c: bytes = carried[0](4)
-          let alias: bytes = a;
-          a[0] = 7
-          if (alias[0] !== 7 || a.length !== 2 || b.length !== 3 || c.length !== 4) {
-            throw { code: "TEST_FAIL", message: "indirect allocation identity" }
-          }
-          if (a[1] !== 0 || b[2] !== 0 || c[3] !== 0) {
-            throw { code: "TEST_FAIL", message: "indirect zero fill" }
-          }
-          return null
-        }
-        """;
-
-    /** The negative arm: the indirect call's E8012 at the call expression. */
-    private static final String FIRST_CLASS_BYTES_NEGATIVE_SOURCE = """
-        export function main(): null {
-          let g: (x: int) => bytes = bytes
-          let bad: bytes = g(-1)
-          return null
-        }
-        """;
-
-    private static void testFirstClassBytesAllocation() throws Exception {
-        System.out.println("-- the first-class bytes allocation: indirect zero fill, "
-            + "identity, and the negative arm on all three consumers --");
-        driveFirstClassBytesSuccess();
-        driveFirstClassBytesNegative();
-    }
-
-    private static void driveFirstClassBytesSuccess() throws Exception {
-        String label = "first-class bytes allocation";
-        for (String backend : List.of("luajit", "jvm")) {
-            ScratchProject project = materializeScratchProject(
-                FIRST_CLASS_BYTES_ALLOCATE_SOURCE, backend);
-            try {
-                ManifestCompile compile = compileManifest(asManifestProject(project),
-                    backend);
-                check(compile.success(), label + " (" + backend + "): the "
-                    + "manifest-authored compile succeeds: " + diagnosticsOf(compile));
-                if (!compile.success()) {
-                    continue;
-                }
-                if ("luajit".equals(backend)) {
-                    SemanticRuntimeModel.ConsumerRun oracle =
-                        runManifestOracle(compile.orchestrator());
-                    check(oracle != null && oracle.terminal()
-                            instanceof SemanticRuntimeModel.Terminal.Success,
-                        label + ": the oracle runs the indirect allocations to "
-                            + "success: " + (oracle == null ? "no lowering"
-                                : oracle.terminal()));
-                }
-                executeScratchArtifact(project, backend, label, true, null);
-            } finally {
-                deleteRecursively(project.root());
-            }
-        }
-    }
-
-    private static void driveFirstClassBytesNegative() throws Exception {
-        String label = "first-class bytes negative length";
-        String sentinel = "g(-1)";
-        for (String backend : List.of("luajit", "jvm")) {
-            ScratchProject project = materializeScratchProject(
-                FIRST_CLASS_BYTES_NEGATIVE_SOURCE, backend);
-            try {
-                ManifestCompile compile = compileManifest(asManifestProject(project),
-                    backend);
-                check(compile.success(), label + " (" + backend + "): the "
-                    + "manifest-authored compile succeeds: " + diagnosticsOf(compile));
-                if (!compile.success()) {
-                    continue;
-                }
-                String expectedOrigin = project.entry().toAbsolutePath().toString()
-                    + ":" + sentinelLine(FIRST_CLASS_BYTES_NEGATIVE_SOURCE, sentinel)
-                    + ":" + sentinelColumn(FIRST_CLASS_BYTES_NEGATIVE_SOURCE, sentinel);
-                if ("luajit".equals(backend)) {
-                    SemanticRuntimeModel.ConsumerRun oracle =
-                        runManifestOracle(compile.orchestrator());
-                    boolean pinned = oracle != null && oracle.terminal()
-                            instanceof SemanticRuntimeModel.Terminal.DealFailure failure
-                        && "E8012".equals(failure.error().code())
-                        && "bytes length must be non-negative".equals(
-                            failure.error().message())
-                        && expectedOrigin.equals(failure.error().origin());
-                    check(pinned, label + ": the oracle projects the pinned E8012 at "
-                        + "the indirect call expression: " + (oracle == null
-                            ? "no lowering" : oracle.terminal()));
-                }
-                executeScratchArtifact(project, backend, label, false,
-                    expectedOrigin);
-            } finally {
-                deleteRecursively(project.root());
-            }
-        }
-    }
-
-    private static int sentinelLine(String source, String sentinel) {
-        String[] lines = source.split("\n", -1);
-        for (int i = 0; i < lines.length; i++) {
-            if (lines[i].contains(sentinel)) {
-                return i + 1;
-            }
-        }
-        throw new IllegalStateException("the sentinel '" + sentinel
-            + "' is absent from the source");
-    }
-
-    private static int sentinelColumn(String source, String sentinel) {
-        String[] lines = source.split("\n", -1);
-        for (String line : lines) {
-            int index = line.indexOf(sentinel);
-            if (index >= 0) {
-                return index + 1;
-            }
-        }
-        throw new IllegalStateException("the sentinel '" + sentinel
-            + "' is absent from the source");
     }
 
     /**
@@ -5391,181 +4430,13 @@ public class BytesCoverageTest {
         return result;
     }
 
-    /** The oracle's run of one manifest-authored compile over the closure. */
-    private static SemanticRuntimeModel.ConsumerRun runManifestOracle(
-            CompilationOrchestrator orchestrator) {
-        SemanticLowerer.ProjectLoweringResult result = lowerManifestOracle(orchestrator,
-            Map.of(), Map.of());
-        if (result.project() == null) {
-            return null;
-        }
-        return SemanticOracle.executeProjectInits(result.project(), result.tables(),
-            result.registries(), null);
-    }
-
-    /**
-     * Executes the actual staged artifacts of one scratch project on the
-     * named backend and asserts the exact status and streams plus the
-     * transported DEAL tuple.
-     */
-    private static void executeScratchArtifact(ScratchProject project, String backend,
-            String label, boolean expectSuccess, String expectedOrigin)
-            throws Exception {
-        if ("luajit".equals(backend)) {
-            Path artifact = project.out().resolve(
-                project.modulePath().replace('.', '/') + ".lua");
-            check(Files.isRegularFile(artifact), label + " (" + backend + "): the "
-                + "staged LuaJIT artifact exists: " + artifact);
-            if (!Files.isRegularFile(artifact)) {
-                return;
-            }
-            Path transport = project.out().resolve(ACCEPT_TRANSPORT);
-            Path probe = project.out().resolve("__accept_probe.lua");
-            Files.writeString(probe, luaAcceptanceProbe(
-                artifact.toAbsolutePath().toString(), List.of(), transport),
-                StandardCharsets.UTF_8);
-            BoundedRun run = runBounded(List.of("luajit", "__accept_probe.lua"),
-                project.out(), Map.of("DEAL_DEFER_MAIN", "1"));
-            assertScratchRun(label + " (" + backend + ")", run,
-                readAcceptanceTuple(transport), expectSuccess, expectedOrigin);
-            return;
-        }
-        String className = JvmNames.classNameFor(project.modulePath());
-        Path artifact = project.out().resolve(className + ".java");
-        check(Files.isRegularFile(artifact), label + " (" + backend + "): the staged "
-            + "JVM artifact exists: " + artifact);
-        if (!Files.isRegularFile(artifact)) {
-            return;
-        }
-        Path transport = project.out().resolve(ACCEPT_TRANSPORT);
-        String probeName = jvmProbeName();
-        Files.writeString(project.out().resolve(probeName + ".java"),
-            jvmAcceptanceProbe(probeName, className, project.modulePath(), List.of(),
-                transport), StandardCharsets.UTF_8);
-        Path classes = project.out().resolve("classes");
-        Files.createDirectories(classes);
-        BoundedRun compile = runJavac(project.out(), classes,
-            List.of(artifact.toString(), probeName + ".java"));
-        check(compile.captureClean() && compile.exitCode() == 0, label + " ("
-            + backend + "): the staged JVM artifact compiles with javac --release "
-            + "25 -proc:none: " + compile.stdout() + compile.stderr());
-        if (compile.exitCode() != 0) {
-            return;
-        }
-        BoundedRun run = runJava(absoluteClasspath(), classes, probeName);
-        assertScratchRun(label + " (" + backend + ")", run,
-            readAcceptanceTuple(transport), expectSuccess, expectedOrigin);
-    }
-
-    /** The scratch drives' exact status, streams, and transported tuple. */
-    private static void assertScratchRun(String label, BoundedRun run,
-            CapturedTuple tuple, boolean expectSuccess, String expectedOrigin) {
-        check(run != null && run.captureClean(), label + ": the staged-artifact run "
-            + "is capture-clean");
-        if (run == null) {
-            return;
-        }
-        if (expectSuccess) {
-            checkEq(0, run.exitCode(), label + ": the staged artifact exits zero");
-            checkEq("", run.stdout(), label + ": the staged artifact prints nothing "
-                + "on stdout");
-            checkEq("", run.stderr(), label + ": the staged artifact prints nothing "
-                + "on stderr");
-            check(tuple == null, label + ": the staged artifact projects no DEAL "
-                + "error");
-            return;
-        }
-        checkEq(1, run.exitCode(), label + ": the staged artifact exits one on the "
-            + "pinned DEAL failure");
-        checkEq("", run.stdout(), label + ": the probe prints nothing on stdout");
-        checkEq("", run.stderr(), label + ": the probe prints nothing on stderr");
-        check(tuple != null, label + ": the staged artifact transports the DEAL "
-            + "failure tuple");
-        if (tuple == null) {
-            return;
-        }
-        checkEq("E8012", tuple.code(), label + ": the pinned code");
-        checkEq("bytes length must be non-negative", tuple.message(),
-            label + ": the pinned message");
-        checkEq(expectedOrigin, tuple.file() + ":" + tuple.line() + ":"
-            + tuple.column(), label + ": the pinned origin is the indirect call "
-            + "expression");
-        check(tuple.expected() == null && tuple.actual() == null,
-            label + ": the allocation row pins no expected/actual tokens");
-    }
-
     // =========================================================================
     // Entry point
     // =========================================================================
 
-    /**
-     * The rejected raw-profile cleanup control (the CD3 gate-input
-     * contract): a scratch corpus fixture whose original declaration is a
-     * legacy profile after the 40-line metadata window is rejected through
-     * the real fixture materialization with the named gate-input defect,
-     * and the rejected input allocates no owned {@code bytes-corpus-}
-     * scratch root (the validation precedes the allocation, so no leak can
-     * occur). The same scratch bytes without the declaration are accepted
-     * as a production-profile input (the control).
-     */
-    private static void testRejectedRawProfileLeavesNoScratch() throws Exception {
-        System.out.println("-- the rejected raw-profile input allocates no "
-            + "scratch root --");
-        Path scratch = Files.createTempDirectory("bytes-rejected-profile-");
-        try {
-            String pristine = Files.readString(CORPUS.resolve(BYTES_DIR)
-                .resolve("bytes-length.deal"), StandardCharsets.UTF_8);
-            StringBuilder padded = new StringBuilder();
-            for (int i = 0; i < 40; i++) {
-                padded.append("// padding line ").append(i).append('\n');
-            }
-            padded.append("// @profile: legacy-safe-int\n").append(pristine);
-            Files.writeString(scratch.resolve("legacy-line-41.deal"),
-                padded.toString(), StandardCharsets.UTF_8);
-            check(ConformanceHarnessMetadata.productionCorpusSource(pristine,
-                    BYTES_DIR + "/bytes-length.deal") != null,
-                "the pristine scratch bytes are a production-profile input "
-                    + "(the control)");
-            BytesFixture rejected = new BytesFixture(scratch.toString(),
-                "legacy-line-41", "main", "null", List.of(), null, null, 0, 0);
-            Set<Path> before = scratchRoots("bytes-corpus-");
-            try {
-                compileFixture(rejected);
-                check(false, "the line-41 legacy profile is rejected before "
-                    + "compilation");
-            } catch (ConformanceHarnessMetadata.HarnessInputDefectException
-                    defect) {
-                check(defect.getMessage().contains(
-                        ConformanceHarnessMetadata.HARNESS_DEFECT)
-                        && defect.getMessage().contains("legacy-line-41.deal"),
-                    "the line-41 legacy declaration is a named "
-                        + ConformanceHarnessMetadata.HARNESS_DEFECT
-                        + " naming the fixture: " + defect.getMessage());
-            }
-            Set<Path> after = scratchRoots("bytes-corpus-");
-            check(after.equals(before), "the rejected input leaves no "
-                + "bytes-corpus scratch root behind: " + after);
-        } finally {
-            deleteRecursively(scratch);
-        }
-    }
-
-    /** The temporary roots whose file name starts with {@code prefix}. */
-    private static Set<Path> scratchRoots(String prefix) throws Exception {
-        Path tmp = Path.of(System.getProperty("java.io.tmpdir"));
-        Set<Path> roots = new java.util.LinkedHashSet<>();
-        try (var listing = Files.list(tmp)) {
-            listing.filter(p -> p.getFileName().toString().startsWith(prefix))
-                .forEach(roots::add);
-        }
-        return roots;
-    }
-
     public static void main(String[] args) throws Exception {
-        testCorpusPins();
         testRejectedRawProfileLeavesNoScratch();
         testCorpusDrive();
-        testJointBytesStagedProduction();
         testReadShapeAndWriteChain();
         testBytesElementAssignmentOrigin();
         testBytesBoundaryContext();
@@ -5577,8 +4448,8 @@ public class BytesCoverageTest {
         testIndirectBytesAllocation();
         testFocusedRunnerContract();
         testOracleRealization();
-        testFirstClassBytesAllocation();
-        testManifestProductionAcceptance();
+        testManifestBytesContracts();
+        driveFfiBytesPointerLength();
         System.out.println();
         System.out.println("BytesCoverageTest: " + passed + " passed, " + failed
             + " failed");

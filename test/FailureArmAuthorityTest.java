@@ -70,6 +70,7 @@ public class FailureArmAuthorityTest {
     private static String armsChunk;
     private static String walkChunk;
     private static String walkHostChunk;
+    private static List<String> arrayBoundaryRows;
 
     private static void check(boolean condition, String message) {
         if (condition) {
@@ -112,6 +113,7 @@ public class FailureArmAuthorityTest {
         armsChunk = null;
         walkChunk = null;
         walkHostChunk = null;
+        arrayBoundaryRows = null;
         testClosedArmTable();
         testConsistencyInvariantNegatives();
         testCorrectedTemplates();
@@ -1432,12 +1434,29 @@ public class FailureArmAuthorityTest {
             "the lowering records one ASYNC_COMPLETION cell per driven await: "
                 + completionCells);
         Path jvmOut = root.resolve("out-jvm");
-        CompilationOrchestrator jvm = new CompilationOrchestrator(entry, jvmOut, false,
-            false, false, false, Backend.JVM, externals, List.of(src.toAbsolutePath()),
-            Path.of("std").toAbsolutePath().normalize(), null, invocation);
-        boolean jvmCompiled = jvm.compile();
-        check(jvmCompiled && jvm.diagnostics().isEmpty(), "the completion-signature "
+        deal.publication.PublicationStager stager = deal.publication.PublicationStager.forRoot(jvmOut);
+        deal.module.ProductionProjectEmission.Result jvm;
+        try {
+            jvm = deal.module.ProductionProjectEmission.run(invocation, built.input(),
+                built.index(), manifests.manifests(), lua.hostDeclarationSurface(),
+                identities, Map.of(), src.toString(),
+                BuiltinErrorDeclaration.synthesized(entrySpan(built.input())),
+                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                    IntrinsicKind.BYTES_NEW),
+                Set.of(), Backend.JVM, false,
+                deal.distribution.DistributionHome.forManifestDirectory(src.toString()),
+                stager);
+            if (jvm.emitted()) {
+                stager.publish();
+            }
+        } finally {
+            stager.discard();
+        }
+        check(jvm.emitted() && jvm.diagnostics().isEmpty(), "the completion-signature "
             + "drive's project compiles on the JVM target: " + jvm.diagnostics());
+        if (!jvm.emitted()) {
+            return null;
+        }
         String modulePath = project.entryModule().path();
         String className = JvmNames.classNameFor(modulePath);
         return new CompletionDrive(root, entry, project, lowering.tables(), entryOpIds,
@@ -1598,7 +1617,7 @@ public class FailureArmAuthorityTest {
         Path host = out.resolve(hostClass + ".java");
         Files.writeString(host, jvmHost.formatted(hostClass),
             StandardCharsets.UTF_8);
-        Path driver = out.resolve("CompletionSignatureDriver.java");
+        Path driver = out.resolve("FailureArmCompletionSignatureDriver.java");
         Files.writeString(driver, completionDriverSource(drive, cells),
             StandardCharsets.UTF_8);
         Path classes = drive.root().resolve("jvm-classes");
@@ -1621,7 +1640,8 @@ public class FailureArmAuthorityTest {
             return Map.of();
         }
         ProcessBuilder javaRun = new ProcessBuilder("java", "-cp",
-            classpath + java.io.File.pathSeparator + classes, "CompletionSignatureDriver");
+            classes + java.io.File.pathSeparator + classpath,
+            "FailureArmCompletionSignatureDriver");
         javaRun.directory(out.toFile());
         javaRun.redirectErrorStream(true);
         Process run = javaRun.start();
@@ -1641,7 +1661,7 @@ public class FailureArmAuthorityTest {
     private static String completionDriverSource(CompletionDrive drive,
             List<CompletionCell> cells) {
         StringBuilder source = new StringBuilder();
-        source.append("public class CompletionSignatureDriver {\n");
+        source.append("public class FailureArmCompletionSignatureDriver {\n");
         source.append("  public static void main(String[] args) {\n");
         source.append("    try {\n");
         source.append("      ").append(drive.className()).append(".dealMain();\n");
@@ -5700,15 +5720,36 @@ public class FailureArmAuthorityTest {
     // 15. The moved cell: a fractional array(int) element at the boundary
     // =========================================================================
 
-    /**
-     * The moved cell (jsonable-tojson-walk-arm-binding W6): the numeric
-     * classification's only ripple. A fractional {@code array(int)} element —
-     * a position the emitted Lua walk never fails — is classified at the
-     * boundary-check site on all three consumers: the emitted {@code __bcheck}
-     * array element arm, the oracle's per-element int rule, and the JVM's
-     * array element arm each publish the value-derived {@code number} token,
-     * never the declared {@code int} text beside the position.
-     */
+    private static List<String> arrayBoundaryRows() throws Exception {
+        if (arrayBoundaryRows == null) {
+            List<String> rows = runPreludeProbe("""
+                do
+                  local ok, value = pcall(__bcheck, "array(int)", "array",
+                    {__a = true, __n = 1, [1] = 3.5})
+                  row("element", ok, value)
+                end
+                do
+                  local ok, value = pcall(__bcheck, "array(int)", "array",
+                    {__a = true, __da = true, __n = 1, [1] = __NULL})
+                  row("present-null", ok, value)
+                  ok, value = pcall(__bcheck, "array(int)", "array",
+                    {__a = true, __da = true, __n = 1})
+                  row("deleted-slot", ok, value)
+                  ok, value = pcall(__bcheck, "array(null)", "array",
+                    {__a = true, __da = true, __n = 1, [1] = __NULL})
+                  row("null-admission", ok, value)
+                end
+                """, "array-boundary-probe", 4);
+            check(rows.size() == 4, "the array-boundary batch prints exactly four rows: "
+                + rows);
+            if (rows.size() != 4) {
+                throw new IllegalStateException("the array-boundary batch is incomplete");
+            }
+            arrayBoundaryRows = List.copyOf(rows);
+        }
+        return arrayBoundaryRows;
+    }
+
     static void testMovedElementCell() throws Exception {
         System.out.println("-- the moved cell: a fractional array(int) element --");
         String origin = "moved-cell.deal:3:12";
@@ -5734,11 +5775,7 @@ public class FailureArmAuthorityTest {
                 "the JVM array element arm renders the oracle's identical tuple");
         }
         // The emitted prelude leg (the moved cell), under real luajit.
-        List<String> rows = runPreludeProbe("""
-            local ok, value = pcall(__bcheck, "array(int)", "array",
-              {__a = true, __n = 1, [1] = 3.5})
-            row("element", ok, value)
-            """, "moved-cell-probe", 1);
+        List<String> rows = arrayBoundaryRows().subList(0, 1);
         checkEq("element|E8003|int|number|array element 1 type mismatch", rows.get(0),
             "the emitted __bcheck array element arm classifies the element by its value");
         checkEq(null, firstDifferingField(oracle, luaTuple(rows.get(0), origin)),
@@ -5828,17 +5865,7 @@ public class FailureArmAuthorityTest {
 
         // The emitted prelude leg, under real luajit (the decoded array
         // carrier; the mark is inert at the element projection).
-        List<String> rows = runPreludeProbe("""
-            local ok, value = pcall(__bcheck, "array(int)", "array",
-              {__a = true, __da = true, __n = 1, [1] = __NULL})
-            row("present-null", ok, value)
-            ok, value = pcall(__bcheck, "array(int)", "array",
-              {__a = true, __da = true, __n = 1})
-            row("deleted-slot", ok, value)
-            ok, value = pcall(__bcheck, "array(null)", "array",
-              {__a = true, __da = true, __n = 1, [1] = __NULL})
-            row("null-admission", ok, value)
-            """, "decoded-null-probe", 3);
+        List<String> rows = arrayBoundaryRows().subList(1, 4);
         checkEq("present-null|E8003|int|null|array element 1 type mismatch",
             rows.get(0), "the emitted prelude projects the present null element as "
                 + "the null token");

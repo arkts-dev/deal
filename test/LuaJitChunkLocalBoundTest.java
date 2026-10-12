@@ -213,39 +213,34 @@ public class LuaJitChunkLocalBoundTest {
     // 2. The unchanged skill example under real luajit
     // =========================================================================
 
-    private static void testSkillExampleEntry() throws Exception {
+    private static void testSkillExampleEntry(Path root) throws Exception {
         System.out.println("-- the unchanged skill example: the production "
             + "compile and the silent real luajit run --");
-        Path root = Files.createTempDirectory("deal-skill-entry-");
-        try {
-            Path entry = SKILL_EXAMPLE_ROOT.resolve("src/main.deal").toAbsolutePath();
-            check(Files.isRegularFile(entry),
-                "the skill example entry is present: " + entry);
-            Path out = root.resolve("out").toAbsolutePath();
-            List<String> diagnostics = new ArrayList<>();
-            check(productionCompile(entry, out, diagnostics),
-                "the unchanged skill example compiles through the release-owned "
-                    + "production invocation: " + diagnostics);
+        Path entry = SKILL_EXAMPLE_ROOT.resolve("src/main.deal").toAbsolutePath();
+        check(Files.isRegularFile(entry),
+            "the skill example entry is present: " + entry);
+        Path out = root.resolve("out").toAbsolutePath();
+        List<String> diagnostics = new ArrayList<>();
+        check(productionCompile(entry, out, diagnostics),
+            "the unchanged skill example compiles through the release-owned "
+                + "production invocation: " + diagnostics);
 
-            Path artifact = out.resolve("main.lua");
-            check(Files.isRegularFile(artifact),
-                "the skill example stages the entry chunk main.lua");
-            String lua = Files.readString(artifact, StandardCharsets.UTF_8);
-            check(!PER_FACTORY_LOCAL.matcher(lua).find(),
-                "the skill example chunk declares no per-factory chunk-level "
-                    + "local");
+        Path artifact = out.resolve("main.lua");
+        check(Files.isRegularFile(artifact),
+            "the skill example stages the entry chunk main.lua");
+        String lua = Files.readString(artifact, StandardCharsets.UTF_8);
+        check(!PER_FACTORY_LOCAL.matcher(lua).find(),
+            "the skill example chunk declares no per-factory chunk-level "
+                + "local");
 
-            ProcessOutcome run = runProcess(out, List.of("luajit", "main.lua"));
-            checkEq(0, run.exitCode(),
-                "the unchanged skill example executes under real luajit: "
-                    + run.output());
-            checkEq("", run.stdout(),
-                "the skill example completes silently on stdout");
-            checkEq("", run.stderr(),
-                "the skill example completes silently on stderr");
-        } finally {
-            deleteRecursively(root);
-        }
+        ProcessOutcome run = runProcess(out, List.of("luajit", "main.lua"));
+        checkEq(0, run.exitCode(),
+            "the unchanged skill example executes under real luajit: "
+                + run.output());
+        checkEq("", run.stdout(),
+            "the skill example completes silently on stdout");
+        checkEq("", run.stderr(),
+            "the skill example completes silently on stderr");
     }
 
     // =========================================================================
@@ -259,47 +254,36 @@ public class LuaJitChunkLocalBoundTest {
      * a helper set that declares chunk-level locals fails to load here
      * before it can push a legitimate program body over LuaJIT's limit.
      */
-    private static void testPreludeChunkLocalBudget() throws Exception {
+    private static void testPreludeChunkLocalBudget(Path root) throws Exception {
         System.out.println("-- the prelude's main-chunk local budget: the "
             + "production chunk and the appended probe body --");
-        Path root = Files.createTempDirectory("deal-prelude-budget-");
-        try {
-            Path entry = SKILL_EXAMPLE_ROOT.resolve("src/main.deal").toAbsolutePath();
-            Path out = root.resolve("out").toAbsolutePath();
-            List<String> diagnostics = new ArrayList<>();
-            check(productionCompile(entry, out, diagnostics),
-                "the budget fixture compiles through the release-owned "
-                    + "production invocation: " + diagnostics);
-            write(root, "budget-probe.lua", """
-                local text = io.open("out/main.lua"):read("*a")
-                text = text:gsub("%%s*$", "")
-                local tail = 'return __exportSurfaces["main"]'
-                assert(text:sub(-#tail) == tail,
-                  "the artifact tail is the surface return")
-                local extra = {}
-                for i = 1, %d do
-                  extra[i] = "local __budget" .. i .. " = i"
-                end
-                local body = text:sub(1, #text - #tail)
-                  .. table.concat(extra, "\\n") .. "\\n" .. tail
-                local chunk, err = load(body, "budget-probe")
-                if chunk == nil then
-                  print("BUDGET-FAIL|" .. tostring(err))
-                else
-                  print("BUDGET-OK")
-                end
-                """.formatted(PROBE_LOCALS));
-            ProcessOutcome run = runProcess(root,
-                List.of("luajit", "budget-probe.lua"));
-            checkEq(0, run.exitCode(),
-                "the local-budget probe runs under real luajit: " + run.output());
-            check(run.stdout().contains("BUDGET-OK"),
-                "the production chunk keeps room for the appended probe body "
-                    + "of " + PROBE_LOCALS + " locals: "
-                    + run.stdout().replace("\n", "\\n"));
-        } finally {
-            deleteRecursively(root);
-        }
+        write(root, "budget-probe.lua", """
+            local text = io.open("out/main.lua"):read("*a")
+            text = text:gsub("%%s*$", "")
+            local tail = 'return __exportSurfaces["main"]'
+            assert(text:sub(-#tail) == tail,
+              "the artifact tail is the surface return")
+            local extra = {}
+            for i = 1, %d do
+              extra[i] = "local __budget" .. i .. " = i"
+            end
+            local body = text:sub(1, #text - #tail)
+              .. table.concat(extra, "\\n") .. "\\n" .. tail
+            local chunk, err = load(body, "budget-probe")
+            if chunk == nil then
+              print("BUDGET-FAIL|" .. tostring(err))
+            else
+              print("BUDGET-OK")
+            end
+            """.formatted(PROBE_LOCALS));
+        ProcessOutcome run = runProcess(root,
+            List.of("luajit", "budget-probe.lua"));
+        checkEq(0, run.exitCode(),
+            "the local-budget probe runs under real luajit: " + run.output());
+        check(run.stdout().contains("BUDGET-OK"),
+            "the production chunk keeps room for the appended probe body "
+                + "of " + PROBE_LOCALS + " locals: "
+                + run.stdout().replace("\n", "\\n"));
     }
 
     // =========================================================================
@@ -412,8 +396,13 @@ public class LuaJitChunkLocalBoundTest {
     public static void main(String[] args) throws Exception {
         System.out.println("=== LuaJIT Chunk Local Bound Test (ISSUE-0716) ===\n");
         testGrowingFactoryChunk();
-        testSkillExampleEntry();
-        testPreludeChunkLocalBudget();
+        Path skillRoot = Files.createTempDirectory("deal-skill-entry-");
+        try {
+            testSkillExampleEntry(skillRoot);
+            testPreludeChunkLocalBudget(skillRoot);
+        } finally {
+            deleteRecursively(skillRoot);
+        }
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

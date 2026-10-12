@@ -1171,7 +1171,7 @@ public class HostModuleLoadEmissionTest {
             }
 
             ProcessOutcome run = runProcess(List.of("java", "-cp",
-                classpath + java.io.File.pathSeparator + classes,
+                classes + java.io.File.pathSeparator + classpath,
                 "HostModuleLoadProbe"), workspace, false);
             check(run.exitCode() == 0 && run.stdout().contains("PROBE-OK"),
                 "the emitted host wrappers run the declared cells under java: exit="
@@ -1253,7 +1253,7 @@ public class HostModuleLoadEmissionTest {
                 return;
             }
             ProcessOutcome run = runProcess(List.of("java", "-cp",
-                classpath + java.io.File.pathSeparator + classes,
+                classes + java.io.File.pathSeparator + classpath,
                 "HostArrayProbeMain"), workspace, false);
             check(run.exitCode() == 0 && run.stdout().contains("PROBE-OK"),
                 "the declared-array wrappers project every element failure through "
@@ -1583,7 +1583,7 @@ public class HostModuleLoadEmissionTest {
                 return;
             }
             ProcessOutcome run = runProcess(List.of("java", "-cp",
-                classpath + java.io.File.pathSeparator + classes,
+                classes + java.io.File.pathSeparator + classpath,
                 "HostLoadFailureProbe"), workspace, false);
             check(run.exitCode() == 0 && run.stdout().contains("PROBE-OK"),
                 "the load seed '" + label + "' raises the pinned E8011: exit="

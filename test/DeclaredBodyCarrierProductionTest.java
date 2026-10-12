@@ -38,10 +38,12 @@ import deal.semantic.ir.ParameterBoundaryMode;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
+import deal.semantic.ir.SemanticIrDumper;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ValueId;
 
 import java.io.File;
+import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitOption;
 import java.nio.file.Files;
@@ -181,6 +183,7 @@ public class DeclaredBodyCarrierProductionTest {
 
     private static int passed = 0;
     private static int failed = 0;
+    private static AsyncExportInvokerProductionTest.JavacPreparation javacPreparation;
 
     private static void check(boolean condition, String message) {
         if (condition) {
@@ -1438,7 +1441,18 @@ public class DeclaredBodyCarrierProductionTest {
             // Surface 1: both release-owned production lanes.
             CompilationOrchestrator luaCompilation =
                 compileLane(testCase, project, entry, "luajit");
-            compileLane(testCase, project, entry, "jvm");
+            CompilationOrchestrator jvmCompilation =
+                compileLane(testCase, project, entry, "jvm");
+            Path jvmOut = project.resolve("out-jvm");
+            Path jvmArtifact = jvmOut.resolve(JvmNames.classNameFor("main") + ".java");
+            String probeClass = null;
+            if (Files.isRegularFile(jvmArtifact)) {
+                Path probe = testCase.asyncExport() == null ? null
+                    : prepareProductionAsyncProbe(testCase, jvmOut, jvmCompilation);
+                probeClass = probe == null ? null
+                    : probe.getFileName().toString().replace(".java", "");
+                compileStagedJvm(testCase, jvmOut, jvmArtifact, probe);
+            }
 
             // Surface 2: the one lowering and the carrier battery.
             Lowered lowered = lower(testCase, luaCompilation);
@@ -1454,7 +1468,7 @@ public class DeclaredBodyCarrierProductionTest {
             // Surface 4: the staged production artifacts execute the case's
             // own entry surface.
             if (testCase.asyncExport() != null) {
-                driveProductionAsync(testCase, project, lowered);
+                driveProductionAsync(testCase, project, lowered, probeClass);
             } else {
                 driveProductionSync(testCase, project);
             }
@@ -1505,29 +1519,48 @@ public class DeclaredBodyCarrierProductionTest {
             Path artifact = out.resolve(JvmNames.classNameFor("main") + ".java");
             check(Files.isRegularFile(artifact), testCase.name()
                 + " [jvm]: the project artifact is staged: " + artifact);
-            if (Files.isRegularFile(artifact)) {
-                compileStagedJvm(testCase, out, artifact);
-            }
         }
         return orchestrator;
     }
 
     /** The parent epic's JVM criterion on the staged artifact. */
-    private static void compileStagedJvm(Case testCase, Path out, Path artifact)
-            throws Exception {
+    private static void compileStagedJvm(Case testCase, Path out, Path artifact,
+                                         Path probe) throws Exception {
         Path classes = out.resolve("classes");
         Files.createDirectories(classes);
-        ProcessBuilder javac = new ProcessBuilder("javac", "--release", "25",
-            "-proc:none", "-cp", classes + File.pathSeparator + absoluteClasspath(),
-            "-d", classes.toString(), artifact.toString());
-        javac.directory(out.toFile());
-        javac.redirectErrorStream(true);
-        Process compile = javac.start();
-        String compileOut = new String(compile.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        int exit = compile.waitFor();
-        check(exit == 0, testCase.name() + " [jvm]: the staged artifact compiles under "
-            + "javac --release 25 -proc:none: " + compileOut);
+        StringWriter messages = new StringWriter();
+        boolean compiled = javacPreparation.compile(
+            probe == null ? List.of(artifact) : List.of(artifact, probe), classes, messages);
+        check(compiled, testCase.name() + " [jvm]: the staged artifact compiles under "
+            + "javac --release 25 -proc:none: " + messages);
+    }
+
+    private static Path prepareProductionAsyncProbe(Case testCase, Path out,
+            CompilationOrchestrator compilation) throws Exception {
+        ExecutableLoweredProject produced = compilation == null ? null
+            : compilation.producedProject();
+        Long entryId = produced == null ? null
+            : asyncEntryIdOf(produced.modules().get(produced.entryModule()),
+                testCase.asyncExport());
+        check(entryId != null, testCase.name()
+            + " [jvm]: the produced project records the async export's entry");
+        if (entryId == null) {
+            return null;
+        }
+        String probeClass = "DeclaredBodyAsyncProbe_"
+            + UUID.randomUUID().toString().replace("-", "");
+        Path probe = out.resolve(probeClass + ".java");
+        Files.writeString(probe,
+            "public final class " + probeClass + " {\n"
+                + "  public static void main(String[] args) {\n"
+                + "    Main.dealMain();\n"
+                + "    Object result = Main.ae" + entryId
+                + "(\"-\", true, new Object[]{});\n"
+                + "    System.out.println(\"DECLARED_BODY_ASYNC_RESULT:\" + result);\n"
+                + "    System.exit(0);\n"
+                + "  }\n"
+                + "}\n", StandardCharsets.UTF_8);
+        return probe;
     }
 
     // =========================================================================
@@ -1552,12 +1585,25 @@ public class DeclaredBodyCarrierProductionTest {
                 || manifests.manifests() == null) {
             return null;
         }
+        ExecutableLoweredProject produced = orchestrator.producedProject();
+        check(produced != null, testCase.name()
+            + ": the production compile exposes its read-only lowered project");
+        if (produced == null) {
+            return null;
+        }
+        boolean noDeclarationSeeds = orchestrator.hostDeclarationSurface().moduleIds().isEmpty();
+        check(noDeclarationSeeds,
+            testCase.name() + ": the fixture has no host declaration or FFI seeds");
+        if (!noDeclarationSeeds) {
+            return null;
+        }
         SemanticLowerer.ProjectLoweringResult result = SemanticLowerer.lowerProject(
-            productionInvocation(), built.input(), built.index(),
+            orchestrator.invocation(), built.input(), built.index(),
             manifests.manifests(), orchestrator.hostDeclarationSurface(),
             Map.of(), Map.of(),
-            BuiltinErrorDeclaration.synthesized(
-                built.input().modules().get(0).ast().span()),
+            BuiltinErrorDeclaration.synthesized(built.input().modules().stream()
+                .filter(module -> module.moduleId().equals(built.input().entryModule()))
+                .findFirst().orElseThrow().ast().span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW),
             Set.of());
@@ -1568,8 +1614,25 @@ public class DeclaredBodyCarrierProductionTest {
         if (result.project() == null) {
             return null;
         }
-        ModuleId entryModule = result.project().entryModule();
-        LoweredModuleUnit unit = result.project().modules().get(entryModule);
+        boolean sameClosure = produced.entryModule().equals(result.project().entryModule())
+            && produced.modules().keySet().equals(result.project().modules().keySet());
+        check(sameClosure,
+            testCase.name() + ": independent lowering preserves the production closure");
+        boolean deterministic = sameClosure;
+        for (Map.Entry<ModuleId, LoweredModuleUnit> module : produced.modules().entrySet()) {
+            LoweredModuleUnit independent = result.project().modules().get(module.getKey());
+            boolean sameUnit = independent != null
+                && SemanticIrDumper.dumpModuleText(module.getValue())
+                    .equals(SemanticIrDumper.dumpModuleText(independent));
+            check(sameUnit, testCase.name() + ": independent lowering is deterministic for "
+                + module.getKey());
+            deterministic &= sameUnit;
+        }
+        if (!deterministic) {
+            return null;
+        }
+        ModuleId entryModule = produced.entryModule();
+        LoweredModuleUnit unit = produced.modules().get(entryModule);
         StructuredBodyTable table = result.tables().get(entryModule);
         check(unit != null && table != null, testCase.name()
             + ": the lowering produced the entry unit and its block table");
@@ -1577,7 +1640,7 @@ public class DeclaredBodyCarrierProductionTest {
             return null;
         }
         checkDeclaredBodyCarriers(testCase, unit, table);
-        return new Lowered(result.project(), result.tables(), result.registries(),
+        return new Lowered(produced, result.tables(), result.registries(),
             unit, table);
     }
 
@@ -2198,8 +2261,8 @@ public class DeclaredBodyCarrierProductionTest {
      * release-owned lanes through their production async-entry surface and
      * publish the pinned console effects and the pinned result.
      */
-    private static void driveProductionAsync(Case testCase, Path project, Lowered lowered)
-            throws Exception {
+    private static void driveProductionAsync(Case testCase, Path project, Lowered lowered,
+                                             String probeClass) throws Exception {
         String marker = "DECLARED_BODY_ASYNC_RESULT:";
         String expectedResult = productionResultText(testCase.resultAtom());
         List<String> expectedStdout = new ArrayList<>(testCase.effects());
@@ -2247,42 +2310,22 @@ public class DeclaredBodyCarrierProductionTest {
             classes.resolve(JvmNames.classNameFor("main") + ".class"));
         check(artifactCompiled, testCase.name()
             + " [jvm]: the staged artifact is compiled for the async drive");
-        if (Files.isRegularFile(artifact) && entryId != null && artifactCompiled) {
-            String probeClass = "DeclaredBodyAsyncProbe_"
-                + UUID.randomUUID().toString().replace("-", "");
-            Path probe = jvmOut.resolve(probeClass + ".java");
-            Files.writeString(probe,
-                "public final class " + probeClass + " {\n"
-                    + "  public static void main(String[] args) {\n"
-                    + "    Main.dealMain();\n"
-                    + "    Object result = Main.ae" + entryId
-                    + "(\"-\", true, new Object[]{});\n"
-                    + "    System.out.println(\"" + marker + "\" + result);\n"
-                    + "    System.exit(0);\n"
-                    + "  }\n"
-                    + "}\n",
-                StandardCharsets.UTF_8);
-            ProcessBuilder javac = new ProcessBuilder("javac", "--release", "25",
-                "-proc:none", "-sourcepath", "", "-cp",
-                classes + File.pathSeparator + absoluteClasspath(),
-                "-d", classes.toString(), probe.toString());
-            javac.directory(jvmOut.toFile());
-            ProcessOutput compile = runProcess(javac);
-            check(compile.exit() == 0, testCase.name() + " [jvm]: the async probe "
-                + "compiles against the staged classes under javac --release 25 -proc:none: "
-                + compile.describe());
-            if (compile.exit() == 0) {
-                ProcessBuilder java = new ProcessBuilder("java", "-cp",
-                    classes + File.pathSeparator + absoluteClasspath(), probeClass);
-                java.directory(jvmOut.toFile());
-                ProcessOutput run = runProcess(java);
-                check(run.exit() == 0 && run.stderr().isEmpty(), testCase.name()
-                    + " [jvm]: the staged artifact executes the async case: "
-                    + run.describe());
-                check(run.stdout().equals(expectedStdout), testCase.name()
-                    + " [jvm]: the staged artifact publishes the pinned effects and "
-                    + "result " + expectedStdout + "; got " + run.stdout());
-            }
+        boolean probeCompiled = probeClass != null
+            && Files.isRegularFile(classes.resolve(probeClass + ".class"));
+        check(probeCompiled, testCase.name() + " [jvm]: the async probe compiled"
+            + " together with the staged artifact");
+        if (Files.isRegularFile(artifact) && entryId != null && artifactCompiled
+                && probeCompiled) {
+            ProcessBuilder java = new ProcessBuilder("java", "-cp",
+                classes + File.pathSeparator + absoluteClasspath(), probeClass);
+            java.directory(jvmOut.toFile());
+            ProcessOutput run = runProcess(java);
+            check(run.exit() == 0 && run.stderr().isEmpty(), testCase.name()
+                + " [jvm]: the staged artifact executes the async case: "
+                + run.describe());
+            check(run.stdout().equals(expectedStdout), testCase.name()
+                + " [jvm]: the staged artifact publishes the pinned effects and "
+                + "result " + expectedStdout + "; got " + run.stdout());
         }
     }
 
@@ -2419,8 +2462,14 @@ public class DeclaredBodyCarrierProductionTest {
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== Declared-Body Carrier Production Test (ISSUE-0757) ===\n");
-        for (Case testCase : CASES) {
-            runCase(testCase);
+        try (AsyncExportInvokerProductionTest.JavacPreparation preparation =
+                new AsyncExportInvokerProductionTest.JavacPreparation()) {
+            javacPreparation = preparation;
+            for (Case testCase : CASES) {
+                runCase(testCase);
+            }
+        } finally {
+            javacPreparation = null;
         }
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

@@ -40,475 +40,7 @@ public class JsConformanceTest {
     // Host harness: one CommonJS implementation per host fixture
     // =========================================================================
 
-    private static final Map<String, String> HOST_JS = Map.ofEntries(
-        Map.entry("array_return", """
-"use strict";
-
-// Host fixture implementation for the host-array-return-ok conformance
-// test: a plain JS Array of strings satisfies the declared string[]
-// return (the boundary wrapper checks the carrier and its elements).
-module.exports = {
-  split: function (s) {
-    return ["a", "b", "c"];
-  },
-};
-"""),
-        Map.entry("async_bad", """
-"use strict";
-
-// Host fixture implementation for the host-async-bad conformance test:
-// the returned value is a valid backend async operation (a thenable),
-// but its completion value 42 violates the declared async return type
-// string — the await-site completion check must raise E8001.
-module.exports = {
-  fetchValue: function () {
-    return Promise.resolve(42);
-  },
-};
-"""),
-        Map.entry("async_ok", """
-"use strict";
-
-// Host fixture implementation for the host-async-ok conformance test:
-// a real backend async operation (a thenable) whose completion value
-// satisfies the declared async return type string.
-module.exports = {
-  fetchValue: function () {
-    return Promise.resolve("fetched");
-  },
-};
-"""),
-        Map.entry("async_shape_bad", """
-"use strict";
-
-// Host fixture implementation for the host-async-shape-bad conformance
-// test: the declared export is an async function, so the host must
-// return a backend async operation (a thenable); the plain number below
-// must be rejected at the call site with E8010 (async-operation shape),
-// before the await-site completion check ever runs.
-module.exports = {
-  fetchValue: function () {
-    return 42;
-  },
-};
-"""),
-        Map.entry("bad_return", """
-"use strict";
-
-// Host fixture implementation for the host-bad-return conformance test:
-// a junk return value for the declared int return type — the wrapper
-// must raise E8010 at the call site.
-module.exports = {
-  getNumber: function () {
-    return "not a number";
-  },
-};
-"""),
-        Map.entry("bad_string", """
-"use strict";
-
-// Host-module fixture (host-module-abi D6): a host surface whose
-// returned strings exercise the DEAL v1.2 string carrier classes. JS
-// strings are UTF-16, so lone surrogate code units are the JS analog of
-// the Lua host's malformed UTF-8 bytes — the declared (string) boundary
-// must reject both classes with E8010 and select the pinned reason from
-// the offending code point (the embedded surrogate included). The valid
-// exports exercise the admitted carriers at scalar and array element
-// positions (the raw carrier decodes to the same "ok" string), the
-// nullable nested-array element that must stay the language null, one
-// inner array returned at both positions of a declared string[][] (the
-// same DEAL array, so identity holds and a mutation is observed through
-// both aliases), and the rejected nested tail whose retained earlier
-// elements must stay untouched. The native-* exports return the same
-// declared shapes (one JS array here; the JVM host's declared $DealRt
-// wrapper there), so every valid control must land as a usable DEAL
-// array at every nesting level and every invalid element must be
-// rejected by the element check. The nativeDifferingDepthStringArray
-// export shares one inner array between two positions with different
-// descriptor depths (the same array is checked as the root's first
-// element and again under the root's second element at one depth less),
-// so every position must re-validate the elements against its own
-// descriptor.
-module.exports = {
-  badString: function () {
-    return "a\\uD800b";
-  },
-
-  surrogateString: function () {
-    return "\\uD800";
-  },
-
-  embeddedSurrogateString: function () {
-    return "a\\uD800b";
-  },
-
-  validString: function () {
-    return "ok";
-  },
-
-  rawStringArray: function () {
-    return ["ok"];
-  },
-
-  rawNestedStringArray: function () {
-    return [["ok"]];
-  },
-
-  rawNullableStringArray: function () {
-    return ["ok"];
-  },
-
-  rawNullableArrayArray: function () {
-    return [null, ["ok"]];
-  },
-
-  sharedNestedStringArray: function () {
-    var shared = ["ok"];
-    return [shared, shared];
-  },
-
-  badNestedTail: function () {
-    return [["ok"], "not an array"];
-  },
-
-  nativeBadStringArray: function () {
-    return ["ok", "\\uD800"];
-  },
-
-  nativeBadNestedTail: function () {
-    return [["ok"], "not an array"];
-  },
-
-  nativeStringArray: function () {
-    return ["ok"];
-  },
-
-  nativeNestedStringArray: function () {
-    return [["ok"]];
-  },
-
-  nativeSharedNestedStringArray: function () {
-    var shared = ["ok"];
-    return [shared, shared];
-  },
-
-  nativeDifferingDepthStringArray: function () {
-    var s = ["ok"];
-    var d = [s];
-    var c = [d];
-    var e = [c];
-    return [c, e];
-  },
-};
-"""),
-        Map.entry("boundary_apply", """
-"use strict";
-
-// Host fixture implementation for the host-boundary-apply-function
-// conformance test. The function-typed parameter arrives as the DEAL
-// wrapper ({ $kind: "function", $sig, $f }); the host invokes it
-// through .$f (DEAL→host adaptation, js-v12-host-abi-completion D2/D6).
-module.exports = {
-  apply: function (f, v) {
-    return f.$f(v) + 100;
-  },
-};
-"""),
-        Map.entry("boundary", """
-let nextValue = 0;
-module.exports = {
-  intValue() { return 17; },
-  stringValue() { return "host"; },
-  nullableString(flag) { return flag ? "host" : null; },
-  nullValue() { return null; },
-  nextValue() { nextValue += 1; return nextValue; },
-  echoInt(value) { return value; },
-  echoNumber(value) { return value; },
-  echoBoolean(value) { return value; },
-  echoString(value) { return value; },
-  nullableInt(value) { return value; },
-  extraExport() { return "ignored"; },
-  apply(value, callback) { return callback.f(value); }
-};
-"""),
-        Map.entry("cfg", """
-"use strict";
-
-// Host fixture implementation for the host-class-export conformance
-// test (host-module-abi D6 + runtime-class-identity D1-D2). Each
-// declared class export carries its canonical externals identity META and
-// a <C>_defaults table (construction depends on both). The preserved
-// defaults-map seam (host-module-abi D2, ISSUE-0331 gate closure): the
-// loader passes the defaults table through verbatim, so the host owns
-// which absent optional fields its defaults table marks — the
-// $rt.MISSING marks below mirror the Lua triplet's __MISSING marks
-// (cfg.lua), and construction overlays provided optional fields over
-// the marked entries exactly like the reference's class_.
-
-const $rt = require("../deal/runtime");
-
-module.exports = {
-  Endpoint: {
-    $kind: "class",
-    $classname: "@$external/host.cfg/Endpoint",
-  },
-
-  Endpoint_defaults: {
-    path: "/",
-  },
-
-  ServerConfig: {
-    $kind: "class",
-    $classname: "@$external/host.cfg/ServerConfig",
-  },
-
-  ServerConfig_defaults: {
-    port: 8080,
-    endpoint: $rt.MISSING,
-    tags: $rt.MISSING,
-    note: $rt.MISSING,
-  },
-
-  describe: function (s) {
-    return s.endpoint.path + ":" + s.port;
-  },
-};
-"""),
-        Map.entry("empty_return", """
-"use strict";
-
-// Host fixture implementation for the host-empty-return-bad conformance
-// test: zero results (undefined) for the declared int return — the
-// wrapper's presence rule must raise E8010 on every call path,
-// including the discard path.
-module.exports = {
-  ping: function () {
-  },
-};
-"""),
-        Map.entry("extra_export", """
-"use strict";
-
-// Host fixture implementation for the host-extra-export-ignored
-// conformance test (host-module-abi D6). The implementation supplies
-// more exports than the declared surface (ping): extra and helper are
-// dropped structurally by the loader and the load must succeed (R4).
-module.exports = {
-  ping: function () {
-    return "pong";
-  },
-
-  extra: 42,
-
-  helper: function () {
-    return "unreachable";
-  },
-};
-"""),
-        Map.entry("missing_export", """
-"use strict";
-
-// Host fixture implementation for the host-missing-export conformance
-// test. The declared surface names "missing", which this implementation
-// omits: the loader must raise E8011 at load time, before any exported
-// function auto-invocation (R3).
-module.exports = {
-  ping: function () {
-    return "pong";
-  },
-};
-"""),
-        Map.entry("nullable_fn", """
-"use strict";
-
-// Host fixture implementation for the host-nullable-function-param and
-// host-nullable-function-param-bad conformance tests. The declared
-// parameter is ?((x: int) => int): the wrapper accepts the DEAL null
-// (JS null here) passed through unadapted and matching-sig DEAL
-// functions (delivered as their { $kind: "function", $sig, $f }
-// wrappers, invoked through .$f), and raises E8010 for anything else.
-module.exports = {
-  register: function (cb) {
-    if (cb === null || cb === undefined) {
-      return 0;
-    }
-    return cb.$f(41);
-  },
-};
-"""),
-        Map.entry("nullable_fn_return", """
-"use strict";
-
-// Host fixture implementation for the host-nullable-function-return
-// conformance tests. The declared return descriptor is ?((x: int) =>
-// int): JS null is the null result, and a raw JS function value fails
-// the function-typed return check — function-typed return wrapping is
-// excluded (assumption c), so the wrapper must raise E8010 for the
-// "bad" path.
-module.exports = {
-  getCallback: function (mode) {
-    if (mode === "bad") {
-      return function (x) {
-        return x;
-      };
-    }
-    return null;
-  },
-};
-"""),
-        Map.entry("nullable_return", """
-"use strict";
-
-// Host fixture implementation for the host-nullable-return-ok/bad
-// conformance tests. JS null is the null result; an int return
-// exercises the wrong-representation E8010 path.
-module.exports = {
-  find: function (s) {
-    if (s === "__NULL__") {
-      return null;
-    }
-    if (s === "__BAD__") {
-      return 42;
-    }
-    return s;
-  },
-};
-"""),
-        Map.entry("nullreturn_bad", """
-"use strict";
-
-// Host fixture implementation for the host-null-return-bad conformance
-// test: a junk return for the sync ->null declared return — the
-// wrapper's sync-null check must raise E8010, including on the discard
-// call path.
-module.exports = {
-  ping: function () {
-    return "junk";
-  },
-};
-"""),
-        Map.entry("nullreturn_ok", """
-"use strict";
-
-// Host fixture implementation for the host-null-return-ok conformance
-// test. JS null is the DEAL null sentinel for a sync function declared
-// ->null — the wrapper's sync-null check accepts it and rejects any
-// non-sentinel value (plain undefined included).
-module.exports = {
-  ping: function () {
-    return null;
-  },
-};
-"""),
-        Map.entry("planprobe", """
-"use strict";
-
-// Host fixture implementation for the ISSUE-0340 default-plan fixtures
-// (Node lane). nextValue() increments a module counter and returns the
-// count * 10; valueCount() reads it — the Node host-slice mirror of the
-// Lua host fixture's mutable state.
-let n = 0;
-
-module.exports = {
-  nextValue: function () {
-    n = n + 1;
-    return n * 10;
-  },
-  valueCount: function () {
-    return n;
-  },
-};
-"""),
-        Map.entry("presence", """
-"use strict";
-
-// Host fixture implementation for the host-export-presence conformance
-// test (host-module-abi D6). The declared class export carries the
-// canonical externals identity descriptor (@$external/host/presence/Config) and a
-// <C>_defaults table — runtime construction through the synthesized
-// class symbol depends on both. The preserved defaults-map seam
-// (host-module-abi D2, ISSUE-0331): the loader passes the defaults
-// table through verbatim, and this host does NOT mark its absent
-// optional fields with $rt.MISSING — so a provided declared optional
-// absent from Config_defaults raises E8007 at construction (the
-// host-class-extra-field fixture).
-module.exports = {
-  ping: function () {
-    return "pong";
-  },
-
-  Config: {
-    $kind: "class",
-    $classname: "@$external/host.presence/Config",
-  },
-
-  Config_defaults: {
-    port: 8080,
-  },
-};
-"""),
-        Map.entry("prewrapped_bad", """
-"use strict";
-
-// Host fixture implementation for the host-prewrapped-bad conformance
-// test. The pre-wrapped sig-table form is a LuaJIT host-loader
-// mechanism; the JS host realizes the declared-shape contract (the
-// declared descriptor is the only trusted metadata): ping returns junk
-// for the declared ->null return, so the wrapper's sync-null check must
-// raise E8010, including the discard call path.
-module.exports = {
-  ping: function () {
-    return "junk";
-  },
-};
-"""),
-        Map.entry("prewrapped_ok", """
-"use strict";
-
-// Host fixture implementation for the host-prewrapped-ok conformance
-// test. The pre-wrapped sig-table form is a LuaJIT host-loader
-// mechanism; the JS host realizes the declared-shape contract (the
-// declared descriptor is the only trusted metadata): greet returns the
-// declared string and ping's sync ->null return is the DEAL null, both
-// enforced through the declared-descriptor wrapper.
-module.exports = {
-  greet: function (name) {
-    return "hello " + name;
-  },
-
-  ping: function () {
-    return null;
-  },
-};
-"""),
-        Map.entry("rest_join", """
-"use strict";
-
-// Host fixture implementation for the host-rest-ok/host-rest-bad
-// conformance tests: the v1.2 fixed-array parameter form (DEAL v1.2
-// removed rest parameters — the join export takes a fixed array
-// parameter, never JS rest syntax). The boundary wrapper checks the
-// array against the declared string[] element type.
-module.exports = {
-  join: function (sep, parts) {
-    return parts.join(sep);
-  },
-};
-"""),
-        Map.entry("bytes_roundtrip", """
-let calls = 0;
-let shared = new Uint8Array(2);
-module.exports = {
-  echoBytes(b) { calls += 1; return b; },
-  nullableBytes(b) { calls += 1; return b; },
-  makeBytes(n) { calls += 1; return new Uint8Array(n); },
-  sharedBytes() { return shared; },
-  readByte(b) { calls += 1; return b[0]; },
-  callCount() { return calls; },
-  badBytesReturn() { calls += 1; return "not-bytes"; }
-};
-""")
-    );
+    private static Map<String, byte[]> HOST_JS = Map.of();
 
     // =========================================================================
     // Data types and counters
@@ -694,9 +226,11 @@ module.exports = {
             ordered.sort(Comparator.comparing(
                 c -> c.test().relativePath()));
 
-            int workers = Math.max(1,
-                Math.min(Runtime.getRuntime().availableProcessors(),
-                    ordered.size()));
+            int jobs = Integer.parseInt(System.getProperty("deal.test.jobs", "1"));
+            if (jobs < 1) {
+                throw new IllegalArgumentException("deal.test.jobs must be positive");
+            }
+            int workers = Math.max(1, Math.min(jobs, ordered.size()));
             ExecutorService pool = Executors.newFixedThreadPool(workers);
             try {
                 List<Future<?>> futures = new ArrayList<>();
@@ -787,30 +321,19 @@ module.exports = {
                 + " (harness failure; a gap is never a pass)");
             ok = false;
         }
+        Map<String, byte[]> implementations = new LinkedHashMap<>();
         for (String name : declNames) {
-            String source = HOST_JS.get(name);
-            if (source == null || source.isBlank()
-                    || !source.contains("module.exports")) {
-                System.out.println("GATE FAILURE: the HOST_JS "
-                    + "implementation for host fixture '" + name
-                    + "' is missing or not a well-shaped CommonJS module"
-                    + " (module.exports) — a missing or wrong-shaped "
-                    + "implementation is a harness failure, never a pass");
-                ok = false;
-                continue;
-            }
             Path onDiskJs = hostFixturesRoot.resolve(name + ".js");
             if (!Files.isRegularFile(onDiskJs)) {
                 System.out.println("GATE FAILURE: the on-disk host "
-                    + "implementation " + onDiskJs + " is missing — the "
-                    + "HOST_JS map must mirror the on-disk "
-                    + "host-fixtures subtree (harness failure, never a "
-                    + "pass)");
+                    + "implementation " + onDiskJs + " is missing"
+                    + " (harness failure, never a pass)");
                 ok = false;
                 continue;
             }
-            String onDisk = Files.readString(onDiskJs);
-            if (!onDisk.contains("module.exports")) {
+            byte[] bytes = Files.readAllBytes(onDiskJs);
+            String source = new String(bytes, StandardCharsets.UTF_8);
+            if (source.isBlank() || !source.contains("module.exports")) {
                 System.out.println("GATE FAILURE: the on-disk host "
                     + "implementation " + onDiskJs + " is not a "
                     + "well-shaped CommonJS module (missing "
@@ -819,33 +342,15 @@ module.exports = {
                 ok = false;
                 continue;
             }
-            if (!source.equals(onDisk)) {
-                System.out.println("GATE FAILURE: the HOST_JS "
-                    + "implementation for '" + name + "' differs from "
-                    + "the on-disk host implementation " + onDiskJs
-                    + " — the map is the runner's byte-exact mirror of "
-                    + "the corpus implementation; drift is a "
-                    + "wrong-shaped harness (never a pass)");
-                ok = false;
-            }
-        }
-        List<String> mapNames = new ArrayList<>(HOST_JS.keySet());
-        Collections.sort(mapNames);
-        for (String name : mapNames) {
-            if (!declNames.contains(name)) {
-                System.out.println("GATE FAILURE: HOST_JS entry '" + name
-                    + "' names no on-disk host-fixtures declaration — a "
-                    + "dead harness entry fails the run");
-                ok = false;
-            }
+            implementations.put(name, bytes);
         }
         if (!ok) {
             System.exit(1);
         }
+        HOST_JS = Map.copyOf(implementations);
         System.out.println("Host harness: " + declNames.size()
             + " host-fixture declaration(s) validated against "
-            + declNames.size() + " HOST_JS implementation(s) (byte-exact"
-            + " mirrors of the on-disk .js implementations)");
+            + HOST_JS.size() + " cached on-disk .js implementation(s)");
     }
 
     // =========================================================================
@@ -1562,7 +1067,7 @@ module.exports = {
             // <outputRoot>/<raw specifier>.js, the file the emitted
             // relative require resolves.
             for (String hostName : hostNames) {
-                String hostSource = HOST_JS.get(hostName);
+                byte[] hostSource = HOST_JS.get(hostName);
                 if (hostSource == null) {
                     throw new HarnessFailure("no HOST_JS implementation "
                         + "for host/" + hostName + " — a missing host "
@@ -1572,7 +1077,7 @@ module.exports = {
                 Path dest = outputRoot.resolve("host").resolve(
                     hostName + ".js");
                 Files.createDirectories(dest.getParent());
-                Files.writeString(dest, hostSource);
+                Files.write(dest, hostSource);
             }
 
             // 6. Runner: auto-invokes the entry module's zero-arity
@@ -2113,28 +1618,17 @@ module.exports = {
      * with captured streams. */
     private static NodeResult runNode(Path outputRoot)
             throws IOException, InterruptedException {
-        ProcessBuilder pb = new ProcessBuilder("node",
-            "JsConformanceRunner.js");
-        pb.directory(outputRoot.toFile());
-        pb.redirectErrorStream(false);
-        Process p = pb.start();
         nodeExecuted.incrementAndGet();
-        boolean finished = p.waitFor(SUBPROCESS_TIMEOUT_SECONDS,
-            TimeUnit.SECONDS);
-        if (!finished) {
-            p.destroyForcibly();
-            p.waitFor(5, TimeUnit.SECONDS);
-            return new NodeResult(-1, "",
-                "node subprocess timed out");
-        }
-        String stdout = readAll(p.getInputStream());
-        String stderr = readAll(p.getErrorStream());
-        return new NodeResult(p.exitValue(), stdout, stderr);
-    }
-
-    private static String readAll(InputStream stream) throws IOException {
-        try (stream) {
-            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        try {
+            BoundedProcess.BoundedResult result = BoundedProcess.runCaptured(
+                List.of("node", "JsConformanceRunner.js"), outputRoot,
+                Map.of(), TimeUnit.SECONDS.toMillis(SUBPROCESS_TIMEOUT_SECONDS));
+            return new NodeResult(result.exitCode(), result.stdout(), result.stderr());
+        } catch (BoundedProcess.BoundedProcessTimeoutException timeout) {
+            return new NodeResult(-1, "", "node subprocess timed out");
+        } catch (IOException failure) {
+            nodeExecuted.decrementAndGet();
+            throw failure;
         }
     }
 

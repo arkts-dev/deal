@@ -115,30 +115,10 @@ public class LoweringSupportTest {
             ReleaseConfiguration.releaseCapabilityRegistry());
     }
 
-    static void testProductionInvocationTimeDrive() throws Exception {
-        System.out.println("-- The release-owned production invocation of the"
-            + " time.nowMillis fixture: one artifact, the pinned E8004 terminal"
-            + " --");
-
-        Path tmp = Files.createTempDirectory("deal-manifest-production-");
-        try {
-            productionAccept(tmp.resolve("direct"), Map.of("main.deal", """
-                import * as time from "std/time"
-
-                export function main(): null {
-                  time.nowMillis();
-                  return null
-                }
-                """), "main.deal",
-                "the direct time.nowMillis() production drive", "E8004");
-        } finally {
-            deleteRecursively(tmp);
-        }
-    }
-
     private record ProductionObservation(boolean ok, List<CompilerDiagnostic> diagnostics,
                                          int semanticEmissions, boolean staged,
-                                         int exitCode, String runOutput) {
+                                         int exitCode, String runOutput,
+                                         RequirementManifestResult manifests) {
     }
 
     private static ProductionObservation productionAccept(Path tmp, Map<String, String> sources,
@@ -161,10 +141,17 @@ public class LoweringSupportTest {
         if (!ok) {
             ProductionObservation observation = new ProductionObservation(false,
                 orchestrator.diagnostics(), orchestrator.semanticEmissionCount(),
-                false, -1, "");
+                false, -1, "", orchestrator.requirementManifests());
             verifyProduction(observation, what, expectedFailureCode);
             return observation;
         }
+        ProductionObservation observation = runProduction(orchestrator, output);
+        verifyProduction(observation, what, expectedFailureCode);
+        return observation;
+    }
+
+    private static ProductionObservation runProduction(CompilationOrchestrator orchestrator,
+                                                        Path output) throws Exception {
         boolean staged = Files.exists(output.resolve("main.lua"));
         ProcessBuilder builder = new ProcessBuilder("luajit", "main.lua");
         builder.directory(output.toFile());
@@ -173,11 +160,9 @@ public class LoweringSupportTest {
         String runOutput = new String(process.getInputStream().readAllBytes(),
             java.nio.charset.StandardCharsets.UTF_8);
         int exitCode = process.waitFor();
-        ProductionObservation observation = new ProductionObservation(true,
-            orchestrator.diagnostics(), orchestrator.semanticEmissionCount(),
-            staged, exitCode, runOutput);
-        verifyProduction(observation, what, expectedFailureCode);
-        return observation;
+        return new ProductionObservation(true,
+            List.copyOf(orchestrator.diagnostics()), orchestrator.semanticEmissionCount(),
+            staged, exitCode, runOutput, orchestrator.requirementManifests());
     }
 
     private static void verifyProduction(ProductionObservation observation, String what,
@@ -321,6 +306,11 @@ public class LoweringSupportTest {
                       return null
                     }
                     """), "main.deal");
+            check(fixture.ok(), "the direct time fixture compiles for execution");
+            if (fixture.ok()) {
+                verifyProduction(runProduction(fixture.orchestrator(), tmp.resolve("build")),
+                    "the direct time.nowMillis() production drive", "E8004");
+            }
             RequirementManifestResult result = fixture.manifests();
             testSyntheticUnitCopy(result);
             testNoFrontendMutationAndRecompute(fixture);
@@ -1444,12 +1434,13 @@ public class LoweringSupportTest {
 
         Path tmp = Files.createTempDirectory("deal-manifest-e10-classlit");
         try {
-            RequirementManifestResult result = compileAndCompute(tmp,
+            ProductionObservation production = productionAccept(tmp,
                 Map.of("main.deal", """
                     export function main(): null {
                       throw { code: "TEST_FAIL", message: "boom" }
                     }
-                    """), "main.deal");
+                    """), "main.deal", "the builtin-Error-only E10 arm", "TEST_FAIL");
+            RequirementManifestResult result = production.manifests();
             if (result != null) {
                 check(manifestOf(result, "main").capabilities().contains(
                         SemanticCapability.CLASSES),
@@ -1458,12 +1449,6 @@ public class LoweringSupportTest {
                         + manifestOf(result, "main").capabilities());
             }
 
-            productionAccept(tmp.resolve("production"), Map.of("main.deal", """
-                export function main(): null {
-                  throw { code: "TEST_FAIL", message: "boom" }
-                }
-                """), "main.deal",
-                "the builtin-Error-only E10 arm", "TEST_FAIL");
         } finally {
             deleteRecursively(tmp);
         }
@@ -1825,7 +1810,6 @@ public class LoweringSupportTest {
         testE10UncalledDeclarationArm();
         testE10StoredFunctionExpressionArm();
         testBytesBearingMarkerDeterminism();
-        testProductionInvocationTimeDrive();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

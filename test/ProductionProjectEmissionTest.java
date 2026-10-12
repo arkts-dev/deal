@@ -565,6 +565,7 @@ public class ProductionProjectEmissionTest {
                     "the JVM artifact is the entry class named by classNameFor");
                 checkEq(Set.of("App.java"), jvmStager.stagedSet().relativePaths(),
                     "exactly one staged artifact and nothing else on the JVM");
+                jvmStager.publish();
             } finally {
                 jvmStager.discard();
             }
@@ -624,19 +625,9 @@ public class ProductionProjectEmissionTest {
     private static void testJvmToolchain(Fixture fixture) throws Exception {
         System.out.println("-- the staged JVM artifact compiles with javac --release "
             + "25 -proc:none and runs under java --");
-        Path out = fixture.root().resolve("out-arm");
+        Path out = fixture.root().resolve("jvm-out");
         Path classes = fixture.root().resolve("classes");
         {
-            PublicationStager stager = PublicationStager.forRoot(out);
-            try {
-                ProductionProjectEmission.Result result =
-                    emit(fixture, Backend.JVM, stager, false);
-                check(result.emitted(),
-                    "the JVM fixture emits: " + result.diagnostics());
-                stager.publish();
-            } finally {
-                stager.discard();
-            }
             Path source = out.resolve("App.java");
             check(Files.isRegularFile(source),
                 "the published JVM artifact exists at the pinned path");
@@ -651,7 +642,7 @@ public class ProductionProjectEmissionTest {
                 return;
             }
             ProcessOutcome run = runProcess(List.of("java", "-cp",
-                classpath + java.io.File.pathSeparator + classes, "App"),
+                classes + java.io.File.pathSeparator + classpath, "App"),
                 fixture.root());
             checkEq(0, run.exitCode(), "the published JVM artifact runs: "
                 + run.output());
@@ -1003,7 +994,7 @@ public class ProductionProjectEmissionTest {
                     + javacRun.output());
             if (javacRun.exitCode() == 0) {
                 ProcessOutcome jvmRun = runProcess(List.of("java", "-cp",
-                    classpath + java.io.File.pathSeparator + crossJvmClasses,
+                    crossJvmClasses + java.io.File.pathSeparator + classpath,
                     "AsyncCrossRunner"), cross.root());
                 checkEq(0, jvmRun.exitCode(),
                     "the cross-module await path executes under java: "
@@ -1110,7 +1101,7 @@ public class ProductionProjectEmissionTest {
                     + javacRun.output());
             if (javacRun.exitCode() == 0) {
                 ProcessOutcome jvmRun = runProcess(List.of("java", "-cp",
-                    classpath + java.io.File.pathSeparator + jvmClasses,
+                    jvmClasses + java.io.File.pathSeparator + classpath,
                     "AsyncWorkerRunner"), same.root());
                 checkEq(0, jvmRun.exitCode(),
                     "the same-module await path executes under java: "

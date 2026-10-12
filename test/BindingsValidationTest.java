@@ -612,133 +612,55 @@ public class BindingsValidationTest {
         checkerRejects("let x: int = (x = 1);", "E2001",
             "(a) the store-to-pre-init shape");
 
-        // (b) Size-1 self-recursion: the own-name arm (INIT is the
-        // immediate commit after CLOSURE_NEW).
-        testCellKindInvariant(validatedResult("function f(): null { let g: () => null = f; }",
-            "(b) size-1 self-recursion"));
-
-        // (c) Forward module-function body references: the
-        // module-init-completion arm.
-        validatedResult("""
-            function first(): null { let h: () => null = laterFn; }
+        SemanticLowerer.ValidationCoreResult result = validatedResult("""
+            function selfReference(): null { let g: () => null = selfReference; }
+            function forwardReference(): null { let h: () => null = laterFn; }
             function laterFn(): null {}
-            """,
-            "(c) forward module-function body references");
-
-        // (d) Group-member body loads: the group-publication arm; member
-        // cells are SHARED_CELL with no separate ALLOC/INIT.
-        testCellKindInvariant(validatedResult("""
             function even(): null { let oddRef: () => null = odd; }
             function odd(): null { let evenRef: () => null = even; }
-            """,
-            "(d) group-member body loads"));
-
-        // (e) The one-level parameter capture: the parameter-transfer
-        // entry dominates the closure creation (arm 2 at the creation
-        // site).
-        validatedResult("""
-            function f(p: int): null {
+            function parameterCapture(p: int): null {
               let g: () => null = function(): null { let read: int = p; };
             }
-            """,
-            "(e) the one-level parameter capture");
-
-        // (f) The catch-binding capture: the catch-entry transfer
-        // dominates the closure created in the catch block.
-        validatedResult("""
-            function f(): null {
+            function catchCapture(): null {
               try { let t = 1; }
               catch (e) { let g: () => null = function(): null { let copy = e; }; }
             }
-            """,
-            "(f) the catch-binding capture");
-
-        // (g) The FOR_EACH iteration-binding capture: the FOR_EACH
-        // per-iteration transfer dominates its body block through the
-        // structured edge.
-        testCellKindInvariant(validatedResult("""
-            function f(): null {
+            function iterationCapture(): null {
               for (let c: string of "ab") {
                 let g: () => null = function(): null { let read: string = c; };
               }
             }
-            """,
-            "(g) the FOR_EACH iteration-binding capture"));
-
-        // (h) Nested size-1 self-recursion: the own-name arm along the
-        // detaching chain.
-        validatedResult("""
-            function outer(): null {
+            function nestedSelfReference(): null {
               function g(): null { let copy: () => null = g; }
             }
-            """,
-            "(h) nested size-1 self-recursion");
-
-        // (i) The doubly-nested capture chain pinned by
-        // test/conformance/backend-runtime/closures/nested-closure-mutation.deal
-        // (runtime-ok across luajit/jvm/js): x's INIT in t's body
-        // dominates make's creation; the chain closes in t's body region
-        // (creation-site dominance transitively along the detaching
-        // chain). The fixture's call/return/throw constructs are outside
-        // this walk's window, so the equivalent chain over declared
-        // functions pins the same resolution shape.
-        validatedResult("""
-            function t(): null {
+            function nestedCaptureChain(): null {
               let x: int = 1;
               function make(): null {
                 let inner: () => null = function(): null { let read: int = x; };
               }
             }
-            """,
-            "(i) the doubly-nested nested-closure-mutation capture chain");
-
-        // (j) Structured child-block loads of ancestor bindings (R1):
-        // loads in the try and catch blocks resolve the ancestor ALLOC
-        // through the structured edges and are dominated by its INIT.
-        validatedResult("""
-            function f(): null {
+            function ancestorLoads(): null {
               let x = 1;
               try { let t = x; } catch (e) { let y = x; }
             }
-            """,
-            "(j) structured child-block loads of ancestor bindings");
-
-        // (k) Thunk-block captures of closures created inside thunks:
-        // the inner closure's capture resolves through the thunk's
-        // pinned capturedBindings and the chain closes at the
-        // FUNCTION_ADAPT creation site (R3).
-        validatedResult("""
-            function main(): null {
+            function thunkCapture(): null {
               let x = 1;
               let s: () => null = function(): null { let read: int = x; };
               let k: (a: int, b: int) => null = (s = function(): null { let read2: int = x; });
             }
-            """,
-            "(k) thunk-block captures of closures created inside thunks");
-
-        testCellKindInvariant(validatedResult(
-            "for (let i = 0; i < 3; i = i + 1) { let j = i; }",
-            "(l) the for-let counter's generation-0 references"));
-
-        validatedResult("""
-            function f(): null {
+            for (let i = 0; i < 3; i = i + 1) { let j = i; }
+            function forLetCapture(): null {
               for (let i = 0; i < 3; i = i + 1) {
                 let g: () => null = function(): null { let read: int = i; };
               }
             }
-            """,
-            "(l2) the for-let per-iteration closure capture");
-
-        // (m) VALUE-over-proof single loads: the proved binding's INIT
-        // precedes the load at the adaptation position (arm 1).
-        validatedResult("""
-            function main(): null {
+            function provedLoad(): null {
               let f: (x: int) => null = inner;
               let g: (a: int, b: int) => null = f;
             }
             function inner(x: int): null {}
-            """,
-            "(m) VALUE-over-proof single loads");
+            """, "the thirteen source-level positive shapes");
+        testCellKindInvariant(result);
     }
 
     // =========================================================================

@@ -9,6 +9,7 @@ import deal.codegen.lua.LuaJitAsyncExportInvocationException;
 import deal.codegen.lua.LuaJitAsyncExportInvoker;
 
 import java.io.File;
+import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,6 +19,12 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
+
+import javax.tools.DiagnosticCollector;
+import javax.tools.JavaCompiler;
+import javax.tools.JavaFileObject;
+import javax.tools.StandardJavaFileManager;
+import javax.tools.ToolProvider;
 
 /**
  * The public production async-export drive (ISSUE-0749): every scenario
@@ -62,6 +69,7 @@ public class AsyncExportInvokerProductionTest {
 
     private static int passed = 0;
     private static int failed = 0;
+    private static JavacPreparation javacPreparation;
 
     private static void check(boolean condition, String message) {
         if (condition) {
@@ -806,23 +814,28 @@ public class AsyncExportInvokerProductionTest {
     public static void main(String[] args) throws Exception {
         System.out.println("=== Async-Export Invoker Production Tests (ISSUE-0749) ===\n");
 
-        testValueSevenBothTargets();
-        testNullAndContainerCompletionsBothTargets();
-        testNumericReadCompletionsBothTargets();
-        testEmptyArrayCompletionsBothTargets();
-        testGraphCompletionsBothTargets();
-        testParsedJsonCompletionsBothTargets();
-        testAbsentAndNullSlotsBothTargets();
-        testNonEncodableCarrierCompletionsBothTargets();
-        testRepresentationFailureBothTargets();
-        testDelayedHostCompletionBothTargets();
-        testTypedCompletionRejectionBothTargets();
-        testUnchangedErrorFieldsBothTargets();
-        testLineTerminatorSourcePathBothTargets();
-        testInitializationAndMainOnceBothTargets();
-        testParameterizedPublishedWrapper();
-        testDealErrorEnvelopeProjection();
-        testSharedProtocolAndPackagedRuntime();
+        try (JavacPreparation preparation = new JavacPreparation()) {
+            javacPreparation = preparation;
+            testValueSevenBothTargets();
+            testNullAndContainerCompletionsBothTargets();
+            testNumericReadCompletionsBothTargets();
+            testEmptyArrayCompletionsBothTargets();
+            testGraphCompletionsBothTargets();
+            testParsedJsonCompletionsBothTargets();
+            testAbsentAndNullSlotsBothTargets();
+            testNonEncodableCarrierCompletionsBothTargets();
+            testRepresentationFailureBothTargets();
+            testDelayedHostCompletionBothTargets();
+            testTypedCompletionRejectionBothTargets();
+            testUnchangedErrorFieldsBothTargets();
+            testLineTerminatorSourcePathBothTargets();
+            testInitializationAndMainOnceBothTargets();
+            testParameterizedPublishedWrapper();
+            testDealErrorEnvelopeProjection();
+            testSharedProtocolAndPackagedRuntime();
+        } finally {
+            javacPreparation = null;
+        }
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -1642,6 +1655,38 @@ public class AsyncExportInvokerProductionTest {
                            Path classes) {
     }
 
+    static final class JavacPreparation implements AutoCloseable {
+        private final JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        private final StandardJavaFileManager fileManager;
+        private final String classpath = absoluteClasspath();
+
+        JavacPreparation() {
+            if (compiler == null) {
+                throw new IllegalStateException("no system Java compiler available");
+            }
+            fileManager = compiler.getStandardFileManager(null, null,
+                StandardCharsets.UTF_8);
+        }
+
+        boolean compile(List<Path> sources, Path classes, StringWriter messages) {
+            DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
+            Boolean compiled = compiler.getTask(messages, fileManager, diagnostics,
+                List.of("--release", "25", "-proc:none", "-encoding", "UTF-8",
+                    "-sourcepath", "", "-cp", classes + File.pathSeparator + classpath,
+                    "-d", classes.toString()), null,
+                fileManager.getJavaFileObjectsFromPaths(sources)).call();
+            for (var diagnostic : diagnostics.getDiagnostics()) {
+                messages.append(diagnostic.toString()).append('\n');
+            }
+            return Boolean.TRUE.equals(compiled);
+        }
+
+        @Override
+        public void close() throws java.io.IOException {
+            fileManager.close();
+        }
+    }
+
     /**
      * Compiles one fixture project through the public {@code deal compile}
      * entry, then stages the target's host implementation: the LuaJIT lane
@@ -1687,17 +1732,18 @@ public class AsyncExportInvokerProductionTest {
         }
         Path classes = root.resolve("classes");
         Files.createDirectories(classes);
-        List<String> argv = new ArrayList<>(List.of("javac", "--release", "25",
-            "-proc:none", "-cp", absoluteClasspath(), "-d", classes.toString(),
-            root.resolve("out/Main.java").toAbsolutePath().toString()));
+        List<Path> sources = new ArrayList<>(List.of(root.resolve("out/Main.java")));
         if (hostSource != null) {
-            argv.add(root.resolve("host/HostProbe.java").toAbsolutePath()
-                .toString());
+            sources.add(root.resolve("host/HostProbe.java"));
         }
-        ProcessOutcome compiled = runProcess(argv, root);
-        checkEq(0, compiled.exitCode(),
-            name + ": the emitted JVM artifact compiles with javac: "
-                + compiled.output());
+        StringWriter messages = new StringWriter();
+        boolean compiled = javacPreparation.compile(sources, classes, messages);
+        check(compiled, name + ": the emitted JVM artifact compiles with javac: "
+            + messages);
+        if (!compiled) {
+            throw new IllegalStateException(name + ": the emitted JVM artifact did not"
+                + " compile: " + messages);
+        }
         return new Project(root, backend, classes.resolve("Main.class"), classes);
     }
 

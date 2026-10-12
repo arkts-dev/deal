@@ -12,11 +12,13 @@ import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * The lane-level dangling-identity guard (ISSUE-0694; design source
@@ -404,22 +406,22 @@ public final class ProducedProjectIdentityAudit {
      * boundary as its return boundary. A dynamic callee's recorded return
      * cells are not a statically materialized invocation.
      */
-    private static boolean staticallyMaterializes(SemanticOp op, OpId boundaryOpId) {
+    private static OpId staticallyMaterializedBoundary(SemanticOp op) {
         return switch (op.kind()) {
             case CALL -> op.payload() instanceof KindPayload.CallPayload call
                 && !(call.callee() instanceof KindPayload.CallCallee.Dynamic)
-                && boundaryOpId.equals(call.returnBoundaryOpId());
+                ? call.returnBoundaryOpId() : null;
             case ASYNC_START -> op.payload()
                     instanceof KindPayload.AsyncStartPayload start
                 && !(start.callee() instanceof KindPayload.CallCallee.Dynamic)
-                && boundaryOpId.equals(start.returnBoundaryOpId());
+                ? start.returnBoundaryOpId() : null;
             case CALLBACK_INVOKE -> op.payload()
                     instanceof KindPayload.CallbackInvokePayload callback
-                && boundaryOpId.equals(callback.returnBoundaryOpId());
+                ? callback.returnBoundaryOpId() : null;
             case EXTERNAL_ENTRY -> op.payload()
                     instanceof KindPayload.ExternalEntryPayload entry
-                && boundaryOpId.equals(entry.returnBoundaryOpId());
-            default -> false;
+                ? entry.returnBoundaryOpId() : null;
+            default -> null;
         };
     }
 
@@ -432,6 +434,7 @@ public final class ProducedProjectIdentityAudit {
 
         private final Map<OpId, SemanticOp> byId = new LinkedHashMap<>();
         private final Map<OpId, Integer> emitted = new LinkedHashMap<>();
+        private final Set<OpId> staticReturnBoundaries = new HashSet<>();
 
         private static Closure of(ExecutableLoweredProject project) {
             Closure closure = new Closure();
@@ -439,6 +442,12 @@ public final class ProducedProjectIdentityAudit {
                 for (SemanticOp op : unit.ops()) {
                     closure.byId.putIfAbsent(op.opId(), op);
                     closure.emitted.merge(op.opId(), 1, Integer::sum);
+                }
+            }
+            for (SemanticOp op : closure.byId.values()) {
+                OpId boundaryId = staticallyMaterializedBoundary(op);
+                if (boundaryId != null) {
+                    closure.staticReturnBoundaries.add(boundaryId);
                 }
             }
             return closure;
@@ -449,13 +458,7 @@ public final class ProducedProjectIdentityAudit {
          * boundary as its return boundary (a closure-wide witness).
          */
         private boolean staticallyMaterializes(OpId boundaryOpId) {
-            for (SemanticOp op : byId.values()) {
-                if (ProducedProjectIdentityAudit.staticallyMaterializes(op,
-                        boundaryOpId)) {
-                    return true;
-                }
-            }
-            return false;
+            return staticReturnBoundaries.contains(boundaryOpId);
         }
     }
 }

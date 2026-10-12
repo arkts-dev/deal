@@ -1642,36 +1642,56 @@ public class CheckerTest {
             "the await invalidates the shadowed refinement; the block exit "
                 + "must not restore it");
 
-        CheckerOutput restored = checkProgram(
-            "export function run(): null {\n" +
-            "  let x: string | null = \"ok\";\n" +
-            "  if (x !== null) {\n" +
-            "    {\n" +
-            "      let x: int = 0;\n" +
-            "    }\n" +
-            "    let s: string = x;\n" +
-            "  }\n" +
-            "  return null;\n" +
-            "}"
-        );
+        CheckerOutput restored = checkProgram("""
+            async function positiveTick(): null { return null; }
+            export function restoredBlock(): null {
+              let x: string | null = "ok";
+              if (x !== null) {
+                { let x: int = 0; }
+                let s: string = x;
+              }
+              return null;
+            }
+            export async function nestedAwait(): null {
+              let x: string | null = "ok";
+              if (x !== null) {
+                {
+                  let x: int = 0;
+                  let f = async function(): null { await positiveTick(); return null; };
+                }
+                let s: string = x;
+              }
+              return null;
+            }
+            export function restoredLoop(): null {
+              let x: string | null = "ok";
+              if (x !== null) {
+                {
+                  let x: int = 0;
+                  for (let n: int of [1]) { let z: int = n; }
+                }
+                let s: string = x;
+              }
+              return null;
+            }
+            export async function nestedLoopAwait(): null {
+              let x: string | null = "ok";
+              if (x !== null) {
+                {
+                  let x: int = 0;
+                  for (let n: int of [1]) {
+                    let f = async function(): null { await positiveTick(); return null; };
+                  }
+                }
+                let s: string = x;
+              }
+              return null;
+            }
+            """);
         assertNoErrors(restored,
             "without an await the block exit restores the enclosing refinement");
 
-        CheckerOutput nested = checkProgram(
-            "async function tick(): null { return null; }\n" +
-            "export async function run(): null {\n" +
-            "  let x: string | null = \"ok\";\n" +
-            "  if (x !== null) {\n" +
-            "    {\n" +
-            "      let x: int = 0;\n" +
-            "      let f = async function(): null { await tick(); return null; };\n" +
-            "    }\n" +
-            "    let s: string = x;\n" +
-            "  }\n" +
-            "  return null;\n" +
-            "}"
-        );
-        assertNoErrors(nested,
+        assertNoErrors(restored,
             "an await inside a nested function body is scoped to that function");
 
         CheckerOutput loopAwait = checkProgram(
@@ -1728,40 +1748,11 @@ public class CheckerTest {
             "an await inside a C-style for body invalidates the enclosing "
                 + "refinements; the loop exit must not restore them");
 
-        CheckerOutput loopRestored = checkProgram(
-            "export function run(): null {\n" +
-            "  let x: string | null = \"ok\";\n" +
-            "  if (x !== null) {\n" +
-            "    {\n" +
-            "      let x: int = 0;\n" +
-            "      for (let n: int of [1]) { let z: int = n; }\n" +
-            "    }\n" +
-            "    let s: string = x;\n" +
-            "  }\n" +
-            "  return null;\n" +
-            "}"
-        );
-        assertNoErrors(loopRestored,
+        assertNoErrors(restored,
             "without an await the loop exit keeps the shadow snapshot "
                 + "restorable");
 
-        CheckerOutput nestedLoop = checkProgram(
-            "async function tick(): null { return null; }\n" +
-            "export async function run(): null {\n" +
-            "  let x: string | null = \"ok\";\n" +
-            "  if (x !== null) {\n" +
-            "    {\n" +
-            "      let x: int = 0;\n" +
-            "      for (let n: int of [1]) {\n" +
-            "        let f = async function(): null { await tick(); return null; };\n" +
-            "      }\n" +
-            "    }\n" +
-            "    let s: string = x;\n" +
-            "  }\n" +
-            "  return null;\n" +
-            "}"
-        );
-        assertNoErrors(nestedLoop,
+        assertNoErrors(restored,
             "an await inside a nested function body stays scoped to that "
                 + "function even when the body sits inside a loop");
     }
@@ -3324,8 +3315,6 @@ public class CheckerTest {
         out = checkProgram("let n: int = 1; let s: string = `x${n}`;");
         assertError(out, "E3016", "template interpolation of int is not string");
     }
-
-    /** A function TYPE annotation using the removed rest arm is E1047. */
 
     /**
      * The bytes intrinsic sits at the bottom of the spec's name

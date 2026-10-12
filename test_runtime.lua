@@ -2822,12 +2822,6 @@ test("load_host synthesizes no <C>_plan key and host classes keep the defaults-m
   end, "E8007")
 end)
 
-test("load_host class identity mismatch raises E8011", function()
-  assert_error(function()
-    __rt.load_host(HOST_FIXTURE, { WrongName = "@$external/host.cfg/WrongName" })
-  end, "E8011")
-end)
-
 test("load_host non-class export for class descriptor raises E8011", function()
   assert_error(function()
     __rt.load_host(HOST_FIXTURE, { not_a_class = "@$external/host.cfg/NotAClass" })

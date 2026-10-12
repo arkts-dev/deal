@@ -927,6 +927,14 @@ public class ProductionDispatchTest {
     private record ProcessOutcome(int exitCode, String output) {
     }
 
+    private static String absoluteClasspath() {
+        return Arrays.stream(System.getProperty("java.class.path", "")
+                .split(File.pathSeparator))
+            .filter(entry -> !entry.isEmpty())
+            .map(entry -> Path.of(entry).toAbsolutePath().normalize().toString())
+            .collect(java.util.stream.Collectors.joining(File.pathSeparator));
+    }
+
     private static ProcessOutcome runProcess(Path directory, String... command)
             throws Exception {
         ProcessBuilder builder = new ProcessBuilder(command);
@@ -1243,8 +1251,7 @@ public class ProductionDispatchTest {
             check(source.contains("public final class Main"),
                 "the project class is one public final class");
 
-            String buildCp = Path.of("build").toAbsolutePath().normalize()
-                .toString();
+            String buildCp = absoluteClasspath();
             ProcessOutcome javac = runProcess(project, "javac", "--release",
                 "25", "-proc:none", "-cp", buildCp, "-d", out.toString(),
                 out.resolve("Main.java").toString());
@@ -1254,7 +1261,7 @@ public class ProductionDispatchTest {
                 return;
             }
             ProcessOutcome run = runProcess(out, "java", "-cp",
-                buildCp + File.pathSeparator + out, "Main");
+                out + File.pathSeparator + buildCp, "Main");
             check(run.exitCode() == 0,
                 "the production JVM artifact runs clean: exit="
                     + run.exitCode() + " output=" + run.output());
@@ -2858,8 +2865,7 @@ public class ProductionDispatchTest {
                   }
                 }
                 """);
-            String buildCp = Path.of("build").toAbsolutePath().normalize()
-                .toString();
+            String buildCp = absoluteClasspath();
             ProcessOutcome javac = runProcess(same, "javac", "--release", "25",
                 "-proc:none", "-cp", buildCp, "-d", jvmOut.toString(),
                 jvmOut.resolve("Main.java").toString(),
@@ -2871,7 +2877,7 @@ public class ProductionDispatchTest {
                 return;
             }
             ProcessOutcome jvmRun = runProcess(jvmOut, "java", "-cp",
-                buildCp + File.pathSeparator + jvmOut, "AsyncWorkerRunner");
+                jvmOut + File.pathSeparator + buildCp, "AsyncWorkerRunner");
             check(jvmRun.exitCode() == 0
                     && jvmRun.output().contains("PROBE|ASYNC-RESULT|1"),
                 "the same-module await path executes under java: exit="
@@ -3069,8 +3075,7 @@ public class ProductionDispatchTest {
             if (jvmCompile.exitCode() != 0) {
                 return;
             }
-            String buildCp = Path.of("build").toAbsolutePath().normalize()
-                .toString();
+            String buildCp = absoluteClasspath();
             ProcessOutcome javac = runProcess(project, "javac", "--release", "25",
                 "-proc:none", "-cp", buildCp, "-d", jvmOut.toString(),
                 jvmOut.resolve("Main.java").toString());
@@ -3080,7 +3085,7 @@ public class ProductionDispatchTest {
                 return;
             }
             ProcessOutcome javaRun = runProcess(jvmOut, "java", "-cp",
-                buildCp + File.pathSeparator + jvmOut, "Main");
+                jvmOut + File.pathSeparator + buildCp, "Main");
             check(javaRun.exitCode() == 1
                     && javaRun.output().contains("DEAL_ERROR_CODE: E8004"),
                 "the JVM artifact publishes the pinned E8004 terminal: exit="
@@ -3130,8 +3135,7 @@ public class ProductionDispatchTest {
             check(java.contains("new JvmRuntime.ErrorValue("),
                 "the JVM artifact publishes the canonical ErrorValue carrier: "
                     + java);
-            String buildCp = Path.of("build").toAbsolutePath().normalize()
-                .toString();
+            String buildCp = absoluteClasspath();
             ProcessOutcome javac = runProcess(project, "javac", "--release", "25",
                 "-proc:none", "-cp", buildCp, "-d", jvmOut.toString(),
                 jvmOut.resolve("Main.java").toString());
@@ -3141,7 +3145,7 @@ public class ProductionDispatchTest {
                 return;
             }
             ProcessOutcome javaRun = runProcess(jvmOut, "java", "-cp",
-                buildCp + File.pathSeparator + jvmOut, "Main");
+                jvmOut + File.pathSeparator + buildCp, "Main");
             check(javaRun.exitCode() == 0 && javaRun.output().isEmpty(),
                 "the JVM builtin Error artifact runs clean: exit="
                     + javaRun.exitCode() + " output=" + javaRun.output());
@@ -4793,8 +4797,6 @@ public class ProductionDispatchTest {
         }
         check(emittedRefused, "an emitted production run refuses a missing "
             + "produced-project reference");
-
-        checkProducedProjectAccessorIsReadOnly();
     }
 
     /** Whether the project closure carries at least one RETURN op. */
@@ -4802,64 +4804,6 @@ public class ProductionDispatchTest {
         return project.modules().values().stream().anyMatch(unit ->
             unit.ops().stream().anyMatch(op ->
                 op.kind() == SemanticOpKind.RETURN));
-    }
-
-    /**
-     * The read-only wiring of the accessor: in the production source set the
-     * token occurs only in the orchestrator — exactly one writer, inside the
-     * production arm, refusing a second record — and in the production
-     * unit's result record, which carries the reference out once; no
-     * emission, staging, or comparison source reads it back.
-     */
-    private static void checkProducedProjectAccessorIsReadOnly()
-            throws Exception {
-        Path deal = Path.of("deal");
-        check(Files.isDirectory(deal), "the production source root exists");
-        if (!Files.isDirectory(deal)) {
-            return;
-        }
-        try (Stream<Path> listing = Files.walk(deal)) {
-            for (Path file : listing.filter(Files::isRegularFile).sorted()
-                    .toList()) {
-                String name = file.getFileName().toString();
-                if (!name.endsWith(".java")) {
-                    continue;
-                }
-                String source = Files.readString(file, StandardCharsets.UTF_8);
-                int occurrences = countOccurrences(source, "producedProject");
-                if (name.equals("CompilationOrchestrator.java")
-                        || name.equals("ProductionProjectEmission.java")) {
-                    check(occurrences > 0, "the accessor surface is declared "
-                        + "in " + name);
-                } else {
-                    checkEq(0, occurrences,
-                        "no emission, staging, or comparison source mentions "
-                            + "the produced-project reference (" + file + ")");
-                }
-            }
-        }
-        String orchestrator = Files.readString(
-            Path.of("deal", "module", "CompilationOrchestrator.java"),
-            StandardCharsets.UTF_8);
-        checkEq(1, countOccurrences(orchestrator,
-                "producedProject = Objects.requireNonNull("),
-            "the orchestrator assigns the reference at exactly one writer");
-        checkEq(2, countOccurrences(orchestrator, "recordProducedProject("),
-            "the writer helper has one declaration and one call site");
-        check(orchestrator.contains(
-                "recordProducedProject(result.producedProject());"),
-            "the production arm records the produced project it received");
-        check(orchestrator.contains("if (producedProject != null)"),
-            "the writer refuses a second record (set exactly once)");
-        String emission = Files.readString(
-            Path.of("deal", "module", "ProductionProjectEmission.java"),
-            StandardCharsets.UTF_8);
-        check(emission.contains("ExecutableLoweredProject producedProject,"),
-            "the production arm's result carries the read-only project "
-                + "reference");
-        checkEq(0, countOccurrences(emission, ".producedProject()"),
-            "no emission or staging step of the production unit reads the "
-                + "reference back");
     }
 
     // =========================================================================

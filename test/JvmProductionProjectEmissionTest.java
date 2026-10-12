@@ -113,7 +113,9 @@ public class JvmProductionProjectEmissionTest {
         List<SemanticRequirementManifest> manifests,
         HostDeclarationSurface surface,
         Map<ModuleId, FfiGeneratedModule> externCModules,
-        Map<ModuleId, CanonicalModuleIdentity> declarationIdentities) {
+        Map<ModuleId, CanonicalModuleIdentity> declarationIdentities,
+        ExecutableLoweredProject producedProject,
+        JvmSemanticEmitter.EmissionResult emission) {
     }
 
     private record Baseline(
@@ -124,11 +126,7 @@ public class JvmProductionProjectEmissionTest {
 
     private static Baseline prepare(Fixture fixture) {
         SemanticLowerer.ProjectLoweringResult result = lower(fixture);
-        JvmSemanticEmitter.EmissionResult emission = result.project() == null ? null
-            : JvmSemanticEmitter.emitProductionProject(result.project(), result.tables(),
-                result.registries(),
-                JvmBackend.classNameFor(result.project().entryModule().path()),
-                fixture.surface());
+        JvmSemanticEmitter.EmissionResult emission = fixture.emission();
         return new Baseline(result, fixture.surface(), emission);
     }
 
@@ -160,7 +158,8 @@ public class JvmProductionProjectEmissionTest {
         Path entry = root.resolve(entryRelative).toAbsolutePath();
         Path output = root.resolve("out").toAbsolutePath();
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(entry, output,
-            false, null, List.of(root.resolve("src").toAbsolutePath()), null);
+            false, false, false, false, deal.codegen.Backend.JVM, null,
+            List.of(root.resolve("src").toAbsolutePath()), null, null, invocation());
         boolean compiled = orchestrator.compile();
         CheckedProjectBuildResult built = orchestrator.checkedProject();
         RequirementManifestResult manifests = orchestrator.requirementManifests();
@@ -172,9 +171,13 @@ public class JvmProductionProjectEmissionTest {
             throw new IllegalStateException("the fixture project did not build: " + detail
                 + " / " + orchestrator.diagnostics());
         }
+        ExecutableLoweredProject produced = orchestrator.producedProject();
+        String className = JvmBackend.classNameFor(produced.entryModule().path());
         return new Fixture(root, built.input(), built.index(), manifests.manifests(),
             orchestrator.hostDeclarationSurface(), new LinkedHashMap<>(),
-            new LinkedHashMap<>());
+            new LinkedHashMap<>(), produced, new JvmSemanticEmitter.EmissionResult(
+                className, Files.readString(output.resolve(className + ".java"),
+                    StandardCharsets.UTF_8)));
     }
 
     /** The one project lowering over the real checked project. */
@@ -498,11 +501,16 @@ public class JvmProductionProjectEmissionTest {
             Path classes = workspace.resolve("classes");
             Files.createDirectories(classes);
             String classpath = absoluteClasspath();
+            String driverName = "JvmProductionProjectProbe_"
+                + java.util.UUID.randomUUID().toString().replace("-", "");
+            Path driver = workspace.resolve(driverName + ".java");
+            Files.writeString(driver, probeSource(className, driverName, modules, entries),
+                StandardCharsets.UTF_8);
             ProcessOutcome javacRun = runProcess(List.of("javac", "--release", "25",
-                "-proc:none", "-cp", classpath, "-d", classes.toString(),
-                source.toAbsolutePath().toString()), workspace);
+                "-proc:none", "-sourcepath", "", "-cp", classpath, "-d", classes.toString(),
+                source.toAbsolutePath().toString(), driver.toAbsolutePath().toString()), workspace);
             check(javacRun.exitCode() == 0,
-                "the production artifact compiles with javac --release 25 -proc:none: "
+                "the production artifact and surface probe compile with javac --release 25 -proc:none: "
                     + javacRun.output());
             if (javacRun.exitCode() != 0) {
                 return;
@@ -510,7 +518,7 @@ public class JvmProductionProjectEmissionTest {
 
             // The artifact's own main: exit 0, empty output, no trace line.
             ProcessOutcome direct = runProcess(List.of("java", "-cp",
-                classpath + java.io.File.pathSeparator + classes, className), workspace);
+                classes + java.io.File.pathSeparator + classpath, className), workspace);
             check(direct.exitCode() == 0,
                 "the executed artifact exits 0: exit=" + direct.exitCode() + " "
                     + direct.output());
@@ -524,20 +532,8 @@ public class JvmProductionProjectEmissionTest {
             // The surface probe: the entry module's main drive runs once,
             // both per-module surfaces hold their declaration-order exports,
             // and a repeated dealMain() drive re-runs no initialized module.
-            String driverName = "JvmProductionProjectProbe";
-            Path driver = workspace.resolve(driverName + ".java");
-            Files.writeString(driver, probeSource(className, driverName, modules, entries),
-                StandardCharsets.UTF_8);
-            ProcessOutcome probeJavac = runProcess(List.of("javac", "--release", "25",
-                "-proc:none", "-cp", classpath + java.io.File.pathSeparator + classes.toString(),
-                "-d", classes.toString(), driver.toAbsolutePath().toString()), workspace);
-            check(probeJavac.exitCode() == 0,
-                "the surface probe compiles: " + probeJavac.output());
-            if (probeJavac.exitCode() != 0) {
-                return;
-            }
             ProcessOutcome probe = runProcess(List.of("java", "-cp",
-                classpath + java.io.File.pathSeparator + classes, driverName), workspace);
+                classes + java.io.File.pathSeparator + classpath, driverName), workspace);
             check(probe.exitCode() == 0 && probe.stdout().contains("PROBE-OK"),
                 "the two per-module surfaces hold their declaration-order exports after "
                     + "the run, the entry main ran exactly once, and a repeated "
@@ -695,16 +691,9 @@ public class JvmProductionProjectEmissionTest {
             HOST_ERROR_APP_SOURCE, "src/app.deal");
         Path workspace = Files.createTempDirectory("jvm-production-project-hosterror");
         try {
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
-            if (result.project() == null) {
-                fail("the host-error fixture lowers: " + result.diagnostics());
-                return;
-            }
-            ExecutableLoweredProject project = result.project();
+            ExecutableLoweredProject project = fixture.producedProject();
             String className = JvmBackend.classNameFor(project.entryModule().path());
-            JvmSemanticEmitter.EmissionResult emission =
-                JvmSemanticEmitter.emitProductionProject(project, result.tables(),
-                    result.registries(), className, fixture.surface());
+            JvmSemanticEmitter.EmissionResult emission = fixture.emission();
             Path source = workspace.resolve(className + ".java");
             Files.writeString(source, emission.source(), StandardCharsets.UTF_8);
             SemanticOp arun = asyncEntry(project.modules().get(new ModuleId("app")),
@@ -733,7 +722,7 @@ public class JvmProductionProjectEmissionTest {
                 return;
             }
             ProcessOutcome run = runProcess(List.of("java", "-cp",
-                classpath + java.io.File.pathSeparator + classes, "HostProbe"),
+                classes + java.io.File.pathSeparator + classpath, "HostProbe"),
                 workspace);
             checkEq(0, run.exitCode(), "the host-error probe exits 0: "
                 + run.output());
@@ -1105,7 +1094,7 @@ public class JvmProductionProjectEmissionTest {
                 return;
             }
             ProcessOutcome direct = runProcess(List.of("java", "-cp",
-                classpath + java.io.File.pathSeparator + classes, "Library"), workspace);
+                classes + java.io.File.pathSeparator + classpath, "Library"), workspace);
             checkEq(0, direct.exitCode(),
                 "the non-entry artifact runs its module walk and exits 0: "
                     + direct.output());
@@ -1126,19 +1115,12 @@ public class JvmProductionProjectEmissionTest {
         Fixture fixture = compileProject(OVERFLOW_SOURCE, "src/main.deal");
         Path workspace = Files.createTempDirectory("jvm-production-project-overflow");
         try {
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
-            if (result.project() == null) {
-                fail("the overflow fixture project lowers: " + result.diagnostics());
-                return;
-            }
-            ExecutableLoweredProject project = result.project();
+            ExecutableLoweredProject project = fixture.producedProject();
             checkEq(List.of(new ModuleId("main")), List.copyOf(project.modules().keySet()),
                 "the overflow fixture is the single entry module");
             String className = JvmBackend.classNameFor(project.entryModule().path());
             checkEq("Main", className, "the overflow entry class name is Main");
-            JvmSemanticEmitter.EmissionResult emission =
-                JvmSemanticEmitter.emitProductionProject(project, result.tables(),
-                    result.registries(), className, fixture.surface());
+            JvmSemanticEmitter.EmissionResult emission = fixture.emission();
 
             Path source = workspace.resolve(className + ".java");
             Files.writeString(source, emission.source(), StandardCharsets.UTF_8);
@@ -1155,7 +1137,7 @@ public class JvmProductionProjectEmissionTest {
                 return;
             }
             ProcessOutcome run = runProcess(List.of("java", "-cp",
-                classpath + java.io.File.pathSeparator + classes, className), workspace);
+                classes + java.io.File.pathSeparator + classpath, className), workspace);
             check(run.exitCode() == 1,
                 "the overflow run exits 1: exit=" + run.exitCode() + " " + run.output());
             check(run.stdout().contains("DEAL_ERROR_CODE: E8004"),
@@ -1238,17 +1220,9 @@ public class JvmProductionProjectEmissionTest {
         Fixture fixture = compileProject(shadowSource, "src/main.deal");
         Path workspace = Files.createTempDirectory("jvm-production-project-shadow");
         try {
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
-            if (result.project() == null) {
-                fail("the shadowing-binding fixture project lowers: "
-                    + result.diagnostics());
-                return;
-            }
-            ExecutableLoweredProject project = result.project();
+            ExecutableLoweredProject project = fixture.producedProject();
             String className = JvmBackend.classNameFor(project.entryModule().path());
-            JvmSemanticEmitter.EmissionResult emission =
-                JvmSemanticEmitter.emitProductionProject(project, result.tables(),
-                    result.registries(), className, fixture.surface());
+            JvmSemanticEmitter.EmissionResult emission = fixture.emission();
 
             Path source = workspace.resolve(className + ".java");
             Files.writeString(source, emission.source(), StandardCharsets.UTF_8);
@@ -1265,7 +1239,7 @@ public class JvmProductionProjectEmissionTest {
                 return;
             }
             ProcessOutcome run = runProcess(List.of("java", "-cp",
-                classpath + java.io.File.pathSeparator + classes, className), workspace);
+                classes + java.io.File.pathSeparator + classpath, className), workspace);
             checkEq(0, run.exitCode(),
                 "the shadowing-binding artifact exits 0: " + run.output());
             checkEq("", run.stdout(),
@@ -1317,17 +1291,9 @@ public class JvmProductionProjectEmissionTest {
         Fixture fixture = compileProject(source, "src/main.deal");
         Path workspace = Files.createTempDirectory("jvm-production-project-dyntable");
         try {
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
-            if (result.project() == null) {
-                fail("the dynamic-table-read fixture project lowers: "
-                    + result.diagnostics());
-                return;
-            }
-            ExecutableLoweredProject project = result.project();
+            ExecutableLoweredProject project = fixture.producedProject();
             String className = JvmBackend.classNameFor(project.entryModule().path());
-            JvmSemanticEmitter.EmissionResult emission =
-                JvmSemanticEmitter.emitProductionProject(project, result.tables(),
-                    result.registries(), className, fixture.surface());
+            JvmSemanticEmitter.EmissionResult emission = fixture.emission();
 
             Path artifact = workspace.resolve(className + ".java");
             Files.writeString(artifact, emission.source(), StandardCharsets.UTF_8);
@@ -1344,7 +1310,7 @@ public class JvmProductionProjectEmissionTest {
                 return;
             }
             ProcessOutcome run = runProcess(List.of("java", "-cp",
-                classpath + java.io.File.pathSeparator + classes, className), workspace);
+                classes + java.io.File.pathSeparator + classpath, className), workspace);
             checkEq(0, run.exitCode(),
                 "the dynamic-table-read artifact exits 0: " + run.output());
             checkEq("", run.stdout(),
