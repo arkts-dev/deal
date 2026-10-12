@@ -121,6 +121,16 @@ final class DefaultIrRecorder {
         classLiteralProviders = new LinkedHashMap<>();
 
     /**
+     * The resolved provider of every inferred class-typed binding whose
+     * declaration was already walked (binding symbol &rarr; the provider
+     * its initializer expression's checked route names): an inferred
+     * binding keeps its initializer's provenance for later assignments,
+     * so the import order never decides the constructed class.
+     */
+    private final Map<Symbol.VariableSymbol, DefaultPlanImport>
+        bindingProviders = new java.util.IdentityHashMap<>();
+
+    /**
      * The provider the enclosing declared function's return type node
      * names (the return-provider provenance of a returned class
      * literal), pushed around every walked function body and function
@@ -702,7 +712,7 @@ final class DefaultIrRecorder {
                 Type paramType = typeResolver.resolveTypeNode(p.type(),
                     bodyScope);
                 bodyScope.define(p.name(), new Symbol.VariableSymbol(
-                    p.name(), paramType, true));
+                    p.name(), paramType, true, null, p.type()));
             }
         }
         List<DefaultIrNode> statements = new ArrayList<>();
@@ -733,7 +743,7 @@ final class DefaultIrRecorder {
                 Type paramType = typeResolver.resolveTypeNode(p.type(),
                     bodyScope);
                 bodyScope.define(p.name(), new Symbol.VariableSymbol(
-                    p.name(), paramType, true));
+                    p.name(), paramType, true, null, p.type()));
             }
         }
         // Await inside a nested function-expression body is not at
@@ -780,10 +790,23 @@ final class DefaultIrRecorder {
                 if (vd.initializer() != null) {
                     // The declared annotation is the checked provenance
                     // of the initializer's class context: a qualified
-                    // spelling names its provider import directly.
+                    // spelling names its provider import directly. An
+                    // inferred declaration inherits the resolved route
+                    // of its initializer expression, so the binding
+                    // keeps that provider for its later assignments
+                    // (never the first identity-equal export).
                     DefaultPlanImport declaredProvider = vd.typeAnnotation()
                         .map(typeNode -> providerForTypeNode(typeNode, null))
                         .orElse(null);
+                    if (declaredProvider == null) {
+                        declaredProvider = expressionContextProvider(
+                            vd.initializer(), effectiveScope);
+                    }
+                    Symbol bound = effectiveScope.resolve(vd.name());
+                    if (bound instanceof Symbol.VariableSymbol variable
+                            && declaredProvider != null) {
+                        bindingProviders.put(variable, declaredProvider);
+                    }
                     children.add(recordExpression(vd.initializer(),
                         effectiveScope, List.of(), declaredProvider,
                         evaluatorScope));
@@ -1027,8 +1050,9 @@ final class DefaultIrRecorder {
      *       ({@code provenance}), when its program declares the demanded
      *       class and its classification carries the class identity —
      *       the resolved imported callee's parameter context, the
-     *       enclosing class field's declaring provider, or the directly
-     *       declared variable type;</li>
+     *       enclosing class field's declaring provider, the directly
+     *       declared variable type, or the assigned binding's own
+     *       declaration (annotation or recorded initializer route);</li>
      *   <li>the import the occurrence's resolved qualified alias names
      *       (the checked spelling of the declaring annotation), when its
      *       export surface carries the class identity;</li>
@@ -1102,17 +1126,59 @@ final class DefaultIrRecorder {
 
     /**
      * The contextual provider of an assignment value: the assigned
-     * member's declared type node, read from the owning class's exact
-     * declaration (the same-module program, or the checked provider of
-     * the owner's identity), names the value's provider. A target form
-     * the checked symbol surface does not tie to one declaration (a
-     * bare identifier, an index) yields null and the class literal
-     * keeps the checked export-surface selection.
+     * binding's exact resolved provenance for an identifier target (its
+     * own declared type annotation, else the recorded route of the
+     * declaration's initializer), the same provenance of the array a
+     * class element is assigned into (an index target), or the assigned
+     * member's declared type node read from the owning class's exact
+     * declaration. A target form the checked symbol surface does not
+     * tie to one declaration (an unresolved name, an unrecorded route)
+     * yields null and the class literal keeps the checked export-surface
+     * selection.
      */
     private DefaultPlanImport assignmentContextProvider(
             AssignmentExpr assign, SymbolTable scope) {
-        if (!(assign.target() instanceof MemberAccessExpr mae)
-                || !(typeMap.get(mae.object()) instanceof Type.Class owner)) {
+        return switch (assign.target()) {
+            case IdentifierExpr id -> bindingContextProvider(id, scope);
+            case IndexExpr index -> expressionContextProvider(
+                index.array(), scope);
+            case MemberAccessExpr mae -> memberContextProvider(mae, scope);
+            default -> null;
+        };
+    }
+
+    /**
+     * The provider a resolved variable binding names for a constructed
+     * value: the declaration's own annotation when it carries one (a
+     * qualified class spelling names the defining provider directly, so
+     * an identity-equal sibling module and the import order never
+     * capture the literal), else the route recorded for the binding when
+     * its declaration was walked (an inferred binding inherits the
+     * resolved provenance of its initializer expression).
+     */
+    private DefaultPlanImport bindingContextProvider(IdentifierExpr id,
+            SymbolTable scope) {
+        Symbol sym = scope.resolve(id.name());
+        if (!(sym instanceof Symbol.VariableSymbol variable)) {
+            return null;
+        }
+        if (variable.declaredType() != null) {
+            return providerForTypeNode(variable.declaredType(), null);
+        }
+        return bindingProviders.get(variable);
+    }
+
+    /**
+     * The provider the object of a member target (or of an indexed member
+     * target) names for a constructed value: the assigned member's
+     * declared type node read from the owning class's exact declaration
+     * (the same-module program, or the checked provider of the owner's
+     * identity). Null when the checked symbol surface does not tie the
+     * member to one declaration.
+     */
+    private DefaultPlanImport memberContextProvider(MemberAccessExpr mae,
+            SymbolTable scope) {
+        if (!(typeMap.get(mae.object()) instanceof Type.Class owner)) {
             return null;
         }
         Symbol sym = scope.resolve(owner.name());
@@ -1124,6 +1190,67 @@ final class DefaultIrRecorder {
         DefaultPlanImport provider = providerForClass(owner, null);
         return provider == null ? null : providerForDeclaredField(
             provider.program(), provider, owner, mae.field());
+    }
+
+    /**
+     * The provider a value expression's checked route names for a class
+     * value, used for an inferred binding's provenance: an identifier
+     * carries its binding's provenance, a member read its declared
+     * field's, an index read its array's (the element keeps the array
+     * declaration's provider), an assignment its value's, and a call the
+     * resolved callee's declared return type (the imported callee's own
+     * declaration names its module's classes; a same-module callee keeps
+     * this module's import spellings). Null when the route names no
+     * owning import: the caller then keeps the checked export-surface
+     * selection.
+     */
+    private DefaultPlanImport expressionContextProvider(ExpressionNode expr,
+            SymbolTable scope) {
+        return switch (expr) {
+            case IdentifierExpr id -> bindingContextProvider(id, scope);
+            case MemberAccessExpr mae -> memberContextProvider(mae, scope);
+            case IndexExpr index -> expressionContextProvider(
+                index.array(), scope);
+            case AssignmentExpr assign -> expressionContextProvider(
+                assign.value(), scope);
+            case CallExpr call -> callReturnContextProvider(call, scope);
+            default -> null;
+        };
+    }
+
+    /**
+     * The provider the resolved callee's declared return type names for
+     * a call result: an imported callee's declaration is resolved in its
+     * own module (a bare class spelling is that module's own class), a
+     * same-module callee's declaration in this module (a qualified
+     * spelling names one of this module's imports). Null when the callee
+     * is unresolved, carries no declaration, or its return type names no
+     * owning import.
+     */
+    private DefaultPlanImport callReturnContextProvider(CallExpr call,
+            SymbolTable scope) {
+        if (call.callee() instanceof MemberAccessExpr mae
+                && mae.object() instanceof IdentifierExpr id
+                && scope.resolve(id.name()) instanceof Symbol.ModuleSymbol) {
+            DefaultPlanImport provider = imports.get(id.name());
+            if (provider == null) {
+                return null;
+            }
+            FunctionDeclaration declaration =
+                AstDeclarations.findFunctionDeclaration(provider.program(),
+                    mae.field());
+            return declaration == null ? null : providerForTypeNode(
+                declaration.returnType(), provider);
+        }
+        if (call.callee() instanceof IdentifierExpr cid
+                && scope.resolve(cid.name())
+                    instanceof Symbol.FunctionSymbol function) {
+            FunctionDeclaration declaration = functionDeclarationOf(
+                function, cid.name(), scope);
+            return declaration == null ? null : providerForTypeNode(
+                declaration.returnType(), null);
+        }
+        return null;
     }
 
     /**

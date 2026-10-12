@@ -365,6 +365,65 @@ public class ProductionDispatchTest {
         }
         """;
 
+    /**
+     * The identifier-assignment collision (review cycle 5): the
+     * assignment value's context is the assigned binding's own resolved
+     * provenance (its declared annotation, or the initializer route of
+     * an inferred binding), so every assignment literal — a local, an
+     * indexed element, an inferred binding, and a class-typed parameter —
+     * must construct the exact provider the binding names, never the
+     * first identity-equal export of the import order.
+     */
+    private static final String ASSIGN_IR_SOURCE = """
+        export class Ir { a: int = 7; }
+        export function make(): Ir { return {}; }
+        """;
+
+    private static final String ASSIGN_CODEC_SOURCE = """
+        export class Ir { a: int = 93; }
+        export class Codec { b: int = 9; }
+        """;
+
+    private static final String ASSIGN_MAIN_CODEC_FIRST = """
+        import * as console from "std/console";
+        import * as codec from "./m/codec";
+        import * as ir from "./m/ir";
+        function set(p: ir.Ir): int { p = {}; return p.a; }
+        export function main(): null {
+          let x: ir.Ir = {};
+          x = {};
+          let xs: ir.Ir[] = [{}];
+          xs[0] = {};
+          let y = ir.make();
+          y = {};
+          let c: codec.Codec = {};
+          if (x.a === 7 && xs[0].a === 7 && y.a === 7 && set({}) === 7
+              && c.b === 9) { console.log("ok"); }
+          else { console.log("wrong"); }
+          return null;
+        }
+        """;
+
+    private static final String ASSIGN_MAIN_IR_FIRST = """
+        import * as console from "std/console";
+        import * as ir from "./m/ir";
+        import * as codec from "./m/codec";
+        function set(p: ir.Ir): int { p = {}; return p.a; }
+        export function main(): null {
+          let x: ir.Ir = {};
+          x = {};
+          let xs: ir.Ir[] = [{}];
+          xs[0] = {};
+          let y = ir.make();
+          y = {};
+          let c: codec.Codec = {};
+          if (x.a === 7 && xs[0].a === 7 && y.a === 7 && set({}) === 7
+              && c.b === 9) { console.log("ok"); }
+          else { console.log("wrong"); }
+          return null;
+        }
+        """;
+
     private static final String HOST_DEAL_JSON_LUA = """
         {
           "languageVersion": "1.2",
@@ -831,32 +890,316 @@ public class ProductionDispatchTest {
             CapabilityRegistry.releaseRegistry());
     }
 
-    /** The test-only bounded node probe (a skip, never a failure, when
-     * node is unavailable — the JsBackendTest toolchain rule). */
-    private static Boolean nodeAvailable;
+    // =========================================================================
+    // The bounded real-toolchain runner (the retained release contract)
+    // =========================================================================
 
-    private static boolean probeNode() {
-        if (nodeAvailable == null) {
-            try {
-                Process node = new ProcessBuilder("node", "--version")
-                    .redirectErrorStream(true).start();
-                nodeAvailable = node.waitFor() == 0;
-            } catch (IOException | InterruptedException e) {
-                nodeAvailable = false;
-            }
+    /**
+     * The bounded-subprocess contract of the focused acceptance drive
+     * (adapted from the retained {@code JsonableHelperProductionDriveTest}
+     * runner): every artifact invocation drains stdout and stderr
+     * separately with the canonical 1 MiB cap, runs under one monotonic
+     * deadline, owns its whole process tree on every exit path, and
+     * reports an exceeded deadline as the named hard
+     * {@link BoundedProcessTimeout}. A missing toolchain is a failed
+     * invocation, never a skip, so a run that cannot produce the
+     * demanded artifact outcome fails the drive.
+     */
+    private static final int STREAM_CAP_BYTES = 1 << 20;
+
+    private static final String TRUNCATION_MARKER =
+        "\n[STREAM TRUNCATED at 1 MiB]\n";
+
+    private static final long BOUNDED_PROCESS_BUDGET_MS = 300_000L;
+
+    private static final long POST_KILL_DRAIN_BUDGET_MS = 5_000L;
+
+    private static final long REAP_BUDGET_MS = 5_000L;
+
+    /** A hard gate failure, never a skip: an {@link AssertionError} so no
+     * probe-style guard reads a hung toolchain as absent. */
+    private static final class BoundedProcessTimeout
+            extends AssertionError {
+        private static final long serialVersionUID = 1L;
+
+        BoundedProcessTimeout(String message) {
+            super(message);
         }
-        return nodeAvailable;
     }
 
-    /** The {@link #runProcess} outcome for a command whose absence is a
-     * probe failure, not a test abort. */
-    private static ProcessOutcome runProcessUnchecked(Path directory,
-            String... command) {
-        try {
-            return runProcess(directory, command);
-        } catch (Exception e) {
-            return new ProcessOutcome(-1, "process failure: " + e);
+    /** One stream's capped, concurrent drain: the first
+     * {@link #STREAM_CAP_BYTES} bytes are retained and the read continues
+     * to EOF, so a child that saturates a pipe can never deadlock the
+     * harness. */
+    private static final class CappedDrain implements Runnable {
+
+        private final java.io.InputStream stream;
+        private final ByteArrayOutputStream retained =
+            new ByteArrayOutputStream();
+        private volatile boolean truncated;
+
+        CappedDrain(java.io.InputStream stream) {
+            this.stream = stream;
         }
+
+        @Override
+        public void run() {
+            byte[] buffer = new byte[8192];
+            try (java.io.InputStream in = stream) {
+                int read;
+                while ((read = in.read(buffer)) >= 0) {
+                    int kept = Math.min(read, STREAM_CAP_BYTES
+                        - retained.size());
+                    if (kept > 0) {
+                        retained.write(buffer, 0, kept);
+                    }
+                    if (kept < read) {
+                        truncated = true;
+                    }
+                }
+            } catch (IOException ignored) {
+                // The stream ends when the child and its descendants are
+                // gone.
+            }
+        }
+
+        String text() {
+            String drained = new String(retained.toByteArray(),
+                StandardCharsets.UTF_8);
+            return truncated ? drained + TRUNCATION_MARKER : drained;
+        }
+    }
+
+    /** One bounded invocation's separate transcripts. */
+    private record BoundedOutcome(int exitCode, String stdout,
+                                  String stderr) {
+        String output() {
+            return "stdout=" + stdout.replace("\n", "\\n")
+                + " stderr=" + stderr.replace("\n", "\\n");
+        }
+    }
+
+    private static final String SETSID_BINARY =
+        firstExecutable("/usr/bin/setsid", "/bin/setsid");
+    private static final String KILL_BINARY =
+        firstExecutable("/bin/kill", "/usr/bin/kill");
+
+    private static String firstExecutable(String... candidates) {
+        for (String candidate : candidates) {
+            if (Files.isExecutable(Path.of(candidate))) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /** The bounded run of one real-toolchain invocation at the canonical
+     * budget. */
+    private static BoundedOutcome boundedRun(Path directory,
+            String... command) throws Exception {
+        return boundedRun(directory, BOUNDED_PROCESS_BUDGET_MS, command);
+    }
+
+    /**
+     * The bounded real-toolchain runner: separate stdout/stderr
+     * transcripts, both streams drained concurrently with the canonical
+     * 1 MiB cap, the canonical 300000 ms deadline, and on timeout
+     * descendants-then-group-then-child forcible termination plus a
+     * drain to EOF and a reap, reported as the named hard
+     * {@link BoundedProcessTimeout}. One monotonic deadline covers the
+     * direct child and the drainage of both streams. The child is owned
+     * for the whole call: every path out of the wait — the child's
+     * completion, the deadline, an interruption of the waiting thread, or
+     * any other failure — terminates the whole owned tree, drains both
+     * streams to EOF, and reaps the direct child before the outcome
+     * returns or propagates.
+     */
+    private static BoundedOutcome boundedRun(Path directory, long budgetMs,
+            String... command) throws Exception {
+        boolean ownGroup = SETSID_BINARY != null;
+        List<String> argv = new ArrayList<>();
+        if (ownGroup) {
+            argv.add(SETSID_BINARY);
+        }
+        argv.addAll(Arrays.asList(command));
+        ProcessBuilder builder = new ProcessBuilder(argv);
+        builder.directory(directory.toFile());
+        builder.redirectErrorStream(false);
+        long deadlineNanos = System.nanoTime()
+            + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(budgetMs);
+        Process process = builder.start();
+        CappedDrain stdout = new CappedDrain(process.getInputStream());
+        CappedDrain stderr = new CappedDrain(process.getErrorStream());
+        Thread stdoutThread = new Thread(stdout,
+            "production-dispatch-stdout-" + command[0]);
+        Thread stderrThread = new Thread(stderr,
+            "production-dispatch-stderr-" + command[0]);
+        stdoutThread.setDaemon(true);
+        stderrThread.setDaemon(true);
+        stdoutThread.start();
+        stderrThread.start();
+        boolean[] interrupted = {false};
+        boolean finished = false;
+        boolean drained = false;
+        String timeout = null;
+        try {
+            finished = waitForChild(process, deadlineNanos, interrupted);
+            drained = awaitDrains(stdoutThread, stderrThread, deadlineNanos,
+                interrupted);
+            if (!finished) {
+                timeout = "BOUNDED_PROCESS_TIMEOUT " + command[0];
+            } else if (!drained) {
+                timeout = "BOUNDED_PROCESS_TIMEOUT " + command[0]
+                    + " (the stream drainage exceeded the child deadline)";
+            }
+        } finally {
+            terminateTree(process, ownGroup, interrupted);
+            awaitDrains(stdoutThread, stderrThread, System.nanoTime()
+                + java.util.concurrent.TimeUnit.MILLISECONDS
+                    .toNanos(POST_KILL_DRAIN_BUDGET_MS), interrupted);
+            reap(process, interrupted);
+        }
+        if (interrupted[0]) {
+            Thread.interrupted();
+            throw new InterruptedException("interrupted while waiting for "
+                + command[0]);
+        }
+        if (timeout != null) {
+            throw new BoundedProcessTimeout(timeout);
+        }
+        return new BoundedOutcome(process.exitValue(), stdout.text(),
+            stderr.text());
+    }
+
+    /** Waits for the direct child inside the one deadline; {@code false}
+     * means the deadline expired. */
+    private static boolean waitForChild(Process process, long deadlineNanos,
+            boolean[] interrupted) throws InterruptedException {
+        long remaining = deadlineNanos - System.nanoTime();
+        if (remaining <= 0) {
+            return false;
+        }
+        try {
+            return process.waitFor(remaining,
+                java.util.concurrent.TimeUnit.NANOSECONDS);
+        } catch (InterruptedException interruptedWait) {
+            interrupted[0] = true;
+            throw interruptedWait;
+        }
+    }
+
+    /** Terminates the owned tree: descendants first, then the child's
+     * process group (when the runner created one), then the direct
+     * child. */
+    private static void terminateTree(Process process, boolean ownGroup,
+            boolean[] interrupted) {
+        try {
+            process.descendants().forEach(ProcessHandle::destroyForcibly);
+        } catch (RuntimeException ignored) {
+            // A vanished subtree is already gone; the direct child is next.
+        }
+        if (ownGroup) {
+            killProcessGroup(process.pid(), interrupted);
+        }
+        process.destroyForcibly();
+    }
+
+    /** Kills every remaining member of the child's own process group from
+     * outside the group; the helper's own wait is bounded. */
+    private static void killProcessGroup(long groupId, boolean[] interrupted) {
+        List<String> argv = KILL_BINARY != null
+            ? List.of(KILL_BINARY, "-KILL", "--", "-" + groupId)
+            : List.of("bash", "-c", "kill -KILL -- -\"$1\"",
+                "production-dispatch-kill-group", Long.toString(groupId));
+        try {
+            ProcessBuilder killerBuilder = new ProcessBuilder(argv);
+            killerBuilder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            killerBuilder.redirectError(ProcessBuilder.Redirect.DISCARD);
+            Process killer = killerBuilder.start();
+            boolean killed = false;
+            try {
+                killed = killer.waitFor(POST_KILL_DRAIN_BUDGET_MS,
+                    java.util.concurrent.TimeUnit.MILLISECONDS);
+            } catch (InterruptedException interruptedKill) {
+                interrupted[0] = true;
+            }
+            if (!killed) {
+                killer.destroyForcibly();
+            }
+        } catch (Exception ignored) {
+            // The direct child's destroyForcibly remains the backstop.
+        }
+    }
+
+    /** Joins both capped drains to EOF inside the deadline; {@code false}
+     * means a drain was still alive at the deadline. */
+    private static boolean awaitDrains(Thread stdoutThread,
+            Thread stderrThread, long deadlineNanos, boolean[] interrupted) {
+        boolean drained = true;
+        for (Thread thread : new Thread[] {stdoutThread, stderrThread}) {
+            while (thread.isAlive()) {
+                long remaining = deadlineNanos - System.nanoTime();
+                if (remaining <= 0) {
+                    drained = false;
+                    break;
+                }
+                try {
+                    thread.join(Math.max(1L,
+                        java.util.concurrent.TimeUnit.NANOSECONDS
+                            .toMillis(remaining)));
+                } catch (InterruptedException interruptedJoin) {
+                    interrupted[0] = true;
+                }
+            }
+        }
+        return drained;
+    }
+
+    /** Reaps the direct child inside a bounded window even when the waiting
+     * thread is interrupted. */
+    private static void reap(Process process, boolean[] interrupted) {
+        long deadlineNanos = System.nanoTime()
+            + java.util.concurrent.TimeUnit.MILLISECONDS
+                .toNanos(REAP_BUDGET_MS);
+        while (process.isAlive()) {
+            long remaining = deadlineNanos - System.nanoTime();
+            if (remaining <= 0) {
+                process.destroyForcibly();
+                return;
+            }
+            try {
+                if (process.waitFor(Math.max(1L,
+                        java.util.concurrent.TimeUnit.NANOSECONDS
+                            .toMillis(remaining)),
+                        java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    return;
+                }
+            } catch (InterruptedException interruptedReap) {
+                interrupted[0] = true;
+            }
+        }
+    }
+
+    /**
+     * The running distribution's classpath entries resolved against the
+     * test process's working directory: the emitted-artifact toolchain
+     * runs in an isolated workspace, so a relative entry would not
+     * resolve there (the same pinned form as
+     * {@code JvmProductionProjectEmissionTest.absoluteClasspath}).
+     */
+    private static String absoluteClasspath() {
+        StringBuilder resolved = new StringBuilder();
+        for (String entry : System.getProperty("java.class.path", "")
+                .split(File.pathSeparator)) {
+            if (entry.isEmpty()) {
+                continue;
+            }
+            if (resolved.length() > 0) {
+                resolved.append(File.pathSeparator);
+            }
+            resolved.append(Path.of(entry).toAbsolutePath().normalize());
+        }
+        return resolved.toString();
     }
 
     private static List<String> artifactFiles(Path root) throws Exception {
@@ -1181,57 +1524,65 @@ public class ProductionDispatchTest {
     }
 
     /** The JS artifact of the sibling project under the real node. */
-    private static void checkSiblingJsRun(String label, Path out) {
+    private static void checkSiblingJsRun(String label, Path out)
+            throws Exception {
         checkJsArtifactRun(label, out, "main.js");
     }
 
-    /** One named JS entry artifact under the real node. */
+    /**
+     * One named JS entry artifact under the real node through the bounded
+     * separate-stream runner: the focused acceptance drive requires node,
+     * never a skip, and the artifact must print exactly {@code ok} with an
+     * empty stderr and exit 0.
+     */
     private static void checkJsArtifactRun(String label, Path out,
-            String artifact) {
-        if (!probeNode()) {
-            System.out.println("  SKIP (node unavailable): the " + label
-                + " artifact execution");
-            return;
-        }
+            String artifact) throws Exception {
         checkSiblingStdout(label, "node",
-            runProcessUnchecked(out, "node", artifact));
+            boundedRun(out, "node", artifact));
     }
 
-    /** The LuaJIT artifact of the sibling project under the real luajit. */
-    private static void checkSiblingLuaRun(String label, Path out) {
+    /** The LuaJIT artifact of the sibling project under the real luajit
+     * through the bounded separate-stream runner. */
+    private static void checkSiblingLuaRun(String label, Path out)
+            throws Exception {
         checkSiblingStdout(label, "luajit",
-            runProcessUnchecked(out, "luajit", "main.lua"));
+            boundedRun(out, "luajit", "main.lua"));
     }
 
     /**
      * The JVM artifact of the sibling project: javac --release 25 then
-     * java, the pinned two-step of this suite.
+     * java, the pinned two-step of this suite. Both steps run through the
+     * bounded separate-stream runner against the running distribution's
+     * absolute classpath.
      */
     private static void checkSiblingJvmRun(String label, Path project,
             Path out) throws Exception {
-        String buildCp = Path.of("build").toAbsolutePath().normalize()
-            .toString();
-        ProcessOutcome javac = runProcess(project, "javac", "--release",
-            "25", "-proc:none", "-cp", buildCp, "-d", out.toString(),
+        String classpath = absoluteClasspath();
+        BoundedOutcome javac = boundedRun(project, "javac", "--release",
+            "25", "-proc:none", "-cp", classpath, "-d", out.toString(),
             out.resolve("Main.java").toString());
         check(javac.exitCode() == 0, "the " + label + " JVM artifact"
             + " compiles: " + javac.output());
         if (javac.exitCode() != 0) {
             return;
         }
-        checkSiblingStdout(label, "java", runProcess(out, "java", "-cp",
-            buildCp + File.pathSeparator + out, "Main"));
+        checkSiblingStdout(label, "java", boundedRun(out, "java", "-cp",
+            classpath + File.pathSeparator + out, "Main"));
     }
 
-    /** The sibling project's pinned observable: stdout "ok", exit 0. */
+    /** The sibling project's pinned observable: stdout "ok", exit 0, and
+     * an empty stderr (separate streams, no merged-output masking). */
     private static void checkSiblingStdout(String label, String tool,
-            ProcessOutcome run) {
+            BoundedOutcome run) {
         check(run.exitCode() == 0, "the " + label + " artifact runs clean"
             + " under " + tool + ": exit=" + run.exitCode() + " output="
             + run.output());
-        check("ok".equals(run.output().trim()),
+        check("ok".equals(run.stdout().trim()),
             "the " + label + " artifact prints 'ok' under " + tool
-                + ", got '" + run.output() + "'");
+                + ", got '" + run.stdout() + "'");
+        check(run.stderr().isEmpty(), "the " + label + " artifact runs"
+            + " with empty stderr under " + tool + ", got '"
+            + run.stderr() + "'");
     }
 
     /**
@@ -1855,6 +2206,130 @@ public class ProductionDispatchTest {
                 // The published artifact constructs only the named
                 // provider's class: the demanded default (7) is the
                 // observable outcome of every literal shape.
+                checkJsArtifactRun(label, root.resolve("out"),
+                    irFirst ? "main_ir_first.js" : "main.js");
+            }
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * The identifier-assignment collision (review cycle 5): an
+     * assignment value whose class context is the assigned binding's own
+     * declared annotation must construct the provider that annotation
+     * names. Both import orders compile through the release-owned
+     * production invocation; the ordinary walk records exactly one
+     * defining-provider edge (never the sibling), the provider digest is
+     * import-order independent, and the published artifact prints the
+     * demanded default value.
+     */
+    private static void testProductionIdentifierAssignmentCollision()
+            throws Exception {
+        System.out.println("-- production invocation: an identifier"
+            + " assignment keeps the target binding's declared provider"
+            + " (both import orders; exact resource, digest, and artifact"
+            + " outcome) --");
+
+        Path root = Files.createTempDirectory("production-assignment-");
+        try {
+            write(root, "deal.json", """
+                {
+                  "languageVersion": "1.2",
+                  "stdlib": "1.2",
+                  "moduleRoots": ["src"],
+                  "dependencies": {},
+                  "externals": {},
+                  "backend": "js",
+                  "output": "out"
+                }
+                """);
+            write(root, "src/m/ir.deal", ASSIGN_IR_SOURCE);
+            write(root, "src/m/codec.deal", ASSIGN_CODEC_SOURCE);
+            write(root, "src/main.deal", ASSIGN_MAIN_CODEC_FIRST);
+            write(root, "src/main_ir_first.deal", ASSIGN_MAIN_IR_FIRST);
+
+            String codecFirstDigest = null;
+            for (String entry : List.of("src/main.deal",
+                    "src/main_ir_first.deal")) {
+                String label = entry.contains("ir_first") ? "ir-first"
+                    : "codec-first";
+                boolean irFirst = label.equals("ir-first");
+                ArmCompile compile = compileWithInvocation(root, entry,
+                    productionInvocation());
+                check(compile.success(), "the " + label + " assignment"
+                    + " collision compile succeeds through the production"
+                    + " invocation: " + compile.orchestrator()
+                        .diagnostics());
+                if (!compile.success()) {
+                    continue;
+                }
+                CompilationOrchestrator orchestrator =
+                    compile.orchestrator();
+                String mainUri = serializerModuleUri(orchestrator,
+                    "/" + entry);
+                String irUri = serializerModuleUri(orchestrator,
+                    "/src/m/ir.deal");
+                String codecUri = serializerModuleUri(orchestrator,
+                    "/src/m/codec.deal");
+                DiagnosticRange irDeclaration = mainUri == null
+                        || irUri == null || codecUri == null ? null
+                    : classDeclarationRange(ASSIGN_IR_SOURCE,
+                        irUri.substring("file://".length()), "Ir");
+                DiagnosticRange codecIrDeclaration = mainUri == null
+                        || irUri == null || codecUri == null ? null
+                    : classDeclarationRange(ASSIGN_CODEC_SOURCE,
+                        codecUri.substring("file://".length()), "Ir");
+                check(mainUri != null && irUri != null && codecUri != null
+                        && irDeclaration != null
+                        && codecIrDeclaration != null,
+                    "the " + label + " assignment collision resolves every"
+                        + " module identity and declaration range");
+                if (mainUri == null || irUri == null || codecUri == null
+                        || irDeclaration == null
+                        || codecIrDeclaration == null) {
+                    continue;
+                }
+                // The assignment literal, the parameter assignment, and
+                // the call argument are the ordinary walk's runtime
+                // demands: exactly one edge, on the declaring provider,
+                // with the exact defining range and digest — never the
+                // identity-equal sibling.
+                List<RuntimeImportDependency> edges = classEdges(
+                    orchestrator, mainUri, "Ir",
+                    RuntimeImportDependency.Reason.RUNTIME_USE);
+                checkEq(1, edges.size(), "the " + label + " assignment"
+                    + " walk holds exactly one ordinary Ir edge");
+                if (edges.size() != 1) {
+                    continue;
+                }
+                RuntimeImportDependency edge = edges.get(0);
+                checkEq(irUri, edge.toSemanticModuleIdentity()
+                    .canonicalResolvedSourceUri(), "the " + label
+                    + " ordinary Ir edge targets the declaring module");
+                checkEq("ir", edge.importAlias(), "the " + label
+                    + " ordinary Ir edge keeps the spelled alias");
+                checkEq(irDeclaration, edge.semanticResourceIdentity()
+                    .lexicalDeclarationIdentity().sourceScalarRange(),
+                    "the " + label + " ordinary Ir edge carries the exact"
+                        + " defining declaration range");
+                check(!edge.semanticResourceIdentity()
+                    .lexicalDeclarationIdentity().sourceScalarRange()
+                    .equals(codecIrDeclaration), "the " + label
+                    + " ordinary Ir edge never binds the sibling"
+                    + " declaration");
+                if (irFirst) {
+                    checkEq(codecFirstDigest, edge.providerContractDigest(),
+                        "the assignment Ir provider digest is"
+                            + " import-order independent");
+                } else {
+                    codecFirstDigest = edge.providerContractDigest();
+                }
+
+                // The published artifact constructs the binding's own
+                // provider: the demanded default (7) is the observable
+                // outcome of the assignment literal and the parameter
+                // assignment alike, never the sibling's (93).
                 checkJsArtifactRun(label, root.resolve("out"),
                     irFirst ? "main_ir_first.js" : "main.js");
             }
@@ -4288,6 +4763,7 @@ public class ProductionDispatchTest {
         testProductionShadowedLocalCalleeCollision();
         testProductionNestedSiblingCollision();
         testProductionDeclaredContextSiblingCollision();
+        testProductionIdentifierAssignmentCollision();
         testConversionOverflowTerminal();
         testAtomicFailureThroughDispatch();
         testFailClosedFamilies();

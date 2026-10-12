@@ -227,6 +227,7 @@ public final class DefaultIrRecorderTest {
         testContextualCallSiblingCollision();
         testShadowedLocalCalleeSiblingCollision();
         testDeclaredContextSiblingCollision();
+        testIdentifierAssignmentSiblingCollision();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -784,6 +785,108 @@ public final class DefaultIrRecorderTest {
         }
     }
 
+    /**
+     * One identifier-assignment body probe (review cycle 5): the
+     * function's body declares one annotated class-typed local and
+     * assigns a class literal to it. The checked binding carries the
+     * declaration's own annotation node (exactly what the pass-1
+     * resolver records), so the assignment value's provider is the
+     * annotation's provider. Returns the recorded occurrences.
+     */
+    private static List<DefaultResourceOccurrence> siblingAssignmentRun(
+            List<SiblingProvider> providers, String declarationSource,
+            Type literalType) {
+        StringBuilder source = new StringBuilder();
+        for (SiblingProvider provider : providers) {
+            source.append("import * as ").append(provider.alias())
+                .append(" from \"./").append(provider.alias())
+                .append("\"\n");
+        }
+        source.append(declarationSource).append('\n');
+        LexResult lex = new Lexer(source.toString(), "main.deal")
+            .tokenize();
+        check(!lex.hasErrors(), "identifier-assignment fixture lexes: "
+            + lex.diagnostics());
+        ParseResult parse = new Parser(lex.tokens(), "main.deal",
+            lex.directiveEvents()).parse();
+        check(!parse.hasErrors(), "identifier-assignment fixture parses: "
+            + parse.diagnostics());
+        ProgramNode program = parse.program();
+        FunctionDeclaration make = null;
+        for (StatementNode stmt : program.statements()) {
+            if (stmt instanceof FunctionDeclaration fd
+                    && fd.body() != null) {
+                make = fd;
+            }
+        }
+        check(make != null, "the identifier-assignment fixture declares"
+            + " a function");
+        if (make == null) {
+            return List.of();
+        }
+        Map<ExpressionNode, Type> typeMap = new HashMap<>();
+        pinBodyLiterals(make.body().statements(), literalType, typeMap);
+        Map<String, DefaultPlanImport> imports = new LinkedHashMap<>();
+        Map<String, CanonicalModuleIdentity> classification =
+            new LinkedHashMap<>();
+        SymbolTable scope = new SymbolTable();
+        for (SiblingProvider provider : providers) {
+            DefaultPlanImport planImport = provider.planImport();
+            imports.put(provider.alias(), planImport);
+            classification.put(provider.modulePath(), provider.identity());
+            scope.define(provider.alias(), new deal.checker.Symbol
+                .ModuleSymbol(provider.alias(), planImport.exports(),
+                    new Span("main.deal", 1, 1, 1, 5)));
+        }
+        // The checker defines each annotated local in its walked scope
+        // with the declaration's own annotation node on the binding.
+        defineAnnotatedLocals(make.body().statements(), providers, scope);
+        DefaultIrRecorder recorder = new DefaultIrRecorder(
+            typeMap, Map.of(), imports, classification,
+            CONSUMER_LOCATION, "src.main", program,
+            (typeNode, resolutionScope) -> classTypeOf(typeNode, providers),
+            Map.of());
+        recorder.recordFunctionBody(make, scope);
+        return recorder.occurrences();
+    }
+
+    /**
+     * Defines every annotated {@code let} of the given statements in the
+     * walked scope as the checker's binding: the declared type and its
+     * own annotation node travel on the symbol.
+     */
+    private static void defineAnnotatedLocals(List<StatementNode> statements,
+            List<SiblingProvider> providers, SymbolTable scope) {
+        for (StatementNode stmt : statements) {
+            if (stmt instanceof VariableDeclaration vd
+                    && vd.typeAnnotation().isPresent()) {
+                TypeNode annotation = vd.typeAnnotation().get();
+                scope.define(vd.name(), new deal.checker.Symbol
+                    .VariableSymbol(vd.name(),
+                        classTypeOf(annotation, providers), false, null,
+                        annotation));
+            }
+        }
+    }
+
+    /** The provider class type one declared annotation names (a mini
+     * resolver over the probe's siblings, mirroring the checker). */
+    private static Type classTypeOf(TypeNode annotation,
+            List<SiblingProvider> providers) {
+        for (SiblingProvider provider : providers) {
+            if (annotation instanceof deal.ast.QualifiedType q
+                    && provider.alias().equals(q.moduleName())
+                    && provider.declaration().name().equals(q.typeName())) {
+                return provider.classType();
+            }
+            if (annotation instanceof NamedType named
+                    && provider.declaration().name().equals(named.name())) {
+                return provider.classType();
+            }
+        }
+        return Type.Error.INSTANCE;
+    }
+
     private static Type callableType(SiblingProvider provider) {
         return Types.func(List.of(provider.classType()),
             Type.Int.INSTANCE);
@@ -1147,6 +1250,56 @@ public final class DefaultIrRecorderTest {
                     + " inner(); }", codec.classType()), codec,
                 "the nested-declaration collision probe inner():"
                     + " codec.Ir");
+        }
+    }
+
+    /**
+     * The identifier-assignment collision (review cycle 5): the assigned
+     * binding's own declared annotation is the assignment value's
+     * checked context, so the target binding's exact provider owns the
+     * construction in both import orders — never the first
+     * identity-equal export the import order happens to select.
+     */
+    private static void testIdentifierAssignmentSiblingCollision() {
+        System.out.println("-- identifier assignment: the target binding's"
+            + " declared annotation owns the literal (both import orders)"
+            + " --");
+        CanonicalModuleIdentity sibling =
+            new CanonicalModuleIdentity.ProjectModule(SIBLING_IDENTITY);
+        SiblingProvider ir = siblingProvider("ir", "/proj/src/m/ir.deal",
+            "src.m.ir", sibling, "Ir");
+        SiblingProvider codec = siblingProvider("codec",
+            "/proj/src/m/codec.deal", "src.m.codec", sibling, "Ir");
+        check(codec.classIdentity().equals(ir.classIdentity()),
+            "the fixture's exported same-name siblings are identity-equal"
+                + " (the directory-keyed model)");
+
+        for (List<SiblingProvider> order : List.of(
+                List.of(ir, codec), List.of(codec, ir))) {
+            checkSiblingClassOccurrence(
+                siblingAssignmentRun(order,
+                    "function make(): int { let x: ir.Ir = { v: 7 };"
+                        + " x = { v: 7 }; return x.v; }",
+                    ir.classType()), ir,
+                "the identifier-assignment probe (ir spelling)");
+            checkSiblingClassOccurrence(
+                siblingAssignmentRun(order,
+                    "function make(): int { let x: codec.Ir = { v: 7 };"
+                        + " x = { v: 7 }; return x.v; }",
+                    codec.classType()), codec,
+                "the identifier-assignment probe (codec spelling)");
+            checkSiblingClassOccurrence(
+                siblingAssignmentRun(order,
+                    "function make(): int { let xs: ir.Ir[] = [{ v: 7 }];"
+                        + " xs[0] = { v: 7 }; return xs[0].v; }",
+                    ir.classType()), ir,
+                "the indexed-assignment probe (ir element spelling)");
+            checkSiblingClassOccurrence(
+                siblingAssignmentRun(order,
+                    "function make(): int { let xs: codec.Ir[] ="
+                        + " [{ v: 7 }]; xs[0] = { v: 7 }; return xs[0].v; }",
+                    codec.classType()), codec,
+                "the indexed-assignment probe (codec element spelling)");
         }
     }
 

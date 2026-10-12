@@ -642,7 +642,8 @@ public final class NameResolver {
         walkExpression(vd.initializer());
 
         currentScope.define(name,
-            new Symbol.VariableSymbol(name, type, false, declaredClass));
+            new Symbol.VariableSymbol(name, type, false, declaredClass,
+                vd.typeAnnotation().orElse(null)));
     }
 
     /**
@@ -781,7 +782,7 @@ public final class NameResolver {
             paramNames.add(name);
             Type paramType = resolveTypeNode(p.type());
             currentScope.define(name, new Symbol.VariableSymbol(name, paramType,
-                true, declaredClassSymbolOf(p.type())));
+                true, declaredClassSymbolOf(p.type()), p.type()));
         }
     }
 
@@ -837,7 +838,8 @@ public final class NameResolver {
                 // scope plus a while loop).
                 walkExpression(decl.initializer());
                 currentScope.define(name,
-                    new Symbol.VariableSymbol(name, type, false, declaredClass));
+                    new Symbol.VariableSymbol(name, type, false, declaredClass,
+                        decl.typeAnnotation().orElse(null)));
             } else if (init instanceof ForInit.AssignExpr ae) {
                 walkExpression(ae.expr());
             }
@@ -879,7 +881,7 @@ public final class NameResolver {
         // Define the loop variable in the new scope
         currentScope.define(fos.varName(),
             new Symbol.VariableSymbol(fos.varName(), varType, false,
-                varDeclaredClass));
+                varDeclaredClass, fos.varType()));
 
         loopDepth++;
         walkBlock(fos.body()); // Creates block scope, records in scopeMap

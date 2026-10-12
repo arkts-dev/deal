@@ -2,6 +2,7 @@ package deal.checker;
 
 import deal.ast.ClassField;
 import deal.ast.Span;
+import deal.ast.TypeNode;
 import deal.identity.CanonicalClassIdentity;
 import deal.types.Type;
 
@@ -29,12 +30,20 @@ public sealed interface Symbol
      * distinct declarations; the assignment gate uses the recorded
      * declaration to reject a value that crosses them (ISSUE-0717
      * defect snippet 47).
+     *
+     * <p>{@code declaredType} is the declaration's own annotation node
+     * (never a reconstructed spelling): a qualified class annotation is
+     * the exact defining provider's spelling, so an assignment value
+     * constructed for this binding keeps that provider's declaration
+     * even when an identity-equal sibling module declares the same
+     * class name (GitHub #6).</p>
      */
     record VariableSymbol(String name, Type type, boolean isParameter,
-                          ClassSymbol declaredClass) implements Symbol {
+                          ClassSymbol declaredClass, TypeNode declaredType)
+            implements Symbol {
         /** The declaration-provenance-free symbol (intrinsics, inference, tests). */
         public VariableSymbol(String name, Type type, boolean isParameter) {
-            this(name, type, isParameter, null);
+            this(name, type, isParameter, null, null);
         }
     }
 

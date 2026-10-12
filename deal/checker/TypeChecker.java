@@ -611,7 +611,7 @@ public final class TypeChecker {
                             ? vs.declaredClass() : initDeclaredClass;
                         currentScope.defineReplace(vd.name(),
                             new Symbol.VariableSymbol(vd.name(), targetType, false,
-                                provenance));
+                                provenance, vs.declaredType()));
                     }
                 }
             }
@@ -1889,7 +1889,7 @@ public final class TypeChecker {
                 paramNames.add(p.name());
                 Type pt = nameResolver.resolveTypeNode(p.type());
                 currentScope.define(p.name(), new Symbol.VariableSymbol(p.name(), pt,
-                    true, nameResolver.declaredClassSymbolOf(p.type())));
+                    true, nameResolver.declaredClassSymbolOf(p.type()), p.type()));
             }
         }
 
