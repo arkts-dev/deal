@@ -1752,6 +1752,80 @@ public class CanonicalProjectionParityTest {
         }
         """;
 
+    /**
+     * The declared numeric-return surface of the numeric-carrier drive
+     * (ISSUE-0696 remediation): the mandatory and nullable {@code int}
+     * returns and the mandatory {@code number} returns. Caller-owned
+     * exactly like the sync-presence declaration, so no corpus or
+     * host-fixture membership changes.
+     */
+    private static final String NUMERIC_RETURN_DECLARATION = """
+        export function fetchInt(): int;
+        export function fetchNullableInt(): int | null;
+        export function fetchNumber(): number;
+        export function fetchFraction(): number;
+        """;
+
+    /**
+     * The numeric-carrier drive's entry module: one consuming probe per
+     * declared family, so an admitted carrier whose value was lost by the
+     * normalization cannot pass, and one drop probe per {@code int} return
+     * descriptor, so the captured origin is the failing call expression's
+     * own.
+     */
+    private static final String NUMERIC_RETURN_DRIVER = """
+        import * as host from "host/numeric_return"
+
+        export function test_use_int(): null {
+          let v: int = host.fetchInt()
+          if (v !== 7) {
+            throw { code: "PROBE_NUMERIC_RETURN", message: "the int return lost its value" }
+          }
+          return null
+        }
+
+        export function test_use_nullable_int(): null {
+          let v: int | null = host.fetchNullableInt()
+          if (v !== null) {
+            if (v !== 7) {
+              throw { code: "PROBE_NUMERIC_RETURN", message: "the nullable int return lost its value" }
+            }
+            return null
+          }
+          throw { code: "PROBE_NUMERIC_RETURN", message: "the nullable int return was the language null" }
+        }
+
+        export function test_use_number(): null {
+          let v: number = host.fetchNumber()
+          if (v !== 7.0) {
+            throw { code: "PROBE_NUMERIC_RETURN", message: "the number return lost its value" }
+          }
+          return null
+        }
+
+        export function test_use_fraction(): null {
+          let v: number = host.fetchFraction()
+          if (v !== 7.5) {
+            throw { code: "PROBE_NUMERIC_RETURN", message: "the fractional number return lost its value" }
+          }
+          return null
+        }
+
+        export function test_drop_int(): null {
+          host.fetchInt()
+          return null
+        }
+
+        export function test_drop_nullable_int(): null {
+          host.fetchNullableInt()
+          return null
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
     /** The LuaJIT absent host: every declared export returns zero results. */
     private static String luaAbsentSyncHost() {
         return """
@@ -1994,6 +2068,188 @@ public class CanonicalProjectionParityTest {
         }
     }
 
+    // =========================================================================
+    // The numeric host return carriers (ISSUE-0696 remediation)
+    // =========================================================================
+
+    /**
+     * The numeric host return carriers: every admitted numeric carrier of
+     * the closed host ABI — the boxed {@code int} (Integer), the signed32
+     * {@code long}, and the {@code double} — is validated in the pinned int
+     * order (NaN, infinity, non-integer, then signed32 range) and an
+     * admitted value is normalized to the declared return carrier before
+     * the carrier cast, on the real emitted wrappers. The drive runs the
+     * production LuaJIT artifact, the production JVM artifact, and the
+     * oracle over the same caller-owned declaration: an in-range carrier is
+     * admitted with its value consumed in-language, while an out-of-range,
+     * fractional, NaN, or infinite carrier renders the closed
+     * {@code HOST_SYNC_RETURN_CELL} composite with the selected inner arm
+     * at the call origin — never a ClassCastException and never a silent
+     * truncation.
+     */
+    private static void testHostNumericReturnCarriers() throws Exception {
+        System.out.println("-- the numeric host return carriers: in-range, "
+            + "out-of-range, fractional, NaN, and infinite carriers of the real "
+            + "emitted wrappers --");
+        safely("the numeric host return carriers",
+            CanonicalProjectionParityTest::driveHostNumericReturnCarriers);
+    }
+
+    /** The caller-owned numeric-return project (one declaration and driver). */
+    private static Compiled compileNumericReturn() throws Exception {
+        Case spec = new Case("host-abi/host-async-shape-bad", "test_use_int",
+            Entry.MAIN, List.of(), null, null);
+        return compile(spec, NUMERIC_RETURN_DRIVER,
+            Map.of("numeric_return", NUMERIC_RETURN_DECLARATION));
+    }
+
+    /**
+     * The numeric-carrier drive: the admitted in-range carriers on the
+     * consuming probes, then the range and refinement non-admissions on the
+     * drop probes, each against the closed arm's own render.
+     */
+    private static void driveHostNumericReturnCarriers() throws Exception {
+        Compiled compiled = compileNumericReturn();
+        try {
+            String stem = "numeric_return";
+            // The admitted carriers: the boxed int, the signed32 long, and
+            // the integral double all normalize to the declared int carrier
+            // (the consuming probe compares the value in-language), and the
+            // long/double/int carriers normalize to the declared number.
+            assertHostSuccess(compiled, stem, numericReturnResponder(
+                new SemanticOracle.Value.IntValue(7L)), "test_use_int",
+                luaNumericHost("7"), jvmNumericHost("java.lang.Integer.valueOf(7)"),
+                "the in-range Integer int return");
+            assertHostSuccess(compiled, stem, numericReturnResponder(
+                new SemanticOracle.Value.IntValue(7L)), "test_use_int",
+                luaNumericHost("7"), jvmNumericHost("java.lang.Long.valueOf(7)"),
+                "the in-range Long int return");
+            assertHostSuccess(compiled, stem, numericReturnResponder(
+                new SemanticOracle.Value.IntValue(7L)), "test_use_int",
+                luaNumericHost("7"), jvmNumericHost("java.lang.Double.valueOf(7)"),
+                "the in-range integral Double int return");
+            assertHostSuccess(compiled, stem, numericReturnResponder(
+                new SemanticOracle.Value.IntValue(7L)), "test_use_nullable_int",
+                luaNumericHost("7"), jvmNumericHost("java.lang.Long.valueOf(7)"),
+                "the in-range Long nullable-int return");
+            check(BoundaryExecutor.check(FailurePolicyId.HOST_SYNC_RETURN,
+                RuntimeDescriptor.Number.INSTANCE, BoundaryValueView.ofInt(7),
+                BoundaryContext.none()) instanceof BoundaryOutcome.Pass,
+                "the oracle's number cell admits the boxed-int carrier, the "
+                    + "admission the emitted JVM wrapper applies");
+            assertHostSuccess(compiled, stem, numericReturnResponder(
+                new SemanticOracle.Value.NumValue(7.0)), "test_use_number",
+                luaNumericHost("7"), jvmNumericHost("java.lang.Integer.valueOf(7)"),
+                "the in-range Integer number return");
+            assertHostSuccess(compiled, stem, numericReturnResponder(
+                new SemanticOracle.Value.NumValue(7.0)), "test_use_number",
+                luaNumericHost("7"), jvmNumericHost("java.lang.Long.valueOf(7)"),
+                "the in-range Long number return");
+            assertHostSuccess(compiled, stem, numericReturnResponder(
+                new SemanticOracle.Value.NumValue(7.5)), "test_use_fraction",
+                luaNumericHost("7.5"), jvmNumericHost("java.lang.Double.valueOf(7.5)"),
+                "the in-range fractional Double number return");
+            // The non-admitted int carriers: the signed32-range arm for an
+            // out-of-range Long or Double at both int returns, and the
+            // refinement arms for a fractional, NaN, or infinite Double,
+            // each rendered as the host composite at the call origin.
+            Tuple rangeInt = hostReturnCellTuple("int", FailureContractRegistry
+                .arm(FailureArmId.INT32_RANGE).template(), "number", 39, 3);
+            Tuple rangeNullableInt = hostReturnCellTuple("?int",
+                FailureContractRegistry.arm(FailureArmId.INT32_RANGE).template(),
+                "number", 44, 3);
+            Tuple nanInt = hostReturnCellTuple("int", FailureContractRegistry
+                .arm(FailureArmId.INT_CONVERSION_NAN).template(), "number", 39, 3);
+            Tuple infinityInt = hostReturnCellTuple("int", FailureContractRegistry
+                .arm(FailureArmId.INT_CONVERSION_INFINITY).template(), "number",
+                39, 3);
+            Tuple fractionInt = hostReturnCellTuple("int", FailureContractRegistry
+                .arm(FailureArmId.INT_CONVERSION_FRACTIONAL).template(), "number",
+                39, 3);
+            assertHostFailure(compiled, stem, numericReturnResponder(
+                new SemanticOracle.Value.NumValue(2147483648.0)), "test_drop_int",
+                rangeInt, luaNumericHost("2147483648"),
+                jvmNumericHost("java.lang.Long.valueOf(2147483648L)"),
+                "the out-of-range Long int return", rangeInt);
+            assertHostFailure(compiled, stem, numericReturnResponder(
+                new SemanticOracle.Value.NumValue(2147483648.0)), "test_drop_int",
+                rangeInt, luaNumericHost("2147483648"),
+                jvmNumericHost("java.lang.Double.valueOf(2147483648.0)"),
+                "the out-of-range Double int return", rangeInt);
+            assertHostFailure(compiled, stem, numericReturnResponder(
+                new SemanticOracle.Value.NumValue(1.5)), "test_drop_int",
+                fractionInt, luaNumericHost("1.5"),
+                jvmNumericHost("java.lang.Double.valueOf(1.5)"),
+                "the fractional Double int return", fractionInt);
+            assertHostFailure(compiled, stem, numericReturnResponder(
+                new SemanticOracle.Value.NumValue(Double.NaN)), "test_drop_int",
+                nanInt, luaNumericHost("0/0"),
+                jvmNumericHost("java.lang.Double.valueOf(java.lang.Double.NaN)"),
+                "the NaN Double int return", nanInt);
+            assertHostFailure(compiled, stem, numericReturnResponder(
+                new SemanticOracle.Value.NumValue(Double.POSITIVE_INFINITY)),
+                "test_drop_int", infinityInt, luaNumericHost("math.huge"),
+                jvmNumericHost(
+                    "java.lang.Double.valueOf(java.lang.Double.POSITIVE_INFINITY)"),
+                "the infinite Double int return", infinityInt);
+            assertHostFailure(compiled, stem, numericReturnResponder(
+                new SemanticOracle.Value.NumValue(2147483648.0)),
+                "test_drop_nullable_int", rangeNullableInt,
+                luaNumericHost("2147483648"),
+                jvmNumericHost("java.lang.Long.valueOf(2147483648L)"),
+                "the out-of-range Long nullable-int return", rangeNullableInt);
+            assertHostFailure(compiled, stem, numericReturnResponder(
+                new SemanticOracle.Value.NumValue(Double.NaN)),
+                "test_drop_nullable_int", hostReturnCellTuple("?int",
+                    FailureContractRegistry.arm(
+                        FailureArmId.INT_CONVERSION_NAN).template(), "number",
+                    44, 3), luaNumericHost("0/0"),
+                jvmNumericHost("java.lang.Double.valueOf(java.lang.Double.NaN)"),
+                "the NaN Double nullable-int return",
+                hostReturnCellTuple("?int", FailureContractRegistry.arm(
+                    FailureArmId.INT_CONVERSION_NAN).template(), "number", 44, 3));
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /** The numeric-return responder: the same value for every host call. */
+    private static SemanticOracle.HostResponder numericReturnResponder(
+            SemanticOracle.Value value) {
+        return new SemanticOracle.HostResponder() {
+            @Override
+            public SyncOutcome call(ModuleId module, String export,
+                    RuntimeDescriptor.Func descriptor,
+                    List<SemanticOracle.Value> args) {
+                return new SyncOutcome.Returned(value);
+            }
+        };
+    }
+
+    /** The LuaJIT numeric-return host: one plain number for every export. */
+    private static String luaNumericHost(String value) {
+        return """
+            return {
+              fetchInt = function() return %s end,
+              fetchNullableInt = function() return %s end,
+              fetchNumber = function() return %s end,
+              fetchFraction = function() return %s end,
+            }
+            """.formatted(value, value, value, value);
+    }
+
+    /** The JVM numeric-return host: one boxed carrier expression for every export. */
+    private static String jvmNumericHost(String carrier) {
+        return """
+            final class HostNumeric_return {
+              public static Object fetchInt() { return %s; }
+              public static Object fetchNullableInt() { return %s; }
+              public static Object fetchNumber() { return %s; }
+              public static Object fetchFraction() { return %s; }
+            }
+            """.formatted(carrier, carrier, carrier, carrier);
+    }
+
     /**
      * Drives one probe export of the sync-presence project through the
      * oracle (under the supplied responder), the LuaJIT artifact (under the
@@ -2011,14 +2267,28 @@ public class CanonicalProjectionParityTest {
             SemanticOracle.HostResponder responder, String export, Tuple oracleExpected,
             String luaHost, String jvmHost, String what, Tuple jvmExpected)
             throws Exception {
+        assertHostFailure(compiled, "sync_presence", responder, export,
+            oracleExpected, luaHost, jvmHost, what, jvmExpected);
+    }
+
+    /**
+     * Drives one probe export through the oracle (under the supplied
+     * responder), the LuaJIT artifact, and the JVM artifact under the named
+     * host stem, asserting each captures the expected tuple and that the
+     * consumers agree.
+     */
+    private static void assertHostFailure(Compiled compiled, String stem,
+            SemanticOracle.HostResponder responder, String export, Tuple oracleExpected,
+            String luaHost, String jvmHost, String what, Tuple jvmExpected)
+            throws Exception {
         SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeSyncEntry(
             compiled.project(), compiled.tables(), compiled.registries(), responder,
             compiled.checkedProject().entryModule(), export, List.of());
         Tuple oracle = failureTuple(compiled, run);
         checkEq(oracleExpected, oracle, what + " (oracle): the complete tuple");
-        Tuple lua = luaSyncPresenceFailure(compiled, luaHost, export);
+        Tuple lua = luaHostFailure(compiled, stem, luaHost, export);
         checkEq(oracleExpected, lua, what + " (luajit): the complete tuple");
-        Tuple jvm = jvmSyncPresenceFailure(compiled, jvmHost, export);
+        Tuple jvm = jvmHostFailure(compiled, stem, jvmHost, export);
         checkEq(jvmExpected, jvm, what + " (jvm): the complete tuple");
         if (oracle != null && lua != null) {
             checkEq(null, firstDifferingField(oracle, lua), what
@@ -2031,8 +2301,16 @@ public class CanonicalProjectionParityTest {
         }
     }
 
-    /** One admitted-presence probe on all three consumers. */
+    /** One admitted-presence probe of the sync-presence project on all three consumers. */
     private static void assertSyncPresenceSuccess(Compiled compiled,
+            SemanticOracle.HostResponder responder, String export, String luaHost,
+            String jvmHost, String what) throws Exception {
+        assertHostSuccess(compiled, "sync_presence", responder, export, luaHost,
+            jvmHost, what);
+    }
+
+    /** One admitted host value on all three consumers under the named host stem. */
+    private static void assertHostSuccess(Compiled compiled, String stem,
             SemanticOracle.HostResponder responder, String export, String luaHost,
             String jvmHost, String what) throws Exception {
         SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeSyncEntry(
@@ -2040,12 +2318,12 @@ public class CanonicalProjectionParityTest {
             compiled.checkedProject().entryModule(), export, List.of());
         check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
             what + " (oracle): the admitted presence completes: " + run.terminal());
-        String lua = luaArtifactOutput(compiled, Map.of("sync_presence", luaHost),
+        String lua = luaArtifactOutput(compiled, Map.of(stem, luaHost),
             luaExportProbe(compiled, export));
         check(lua.contains("OK") && !lua.contains("ERR|"), what + " (luajit): "
             + "the admitted presence completes without a failure event: " + lua);
         String jvm = jvmArtifactOutput(compiled, jvmExportProbe(compiled, export),
-            Map.of("sync_presence", jvmHost));
+            Map.of(stem, jvmHost));
         check(jvm != null && jvm.contains("OK") && !jvm.contains("ERR|"), what
             + " (jvm): the admitted presence completes without a failure event: "
             + jvm);
@@ -2054,10 +2332,16 @@ public class CanonicalProjectionParityTest {
     /** The LuaJIT artifact's failure tuple of one named sync-presence probe. */
     private static Tuple luaSyncPresenceFailure(Compiled compiled, String hostSource,
             String export) throws Exception {
-        String output = luaArtifactOutput(compiled, Map.of("sync_presence", hostSource),
+        return luaHostFailure(compiled, "sync_presence", hostSource, export);
+    }
+
+    /** The LuaJIT artifact's failure tuple of one probe under the named host stem. */
+    private static Tuple luaHostFailure(Compiled compiled, String stem,
+            String hostSource, String export) throws Exception {
+        String output = luaArtifactOutput(compiled, Map.of(stem, hostSource),
             luaExportProbe(compiled, export));
         Tuple tuple = parseLuaProbe(output, compiled);
-        check(tuple != null, export + " (luajit, sync_presence): the probe captures "
+        check(tuple != null, export + " (luajit, " + stem + "): the probe captures "
             + "the failure: " + output);
         return tuple;
     }
@@ -2065,13 +2349,19 @@ public class CanonicalProjectionParityTest {
     /** The JVM artifact's failure tuple of one named sync-presence probe. */
     private static Tuple jvmSyncPresenceFailure(Compiled compiled, String hostSource,
             String export) throws Exception {
+        return jvmHostFailure(compiled, "sync_presence", hostSource, export);
+    }
+
+    /** The JVM artifact's failure tuple of one probe under the named host stem. */
+    private static Tuple jvmHostFailure(Compiled compiled, String stem,
+            String hostSource, String export) throws Exception {
         String output = jvmArtifactOutput(compiled, jvmExportProbe(compiled, export),
-            Map.of("sync_presence", hostSource));
+            Map.of(stem, hostSource));
         if (output == null) {
             return null;
         }
         Tuple tuple = parseJvmProbe(output, compiled);
-        check(tuple != null, export + " (jvm, sync_presence): the probe captures the "
+        check(tuple != null, export + " (jvm, " + stem + "): the probe captures the "
             + "failure: " + output);
         return tuple;
     }
@@ -5973,6 +6263,7 @@ public class CanonicalProjectionParityTest {
         testArmFamilies();
         testHostNullCompletions();
         testHostSyncReturnPresence();
+        testHostNumericReturnCarriers();
         testCallbackEntrySlot();
         testInvalidUnicodeBoundaryOriginDrive();
         testHostStringCarrierProducers();

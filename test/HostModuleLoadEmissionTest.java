@@ -1015,9 +1015,12 @@ public class HostModuleLoadEmissionTest {
             check(source.contains("__hostParamCheck(2, \"[string]\", __a1, "
                     + "oFile, oLine, oCol);"),
                 "the second parameter cell carries its declared descriptor");
-            check(source.contains("return ((java.lang.Integer) __hostCheck(\"int\", "
-                    + "__r, false, oFile, oLine, oCol)).intValue();"),
-                "the sync return cell runs the declared descriptor");
+            check(source.contains("java.lang.Object __hostReturn = __hostCheck(\"int\", "
+                    + "__r, false, oFile, oLine, oCol);")
+                    && source.contains("return ((java.lang.Number) __hostReturn)"
+                        + ".intValue();"),
+                "the sync return cell runs the declared descriptor and normalizes "
+                    + "the admitted numeric host carrier to the settled carrier");
             check(source.contains("throw JvmRuntime.arm("
                     + "deal.semantic.ir.FailureArmId.HOST_SYNC_RETURN_NOTHING, "
                     + "java.util.Map.of(\"expected\", \"int\"), oFile + \":\" + oLine "

@@ -905,7 +905,16 @@ final class JvmHostAbiEmission {
             return;
         }
         String carrier = carrierType(ret, nullable);
-        out.append("    return ").append(castExpression(carrier, checked))
+        // The declared return carrier's normalization: the closed admitted
+        // numeric host carriers (Integer, Long, Double) are validated in
+        // the pinned int order by the check above and then converted to
+        // the declared carrier — the wrapper's own settled Java return
+        // type — so an admitted Long or integral Double never reaches the
+        // carrier cast as the wrong box (the pre-fix ClassCastException
+        // path) and an out-of-range carrier never reaches it at all.
+        out.append("    java.lang.Object __hostReturn = ").append(checked)
+            .append(";\n");
+        out.append("    return ").append(castExpression(carrier, "__hostReturn"))
             .append(";\n");
     }
 
@@ -923,12 +932,26 @@ final class JvmHostAbiEmission {
             .append(javaString(desc)).append(", \"nothing\");\n");
     }
 
-    /** The Java cast of one checked return value onto its settled carrier. */
+    /**
+     * The Java cast of one checked return value onto its settled carrier:
+     * each declared numeric carrier normalizes every admitted numeric host
+     * box (Integer, Long, Double) through {@code java.lang.Number}, so the
+     * declared {@code int} / {@code number} carrier — and its boxed
+     * nullable form, which keeps an admitted language null — always holds
+     * the settled carrier class. Every other carrier is the reference cast
+     * of its settled class.
+     */
     private static String castExpression(String carrier, String expression) {
         return switch (carrier) {
-            case "int" -> "((java.lang.Integer) " + expression + ").intValue()";
-            case "double" -> "((java.lang.Double) " + expression + ").doubleValue()";
+            case "int" -> "((java.lang.Number) " + expression + ").intValue()";
+            case "double" -> "((java.lang.Number) " + expression + ").doubleValue()";
             case "boolean" -> "((java.lang.Boolean) " + expression + ").booleanValue()";
+            case "java.lang.Integer" -> "(" + expression + " == null ? null : "
+                + "java.lang.Integer.valueOf(((java.lang.Number) " + expression
+                + ").intValue()))";
+            case "java.lang.Double" -> "(" + expression + " == null ? null : "
+                + "java.lang.Double.valueOf(((java.lang.Number) " + expression
+                + ").doubleValue()))";
             default -> "(" + carrier + ") " + expression;
         };
     }
@@ -976,6 +999,15 @@ final class JvmHostAbiEmission {
             + "java.lang.String desc, java.lang.Object v, java.lang.String oFile,"
             + " int oLine, int oCol) {\n");
         out.append("    return JvmRuntime.fail(\"E8001\", reason, oFile + \":\" + oLine + \":\" + oCol, desc, __hostKind(v));\n");
+        out.append("  }\n\n");
+        // The signed32-range non-admission of the int cell, shared by the
+        // Long and Double carrier branches: the closed INT32_RANGE arm's
+        // own render at the checked site (never a composed range text),
+        // exactly like the deployed check_int's range branch.
+        out.append("  static JvmRuntime.DealError __hostRangeFail(java.lang.String oFile,"
+            + " int oLine, int oCol) {\n");
+        out.append("    return JvmRuntime.arm(deal.semantic.ir.FailureArmId.INT32_RANGE,"
+            + " java.util.Map.of(), oFile + \":\" + oLine + \":\" + oCol, null, null);\n");
         out.append("  }\n\n");
         out.append("  static java.lang.String __hostKind(java.lang.Object v) {\n");
         out.append("    if (v == JvmRuntime.MISSING) return \"nil\";\n");
@@ -1451,17 +1483,28 @@ final class JvmHostAbiEmission {
         out.append("    if (d.equals(\"boolean\")) { if (v instanceof java.lang.Boolean) return v; throw __hostFail(JvmRuntime.kindReason(\"boolean\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.equals(\"int\")) {\n");
         out.append("      if (v instanceof java.lang.Integer) return v;\n");
-        out.append("      if (v instanceof java.lang.Long) return v;\n");
+        // The admitted Long carrier is a numeric host carrier like the
+        // Double one: it cannot be NaN, infinite, or fractional, so only
+        // the signed32 range step of the pinned int ladder applies before
+        // admission (the pre-fix branch admitted every Long, including an
+        // out-of-range one, and the declared int return then truncated or
+        // crashed on the cast instead of rendering the range arm).
+        out.append("      if (v instanceof java.lang.Long __ll) { if (__ll < -2147483648L || __ll > 2147483647L) throw __hostRangeFail(oFile, oLine, oCol); return v; }\n");
         out.append("      if (v instanceof java.lang.Double __dd) {\n");
         out.append("        if (__dd.isNaN()) throw __hostFail(JvmRuntime.refinementReason(\"NaN\"), d, v, oFile, oLine, oCol);\n");
         out.append("        if (__dd.isInfinite()) throw __hostFail(JvmRuntime.refinementReason(\"infinity\"), d, v, oFile, oLine, oCol);\n");
         out.append("        if (__dd % 1.0 != 0.0) throw __hostFail(JvmRuntime.refinementReason(\"number\"), d, v, oFile, oLine, oCol);\n");
-        out.append("        if (__dd < -2147483648.0 || __dd > 2147483647.0) { throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.INT32_RANGE, java.util.Map.of(), oFile + \":\" + oLine + \":\" + oCol, null, null); }\n");
+        out.append("        if (__dd < -2147483648.0 || __dd > 2147483647.0) throw __hostRangeFail(oFile, oLine, oCol);\n");
         out.append("        return v;\n");
         out.append("      }\n");
         out.append("      throw __hostFail(JvmRuntime.kindReason(\"int\"), d, v, oFile, oLine, oCol);\n");
         out.append("    }\n");
-        out.append("    if (d.equals(\"number\")) { if (v instanceof java.lang.Double || v instanceof java.lang.Long) return v; throw __hostFail(JvmRuntime.kindReason(\"number\"), d, v, oFile, oLine, oCol); }\n");
+        // The number cell admits every numeric host carrier: the boxed
+        // int carrier (Integer) is a numeric host carrier like Long and
+        // Double, exactly as the oracle's NUMBER/INT view and the deployed
+        // check_number admit it; the declared return carrier's normalization
+        // then settles the admitted value as the production Double.
+        out.append("    if (d.equals(\"number\")) { if (v instanceof java.lang.Double || v instanceof java.lang.Long || v instanceof java.lang.Integer) return v; throw __hostFail(JvmRuntime.kindReason(\"number\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.equals(\"string\")) { if (v instanceof java.lang.String __s) { java.lang.String __r = __hostStringReason(__s); if (__r != null) throw __hostFail(__r, d, v, oFile, oLine, oCol); return v; } if (v instanceof byte[] __b) { java.lang.String __r = JvmRuntime.hostStringReason(__b); if (__r != null) throw __hostFail(__r, d, v, oFile, oLine, oCol); return new java.lang.String(__b, java.nio.charset.StandardCharsets.UTF_8); } throw __hostFail(JvmRuntime.kindReason(\"string\"), d, v, oFile, oLine, oCol); }\n");
         // The bytes cell admits both representations of one buffer (K6
         // item 13 / H7): the production carrier `JvmRuntime.BytesValue`
