@@ -389,6 +389,7 @@ public class CanonicalProjectionParityTest {
         host("host-abi/host-rest-bad", "test_host_rest_bad", "rest_join"),
         host("host-abi/host-class-extra-field", "test_host_class_extra_field",
             "presence"),
+        host("host-abi/host-bad-return", "test_host_bad_return", "bad_return"),
         host("host-abi/host-missing-export", "test_host_missing_export",
             "missing_export"),
         async("host-abi/host-async-shape-bad", "test_host_async_shape_bad",
@@ -1210,6 +1211,24 @@ public class CanonicalProjectionParityTest {
             assertPinned(jvm, pin, spec, "jvm");
             checkEq(null, firstDifferingField(lua, jvm), spec.what()
                 + ": the two production artifacts render the identical tuple");
+            // The production wrappers' mapped failure sites follow the
+            // closed arm's own template and declared fields, never a
+            // runtime-side text copy: the two produced tuples equal the
+            // registry's render of the arm the site belongs to.
+            switch (spec.corpusPath()) {
+                case "host-abi/host-empty-return-bad" -> assertRegistryArm(spec, lua,
+                    jvm, FailureArmId.HOST_SYNC_RETURN_NOTHING,
+                    Map.of("expected", "int"), "int", "nothing");
+                case "host-abi/host-bad-return" -> assertRegistryArm(spec, lua, jvm,
+                    FailureArmId.HOST_SYNC_RETURN_CELL,
+                    Map.of("inner", FailureProjections.kindReason(
+                        RuntimeDescriptor.Int.INSTANCE)), "int", "string");
+                case "host-abi/host-async-shape-bad" -> assertRegistryArm(spec, lua,
+                    jvm, FailureArmId.ASYNC_SHAPE, Map.of("actual", "number"),
+                    "async operation", "number");
+                default -> {
+                }
+            }
             switch (spec.corpusPath()) {
                 case "host-abi/host-bytes-param-mismatch-e8010",
                      "host-abi/host-nullable-function-param-bad",
@@ -1231,6 +1250,9 @@ public class CanonicalProjectionParityTest {
                 case "host-abi/host-empty-return-bad" -> assertOracleCell(spec, lua,
                     FailurePolicyId.HOST_SYNC_RETURN, RuntimeDescriptor.Int.INSTANCE,
                     BoundaryValueView.of(ActualKind.NOTHING), BoundaryContext.none());
+                case "host-abi/host-bad-return" -> assertOracleCell(spec, lua,
+                    FailurePolicyId.HOST_SYNC_RETURN, RuntimeDescriptor.Int.INSTANCE,
+                    BoundaryValueView.of(ActualKind.STRING), BoundaryContext.none());
                 case "host-abi/host-nullable-return-bad" -> assertOracleCell(spec, lua,
                     FailurePolicyId.HOST_SYNC_RETURN,
                     RuntimeDescriptor.parseCanonicalText("?string"),
@@ -1243,6 +1265,8 @@ public class CanonicalProjectionParityTest {
             }
             if ("host-abi/host-async-shape-bad".equals(spec.corpusPath())) {
                 assertAbsentAsyncHandle(compiled, pin);
+                assertAbsentAsyncHandleProduction(compiled, pin);
+                assertHostWrapperArmDelegation(compiled, pin);
                 assertAsyncHandleCarriers(compiled, pin);
                 assertCyclicAsyncHandle(compiled, pin);
                 assertNumericAsyncHandleBoundaries(compiled, pin);
@@ -1286,6 +1310,181 @@ public class CanonicalProjectionParityTest {
             + " (oracle, absent async handle): the pinned call-origin line");
         checkEq(pin.column(), absent.column(), compiled.spec().what()
             + " (oracle, absent async handle): the pinned call-origin column");
+    }
+
+    /**
+     * The absent-handle projection of the two production wrappers: a host
+     * invocation that produced no result — the LuaJIT wrapper's
+     * zero-result return and the JVM host surface's null/void zero-result
+     * form — renders the closed {@code ASYNC_SHAPE} arm with the fixed
+     * {@code nothing} actual at the supplied call origin, exactly the
+     * registry's own render and the oracle's absent-handle tuple. The two
+     * production artifacts are driven with the corresponding no-result
+     * host carriers, so the control exercises the wrapper failure sites,
+     * never a direct renderer call.
+     */
+    private static void assertAbsentAsyncHandleProduction(Compiled compiled,
+            SidecarExpectations.ErrorExpectation pin) throws Exception {
+        BoundaryFailure arm = FailureContractRegistry.render(FailureArmId.ASYNC_SHAPE,
+            Map.of("actual", "nothing"), "async operation", "nothing", null);
+        Tuple expected = new Tuple(arm.code().name(), arm.message(), pin.sourceFile(),
+            pin.line(), pin.column(), arm.expected(), arm.actual());
+        // The LuaJIT wrapper's zero-result branch: the raw host function
+        // returns no value at all.
+        Tuple lua = luaArtifactWithHost(compiled, "async_shape_bad",
+            "return {\n  fetchValue = function()\n  end,\n}\n");
+        checkEq(null, firstDifferingField(expected, lua), compiled.spec().what()
+            + " (luajit, absent async handle): the production wrapper renders the "
+            + "closed ASYNC_SHAPE arm's complete tuple: " + lua);
+        // The JVM host surface's zero-result form: a host method that
+        // produces no result (its reflective invocation yields null) keeps
+        // the fixed nothing actual, never the language-null carrier's
+        // table token.
+        Tuple jvm = jvmArtifactWithHost(compiled, "async_shape_bad", """
+            final class HostAsync_shape_bad {
+              public static void fetchValue() {
+              }
+            }
+            """);
+        checkEq(null, firstDifferingField(expected, jvm), compiled.spec().what()
+            + " (jvm, absent async handle): the production wrapper renders the "
+            + "closed ASYNC_SHAPE arm's complete tuple: " + jvm);
+        checkEq(null, firstDifferingField(lua, jvm), compiled.spec().what()
+            + ": the two production wrappers render the identical absent-handle "
+            + "tuple");
+    }
+
+    /**
+     * The two production wrappers' mapped failure tuple against the closed
+     * arm's own render — the arm template instantiated with its named
+     * parameters and its declared expected/actual fields. The wrapper
+     * failure site holds no text of its own, so the arm is the only
+     * authority for the message and the projections.
+     */
+    private static void assertRegistryArm(Case spec, Tuple lua, Tuple jvm,
+            FailureArmId armId, Map<String, String> values, String expected,
+            String actual) {
+        BoundaryFailure arm = FailureContractRegistry.render(armId, values, expected,
+            actual, null);
+        Tuple rendered = new Tuple(arm.code().name(), arm.message(), lua.file(),
+            lua.line(), lua.column(), arm.expected(), arm.actual());
+        checkEq(null, firstDifferingField(rendered, lua), spec.what()
+            + " (luajit): the production wrapper renders the arm's own template "
+            + "and declared fields, never a composition");
+        checkEq(null, firstDifferingField(rendered, jvm), spec.what()
+            + " (jvm): the production wrapper renders the arm's own template "
+            + "and declared fields, never a composition");
+    }
+
+    /**
+     * The production Lua wrapper's delegation control: a mapped wrapper
+     * failure calls the artifact-registered closed-arm renderer with the
+     * arm id, its named parameters, the declared expected/actual
+     * projections and the supplied call origin, and the published tuple is
+     * that renderer's output — the wrapper composes no text of its own.
+     * The same drive's negative control removes the artifact-owned
+     * renderer: the wrapper fails closed with the producer-defect report
+     * instead of publishing a locally composed E8010 tuple.
+     */
+    private static void assertHostWrapperArmDelegation(Compiled compiled,
+            SidecarExpectations.ErrorExpectation pin) throws Exception {
+        BoundaryFailure arm = FailureContractRegistry.render(FailureArmId.ASYNC_SHAPE,
+            Map.of("actual", "nothing"), "async operation", "nothing", null);
+        String entryModule = compiled.checkedProject().entryModule().path();
+        // The artifact carries the header-stripped mirror source, so the
+        // pinned raw corpus line rebases onto the artifact's own line.
+        int originLine = pin.line() - compiled.strippedByCorpusPath()
+            .getOrDefault(compiled.spec().fixtureFile(), 0);
+        StringBuilder probe = new StringBuilder();
+        probe.append("local function fail(m) print(\"PROBE-FAIL: \" .. tostring(m)) os.exit(1) end\n");
+        probe.append("dofile(__ARTIFACT__)\n");
+        probe.append("local rt = require(\"deal.runtime\")\n");
+        probe.append("local real = rt.__hostArm\n");
+        probe.append("if real == nil then fail(\"the artifact registered no "
+            + "host arm renderer\") end\n");
+        probe.append("local calls = {}\n");
+        probe.append("rt.__hostArm = function(id, values, file, line, column, "
+            + "expected, actual)\n");
+        probe.append("  calls[#calls + 1] = {id = id, values = values, file = file, "
+            + "line = line, column = column, expected = expected, "
+            + "actual = actual}\n");
+        probe.append("  return real(id, values, file, line, column, expected, "
+            + "actual)\n");
+        probe.append("end\n");
+        probe.append("local ok, err = __dealMain()\n");
+        probe.append("if not ok then fail(\"the init failed: \" .. "
+            + "tostring(err)) end\n");
+        probe.append("local probe = __exportSurfaces[__ENTRY__]["
+            + "\"test_host_async_shape_bad\"]\n");
+        probe.append("if probe == nil then fail(\"no probe export\") end\n");
+        probe.append("local ok2, err2 = pcall(probe.f)\n");
+        probe.append("if ok2 then fail(\"the wrapper failure did not fire\") end\n");
+        probe.append("if #calls ~= 1 then fail(\"the renderer calls: \" .. "
+            + "#calls) end\n");
+        probe.append("local c = calls[1]\n");
+        probe.append("if c.id ~= \"ASYNC_SHAPE\" then fail(\"the arm id: \" .. "
+            + "tostring(c.id)) end\n");
+        probe.append("if type(c.values) ~= \"table\" or c.values.actual ~= "
+            + "\"nothing\" then fail(\"the arm parameters: \" .. "
+            + "tostring(c.values and c.values.actual)) end\n");
+        probe.append("if c.expected ~= ")
+            .append(luaString(arm.expected()))
+            .append(" then fail(\"the expected projection: \" .. "
+                + "tostring(c.expected)) end\n");
+        probe.append("if c.actual ~= ")
+            .append(luaString(arm.actual()))
+            .append(" then fail(\"the actual projection: \" .. "
+                + "tostring(c.actual)) end\n");
+        probe.append("if c.line ~= ").append(originLine)
+            .append(" or c.column ~= ").append(pin.column())
+            .append(" then fail(\"the call origin: \" .. tostring(c.file) .. "
+                + "\":\" .. tostring(c.line) .. \":\" .. "
+                + "tostring(c.column)) end\n");
+        probe.append("if type(c.file) ~= \"string\" or #c.file == 0 then "
+            + "fail(\"the origin file: \" .. tostring(c.file)) end\n");
+        probe.append("if type(err2) ~= \"table\" or err2.__d ~= true then "
+            + "fail(\"the carrier: \" .. tostring(err2)) end\n");
+        probe.append("if err2.code ~= ")
+            .append(luaString(arm.code().name()))
+            .append(" then fail(\"the code: \" .. tostring(err2.code)) end\n");
+        probe.append("if err2.m ~= ")
+            .append(luaString(arm.message()))
+            .append(" then fail(\"the message: \" .. tostring(err2.m)) end\n");
+        probe.append("if err2.o ~= tostring(c.file) .. \":\" .. "
+            + "tostring(c.line) .. \":\" .. tostring(c.column) then "
+            + "fail(\"the origin: \" .. tostring(err2.o)) end\n");
+        probe.append("if err2.e ~= ")
+            .append(luaString(arm.expected()))
+            .append(" then fail(\"the expected field: \" .. tostring(err2.e)) end\n");
+        probe.append("if err2.a ~= ")
+            .append(luaString(arm.actual()))
+            .append(" then fail(\"the actual field: \" .. tostring(err2.a)) end\n");
+        probe.append("rt.__hostArm = nil\n");
+        probe.append("local ok3, err3 = pcall(probe.f)\n");
+        probe.append("if ok3 then fail(\"the wrapper succeeded without its "
+            + "renderer\") end\n");
+        probe.append("if type(err3) ~= \"string\" or string.find(err3, ")
+            .append(luaString("not registered"))
+            .append(", 1, true) == nil then fail(\"the fail-closed error: \" .. "
+                + "tostring(err3)) end\n");
+        probe.append("print(\"PROBE-OK\")\n");
+        String probeSource = probe.toString()
+            .replace("__ARTIFACT__", luaString(artifactPath(compiled)))
+            .replace("__ENTRY__", luaString(entryModule));
+        String output = luaArtifactOutput(compiled,
+            Map.of("async_shape_bad", "return {\n  fetchValue = function()\n  end,\n}\n"),
+            probeSource);
+        check(output.contains("PROBE-OK"), compiled.spec().what()
+            + " (luajit): the production wrapper delegates its mapped failure to "
+            + "the artifact-owned closed-arm renderer and fails closed without "
+            + "it: " + output);
+    }
+
+    /** The staged LuaJIT artifact path of one compiled case. */
+    private static String artifactPath(Compiled compiled) {
+        return compiled.root().resolve("out").resolve(
+            compiled.checkedProject().entryModule().path().replace('.', '/')
+                + ".lua").toAbsolutePath().toString();
     }
 
     /**
@@ -2729,6 +2928,21 @@ public class CanonicalProjectionParityTest {
      */
     private static String luaArtifactOutput(Compiled compiled,
             Map<String, String> hostOverrides) throws Exception {
+        return luaArtifactOutput(compiled, hostOverrides,
+            luaProbe(compiled.root().resolve("out").resolve(compiled
+                .checkedProject().entryModule().path().replace('.', '/') + ".lua")
+                .toAbsolutePath().toString(),
+                compiled.checkedProject().entryModule().path()));
+    }
+
+    /**
+     * Runs the LuaJIT production artifact under a caller-supplied probe
+     * source (the production-wrapper delegation control) with
+     * caller-owned host implementations staged for the named stems,
+     * returning the probe's raw output.
+     */
+    private static String luaArtifactOutput(Compiled compiled,
+            Map<String, String> hostOverrides, String probeSource) throws Exception {
         Path out = compiled.root().resolve("out");
         for (String stem : compiled.hostStems()) {
             Path host = out.resolve("host/" + stem + ".lua");
@@ -2741,10 +2955,7 @@ public class CanonicalProjectionParityTest {
                     stem + ".lua"), host, StandardCopyOption.REPLACE_EXISTING);
             }
         }
-        String artifact = out.resolve(compiled.checkedProject().entryModule().path()
-            .replace('.', '/') + ".lua").toAbsolutePath().toString();
-        Files.writeString(out.resolve("probe.lua"),
-            luaProbe(artifact, compiled.checkedProject().entryModule().path()),
+        Files.writeString(out.resolve("probe.lua"), probeSource,
             StandardCharsets.UTF_8);
         ProcessBuilder builder = new ProcessBuilder("luajit", "probe.lua");
         builder.directory(out.toFile());

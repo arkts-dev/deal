@@ -636,6 +636,21 @@ public final class LuaSemanticEmitter {
                 out.append("  return __arm(id, values, tostring(file)..\":\""
                     + "..tostring(line)..\":\"..tostring(column), nil, nil)\n");
                 out.append("end\n");
+                // The host-wrapper arm renderer (canonical failure-projection
+                // authority P1/P4): the deployed runtime's
+                // `from_lua_function` wrappers delegate every mapped failure
+                // (the declared parameter cell, the sync return cells, and
+                // the async-shape cell) to this artifact-owned render at the
+                // supplied call origin, so the production failure is the
+                // closed arm's own instantiation with the arm's declared
+                // fields and projections — never a runtime-side template
+                // copy and never a locally composed text.
+                out.append("__rt.__hostArm = function(id, values, file, "
+                    + "line, column, expected, actual)\n");
+                out.append("  return __arm(id, values, tostring(file)..\":\""
+                    + "..tostring(line)..\":\"..tostring(column), expected, "
+                    + "actual)\n");
+                out.append("end\n");
                 out.append(HOST_BOUNDARY_PRELUDE);
             } else if (bindsBytesRuntime()) {
 

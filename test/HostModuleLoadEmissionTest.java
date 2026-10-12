@@ -1040,6 +1040,16 @@ public class HostModuleLoadEmissionTest {
                     + "deal.semantic.ir.FailureArmId.ASYNC_SHAPE,"
                     + " java.util.Map.of(\"actual\", __hostKind(__r))"),
                 "the declared async export renders the async-shape arm");
+            check(source.contains("if (__r == null) {\n      throw JvmRuntime.arm("
+                    + "deal.semantic.ir.FailureArmId.ASYNC_SHAPE,"
+                    + " java.util.Map.of(\"actual\", \"nothing\"), oFile + \":\""
+                    + " + oLine + \":\" + oCol, \"async operation\","
+                    + " \"nothing\");")
+                    && source.contains("if (!(__r instanceof "
+                        + "java.util.concurrent.CompletableFuture)) {"),
+                "the declared async export's zero-result presence rule renders "
+                    + "the fixed nothing actual before the shape check (never "
+                    + "the language-null carrier's table token)");
 
             // The synthesized host-record and host-carrier scope.
             check(source.contains("class $DealRt {"),

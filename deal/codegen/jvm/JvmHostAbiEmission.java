@@ -836,6 +836,20 @@ final class JvmHostAbiEmission {
         Type ret = func.returnType();
         String desc = descriptorText(ret);
         if (func.isAsync()) {
+            // The presence rule of the async position: a host invocation
+            // that produced no result (the JVM host surface's zero-result
+            // form is Java null, exactly like the declared sync return
+            // positions) renders the closed ASYNC_SHAPE arm with the fixed
+            // {@code nothing} actual, matching the LuaJIT wrapper's
+            // zero-result branch and the oracle's absent handle. An
+            // explicit non-result value keeps its carrier-kind projection.
+            out.append("    if (__r == null) {\n");
+            out.append("      throw JvmRuntime.arm("
+                + "deal.semantic.ir.FailureArmId.ASYNC_SHAPE,"
+                + " java.util.Map.of(\"actual\", \"nothing\"), oFile + \":\""
+                + " + oLine + \":\" + oCol, \"async operation\","
+                + " \"nothing\");\n");
+            out.append("    }\n");
             out.append("    if (!(__r instanceof "
                     + "java.util.concurrent.CompletableFuture)) {\n");
             out.append("      throw JvmRuntime.arm("

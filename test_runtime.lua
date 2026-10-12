@@ -793,6 +793,25 @@ end)
 
 -- ==================== from_lua_function tests ====================
 
+-- The emitted chunk registers the closed host failure-arm renderer
+-- (__rt.__hostArm) on the deployed runtime at load; the loaded wrappers
+-- delegate every mapped wrapper failure (the declared parameter cell, the
+-- sync return cells, and the async-shape cell) to it with the supplied
+-- call origin and the declared projections. The unit drives register a
+-- recording stub: the arm id, the parameters, the projections and the
+-- origin it receives are the observable delegation, and the stub's own
+-- E8010 carrier keeps the assert_error drives' subject. The production
+-- renderer's tuples are asserted by the artifact drives
+-- (CanonicalProjectionParityTest).
+local host_arm_calls = {}
+__rt.__hostArm = function(id, values, file, line, column, expected, actual)
+  host_arm_calls[#host_arm_calls + 1] = { id = id, values = values,
+    file = file, line = line, column = column, expected = expected,
+    actual = actual }
+  return { code = "E8010", message = "arm:" .. id, file = file, line = line,
+    column = column, expected = expected, actual = actual }
+end
+
 test("from_lua_function wraps with type checks", function()
   local raw = function(a, b) return a + b end
   local w = __rt.from_lua_function("(int,int)->int", raw)
@@ -803,10 +822,20 @@ test("from_lua_function wraps with type checks", function()
   assert(r == 3)
 end)
 
-test("from_lua_function rejects wrong param type", function()
+test("from_lua_function delegates a wrong param type to the closed arm renderer", function()
   local raw = function(a, b) return a + b end
   local w = __rt.from_lua_function("(int,int)->int", raw)
-  assert_error(function() w.f("x", 2) end, "E8010")
+  local before = #host_arm_calls
+  local err = assert_error(function() w.f("x", 2, "t.deal", 3, 4) end, "E8010")
+  assert(err.message == "arm:HOST_PARAMETER_CELL")
+  assert(#host_arm_calls == before + 1)
+  local call = host_arm_calls[#host_arm_calls]
+  assert(call.id == "HOST_PARAMETER_CELL")
+  assert(call.values.index == 1)
+  assert(call.values.inner == "expected int")
+  assert(call.expected == "int")
+  assert(call.actual == "string")
+  assert(call.file == "t.deal" and call.line == 3 and call.column == 4)
 end)
 
 test("from_lua_function rejects wrong arg count (too few)", function()
@@ -1625,10 +1654,66 @@ test("from_lua_function checks return type", function()
   assert(r == 3)
 end)
 
-test("from_lua_function wrong return type errors with E8010", function()
+test("from_lua_function wrong return type delegates the closed arm", function()
   local raw = function() return "not_an_int" end
   local w = __rt.from_lua_function("()->int", raw)
-  assert_error(function() w.f() end, "E8010")
+  local err = assert_error(function() w.f("t.deal", 3, 4) end, "E8010")
+  assert(err.message == "arm:HOST_SYNC_RETURN_CELL")
+  local call = host_arm_calls[#host_arm_calls]
+  assert(call.id == "HOST_SYNC_RETURN_CELL")
+  assert(call.values.inner == "expected int")
+  assert(call.expected == "int")
+  assert(call.actual == "string")
+  assert(call.file == "t.deal" and call.line == 3 and call.column == 4)
+end)
+
+test("from_lua_function zero results delegates the nothing arm", function()
+  local w = __rt.from_lua_function("()->int", function() end)
+  local err = assert_error(function() w.f("t.deal", 5, 6) end, "E8010")
+  assert(err.message == "arm:HOST_SYNC_RETURN_NOTHING")
+  local call = host_arm_calls[#host_arm_calls]
+  assert(call.id == "HOST_SYNC_RETURN_NOTHING")
+  assert(call.values.expected == "int")
+  assert(call.expected == "int")
+  assert(call.actual == "nothing")
+end)
+
+test("from_lua_function async shape delegates the nothing arm", function()
+  local w = __rt.from_lua_function("async()->int", function() end)
+  local err = assert_error(function() w.f("t.deal", 7, 8) end, "E8010")
+  assert(err.message == "arm:ASYNC_SHAPE")
+  local call = host_arm_calls[#host_arm_calls]
+  assert(call.id == "ASYNC_SHAPE")
+  assert(call.values.actual == "nothing")
+  assert(call.expected == "async operation")
+  assert(call.actual == "nothing")
+  assert(call.file == "t.deal" and call.line == 7 and call.column == 8)
+end)
+
+test("from_lua_function async shape delegates the carrier-kind arm", function()
+  local w = __rt.from_lua_function("async()->int", function()
+    return "not an async op"
+  end)
+  local err = assert_error(function() w.f("t.deal", 9, 10) end, "E8010")
+  assert(err.message == "arm:ASYNC_SHAPE")
+  local call = host_arm_calls[#host_arm_calls]
+  assert(call.id == "ASYNC_SHAPE")
+  assert(call.values.actual == "string")
+  assert(call.expected == "async operation")
+  assert(call.actual == "string")
+end)
+
+test("from_lua_function fails closed without the artifact renderer", function()
+  local saved = __rt.__hostArm
+  __rt.__hostArm = nil
+  local w = __rt.from_lua_function("()->int", function() return "junk" end)
+  local ok, err = pcall(function() w.f("t.deal", 1, 2) end)
+  __rt.__hostArm = saved
+  assert(not ok, "the wrapper must not publish a composed failure")
+  assert(type(err) == "string", "the fail-closed report is a plain error: "
+    .. type(err))
+  assert(string.find(err, "not registered", 1, true) ~= nil,
+    "the fail-closed report names the missing renderer: " .. tostring(err))
 end)
 
 -- ==================== check_type descriptor edge cases ====================

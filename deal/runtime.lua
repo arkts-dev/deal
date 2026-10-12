@@ -890,10 +890,35 @@ local function is_function_type(descriptor)
   return false
 end
 
+--- One mapped host-wrapper failure (canonical failure-projection
+-- authority P1/P4): the emitted chunk registers its own closed-arm
+-- renderer on the deployed runtime at load (`__rt.__hostArm`), so the
+-- declared-parameter cell, the declared sync return cells, and the
+-- async-shape cell of `from_lua_function`'s wrappers render through the
+-- authority — the arm's own template instantiated with the closed named
+-- parameters, its declared expected/actual fields, at the supplied call
+-- origin — and compose no failure text of their own. An unregistered
+-- renderer (the runtime driven outside a production artifact) is a
+-- fail-closed producer defect, never a textual fallback.
+local function host_arm_failure(id, values, file, line, column, expected, actual)
+  local render = __rt.__hostArm
+  if render == nil then
+    error("the host failure-arm renderer is not registered on the deployed "
+      .. "runtime (the emitted chunk registers it at load; a producer "
+      .. "defect)", 0)
+  end
+  error(render(id, values, file, line, column, expected, actual), 0)
+end
+
 --- Wrap a plain Lua function with runtime parameter and return type checks.
 -- Parses the signature descriptor through the canonical parser (the only
 -- accepted dialect) to determine the expected parameter types and return
 -- type.
+--
+-- The mapped failures (the declared parameter cell, the sync return
+-- cells, and the async-shape cell) render through the artifact-owned
+-- closed-arm renderer (`__rt.__hostArm`), never through a local text
+-- composition.
 --
 -- Three-way return dispatch:
 -- 1. Async descriptor (parsed.isAsync == true): the call must produce at
@@ -973,14 +998,16 @@ function __rt.from_lua_function(sig, raw_f)
       user_args[i] = select(i, ...)
     end
 
-    -- Check required parameters (the pcall composition: the inner DEAL
-    -- error's message is the byte-exact tail of the re-raised E8010).
+    -- Check required parameters (the closed HOST_PARAMETER_CELL arm with
+    -- the inner DEAL error's message as its inner reason).
     for i = 1, required_params do
       local arg = user_args[i]
       local param_desc = param_descriptors[i]
       local ok, err = pcall(__rt.check_type, param_desc, arg, file, line, column)
       if not ok then
-        error(__rt._err("E8010", "parameter " .. i .. " type mismatch: " .. tostring(err.message), file, line, column, param_desc, type(arg)))
+        local inner = type(err) == "table" and err.message or tostring(err)
+        host_arm_failure("HOST_PARAMETER_CELL", {index = i, inner = inner},
+          file, line, column, param_desc, type(arg))
       end
     end
 
@@ -1002,39 +1029,54 @@ function __rt.from_lua_function(sig, raw_f)
     local nresults = #results
 
     -- Return validation: three-way dispatch (see the doc comment above).
+    -- Every mapped branch renders the closed arm of its cell (the async
+    -- shape's ASYNC_SHAPE, the sync non-null return's
+    -- HOST_SYNC_RETURN_NOTHING / HOST_SYNC_RETURN_CELL, and the sync-null
+    -- return's own pair of the same two arms) through the artifact-owned
+    -- renderer; a failure site holds no text of its own.
     if is_async then
       -- 1. Async: require an async operation result.
       if nresults < 1 then
-        error(__rt._err("E8010", "host async function must return an async operation, got nothing", file, line, column, "async operation", "nothing"))
+        host_arm_failure("ASYNC_SHAPE", {actual = "nothing"}, file, line, column,
+          "async operation", "nothing")
       end
       for i = 1, nresults do
         local r = results[i]
         if type(r) ~= "table" or r.__kind ~= "async" then
-          error(__rt._err("E8010", "host async function must return an async operation, got " .. type(r), file, line, column, "async operation", type(r)))
+          local actual = type(r)
+          host_arm_failure("ASYNC_SHAPE", {actual = actual}, file, line, column,
+            "async operation", actual)
         end
       end
     elseif not is_null_ret then
       -- 2. Non-null declared return: require at least one result, then check
       -- every result against the declared descriptor.
       if nresults < 1 then
-        error(__rt._err("E8010", "return value 1 type mismatch: expected " .. ret_descriptor .. ", got nothing", file, line, column, ret_descriptor, "nothing"))
+        host_arm_failure("HOST_SYNC_RETURN_NOTHING",
+          {expected = ret_descriptor}, file, line, column, ret_descriptor,
+          "nothing")
       end
       for i = 1, nresults do
         local ok, err = pcall(__rt.check_type, ret_descriptor, results[i], file, line, column)
         if not ok then
-          error(__rt._err("E8010", "return value " .. i .. " type mismatch: " .. tostring(err.message), file, line, column, ret_descriptor, type(results[i])))
+          local inner = type(err) == "table" and err.message or tostring(err)
+          host_arm_failure("HOST_SYNC_RETURN_CELL", {inner = inner},
+            file, line, column, ret_descriptor, type(results[i]))
         end
       end
     else
       -- 3. Sync null return: require at least one result and every result
       -- must be the __rt.__NULL sentinel.
       if nresults < 1 then
-        error(__rt._err("E8010", "return value 1 type mismatch: expected null, got nothing", file, line, column, "null", "nothing"))
+        host_arm_failure("HOST_SYNC_RETURN_NOTHING", {expected = ret_descriptor},
+          file, line, column, ret_descriptor, "nothing")
       end
       for i = 1, nresults do
         local ok, err = pcall(__rt.check_null, results[i], file, line, column)
         if not ok then
-          error(__rt._err("E8010", "return value " .. i .. " type mismatch: " .. tostring(err.message), file, line, column, "null", type(results[i])))
+          local inner = type(err) == "table" and err.message or tostring(err)
+          host_arm_failure("HOST_SYNC_RETURN_CELL", {inner = inner},
+            file, line, column, ret_descriptor, type(results[i]))
         end
       end
     end
