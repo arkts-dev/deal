@@ -9725,7 +9725,14 @@ local function __bcheck(desc, staticKind, v, csig, completion)
     return failKind(expected, expected)
   end
   if desc == "null" then
-    if v == nil then return v end
+    -- The language-null admission (P2): the chunk's own nil
+    -- representation, its null sentinel, and the deployed runtime's
+    -- host-crossed null sentinel (a host completion, a runtime-produced
+    -- carrier) are one language null; the absent marker keeps the kind
+    -- arm. The admitted value lands in the chunk's own nil
+    -- representation, which is what the null literal emits and what
+    -- every null comparison reads.
+    if v == nil or v == __NULL or v == __rtNull then return nil end
     return fail("null")
   elseif desc == "boolean" then
     if type(v) == "boolean" then return v end
@@ -9852,7 +9859,15 @@ local function __bcheck(desc, staticKind, v, csig, completion)
     end
     return fail("array")
   elseif string.sub(desc, 1, 9) == "nullable(" then
-    if v == nil or v == __MISSING then return nil end
+    -- The named absent→null mapping plus the language-null admission:
+    -- the absent marker and both null sentinels (the chunk's own and the
+    -- deployed runtime's host-crossed one) all yield the chunk's own null
+    -- representation (nil), so a host operation completing with the
+    -- runtime's sentinel passes a declared null/nullable completion
+    -- exactly like the oracle's NullValue and the JVM's present null.
+    if v == nil or v == __MISSING or v == __NULL or v == __rtNull then
+      return nil
+    end
     local innerSig = csig
     if innerSig ~= nil and string.sub(innerSig, 1, 1) == "?" then
       innerSig = string.sub(innerSig, 2)

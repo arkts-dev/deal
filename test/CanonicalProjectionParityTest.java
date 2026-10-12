@@ -449,6 +449,17 @@ public class CanonicalProjectionParityTest {
      */
     private static Compiled compile(Case spec, String driverSource)
             throws Exception {
+        return compile(spec, driverSource, Map.of());
+    }
+
+    /**
+     * Materializes one corpus case with caller-owned host declarations for
+     * the named stems (a drive whose declaration shape no on-disk
+     * host-fixture carries writes its own declaration into the scratch
+     * mirror, so no corpus or host-fixture membership changes).
+     */
+    private static Compiled compile(Case spec, String driverSource,
+            Map<String, String> hostDeclarations) throws Exception {
         Map<String, CorpusDiscovery.Fixture> byPath = corpusSnapshot().byPath();
         CorpusDiscovery.Fixture entryFixture = byPath.get(spec.fixtureFile());
         if (entryFixture == null) {
@@ -471,7 +482,8 @@ public class CanonicalProjectionParityTest {
         }
         Path root = Files.createTempDirectory("projection-parity");
         try {
-            return compileInto(root, spec, compilationSet, byPath, driverSource);
+            return compileInto(root, spec, compilationSet, byPath, driverSource,
+                hostDeclarations);
         } catch (Exception | Error failure) {
             cleanupRejectedScratch(root, failure);
             throw failure;
@@ -480,8 +492,8 @@ public class CanonicalProjectionParityTest {
 
     private static Compiled compileInto(Path root, Case spec,
             List<SidecarSchemaValidator.CompilationModule> compilationSet,
-            Map<String, CorpusDiscovery.Fixture> byPath, String driverSource)
-            throws Exception {
+            Map<String, CorpusDiscovery.Fixture> byPath, String driverSource,
+            Map<String, String> hostDeclarations) throws Exception {
         Path mirror = root.resolve("conformance");
         Map<String, Integer> stripped = new LinkedHashMap<>();
         Map<String, String> modules = new LinkedHashMap<>();
@@ -550,9 +562,11 @@ public class CanonicalProjectionParityTest {
         for (String stem : hostStems) {
             Path declaration = mirror.resolve("bindings/" + stem + ".d.deal");
             Files.createDirectories(declaration.getParent());
-            Files.writeString(declaration, ConformanceHarnessMetadata
-                .stripClassificationHeaders(Files.readString(Path.of("test",
-                    "conformance", "host-fixtures", stem + ".d.deal"))));
+            String declared = hostDeclarations.get(stem);
+            Files.writeString(declaration, declared != null ? declared
+                : ConformanceHarnessMetadata.stripClassificationHeaders(
+                    Files.readString(Path.of("test", "conformance",
+                        "host-fixtures", stem + ".d.deal"))));
             externals.put("host." + stem, declaration.toAbsolutePath().toString());
             externals.put("host/" + stem, declaration.toAbsolutePath().toString());
         }
@@ -1265,7 +1279,7 @@ public class CanonicalProjectionParityTest {
             }
             if ("host-abi/host-async-shape-bad".equals(spec.corpusPath())) {
                 assertAbsentAsyncHandle(compiled, pin);
-                assertAbsentAsyncHandleProduction(compiled, pin);
+                assertAsyncHandlePresence(compiled, pin);
                 assertHostWrapperArmDelegation(compiled, pin);
                 assertAsyncHandleCarriers(compiled, pin);
                 assertCyclicAsyncHandle(compiled, pin);
@@ -1313,45 +1327,326 @@ public class CanonicalProjectionParityTest {
     }
 
     /**
-     * The absent-handle projection of the two production wrappers: a host
-     * invocation that produced no result — the LuaJIT wrapper's
-     * zero-result return and the JVM host surface's null/void zero-result
-     * form — renders the closed {@code ASYNC_SHAPE} arm with the fixed
-     * {@code nothing} actual at the supplied call origin, exactly the
-     * registry's own render and the oracle's absent-handle tuple. The two
-     * production artifacts are driven with the corresponding no-result
-     * host carriers, so the control exercises the wrapper failure sites,
-     * never a direct renderer call.
+     * The three-consumer async-handle presence drive (ISSUE-0696
+     * remediation; ISSUE-0774's required distinction): a host invocation
+     * that produced no result — the LuaJIT wrapper's zero-result return,
+     * the JVM host surface's declared-void method — renders the closed
+     * {@code ASYNC_SHAPE} arm with the fixed {@code nothing} actual, while
+     * a present language-null result — the LuaJIT runtime's null sentinel,
+     * the JVM host surface's {@code Object}-returning method that returned
+     * null — keeps the canonical carrier-kind {@code table} projection,
+     * exactly like the oracle's {@code Absent} and
+     * {@code InvalidHandle(NullValue)} outcomes. Every consumer renders
+     * the registry's own complete tuple at the supplied call origin, no
+     * consumer collapses the present null carrier into absence, and the
+     * two shapes stay distinct by field name.
      */
-    private static void assertAbsentAsyncHandleProduction(Compiled compiled,
+    private static void assertAsyncHandlePresence(Compiled compiled,
             SidecarExpectations.ErrorExpectation pin) throws Exception {
-        BoundaryFailure arm = FailureContractRegistry.render(FailureArmId.ASYNC_SHAPE,
-            Map.of("actual", "nothing"), "async operation", "nothing", null);
-        Tuple expected = new Tuple(arm.code().name(), arm.message(), pin.sourceFile(),
-            pin.line(), pin.column(), arm.expected(), arm.actual());
-        // The LuaJIT wrapper's zero-result branch: the raw host function
-        // returns no value at all.
-        Tuple lua = luaArtifactWithHost(compiled, "async_shape_bad",
+        Tuple expectedNothing = expectedAsyncShapeTuple(pin, "nothing");
+        Tuple expectedTable = expectedAsyncShapeTuple(pin, "table");
+        // The oracle's two closed outcomes of the same call site.
+        Tuple oracleAbsent = oracleTupleWith(compiled,
+            new SemanticOracle.HostResponder() {
+                @Override
+                public AsyncStartOutcome startAsync(ModuleId module, String export,
+                        RuntimeDescriptor.Func descriptor,
+                        List<SemanticOracle.Value> args, String operationLabel) {
+                    return new AsyncStartOutcome.Absent();
+                }
+            });
+        checkEq(expectedNothing, oracleAbsent, compiled.spec().what()
+            + " (oracle, absent async handle): the complete nothing tuple");
+        Tuple oracleNull = oracleTupleWith(compiled,
+            new SemanticOracle.HostResponder() {
+                @Override
+                public AsyncStartOutcome startAsync(ModuleId module, String export,
+                        RuntimeDescriptor.Func descriptor,
+                        List<SemanticOracle.Value> args, String operationLabel) {
+                    return new AsyncStartOutcome.InvalidHandle(
+                        SemanticOracle.Value.NullValue.INSTANCE);
+                }
+            });
+        checkEq(expectedTable, oracleNull, compiled.spec().what()
+            + " (oracle, present null handle): the complete table tuple");
+        // The two production wrappers driven with the corresponding
+        // no-result and present-null host carriers: the wrapper failure
+        // sites, never a direct renderer call.
+        Tuple luaAbsent = luaArtifactWithHost(compiled, "async_shape_bad",
             "return {\n  fetchValue = function()\n  end,\n}\n");
-        checkEq(null, firstDifferingField(expected, lua), compiled.spec().what()
-            + " (luajit, absent async handle): the production wrapper renders the "
-            + "closed ASYNC_SHAPE arm's complete tuple: " + lua);
-        // The JVM host surface's zero-result form: a host method that
-        // produces no result (its reflective invocation yields null) keeps
-        // the fixed nothing actual, never the language-null carrier's
-        // table token.
-        Tuple jvm = jvmArtifactWithHost(compiled, "async_shape_bad", """
+        checkEq(expectedNothing, luaAbsent, compiled.spec().what()
+            + " (luajit, absent async handle): the complete nothing tuple");
+        Tuple luaNull = luaArtifactWithHost(compiled, "async_shape_bad",
+            "local rt = require(\"deal.runtime\")\nreturn {\n"
+                + "  fetchValue = function()\n    return rt.__NULL\n  end,\n}\n");
+        checkEq(expectedTable, luaNull, compiled.spec().what()
+            + " (luajit, present null handle): the complete table tuple");
+        Tuple jvmAbsent = jvmArtifactWithHost(compiled, "async_shape_bad", """
             final class HostAsync_shape_bad {
               public static void fetchValue() {
               }
             }
             """);
-        checkEq(null, firstDifferingField(expected, jvm), compiled.spec().what()
-            + " (jvm, absent async handle): the production wrapper renders the "
-            + "closed ASYNC_SHAPE arm's complete tuple: " + jvm);
-        checkEq(null, firstDifferingField(lua, jvm), compiled.spec().what()
-            + ": the two production wrappers render the identical absent-handle "
-            + "tuple");
+        checkEq(expectedNothing, jvmAbsent, compiled.spec().what()
+            + " (jvm, absent async handle): the complete nothing tuple");
+        Tuple jvmNull = jvmArtifactWithHost(compiled, "async_shape_bad", """
+            final class HostAsync_shape_bad {
+              public static Object fetchValue() {
+                return null;
+              }
+            }
+            """);
+        checkEq(expectedTable, jvmNull, compiled.spec().what()
+            + " (jvm, present null handle): the complete table tuple");
+        // The two shapes stay distinct across every consumer: the present
+        // null handle never collapses into the absent handle's token.
+        checkEq(null, firstDifferingField(oracleAbsent, luaAbsent), compiled.spec()
+            .what() + ": the oracle and the LuaJIT artifact render the identical "
+            + "absent-handle tuple");
+        checkEq(null, firstDifferingField(oracleAbsent, jvmAbsent), compiled.spec()
+            .what() + ": the oracle and the JVM artifact render the identical "
+            + "absent-handle tuple");
+        checkEq(null, firstDifferingField(oracleNull, luaNull), compiled.spec()
+            .what() + ": the oracle and the LuaJIT artifact render the identical "
+            + "present-null tuple");
+        checkEq(null, firstDifferingField(oracleNull, jvmNull), compiled.spec()
+            .what() + ": the oracle and the JVM artifact render the identical "
+            + "present-null tuple");
+        checkEq("nothing", expectedNothing.actual(), compiled.spec().what()
+            + ": the absent handle's actual token");
+        checkEq("table", expectedTable.actual(), compiled.spec().what()
+            + ": the present null handle's actual token");
+        check(!Objects.equals(expectedNothing.message(), expectedTable.message()),
+            compiled.spec().what() + ": the absent and present-null shapes render "
+                + "distinct messages: " + expectedNothing.message() + " vs "
+                + expectedTable.message());
+    }
+
+    /** One closed {@code ASYNC_SHAPE} tuple at the fixture's pinned call origin. */
+    private static Tuple expectedAsyncShapeTuple(
+            SidecarExpectations.ErrorExpectation pin, String actual) {
+        BoundaryFailure arm = FailureContractRegistry.render(FailureArmId.ASYNC_SHAPE,
+            Map.of("actual", actual), "async operation", actual, null);
+        return new Tuple(arm.code().name(), arm.message(), pin.sourceFile(),
+            pin.line(), pin.column(), arm.expected(), arm.actual());
+    }
+
+    /**
+     * The caller-owned declared-async-null host surface of the completion
+     * drive: a nullable completion, a {@code null} completion, and a
+     * mandatory completion that the same null sentinel must still fail.
+     * The declaration is written into the scratch mirror (no corpus or
+     * host-fixture membership change).
+     */
+    private static final String NULL_COMPLETION_HOST_DECLARATION = """
+        export async function fetchValue(): string | null;
+        export async function pingNull(): null;
+        export async function fetchStrict(): string;
+        """;
+
+    /**
+     * The LuaJIT host implementation: every declared operation completes
+     * with the deployed runtime's language-null sentinel (the carrier of a
+     * host-crossed null).
+     */
+    private static final String NULL_COMPLETION_HOST_LUA = """
+        local rt = require("deal.runtime")
+
+        return {
+          fetchValue = function()
+            return rt.async_start(function()
+              return rt.__NULL
+            end)
+          end,
+          pingNull = function()
+            return rt.async_start(function()
+              return rt.__NULL
+            end)
+          end,
+          fetchStrict = function()
+            return rt.async_start(function()
+              return rt.__NULL
+            end)
+          end,
+        }
+        """;
+
+    /**
+     * The JVM host implementation: every declared operation completes with
+     * a present Java null — the JVM host surface's language-null carrier.
+     */
+    private static final String NULL_COMPLETION_HOST_JAVA = """
+        import java.util.concurrent.CompletableFuture;
+
+        final class HostAsync_nullable {
+          public static Object fetchValue() {
+            return CompletableFuture.completedFuture(null);
+          }
+          public static Object pingNull() {
+            return CompletableFuture.completedFuture(null);
+          }
+          public static Object fetchStrict() {
+            return CompletableFuture.completedFuture(null);
+          }
+        }
+        """;
+
+    /** The drive's generated entry module: the two admitted null completions. */
+    private static final String NULL_COMPLETION_DRIVER = """
+        import * as host from "host/async_nullable"
+
+        export async function test_nullable_host_completion(): null {
+          let v: string | null = await host.fetchValue()
+          if (v !== null) {
+            throw { code: "PROBE_HOST_NULL_COMPLETION", message: "the host null completion was not the language null" }
+          }
+          return null
+        }
+
+        export async function test_null_host_completion(): null {
+          await host.pingNull()
+          return null
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
+    /** The drive's generated entry module: the rejected null completion. */
+    private static final String NULL_COMPLETION_STRICT_DRIVER = """
+        import * as host from "host/async_nullable"
+
+        export async function test_strict_host_completion(): null {
+          let s: string = await host.fetchStrict()
+          return null
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
+    /**
+     * The host null/nullable async completions (ISSUE-0696 remediation): a
+     * host operation completing with the language-null carrier — the
+     * deployed runtime's sentinel on LuaJIT, a present Java null on the
+     * JVM — is a valid completion of a declared {@code null} or
+     * {@code T | null} async return on the oracle, the LuaJIT artifact,
+     * and the JVM artifact alike, while the same null completion at a
+     * declared non-null return still renders the pinned
+     * {@code ASYNC_COMPLETION_KIND} tuple ({@code expected string}, actual
+     * {@code null}) at the await expression. The drive's declaration is
+     * caller-owned, so no corpus or host-fixture membership changes.
+     */
+    private static void testHostNullCompletions() throws Exception {
+        System.out.println("-- the host null/nullable async completions: the "
+            + "language-null carrier is admitted by a declared null or nullable "
+            + "return on all three consumers and still rejected at a mandatory "
+            + "return --");
+        safely("the nullable and null host completions",
+            CanonicalProjectionParityTest::driveHostNullCompletionSuccess);
+        safely("the mandatory host completion rejects the null sentinel",
+            CanonicalProjectionParityTest::driveHostMandatoryNullCompletion);
+    }
+
+    /**
+     * The admitted null/nullable host completions: the oracle's async-entry
+     * drive completes with a success terminal for both exports (the body's
+     * own {@code !== null} probe consumed the admitted language null), and
+     * both production artifacts complete without a failure event.
+     */
+    private static void driveHostNullCompletionSuccess() throws Exception {
+        Case spec = new Case("host-abi/host-async-shape-bad",
+            "test_nullable_host_completion", Entry.ASYNC, List.of(), null, null);
+        Compiled compiled = compile(spec, NULL_COMPLETION_DRIVER,
+            Map.of("async_nullable", NULL_COMPLETION_HOST_DECLARATION));
+        try {
+            SemanticOracle.HostResponder responder = nullCompletingResponder();
+            for (String export : List.of("test_nullable_host_completion",
+                    "test_null_host_completion")) {
+                SemanticRuntimeModel.ConsumerRun run =
+                    SemanticOracle.invokeAsyncEntry(compiled.project(),
+                        compiled.tables(), responder,
+                        compiled.checkedProject().entryModule(), export, List.of());
+                check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                    "the " + export + " (oracle): the host null completion is "
+                        + "admitted: " + run.terminal());
+            }
+            String lua = luaArtifactOutput(compiled,
+                Map.of("async_nullable", NULL_COMPLETION_HOST_LUA));
+            check(lua.contains("OK") && !lua.contains("ERR|"),
+                "the nullable/null host completions (luajit): the production "
+                    + "artifact completes without a failure event: " + lua);
+            String jvm = jvmArtifactOutput(compiled, jvmProbe(
+                JvmBackend.classNameFor(
+                    compiled.checkedProject().entryModule().path()),
+                compiled.checkedProject().entryModule().path(), ""),
+                Map.of("async_nullable", NULL_COMPLETION_HOST_JAVA));
+            check(jvm != null && jvm.contains("OK") && !jvm.contains("ERR|"),
+                "the nullable/null host completions (jvm): the production "
+                    + "artifact completes without a failure event: " + jvm);
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /**
+     * The rejected mandatory host completion: the same null sentinel at a
+     * declared {@code string} async return renders the closed
+     * {@code ASYNC_COMPLETION_KIND} arm byte-exact on all three consumers —
+     * code, message, the await-expression origin, expected, and actual — so
+     * the language-null admission never widens a mandatory completion cell.
+     */
+    private static void driveHostMandatoryNullCompletion() throws Exception {
+        Case spec = new Case("host-abi/host-async-shape-bad",
+            "test_strict_host_completion", Entry.ASYNC, List.of(), null, null);
+        Compiled compiled = compile(spec, NULL_COMPLETION_STRICT_DRIVER,
+            Map.of("async_nullable", NULL_COMPLETION_HOST_DECLARATION));
+        try {
+            BoundaryFailure arm = FailureContractRegistry.render(
+                FailureArmId.ASYNC_COMPLETION_KIND, Map.of("expected", "string"),
+                "string", "null", null);
+            Tuple expected = new Tuple(arm.code().name(), arm.message(), "app.deal",
+                4, 19, arm.expected(), arm.actual());
+            Tuple oracle = oracleTupleWith(compiled, nullCompletingResponder());
+            checkEq(expected, oracle, "the mandatory host completion (oracle): the "
+                + "complete ASYNC_COMPLETION_KIND tuple at the await expression");
+            Tuple lua = luaArtifactWithHost(compiled, "async_nullable",
+                NULL_COMPLETION_HOST_LUA);
+            checkEq(expected, lua, "the mandatory host completion (luajit): the "
+                + "complete ASYNC_COMPLETION_KIND tuple at the await expression");
+            Tuple jvm = jvmArtifactWithHost(compiled, "async_nullable",
+                NULL_COMPLETION_HOST_JAVA);
+            checkEq(expected, jvm, "the mandatory host completion (jvm): the "
+                + "complete ASYNC_COMPLETION_KIND tuple at the await expression");
+            checkEq(null, firstDifferingField(oracle, lua),
+                "the mandatory host completion: the oracle and the LuaJIT artifact "
+                    + "render the identical tuple");
+            checkEq(null, firstDifferingField(oracle, jvm),
+                "the mandatory host completion: the oracle and the JVM artifact "
+                    + "render the identical tuple");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /** The drive's async host seam: every declared operation completes with null. */
+    private static SemanticOracle.HostResponder nullCompletingResponder() {
+        return new SemanticOracle.HostResponder() {
+            @Override
+            public AsyncStartOutcome startAsync(ModuleId module, String export,
+                    RuntimeDescriptor.Func descriptor,
+                    List<SemanticOracle.Value> args, String operationLabel) {
+                return new AsyncStartOutcome.Operation(operationLabel);
+            }
+
+            @Override
+            public SyncOutcome completeAsync(String operationLabel) {
+                return new SyncOutcome.Returned(
+                    SemanticOracle.Value.NullValue.INSTANCE);
+            }
+        };
     }
 
     /**
@@ -5151,6 +5446,7 @@ public class CanonicalProjectionParityTest {
         System.out.println("=== Canonical Projection Parity Tests (ISSUE-0705) ===");
         testNamedDivergences();
         testArmFamilies();
+        testHostNullCompletions();
         testCallbackEntrySlot();
         testInvalidUnicodeBoundaryOriginDrive();
         testHostStringCarrierProducers();

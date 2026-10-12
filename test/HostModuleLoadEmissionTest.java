@@ -1040,7 +1040,8 @@ public class HostModuleLoadEmissionTest {
                     + "deal.semantic.ir.FailureArmId.ASYNC_SHAPE,"
                     + " java.util.Map.of(\"actual\", __hostKind(__r))"),
                 "the declared async export renders the async-shape arm");
-            check(source.contains("if (__r == null) {\n      throw JvmRuntime.arm("
+            check(source.contains("if (__r == JvmRuntime.MISSING) {\n      throw "
+                    + "JvmRuntime.arm("
                     + "deal.semantic.ir.FailureArmId.ASYNC_SHAPE,"
                     + " java.util.Map.of(\"actual\", \"nothing\"), oFile + \":\""
                     + " + oLine + \":\" + oCol, \"async operation\","
@@ -1049,7 +1050,16 @@ public class HostModuleLoadEmissionTest {
                         + "java.util.concurrent.CompletableFuture)) {"),
                 "the declared async export's zero-result presence rule renders "
                     + "the fixed nothing actual before the shape check (never "
-                    + "the language-null carrier's table token)");
+                    + "the present language-null carrier's table token)");
+            check(source.contains("if (m.getReturnType() == "
+                    + "java.lang.Void.TYPE) {\n"
+                    + "        m.invoke(null, args);\n"
+                    + "        return JvmRuntime.MISSING;")
+                    && source.contains("      return m.invoke(null, args);\n"),
+                "the reflective invocation preserves the result's presence: the "
+                    + "declared void shape yields the absent marker while a "
+                    + "returned value — a present null included — is returned "
+                    + "unchanged");
 
             // The synthesized host-record and host-carrier scope.
             check(source.contains("class $DealRt {"),
