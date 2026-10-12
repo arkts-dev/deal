@@ -32,6 +32,7 @@ import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.SemanticProfile;
+import deal.test.conformance.JvmCompilation;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -1091,6 +1092,272 @@ public class FailClosedGuardRetargetingTest {
             "the clean-EOF control is not refused (both streams complete)");
     }
 
+    private static void testJvmCompilationContract() throws Exception {
+        Path root = Files.createTempDirectory("guard-javac-contract-");
+        String className = "GuardJavac" + java.util.UUID.randomUUID()
+            .toString().replace("-", "");
+        try {
+            Path first = root.resolve("first");
+            Path second = root.resolve("second");
+            writeFileIn(first, "src/" + className + ".java",
+                "public final class " + className + " {"
+                    + " static int value = 17;"
+                    + " public static void main(String[] args) {"
+                    + " System.out.println(value); } }");
+            writeFileIn(second, "src/" + className + ".java",
+                "public final class " + className + " {"
+                    + " static String value() { return \"second\"; }"
+                    + " public static void main(String[] args) {"
+                    + " System.out.println(value()); } }");
+            assertJvmCompilation("first incompatible source",
+                compileJvmProbe(first, className, 30_000L));
+            List<ProcessHandle> workers = jvmCompilationWorkers();
+            checkEq(1, workers.size(), "one real javac worker is running");
+            assertJvmCompilation("second incompatible source",
+                compileJvmProbe(second, className, 30_000L));
+            checkEq(workers.stream().map(ProcessHandle::pid).toList(),
+                jvmCompilationWorkers().stream().map(ProcessHandle::pid).toList(),
+                "both incompatible sources compile through the same worker");
+            assertJvmEntrypoint("first isolated output", first, className, "17");
+            assertJvmEntrypoint("second isolated output", second, className,
+                "second");
+
+            Path invalid = root.resolve("invalid");
+            writeFileIn(invalid, "src/" + className + ".java",
+                "public final class " + className + " {"
+                    + " public static void main(String[] args) {"
+                    + " System.out.println(missingValue); } }");
+            JvmCompilation.Result rejected = compileJvmProbe(invalid, className,
+                30_000L);
+            checkEq(1, rejected.exitCode(), "invalid Java source fails compilation");
+            check(rejected.stderr().contains("missingValue"),
+                "invalid Java source returns its actual compiler diagnostic: "
+                    + rejected.stderr());
+            check(!Files.exists(invalid.resolve("classes/" + className + ".class")),
+                "invalid Java source yields no class");
+            writeFileIn(invalid, "src/" + className + ".java",
+                "public final class " + className + " {"
+                    + " public static void main(String[] args) {"
+                    + " System.out.println(\"valid-after-error\"); } }");
+            assertJvmCompilation("valid compilation after invalid source",
+                compileJvmProbe(invalid, className, 30_000L));
+            assertJvmEntrypoint("valid compilation after invalid source", invalid,
+                className, "valid-after-error");
+
+            testJvmCompilationDependencies(root, first, second, className);
+            testJvmCompilationJarOverwrite(root, first, second, className);
+            testJvmCompilationTimeout(root.resolve("timeout"), className);
+            testJvmCompilationInterruption(root.resolve("interrupted"), className);
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    private static void testJvmCompilationDependencies(Path root, Path first,
+            Path second, String className) throws Exception {
+        String consumer = className + "Consumer";
+        String source = "public final class " + consumer + " {"
+            + " public static void main(String[] args) {"
+            + " System.out.println(" + className + ".value); } }";
+        Path caller = root.resolve("dependency-caller");
+        writeFileIn(caller, "src/" + consumer + ".java", source);
+        assertJvmCompilation("explicit first dependency classpath",
+            compileJvmProbe(caller, consumer, 30_000L, first.resolve("classes")));
+        assertJvmEntrypoint("explicit first dependency classpath", caller,
+            consumer, "17", first.resolve("classes"));
+
+        Path missing = root.resolve("dependency-missing");
+        writeFileIn(missing, "src/" + consumer + ".java", source);
+        JvmCompilation.Result inherited = compileJvmProbe(missing, consumer, 30_000L);
+        checkEq(1, inherited.exitCode(), "no -cp does not inherit the previous classpath");
+        check(inherited.stderr().contains(className),
+            "no -cp reports the absent dependency: " + inherited.stderr());
+        check(!Files.exists(missing.resolve("classes/" + consumer + ".class")),
+            "no -cp emits no consumer class when its dependency is absent");
+
+        JvmCompilation.Result changed = compileJvmProbe(caller, consumer,
+            30_000L, second.resolve("classes"));
+        checkEq(1, changed.exitCode(), "changed -cp rejects the old dependency API");
+        check(changed.stderr().contains("value"),
+            "changed -cp reports the missing field: " + changed.stderr());
+        writeFileIn(caller, "src/" + consumer + ".java", source.replace(
+            className + ".value", className + ".value()"));
+        assertJvmCompilation("explicit second dependency classpath",
+            compileJvmProbe(caller, consumer, 30_000L, second.resolve("classes")));
+        assertJvmEntrypoint("explicit second dependency classpath", caller,
+            consumer, "second", second.resolve("classes"));
+    }
+
+    private static void testJvmCompilationJarOverwrite(Path root, Path first,
+            Path second, String className) throws Exception {
+        String dependency = className + "Dependency";
+        String consumer = className + "JarConsumer";
+        Path jar = root.resolve("dependency.jar");
+        Path caller = root.resolve("jar-caller");
+        writeFileIn(caller, "src/" + consumer + ".java",
+            "public final class " + consumer + " {"
+                + " public static void main(String[] args) {"
+                + " System.out.println(" + dependency + ".VALUE); } }");
+        List<Long> workers = jvmCompilationWorkers().stream()
+            .map(ProcessHandle::pid).toList();
+        byte[] previous = null;
+        for (int version = 0; version < 2; version++) {
+            Path artifacts = version == 0 ? first : second;
+            String value = version == 0 ? "jar-first" : "jar-second";
+            writeFileIn(artifacts, "src/" + dependency + ".java",
+                "public final class " + dependency + " {"
+                    + " public static final String VALUE = \"" + value + "\"; }");
+            assertJvmCompilation(value + " dependency",
+                compileJvmProbe(artifacts, dependency, 30_000L));
+            ProcessOutcome packed = runProcess(List.of("jar", "--create", "--file",
+                jar.toString(), "-C", artifacts.resolve("classes").toString(),
+                dependency + ".class"), root);
+            checkEq(0, packed.exitCode(), value + ": real jar creation succeeds: "
+                + packed.output());
+            byte[] current = Files.readAllBytes(jar);
+            if (previous != null) {
+                check(!Arrays.equals(previous, current),
+                    "the dependency JAR bytes change at the exact same path");
+            }
+            previous = current;
+            assertJvmCompilation(value + " consumer",
+                compileJvmProbe(caller, consumer, 30_000L, jar));
+            assertJvmEntrypoint(value + " inlined dependency constant", caller,
+                consumer, value);
+        }
+        checkEq(workers, jvmCompilationWorkers().stream()
+            .map(ProcessHandle::pid).toList(),
+            "same-path JAR replacement is observed without restarting the worker");
+    }
+
+    private static void testJvmCompilationTimeout(Path root, String className)
+            throws Exception {
+        writeJvmCompilationWorkload(root, className, "valid-after-timeout");
+        List<ProcessHandle> workers = jvmCompilationWorkers();
+        checkEq(1, workers.size(), "timeout starts with a live javac worker");
+        long before = System.nanoTime();
+        boolean timedOut = false;
+        try {
+            compileJvmProbe(root, className, 1L);
+        } catch (IOException failure) {
+            timedOut = true;
+            check(failure.getCause() instanceof java.util.concurrent.TimeoutException,
+                "the 1ms deadline throws IOException caused by timeout: " + failure);
+            checkEq("javac compilation exceeded 1ms", failure.getMessage(),
+                "the timeout names the actual compilation deadline");
+        }
+        long elapsedMs = (System.nanoTime() - before) / 1_000_000L;
+        check(timedOut, "the real compiler workload exceeds the 1ms deadline");
+        check(elapsedMs < 15_000L,
+            "timeout cleanup returns within its upper margin: " + elapsedMs + " ms");
+        for (ProcessHandle worker : workers) {
+            check(!worker.isAlive(), "the timed-out javac worker is killed");
+            worker.onExit().get(5, java.util.concurrent.TimeUnit.SECONDS);
+            check(ProcessHandle.current().children()
+                    .noneMatch(child -> child.pid() == worker.pid()),
+                "the timed-out javac worker is reaped");
+        }
+        check(jvmCompilationWorkers().isEmpty(),
+            "timeout leaves no live javac worker");
+        assertJvmCompilation("valid compilation after timeout",
+            compileJvmProbe(root, className, 30_000L));
+        check(jvmCompilationWorkers().stream().noneMatch(worker -> workers.stream()
+                .anyMatch(previous -> previous.pid() == worker.pid())),
+            "compilation after timeout starts a fresh worker");
+        assertJvmEntrypoint("valid compilation after timeout", root, className,
+            "valid-after-timeout");
+    }
+
+    private static void testJvmCompilationInterruption(Path root, String className)
+            throws Exception {
+        writeJvmCompilationWorkload(root, className, "valid-after-interruption");
+        long before = System.nanoTime();
+        boolean interrupted = false;
+        try {
+            Thread.currentThread().interrupt();
+            try {
+                compileJvmProbe(root, className, 30_000L);
+            } catch (InterruptedException failure) {
+                interrupted = true;
+                check(Thread.currentThread().isInterrupted(),
+                    "compilation preserves the interrupted caller's flag");
+            }
+            check(interrupted, "a pre-interrupted caller gets InterruptedException");
+            check((System.nanoTime() - before) / 1_000_000L < 15_000L,
+                "interruption cleanup returns within its upper margin");
+        } finally {
+            Thread.interrupted();
+        }
+        check(!Thread.currentThread().isInterrupted(),
+            "the interruption regression clears its flag in finally");
+        assertJvmCompilation("valid compilation after interruption",
+            compileJvmProbe(root, className, 30_000L));
+        assertJvmEntrypoint("valid compilation after interruption", root, className,
+            "valid-after-interruption");
+    }
+
+    private static void writeJvmCompilationWorkload(Path root, String className,
+            String line) throws Exception {
+        StringBuilder source = new StringBuilder("public final class ")
+            .append(className).append(" {");
+        for (int i = 0; i < 1_000; i++) {
+            source.append(" static int value").append(i)
+                .append("(int n) { return n + ").append(i).append("; }");
+        }
+        source.append(" public static void main(String[] args) {")
+            .append(" System.out.println(\"").append(line).append("\"); } }");
+        writeFileIn(root, "src/" + className + ".java", source.toString());
+    }
+
+    private static JvmCompilation.Result compileJvmProbe(Path root,
+            String className, long timeoutMillis, Path... dependencies) throws Exception {
+        Files.createDirectories(root.resolve("classes"));
+        List<String> command = new ArrayList<>(List.of("javac", "--release", "25",
+            "-proc:none", "-d", "classes"));
+        if (dependencies.length > 0) {
+            command.addAll(List.of("-cp", Arrays.stream(dependencies)
+                .map(path -> path.toAbsolutePath().normalize().toString())
+                .collect(java.util.stream.Collectors.joining(File.pathSeparator))));
+        }
+        command.add("src/" + className + ".java");
+        return JvmCompilation.compile(command, root, timeoutMillis);
+    }
+
+    private static void assertJvmCompilation(String label,
+            JvmCompilation.Result result) {
+        checkEq(0, result.exitCode(), label + ": compilation succeeds: "
+            + result.stderr());
+        checkEq("", result.stdout(), label + ": compilation has no stdout");
+        checkEq("", result.stderr(), label + ": compilation has no diagnostics");
+    }
+
+    private static void assertJvmEntrypoint(String label, Path root,
+            String className, String line, Path... dependencies) throws Exception {
+        Path classes = root.resolve("classes");
+        check(Files.isRegularFile(classes.resolve(className + ".class")),
+            label + ": relative -d selects the requested output directory");
+        String classpath = Stream.concat(Stream.of(classes), Arrays.stream(dependencies))
+            .map(path -> path.toAbsolutePath().normalize().toString())
+            .collect(java.util.stream.Collectors.joining(File.pathSeparator));
+        BoundedProcess.BoundedResult result = BoundedProcess.runCaptured(
+            List.of("java", "-cp", classpath + File.pathSeparator
+                + absoluteClasspath(), className), root, Map.of(), 15_000L);
+        checkEq(0, result.exitCode(), label + ": actual entrypoint exits zero: "
+            + result.stderr());
+        checkEq(line + "\n", result.stdout(),
+            label + ": actual entrypoint emits its distinct value");
+        checkEq("", result.stderr(), label + ": actual entrypoint has no stderr");
+    }
+
+    private static List<ProcessHandle> jvmCompilationWorkers() {
+        try (Stream<ProcessHandle> children = ProcessHandle.current().children()) {
+            return children.filter(child -> child.info().arguments()
+                .map(arguments -> Arrays.asList(arguments)
+                    .contains(JvmCompilation.class.getName()))
+                .orElse(false)).toList();
+        }
+    }
+
     // =========================================================================
     // Helpers
     // =========================================================================
@@ -1239,6 +1506,7 @@ public class FailClosedGuardRetargetingTest {
         testSharedEmitterCoverageSeed();
         testRealizedConstructProbes();
         testBoundedProcessContract();
+        testJvmCompilationContract();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

@@ -411,18 +411,21 @@ public class ProductionProjectEmissionTest {
             Set.of(), backend, sourceMapExplicit, fixture.distributionHome(), stager);
     }
 
-    /** Runs the unit with stderr captured (the warning/status observable). */
-    private static String emitCapturingStderr(Fixture fixture, Backend backend,
+    private record Emission(ProductionProjectEmission.Result result, String stderr) {
+    }
+
+    private static Emission emitCapturingStderr(Fixture fixture, Backend backend,
             PublicationStager stager, boolean sourceMapExplicit) throws Exception {
         PrintStream originalErr = System.err;
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         System.setErr(new PrintStream(buffer, true, StandardCharsets.UTF_8));
+        ProductionProjectEmission.Result result;
         try {
-            emit(fixture, backend, stager, sourceMapExplicit);
+            result = emit(fixture, backend, stager, sourceMapExplicit);
         } finally {
             System.setErr(originalErr);
         }
-        return buffer.toString(StandardCharsets.UTF_8);
+        return new Emission(result, buffer.toString(StandardCharsets.UTF_8));
     }
 
     // =========================================================================
@@ -511,12 +514,16 @@ public class ProductionProjectEmissionTest {
     // 2. One lowering, one emission, one staged project artifact per target
     // =========================================================================
 
-    private static void testOneArtifactPerTarget(Fixture fixture) throws Exception {
+    private record UnmappedLua(String source, String stderr, Set<String> paths) {
+    }
+
+    private static UnmappedLua testOneArtifactPerTarget(Fixture fixture) throws Exception {
         System.out.println("-- one staged project artifact per target, the LuaJIT "
             + "deployment copies, no sidecar, byte-identical repeats --");
         Path luaOut = fixture.root().resolve("lua-out");
         Path jvmOut = fixture.root().resolve("jvm-out");
         Path luaOutRepeat = fixture.root().resolve("lua-out-repeat");
+        UnmappedLua unmapped;
         {
             // LuaJIT: the chunk named for the entry module plus the unchanged
             // runtime/stdlib deployment copies.
@@ -524,7 +531,9 @@ public class ProductionProjectEmissionTest {
             ProductionProjectEmission.Result luaResult;
             String firstChunk;
             try {
-                luaResult = emit(fixture, Backend.LUAJIT, luaStager, false);
+                Emission emission = emitCapturingStderr(fixture, Backend.LUAJIT,
+                    luaStager, false);
+                luaResult = emission.result();
                 check(luaResult.emitted(),
                     "the LuaJIT production run emits: " + luaResult.diagnostics());
                 checkEq("app.lua", luaResult.artifactRelativePath(),
@@ -547,9 +556,11 @@ public class ProductionProjectEmissionTest {
                             || path.equals("deal/runtime.lua")).toList().size(),
                     "the LuaJIT staged set is the project artifact plus the "
                         + "deployment copies");
-                firstChunk = new String(luaStager.stagedSet()
+                unmapped = new UnmappedLua(new String(luaStager.stagedSet()
                     .artifact("app.lua").orElseThrow().content(),
-                    StandardCharsets.UTF_8);
+                    StandardCharsets.UTF_8), emission.stderr(),
+                    Set.copyOf(luaStager.stagedSet().relativePaths()));
+                firstChunk = unmapped.source();
             } finally {
                 luaStager.discard();
             }
@@ -587,6 +598,7 @@ public class ProductionProjectEmissionTest {
                 repeatStager.discard();
             }
         }
+        return unmapped;
     }
 
     private static void testOneMainProbe() throws Exception {
@@ -658,7 +670,7 @@ public class ProductionProjectEmissionTest {
     //    call emits and stages
     // =========================================================================
 
-    private static void testAtomicFailures() throws Exception {
+    private static void testAtomicFailures(Fixture failing) throws Exception {
         System.out.println("-- a failing lowering stages nothing and preserves the "
             + "previous artifact set; the cross-module sync call emits and "
             + "stages --");
@@ -709,9 +721,8 @@ public class ProductionProjectEmissionTest {
             deleteRecursively(nested.root());
         }
 
-        Fixture failing = adapterSourceFixture();
         Path out = failing.root().resolve("out-arm");
-        try {
+        {
             writeFileIn(out, "app.lua", "-- previous artifact\n");
             writeFileIn(out, "lib.lua", "-- previous sibling\n");
             writeFileIn(out, "deal/runtime.lua", "-- previous runtime\n");
@@ -734,8 +745,6 @@ public class ProductionProjectEmissionTest {
                     + result.diagnostics());
             checkEq(before, snapshotTree(out),
                 "the failing lowering leaves the previous artifact set byte-identical");
-        } finally {
-            deleteRecursively(failing.root());
         }
 
         Fixture sync = twoModuleFixture(SYNC_CALL_APP_SOURCE);
@@ -1117,7 +1126,8 @@ public class ProductionProjectEmissionTest {
     // 6. The source-map emission: real coordinates, explicit flag, rollback
     // =========================================================================
 
-    private static void testSourceMapEmission(Fixture fixture) throws Exception {
+    private static void testSourceMapEmission(Fixture fixture, Fixture failing,
+            UnmappedLua unmapped) throws Exception {
         System.out.println("-- an effective --source-map emits source comments and "
             + "one sidecar per constituent module with real generated/source "
             + "coordinates on both targets; no flag emits neither; a failing run "
@@ -1134,7 +1144,7 @@ public class ProductionProjectEmissionTest {
             PublicationStager stager = PublicationStager.forRoot(out);
             try {
                 String stderr = emitCapturingStderr(fixture, Backend.LUAJIT,
-                    stager, true);
+                    stager, true).stderr();
                 checkEq("", stderr,
                     "the effective --source-map run prints no warning");
                 check(stager.stagedSet().artifact("app.lua").isPresent(),
@@ -1180,25 +1190,12 @@ public class ProductionProjectEmissionTest {
 
         // (2) The same project without the effective flag: no warning, no
         // sidecar, and no source comment in the artifact bytes.
-        Path noMapOut = fixture.root().resolve("no-map-out");
-        String noMapLua;
-        {
-            PublicationStager stager = PublicationStager.forRoot(noMapOut);
-            String stderr;
-            try {
-                stderr = emitCapturingStderr(fixture, Backend.LUAJIT, stager,
-                    false);
-                check(stager.stagedSet().relativePaths().stream()
-                        .noneMatch(path -> path.endsWith(".deal.map.json")),
-                    "a compile without the effective flag stages no sidecar");
-                noMapLua = new String(stager.stagedSet().artifact("app.lua")
-                    .orElseThrow().content(), StandardCharsets.UTF_8);
-            } finally {
-                stager.discard();
-            }
-            checkEq("", stderr, "a compile without the flag prints no warning");
-        }
-        checkEq(0, countSourceComments(noMapLua, "-- "),
+        check(unmapped.paths().stream()
+                .noneMatch(path -> path.endsWith(".deal.map.json")),
+            "a compile without the effective flag stages no sidecar");
+        checkEq("", unmapped.stderr(),
+            "a compile without the flag prints no warning");
+        checkEq(0, countSourceComments(unmapped.source(), "-- "),
             "a compile without the flag emits no source comment");
 
         // (3) JVM: the class source carries the same source comments and the
@@ -1211,7 +1208,7 @@ public class ProductionProjectEmissionTest {
             PublicationStager stager = PublicationStager.forRoot(jvmOut);
             try {
                 String stderr = emitCapturingStderr(fixture, Backend.JVM,
-                    stager, true);
+                    stager, true).stderr();
                 checkEq("", stderr,
                     "the JVM effective --source-map run prints no warning");
                 check(stager.stagedSet().artifact("App.java").isPresent(),
@@ -1245,8 +1242,7 @@ public class ProductionProjectEmissionTest {
         writeFileIn(rollbackOut, "lib.deal.map.json", "-- previous map\n");
         writeFileIn(rollbackOut, "deal/runtime.lua", "-- previous runtime\n");
         Map<String, String> before = snapshotTree(rollbackOut);
-        Fixture failing = adapterSourceFixture();
-        try {
+        {
             PublicationStager stager = PublicationStager.forRoot(rollbackOut);
             ProductionProjectEmission.Result result;
             try {
@@ -1263,8 +1259,6 @@ public class ProductionProjectEmissionTest {
             checkEq(before, snapshotTree(rollbackOut),
                 "the failing source-map run preserves the previous set "
                     + "(artifact and maps) byte-identical");
-        } finally {
-            deleteRecursively(failing.root());
         }
     }
 
@@ -1437,17 +1431,10 @@ public class ProductionProjectEmissionTest {
 
     private static ProcessOutcome runProcess(List<String> command, Path workDir)
             throws Exception {
-        Path stderrFile = Files.createTempFile(workDir, "stderr", ".txt");
-        ProcessBuilder builder = new ProcessBuilder(command);
-        builder.directory(workDir.toFile());
-        builder.redirectError(stderrFile.toFile());
-        Process process = builder.start();
-        String stdout = new String(process.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        int exit = process.waitFor();
-        String stderr = Files.readString(stderrFile, StandardCharsets.UTF_8);
-        Files.deleteIfExists(stderrFile);
-        return new ProcessOutcome(exit, stdout, stderr);
+        BoundedProcess.BoundedResult result = BoundedProcess.runCaptured(
+            command, workDir);
+        return new ProcessOutcome(result.exitCode(), result.stdout(),
+            result.stderr());
     }
 
     private static void writeFileIn(Path root, String relative, String content)
@@ -1487,19 +1474,22 @@ public class ProductionProjectEmissionTest {
         Fixture fixture = null;
         Fixture cross = null;
         Fixture same = null;
+        Fixture failing = null;
         try {
             fixture = twoModuleFixture(APP_SOURCE);
             testUnitShapeAndConstants(fixture);
-            testOneArtifactPerTarget(fixture);
+            UnmappedLua unmapped = testOneArtifactPerTarget(fixture);
             testOneMainProbe();
             testJvmToolchain(fixture);
-            testAtomicFailures();
+            failing = adapterSourceFixture();
+            testAtomicFailures(failing);
             testHostImportGuard();
             cross = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
             same = asyncFixture(ASYNC_LIB_SOURCE, SAME_ASYNC_APP_SOURCE);
             testCrossModuleAsyncEmission(cross, same);
-            testSourceMapEmission(fixture);
+            testSourceMapEmission(fixture, failing, unmapped);
         } finally {
+            deleteRecursively(failing == null ? null : failing.root());
             deleteRecursively(same == null ? null : same.root());
             deleteRecursively(cross == null ? null : cross.root());
             deleteRecursively(fixture == null ? null : fixture.root());

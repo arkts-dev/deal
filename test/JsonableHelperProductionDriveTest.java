@@ -36,11 +36,13 @@ import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
+import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ValueId;
 import deal.test.conformance.ErrorSnapshot;
+import deal.test.conformance.JvmCompilation;
 import deal.test.conformance.SidecarExpectations;
 
 import java.io.File;
@@ -420,7 +422,7 @@ public class JsonableHelperProductionDriveTest {
     private static Compilation compileObservation(Project project, String fixtureRel,
             Target target) throws Exception {
         ProjectLocator.LocateResult located = ProjectLocator.locate(
-            project.entryFile().toString(), new deal.project.CliOverrides(null,
+            project.entryFile().toString(), new deal.project.CliOverrides(target.laneName(),
                 project.outputRoot().toString()));
         if (located.context() == null) {
             check(false, fixtureRel + " [" + target.laneName()
@@ -440,6 +442,60 @@ public class JsonableHelperProductionDriveTest {
         return new Compilation(compiled, List.copyOf(diagnostics),
             orchestrator.checkedProject(), orchestrator.requirementManifests(),
             orchestrator.hostDeclarationSurface(), orchestrator.producedProject());
+    }
+
+    private static Compilation emitChecked(Project project, Compilation preparation,
+            Target target) throws Exception {
+        if (!preparation.compiled()) {
+            return preparation;
+        }
+        CheckedProjectBuildResult built = preparation.built();
+        try (PublicationStager stager = PublicationStager.forRoot(project.outputRoot())) {
+            ProductionProjectEmission.Result result = ProductionProjectEmission.run(
+                productionInvocation(), built.input(), built.index(),
+                preparation.manifests().manifests(), preparation.surface(), Map.of(),
+                Map.of(), project.root().toString(), BuiltinErrorDeclaration.synthesized(
+                    built.input().modules().get(0).ast().span()),
+                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                    IntrinsicKind.BYTES_NEW), Set.of(),
+                target == Target.JVM ? Backend.JVM : Backend.LUAJIT, false,
+                DistributionHome.forManifestDirectory(project.root().toString()), stager);
+            if (result.emitted()) {
+                stager.publish();
+            }
+            return new Compilation(result.emitted(), result.diagnostics().stream()
+                .filter(d -> "error".equals(d.severity()))
+                .map(d -> d.code() + " " + d.message()).toList(), built,
+                preparation.manifests(), preparation.surface(), result.producedProject());
+        }
+    }
+
+    private static Compilation fixtureCompilation(Compilation observation,
+            ModuleId fixture) {
+        if (!observation.compiled()) {
+            return observation;
+        }
+        CheckedProjectBuildResult built = observation.built();
+        ModuleId driver = built.input().entryModule();
+        List<CheckedModuleInput> modules = built.input().modules().stream()
+            .filter(module -> !module.moduleId().equals(driver)).toList();
+        Map<ModuleId, deal.semantic.ir.ExternalModuleInterface> interfaces =
+            new LinkedHashMap<>(built.index().modules());
+        interfaces.remove(driver);
+        CheckedProjectInput input = new CheckedProjectInput(built.input().invocation(),
+            fixture, modules, built.input().releaseStateHash());
+        CheckedProjectBuildResult fixtureBuilt = new CheckedProjectBuildResult(input,
+            new ProjectInterfaceIndex(built.index().formatVersion(), interfaces), List.of());
+        RequirementManifestResult manifests = new RequirementManifestResult(
+            observation.manifests().manifests().stream()
+                .filter(manifest -> !manifest.moduleId().equals(driver)).toList(), List.of());
+        return new Compilation(true, List.of(), fixtureBuilt, manifests,
+            observation.surface(), null);
+    }
+
+    private static Project withOutput(Project project, String directory) {
+        return new Project(project.root(), project.srcRoot(), project.entryFile(),
+            project.modulePath(), project.modules(), project.root().resolve(directory));
     }
 
     private static boolean compile(Project project, String fixtureRel, Target target,
@@ -586,6 +642,11 @@ public class JsonableHelperProductionDriveTest {
      */
     private static ProcessOutcome runProcess(Path directory, Map<String, String> env,
             long budgetMs, String... command) throws Exception {
+        if (command.length > 0 && "javac".equals(command[0])) {
+            JvmCompilation.Result compile = JvmCompilation.compile(List.of(command),
+                directory, budgetMs);
+            return new ProcessOutcome(compile.exitCode(), compile.stdout(), compile.stderr());
+        }
         boolean ownGroup = SETSID_BINARY != null;
         List<String> argv = new ArrayList<>();
         if (ownGroup) {
@@ -1013,7 +1074,9 @@ public class JsonableHelperProductionDriveTest {
         new LinkedHashMap<>();
 
     private record CorpusObservation(Project project, Compilation compilation,
-                                     Lowered lowered, List<Export> exports,
+                                     Compilation luaCompilation,
+                                     Lowered lowered, Lowered oracleExports,
+                                     List<Export> exports,
                                      Optional<SidecarExpectations.RuntimeExpectation.Executed> pinned) {
     }
 
@@ -1028,26 +1091,38 @@ public class JsonableHelperProductionDriveTest {
             String fixtureRel = fixture.contains("/") ? fixture
                 : FAMILY_DIR + "/" + fixture;
             Project luaProject = materialize(fixtureRel, Target.LUAJIT);
-            Project jvmProject = materialize(fixtureRel, Target.JVM);
+            Project jvmProject = withOutput(luaProject, "out-jvm");
             try {
                 Optional<SidecarExpectations.RuntimeExpectation.Executed> pinned =
                     pinnedOf(fixtureRel);
                 List<Export> exports = List.copyOf(exportsOf(
                     Files.readString(jvmProject.entryFile(), StandardCharsets.UTF_8)));
                 Map<Target, String> legs = new LinkedHashMap<>();
+                Path driver = luaProject.srcRoot().resolve("__oracle_drive.deal");
+                Files.writeString(driver, oracleDriver(luaProject, exports),
+                    StandardCharsets.UTF_8);
+                Project oracleProject = new Project(luaProject.root(), luaProject.srcRoot(),
+                    driver, "__oracle_drive", luaProject.modules(),
+                    luaProject.root().resolve("out-oracle"));
+                Compilation oracleCompilation = compileObservation(oracleProject, fixtureRel,
+                    Target.LUAJIT);
+                Lowered oracleExports = lower(oracleCompilation, fixtureRel + " (oracle exports)");
+                Compilation preparation = fixtureCompilation(oracleCompilation,
+                    new ModuleId(luaProject.modulePath()));
+                Compilation luaCompilation = emitChecked(luaProject, preparation, Target.LUAJIT);
                 legs.put(Target.LUAJIT, driveLeg(fixtureRel, luaProject, Target.LUAJIT,
-                    compileObservation(luaProject, fixtureRel, Target.LUAJIT), exports, pinned));
-                Compilation jvmCompilation = compileObservation(jvmProject, fixtureRel,
+                    luaCompilation, exports, pinned));
+                Compilation jvmCompilation = emitChecked(jvmProject, preparation,
                     Target.JVM);
                 observations.put(fixtureRel,
-                    new CorpusObservation(jvmProject, jvmCompilation, null, exports, pinned));
+                    new CorpusObservation(jvmProject, jvmCompilation, luaCompilation, null,
+                        oracleExports, exports, pinned));
                 legs.put(Target.JVM, driveLeg(fixtureRel, jvmProject, Target.JVM,
                     jvmCompilation, exports, pinned));
                 RECORD.put(fixtureRel, legs);
             } finally {
-                deleteRecursively(luaProject.root());
                 if (!observations.containsKey(fixtureRel)) {
-                    deleteRecursively(jvmProject.root());
+                    deleteRecursively(luaProject.root());
                 }
             }
         }
@@ -1424,16 +1499,14 @@ public class JsonableHelperProductionDriveTest {
                 Lowered mainLeg = lower(observation.compilation(),
                     fixtureRel + " (oracle main)");
                 observations.put(fixtureRel, new CorpusObservation(project,
-                    observation.compilation(), mainLeg, exports, observation.pinned()));
+                    observation.compilation(), observation.luaCompilation(), mainLeg,
+                    observation.oracleExports(), exports,
+                    observation.pinned()));
                 SemanticRuntimeModel.ErrorSnapshot mainFailure =
                     oracleMainFailure(mainLeg);
                 String mainOutcome = mainFailure == null ? "ok"
                     : oracleOutcomeOfFailure(project, mainFailure);
-                Path driver = project.srcRoot().resolve("__oracle_drive.deal");
-                Files.writeString(driver, oracleDriver(project, exports),
-                    StandardCharsets.UTF_8);
-                Lowered lowered = lower(project, driver,
-                    fixtureRel + " (oracle exports)");
+                Lowered lowered = observation.oracleExports();
                 if (lowered == null) {
                     continue;
                 }
@@ -2082,7 +2155,32 @@ public class JsonableHelperProductionDriveTest {
             root.resolve("out"));
     }
 
-    /** The 1-based line of the first occurrence of a token in a source. */
+    private record PreparedSynthetic(Project project, Compilation compilation,
+                                     Lowered oracle) implements AutoCloseable {
+        @Override
+        public void close() throws java.io.IOException {
+            deleteRecursively(project.root());
+        }
+    }
+
+    private static PreparedSynthetic prepareSynthetic(String label, String source,
+            List<Export> exports) throws Exception {
+        Project project = syntheticProject("app", source, Target.LUAJIT);
+        try {
+            Path driver = project.srcRoot().resolve("__oracle_drive.deal");
+            Files.writeString(driver, oracleDriver(project, exports), StandardCharsets.UTF_8);
+            Project oracleProject = new Project(project.root(), project.srcRoot(), driver,
+                "__oracle_drive", project.modules(), project.root().resolve("out-oracle"));
+            Compilation observation = compileObservation(oracleProject, label, Target.LUAJIT);
+            return new PreparedSynthetic(project,
+                fixtureCompilation(observation, new ModuleId(project.modulePath())),
+                lower(observation, label + " oracle"));
+        } catch (Exception failure) {
+            deleteRecursively(project.root());
+            throw failure;
+        }
+    }
+
     private static int lineOf(String source, String needle) {
         return source.substring(0, source.indexOf(needle)).split("\n", -1).length;
     }
@@ -2091,20 +2189,6 @@ public class JsonableHelperProductionDriveTest {
     private static int columnOf(String source, String needle) {
         int index = source.indexOf(needle);
         return index - source.lastIndexOf('\n', index - 1);
-    }
-
-    /** The oracle's failure of one synthetic project, or {@code null} on
-     * success. */
-    private static SemanticRuntimeModel.ErrorSnapshot oracleFailure(Project project,
-            List<Export> exports) throws Exception {
-        return oracleMainFailure(lowerOracleExports(project, exports, "synthetic oracle"));
-    }
-
-    private static Lowered lowerOracleExports(Project project, List<Export> exports,
-            String label) throws Exception {
-        Path driver = project.srcRoot().resolve("__oracle_drive.deal");
-        Files.writeString(driver, oracleDriver(project, exports), StandardCharsets.UTF_8);
-        return lower(project, driver, label);
     }
 
     /** The {@code line:column} suffix of a {@code file:line:column} origin. */
@@ -2156,10 +2240,9 @@ public class JsonableHelperProductionDriveTest {
         String expectedPosition = line + ":" + column;
         List<Export> exports = exportsOf(source);
         // The oracle leg.
-        Project oracleProject = syntheticProject("app", source, Target.JVM);
-        try {
-            Lowered lowered = lowerOracleExports(oracleProject, exports,
-                "dynamic-helper oracle and IR");
+        try (PreparedSynthetic prepared = prepareSynthetic("dynamic-helper-origin", source,
+                exports)) {
+            Lowered lowered = prepared.oracle();
             SemanticRuntimeModel.ErrorSnapshot oracle = oracleMainFailure(lowered);
             check(oracle != null,
                 "the oracle rejects the cyclic helper invocation");
@@ -2190,16 +2273,11 @@ public class JsonableHelperProductionDriveTest {
                 check(dynamicCall, "the f(w) call lowers as a dynamic "
                     + "DEAL-body invocation");
             }
-        } finally {
-            deleteRecursively(oracleProject.root());
-        }
-        // The two real-toolchain legs.
-        for (Target target : Target.values()) {
-            Project project = syntheticProject("app", source, target);
-            try {
-                List<String> diagnostics = new ArrayList<>();
-                boolean compiled = compile(project, "dynamic-helper-origin", target,
-                    diagnostics);
+            for (Target target : Target.values()) {
+                Project project = withOutput(prepared.project(), "out-" + target.laneName());
+                Compilation compilation = emitChecked(project, prepared.compilation(), target);
+                List<String> diagnostics = compilation.diagnostics();
+                boolean compiled = compilation.compiled();
                 check(compiled, "the dynamic-helper project compiles ["
                     + target.laneName() + "]: " + diagnostics);
                 if (!compiled) {
@@ -2227,8 +2305,6 @@ public class JsonableHelperProductionDriveTest {
                         && capture.sourceFile().endsWith("app.deal"),
                     "the " + target.laneName() + " artifact's origin names the "
                         + "declaring module file");
-            } finally {
-                deleteRecursively(project.root());
             }
         }
     }
@@ -2279,7 +2355,7 @@ public class JsonableHelperProductionDriveTest {
               return null;
             }
             """;
-        Compilation compilation = driveExactHelperText("helper-function-binding", source);
+        Compilation compilation = driveExactHelperProgram("helper-function-binding", source);
         // The reserved shape survives the carrier-carried call: each
         // helper keeps exactly one CLOSURE_NEW and one reserved
         // EXTERNAL_ENTRY, and every binding-invoked helper CALL resolves
@@ -2401,10 +2477,9 @@ public class JsonableHelperProductionDriveTest {
         String expectedPosition = line + ":" + column;
         List<Export> exports = exportsOf(source);
         String oracleMessage = null;
-        Project oracleProject = syntheticProject("app", source, Target.JVM);
-        try {
-            SemanticRuntimeModel.ErrorSnapshot oracle =
-                oracleFailure(oracleProject, exports);
+        try (PreparedSynthetic prepared = prepareSynthetic("table-class-instance", source,
+                exports)) {
+            SemanticRuntimeModel.ErrorSnapshot oracle = oracleMainFailure(prepared.oracle());
             check(oracle != null, "the oracle rejects the class instance inside "
                 + "an array nested in a table field");
             if (oracle != null) {
@@ -2418,15 +2493,11 @@ public class JsonableHelperProductionDriveTest {
                         + oracle.origin() + ")");
                 oracleMessage = oracle.message();
             }
-        } finally {
-            deleteRecursively(oracleProject.root());
-        }
-        for (Target target : Target.values()) {
-            Project project = syntheticProject("app", source, target);
-            try {
-                List<String> diagnostics = new ArrayList<>();
-                boolean compiled = compile(project, "table-class-instance", target,
-                    diagnostics);
+            for (Target target : Target.values()) {
+                Project project = withOutput(prepared.project(), "out-" + target.laneName());
+                Compilation compilation = emitChecked(project, prepared.compilation(), target);
+                List<String> diagnostics = compilation.diagnostics();
+                boolean compiled = compilation.compiled();
                 check(compiled, "the table-class-instance project compiles ["
                     + target.laneName() + "]: " + diagnostics);
                 if (!compiled) {
@@ -2453,8 +2524,6 @@ public class JsonableHelperProductionDriveTest {
                         + target.laneName() + " artifact renders the helper call "
                         + "origin (got " + capture.sourceFile() + ":"
                         + capture.line() + ":" + capture.column() + ")");
-            } finally {
-                deleteRecursively(project.root());
             }
         }
     }
@@ -2479,48 +2548,67 @@ public class JsonableHelperProductionDriveTest {
      * transcripts empty, no probe defect, and no failure transport
      * ({@link #exactHelperArtifactMismatches}).
      */
-    private static Compilation driveExactHelperText(String label, String source)
+    private static Compilation driveExactHelperProgram(String label, String source)
             throws Exception {
         List<Export> exports = exportsOf(source);
-        Compilation jvmCompilation = null;
-        Project oracleProject = syntheticProject("app", source, Target.JVM);
-        try {
-            SemanticRuntimeModel.ErrorSnapshot oracle =
-                oracleFailure(oracleProject, exports);
+        try (PreparedSynthetic prepared = prepareSynthetic(label, source, exports)) {
+            Project project = prepared.project();
+            SemanticRuntimeModel.ErrorSnapshot oracle = oracleMainFailure(prepared.oracle());
+            Compilation preparation = prepared.compilation();
             check(oracle == null, label + ": the oracle produces the exact "
                 + "expected helper text (outcome "
                 + (oracle == null ? "success"
                     : oracle.code() + " " + oracle.message())
                 + ")");
-        } finally {
-            deleteRecursively(oracleProject.root());
-        }
-        for (Target target : Target.values()) {
-            Project project = syntheticProject("app", source, target);
-            try {
-                Compilation compilation = compileObservation(project, label, target);
+            Compilation jvmCompilation = null;
+            for (Target target : Target.values()) {
+                Project artifactProject = target == Target.LUAJIT ? project
+                    : withOutput(project, "out-jvm");
+                Compilation compilation = emitChecked(artifactProject, preparation, target);
                 if (target == Target.JVM) {
                     jvmCompilation = compilation;
                 }
-                List<String> diagnostics = compilation.diagnostics();
-                boolean compiled = compilation.compiled();
-                check(compiled, label + " [" + target.laneName() + "]: the project "
-                    + "compiles through the production invocation: " + diagnostics);
-                if (!compiled) {
+                check(compilation.compiled(), label + " [" + target.laneName()
+                    + "]: the project compiles through the production invocation: "
+                    + compilation.diagnostics());
+                if (!compilation.compiled()) {
                     continue;
                 }
                 Execution execution = target == Target.LUAJIT
-                    ? executeLua(project, exports) : executeJvm(project, exports);
-                List<String> mismatches = exactHelperArtifactMismatches(execution);
-                for (String mismatch : mismatches) {
-                    check(false, label + " [" + target.laneName() + "]: "
-                        + mismatch);
+                    ? executeLua(artifactProject, exports)
+                    : executeJvm(artifactProject, exports);
+                for (String mismatch : exactHelperArtifactMismatches(execution)) {
+                    check(false, label + " [" + target.laneName() + "]: " + mismatch);
                 }
-            } finally {
-                deleteRecursively(project.root());
             }
+            return jvmCompilation;
         }
-        return jvmCompilation;
+    }
+
+    private static String combineExactHelperSources(String... sources) {
+        StringBuilder combined = new StringBuilder();
+        for (int index = 0; index < sources.length; index++) {
+            String source = sources[index];
+            source = source.substring(0, source.lastIndexOf("export function main()"));
+            Matcher classes = Pattern.compile("export class (\\w+)").matcher(source);
+            Map<String, String> names = new LinkedHashMap<>();
+            while (classes.find()) {
+                String name = classes.group(1);
+                names.put(name, "Scenario" + index + "_" + name);
+            }
+            Matcher identifiers = Pattern.compile(
+                "\"(?:\\\\.|[^\"\\\\])*\"|//[^\\n]*|\\b[A-Za-z_][A-Za-z_0-9]*\\b")
+                .matcher(source);
+            StringBuilder renamed = new StringBuilder();
+            while (identifiers.find()) {
+                identifiers.appendReplacement(renamed, Matcher.quoteReplacement(
+                    names.getOrDefault(identifiers.group(), identifiers.group())));
+            }
+            identifiers.appendTail(renamed);
+            combined.append(renamed).append('\n');
+        }
+        return combined.append("export function main(): null {\n  return null;\n}\n")
+            .toString();
     }
 
     /**
@@ -2588,7 +2676,7 @@ public class JsonableHelperProductionDriveTest {
      * never in sorted order, so the same object value yields the same string
      * on the oracle and both production artifacts.
      */
-    private static void testNestedTableInsertionOrder() throws Exception {
+    private static String nestedTableInsertionOrderFunction() {
         System.out.println("-- the nested-class table field's first-insertion order: "
             + "the exact three-consumer text --");
         String expected = "{\"child\":{\"data\":{\"z\":\"first\","
@@ -2603,8 +2691,7 @@ public class JsonableHelperProductionDriveTest {
             + "    throw { code: \"MISMATCH\", message: json };\n"
             + "  }\n"
             + "  return null;\n}\n";
-        driveExactHelperText("nested-table-order",
-            nestedTableFixtureSource(function));
+        return function;
     }
 
     /**
@@ -2643,8 +2730,8 @@ public class JsonableHelperProductionDriveTest {
             + "    throw { code: \"MISMATCH\", message: json };\n"
             + "  }\n"
             + "  return null;\n}\n";
-        driveExactHelperText("nested-table-numbers",
-            nestedTableFixtureSource(function));
+        driveExactHelperProgram("nested-table-order-and-numbers",
+            nestedTableFixtureSource(nestedTableInsertionOrderFunction() + "\n" + function));
     }
 
     /**
@@ -2704,24 +2791,19 @@ public class JsonableHelperProductionDriveTest {
             + "consumers --");
         String validSource = nestedClassDepthSource(511, nestedChainText(511));
         List<Export> validExports = exportsOf(validSource);
-        Project validOracle = syntheticProject("app", validSource, Target.JVM);
-        try {
-            SemanticRuntimeModel.ErrorSnapshot oracle =
-                oracleFailure(validOracle, validExports);
+        try (PreparedSynthetic prepared = prepareSynthetic("nested-class-depth-ok", validSource,
+                validExports)) {
+            SemanticRuntimeModel.ErrorSnapshot oracle = oracleMainFailure(prepared.oracle());
             check(oracle == null, "the 511-link chain (512 containers) completes "
                 + "on the oracle (outcome "
                 + (oracle == null ? "success"
                     : oracle.code() + " " + oracle.message())
                 + ")");
-        } finally {
-            deleteRecursively(validOracle.root());
-        }
-        for (Target target : Target.values()) {
-            Project project = syntheticProject("app", validSource, target);
-            try {
-                List<String> diagnostics = new ArrayList<>();
-                boolean compiled = compile(project, "nested-class-depth-ok", target,
-                    diagnostics);
+            for (Target target : Target.values()) {
+                Project project = withOutput(prepared.project(), "out-" + target.laneName());
+                Compilation compilation = emitChecked(project, prepared.compilation(), target);
+                List<String> diagnostics = compilation.diagnostics();
+                boolean compiled = compilation.compiled();
                 check(compiled, "the 511-link project compiles ["
                     + target.laneName() + "]: " + diagnostics);
                 if (!compiled) {
@@ -2735,8 +2817,6 @@ public class JsonableHelperProductionDriveTest {
                         + "completes on the " + target.laneName() + " artifact: "
                         + mismatch);
                 }
-            } finally {
-                deleteRecursively(project.root());
             }
         }
         String invalidSource = nestedClassDepthSource(512, null);
@@ -2746,10 +2826,9 @@ public class JsonableHelperProductionDriveTest {
         String expectedMessage = "value at child.data" + ".next".repeat(512)
             + " is not JSON serializable: table";
         String oracleMessage = null;
-        Project invalidOracle = syntheticProject("app", invalidSource, Target.JVM);
-        try {
-            SemanticRuntimeModel.ErrorSnapshot oracle =
-                oracleFailure(invalidOracle, invalidExports);
+        try (PreparedSynthetic prepared = prepareSynthetic("nested-class-depth-overflow",
+                invalidSource, invalidExports)) {
+            SemanticRuntimeModel.ErrorSnapshot oracle = oracleMainFailure(prepared.oracle());
             check(oracle != null, "the 512-link chain exceeds the depth bound on "
                 + "the oracle");
             if (oracle != null) {
@@ -2763,15 +2842,11 @@ public class JsonableHelperProductionDriveTest {
                         + oracle.origin() + ")");
                 oracleMessage = oracle.message();
             }
-        } finally {
-            deleteRecursively(invalidOracle.root());
-        }
-        for (Target target : Target.values()) {
-            Project project = syntheticProject("app", invalidSource, target);
-            try {
-                List<String> diagnostics = new ArrayList<>();
-                boolean compiled = compile(project, "nested-class-depth-overflow",
-                    target, diagnostics);
+            for (Target target : Target.values()) {
+                Project project = withOutput(prepared.project(), "out-" + target.laneName());
+                Compilation compilation = emitChecked(project, prepared.compilation(), target);
+                List<String> diagnostics = compilation.diagnostics();
+                boolean compiled = compilation.compiled();
                 check(compiled, "the 512-link project compiles ["
                     + target.laneName() + "]: " + diagnostics);
                 if (!compiled) {
@@ -2799,8 +2874,6 @@ public class JsonableHelperProductionDriveTest {
                         + target.laneName() + " artifact renders the helper call "
                         + "origin (got " + capture.sourceFile() + ":"
                         + capture.line() + ":" + capture.column() + ")");
-            } finally {
-                deleteRecursively(project.root());
             }
         }
     }
@@ -2820,22 +2893,17 @@ public class JsonableHelperProductionDriveTest {
     private static void driveThreeConsumerParity(String label, String source)
             throws Exception {
         List<Export> exports = exportsOf(source);
-        SemanticRuntimeModel.ErrorSnapshot oracle;
-        Project oracleProject = syntheticProject("app", source, Target.JVM);
-        try {
-            oracle = oracleFailure(oracleProject, exports);
-        } finally {
-            deleteRecursively(oracleProject.root());
-        }
-        String reference = oracle == null ? "success"
-            : oracle.code() + " " + oracle.message();
-        System.out.println("   " + label + ": the oracle reference outcome is "
-            + reference);
-        for (Target target : Target.values()) {
-            Project project = syntheticProject("app", source, target);
-            try {
-                List<String> diagnostics = new ArrayList<>();
-                boolean compiled = compile(project, label, target, diagnostics);
+        try (PreparedSynthetic prepared = prepareSynthetic(label, source, exports)) {
+            SemanticRuntimeModel.ErrorSnapshot oracle = oracleMainFailure(prepared.oracle());
+            String reference = oracle == null ? "success"
+                : oracle.code() + " " + oracle.message();
+            System.out.println("   " + label + ": the oracle reference outcome is "
+                + reference);
+            for (Target target : Target.values()) {
+                Project project = withOutput(prepared.project(), "out-" + target.laneName());
+                Compilation compilation = emitChecked(project, prepared.compilation(), target);
+                List<String> diagnostics = compilation.diagnostics();
+                boolean compiled = compilation.compiled();
                 check(compiled, label + " [" + target.laneName()
                     + "]: the project compiles through the production invocation: "
                     + diagnostics);
@@ -2864,8 +2932,6 @@ public class JsonableHelperProductionDriveTest {
                             + target.laneName() + "]: the failure message");
                     }
                 }
-            } finally {
-                deleteRecursively(project.root());
             }
         }
     }
@@ -2878,7 +2944,7 @@ public class JsonableHelperProductionDriveTest {
      * executor view reads the carrier's current elements, so it never
      * serves the stale pre-commit contents.
      */
-    private static void testArrayExecutorViewSync() throws Exception {
+    private static String arrayExecutorViewSyncSource() {
         System.out.println("-- the oracle's live array view: replacement and "
             + "append serialize on all three consumers --");
         String source = "// @jsonable\nexport class Box {\n  xs: int[] = [];\n}\n\n"
@@ -2918,7 +2984,7 @@ public class JsonableHelperProductionDriveTest {
             + "  return null;\n"
             + "}\n\n"
             + "export function main(): null {\n  return null;\n}\n";
-        driveExactHelperText("array-executor-view-sync", source);
+        return source;
     }
 
     /**
@@ -3355,7 +3421,7 @@ public class JsonableHelperProductionDriveTest {
      * committed state must hold the child's live view identity, never a
      * snapshot frozen when the parent wrote {@code y}.
      */
-    private static void testNestedClassFieldViewSync() throws Exception {
+    private static String nestedClassFieldViewSyncSource() {
         System.out.println("-- the committed nested-class view: a field write "
             + "through the parent serializes on all three consumers --");
         String expected = dealStringLiteral("{\"child\":{\"x\":2},\"y\":0}");
@@ -3403,7 +3469,7 @@ public class JsonableHelperProductionDriveTest {
             + "  return null;\n"
             + "}\n\n"
             + "export function main(): null {\n  return null;\n}\n";
-        driveExactHelperText("nested-class-field-view-sync", source);
+        return source;
     }
 
     /**
@@ -3416,7 +3482,7 @@ public class JsonableHelperProductionDriveTest {
      * {@code y: int}) proves the later array-element commit is still
      * observed after an unrelated parent-field commit.
      */
-    private static void testArrayHeldClassViewSync() throws Exception {
+    private static String arrayHeldClassViewSyncSource() {
         System.out.println("-- the committed array-held class view: a field write "
             + "through b.children[0].x serializes on all three consumers --");
         String source = "// @jsonable\nexport class Child {\n  x: int = 0;\n}\n\n"
@@ -3449,7 +3515,7 @@ public class JsonableHelperProductionDriveTest {
             + "  return null;\n"
             + "}\n\n"
             + "export function main(): null {\n  return null;\n}\n";
-        driveExactHelperText("array-held-class-view-sync", source);
+        return source;
     }
 
     /**
@@ -3459,7 +3525,7 @@ public class JsonableHelperProductionDriveTest {
      * the LuaJIT artifact, and the JVM artifact, while a non-nullable
      * {@code int[]} rejects the same document (language null) on all three.
      */
-    private static void testNullableArrayElements() throws Exception {
+    private static String nullableArrayElementsSource() {
         System.out.println("-- the nullable-array element admission: the element "
             + "descriptor decides a null element on all three consumers --");
         String source = "// @jsonable\nexport class Box {\n"
@@ -3491,7 +3557,7 @@ public class JsonableHelperProductionDriveTest {
             + "  return null;\n"
             + "}\n\n"
             + "export function main(): null {\n  return null;\n}\n";
-        driveExactHelperText("nullable-array-elements", source);
+        return source;
     }
 
     /**
@@ -3501,7 +3567,7 @@ public class JsonableHelperProductionDriveTest {
      * {@code number} field or array element admits it with its own variant's
      * spelling — never a rejection of the carrier representation.
      */
-    private static void testReadDerivedNumericCarriers() throws Exception {
+    private static String readDerivedNumericCarriersSource() {
         System.out.println("-- read-derived numeric carriers in declared fields and "
             + "array elements: the own-variant spelling on all three consumers --");
         String source = "// @jsonable\nexport class Child {\n"
@@ -3524,7 +3590,7 @@ public class JsonableHelperProductionDriveTest {
             + "  return null;\n"
             + "}\n\n"
             + "export function main(): null {\n  return null;\n}\n";
-        driveExactHelperText("read-derived-numeric-carriers", source);
+        return source;
     }
 
     /**
@@ -3593,7 +3659,7 @@ public class JsonableHelperProductionDriveTest {
             + "  return null;\n"
             + "}\n\n"
             + "export function main(): null {\n  return null;\n}\n";
-        driveExactHelperText("declared-array-numeric-variants", deficient);
+
         // The controls: a marked number slot keeps the closed decimal
         // spelling (the all-number literal), and one mixed array built
         // through an index write that marks only the number slot spells the
@@ -3626,7 +3692,8 @@ public class JsonableHelperProductionDriveTest {
             + "  return null;\n"
             + "}\n\n"
             + "export function main(): null {\n  return null;\n}\n";
-        driveExactHelperText("declared-array-numeric-controls", controls);
+        driveExactHelperProgram("declared-array-numeric-variants-and-controls",
+            combineExactHelperSources(deficient, controls, readDerivedNumericCarriersSource()));
     }
 
     /**
@@ -3686,7 +3753,8 @@ public class JsonableHelperProductionDriveTest {
             + "  throw { code: \"MISMATCH\", message: \"the explicit valid "
             + "document was rejected\" };\n}\n\n"
             + "export function main(): null {\n  return null;\n}\n";
-        driveExactHelperText("nested-default-numeric-carrier", source);
+        driveExactHelperProgram("nested-default-numeric-carrier-and-nullable-arrays",
+            combineExactHelperSources(source, nullableArrayElementsSource()));
     }
 
     /**
@@ -3808,7 +3876,8 @@ public class JsonableHelperProductionDriveTest {
      * {@code $}-only-in-quoted-keys invariant: the Lua surface keys the
      * helper by a quoted string, the JVM surface by the same string).
      */
-    private static void testDeterminismAndExportKey() throws Exception {
+    private static void testDeterminismAndExportKey(
+            Map<String, CorpusObservation> observations) throws Exception {
         System.out.println("-- determinism and the verbatim export key --");
         List<String> fixtures = List.of(
             FAMILY_DIR + "/jsonable-helper-exports",
@@ -3818,12 +3887,15 @@ public class JsonableHelperProductionDriveTest {
             String fixtureRel = fixtures.get(index);
             String helper = keys.get(index);
             for (Target target : Target.values()) {
-                Project project = materialize(fixtureRel, target);
-                try {
-                    List<String> firstDiagnostics = new ArrayList<>();
+                CorpusObservation observation = observations.get(fixtureRel);
+                Project project = target == Target.JVM ? observation.project()
+                    : withOutput(observation.project(), "out");
+                {
+                    Compilation firstCompilation = target == Target.JVM
+                        ? observation.compilation() : observation.luaCompilation();
+                    List<String> firstDiagnostics = firstCompilation.diagnostics();
                     List<String> secondDiagnostics = new ArrayList<>();
-                    boolean firstCompiled = compile(project, fixtureRel, target,
-                        firstDiagnostics);
+                    boolean firstCompiled = firstCompilation.compiled();
                     String first = firstCompiled
                         ? Files.readString(artifactOf(project, target)) : null;
                     Project repeat = new Project(project.root(), project.srcRoot(),
@@ -3856,14 +3928,12 @@ public class JsonableHelperProductionDriveTest {
                     check(first.contains(publication), fixtureRel + " ["
                         + target.laneName() + "]: the emitted helper publication "
                         + "keys the DEAL name verbatim (" + publication + ")");
-                } finally {
-                    deleteRecursively(project.root());
                 }
             }
         }
     }
 
-    private static void deleteRecursively(Path dir) throws Exception {
+    private static void deleteRecursively(Path dir) throws java.io.IOException {
         if (dir == null || !Files.exists(dir)) {
             return;
         }
@@ -3887,6 +3957,7 @@ public class JsonableHelperProductionDriveTest {
             testNegatives();
             testMissingHelperFactsFailClosed(observations.get(CROSS_MODULE_FIXTURE));
             cyclicPin = observations.get(CYCLIC_FIXTURE).pinned();
+            testDeterminismAndExportKey(observations);
         } finally {
             for (CorpusObservation observation : observations.values()) {
                 deleteRecursively(observation.project().root());
@@ -3895,16 +3966,13 @@ public class JsonableHelperProductionDriveTest {
         testDynamicHelperOrigin();
         testHelperFunctionBindingInvocation();
         testTableClassInstanceRejection();
-        testNestedTableInsertionOrder();
         testNestedTableNumericVariants();
         testNestedClassDepthBound();
         testDepthArtifactCreditNegativeControl();
-        testArrayExecutorViewSync();
+        driveExactHelperProgram("committed-array-and-class-views",
+            combineExactHelperSources(arrayExecutorViewSyncSource(),
+                nestedClassFieldViewSyncSource(), arrayHeldClassViewSyncSource()));
         testArrayExecutorViewDeleteParity();
-        testNestedClassFieldViewSync();
-        testArrayHeldClassViewSync();
-        testNullableArrayElements();
-        testReadDerivedNumericCarriers();
         testDeclaredArrayNumericVariants();
         testNestedClassDefaultNumericCarrier();
         testOracleDriverMainCoverage();
@@ -3913,7 +3981,6 @@ public class JsonableHelperProductionDriveTest {
         testRuntimeOkNegativeControls();
         testRawProfileNegativeControl();
         testBoundedProcessControls();
-        testDeterminismAndExportKey();
         System.out.println("");
         System.out.println("Jsonable helper production drive: " + passed
             + " passed, " + failed + " failed");

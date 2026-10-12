@@ -41,9 +41,9 @@ import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticIrDumper;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ValueId;
+import deal.test.conformance.JvmCompilation;
 
 import java.io.File;
-import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitOption;
 import java.nio.file.Files;
@@ -183,7 +183,6 @@ public class DeclaredBodyCarrierProductionTest {
 
     private static int passed = 0;
     private static int failed = 0;
-    private static AsyncExportInvokerProductionTest.JavacPreparation javacPreparation;
 
     private static void check(boolean condition, String message) {
         if (condition) {
@@ -1528,11 +1527,17 @@ public class DeclaredBodyCarrierProductionTest {
                                          Path probe) throws Exception {
         Path classes = out.resolve("classes");
         Files.createDirectories(classes);
-        StringWriter messages = new StringWriter();
-        boolean compiled = javacPreparation.compile(
-            probe == null ? List.of(artifact) : List.of(artifact, probe), classes, messages);
-        check(compiled, testCase.name() + " [jvm]: the staged artifact compiles under "
-            + "javac --release 25 -proc:none: " + messages);
+        List<String> command = new ArrayList<>(List.of("javac", "--release", "25",
+            "-proc:none", "-encoding", "UTF-8", "-sourcepath", "", "-cp",
+            classes + File.pathSeparator + absoluteClasspath(),
+            "-d", classes.toString(), artifact.toString()));
+        if (probe != null) {
+            command.add(probe.toString());
+        }
+        JvmCompilation.Result compile = JvmCompilation.compile(command, out);
+        check(compile.exitCode() == 0, testCase.name()
+            + " [jvm]: the staged artifact and any async probe compile under "
+            + "javac --release 25 -proc:none: " + compile.stdout() + compile.stderr());
     }
 
     private static Path prepareProductionAsyncProbe(Case testCase, Path out,
@@ -1644,17 +1649,43 @@ public class DeclaredBodyCarrierProductionTest {
             unit, table);
     }
 
-    /**
-     * The declared-body carrier battery: the validator admission, exactly one
-     * closure creation per declaration, the absence of any call-site factory
-     * reconstruction of a capture-carrying body, the value-carried
-     * invocation's resolution of the declaration's own closure identity and
-     * single return cell, and the same-module exported-entry realization's
-     * recording of the declaration's reserved {@code EXTERNAL_ENTRY}
-     * (identity and single return cell) instead of a source-call re-shape.
-     */
+    private record Inspection(Map<OpId, SemanticOp> ops,
+                              Map<OpId, SemanticOp> nestedStarts,
+                              Map<BindingGeneration, KindPayload.BindingAllocPayload> allocations,
+                              Map<FunctionId, List<FunctionAllocationIdentity>> identities) {
+
+        private static Inspection of(LoweredModuleUnit unit) {
+            Map<OpId, SemanticOp> ops = new LinkedHashMap<>();
+            Map<OpId, SemanticOp> nestedStarts = new LinkedHashMap<>();
+            Map<BindingGeneration, KindPayload.BindingAllocPayload> allocations =
+                new LinkedHashMap<>();
+            Map<FunctionId, List<FunctionAllocationIdentity>> identities =
+                new LinkedHashMap<>();
+            for (SemanticOp op : unit.ops()) {
+                ops.putIfAbsent(op.opId(), op);
+                if (op.kind() == SemanticOpKind.ASYNC_START
+                        && op.origin().parentOpId() != null) {
+                    nestedStarts.put(op.origin().parentOpId(), op);
+                }
+                if (op.payload() instanceof KindPayload.BindingAllocPayload alloc) {
+                    allocations.putIfAbsent(
+                        new BindingGeneration(alloc.binding(), alloc.generation()), alloc);
+                }
+            }
+            for (Map.Entry<FunctionAllocationIdentity, FunctionExecutionBinding> entry
+                    : unit.functionBindings().entrySet()) {
+                if (entry.getValue() instanceof FunctionExecutionBinding.LoweredBody body) {
+                    identities.computeIfAbsent(body.functionId(), key -> new ArrayList<>())
+                        .add(entry.getKey());
+                }
+            }
+            return new Inspection(ops, nestedStarts, allocations, identities);
+        }
+    }
+
     private static void checkDeclaredBodyCarriers(Case testCase, LoweredModuleUnit unit,
                                                   StructuredBodyTable table) {
+        Inspection inspection = Inspection.of(unit);
         Optional<CompilerDiagnostic> admission = ControlFlowValidator.validate(unit, table);
         check(admission.isEmpty(), testCase.name()
             + ": the control-flow validator admits the unit: " + admission);
@@ -1685,14 +1716,9 @@ public class DeclaredBodyCarrierProductionTest {
                 // and the registration of that identity is the member's
                 // own LoweredBody.
                 for (FunctionId member : group.functions()) {
-                    for (Map.Entry<FunctionAllocationIdentity,
-                            FunctionExecutionBinding> entry
-                            : unit.functionBindings().entrySet()) {
-                        if (entry.getValue()
-                                instanceof FunctionExecutionBinding.LoweredBody body
-                                && body.functionId().equals(member)) {
-                            groupMemberIdentities.put(entry.getKey().id(), member);
-                        }
+                    for (FunctionAllocationIdentity identity
+                            : inspection.identities().getOrDefault(member, List.of())) {
+                        groupMemberIdentities.put(identity.id(), member);
                     }
                 }
             }
@@ -1820,7 +1846,7 @@ public class DeclaredBodyCarrierProductionTest {
                     + " identities");
             } else if (target != null && !target.captures().isEmpty()
                     && !entryDelegated.contains(body.functionId())
-                    && !moduleStableCaptures(unit, target)) {
+                    && !moduleStableCaptures(unit, target, inspection)) {
                 staticCaptureInvocations++;
                 System.err.println("FAIL: " + testCase.name() + ": the invocation "
                     + op.opId() + " of capture-carrying function " + body.functionId()
@@ -1838,9 +1864,9 @@ public class DeclaredBodyCarrierProductionTest {
             + ": the unit records at least " + testCase.minEntryInvocations()
             + " same-module exported-entry realization(s); got "
             + moduleEntryInvocations);
-        checkAdapterOverAsyncNestedSources(testCase, unit, returnBoundaries);
+        checkAdapterOverAsyncNestedSources(testCase, unit, returnBoundaries, inspection);
         if (testCase.arityExtensionAdapter()) {
-            checkArityExtensionAdapters(testCase, unit);
+            checkArityExtensionAdapters(testCase, unit, inspection);
         }
     }
 
@@ -1856,7 +1882,8 @@ public class DeclaredBodyCarrierProductionTest {
      * source resolutions keep their static/entry shapes.
      */
     private static void checkAdapterOverAsyncNestedSources(Case testCase,
-            LoweredModuleUnit unit, Map<FunctionId, OpId> returnBoundaries) {
+            LoweredModuleUnit unit, Map<FunctionId, OpId> returnBoundaries,
+            Inspection inspection) {
         for (SemanticOp outer : unit.ops()) {
             if (outer.kind() != SemanticOpKind.ASYNC_START
                     || !(outer.payload() instanceof KindPayload.AsyncStartPayload started)
@@ -1873,13 +1900,7 @@ public class DeclaredBodyCarrierProductionTest {
             if (!(outerBinding instanceof FunctionExecutionBinding.AdapterBinding)) {
                 continue;
             }
-            SemanticOp nested = null;
-            for (SemanticOp candidate : unit.ops()) {
-                if (candidate.kind() == SemanticOpKind.ASYNC_START
-                        && outer.opId().equals(candidate.origin().parentOpId())) {
-                    nested = candidate;
-                }
-            }
+            SemanticOp nested = inspection.nestedStarts().get(outer.opId());
             check(nested != null, testCase.name()
                 + ": the adapter-over-async start " + outer.opId()
                 + " carries its nested source ASYNC_START");
@@ -1946,7 +1967,8 @@ public class DeclaredBodyCarrierProductionTest {
      * body RETURN keeps naming the entry and its single return cell.
      */
     private static void checkArityExtensionAdapters(Case testCase,
-                                                    LoweredModuleUnit unit) {
+                                                    LoweredModuleUnit unit,
+                                                    Inspection inspection) {
         Map<OpId, String> entryReturnCells = new LinkedHashMap<>();
         for (SemanticOp op : unit.ops()) {
             if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
@@ -1973,8 +1995,8 @@ public class DeclaredBodyCarrierProductionTest {
                     + " published closure; got mode " + call.mode() + " and entry ref "
                     + call.externalEntryRef());
                 checkTargetParameterCells(testCase, unit, op,
-                    call.parameterBoundaryOpIds(), adapter);
-                SemanticOp cell = opOf(unit, call.returnBoundaryOpId());
+                    call.parameterBoundaryOpIds(), adapter, inspection);
+                SemanticOp cell = inspection.ops().get(call.returnBoundaryOpId());
                 check(cell != null && cell.kind() == SemanticOpKind.BOUNDARY
                         && cell.payload()
                             instanceof KindPayload.BoundaryPayload boundary
@@ -1997,8 +2019,8 @@ public class DeclaredBodyCarrierProductionTest {
                     + ": the outer adapter-over-async start " + op.opId()
                     + " runs zero return boundaries of its own");
                 checkTargetParameterCells(testCase, unit, op,
-                    started.parameterBoundaryOpIds(), adapter);
-                checkNestedEntrySource(testCase, unit, op, adapter);
+                    started.parameterBoundaryOpIds(), adapter, inspection);
+                checkNestedEntrySource(testCase, unit, op, adapter, inspection);
             }
         }
         check(syncAdapters + asyncAdapters == 1, testCase.name()
@@ -2012,15 +2034,10 @@ public class DeclaredBodyCarrierProductionTest {
      * activation token.
      */
     private static void checkNestedEntrySource(Case testCase, LoweredModuleUnit unit,
-                                               SemanticOp outer,
-                                               FunctionExecutionBinding.AdapterBinding adapter) {
-        SemanticOp nested = null;
-        for (SemanticOp candidate : unit.ops()) {
-            if (candidate.kind() == SemanticOpKind.ASYNC_START
-                    && outer.opId().equals(candidate.origin().parentOpId())) {
-                nested = candidate;
-            }
-        }
+                                                SemanticOp outer,
+                                                FunctionExecutionBinding.AdapterBinding adapter,
+                                                Inspection inspection) {
+        SemanticOp nested = inspection.nestedStarts().get(outer.opId());
         check(nested != null, testCase.name()
             + ": the adapter-over-async start " + outer.opId()
             + " carries its nested source ASYNC_START");
@@ -2059,7 +2076,7 @@ public class DeclaredBodyCarrierProductionTest {
             + ": the nested source start's ExternalAsyncLink names the entry's"
             + " canonical body-task token in the same module; got " + link);
         SemanticOp entry = link == null ? null
-            : opOf(unit, new OpId(unit.moduleId(), link.calleeTokenId().tokenId()));
+            : inspection.ops().get(new OpId(unit.moduleId(), link.calleeTokenId().tokenId()));
         check(entry != null && entry.kind() == SemanticOpKind.EXTERNAL_ENTRY
                 && entry.payload() instanceof KindPayload.ExternalEntryPayload payload
                 && payload.async(), testCase.name()
@@ -2077,14 +2094,14 @@ public class DeclaredBodyCarrierProductionTest {
     /** The adapter's xN target-signature {@code FUNCTION_PARAMETER} cells. */
     private static void checkTargetParameterCells(Case testCase, LoweredModuleUnit unit,
             SemanticOp invocation, List<OpId> boundaryIds,
-            FunctionExecutionBinding.AdapterBinding adapter) {
+            FunctionExecutionBinding.AdapterBinding adapter, Inspection inspection) {
         List<RuntimeDescriptor> targetParams =
             adapter.targetSignature().paramTypes();
         check(boundaryIds.size() == targetParams.size(), testCase.name()
             + ": the adapter invocation " + invocation.opId() + " runs one"
             + " FUNCTION_PARAMETER cell per target parameter; got " + boundaryIds.size());
         for (int i = 0; i < boundaryIds.size(); i++) {
-            SemanticOp boundary = opOf(unit, boundaryIds.get(i));
+            SemanticOp boundary = inspection.ops().get(boundaryIds.get(i));
             check(boundary != null && boundary.kind() == SemanticOpKind.BOUNDARY
                     && boundary.payload() instanceof KindPayload.BoundaryPayload payload
                     && payload.kind() == BoundaryKind.FUNCTION_PARAMETER
@@ -2109,19 +2126,6 @@ public class DeclaredBodyCarrierProductionTest {
             ? adapter : null;
     }
 
-    /** The unit op with the given id, or null. */
-    private static SemanticOp opOf(LoweredModuleUnit unit, OpId opId) {
-        if (opId == null) {
-            return null;
-        }
-        for (SemanticOp op : unit.ops()) {
-            if (op.opId().equals(opId)) {
-                return op;
-            }
-        }
-        return null;
-    }
-
     /**
      * Whether every capture of one declaration resolves to a module-init
      * incarnation: a module-level declaration's single-incarnation cells, so
@@ -2130,21 +2134,11 @@ public class DeclaredBodyCarrierProductionTest {
      * per-invocation and only the published carrier names the right one.
      */
     private static boolean moduleStableCaptures(LoweredModuleUnit unit,
-                                                LoweredFunction function) {
+                                                LoweredFunction function,
+                                                Inspection inspection) {
         for (BindingGeneration capture : function.captures()) {
-            boolean found = false;
-            for (SemanticOp op : unit.ops()) {
-                if (op.payload() instanceof KindPayload.BindingAllocPayload alloc
-                        && alloc.binding().equals(capture.binding())
-                        && alloc.generation() == capture.generation()) {
-                    if (!alloc.scope().equals(unit.moduleInit().initBlock())) {
-                        return false;
-                    }
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
+            KindPayload.BindingAllocPayload alloc = inspection.allocations().get(capture);
+            if (alloc == null || !alloc.scope().equals(unit.moduleInit().initBlock())) {
                 return false;
             }
         }
@@ -2401,13 +2395,15 @@ public class DeclaredBodyCarrierProductionTest {
     }
 
     private static ProcessOutput runProcess(ProcessBuilder builder) throws Exception {
-        Process process = builder.start();
-        String out = new String(process.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        String err = new String(process.getErrorStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        int exit = process.waitFor();
-        return new ProcessOutput(exit, splitLines(out), splitLines(err));
+        BoundedProcess.BoundedResult captured = BoundedProcess.runCaptured(
+            builder.command(), builder.directory() == null ? null
+                : builder.directory().toPath(), builder.environment());
+        if (captured.stdoutTruncated() || captured.stderrTruncated()) {
+            throw new AssertionError("runtime process output was truncated: "
+                + builder.command());
+        }
+        return new ProcessOutput(captured.exitCode(), splitLines(captured.stdout()),
+            splitLines(captured.stderr()));
     }
 
     private static List<String> splitLines(String text) {
@@ -2462,14 +2458,8 @@ public class DeclaredBodyCarrierProductionTest {
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== Declared-Body Carrier Production Test (ISSUE-0757) ===\n");
-        try (AsyncExportInvokerProductionTest.JavacPreparation preparation =
-                new AsyncExportInvokerProductionTest.JavacPreparation()) {
-            javacPreparation = preparation;
-            for (Case testCase : CASES) {
-                runCase(testCase);
-            }
-        } finally {
-            javacPreparation = null;
+        for (Case testCase : CASES) {
+            runCase(testCase);
         }
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

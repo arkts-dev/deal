@@ -630,6 +630,11 @@ public class ProductionDispatchTest {
         export class Point {
           x: int = 0
         }
+
+        export class DefaultPoint {
+          x: int = 3
+          y: int = 4
+        }
         """;
 
     /**
@@ -649,36 +654,9 @@ public class ProductionDispatchTest {
 
         export function main(): null {
           let p: lib.Point = { x: 1 };
-          console.log("PROBE|DIRECT-MAIN")
-          return null
-        }
-        """;
-
-    /**
-     * The omitted-default factory fixture: the exported class carries two
-     * defaulted fields, so the owner-side factory group emits one
-     * caller-attributed failure branch per omitted default and must restore
-     * the owning module's comment and mapping after each branch.
-     */
-    private static final String OMITTED_DEFAULT_LIB_SOURCE = """
-        export class Point {
-          x: int = 3
-          y: int = 4
-        }
-        """;
-
-    /**
-     * The omitted-default entry: the one imported-class construction
-     * provides no field, so both defaults evaluate on the owning side and
-     * the construction stays the caller's own mapped group.
-     */
-    private static final String OMITTED_DEFAULT_APP_SOURCE = """
-        import * as lib from "./lib"
-        import * as console from "std/console"
-
-        export function main(): null {
-          let p: lib.Point = {};
-          console.log("PROBE|OMITTED-DEFAULTS")
+          let q: lib.DefaultPoint = {};
+          console.log("PROBE|DIRECT-MAIN");
+          console.log("PROBE|OMITTED-DEFAULTS");
           return null
         }
         """;
@@ -937,14 +915,10 @@ public class ProductionDispatchTest {
 
     private static ProcessOutcome runProcess(Path directory, String... command)
             throws Exception {
-        ProcessBuilder builder = new ProcessBuilder(command);
-        builder.directory(directory.toFile());
-        builder.redirectErrorStream(true);
-        Process process = builder.start();
-        String output = new String(process.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        int exitCode = process.waitFor();
-        return new ProcessOutcome(exitCode, output);
+        BoundedProcess.BoundedResult result = BoundedProcess.runCaptured(
+            List.of(command), directory);
+        return new ProcessOutcome(result.exitCode(),
+            result.stdout() + result.stderr());
     }
 
     /**
@@ -2664,7 +2638,8 @@ public class ProductionDispatchTest {
     // 3. Atomic failure through the dispatch
     // =========================================================================
 
-    private static void testAtomicFailureThroughDispatch() throws Exception {
+    private static void testAtomicFailureThroughDispatch(Path sync,
+            ArmCompile syncCompile) throws Exception {
         System.out.println("-- atomic failure: a failing lowering stages nothing "
             + "and preserves the previous set; the cross-module sync call "
             + "emits --");
@@ -2691,31 +2666,23 @@ public class ProductionDispatchTest {
             checkTreeIdentical(before, out,
                 "the failing lowering preserves the previous set");
 
-            Path sync = Files.createTempDirectory(
-                "production-dispatch-atomic-sync-");
-            try {
-                write(sync, "deal.json", DEAL_JSON_LUA);
-                write(sync, "src/lib.deal", LIB_SOURCE);
-                write(sync, "src/main.deal", SYNC_CALL_SOURCE);
-                Path syncOut = sync.resolve("out");
-                ProjectOutcome syncCompile = productionCompile(sync,
-                    "src/main.deal", "out");
-                check(syncCompile.exitCode() == 0,
-                    "the cross-module sync call compiles: "
-                        + syncCompile.stderr());
-                check(!syncCompile.stderr().contains("E6005"),
-                    "the cross-module sync call reports no emitter gap: "
-                        + syncCompile.stderr());
-                check(artifactFiles(syncOut).contains("main.lua")
-                        && !artifactFiles(syncOut).contains("lib.lua"),
-                    "the emit publishes the one project artifact and no "
-                        + "per-module sibling: " + artifactFiles(syncOut));
+            Path syncOut = sync.resolve("out");
+            check(syncCompile.success(),
+                "the cross-module sync call compiles: "
+                    + syncCompile.orchestrator().diagnostics());
+            check(syncCompile.orchestrator().diagnostics().stream()
+                    .noneMatch(d -> "E6005".equals(d.code())),
+                "the cross-module sync call reports no emitter gap: "
+                    + syncCompile.orchestrator().diagnostics());
+            List<String> artifacts = artifactFiles(syncOut);
+            check(artifacts.contains("main.lua") && !artifacts.contains("lib.lua"),
+                "the emit publishes the one project artifact and no "
+                    + "per-module sibling: " + artifacts);
+            if (syncCompile.success()) {
                 ProcessOutcome syncRun = runProcess(syncOut, "luajit", "main.lua");
                 check(syncRun.exitCode() == 0,
                     "the published project artifact executes: "
                         + syncRun.output());
-            } finally {
-                deleteRecursively(sync);
             }
         } finally {
             deleteRecursively(project);
@@ -3202,8 +3169,7 @@ public class ProductionDispatchTest {
                 "public static Object ae", List.of("src/lib.deal",
                     "src/main.deal"));
 
-            String classpath = Path.of("build").toAbsolutePath().normalize()
-                .toString();
+            String classpath = absoluteClasspath();
             ProcessOutcome javac = runProcess(project, "javac", "--release", "25",
                 "-proc:none", "-cp", classpath, "-d", jvmOut.toString(),
                 jvmOut.resolve("Main.java").toString());
@@ -3211,7 +3177,7 @@ public class ProductionDispatchTest {
                 "the source-commented JVM artifact compiles: " + javac.output());
             if (javac.exitCode() == 0) {
                 ProcessOutcome run = runProcess(jvmOut, "java", "-cp",
-                    classpath + File.pathSeparator + jvmOut, "Main");
+                    jvmOut + File.pathSeparator + classpath, "Main");
                 check(run.exitCode() == 0
                         && countOccurrences(run.output(), "PROBE|MAIN-ONCE") == 1,
                     "the source-commented JVM artifact runs the entry once: exit="
@@ -3501,8 +3467,7 @@ public class ProductionDispatchTest {
             checkEq(actualSourcePath, jsonStringField(Files.readString(
                     jvmOut.resolve("main.deal.map.json")), "source"),
                 "the JVM sidecar keeps the actual source path");
-            String classpath = Path.of("build").toAbsolutePath().normalize()
-                .toString();
+            String classpath = absoluteClasspath();
             ProcessOutcome javac = runProcess(project, "javac", "--release",
                 "25", "-proc:none", "-cp", classpath, "-d",
                 jvmOut.toString(), jvmOut.resolve("Main.java").toString());
@@ -3510,7 +3475,7 @@ public class ProductionDispatchTest {
                 "the JVM unsafe-path artifact compiles: " + javac.output());
             if (javac.exitCode() == 0) {
                 ProcessOutcome run = runProcess(jvmOut, "java", "-cp",
-                    classpath + File.pathSeparator + jvmOut, "Main");
+                    jvmOut + File.pathSeparator + classpath, "Main");
                 checkEq(0, run.exitCode(),
                     "the JVM unsafe-path artifact runs: " + run.output());
             }
@@ -3610,8 +3575,7 @@ public class ProductionDispatchTest {
                     actualSource, Path.of("build", CONTROL_OUTPUT_NAME)
                         .toString().replace(File.separatorChar, '/')
                         + "/Main.java");
-                String classpath = Path.of("build").toAbsolutePath().normalize()
-                    .toString();
+                String classpath = absoluteClasspath();
                 ProcessOutcome javac = runProcess(project, "javac", "--release",
                     "25", "-proc:none", "-cp", classpath, "-d",
                     jvmOut.toString(), jvmOut.resolve("Main.java").toString());
@@ -3619,7 +3583,7 @@ public class ProductionDispatchTest {
                     "the JVM control-path artifact compiles: " + javac.output());
                 if (javac.exitCode() == 0) {
                     ProcessOutcome run = runProcess(jvmOut, "java", "-cp",
-                        classpath + File.pathSeparator + jvmOut, "Main");
+                        jvmOut + File.pathSeparator + classpath, "Main");
                     checkEq(0, run.exitCode(),
                         "the JVM control-path artifact runs: " + run.output());
                 }
@@ -3683,27 +3647,45 @@ public class ProductionDispatchTest {
             check(jvmCompile.exitCode() == 0,
                 "the direct-emission JVM compile succeeds: "
                     + jvmCompile.stderr());
+            check(jvmCompile.exitCode() == 0,
+                "the omitted-default JVM compile succeeds: "
+                    + jvmCompile.stderr());
             if (jvmCompile.exitCode() == 0) {
-                verifyDirectEmissionGroups(project, jvmOut, "Main.java",
+                MappedArtifact artifact = prepareMappedArtifact(project, jvmOut,
+                    "Main.java");
+                verifyDirectEmissionGroups(artifact, "Main.java",
                     "// ", "b\\d+g0 = args\\[0\\];",
                     "String __prevMod_\\d+ = MODULE;", "MODULE = __prevMod_\\d+;");
-                String classpath = Path.of("build").toAbsolutePath().normalize()
-                    .toString();
+                verifyOmittedDefaultOwnerAttribution(artifact,
+                    "Main.java", "// ", "String __prevMod_\\d+ = MODULE;",
+                    "JvmRuntime\\.setModule\\(MODULE\\);",
+                    "\\w+ = default\\d+\\(\\);",
+                    "\\w+ __tf_\\d+_\\d+ = new \\w+\\(\\);", "throw __e;");
+                String classpath = absoluteClasspath();
                 ProcessOutcome javac = runProcess(project, "javac", "--release",
                     "25", "-proc:none", "-cp", classpath, "-d",
                     jvmOut.toString(), jvmOut.resolve("Main.java").toString());
                 check(javac.exitCode() == 0,
                     "the direct-emission JVM artifact compiles: "
                         + javac.output());
+                check(javac.exitCode() == 0,
+                    "the omitted-default JVM artifact compiles: "
+                        + javac.output());
                 if (javac.exitCode() == 0) {
                     ProcessOutcome run = runProcess(jvmOut, "java", "-cp",
-                        classpath + File.pathSeparator + jvmOut, "Main");
+                        jvmOut + File.pathSeparator + classpath, "Main");
                     check(run.exitCode() == 0
                             && countOccurrences(run.output(),
                                 "PROBE|DIRECT-MAIN") == 1,
                         "the direct-emission JVM artifact runs the entry once: "
                             + "exit=" + run.exitCode() + " output="
                             + run.output());
+                    check(run.exitCode() == 0
+                            && countOccurrences(run.output(),
+                                "PROBE|OMITTED-DEFAULTS") == 1,
+                        "the omitted-default JVM artifact evaluates both "
+                            + "defaults and runs the entry once: exit="
+                            + run.exitCode() + " output=" + run.output());
                 }
             }
 
@@ -3717,17 +3699,35 @@ public class ProductionDispatchTest {
             check(luaCompile.exitCode() == 0,
                 "the direct-emission LuaJIT compile succeeds: "
                     + luaCompile.stderr());
+            check(luaCompile.exitCode() == 0,
+                "the omitted-default LuaJIT compile succeeds: "
+                    + luaCompile.stderr());
             if (luaCompile.exitCode() == 0) {
-                verifyDirectEmissionGroups(project, luaOut, "main.lua", "-- ",
+                MappedArtifact artifact = prepareMappedArtifact(project, luaOut,
+                    "main.lua");
+                verifyDirectEmissionGroups(artifact, "main.lua", "-- ",
                     "S\\.b\\d+g0 = __args\\[1\\]",
                     "__modStack\\[#__modStack \\+ 1\\] = __module",
                     "__modStack\\[#__modStack\\] = nil");
+                verifyOmittedDefaultOwnerAttribution(artifact,
+                    "main.lua", "-- ",
+                    "__modStack\\[#__modStack \\+ 1\\] = __module",
+                    "__modStack\\[#__modStack\\] = nil",
+                    "__okT, __resT = pcall\\(__factories\\.D\\d+\\)",
+                    "__instT = \\{\\}",
+                    "__ev\\(\"main#\\d+\", \"FAILURE\", \"CLASS_NEW\".*");
                 ProcessOutcome run = runProcess(luaOut, "luajit", "main.lua");
                 check(run.exitCode() == 0
                         && countOccurrences(run.output(),
                             "PROBE|DIRECT-MAIN") == 1,
                     "the direct-emission LuaJIT chunk runs the entry once: "
                         + "exit=" + run.exitCode() + " output=" + run.output());
+                check(run.exitCode() == 0
+                        && countOccurrences(run.output(),
+                            "PROBE|OMITTED-DEFAULTS") == 1,
+                    "the omitted-default LuaJIT chunk evaluates both "
+                        + "defaults and runs the entry once: exit="
+                        + run.exitCode() + " output=" + run.output());
             }
         } finally {
             deleteRecursively(project);
@@ -3745,15 +3745,28 @@ public class ProductionDispatchTest {
      * names the caller's own construction span and is mapped by the entry
      * module's sidecar.
      */
-    private static void verifyDirectEmissionGroups(Path project, Path outputRoot,
+    private record MappedArtifact(List<String> lines, List<String> appLines,
+            List<String> libLines, Map<String, List<int[]>> mappings) {
+    }
+
+    private static MappedArtifact prepareMappedArtifact(Path project,
+            Path outputRoot, String artifactName) throws Exception {
+        return new MappedArtifact(
+            Files.readString(outputRoot.resolve(artifactName)).lines().toList(),
+            Files.readString(project.resolve("src/main.deal")).lines().toList(),
+            Files.readString(project.resolve("src/lib.deal")).lines().toList(),
+            Map.of("main.deal.map.json", parseSidecarMappings(Files.readString(
+                    outputRoot.resolve("main.deal.map.json"))),
+                "lib.deal.map.json", parseSidecarMappings(Files.readString(
+                    outputRoot.resolve("lib.deal.map.json")))));
+    }
+
+    private static void verifyDirectEmissionGroups(MappedArtifact artifact,
             String artifactName, String commentMarker, String parameterPattern,
             String factoryGroupStart, String factoryGroupEnd) throws Exception {
-        List<String> lines = Files.readString(outputRoot.resolve(artifactName))
-            .lines().toList();
-        List<String> appLines = Files.readString(project.resolve("src/main.deal"))
-            .lines().toList();
-        List<String> libLines = Files.readString(project.resolve("src/lib.deal"))
-            .lines().toList();
+        List<String> lines = artifact.lines();
+        List<String> appLines = artifact.appLines();
+        List<String> libLines = artifact.libLines();
 
         // The expected source positions, read from the fixture sources.
         int parameterLine = lineContaining(appLines, "export function f(") + 1;
@@ -3778,13 +3791,19 @@ public class ProductionDispatchTest {
                     + "parameter's own source comment");
             // The comment directly precedes the statement, so the
             // statement's 0-based index is the comment's 1-based line.
-            checkSidecarMapping(outputRoot, "main.deal.map.json", statementLine,
+            checkSidecarMapping(artifact, "main.deal.map.json", statementLine,
                 comment, commentMarker, parameterLine, parameterColumn,
                 artifactName + " parameter transfer");
         }
 
         // (2) The owner-side class-factory group.
-        List<Integer> factoryStarts = matchingLines(lines, factoryGroupStart);
+        List<Integer> allFactoryStarts = matchingLines(lines, factoryGroupStart);
+        checkEq(2, allFactoryStarts.size(), artifactName
+            + " carries one factory group per distinct construction site");
+        List<Integer> factoryStarts = allFactoryStarts
+            .stream().filter(index -> index > 0 && lines.get(index - 1).strip()
+                .equals(commentMarker + "src/lib.deal:" + classLine + ":"
+                    + classColumn)).toList();
         checkEq(1, factoryStarts.size(), artifactName
             + " carries exactly one owner-side factory group: " + factoryStarts);
         if (factoryStarts.size() != 1) {
@@ -3798,16 +3817,18 @@ public class ProductionDispatchTest {
                 + "class declaration comment of the owning module");
         // The factory comment directly precedes the group's first statement
         // (the 0-based statement index is the comment's 1-based line).
-        checkSidecarMapping(outputRoot, "lib.deal.map.json", factoryStart,
+        checkSidecarMapping(artifact, "lib.deal.map.json", factoryStart,
             factoryComment, commentMarker, classLine, classColumn,
             artifactName + " owner-side factory group");
 
         // (3) The caller's attribution resumes after the group's module
         // restore: the first source comment after the restore names the
         // caller's own construction span and the entry sidecar maps it.
+        int nextFactory = allFactoryStarts.stream()
+            .filter(index -> index > factoryStart).findFirst().orElse(lines.size());
         int factoryEnd = -1;
         for (int candidate : matchingLines(lines, factoryGroupEnd)) {
-            if (candidate > factoryStart) {
+            if (candidate > factoryStart && candidate < nextFactory) {
                 factoryEnd = candidate;
             }
         }
@@ -3835,100 +3856,9 @@ public class ProductionDispatchTest {
             callerLine.strip(),
             artifactName + " restores the caller's own source comment when "
                 + "the caller's statements resume");
-        checkSidecarMapping(outputRoot, "main.deal.map.json", callerComment + 1,
+        checkSidecarMapping(artifact, "main.deal.map.json", callerComment + 1,
             callerLine, commentMarker, constructLine, constructColumn,
             artifactName + " caller restore");
-    }
-
-    /**
-     * The omitted-default regression: on both targets every omitted default
-     * invocation, the owner-side transfer construction, and the caller's
-     * final continuation carry the source comment and sidecar mapping of
-     * their own source group. The caller's mapping inside an emitted
-     * failure branch stays on the caller's own terminal and never leaks to
-     * the owner-side statements that follow the branch.
-     */
-    private static void testSourceMapOmittedDefaultOwnerAttribution()
-            throws Exception {
-        System.out.println("-- source map: the owner-side factory group "
-            + "restores its own comment and mapping after every "
-            + "omitted-default failure branch on both targets --");
-
-        Path project = Files.createTempDirectory(
-            "production-dispatch-map-omitted-");
-        try {
-            write(project, "deal.json", DEAL_JSON_JVM);
-            write(project, "src/lib.deal", OMITTED_DEFAULT_LIB_SOURCE);
-            write(project, "src/main.deal", OMITTED_DEFAULT_APP_SOURCE);
-            String entry = project.resolve("src/main.deal").toAbsolutePath()
-                .toString();
-
-            // (1) The JVM target: the two defaults are omitted, so the
-            // owner-side failure branches execute; the artifact still
-            // compiles and runs the entry, and every owner-side resumption
-            // is attributed to the owning module again.
-            Path jvmOut = project.resolve("build/jvm");
-            ProjectOutcome jvmCompile = runProductionCli("compile", entry,
-                "--backend", "jvm", "--source-map", "--output",
-                jvmOut.toAbsolutePath().toString());
-            check(jvmCompile.exitCode() == 0,
-                "the omitted-default JVM compile succeeds: "
-                    + jvmCompile.stderr());
-            if (jvmCompile.exitCode() == 0) {
-                verifyOmittedDefaultOwnerAttribution(project, jvmOut,
-                    "Main.java", "// ", "String __prevMod_\\d+ = MODULE;",
-                    "JvmRuntime\\.setModule\\(MODULE\\);",
-                    "\\w+ = default\\d+\\(\\);",
-                    "\\w+ __tf_\\d+_\\d+ = new \\w+\\(\\);", "throw __e;");
-                String classpath = Path.of("build").toAbsolutePath().normalize()
-                    .toString();
-                ProcessOutcome javac = runProcess(project, "javac", "--release",
-                    "25", "-proc:none", "-cp", classpath, "-d",
-                    jvmOut.toString(), jvmOut.resolve("Main.java").toString());
-                check(javac.exitCode() == 0,
-                    "the omitted-default JVM artifact compiles: "
-                        + javac.output());
-                if (javac.exitCode() == 0) {
-                    ProcessOutcome run = runProcess(jvmOut, "java", "-cp",
-                        classpath + File.pathSeparator + jvmOut, "Main");
-                    check(run.exitCode() == 0
-                            && countOccurrences(run.output(),
-                                "PROBE|OMITTED-DEFAULTS") == 1,
-                        "the omitted-default JVM artifact evaluates both "
-                            + "defaults and runs the entry once: exit="
-                            + run.exitCode() + " output=" + run.output());
-                }
-            }
-
-            // (2) The LuaJIT target: the same owner-side resumptions carry
-            // the same comments and mappings, and the chunk runs under the
-            // real interpreter.
-            Path luaOut = project.resolve("build/lua");
-            ProjectOutcome luaCompile = runProductionCli("compile", entry,
-                "--backend", "luajit", "--source-map", "--output",
-                luaOut.toAbsolutePath().toString());
-            check(luaCompile.exitCode() == 0,
-                "the omitted-default LuaJIT compile succeeds: "
-                    + luaCompile.stderr());
-            if (luaCompile.exitCode() == 0) {
-                verifyOmittedDefaultOwnerAttribution(project, luaOut,
-                    "main.lua", "-- ",
-                    "__modStack\\[#__modStack \\+ 1\\] = __module",
-                    "__modStack\\[#__modStack\\] = nil",
-                    "__okT, __resT = pcall\\(__factories\\.D\\d+\\)",
-                    "__instT = \\{\\}",
-                    "__ev\\(\"main#\\d+\", \"FAILURE\", \"CLASS_NEW\".*");
-                ProcessOutcome run = runProcess(luaOut, "luajit", "main.lua");
-                check(run.exitCode() == 0
-                        && countOccurrences(run.output(),
-                            "PROBE|OMITTED-DEFAULTS") == 1,
-                    "the omitted-default LuaJIT chunk evaluates both "
-                        + "defaults and runs the entry once: exit="
-                        + run.exitCode() + " output=" + run.output());
-            }
-        } finally {
-            deleteRecursively(project);
-        }
     }
 
     /**
@@ -3938,20 +3868,17 @@ public class ProductionDispatchTest {
      * sidecar mapping of their own source group; each emitted failure branch
      * keeps the caller's mapping on the caller's own terminal.
      */
-    private static void verifyOmittedDefaultOwnerAttribution(Path project,
-            Path outputRoot, String artifactName, String commentMarker,
+    private static void verifyOmittedDefaultOwnerAttribution(MappedArtifact artifact,
+            String artifactName, String commentMarker,
             String factoryGroupStart, String factoryGroupEnd,
             String defaultInvocation, String transferConstruction,
             String callerTerminal) throws Exception {
-        List<String> lines = Files.readString(outputRoot.resolve(artifactName))
-            .lines().toList();
-        List<String> appLines = Files.readString(project.resolve("src/main.deal"))
-            .lines().toList();
-        List<String> libLines = Files.readString(project.resolve("src/lib.deal"))
-            .lines().toList();
-        int classLine = lineContaining(libLines, "export class Point") + 1;
+        List<String> lines = artifact.lines();
+        List<String> appLines = artifact.appLines();
+        List<String> libLines = artifact.libLines();
+        int classLine = lineContaining(libLines, "export class DefaultPoint") + 1;
         int classColumn = libLines.get(classLine - 1).indexOf("class") + 1;
-        int constructLine = lineContaining(appLines, "let p: lib.Point") + 1;
+        int constructLine = lineContaining(appLines, "let q: lib.DefaultPoint") + 1;
         int constructColumn = appLines.get(constructLine - 1).indexOf("{") + 1;
         String ownerComment = commentMarker + "src/lib.deal:" + classLine + ":"
             + classColumn;
@@ -3961,7 +3888,9 @@ public class ProductionDispatchTest {
         // The one owner-side factory group of the fixture, closed by its
         // success-path module restore (the first restore after the transfer
         // construction; the failure branches restore inside the group).
-        List<Integer> groupStarts = matchingLines(lines, factoryGroupStart);
+        List<Integer> groupStarts = matchingLines(lines, factoryGroupStart)
+            .stream().filter(index -> index > 0
+                && lines.get(index - 1).strip().equals(ownerComment)).toList();
         checkEq(1, groupStarts.size(), artifactName
             + " carries exactly one owner-side factory group: " + groupStarts);
         if (groupStarts.size() != 1) {
@@ -4022,7 +3951,7 @@ public class ProductionDispatchTest {
             checkEq(ownerComment, lines.get(comment - 1).strip(),
                 artifactName + " attributes generated line " + statement
                     + " to the owning module's factory group");
-            checkSidecarMapping(outputRoot, "lib.deal.map.json", comment,
+            checkSidecarMapping(artifact, "lib.deal.map.json", comment,
                 lines.get(comment - 1), commentMarker, classLine, classColumn,
                 artifactName + " owner-side resumption at generated line "
                     + statement);
@@ -4063,7 +3992,7 @@ public class ProductionDispatchTest {
             checkEq(callerComment, lines.get(continuation - 1).strip(),
                 artifactName + " restores the caller's own source comment "
                     + "when the caller's statements resume");
-            checkSidecarMapping(outputRoot, "main.deal.map.json", continuation,
+            checkSidecarMapping(artifact, "main.deal.map.json", continuation,
                 lines.get(continuation - 1), commentMarker, constructLine,
                 constructColumn, artifactName + " caller continuation");
         }
@@ -4095,9 +4024,10 @@ public class ProductionDispatchTest {
 
     /** The 0-based indexes of the lines whose stripped text matches the pattern. */
     private static List<Integer> matchingLines(List<String> lines, String pattern) {
+        java.util.regex.Pattern compiled = java.util.regex.Pattern.compile(pattern);
         List<Integer> matched = new ArrayList<>();
         for (int i = 0; i < lines.size(); i++) {
-            if (lines.get(i).strip().matches(pattern)) {
+            if (compiled.matcher(lines.get(i).strip()).matches()) {
                 matched.add(i);
             }
         }
@@ -4109,11 +4039,10 @@ public class ProductionDispatchTest {
      * position (its 1-based line and its marker column) to the expected
      * source position.
      */
-    private static void checkSidecarMapping(Path outputRoot, String sidecarName,
+    private static void checkSidecarMapping(MappedArtifact artifact, String sidecarName,
             int commentGeneratedLine, String commentLine, String commentMarker,
-            int sourceLine, int sourceColumn, String context) throws Exception {
-        List<int[]> mappings = parseSidecarMappings(
-            Files.readString(outputRoot.resolve(sidecarName)));
+            int sourceLine, int sourceColumn, String context) {
+        List<int[]> mappings = artifact.mappings().get(sidecarName);
         int generatedColumn = commentLine.indexOf(commentMarker) + 1;
         boolean mapped = false;
         for (int[] mapping : mappings) {
@@ -4229,7 +4158,8 @@ public class ProductionDispatchTest {
     //    production arm; a legacy profile fails closed at the lowering
     // =========================================================================
 
-    private static void testSingleArmDispatch() throws Exception {
+    private static void testSingleArmDispatch(Path project,
+            ArmCompile reference) throws Exception {
         System.out.println("-- dispatch: every recorded invocation runs the one "
             + "production arm; the legacy profile fails closed at the "
             + "lowering --");
@@ -4241,16 +4171,7 @@ public class ProductionDispatchTest {
                 && Backend.fromCliName("js").orElseThrow() == Backend.JS,
             "the three backend CLI names keep their closed values");
 
-        Path project = Files.createTempDirectory("production-dispatch-arm-");
-        try {
-            // A multi-module fixture with a cross-module call: the one
-            // production arm emits it as the one project artifact.
-            write(project, "deal.json", DEAL_JSON_LUA);
-            write(project, "src/lib.deal", LIB_SOURCE);
-            write(project, "src/main.deal", SYNC_CALL_SOURCE);
-
-            ArmCompile reference = compileWithInvocation(project,
-                "src/main.deal", productionInvocation());
+        {
             check(reference.success(), "the release-owned compile succeeds: "
                 + reference.orchestrator().diagnostics());
             if (!reference.success()) {
@@ -4280,8 +4201,6 @@ public class ProductionDispatchTest {
                 legacyRegression());
             checkLegacyFailClosedRow(project, "PUBLIC_BUILD + PRE_ACTIVATION",
                 publicBuildPreActivation());
-        } finally {
-            deleteRecursively(project);
         }
 
         // A fail-closed input keeps the release-owned diagnostics under a
@@ -4664,7 +4583,8 @@ public class ProductionDispatchTest {
      * the reference back nowhere, so no emission, staging, or comparison
      * step consumes it.
      */
-    private static void testProducedProjectAccessor() throws Exception {
+    private static void testProducedProjectAccessor(Path project,
+            ArmCompile production) throws Exception {
         System.out.println("-- the produced-project accessor: the production "
             + "arm exposes the project it emitted; the reference is "
             + "read-only and recorded at most once --");
@@ -4672,15 +4592,8 @@ public class ProductionDispatchTest {
         // (1) A successful production compile exposes its own project: the
         // entry artifact is the project's entry artifact and the identity
         // guard passes it (the audit's subject is non-empty).
-        Path project = Files.createTempDirectory("production-dispatch-produced-");
         ExecutableLoweredProject produced = null;
-        try {
-            write(project, "deal.json", DEAL_JSON_LUA);
-            write(project, "src/lib.deal", LIB_SOURCE);
-            write(project, "src/main.deal", SYNC_CALL_SOURCE);
-
-            ArmCompile production = compileWithInvocation(project,
-                "src/main.deal", productionInvocation());
+        {
             check(production.success(), "the production compile succeeds: "
                 + production.orchestrator().diagnostics());
             if (!production.success()) {
@@ -4720,8 +4633,6 @@ public class ProductionDispatchTest {
             check(violations.isEmpty(),
                 "the produced project passes the dangling-identity audit: "
                     + violations);
-        } finally {
-            deleteRecursively(project);
         }
 
         // (2) The JS arm records none: the third, unchanged pipeline runs no
@@ -4828,17 +4739,26 @@ public class ProductionDispatchTest {
         testProductionMemberAssignmentCollision();
         testProductionShadowingInitializerCollision();
         testConversionOverflowTerminal();
-        testAtomicFailureThroughDispatch();
+        Path sync = Files.createTempDirectory("production-dispatch-sync-");
+        try {
+            write(sync, "deal.json", DEAL_JSON_LUA);
+            write(sync, "src/lib.deal", LIB_SOURCE);
+            write(sync, "src/main.deal", SYNC_CALL_SOURCE);
+            ArmCompile compiled = compileWithInvocation(sync, "src/main.deal",
+                productionInvocation());
+            testAtomicFailureThroughDispatch(sync, compiled);
+            testProducedProjectAccessor(sync, compiled);
+            testSingleArmDispatch(sync, compiled);
+        } finally {
+            deleteRecursively(sync);
+        }
         testFailClosedFamilies();
         testSourceMapDisposition();
         testSourceMapUnsafeSourcePathText();
         testSourceMapControlCharacterPaths();
         testSourceMapDirectEmissionGroups();
-        testSourceMapOmittedDefaultOwnerAttribution();
-        testSingleArmDispatch();
         testLegacyRejectionStagesNothingWithDumps();
         testRetainedTestScopeEmitters();
-        testProducedProjectAccessor();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

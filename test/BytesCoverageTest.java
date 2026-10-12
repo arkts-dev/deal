@@ -51,6 +51,7 @@ import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ValueId;
 import deal.test.conformance.CorpusFfi;
 import deal.test.conformance.ErrorSnapshot;
+import deal.test.conformance.JvmCompilation;
 import deal.test.conformance.SidecarExpectations;
 
 import java.io.File;
@@ -614,168 +615,146 @@ public class BytesCoverageTest {
     private static void testCorpusDrive() throws Exception {
         System.out.println("-- the bytes corpus through the one production pipeline: "
             + "oracle + shared LuaJIT + shared JVM --");
-        for (BytesFixture fixture : allFixtures()) {
-            if ("bytes_module_lib".equals(fixture.relativePath())
-                    || "bytes-fn-xmod-lib".equals(fixture.relativePath())) {
-                continue;
-            }
-            if (HOST_FIXTURE.equals(fixture.relativePath())) {
-                // The async-export host fixture: driven with its own
-                // bytes-aware host implementation on every consumer.
-                driveHostFixture(fixture);
-                continue;
-            }
-            if (ASYNC_ENTRY_FIXTURES.containsKey(fixture.relativePath())) {
-                // The async-export fixture: driven through the async-entry
-                // surface of every consumer.
-                driveAsyncFixture(fixture,
-                    ASYNC_ENTRY_FIXTURES.get(fixture.relativePath()));
-                continue;
-            }
-            Compiled compiled = compileFixture(fixture);
-            if (compiled == null) {
-                continue;
-            }
+        List<BytesFixture> fixtures = allFixtures();
+        for (int offset = 0; offset < fixtures.size(); offset += 8) {
+            List<Drive> drives = new ArrayList<>();
+            Path workspace = Files.createTempDirectory("bytes-jvm-batch-");
             try {
-                Drive drive = lower(compiled, fixture);
-                if (drive == null) {
-                    continue;
-                }
-                List<SemanticRuntimeModel.ConsumerRun> runs;
-                if (CORPUS_MATRIX_FIXTURES.contains(fixture.relativePath())) {
-                    SemanticDifferentialHarness.Expectation expectation = fixture.runtimeOk()
-                        ? SemanticDifferentialHarness.Expectation.success(fixture.what(),
-                            List.of(), "null")
-                        : SemanticDifferentialHarness.Expectation.failure(fixture.what(),
-                            List.of(), fixture.code(),
-                            compiledOrigin(drive, fixture.line(), fixture.column()));
-                    Path workspace = Files.createTempDirectory("bytes-matrix-");
-                    SemanticDifferentialHarness.Verdict verdict;
-                    try {
-                        verdict = SemanticDifferentialHarness.runProject(drive.project(),
-                            drive.tables(), drive.registries(), expectation, workspace);
-                    } finally {
-                        deleteRecursively(workspace);
+                for (BytesFixture fixture : fixtures.subList(offset,
+                        Math.min(offset + 8, fixtures.size()))) {
+                    if ("bytes_module_lib".equals(fixture.relativePath())
+                            || "bytes-fn-xmod-lib".equals(fixture.relativePath())) {
+                        continue;
                     }
-                    checkEq(3, verdict.runs().size(), fixture.what() + ": the drive produced "
-                        + "the three consumers: " + verdict.failures());
-                    check(verdict.pass(), fixture.what() + ": the three-consumer "
-                        + "differential verdict passes (the pinned outcome and origin, the "
-                        + "traces event-for-event): " + verdict.failures());
-                    runs = verdict.runs();
-                } else {
-                    for (LoweredModuleUnit unit : drive.project().modules().values()) {
-                        Optional<CompilerDiagnostic> chainFailure =
-                            deal.semantic.ir.AddressChainProtocol.validate(unit);
-                        check(chainFailure.isEmpty(), fixture.what()
-                            + ": the address-chain protocol accepts module "
-                            + unit.moduleId().path() + ": " + chainFailure);
+                    if (HOST_FIXTURE.equals(fixture.relativePath())) {
+                        driveHostFixture(fixture);
+                        continue;
                     }
-                    SemanticRuntimeModel.ConsumerRun oracle =
-                        SemanticOracle.executeProjectInits(drive.project(), drive.tables(),
-                            drive.registries(), null);
-                    check(!oracle.trace().isEmpty(), fixture.what()
-                        + ": the oracle produces semantic events");
-                    checkEq(List.of(), oracle.effects(), fixture.what()
-                        + ": the oracle produces the pinned empty effects");
-                    runs = List.of(oracle);
-                }
-                if (fixture.runtimeOk()) {
-                    for (SemanticRuntimeModel.ConsumerRun run : runs) {
-                        check(run.terminal()
-                                instanceof SemanticRuntimeModel.Terminal.Success success
-                                && "null".equals(success.resultAtom()),
-                            run.consumer() + " (" + fixture.what() + "): the drive's entry "
-                                + "succeeds: " + run.terminal());
+                    if (ASYNC_ENTRY_FIXTURES.containsKey(fixture.relativePath())) {
+                        driveAsyncFixture(fixture, ASYNC_ENTRY_FIXTURES.get(fixture.relativePath()));
+                        continue;
                     }
-                } else {
-                    String expectedOrigin = compiledOrigin(drive, fixture.line(),
-                        fixture.column());
-                    for (SemanticRuntimeModel.ConsumerRun run : runs) {
-                        boolean pinnedTerminal = run.terminal()
-                                instanceof SemanticRuntimeModel.Terminal.DealFailure
-                                    terminal
-                                && fixture.code().equals(terminal.error().code())
-                                && fixture.message().equals(terminal.error().message())
-                                && expectedOrigin.equals(terminal.error().origin());
-                        check(pinnedTerminal, run.consumer() + " (" + fixture.what()
-                            + "): the terminal is the pinned row at the pinned origin: "
-                            + run.terminal());
-                        if (pinnedTerminal && fixture.pinsExpectedActual()
-                                && run.terminal()
-                                    instanceof SemanticRuntimeModel.Terminal.DealFailure
-                                        terminal) {
-                            checkEq(fixture.expected(), terminal.error().expected(),
-                                run.consumer() + " (" + fixture.what() + "): the oracle "
-                                    + "expected token is pin-exact");
-                            checkEq(fixture.actual(), terminal.error().actual(),
-                                run.consumer() + " (" + fixture.what() + "): the oracle "
-                                    + "actual token is pin-exact");
+                    Compiled compiled = compileFixture(fixture);
+                    if (compiled != null) {
+                        Drive drive = lower(compiled, fixture);
+                        if (drive == null) {
+                            deleteRecursively(compiled.root());
+                        } else {
+                            drives.add(drive);
                         }
                     }
                 }
-
-                // The production artifacts under the real toolchains. Every
-                // capture is compared exactly (status, complete streams,
-                // capture health) before the framed outcome is read.
-                ArtifactRun lua = luaProduction(drive);
-                ArtifactRun jvm = jvmProduction(drive);
-                if (fixture.runtimeOk()) {
-                    assertTranscript(fixture.what(), "luajit probe", lua.probe(), 0,
-                        "OK\n");
-                    assertTranscript(fixture.what(), "jvm probe", jvm.probe(), 0,
-                        "OK\n");
-                    check(lua.terminal() == null && jvm.terminal() == null,
-                        fixture.what() + ": a runtime-ok fixture runs no direct "
-                            + "terminal artifact");
-                    checkEq("OK", lua.outcome(), fixture.what()
-                        + ": the LuaJIT production artifact runs the fixture to its "
-                        + "pinned outcome");
-                    checkEq("OK", jvm.outcome(), fixture.what()
-                        + ": the JVM production artifact runs the fixture to its pinned "
-                        + "outcome");
-                } else {
-                    String expectedOrigin = compiledOrigin(drive, fixture.line(),
-                        fixture.column());
-                    String expectedPrefix = "ERR:" + fixture.code() + "|"
-                        + fixture.message() + "|" + expectedOrigin + "|";
-                    String probeTranscript = expectedPrefix
-                        + (fixture.pinsExpectedActual() ? fixture.expected() : "")
-                        + "|"
-                        + (fixture.pinsExpectedActual() ? fixture.actual() : "")
-                        + "\n";
-                    String terminalTranscript = "DEAL_ERROR_CODE: "
-                        + fixture.code() + "\n";
-                    assertTranscript(fixture.what(), "luajit probe", lua.probe(), 0,
-                        probeTranscript);
-                    assertTranscript(fixture.what(), "jvm probe", jvm.probe(), 0,
-                        probeTranscript);
-                    assertTranscript(fixture.what(), "luajit terminal", lua.terminal(),
-                        1, terminalTranscript);
-                    assertTranscript(fixture.what(), "jvm terminal", jvm.terminal(), 1,
-                        terminalTranscript);
-                    if (fixture.pinsExpectedActual()) {
-                        // The exact-tuple rows (including the decoded nested
-                        // element row): a divergent field fails by value.
-                        String pinnedOutcome = expectedPrefix + fixture.expected()
-                            + "|" + fixture.actual();
-                        checkEq(pinnedOutcome, lua.outcome(), fixture.what()
-                            + ": the LuaJIT production artifact reproduces the pinned "
-                            + "expected/actual tuple");
-                        checkEq(pinnedOutcome, jvm.outcome(), fixture.what()
-                            + ": the JVM production artifact reproduces the pinned "
-                            + "expected/actual tuple");
-                    } else {
-                        check(lua.outcome().startsWith(expectedPrefix), fixture.what()
-                            + ": the LuaJIT production artifact projects the pinned row "
-                            + "at the pinned origin: " + lua.outcome());
-                        check(jvm.outcome().startsWith(expectedPrefix), fixture.what()
-                            + ": the JVM production artifact projects the pinned row at "
-                            + "the pinned origin: " + jvm.outcome());
-                    }
+                prepareJvmBatch(drives, workspace);
+                for (Drive drive : drives) {
+                    driveCorpusFixture(drive);
                 }
             } finally {
-                deleteRecursively(compiled.root());
+                for (Drive drive : drives) {
+                    preparedJvm.remove(drive.compiled());
+                    deleteRecursively(drive.compiled().root());
+                }
+                deleteRecursively(workspace);
+            }
+        }
+    }
+
+    private static void driveCorpusFixture(Drive drive) throws Exception {
+        BytesFixture fixture = drive.spec();
+        Compiled compiled = drive.compiled();
+        List<SemanticRuntimeModel.ConsumerRun> runs;
+        if (CORPUS_MATRIX_FIXTURES.contains(fixture.relativePath())) {
+            SemanticDifferentialHarness.Expectation expectation = fixture.runtimeOk()
+                ? SemanticDifferentialHarness.Expectation.success(fixture.what(),
+                    List.of(), "null")
+                : SemanticDifferentialHarness.Expectation.failure(fixture.what(),
+                    List.of(), fixture.code(),
+                    compiledOrigin(drive, fixture.line(), fixture.column()));
+            Path workspace = Files.createTempDirectory("bytes-matrix-");
+            SemanticDifferentialHarness.Verdict verdict;
+            try {
+                verdict = SemanticDifferentialHarness.runProject(drive.project(),
+                    drive.tables(), drive.registries(), expectation, workspace);
+            } finally {
+                deleteRecursively(workspace);
+            }
+            checkEq(3, verdict.runs().size(), fixture.what() + ": the drive produced "
+                + "the three consumers: " + verdict.failures());
+            check(verdict.pass(), fixture.what() + ": the three-consumer "
+                + "differential verdict passes (the pinned outcome and origin, the "
+                + "traces event-for-event): " + verdict.failures());
+            runs = verdict.runs();
+        } else {
+            for (LoweredModuleUnit unit : drive.project().modules().values()) {
+                Optional<CompilerDiagnostic> chainFailure =
+                    deal.semantic.ir.AddressChainProtocol.validate(unit);
+                check(chainFailure.isEmpty(), fixture.what()
+                    + ": the address-chain protocol accepts module "
+                    + unit.moduleId().path() + ": " + chainFailure);
+            }
+            SemanticRuntimeModel.ConsumerRun oracle =
+                SemanticOracle.executeProjectInits(drive.project(), drive.tables(),
+                    drive.registries(), null);
+            check(!oracle.trace().isEmpty(), fixture.what()
+                + ": the oracle produces semantic events");
+            checkEq(List.of(), oracle.effects(), fixture.what()
+                + ": the oracle produces the pinned empty effects");
+            runs = List.of(oracle);
+        }
+        if (fixture.runtimeOk()) {
+            for (SemanticRuntimeModel.ConsumerRun run : runs) {
+                check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success success
+                        && "null".equals(success.resultAtom()),
+                    run.consumer() + " (" + fixture.what() + "): the drive's entry succeeds: "
+                        + run.terminal());
+            }
+        } else {
+            String expectedOrigin = compiledOrigin(drive, fixture.line(), fixture.column());
+            for (SemanticRuntimeModel.ConsumerRun run : runs) {
+                boolean pinnedTerminal = run.terminal()
+                        instanceof SemanticRuntimeModel.Terminal.DealFailure terminal
+                        && fixture.code().equals(terminal.error().code())
+                        && fixture.message().equals(terminal.error().message())
+                        && expectedOrigin.equals(terminal.error().origin());
+                check(pinnedTerminal, run.consumer() + " (" + fixture.what()
+                    + "): the terminal is the pinned row at the pinned origin: " + run.terminal());
+                if (pinnedTerminal && fixture.pinsExpectedActual() && run.terminal()
+                        instanceof SemanticRuntimeModel.Terminal.DealFailure terminal) {
+                    checkEq(fixture.expected(), terminal.error().expected(),
+                        run.consumer() + " (" + fixture.what() + "): the expected token is pin-exact");
+                    checkEq(fixture.actual(), terminal.error().actual(),
+                        run.consumer() + " (" + fixture.what() + "): the actual token is pin-exact");
+                }
+            }
+        }
+        ArtifactRun lua = luaProduction(drive);
+        ArtifactRun jvm = jvmProduction(drive);
+        if (fixture.runtimeOk()) {
+            assertTranscript(fixture.what(), "luajit probe", lua.probe(), 0, "OK\n");
+            assertTranscript(fixture.what(), "jvm probe", jvm.probe(), 0, "OK\n");
+            check(lua.terminal() == null && jvm.terminal() == null,
+                fixture.what() + ": a runtime-ok fixture runs no direct terminal artifact");
+            checkEq("OK", lua.outcome(), fixture.what() + ": the LuaJIT production outcome");
+            checkEq("OK", jvm.outcome(), fixture.what() + ": the JVM production outcome");
+        } else {
+            String expectedPrefix = "ERR:" + fixture.code() + "|" + fixture.message() + "|"
+                + compiledOrigin(drive, fixture.line(), fixture.column()) + "|";
+            String probeTranscript = expectedPrefix
+                + (fixture.pinsExpectedActual() ? fixture.expected() : "") + "|"
+                + (fixture.pinsExpectedActual() ? fixture.actual() : "") + "\n";
+            String terminalTranscript = "DEAL_ERROR_CODE: " + fixture.code() + "\n";
+            assertTranscript(fixture.what(), "luajit probe", lua.probe(), 0, probeTranscript);
+            assertTranscript(fixture.what(), "jvm probe", jvm.probe(), 0, probeTranscript);
+            assertTranscript(fixture.what(), "luajit terminal", lua.terminal(), 1, terminalTranscript);
+            assertTranscript(fixture.what(), "jvm terminal", jvm.terminal(), 1, terminalTranscript);
+            if (fixture.pinsExpectedActual()) {
+                String pinnedOutcome = expectedPrefix + fixture.expected() + "|" + fixture.actual();
+                checkEq(pinnedOutcome, lua.outcome(), fixture.what() + ": the LuaJIT exact tuple");
+                checkEq(pinnedOutcome, jvm.outcome(), fixture.what() + ": the JVM exact tuple");
+            } else {
+                check(lua.outcome().startsWith(expectedPrefix), fixture.what()
+                    + ": the LuaJIT pinned row and origin: " + lua.outcome());
+                check(jvm.outcome().startsWith(expectedPrefix), fixture.what()
+                    + ": the JVM pinned row and origin: " + jvm.outcome());
             }
         }
     }
@@ -3358,8 +3337,71 @@ public class BytesCoverageTest {
         }
     }
 
+    private record PreparedJvm(Path classes, String probeName, String className) {
+    }
+
+    private static final Map<Compiled, PreparedJvm> preparedJvm =
+        new java.util.IdentityHashMap<>();
+
+    private static String jvmProbeSource(String probeName, String className) {
+        return "final class " + probeName + " { public static void main(String[] args) {"
+            + " try { " + className + ".dealMain(); }"
+            + " catch (deal.codegen.jvm.JvmRuntime.DealError error) {"
+            + " System.out.println(\"ERR:\" + error.code + \"|\" + error.msg + \"|\""
+            + " + error.origin + \"|\" + (error.expected == null ? \"\" : error.expected)"
+            + " + \"|\" + (error.actual == null ? \"\" : error.actual)); return; }"
+            + " System.out.println(\"OK\"); } }\n";
+    }
+
+    private static void prepareJvmBatch(List<Drive> drives, Path workspace) throws Exception {
+        if (drives.isEmpty()) {
+            return;
+        }
+        Path classes = workspace.resolve("classes");
+        Files.createDirectories(classes);
+        List<String> sources = new ArrayList<>();
+        Map<Compiled, PreparedJvm> prepared = new java.util.IdentityHashMap<>();
+        for (int i = 0; i < drives.size(); i++) {
+            Drive drive = drives.get(i);
+            String packageName = "bytesbatch" + i;
+            Path directory = workspace.resolve(packageName);
+            Files.createDirectories(directory);
+            String className = JvmBackend.classNameFor(drive.project().entryModule().path());
+            String source = drive.compiled().jvmSource();
+            if (source == null) {
+                source = JvmSemanticEmitter.emitProductionProject(drive.project(),
+                    drive.tables(), drive.registries(), className,
+                    drive.compiled().surface()).source();
+            }
+            String probeName = jvmProbeName();
+            Path artifact = directory.resolve(className + ".java");
+            Path probe = directory.resolve(probeName + ".java");
+            Files.writeString(artifact, "package " + packageName + ";\n" + source,
+                StandardCharsets.UTF_8);
+            Files.writeString(probe, "package " + packageName + ";\n"
+                + jvmProbeSource(probeName, className), StandardCharsets.UTF_8);
+            sources.add(artifact.toString());
+            sources.add(probe.toString());
+            prepared.put(drive.compiled(), new PreparedJvm(classes,
+                packageName + "." + probeName, packageName + "." + className));
+        }
+        BoundedRun compile = runJavac(workspace, classes, sources);
+        check(compile.captureClean() && compile.exitCode() == 0,
+            "the isolated bytes JVM batch compiles: " + compile.stdout() + compile.stderr());
+        if (compile.captureClean() && compile.exitCode() == 0) {
+            preparedJvm.putAll(prepared);
+        }
+    }
+
     private static ArtifactRun jvmProduction(Drive drive) throws Exception {
-        return jvmProduction(drive, null, null);
+        PreparedJvm prepared = preparedJvm.get(drive.compiled());
+        if (prepared == null) {
+            return jvmProduction(drive, null, null);
+        }
+        BoundedRun probe = runJava(absoluteClasspath(), prepared.classes(), prepared.probeName());
+        BoundedRun terminal = drive.spec().runtimeOk() ? null
+            : runJava(absoluteClasspath(), prepared.classes(), prepared.className());
+        return new ArtifactRun(probe, terminal);
     }
 
     /**
@@ -3436,7 +3478,10 @@ public class BytesCoverageTest {
             "-proc:none", "-cp", classes + File.pathSeparator + absoluteClasspath(),
             "-d", classes.toString()));
         argv.addAll(sources);
-        return runBounded(argv, workspace, Map.of());
+        JvmCompilation.Result compile = JvmCompilation.compile(argv, workspace,
+            TimeUnit.SECONDS.toMillis(PROCESS_BUDGET_SECONDS));
+        return new BoundedRun(compile.exitCode(), compile.stdout(), compile.stderr(),
+            false, false, false, false);
     }
 
     /** One bounded {@code java} run of a compiled artifact or probe. */

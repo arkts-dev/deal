@@ -6,6 +6,7 @@ import deal.semantic.SemanticOracle;
 import deal.semantic.SemanticTraceProtocol;
 import deal.semantic.SemanticRuntimeModel;
 import deal.semantic.SharedStdlibSemantics;
+import deal.test.conformance.JvmCompilation;
 
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.ClassFactoryRegistry;
@@ -263,16 +264,11 @@ public final class SemanticDifferentialHarness {
             LoweredModuleUnit entry = project.modules().get(project.entryModule());
             Path script = workspace.resolve("project.lua");
             Files.writeString(script, lua, StandardCharsets.UTF_8);
-            Path stdout = workspace.resolve("lua-proj-out.txt");
-            Path stderr = workspace.resolve("lua-proj-err.txt");
-            ProcessBuilder builder = new ProcessBuilder("luajit",
-                script.toAbsolutePath().toString());
-            builder.redirectOutput(stdout.toFile());
-            builder.redirectError(stderr.toFile());
-            Process process = builder.start();
-            int exit = process.waitFor();
-            List<String> stdoutLines = Files.readAllLines(stdout, StandardCharsets.UTF_8);
-            List<String> protocolLines = Files.readAllLines(stderr, StandardCharsets.UTF_8);
+            BoundedProcess.BoundedResult captured = runCaptured(List.of("luajit",
+                script.toAbsolutePath().toString()), Map.of());
+            int exit = captured.exitCode();
+            List<String> stdoutLines = captured.stdout().lines().toList();
+            List<String> protocolLines = captured.stderr().lines().toList();
             if (exit != 0) {
                 failures.add("shared LuaJIT project artifact exited " + exit + ": "
                     + String.join(" / ", protocolLines));
@@ -283,6 +279,9 @@ public final class SemanticDifferentialHarness {
             crossCheckStdout(run, stdoutLines, "shared-luajit", failures);
             return run;
         } catch (IOException | InterruptedException exception) {
+            if (exception instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             failures.add("shared LuaJIT project infrastructure failure: "
                 + exception.getMessage());
             return null;
@@ -303,31 +302,23 @@ public final class SemanticDifferentialHarness {
             Files.writeString(source, emission.source(), StandardCharsets.UTF_8);
             Path classes = workspace.resolve("jvm-proj-classes");
             Files.createDirectories(classes);
-            String classpath = System.getProperty("java.class.path", "");
-            ProcessBuilder javac = new ProcessBuilder("javac", "--release", "25",
-                "-proc:none", "-cp", classpath, "-d", classes.toString(),
-                source.toAbsolutePath().toString());
-            javac.redirectErrorStream(true);
-            Process compile = javac.start();
-            String compileOut = new String(compile.getInputStream().readAllBytes(),
-                StandardCharsets.UTF_8);
-            int compileExit = compile.waitFor();
+            String classpath = absoluteClasspath();
+            JvmCompilation.Result compile = JvmCompilation.compile(List.of("javac",
+                "--release", "25", "-proc:none", "-cp", classpath, "-d",
+                classes.toString(), source.toAbsolutePath().toString()), Path.of("."));
+            String compileOut = compile.stdout() + compile.stderr();
+            int compileExit = compile.exitCode();
             if (compileExit != 0) {
                 failures.add("shared JVM project artifact compilation failed ("
                     + compileExit + "): " + compileOut);
                 return null;
             }
-            Path stdout = workspace.resolve("jvm-proj-out.txt");
-            Path stderr = workspace.resolve("jvm-proj-err.txt");
-            ProcessBuilder javaRun = new ProcessBuilder("java", "-cp",
-                classpath + java.io.File.pathSeparator + classes,
-                emission.className());
-            javaRun.redirectOutput(stdout.toFile());
-            javaRun.redirectError(stderr.toFile());
-            Process run = javaRun.start();
-            int exit = run.waitFor();
-            List<String> stdoutLines = Files.readAllLines(stdout, StandardCharsets.UTF_8);
-            List<String> protocolLines = Files.readAllLines(stderr, StandardCharsets.UTF_8);
+            BoundedProcess.BoundedResult captured = runCaptured(List.of("java", "-cp",
+                classes + java.io.File.pathSeparator + classpath,
+                emission.className()), Map.of());
+            int exit = captured.exitCode();
+            List<String> stdoutLines = captured.stdout().lines().toList();
+            List<String> protocolLines = captured.stderr().lines().toList();
             if (exit != 0) {
                 failures.add("shared JVM project artifact exited " + exit + ": "
                     + String.join(" / ", protocolLines));
@@ -338,6 +329,9 @@ public final class SemanticDifferentialHarness {
             crossCheckStdout(consumerRun, stdoutLines, "shared-jvm", failures);
             return consumerRun;
         } catch (IOException | InterruptedException exception) {
+            if (exception instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             failures.add("shared JVM project infrastructure failure: "
                 + exception.getMessage());
             return null;
@@ -765,17 +759,11 @@ public final class SemanticDifferentialHarness {
                     + "end\n"
                     + "io.stderr:flush()\n",
                 StandardCharsets.UTF_8);
-            Path stdout = workspace.resolve("lua-cb-out.txt");
-            Path stderr = workspace.resolve("lua-cb-err.txt");
-            ProcessBuilder builder = new ProcessBuilder("luajit",
-                driver.toAbsolutePath().toString());
-            builder.environment().put("DEAL_CALLBACK_ONLY", "1");
-            builder.redirectOutput(stdout.toFile());
-            builder.redirectError(stderr.toFile());
-            Process process = builder.start();
-            int exit = process.waitFor();
-            List<String> stdoutLines = Files.readAllLines(stdout, StandardCharsets.UTF_8);
-            List<String> protocolLines = Files.readAllLines(stderr, StandardCharsets.UTF_8);
+            BoundedProcess.BoundedResult captured = runCaptured(List.of("luajit",
+                driver.toAbsolutePath().toString()), Map.of("DEAL_CALLBACK_ONLY", "1"));
+            int exit = captured.exitCode();
+            List<String> stdoutLines = captured.stdout().lines().toList();
+            List<String> protocolLines = captured.stderr().lines().toList();
             if (exit != 0) {
                 failures.add("shared LuaJIT callback drive exited " + exit + ": "
                     + String.join(" / ", protocolLines));
@@ -786,6 +774,9 @@ public final class SemanticDifferentialHarness {
             crossCheckStdout(run, stdoutLines, "shared-luajit", failures);
             return run;
         } catch (IOException | InterruptedException exception) {
+            if (exception instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             failures.add("shared LuaJIT callback infrastructure failure: "
                 + exception.getMessage());
             return null;
@@ -847,16 +838,11 @@ public final class SemanticDifferentialHarness {
                     "shared JVM callback", failures)) {
                 return null;
             }
-            Path stdout = workspace.resolve("jvm-cb-out.txt");
-            Path stderr = workspace.resolve("jvm-cb-err.txt");
-            ProcessBuilder javaRun = new ProcessBuilder("java", "-cp",
-                classpath + java.io.File.pathSeparator + classes, driverClass);
-            javaRun.redirectOutput(stdout.toFile());
-            javaRun.redirectError(stderr.toFile());
-            Process run = javaRun.start();
-            int exit = run.waitFor();
-            List<String> stdoutLines = Files.readAllLines(stdout, StandardCharsets.UTF_8);
-            List<String> protocolLines = Files.readAllLines(stderr, StandardCharsets.UTF_8);
+            BoundedProcess.BoundedResult captured = runCaptured(List.of("java", "-cp",
+                classes + java.io.File.pathSeparator + classpath, driverClass), Map.of());
+            int exit = captured.exitCode();
+            List<String> stdoutLines = captured.stdout().lines().toList();
+            List<String> protocolLines = captured.stderr().lines().toList();
             if (exit != 0) {
                 failures.add("shared JVM callback drive exited " + exit + ": "
                     + String.join(" / ", protocolLines));
@@ -867,6 +853,9 @@ public final class SemanticDifferentialHarness {
             crossCheckStdout(consumerRun, stdoutLines, "shared-jvm", failures);
             return consumerRun;
         } catch (IOException | InterruptedException exception) {
+            if (exception instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             failures.add("shared JVM callback infrastructure failure: "
                 + exception.getMessage());
             return null;
@@ -1128,17 +1117,11 @@ public final class SemanticDifferentialHarness {
             drive.append("io.stderr:flush()\n");
             Path driver = workspace.resolve("lua-async-entry-driver.lua");
             Files.writeString(driver, drive.toString(), StandardCharsets.UTF_8);
-            Path stdout = workspace.resolve("lua-ae-out.txt");
-            Path stderr = workspace.resolve("lua-ae-err.txt");
-            ProcessBuilder builder = new ProcessBuilder("luajit",
-                driver.toAbsolutePath().toString());
-            builder.environment().put("DEAL_DEFER_MAIN", "1");
-            builder.redirectOutput(stdout.toFile());
-            builder.redirectError(stderr.toFile());
-            Process process = builder.start();
-            int exit = process.waitFor();
-            List<String> stdoutLines = Files.readAllLines(stdout, StandardCharsets.UTF_8);
-            List<String> protocolLines = Files.readAllLines(stderr, StandardCharsets.UTF_8);
+            BoundedProcess.BoundedResult captured = runCaptured(List.of("luajit",
+                driver.toAbsolutePath().toString()), Map.of("DEAL_DEFER_MAIN", "1"));
+            int exit = captured.exitCode();
+            List<String> stdoutLines = captured.stdout().lines().toList();
+            List<String> protocolLines = captured.stderr().lines().toList();
             if (exit != 0) {
                 failures.add("shared LuaJIT async-entry drive exited " + exit + ": "
                     + String.join(" / ", protocolLines));
@@ -1149,6 +1132,9 @@ public final class SemanticDifferentialHarness {
             crossCheckStdout(run, stdoutLines, "shared-luajit", failures);
             return run;
         } catch (IOException | InterruptedException exception) {
+            if (exception instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             failures.add("shared LuaJIT async-entry infrastructure failure: "
                 + exception.getMessage());
             return null;
@@ -1262,16 +1248,11 @@ public final class SemanticDifferentialHarness {
                     "shared JVM async-entry", failures)) {
                 return null;
             }
-            Path stdout = workspace.resolve("jvm-ae-out.txt");
-            Path stderr = workspace.resolve("jvm-ae-err.txt");
-            ProcessBuilder javaRun = new ProcessBuilder("java", "-cp",
-                classpath + java.io.File.pathSeparator + classes, driverClass);
-            javaRun.redirectOutput(stdout.toFile());
-            javaRun.redirectError(stderr.toFile());
-            Process run = javaRun.start();
-            int exit = run.waitFor();
-            List<String> stdoutLines = Files.readAllLines(stdout, StandardCharsets.UTF_8);
-            List<String> protocolLines = Files.readAllLines(stderr, StandardCharsets.UTF_8);
+            BoundedProcess.BoundedResult captured = runCaptured(List.of("java", "-cp",
+                classes + java.io.File.pathSeparator + classpath, driverClass), Map.of());
+            int exit = captured.exitCode();
+            List<String> stdoutLines = captured.stdout().lines().toList();
+            List<String> protocolLines = captured.stderr().lines().toList();
             if (exit != 0) {
                 failures.add("shared JVM async-entry drive exited " + exit + ": "
                     + String.join(" / ", protocolLines));
@@ -1283,10 +1264,23 @@ public final class SemanticDifferentialHarness {
             crossCheckStdout(consumerRun, stdoutLines, "shared-jvm", failures);
             return consumerRun;
         } catch (IOException | InterruptedException exception) {
+            if (exception instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             failures.add("shared JVM async-entry infrastructure failure: "
                 + exception.getMessage());
             return null;
         }
+    }
+
+    private static BoundedProcess.BoundedResult runCaptured(List<String> command,
+            Map<String, String> environment) throws IOException, InterruptedException {
+        BoundedProcess.BoundedResult captured = BoundedProcess.runCaptured(
+            command, null, environment);
+        if (captured.stdoutTruncated() || captured.stderrTruncated()) {
+            throw new IOException("runtime process output was truncated: " + command);
+        }
+        return captured;
     }
 
     private static String absoluteClasspath() {
@@ -1304,10 +1298,9 @@ public final class SemanticDifferentialHarness {
         List<String> command = new ArrayList<>(List.of("javac", "--release", "25",
             "-proc:none", "-cp", classpath, "-d", classes.toAbsolutePath().toString()));
         command.addAll(sources);
-        Process compile = new ProcessBuilder(command).redirectErrorStream(true).start();
-        String output = new String(compile.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        int exit = compile.waitFor();
+        JvmCompilation.Result compile = JvmCompilation.compile(command, Path.of("."));
+        String output = compile.stdout() + compile.stderr();
+        int exit = compile.exitCode();
         if (exit != 0) {
             failures.add(consumer + " joint artifact/driver compilation failed (" + exit
                 + "), sources: " + String.join(", ", sources) + ": " + output);
@@ -1442,16 +1435,11 @@ public final class SemanticDifferentialHarness {
             Path script = workspace.resolve(unit.moduleId().path().replace('/', '_')
                 + ".lua");
             Files.writeString(script, lua, StandardCharsets.UTF_8);
-            Path stdout = workspace.resolve("lua-out.txt");
-            Path stderr = workspace.resolve("lua-err.txt");
-            ProcessBuilder builder = new ProcessBuilder("luajit",
-                script.toAbsolutePath().toString());
-            builder.redirectOutput(stdout.toFile());
-            builder.redirectError(stderr.toFile());
-            Process process = builder.start();
-            int exit = process.waitFor();
-            List<String> stdoutLines = Files.readAllLines(stdout, StandardCharsets.UTF_8);
-            List<String> protocolLines = Files.readAllLines(stderr, StandardCharsets.UTF_8);
+            BoundedProcess.BoundedResult captured = runCaptured(List.of("luajit",
+                script.toAbsolutePath().toString()), Map.of());
+            int exit = captured.exitCode();
+            List<String> stdoutLines = captured.stdout().lines().toList();
+            List<String> protocolLines = captured.stderr().lines().toList();
             if (exit != 0) {
                 failures.add("shared LuaJIT artifact exited " + exit + ": "
                     + String.join(" / ", protocolLines));
@@ -1462,6 +1450,9 @@ public final class SemanticDifferentialHarness {
             crossCheckStdout(run, stdoutLines, "shared-luajit", failures);
             return run;
         } catch (IOException | InterruptedException exception) {
+            if (exception instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             failures.add("shared LuaJIT infrastructure failure: " + exception.getMessage());
             return null;
         }
@@ -1479,31 +1470,23 @@ public final class SemanticDifferentialHarness {
             Files.writeString(source, emission.source(), StandardCharsets.UTF_8);
             Path classes = workspace.resolve("jvm-classes");
             Files.createDirectories(classes);
-            String classpath = System.getProperty("java.class.path", "");
-            ProcessBuilder javac = new ProcessBuilder("javac", "--release", "25",
-                "-proc:none", "-cp", classpath, "-d", classes.toString(),
-                source.toAbsolutePath().toString());
-            javac.redirectErrorStream(true);
-            Process compile = javac.start();
-            String compileOut = new String(compile.getInputStream().readAllBytes(),
-                StandardCharsets.UTF_8);
-            int compileExit = compile.waitFor();
+            String classpath = absoluteClasspath();
+            JvmCompilation.Result compile = JvmCompilation.compile(List.of("javac",
+                "--release", "25", "-proc:none", "-cp", classpath, "-d",
+                classes.toString(), source.toAbsolutePath().toString()), Path.of("."));
+            String compileOut = compile.stdout() + compile.stderr();
+            int compileExit = compile.exitCode();
             if (compileExit != 0) {
                 failures.add("shared JVM artifact compilation failed ("
                     + compileExit + "): " + compileOut);
                 return null;
             }
-            Path stdout = workspace.resolve("jvm-out.txt");
-            Path stderr = workspace.resolve("jvm-err.txt");
-            ProcessBuilder javaRun = new ProcessBuilder("java", "-cp",
-                classpath + java.io.File.pathSeparator + classes,
-                emission.className());
-            javaRun.redirectOutput(stdout.toFile());
-            javaRun.redirectError(stderr.toFile());
-            Process run = javaRun.start();
-            int exit = run.waitFor();
-            List<String> stdoutLines = Files.readAllLines(stdout, StandardCharsets.UTF_8);
-            List<String> protocolLines = Files.readAllLines(stderr, StandardCharsets.UTF_8);
+            BoundedProcess.BoundedResult captured = runCaptured(List.of("java", "-cp",
+                classes + java.io.File.pathSeparator + classpath,
+                emission.className()), Map.of());
+            int exit = captured.exitCode();
+            List<String> stdoutLines = captured.stdout().lines().toList();
+            List<String> protocolLines = captured.stderr().lines().toList();
             if (exit != 0) {
                 failures.add("shared JVM artifact exited " + exit + ": "
                     + String.join(" / ", protocolLines));
@@ -1514,6 +1497,9 @@ public final class SemanticDifferentialHarness {
             crossCheckStdout(consumerRun, stdoutLines, "shared-jvm", failures);
             return consumerRun;
         } catch (IOException | InterruptedException exception) {
+            if (exception instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             failures.add("shared JVM infrastructure failure: " + exception.getMessage());
             return null;
         }

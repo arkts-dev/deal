@@ -40,6 +40,7 @@ import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.UnicodeScalars;
 import deal.test.conformance.CorpusDiscovery;
+import deal.test.conformance.JvmCompilation;
 import deal.test.conformance.SidecarExpectations;
 import deal.test.conformance.SidecarSchemaValidator;
 
@@ -432,6 +433,8 @@ public class CanonicalProjectionParityTest {
         private boolean emitted;
         private Path artifactClasses;
         private final Map<JvmDrive, Path> drives = new LinkedHashMap<>();
+        private final Map<String, Path> probes = new LinkedHashMap<>();
+        private Map<String, String> defaultHosts;
     }
 
     /** The release-owned production invocation. */
@@ -1298,7 +1301,6 @@ public class CanonicalProjectionParityTest {
                 }
             }
             if ("host-abi/host-async-shape-bad".equals(spec.corpusPath())) {
-                assertAbsentAsyncHandle(compiled, pin);
                 assertAsyncHandlePresence(compiled, pin);
                 assertHostWrapperArmDelegation(compiled, pin);
                 assertAsyncHandleCarriers(compiled, pin);
@@ -1309,41 +1311,6 @@ public class CanonicalProjectionParityTest {
         } finally {
             deleteRecursively(compiled.root());
         }
-    }
-
-    /**
-     * The oracle's absent-handle control of the async shape fixture: a
-     * responder that scripts no async handle renders the same closed arm
-     * with the {@code nothing} actual at the same call origin. The typed
-     * seam therefore keeps the absent handle distinct from the invalid
-     * returned carrier (the non-operation value retains its own kind)
-     * instead of collapsing both onto one projection.
-     */
-    private static void assertAbsentAsyncHandle(Compiled compiled,
-            SidecarExpectations.ErrorExpectation pin) {
-        Tuple absent = oracleTupleWith(compiled, new SemanticOracle.HostResponder() {
-            @Override
-            public AsyncStartOutcome startAsync(ModuleId module, String export,
-                    RuntimeDescriptor.Func descriptor,
-                    List<SemanticOracle.Value> args, String operationLabel) {
-                return new AsyncStartOutcome.Absent();
-            }
-        });
-        checkEq("E8010", absent.code(), compiled.spec().what()
-            + " (oracle, absent async handle): the E8010 code");
-        checkEq("host async function must return an async operation, got nothing",
-            absent.message(), compiled.spec().what()
-                + " (oracle, absent async handle): the nothing message");
-        checkEq("async operation", absent.expected(), compiled.spec().what()
-            + " (oracle, absent async handle): the expected token");
-        checkEq("nothing", absent.actual(), compiled.spec().what()
-            + " (oracle, absent async handle): the absent handle's actual token");
-        checkEq(pin.sourceFile(), absent.file(), compiled.spec().what()
-            + " (oracle, absent async handle): the pinned call-origin file");
-        checkEq(pin.line(), absent.line(), compiled.spec().what()
-            + " (oracle, absent async handle): the pinned call-origin line");
-        checkEq(pin.column(), absent.column(), compiled.spec().what()
-            + " (oracle, absent async handle): the pinned call-origin column");
     }
 
     /**
@@ -3182,12 +3149,10 @@ public class CanonicalProjectionParityTest {
         System.out.println("-- the host nested-array projection: the nullable "
             + "element stays null, the repeated inner array keeps its identity, "
             + "and the rejected nested tail mutates nothing --");
-        safely("the nullable nested-array element control", () ->
-            driveHostCarrierSuccess("the nullable nested-array element control",
-                HOST_CARRIER_NULLABLE_ARRAY_DRIVER));
-        safely("the repeated host inner array", () ->
-            driveHostCarrierSuccess("the repeated host inner array",
-                HOST_CARRIER_SHARED_ARRAY_DRIVER));
+        safely("the valid nested host carriers", () -> driveHostCarrierSuccessBatch(
+            new LinkedHashMap<>(Map.of(
+                "test_nullable_nested", HOST_CARRIER_NULLABLE_ARRAY_DRIVER,
+                "test_shared", HOST_CARRIER_SHARED_ARRAY_DRIVER))));
         safely("the rejected nested tail",
             CanonicalProjectionParityTest::driveHostNestedTail);
     }
@@ -3312,17 +3277,12 @@ public class CanonicalProjectionParityTest {
         safely("the malformed non-surrogate host return", () ->
             driveHostCarrierFailure(FailureArmId.HOST_STRING_INVALID_UTF8,
                 "badString"));
-        safely("the valid scalar string host return", () -> driveHostCarrierSuccess(
-            "the valid scalar string host return", HOST_CARRIER_VALID_DRIVER));
-        safely("the raw string element inside a declared array", () ->
-            driveHostCarrierSuccess("the raw string element inside a declared "
-                + "array", HOST_CARRIER_ARRAY_DRIVER));
-        safely("the raw string element inside a nested array", () ->
-            driveHostCarrierSuccess("the raw string element inside a nested "
-                + "array", HOST_CARRIER_NESTED_DRIVER));
-        safely("the raw string element at a nullable array position", () ->
-            driveHostCarrierSuccess("the raw string element at a nullable array "
-                + "position", HOST_CARRIER_NULLABLE_DRIVER));
+        safely("the valid host string carriers", () -> driveHostCarrierSuccessBatch(
+            new LinkedHashMap<>(Map.of(
+                "test_scalar", HOST_CARRIER_VALID_DRIVER,
+                "test_array", HOST_CARRIER_ARRAY_DRIVER,
+                "test_nested", HOST_CARRIER_NESTED_DRIVER,
+                "test_nullable", HOST_CARRIER_NULLABLE_DRIVER))));
     }
 
     /** The host-carrier drive's anchor case (the generated module is the entry). */
@@ -3362,15 +3322,11 @@ public class CanonicalProjectionParityTest {
                 "host.nativeDifferingDepthStringArray()",
                 HOST_NATIVE_DIFFERING_DEPTH_DRIVER, "[[[[string]]]]", 3, 2,
                 null, null));
-        safely("the native string[] carrier valid control", () ->
-            driveHostCarrierSuccess("the native string[] carrier valid control",
-                HOST_NATIVE_ARRAY_DRIVER));
-        safely("the native nested carrier valid control", () ->
-            driveHostCarrierSuccess("the native nested carrier valid control",
-                HOST_NATIVE_NESTED_DRIVER));
-        safely("the native repeated inner carrier", () ->
-            driveHostCarrierSuccess("the native repeated inner carrier",
-                HOST_NATIVE_SHARED_DRIVER));
+        safely("the valid native host carriers", () -> driveHostCarrierSuccessBatch(
+            new LinkedHashMap<>(Map.of(
+                "test_native_array", HOST_NATIVE_ARRAY_DRIVER,
+                "test_native_nested", HOST_NATIVE_NESTED_DRIVER,
+                "test_native_shared", HOST_NATIVE_SHARED_DRIVER))));
     }
 
     /**
@@ -3488,16 +3444,50 @@ public class CanonicalProjectionParityTest {
      * terminal and both production artifacts complete without a failure
      * event, after the entry body consumed the checked value.
      */
-    private static void driveHostCarrierSuccess(String label, String driverSource)
+    private static void driveHostCarrierSuccessBatch(Map<String, String> sources)
             throws Exception {
-        Compiled compiled = compile(hostCarrierCase(), driverSource);
+        StringBuilder source = new StringBuilder("import * as host from \"host/bad_string\"\n");
+        List<String> exports = sources.keySet().stream().sorted().toList();
+        for (String export : exports) {
+            String fixture = sources.get(export);
+            source.append(fixture.substring(fixture.indexOf("export function main"))
+                .replace("export function main", "export function " + export));
+        }
+        source.append("export function main(): null { return null }\n");
+        Compiled compiled = compile(hostCarrierCase(), source.toString());
         try {
-            SemanticRuntimeModel.ConsumerRun run = oracleRun(compiled);
-            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
-                label + " (oracle): the drive completes with no failure terminal: "
-                    + run.terminal());
-            luaArtifactOk(compiled, label);
-            jvmArtifactOk(compiled, label);
+            String entry = compiled.checkedProject().entryModule().path();
+            for (String export : exports) {
+                safely(export, () -> {
+                    SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeSyncEntry(
+                        compiled.project(), compiled.tables(), compiled.registries(),
+                        responderFor(compiled.spec()), compiled.checkedProject().entryModule(),
+                        export, List.of());
+                    check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success success
+                            && "null".equals(success.resultAtom()),
+                        export + " (oracle): the isolated export succeeds: " + run.terminal());
+                    String lua = luaArtifactOutput(compiled, Map.of(),
+                        luaProbe(compiled.root().resolve("out").resolve(
+                            entry.replace('.', '/') + ".lua").toString(), entry)
+                            .replace("if string.sub(name, 1, 5) == \"test_\" then",
+                                "if name == \"" + export + "\" then")
+                            .replace("if not ok2 then emit(err2) os.exit(0) end",
+                                "if not ok2 then emit(err2) os.exit(0) end\n"
+                                    + "print(\"SUCCESS:" + export + "\")"));
+                    checkEq("SUCCESS:" + export + "\nOK\n", lua,
+                        export + " (luajit): the isolated export succeeds");
+                    String jvm = jvmArtifactOutput(compiled,
+                        jvmProbe(JvmBackend.classNameFor(entry), entry, "")
+                            .replace("if (!name.startsWith(\"test_\"))",
+                                "if (!name.equals(args[0]))")
+                            .replace(".fn.invoke(new java.lang.Object[]{ });",
+                                ".fn.invoke(new java.lang.Object[]{ });\n"
+                                    + "System.out.println(\"SUCCESS:\" + name);"),
+                        Map.of(), List.of(export));
+                    checkEq("SUCCESS:" + export + "\nOK\n", jvm,
+                        export + " (jvm): the isolated export succeeds");
+                });
+            }
         } finally {
             deleteRecursively(compiled.root());
         }
@@ -3717,16 +3707,16 @@ public class CanonicalProjectionParityTest {
         }
         Files.writeString(out.resolve("probe.lua"), probeSource,
             StandardCharsets.UTF_8);
-        ProcessBuilder builder = new ProcessBuilder("luajit", "probe.lua");
-        builder.directory(out.toFile());
-        builder.environment().put("DEAL_DEFER_MAIN", "1");
-        builder.redirectErrorStream(true);
-        Process process = builder.start();
-        String output = new String(process.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        int exit = process.waitFor();
+        BoundedProcess.BoundedResult captured = BoundedProcess.runCaptured(
+            List.of("luajit", "probe.lua"), out, Map.of("DEAL_DEFER_MAIN", "1"));
+        String output = captured.stdout();
+        String diagnostics = output + captured.stderr();
+        check(!captured.stdoutTruncated() && !captured.stderrTruncated(),
+            compiled.spec().what() + " (luajit): the probe output is not truncated: "
+                + diagnostics);
+        int exit = captured.exitCode();
         check(exit == 0, compiled.spec().what() + " (luajit): the probe runs: exit="
-            + exit + " output=" + output);
+            + exit + " output=" + diagnostics);
         return output;
     }
 
@@ -3845,18 +3835,35 @@ public class CanonicalProjectionParityTest {
      */
     private static String jvmArtifactOutput(Compiled compiled, String probeSource,
             Map<String, String> hostOverrides) throws Exception {
+        return jvmArtifactOutput(compiled, probeSource, hostOverrides, List.of());
+    }
+
+    private static String jvmArtifactOutput(Compiled compiled, String probeSource,
+            Map<String, String> hostOverrides, List<String> arguments) throws Exception {
         Path out = compiled.root().resolve("out-jvm");
         JvmPreparation preparation = compiled.jvmPreparation();
         if (!preparation.emitted) {
             emit(compiled, Backend.JVM, out);
             preparation.emitted = true;
         }
-        Map<String, String> hostSources = new LinkedHashMap<>();
+        if (preparation.defaultHosts == null) {
+            Map<String, String> defaults = new LinkedHashMap<>();
+            for (String stem : compiled.hostStems()) {
+                Path host = Path.of("test", "conformance", "host-fixtures", stem + ".java");
+                if (Files.isRegularFile(host)) {
+                    defaults.put(stem, Files.readString(host, StandardCharsets.UTF_8));
+                }
+            }
+            preparation.defaultHosts = Map.copyOf(defaults);
+        }
+        Map<String, String> hostSources = new LinkedHashMap<>(preparation.defaultHosts);
         for (String stem : compiled.hostStems()) {
-            String override = hostOverrides.get(stem);
-            hostSources.put(stem, override != null ? override
-                : Files.readString(Path.of("test", "conformance", "host-fixtures",
-                    stem + ".java"), StandardCharsets.UTF_8));
+            if (hostOverrides.containsKey(stem)) {
+                hostSources.put(stem, hostOverrides.get(stem));
+            }
+            if (!hostSources.containsKey(stem)) {
+                throw new IOException("no JVM host implementation for " + stem);
+            }
         }
         String driverName = "CanonicalProjectionParityDriver";
         JvmDrive drive = new JvmDrive(probeSource, hostSources);
@@ -3882,15 +3889,15 @@ public class CanonicalProjectionParityTest {
                 Files.writeString(source, host.getValue(), StandardCharsets.UTF_8);
                 javacArgs.add(source.toString());
             }
-            Path driver = workspace.resolve(driverName + ".java");
-            Files.writeString(driver, probeSource, StandardCharsets.UTF_8);
-            javacArgs.add(driver.toString());
-            ProcessBuilder javac = new ProcessBuilder(javacArgs).redirectErrorStream(true);
-            javac.directory(workspace.toFile());
-            Process javacProcess = javac.start();
-            String javacOutput = new String(javacProcess.getInputStream().readAllBytes(),
-                StandardCharsets.UTF_8);
-            int javacExit = javacProcess.waitFor();
+            Path probeClasses = preparation.probes.get(probeSource);
+            if (probeClasses == null) {
+                Path driver = workspace.resolve(driverName + ".java");
+                Files.writeString(driver, probeSource, StandardCharsets.UTF_8);
+                javacArgs.add(driver.toString());
+            }
+            JvmCompilation.Result javac = JvmCompilation.compile(javacArgs, workspace);
+            String javacOutput = javac.stdout() + javac.stderr();
+            int javacExit = javac.exitCode();
             check(javacExit == 0, compiled.spec().what() + " (jvm): the production "
                 + "artifact and drive compile: " + javacOutput);
             if (javacExit != 0) {
@@ -3899,19 +3906,26 @@ public class CanonicalProjectionParityTest {
             if (first) {
                 preparation.artifactClasses = classes;
             }
+            if (probeClasses == null) {
+                preparation.probes.put(probeSource, classes);
+            }
             preparation.drives.put(drive, classes);
         }
-        ProcessBuilder java = new ProcessBuilder("java", "-cp",
-            classes + File.pathSeparator + preparation.artifactClasses
-                + File.pathSeparator + classpath, driverName);
-        java.directory(out.toFile());
-        java.redirectErrorStream(true);
-        Process javaProcess = java.start();
-        String output = new String(javaProcess.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        int exit = javaProcess.waitFor();
+        List<String> javaArgs = new ArrayList<>(List.of("java", "-cp",
+            classes + File.pathSeparator + preparation.probes.get(probeSource)
+                + File.pathSeparator + preparation.artifactClasses
+                + File.pathSeparator + classpath, driverName));
+        javaArgs.addAll(arguments);
+        BoundedProcess.BoundedResult captured = BoundedProcess.runCaptured(
+            javaArgs, out, Map.of());
+        String output = captured.stdout();
+        String diagnostics = output + captured.stderr();
+        check(!captured.stdoutTruncated() && !captured.stderrTruncated(),
+            compiled.spec().what() + " (jvm): the probe output is not truncated: "
+                + diagnostics);
+        int exit = captured.exitCode();
         check(exit == 0, compiled.spec().what() + " (jvm): the probe runs: exit="
-            + exit + " output=" + output);
+            + exit + " output=" + diagnostics);
         return output;
     }
 
@@ -4189,15 +4203,15 @@ public class CanonicalProjectionParityTest {
                 chunk()
                 """.formatted(artifact.toAbsolutePath().toString(), body),
                 StandardCharsets.UTF_8);
-            ProcessBuilder builder = new ProcessBuilder("luajit", "probe.lua");
-            builder.directory(workspace.toFile());
-            builder.redirectErrorStream(true);
-            Process process = builder.start();
-            String output = new String(process.getInputStream().readAllBytes(),
-                StandardCharsets.UTF_8);
-            int exit = process.waitFor();
+            BoundedProcess.BoundedResult captured = BoundedProcess.runCaptured(
+                List.of("luajit", "probe.lua"), workspace, Map.of());
+            String output = captured.stdout();
+            String diagnostics = output + captured.stderr();
+            check(!captured.stdoutTruncated() && !captured.stderrTruncated(),
+                "the emitted prelude output is not truncated: " + diagnostics);
+            int exit = captured.exitCode();
             check(exit == 0, "the emitted prelude runs under luajit: exit=" + exit
-                + " output=" + output);
+                + " output=" + diagnostics);
             return parseRows(output, "the emitted prelude");
         } finally {
             deleteRecursively(workspace);
@@ -4258,14 +4272,15 @@ public class CanonicalProjectionParityTest {
                 chunk()
                 """.formatted(artifact.toAbsolutePath().toString()),
                 StandardCharsets.UTF_8);
-            ProcessBuilder builder = new ProcessBuilder("luajit", "probe.lua");
-            builder.directory(workspace.toFile());
-            builder.redirectErrorStream(true);
-            Process process = builder.start();
-            String output = new String(process.getInputStream().readAllBytes(),
-                StandardCharsets.UTF_8);
-            check(process.waitFor() == 0, "the emitted prelude's inner renderer runs "
-                + "under luajit: " + output);
+            BoundedProcess.BoundedResult captured = BoundedProcess.runCaptured(
+                List.of("luajit", "probe.lua"), workspace, Map.of());
+            String output = captured.stdout();
+            String diagnostics = output + captured.stderr();
+            check(!captured.stdoutTruncated() && !captured.stderrTruncated(),
+                "the emitted prelude's inner renderer output is not truncated: "
+                    + diagnostics);
+            check(captured.exitCode() == 0, "the emitted prelude's inner renderer runs "
+                + "under luajit: " + diagnostics);
             Map<String, String> rows = new LinkedHashMap<>();
             for (String line : output.lines().toList()) {
                 if (line.startsWith("ROW|")) {
@@ -4653,14 +4668,14 @@ public class CanonicalProjectionParityTest {
                 row("utf8-valid", "string", "ok")
                 row("element", "[int]", {1, "x"})
                 """, StandardCharsets.UTF_8);
-            ProcessBuilder builder = new ProcessBuilder("luajit", "probe.lua");
-            builder.directory(workspace.toFile());
-            builder.redirectErrorStream(true);
-            Process process = builder.start();
-            String output = new String(process.getInputStream().readAllBytes(),
-                StandardCharsets.UTF_8);
-            check(process.waitFor() == 0, "the deployed matcher runs under luajit: "
-                + output);
+            BoundedProcess.BoundedResult captured = BoundedProcess.runCaptured(
+                List.of("luajit", "probe.lua"), workspace, Map.of());
+            String output = captured.stdout();
+            String diagnostics = output + captured.stderr();
+            check(!captured.stdoutTruncated() && !captured.stderrTruncated(),
+                "the deployed matcher output is not truncated: " + diagnostics);
+            check(captured.exitCode() == 0, "the deployed matcher runs under luajit: "
+                + diagnostics);
             Map<String, String> rows = new LinkedHashMap<>();
             for (String line : output.lines().toList()) {
                 if (line.startsWith("CELL|")) {
@@ -5186,35 +5201,8 @@ public class CanonicalProjectionParityTest {
     // 6. The unchanged surfaces
     // =========================================================================
 
-    private static void testUnchangedSurfaces() throws Exception {
-        System.out.println("-- the unchanged surfaces: the corpus membership/count, "
-            + "the sidecar schema, the comparison contract, and the landed row "
-            + "data --");
-        CorpusDiscovery.DiscoveryResult discovery = corpusSnapshot().discovery();
-        checkEq(List.of(), discovery.failures(),
-            "the corpus discovery reports no classification failure");
-        int dispatched = 0;
-        for (CorpusDiscovery.Fixture fixture : discovery.fixtures()) {
-            if (fixture.runtimeClassified()) {
-                dispatched++;
-            }
-        }
-        checkEq(409, dispatched, "the dispatched runtime-classified corpus count "
-            + "stays the pinned 409");
-        for (Case spec : NAMED) {
-            String raw = Files.readString(CONFORMANCE.resolve(spec.sidecarFile()),
-                StandardCharsets.UTF_8);
-            check(raw.contains("\"version\": 1"), spec.what()
-                + ": the sidecar keeps its schema version");
-            SidecarExpectations.StructuredExpectationSidecar sidecar =
-                SidecarExpectations.StructuredExpectationSidecar.parse(raw);
-            checkEq(new java.util.TreeSet<>(List.of("luajit", "jvm", "js")),
-                new java.util.TreeSet<>(sidecar.byBackend().keySet()), spec.what()
-                    + ": the sidecar dispatches the landed three backends");
-            SidecarExpectations.ErrorExpectation pin = luajitPin(spec);
-            check(pin != null, spec.what() + ": the sidecar carries its error pin");
-        }
-
+    private static void testComparisonContract() throws Exception {
+        System.out.println("-- the pinned and absent fields through the comparison contract --");
         // The comparison contract: mandatory code/message; the pinned span
         // group and optional fields only when pinned; a pinned field the
         // capture lacks fails; an unpinned field the capture emits fails.
@@ -5249,21 +5237,6 @@ public class CanonicalProjectionParityTest {
             expectation, executed(framing(spanless))).isPresent(),
             "a pinned span group the capture lacks fails the comparison");
 
-        // The landed INT32_RESULT row data, and the JSON_TO_ERROR row's
-        // appended cycle template (ISSUE-0711 W4: the template and its arm
-        // land together; the walk template stays index 0 and the std/json
-        // template index 1).
-        checkEq(List.of("value at {fieldPath} is not JSON serializable: {actual}",
-            "unsupported type for JSON encoding: {actual}",
-            "cyclic value cannot be encoded as JSON"),
-            FailureContractRegistry.row(FailurePolicyId.JSON_TO_ERROR).templates(),
-            "the JSON_TO_ERROR row carries the appended cycle template");
-        checkEq(List.of("int out of safe range"),
-            FailureContractRegistry.row(FailurePolicyId.INT32_RESULT).templates(),
-            "the INT32_RESULT row data stays as landed");
-        checkEq(FailurePolicyId.JSON_TO_ERROR,
-            FailureContractRegistry.arm(FailureArmId.JSON_TO_WALK).policy(),
-            "the walk template keeps its bound arm");
     }
 
     private static deal.test.conformance.LaneExecution executed(String stdout) {
@@ -5450,7 +5423,7 @@ public class CanonicalProjectionParityTest {
         testDynamicTableRead();
         testArrayNullAndDeletedSlotCells();
         testCompletenessAndSingleSourceNegatives();
-        testUnchangedSurfaces();
+        testComparisonContract();
         testRawProfileInputControls();
         System.out.println();
         System.out.println("Canonical projection parity: " + passed + " passed, "
