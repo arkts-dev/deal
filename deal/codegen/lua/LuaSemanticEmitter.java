@@ -4866,6 +4866,12 @@ public final class LuaSemanticEmitter {
                     "__errtext(__resT)");
                 out.append("  error(__resT, 0)\n");
                 out.append("end\n");
+                // The failure branch is the only caller-attributed region
+                // of the owner-side group: emission resumes in the owning
+                // module, so the owner's comment and mapping re-open before
+                // the default's completion statements (the mapping sequence
+                // is lexical, not execution-path-dependent).
+                beginSourceMappedGroup(factoryOp, "");
                 if (defaultOp.result() instanceof ValueId resultId) {
                     out.append(slot(resultId)).append(" = __resT\n");
                 }

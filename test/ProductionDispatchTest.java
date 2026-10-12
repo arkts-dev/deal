@@ -208,6 +208,35 @@ public class ProductionDispatchTest {
         """;
 
     /**
+     * The omitted-default factory fixture: the exported class carries two
+     * defaulted fields, so the owner-side factory group emits one
+     * caller-attributed failure branch per omitted default and must restore
+     * the owning module's comment and mapping after each branch.
+     */
+    private static final String OMITTED_DEFAULT_LIB_SOURCE = """
+        export class Point {
+          x: int = 3
+          y: int = 4
+        }
+        """;
+
+    /**
+     * The omitted-default entry: the one imported-class construction
+     * provides no field, so both defaults evaluate on the owning side and
+     * the construction stays the caller's own mapped group.
+     */
+    private static final String OMITTED_DEFAULT_APP_SOURCE = """
+        import * as lib from "./lib"
+        import * as console from "std/console"
+
+        export function main(): null {
+          let p: lib.Point = {};
+          console.log("PROBE|OMITTED-DEFAULTS")
+          return null
+        }
+        """;
+
+    /**
      * The source-map unsafe-path fixture manifest: the module root carries an
      * embedded line terminator (the JSON escape the parser resolves to a real
      * LF in the directory name), so the source display name of the emitted
@@ -2014,6 +2043,249 @@ public class ProductionDispatchTest {
             artifactName + " caller restore");
     }
 
+    /**
+     * The omitted-default regression: on both targets every omitted default
+     * invocation, the owner-side transfer construction, and the caller's
+     * final continuation carry the source comment and sidecar mapping of
+     * their own source group. The caller's mapping inside an emitted
+     * failure branch stays on the caller's own terminal and never leaks to
+     * the owner-side statements that follow the branch.
+     */
+    private static void testSourceMapOmittedDefaultOwnerAttribution()
+            throws Exception {
+        System.out.println("-- source map: the owner-side factory group "
+            + "restores its own comment and mapping after every "
+            + "omitted-default failure branch on both targets --");
+
+        Path project = Files.createTempDirectory(
+            "production-dispatch-map-omitted-");
+        try {
+            write(project, "deal.json", DEAL_JSON_JVM);
+            write(project, "src/lib.deal", OMITTED_DEFAULT_LIB_SOURCE);
+            write(project, "src/main.deal", OMITTED_DEFAULT_APP_SOURCE);
+            String entry = project.resolve("src/main.deal").toAbsolutePath()
+                .toString();
+
+            // (1) The JVM target: the two defaults are omitted, so the
+            // owner-side failure branches execute; the artifact still
+            // compiles and runs the entry, and every owner-side resumption
+            // is attributed to the owning module again.
+            Path jvmOut = project.resolve("build/jvm");
+            ProjectOutcome jvmCompile = runProductionCli("compile", entry,
+                "--backend", "jvm", "--source-map", "--output",
+                jvmOut.toAbsolutePath().toString());
+            check(jvmCompile.exitCode() == 0,
+                "the omitted-default JVM compile succeeds: "
+                    + jvmCompile.stderr());
+            if (jvmCompile.exitCode() == 0) {
+                verifyOmittedDefaultOwnerAttribution(project, jvmOut,
+                    "Main.java", "// ", "String __prevMod_\\d+ = MODULE;",
+                    "JvmRuntime\\.setModule\\(MODULE\\);",
+                    "\\w+ = default\\d+\\(\\);",
+                    "\\w+ __tf_\\d+_\\d+ = new \\w+\\(\\);", "throw __e;");
+                String classpath = Path.of("build").toAbsolutePath().normalize()
+                    .toString();
+                ProcessOutcome javac = runProcess(project, "javac", "--release",
+                    "25", "-proc:none", "-cp", classpath, "-d",
+                    jvmOut.toString(), jvmOut.resolve("Main.java").toString());
+                check(javac.exitCode() == 0,
+                    "the omitted-default JVM artifact compiles: "
+                        + javac.output());
+                if (javac.exitCode() == 0) {
+                    ProcessOutcome run = runProcess(jvmOut, "java", "-cp",
+                        classpath + File.pathSeparator + jvmOut, "Main");
+                    check(run.exitCode() == 0
+                            && countOccurrences(run.output(),
+                                "PROBE|OMITTED-DEFAULTS") == 1,
+                        "the omitted-default JVM artifact evaluates both "
+                            + "defaults and runs the entry once: exit="
+                            + run.exitCode() + " output=" + run.output());
+                }
+            }
+
+            // (2) The LuaJIT target: the same owner-side resumptions carry
+            // the same comments and mappings, and the chunk runs under the
+            // real interpreter.
+            Path luaOut = project.resolve("build/lua");
+            ProjectOutcome luaCompile = runProductionCli("compile", entry,
+                "--backend", "luajit", "--source-map", "--output",
+                luaOut.toAbsolutePath().toString());
+            check(luaCompile.exitCode() == 0,
+                "the omitted-default LuaJIT compile succeeds: "
+                    + luaCompile.stderr());
+            if (luaCompile.exitCode() == 0) {
+                verifyOmittedDefaultOwnerAttribution(project, luaOut,
+                    "main.lua", "-- ",
+                    "__modStack\\[#__modStack \\+ 1\\] = __module",
+                    "__modStack\\[#__modStack\\] = nil",
+                    "__okT, __resT = pcall\\(__factories\\.D\\d+\\)",
+                    "__instT = \\{\\}",
+                    "__ev\\(\"main#\\d+\", \"FAILURE\", \"CLASS_NEW\".*");
+                ProcessOutcome run = runProcess(luaOut, "luajit", "main.lua");
+                check(run.exitCode() == 0
+                        && countOccurrences(run.output(),
+                            "PROBE|OMITTED-DEFAULTS") == 1,
+                    "the omitted-default LuaJIT chunk evaluates both "
+                        + "defaults and runs the entry once: exit="
+                        + run.exitCode() + " output=" + run.output());
+            }
+        } finally {
+            deleteRecursively(project);
+        }
+    }
+
+    /**
+     * Verifies the omitted-default factory groups of one produced artifact:
+     * each omitted default invocation, the owner-side transfer construction,
+     * and the caller's final continuation carry the source comment and
+     * sidecar mapping of their own source group; each emitted failure branch
+     * keeps the caller's mapping on the caller's own terminal.
+     */
+    private static void verifyOmittedDefaultOwnerAttribution(Path project,
+            Path outputRoot, String artifactName, String commentMarker,
+            String factoryGroupStart, String factoryGroupEnd,
+            String defaultInvocation, String transferConstruction,
+            String callerTerminal) throws Exception {
+        List<String> lines = Files.readString(outputRoot.resolve(artifactName))
+            .lines().toList();
+        List<String> appLines = Files.readString(project.resolve("src/main.deal"))
+            .lines().toList();
+        List<String> libLines = Files.readString(project.resolve("src/lib.deal"))
+            .lines().toList();
+        int classLine = lineContaining(libLines, "export class Point") + 1;
+        int classColumn = libLines.get(classLine - 1).indexOf("class") + 1;
+        int constructLine = lineContaining(appLines, "let p: lib.Point") + 1;
+        int constructColumn = appLines.get(constructLine - 1).indexOf("{") + 1;
+        String ownerComment = commentMarker + "src/lib.deal:" + classLine + ":"
+            + classColumn;
+        String callerComment = commentMarker + "src/main.deal:" + constructLine
+            + ":" + constructColumn;
+
+        // The one owner-side factory group of the fixture, closed by its
+        // success-path module restore (the first restore after the transfer
+        // construction; the failure branches restore inside the group).
+        List<Integer> groupStarts = matchingLines(lines, factoryGroupStart);
+        checkEq(1, groupStarts.size(), artifactName
+            + " carries exactly one owner-side factory group: " + groupStarts);
+        if (groupStarts.size() != 1) {
+            return;
+        }
+        int groupStart = groupStarts.get(0);
+
+        // (1) Owner-side resumption: every omitted default invocation and
+        // the owner-side transfer construction follow the owning module's
+        // factory comment and are mapped by the owning module's sidecar at
+        // exactly that generated position.
+        List<Integer> invocations = new ArrayList<>();
+        for (int candidate : matchingLines(lines, defaultInvocation)) {
+            if (candidate > groupStart) {
+                invocations.add(candidate);
+            }
+        }
+        checkEq(2, invocations.size(), artifactName
+            + " emits one invocation per omitted default: " + invocations);
+        int transfer = -1;
+        for (int i = (invocations.isEmpty()
+                ? groupStart : invocations.get(invocations.size() - 1));
+                i < lines.size(); i++) {
+            if (lines.get(i).strip().matches(transferConstruction)) {
+                transfer = i + 1;
+                break;
+            }
+        }
+        check(transfer > 0, artifactName
+            + " emits the owner-side transfer construction after the last "
+            + "omitted default: " + transfer);
+        if (transfer <= 0) {
+            return;
+        }
+        int groupEnd = -1;
+        for (int candidate : matchingLines(lines, factoryGroupEnd)) {
+            if (candidate > transfer) {
+                groupEnd = candidate;
+                break;
+            }
+        }
+        check(groupEnd > transfer, artifactName
+            + " closes the owner-side factory group on the success path: "
+            + groupEnd);
+        if (groupEnd <= transfer) {
+            return;
+        }
+        List<Integer> ownerStatements = new ArrayList<>(invocations);
+        ownerStatements.add(transfer);
+        for (int statement : ownerStatements) {
+            int comment = nearestPrecedingComment(lines, statement,
+                commentMarker);
+            check(comment > 0, artifactName + " precedes generated line "
+                + statement + " with a source comment: " + comment);
+            if (comment <= 0) {
+                continue;
+            }
+            checkEq(ownerComment, lines.get(comment - 1).strip(),
+                artifactName + " attributes generated line " + statement
+                    + " to the owning module's factory group");
+            checkSidecarMapping(outputRoot, "lib.deal.map.json", comment,
+                lines.get(comment - 1), commentMarker, classLine, classColumn,
+                artifactName + " owner-side resumption at generated line "
+                    + statement);
+        }
+
+        // (2) Caller retention: each emitted failure branch keeps the
+        // caller's mapping on the caller's own terminal.
+        List<Integer> callerComments = new ArrayList<>();
+        for (int index = groupStart; index < groupEnd - 1; index++) {
+            if (lines.get(index).strip().equals(callerComment)) {
+                callerComments.add(index + 1);
+            }
+        }
+        checkEq(2, callerComments.size(), artifactName
+            + " retains the caller's mapping inside each failure branch: "
+            + callerComments);
+        for (int comment : callerComments) {
+            boolean terminal = comment < lines.size()
+                && lines.get(comment).strip().matches(callerTerminal);
+            check(terminal, artifactName + " keeps the caller mapping on the "
+                + "caller's own failure terminal after line " + comment + ": "
+                + (comment < lines.size() ? lines.get(comment).strip() : ""));
+        }
+
+        // (3) Caller continuation: the first source comment after the
+        // group's success-path restore names the caller's own construction
+        // span and the entry sidecar maps it.
+        int continuation = -1;
+        for (int i = groupEnd; i < lines.size(); i++) {
+            if (lines.get(i).strip().startsWith(commentMarker)) {
+                continuation = i + 1;
+                break;
+            }
+        }
+        check(continuation > 0, artifactName
+            + " emits a source comment after the owner-side factory group");
+        if (continuation > 0) {
+            checkEq(callerComment, lines.get(continuation - 1).strip(),
+                artifactName + " restores the caller's own source comment "
+                    + "when the caller's statements resume");
+            checkSidecarMapping(outputRoot, "main.deal.map.json", continuation,
+                lines.get(continuation - 1), commentMarker, constructLine,
+                constructColumn, artifactName + " caller continuation");
+        }
+    }
+
+    /**
+     * The line number (1-based) of the nearest source comment at or before
+     * the given generated statement line, or {@code -1}.
+     */
+    private static int nearestPrecedingComment(List<String> lines,
+            int statementLine, String commentMarker) {
+        for (int i = statementLine - 2; i >= 0; i--) {
+            if (lines.get(i).strip().startsWith(commentMarker)) {
+                return i + 1;
+            }
+        }
+        return -1;
+    }
+
     /** The 0-based index of the first line containing the text, or -1. */
     private static int lineContaining(List<String> lines, String needle) {
         for (int i = 0; i < lines.size(); i++) {
@@ -2816,6 +3088,7 @@ public class ProductionDispatchTest {
         testSourceMapUnsafeSourcePathText();
         testSourceMapControlCharacterPaths();
         testSourceMapDirectEmissionGroups();
+        testSourceMapOmittedDefaultOwnerAttribution();
         testSingleArmDispatch();
         testLegacyRejectionStagesNothingWithDumps();
         testRetainedTestScopeEmitters();

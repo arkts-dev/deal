@@ -5241,6 +5241,12 @@ public final class JvmSemanticEmitter {
                     "JvmRuntime.errtext(__e)", indent + 1);
                 out.append(indent(indent)).append("  throw __e;\n");
                 out.append(indent(indent)).append("}\n");
+                // The failure branch is the only caller-attributed region
+                // of the owner-side group: emission resumes in the owning
+                // module, so the owner's comment and mapping re-open before
+                // the default's completion statements (the mapping sequence
+                // is lexical, not execution-path-dependent).
+                beginSourceMappedGroup(factoryOp, indent(indent));
                 emitClassDefaultSuccess(defaultOp, indent);
                 filled.add(defaultOp);
             }
