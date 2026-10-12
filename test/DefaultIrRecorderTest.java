@@ -5,6 +5,7 @@ import deal.ast.Block;
 import deal.ast.ClassDeclaration;
 import deal.ast.ClassField;
 import deal.ast.ExpressionNode;
+import deal.ast.ExpressionStatement;
 import deal.ast.ExportDeclaration;
 import deal.ast.FunctionDeclaration;
 import deal.ast.LiteralExpr;
@@ -228,6 +229,7 @@ public final class DefaultIrRecorderTest {
         testShadowedLocalCalleeSiblingCollision();
         testDeclaredContextSiblingCollision();
         testIdentifierAssignmentSiblingCollision();
+        testMemberAssignmentSiblingCollision();
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -453,7 +455,13 @@ public final class DefaultIrRecorderTest {
         DefaultPlanImport planImport() {
             Type classType = classType();
             Map<String, Type> exports = new LinkedHashMap<>();
-            exports.put(declaration.name(), classType);
+            for (StatementNode stmt : program.statements()) {
+                if (stmt instanceof ExportDeclaration ed
+                        && ed.declaration() instanceof ClassDeclaration cd) {
+                    exports.put(cd.name(), Types.classType(cd.name(),
+                        new CanonicalClassIdentity(identity, cd.name())));
+                }
+            }
             exports.put(functionName(), Types.func(List.of(classType),
                 Type.Int.INSTANCE));
             return new DefaultPlanImport(sourcePath, modulePath, program,
@@ -527,6 +535,40 @@ public final class DefaultIrRecorderTest {
         return List.of(new ClassField(span, "v", false, false,
             new NamedType(span, "int"), java.util.Optional.of(
                 new LiteralExpr(span, new LiteralValue.IntLiteral(0)))));
+    }
+
+    /**
+     * The member-assignment provider (review cycle 5): the demanded
+     * exported class plus an exported wrapper class whose class-typed
+     * member field names the demanded class, so a member assignment
+     * target's declared field type is the only context of the assigned
+     * literal.
+     */
+    private static SiblingProvider siblingProviderWithMemberField(
+            String alias, String sourcePath, String modulePath,
+            CanonicalModuleIdentity identity, String className) {
+        Span classSpan = new Span(sourcePath, 1, 1, 1, 40, 0, 39);
+        ClassDeclaration declaration = new ClassDeclaration(classSpan,
+            className, siblingFields(classSpan));
+        Span wrapperSpan = new Span(sourcePath, 2, 1, 2, 40, 40, 79);
+        ClassDeclaration wrapper = new ClassDeclaration(wrapperSpan,
+            "Wrap", List.of(new ClassField(wrapperSpan, "inner", false,
+                false, new NamedType(wrapperSpan, className),
+                java.util.Optional.of(new ObjectLiteralExpr(wrapperSpan,
+                    List.of())))));
+        Span functionSpan = new Span(sourcePath, 3, 1, 3, 30, 80, 109);
+        FunctionDeclaration use = new FunctionDeclaration(functionSpan,
+            "use" + className,
+            List.of(new Parameter(functionSpan, "x",
+                new NamedType(functionSpan, className))),
+            new NamedType(functionSpan, "int"),
+            new Block(functionSpan, List.of()), false, false);
+        ProgramNode program = new ProgramNode(functionSpan, List.of(
+            new ExportDeclaration(classSpan, declaration),
+            new ExportDeclaration(wrapperSpan, wrapper),
+            new ExportDeclaration(functionSpan, use)));
+        return new SiblingProvider(alias, sourcePath, modulePath, identity,
+            program, declaration, null);
     }
 
     /**
@@ -865,6 +907,113 @@ public final class DefaultIrRecorderTest {
                     .VariableSymbol(vd.name(),
                         classTypeOf(annotation, providers), false, null,
                         annotation));
+            }
+        }
+    }
+
+    /**
+     * One member-assignment body probe (review cycle 5): a function
+     * parameter declared with the given qualified wrapper spelling
+     * assigns a class literal to the wrapper's class-typed member. The
+     * owner expression's checked route (the parameter's own annotation
+     * node, exactly what the pass-1 resolver records) names the
+     * declaring provider, so that provider's own field declaration —
+     * never the first identity-equal export — owns the literal. Returns
+     * the recorded occurrences.
+     */
+    private static List<DefaultResourceOccurrence> siblingMemberAssignmentRun(
+            List<SiblingProvider> providers, String ownerSpelling,
+            Type ownerType, Type literalType) {
+        StringBuilder source = new StringBuilder();
+        for (SiblingProvider provider : providers) {
+            source.append("import * as ").append(provider.alias())
+                .append(" from \"./").append(provider.alias())
+                .append("\"\n");
+        }
+        source.append("function make(w: ").append(ownerSpelling)
+            .append("): int { w.inner = { v: 7 }; return w.inner.v; }\n");
+        LexResult lex = new Lexer(source.toString(), "main.deal").tokenize();
+        check(!lex.hasErrors(), "member-assignment fixture lexes: "
+            + lex.diagnostics());
+        ParseResult parse = new Parser(lex.tokens(), "main.deal",
+            lex.directiveEvents()).parse();
+        check(!parse.hasErrors(), "member-assignment fixture parses: "
+            + parse.diagnostics());
+        ProgramNode program = parse.program();
+        FunctionDeclaration make = null;
+        for (StatementNode stmt : program.statements()) {
+            if (stmt instanceof FunctionDeclaration fd
+                    && fd.body() != null) {
+                make = fd;
+            }
+        }
+        check(make != null, "the member-assignment fixture declares"
+            + " a function");
+        if (make == null) {
+            return List.of();
+        }
+        Map<ExpressionNode, Type> typeMap = new HashMap<>();
+        pinBodyLiterals(make.body().statements(), literalType, typeMap);
+        pinMemberOwners(make.body().statements(), "w", ownerType, typeMap);
+        Map<String, DefaultPlanImport> imports = new LinkedHashMap<>();
+        Map<String, CanonicalModuleIdentity> classification =
+            new LinkedHashMap<>();
+        SymbolTable scope = new SymbolTable();
+        for (SiblingProvider provider : providers) {
+            DefaultPlanImport planImport = provider.planImport();
+            imports.put(provider.alias(), planImport);
+            classification.put(provider.modulePath(), provider.identity());
+            scope.define(provider.alias(), new deal.checker.Symbol
+                .ModuleSymbol(provider.alias(), planImport.exports(),
+                    new Span("main.deal", 1, 1, 1, 5)));
+        }
+        DefaultIrRecorder recorder = new DefaultIrRecorder(
+            typeMap, Map.of(), imports, classification,
+            CONSUMER_LOCATION, "src.main", program,
+            (typeNode, resolutionScope) ->
+                typeNode instanceof deal.ast.QualifiedType qualified
+                    && qualified.typeName().equals("Wrap")
+                ? ownerType : classTypeOf(typeNode, providers),
+            Map.of());
+        recorder.recordFunctionBody(make, scope);
+        return recorder.occurrences();
+    }
+
+    /** Pins the owner expression of every member-assignment target of
+     * the walked body to the wrapper's class type (the checker's
+     * member-access object type). */
+    private static void pinMemberOwners(List<StatementNode> statements,
+            String ownerName, Type ownerType,
+            Map<ExpressionNode, Type> typeMap) {
+        for (StatementNode stmt : statements) {
+            switch (stmt) {
+                case ExpressionStatement es -> pinMemberOwners(es.expr(),
+                    ownerName, ownerType, typeMap);
+                case VariableDeclaration vd -> {
+                    if (vd.initializer() != null) {
+                        pinMemberOwners(vd.initializer(), ownerName,
+                            ownerType, typeMap);
+                    }
+                }
+                case ReturnStatement rs -> rs.expr().ifPresent(expr ->
+                    pinMemberOwners(expr, ownerName, ownerType, typeMap));
+                case Block block -> pinMemberOwners(block.statements(),
+                    ownerName, ownerType, typeMap);
+                default -> { }
+            }
+        }
+    }
+
+    private static void pinMemberOwners(ExpressionNode root,
+            String ownerName, Type ownerType,
+            Map<ExpressionNode, Type> typeMap) {
+        for (ExpressionNode node : collectAll(root)) {
+            if (node instanceof deal.ast.AssignmentExpr assign
+                    && assign.target()
+                        instanceof deal.ast.MemberAccessExpr mae
+                    && mae.object() instanceof deal.ast.IdentifierExpr id
+                    && id.name().equals(ownerName)) {
+                typeMap.put(id, ownerType);
             }
         }
     }
@@ -1300,6 +1449,44 @@ public final class DefaultIrRecorderTest {
                         + " [{ v: 7 }]; xs[0] = { v: 7 }; return xs[0].v; }",
                     codec.classType()), codec,
                 "the indexed-assignment probe (codec element spelling)");
+        }
+    }
+
+    /**
+     * The member-assignment collision (review cycle 5): the assignment
+     * target is a member of a binding whose declared annotation names
+     * one identity-equal sibling, so the member's field declaration must
+     * be read from that provider's own program — never from the first
+     * identity-equal export of the import order. Asserted in both import
+     * orders for both sibling spellings, with the exact defining
+     * declaration range.
+     */
+    private static void testMemberAssignmentSiblingCollision() {
+        System.out.println("-- member assignment: the owner binding's own"
+            + " route owns the member's declared field provider (both"
+            + " import orders) --");
+        CanonicalModuleIdentity sibling =
+            new CanonicalModuleIdentity.ProjectModule(SIBLING_IDENTITY);
+        SiblingProvider ir = siblingProviderWithMemberField("ir",
+            "/proj/src/m/ir.deal", "src.m.ir", sibling, "Ir");
+        SiblingProvider codec = siblingProviderWithMemberField("codec",
+            "/proj/src/m/codec.deal", "src.m.codec", sibling, "Ir");
+        check(codec.classIdentity().equals(ir.classIdentity()),
+            "the fixture's exported same-name siblings are identity-equal"
+                + " (the directory-keyed model)");
+        Type wrapper = Types.classType("Wrap",
+            new CanonicalClassIdentity(sibling, "Wrap"));
+
+        for (List<SiblingProvider> order : List.of(
+                List.of(ir, codec), List.of(codec, ir))) {
+            checkSiblingClassOccurrence(
+                siblingMemberAssignmentRun(order, "ir.Wrap", wrapper,
+                    ir.classType()), ir,
+                "the member-assignment probe (ir.Wrap owner)");
+            checkSiblingClassOccurrence(
+                siblingMemberAssignmentRun(order, "codec.Wrap", wrapper,
+                    codec.classType()), codec,
+                "the member-assignment probe (codec.Wrap owner)");
         }
     }
 

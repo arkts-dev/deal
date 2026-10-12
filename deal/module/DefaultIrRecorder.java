@@ -1173,8 +1173,8 @@ final class DefaultIrRecorder {
      * target) names for a constructed value: the assigned member's
      * declared type node read from the owning class's exact declaration
      * (the same-module program, or the checked provider of the owner's
-     * identity). Null when the checked symbol surface does not tie the
-     * member to one declaration.
+     * own resolved route). Null when the checked symbol surface does not
+     * tie the member to one declaration.
      */
     private DefaultPlanImport memberContextProvider(MemberAccessExpr mae,
             SymbolTable scope) {
@@ -1184,8 +1184,24 @@ final class DefaultIrRecorder {
         Symbol sym = scope.resolve(owner.name());
         if (sym instanceof Symbol.ClassSymbol cs
                 && cs.identity().equals(owner.identity())) {
-            return providerForDeclaredField(program, null, owner,
-                mae.field());
+            DefaultPlanImport declared = providerForDeclaredField(program,
+                null, owner, mae.field());
+            if (declared != null) {
+                return declared;
+            }
+        }
+        // The owner expression's own checked route names the owner's
+        // declaring provider (a binding declared as ir.Wrap, an inferred
+        // binding initialized from an ir route, or a member/index read of
+        // one): that provider's program carries the member's field
+        // declaration, so an identity-equal sibling module and the import
+        // order never capture the assigned literal.
+        DefaultPlanImport ownerProvider = expressionContextProvider(
+            mae.object(), scope);
+        if (ownerProvider != null && ownsClass(ownerProvider, owner,
+                owner.identity().moduleIdentity())) {
+            return providerForDeclaredField(ownerProvider.program(),
+                ownerProvider, owner, mae.field());
         }
         DefaultPlanImport provider = providerForClass(owner, null);
         return provider == null ? null : providerForDeclaredField(

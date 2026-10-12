@@ -424,6 +424,72 @@ public class ProductionDispatchTest {
         }
         """;
 
+    /**
+     * The member-assignment collision (review cycle 5): the assigned
+     * target is a class-typed member of a wrapper binding (a local, an
+     * inferred binding, a same-module class field, an array element,
+     * and a parameter), so the owner expression's own checked route
+     * names the field declaration's provider — never the first
+     * identity-equal export of the import order.
+     */
+    private static final String ASSIGN_MEMBER_IR_SOURCE = """
+        export class Ir { a: int = 7; }
+        export class Wrap { inner: Ir = {}; }
+        export function makeWrap(): Wrap { return {}; }
+        """;
+
+    private static final String ASSIGN_MEMBER_CODEC_SOURCE = """
+        export class Ir { a: int = 93; }
+        export class Wrap { inner: Ir = {}; }
+        export function makeWrap(): Wrap { return {}; }
+        """;
+
+    private static final String ASSIGN_MEMBER_MAIN_CODEC_FIRST = """
+        import * as console from "std/console";
+        import * as codec from "./m/codec";
+        import * as ir from "./m/ir";
+        class Holder { w: ir.Wrap = {}; }
+        function setParam(w: ir.Wrap): int { w.inner = {}; return w.inner.a; }
+        export function main(): null {
+          let w: ir.Wrap = {};
+          w.inner = {};
+          let v = ir.makeWrap();
+          v.inner = {};
+          let h: Holder = {};
+          h.w.inner = {};
+          let xs: ir.Wrap[] = [{}];
+          xs[0].inner = {};
+          if (w.inner.a === 7 && v.inner.a === 7 && h.w.inner.a === 7
+              && xs[0].inner.a === 7 && setParam({}) === 7) {
+            console.log("ok");
+          } else { console.log("wrong"); }
+          return null;
+        }
+        """;
+
+    private static final String ASSIGN_MEMBER_MAIN_IR_FIRST = """
+        import * as console from "std/console";
+        import * as ir from "./m/ir";
+        import * as codec from "./m/codec";
+        class Holder { w: ir.Wrap = {}; }
+        function setParam(w: ir.Wrap): int { w.inner = {}; return w.inner.a; }
+        export function main(): null {
+          let w: ir.Wrap = {};
+          w.inner = {};
+          let v = ir.makeWrap();
+          v.inner = {};
+          let h: Holder = {};
+          h.w.inner = {};
+          let xs: ir.Wrap[] = [{}];
+          xs[0].inner = {};
+          if (w.inner.a === 7 && v.inner.a === 7 && h.w.inner.a === 7
+              && xs[0].inner.a === 7 && setParam({}) === 7) {
+            console.log("ok");
+          } else { console.log("wrong"); }
+          return null;
+        }
+        """;
+
     private static final String HOST_DEAL_JSON_LUA = """
         {
           "languageVersion": "1.2",
@@ -895,289 +961,28 @@ public class ProductionDispatchTest {
     // =========================================================================
 
     /**
-     * The bounded-subprocess contract of the focused acceptance drive
-     * (adapted from the retained {@code JsonableHelperProductionDriveTest}
-     * runner): every artifact invocation drains stdout and stderr
-     * separately with the canonical 1 MiB cap, runs under one monotonic
-     * deadline, owns its whole process tree on every exit path, and
-     * reports an exceeded deadline as the named hard
-     * {@link BoundedProcessTimeout}. A missing toolchain is a failed
-     * invocation, never a skip, so a run that cannot produce the
-     * demanded artifact outcome fails the drive.
+     * The bounded real-toolchain runner of the focused acceptance drive:
+     * the retained {@link BoundedProcess} helper. Every artifact
+     * invocation drains stdout and stderr separately with the canonical
+     * 1 MiB cap, runs under one monotonic deadline that covers the child
+     * and both drains, and owns its whole process tree on every exit
+     * path (descendants, the owned process group, the direct child, then
+     * a bounded drain and reap). A missing toolchain or an exceeded
+     * deadline is the named hard
+     * {@link BoundedProcess.BoundedProcessTimeoutException}, never a
+     * skip, so a run that cannot produce the demanded artifact outcome
+     * fails the drive.
      */
-    private static final int STREAM_CAP_BYTES = 1 << 20;
-
-    private static final String TRUNCATION_MARKER =
-        "\n[STREAM TRUNCATED at 1 MiB]\n";
-
-    private static final long BOUNDED_PROCESS_BUDGET_MS = 300_000L;
-
-    private static final long POST_KILL_DRAIN_BUDGET_MS = 5_000L;
-
-    private static final long REAP_BUDGET_MS = 5_000L;
-
-    /** A hard gate failure, never a skip: an {@link AssertionError} so no
-     * probe-style guard reads a hung toolchain as absent. */
-    private static final class BoundedProcessTimeout
-            extends AssertionError {
-        private static final long serialVersionUID = 1L;
-
-        BoundedProcessTimeout(String message) {
-            super(message);
-        }
-    }
-
-    /** One stream's capped, concurrent drain: the first
-     * {@link #STREAM_CAP_BYTES} bytes are retained and the read continues
-     * to EOF, so a child that saturates a pipe can never deadlock the
-     * harness. */
-    private static final class CappedDrain implements Runnable {
-
-        private final java.io.InputStream stream;
-        private final ByteArrayOutputStream retained =
-            new ByteArrayOutputStream();
-        private volatile boolean truncated;
-
-        CappedDrain(java.io.InputStream stream) {
-            this.stream = stream;
-        }
-
-        @Override
-        public void run() {
-            byte[] buffer = new byte[8192];
-            try (java.io.InputStream in = stream) {
-                int read;
-                while ((read = in.read(buffer)) >= 0) {
-                    int kept = Math.min(read, STREAM_CAP_BYTES
-                        - retained.size());
-                    if (kept > 0) {
-                        retained.write(buffer, 0, kept);
-                    }
-                    if (kept < read) {
-                        truncated = true;
-                    }
-                }
-            } catch (IOException ignored) {
-                // The stream ends when the child and its descendants are
-                // gone.
-            }
-        }
-
-        String text() {
-            String drained = new String(retained.toByteArray(),
-                StandardCharsets.UTF_8);
-            return truncated ? drained + TRUNCATION_MARKER : drained;
-        }
-    }
-
-    /** One bounded invocation's separate transcripts. */
-    private record BoundedOutcome(int exitCode, String stdout,
-                                  String stderr) {
-        String output() {
-            return "stdout=" + stdout.replace("\n", "\\n")
-                + " stderr=" + stderr.replace("\n", "\\n");
-        }
-    }
-
-    private static final String SETSID_BINARY =
-        firstExecutable("/usr/bin/setsid", "/bin/setsid");
-    private static final String KILL_BINARY =
-        firstExecutable("/bin/kill", "/usr/bin/kill");
-
-    private static String firstExecutable(String... candidates) {
-        for (String candidate : candidates) {
-            if (Files.isExecutable(Path.of(candidate))) {
-                return candidate;
-            }
-        }
-        return null;
-    }
-
-    /** The bounded run of one real-toolchain invocation at the canonical
-     * budget. */
-    private static BoundedOutcome boundedRun(Path directory,
+    private static BoundedProcess.BoundedResult boundedRun(Path directory,
             String... command) throws Exception {
-        return boundedRun(directory, BOUNDED_PROCESS_BUDGET_MS, command);
+        return BoundedProcess.runCaptured(Arrays.asList(command),
+            directory);
     }
 
-    /**
-     * The bounded real-toolchain runner: separate stdout/stderr
-     * transcripts, both streams drained concurrently with the canonical
-     * 1 MiB cap, the canonical 300000 ms deadline, and on timeout
-     * descendants-then-group-then-child forcible termination plus a
-     * drain to EOF and a reap, reported as the named hard
-     * {@link BoundedProcessTimeout}. One monotonic deadline covers the
-     * direct child and the drainage of both streams. The child is owned
-     * for the whole call: every path out of the wait — the child's
-     * completion, the deadline, an interruption of the waiting thread, or
-     * any other failure — terminates the whole owned tree, drains both
-     * streams to EOF, and reaps the direct child before the outcome
-     * returns or propagates.
-     */
-    private static BoundedOutcome boundedRun(Path directory, long budgetMs,
-            String... command) throws Exception {
-        boolean ownGroup = SETSID_BINARY != null;
-        List<String> argv = new ArrayList<>();
-        if (ownGroup) {
-            argv.add(SETSID_BINARY);
-        }
-        argv.addAll(Arrays.asList(command));
-        ProcessBuilder builder = new ProcessBuilder(argv);
-        builder.directory(directory.toFile());
-        builder.redirectErrorStream(false);
-        long deadlineNanos = System.nanoTime()
-            + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(budgetMs);
-        Process process = builder.start();
-        CappedDrain stdout = new CappedDrain(process.getInputStream());
-        CappedDrain stderr = new CappedDrain(process.getErrorStream());
-        Thread stdoutThread = new Thread(stdout,
-            "production-dispatch-stdout-" + command[0]);
-        Thread stderrThread = new Thread(stderr,
-            "production-dispatch-stderr-" + command[0]);
-        stdoutThread.setDaemon(true);
-        stderrThread.setDaemon(true);
-        stdoutThread.start();
-        stderrThread.start();
-        boolean[] interrupted = {false};
-        boolean finished = false;
-        boolean drained = false;
-        String timeout = null;
-        try {
-            finished = waitForChild(process, deadlineNanos, interrupted);
-            drained = awaitDrains(stdoutThread, stderrThread, deadlineNanos,
-                interrupted);
-            if (!finished) {
-                timeout = "BOUNDED_PROCESS_TIMEOUT " + command[0];
-            } else if (!drained) {
-                timeout = "BOUNDED_PROCESS_TIMEOUT " + command[0]
-                    + " (the stream drainage exceeded the child deadline)";
-            }
-        } finally {
-            terminateTree(process, ownGroup, interrupted);
-            awaitDrains(stdoutThread, stderrThread, System.nanoTime()
-                + java.util.concurrent.TimeUnit.MILLISECONDS
-                    .toNanos(POST_KILL_DRAIN_BUDGET_MS), interrupted);
-            reap(process, interrupted);
-        }
-        if (interrupted[0]) {
-            Thread.interrupted();
-            throw new InterruptedException("interrupted while waiting for "
-                + command[0]);
-        }
-        if (timeout != null) {
-            throw new BoundedProcessTimeout(timeout);
-        }
-        return new BoundedOutcome(process.exitValue(), stdout.text(),
-            stderr.text());
-    }
-
-    /** Waits for the direct child inside the one deadline; {@code false}
-     * means the deadline expired. */
-    private static boolean waitForChild(Process process, long deadlineNanos,
-            boolean[] interrupted) throws InterruptedException {
-        long remaining = deadlineNanos - System.nanoTime();
-        if (remaining <= 0) {
-            return false;
-        }
-        try {
-            return process.waitFor(remaining,
-                java.util.concurrent.TimeUnit.NANOSECONDS);
-        } catch (InterruptedException interruptedWait) {
-            interrupted[0] = true;
-            throw interruptedWait;
-        }
-    }
-
-    /** Terminates the owned tree: descendants first, then the child's
-     * process group (when the runner created one), then the direct
-     * child. */
-    private static void terminateTree(Process process, boolean ownGroup,
-            boolean[] interrupted) {
-        try {
-            process.descendants().forEach(ProcessHandle::destroyForcibly);
-        } catch (RuntimeException ignored) {
-            // A vanished subtree is already gone; the direct child is next.
-        }
-        if (ownGroup) {
-            killProcessGroup(process.pid(), interrupted);
-        }
-        process.destroyForcibly();
-    }
-
-    /** Kills every remaining member of the child's own process group from
-     * outside the group; the helper's own wait is bounded. */
-    private static void killProcessGroup(long groupId, boolean[] interrupted) {
-        List<String> argv = KILL_BINARY != null
-            ? List.of(KILL_BINARY, "-KILL", "--", "-" + groupId)
-            : List.of("bash", "-c", "kill -KILL -- -\"$1\"",
-                "production-dispatch-kill-group", Long.toString(groupId));
-        try {
-            ProcessBuilder killerBuilder = new ProcessBuilder(argv);
-            killerBuilder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
-            killerBuilder.redirectError(ProcessBuilder.Redirect.DISCARD);
-            Process killer = killerBuilder.start();
-            boolean killed = false;
-            try {
-                killed = killer.waitFor(POST_KILL_DRAIN_BUDGET_MS,
-                    java.util.concurrent.TimeUnit.MILLISECONDS);
-            } catch (InterruptedException interruptedKill) {
-                interrupted[0] = true;
-            }
-            if (!killed) {
-                killer.destroyForcibly();
-            }
-        } catch (Exception ignored) {
-            // The direct child's destroyForcibly remains the backstop.
-        }
-    }
-
-    /** Joins both capped drains to EOF inside the deadline; {@code false}
-     * means a drain was still alive at the deadline. */
-    private static boolean awaitDrains(Thread stdoutThread,
-            Thread stderrThread, long deadlineNanos, boolean[] interrupted) {
-        boolean drained = true;
-        for (Thread thread : new Thread[] {stdoutThread, stderrThread}) {
-            while (thread.isAlive()) {
-                long remaining = deadlineNanos - System.nanoTime();
-                if (remaining <= 0) {
-                    drained = false;
-                    break;
-                }
-                try {
-                    thread.join(Math.max(1L,
-                        java.util.concurrent.TimeUnit.NANOSECONDS
-                            .toMillis(remaining)));
-                } catch (InterruptedException interruptedJoin) {
-                    interrupted[0] = true;
-                }
-            }
-        }
-        return drained;
-    }
-
-    /** Reaps the direct child inside a bounded window even when the waiting
-     * thread is interrupted. */
-    private static void reap(Process process, boolean[] interrupted) {
-        long deadlineNanos = System.nanoTime()
-            + java.util.concurrent.TimeUnit.MILLISECONDS
-                .toNanos(REAP_BUDGET_MS);
-        while (process.isAlive()) {
-            long remaining = deadlineNanos - System.nanoTime();
-            if (remaining <= 0) {
-                process.destroyForcibly();
-                return;
-            }
-            try {
-                if (process.waitFor(Math.max(1L,
-                        java.util.concurrent.TimeUnit.NANOSECONDS
-                            .toMillis(remaining)),
-                        java.util.concurrent.TimeUnit.MILLISECONDS)) {
-                    return;
-                }
-            } catch (InterruptedException interruptedReap) {
-                interrupted[0] = true;
-            }
-        }
+    /** The one-line stream transcript of a bounded invocation. */
+    private static String boundedOutput(BoundedProcess.BoundedResult run) {
+        return "stdout=" + run.stdout().replace("\n", "\\n")
+            + " stderr=" + run.stderr().replace("\n", "\\n");
     }
 
     /**
@@ -1558,11 +1363,11 @@ public class ProductionDispatchTest {
     private static void checkSiblingJvmRun(String label, Path project,
             Path out) throws Exception {
         String classpath = absoluteClasspath();
-        BoundedOutcome javac = boundedRun(project, "javac", "--release",
-            "25", "-proc:none", "-cp", classpath, "-d", out.toString(),
-            out.resolve("Main.java").toString());
+        BoundedProcess.BoundedResult javac = boundedRun(project, "javac",
+            "--release", "25", "-proc:none", "-cp", classpath, "-d",
+            out.toString(), out.resolve("Main.java").toString());
         check(javac.exitCode() == 0, "the " + label + " JVM artifact"
-            + " compiles: " + javac.output());
+            + " compiles: " + boundedOutput(javac));
         if (javac.exitCode() != 0) {
             return;
         }
@@ -1573,10 +1378,10 @@ public class ProductionDispatchTest {
     /** The sibling project's pinned observable: stdout "ok", exit 0, and
      * an empty stderr (separate streams, no merged-output masking). */
     private static void checkSiblingStdout(String label, String tool,
-            BoundedOutcome run) {
+            BoundedProcess.BoundedResult run) {
         check(run.exitCode() == 0, "the " + label + " artifact runs clean"
             + " under " + tool + ": exit=" + run.exitCode() + " output="
-            + run.output());
+            + boundedOutput(run));
         check("ok".equals(run.stdout().trim()),
             "the " + label + " artifact prints 'ok' under " + tool
                 + ", got '" + run.stdout() + "'");
@@ -2330,6 +2135,142 @@ public class ProductionDispatchTest {
                 // provider: the demanded default (7) is the observable
                 // outcome of the assignment literal and the parameter
                 // assignment alike, never the sibling's (93).
+                checkJsArtifactRun(label, root.resolve("out"),
+                    irFirst ? "main_ir_first.js" : "main.js");
+            }
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    private static void testProductionMemberAssignmentCollision()
+            throws Exception {
+        System.out.println("-- production invocation: a member assignment"
+            + " keeps the owner binding's exact field provider (both"
+            + " import orders; exact resource, digest, and artifact"
+            + " outcome) --");
+
+        Path root = Files.createTempDirectory("production-member-");
+        try {
+            write(root, "deal.json", """
+                {
+                  "languageVersion": "1.2",
+                  "stdlib": "1.2",
+                  "moduleRoots": ["src"],
+                  "dependencies": {},
+                  "externals": {},
+                  "backend": "js",
+                  "output": "out"
+                }
+                """);
+            write(root, "src/m/ir.deal", ASSIGN_MEMBER_IR_SOURCE);
+            write(root, "src/m/codec.deal", ASSIGN_MEMBER_CODEC_SOURCE);
+            write(root, "src/main.deal", ASSIGN_MEMBER_MAIN_CODEC_FIRST);
+            write(root, "src/main_ir_first.deal",
+                ASSIGN_MEMBER_MAIN_IR_FIRST);
+
+            String codecFirstDigest = null;
+            for (String entry : List.of("src/main.deal",
+                    "src/main_ir_first.deal")) {
+                String label = entry.contains("ir_first") ? "ir-first"
+                    : "codec-first";
+                boolean irFirst = label.equals("ir-first");
+                ArmCompile compile = compileWithInvocation(root, entry,
+                    productionInvocation());
+                check(compile.success(), "the " + label + " member"
+                    + " collision compile succeeds through the production"
+                    + " invocation: " + compile.orchestrator()
+                        .diagnostics());
+                if (!compile.success()) {
+                    continue;
+                }
+                CompilationOrchestrator orchestrator =
+                    compile.orchestrator();
+                String mainUri = serializerModuleUri(orchestrator,
+                    "/" + entry);
+                String irUri = serializerModuleUri(orchestrator,
+                    "/src/m/ir.deal");
+                String codecUri = serializerModuleUri(orchestrator,
+                    "/src/m/codec.deal");
+                DiagnosticRange irDeclaration = mainUri == null
+                        || irUri == null || codecUri == null ? null
+                    : classDeclarationRange(ASSIGN_MEMBER_IR_SOURCE,
+                        irUri.substring("file://".length()), "Ir");
+                DiagnosticRange codecIrDeclaration = mainUri == null
+                        || irUri == null || codecUri == null ? null
+                    : classDeclarationRange(ASSIGN_MEMBER_CODEC_SOURCE,
+                        codecUri.substring("file://".length()), "Ir");
+                DiagnosticRange irWrapDeclaration = mainUri == null
+                        || irUri == null || codecUri == null ? null
+                    : classDeclarationRange(ASSIGN_MEMBER_IR_SOURCE,
+                        irUri.substring("file://".length()), "Wrap");
+                check(mainUri != null && irUri != null && codecUri != null
+                        && irDeclaration != null
+                        && codecIrDeclaration != null
+                        && irWrapDeclaration != null,
+                    "the " + label + " member collision resolves every"
+                        + " module identity and declaration range");
+                if (mainUri == null || irUri == null || codecUri == null
+                        || irDeclaration == null
+                        || codecIrDeclaration == null
+                        || irWrapDeclaration == null) {
+                    continue;
+                }
+                // The assigned literals of every owner shape are the
+                // ordinary walk's runtime demands: exactly one edge on
+                // the declaring provider with the exact defining range
+                // and digest — never the identity-equal sibling.
+                List<RuntimeImportDependency> edges = classEdges(
+                    orchestrator, mainUri, "Ir",
+                    RuntimeImportDependency.Reason.RUNTIME_USE);
+                checkEq(1, edges.size(), "the " + label + " member"
+                    + " assignment walk holds exactly one ordinary Ir"
+                    + " edge");
+                List<RuntimeImportDependency> wrapEdges = classEdges(
+                    orchestrator, mainUri, "Wrap",
+                    RuntimeImportDependency.Reason.RUNTIME_USE);
+                checkEq(1, wrapEdges.size(), "the " + label + " member"
+                    + " assignment walk holds exactly one ordinary Wrap"
+                    + " edge");
+                if (edges.size() != 1 || wrapEdges.size() != 1) {
+                    continue;
+                }
+                RuntimeImportDependency edge = edges.get(0);
+                checkEq(irUri, edge.toSemanticModuleIdentity()
+                    .canonicalResolvedSourceUri(), "the " + label
+                    + " ordinary Ir edge targets the declaring module");
+                checkEq("ir", edge.importAlias(), "the " + label
+                    + " ordinary Ir edge keeps the spelled alias");
+                checkEq(irDeclaration, edge.semanticResourceIdentity()
+                    .lexicalDeclarationIdentity().sourceScalarRange(),
+                    "the " + label + " ordinary Ir edge carries the exact"
+                        + " defining declaration range");
+                check(!edge.semanticResourceIdentity()
+                    .lexicalDeclarationIdentity().sourceScalarRange()
+                    .equals(codecIrDeclaration), "the " + label
+                    + " ordinary Ir edge never binds the sibling"
+                    + " declaration");
+                RuntimeImportDependency wrapEdge = wrapEdges.get(0);
+                checkEq(irUri, wrapEdge.toSemanticModuleIdentity()
+                    .canonicalResolvedSourceUri(), "the " + label
+                    + " ordinary Wrap edge targets the declaring module");
+                checkEq("ir", wrapEdge.importAlias(), "the " + label
+                    + " ordinary Wrap edge keeps the spelled alias");
+                checkEq(irWrapDeclaration, wrapEdge.semanticResourceIdentity()
+                    .lexicalDeclarationIdentity().sourceScalarRange(),
+                    "the " + label + " ordinary Wrap edge carries the"
+                        + " exact defining declaration range");
+                if (irFirst) {
+                    checkEq(codecFirstDigest, edge.providerContractDigest(),
+                        "the member-assignment Ir provider digest is"
+                            + " import-order independent");
+                } else {
+                    codecFirstDigest = edge.providerContractDigest();
+                }
+
+                // The published artifact constructs every owner shape's
+                // own provider: the demanded default (7), never the
+                // sibling's (93).
                 checkJsArtifactRun(label, root.resolve("out"),
                     irFirst ? "main_ir_first.js" : "main.js");
             }
@@ -4764,6 +4705,7 @@ public class ProductionDispatchTest {
         testProductionNestedSiblingCollision();
         testProductionDeclaredContextSiblingCollision();
         testProductionIdentifierAssignmentCollision();
+        testProductionMemberAssignmentCollision();
         testConversionOverflowTerminal();
         testAtomicFailureThroughDispatch();
         testFailClosedFamilies();
