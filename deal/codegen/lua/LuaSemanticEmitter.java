@@ -428,10 +428,10 @@ public final class LuaSemanticEmitter {
             return hostClassModules.containsKey(classId);
         }
 
-        private String ffiPlanExpr(ClassId classId) {
+        private String ffiPlanExpr(SemanticOp op, ClassId classId) {
             ModuleId declarationModule = ffiClassModules.get(classId);
             if (declarationModule == null) {
-                throw new IllegalStateException("the class " + classId
+                throw rejectedOp(op, "the class " + classId
                     + " is not a declared extern-C class of the compile's"
                     + " declaration surface (the class plan entry has exactly one"
                     + " source — a producer defect)");
@@ -448,10 +448,10 @@ public final class LuaSemanticEmitter {
          * fail-closed producer defect in the prelude helper, never a silent
          * default.
          */
-        private String hostDefaultsExpr(ClassId classId) {
+        private String hostDefaultsExpr(SemanticOp op, ClassId classId) {
             ModuleId declarationModule = hostClassModules.get(classId);
             if (declarationModule == null) {
-                throw new IllegalStateException("the class " + classId
+                throw rejectedOp(op, "the class " + classId
                     + " is not a declared host class of the compile's declaration"
                     + " surface (the class defaults entry has exactly one source —"
                     + " a producer defect)");
@@ -1223,10 +1223,11 @@ public final class LuaSemanticEmitter {
          * or a producer defect: the lowering's STDLIB guard already rejects an
          * out-of-catalog member, so an emitted read always names a row.
          */
-        private static StdlibFunctionCatalog.Entry stdlibRowOf(String modulePath,
+        private static StdlibFunctionCatalog.Entry stdlibRowOf(SemanticOp op,
+                                                              String modulePath,
                                                               String exportName) {
             return StdlibFunctionCatalog.lookup(modulePath, exportName)
-                .orElseThrow(() -> new IllegalStateException("the STDLIB export read '"
+                .orElseThrow(() -> rejectedOp(op, "the STDLIB export read '"
                     + modulePath + "#" + exportName + "' resolves no closed catalog row"
                     + " (the catalog is the STDLIB kind's resolution authority — a"
                     + " producer defect)"));
@@ -2233,7 +2234,7 @@ public final class LuaSemanticEmitter {
                 // builtin Error field is required-present, and the checker
                 // rejects {@code delete e.f} with E4004 — the arm stays a
                 // fail-closed producer defect (K13 item 8).
-                throw new IllegalStateException("FIELD_DELETE " + op.opId()
+                throw rejectedOp(op, "FIELD_DELETE " + op.opId()
                     + " targets the builtin Error field '" + payload.field()
                     + "': every builtin Error field is required-present and the"
                     + " checker rejects the delete with E4004 — a fail-closed"
@@ -2267,7 +2268,7 @@ public final class LuaSemanticEmitter {
             return switch (field) {
                 case "code" -> "code";
                 case "message" -> "m";
-                default -> throw new IllegalStateException(op.kind() + " " + op.opId()
+                default -> throw rejectedOp(op, op.kind() + " " + op.opId()
                     + " names the builtin Error field '" + field + "': the builtin"
                     + " class declares exactly code and message — a fail-closed"
                     + " producer defect, never emitted");
@@ -2793,7 +2794,7 @@ public final class LuaSemanticEmitter {
                 FunctionId functionId = payload.functions().get(i);
                 LoweredFunction function = functionOf(functionId);
                 if (function == null) {
-                    throw new IllegalStateException("group member " + functionId
+                    throw rejectedOp(op, "group member " + functionId
                         + " has no LoweredFunction record (producer defect)");
                 }
                 StringBuilder args = new StringBuilder();
@@ -3066,7 +3067,7 @@ public final class LuaSemanticEmitter {
 
             FunctionExecutionBinding binding = payload.callee()
                     instanceof KindPayload.CallCallee.Dynamic
-                ? null : callBinding(payload);
+                ? null : callBinding(op, payload);
             emitStart(op);
 
             if (binding instanceof FunctionExecutionBinding.HostFunction host) {
@@ -3198,7 +3199,7 @@ public final class LuaSemanticEmitter {
                 }
                 case FunctionExecutionBinding.ExternalFunction external ->
                     emitExternalCall(op, payload, external);
-                default -> throw new IllegalStateException("CALL " + op.opId()
+                default -> throw rejectedOp(op, "CALL " + op.opId()
                     + " resolves a binding outside the statically-resolved slice: "
                     + binding);
             }
@@ -3229,7 +3230,7 @@ public final class LuaSemanticEmitter {
             LoweredFunction calleeFunction =
                 calleeUnit.functions().get(entryPayload.function());
             if (calleeFunction == null) {
-                throw new IllegalStateException("EXTERNAL_ENTRY " + entry.opId()
+                throw rejectedOp(entry, "EXTERNAL_ENTRY " + entry.opId()
                     + " resolves the missing lowered function "
                     + entryPayload.function().id() + " (producer defect)");
             }
@@ -3474,7 +3475,8 @@ public final class LuaSemanticEmitter {
             return null;
         }
 
-        private FunctionExecutionBinding callBinding(KindPayload.CallPayload payload) {
+        private FunctionExecutionBinding callBinding(SemanticOp op,
+                KindPayload.CallPayload payload) {
             FunctionExecutionBinding binding = switch (payload.callee()) {
                 case KindPayload.CallCallee.Static staticCallee -> staticCallee.binding();
                 case KindPayload.CallCallee.Indirect indirect ->
@@ -3483,7 +3485,7 @@ public final class LuaSemanticEmitter {
             };
             if (binding == null
                     && !(payload.callee() instanceof KindPayload.CallCallee.Dynamic)) {
-                throw new IllegalStateException("CALL " + payload
+                throw rejectedOp(op, "CALL " + payload
                     + " resolves no FunctionExecutionBinding (producer defect)");
             }
             return binding;
@@ -3510,7 +3512,7 @@ public final class LuaSemanticEmitter {
             SemanticOp crossing = opsById.get(hostValue.materializingBoundaryOpId());
             if (crossing == null
                     || !(crossing.payload() instanceof KindPayload.BoundaryPayload boundary)) {
-                throw new IllegalStateException("CALL " + op.opId()
+                throw rejectedOp(op, "CALL " + op.opId()
                     + " names the materializing host crossing "
                     + hostValue.materializingBoundaryOpId()
                     + ", which is not a boundary op of the emitted closure"
@@ -3607,7 +3609,7 @@ public final class LuaSemanticEmitter {
                 FunctionExecutionBinding.IntrinsicFunction intrinsic) {
             int argCount = emitHostParameterCells(op, payload);
             if (argCount != intrinsic.descriptor().paramTypes().size()) {
-                throw new IllegalStateException("the conversion intrinsic call "
+                throw rejectedOp(op, "the conversion intrinsic call "
                     + op.opId() + " records " + argCount + " parameter cell(s) for the '"
                     + intrinsic.kind() + "' intrinsic's "
                     + intrinsic.descriptor().paramTypes().size() + " declared "
@@ -3690,7 +3692,7 @@ public final class LuaSemanticEmitter {
                 FunctionExecutionBinding.AdapterBinding adapter) {
             IntrinsicKind kind = adapterIntrinsicKind(adapter);
             if (kind == null) {
-                throw new IllegalStateException("CALL " + op.opId()
+                throw rejectedOp(op, "CALL " + op.opId()
                     + " records an adapter whose source is not the seeded intrinsic "
                     + "identity (producer defect)");
             }
@@ -3708,7 +3710,7 @@ public final class LuaSemanticEmitter {
             int m = adapter.sourceSignature().paramTypes().size();
             if (m != declared.paramTypes().size()
                     || m > payload.parameterBoundaryOpIds().size()) {
-                throw new IllegalStateException("the adapter-over-intrinsic call "
+                throw rejectedOp(op, "the adapter-over-intrinsic call "
                     + op.opId() + " projects " + m + " leading source argument(s) "
                     + "onto the '" + kind + "' intrinsic's "
                     + declared.paramTypes().size() + " declared parameter(s) with "
@@ -3748,7 +3750,7 @@ public final class LuaSemanticEmitter {
                 if (isFunctionPosition(descriptor)
                         || descriptor instanceof RuntimeDescriptor.Class
                         || descriptor instanceof RuntimeDescriptor.Nullable) {
-                    throw new IllegalStateException("the cataloged callable '"
+                    throw rejectedOp(op, "the cataloged callable '"
                         + row.declaredDescriptor().canonicalSpecText() + "' arrives at "
                         + op.opId() + " with the parameter position "
                         + descriptor.canonicalSpecText() + ", whose host-facing "
@@ -3873,14 +3875,14 @@ public final class LuaSemanticEmitter {
                                      KindPayload.CallCallee.Dynamic callee) {
             KindPayload.DynamicReturnBoundary cells = payload.dynamicReturnBoundary();
             if (cells == null) {
-                throw new IllegalStateException("the dynamic CALL " + op.opId()
+                throw rejectedOp(op, "the dynamic CALL " + op.opId()
                     + " records no DynamicReturnBoundary cell set (producer defect)");
             }
             SemanticOp hostCell = opsById.get(cells.hostBoundaryOpId());
             if (hostCell == null
                     || !(hostCell.payload() instanceof KindPayload.BoundaryPayload boundary)
                     || boundary.kind() != BoundaryKind.HOST_TO_DEAL) {
-                throw new IllegalStateException("the dynamic CALL " + op.opId()
+                throw rejectedOp(op, "the dynamic CALL " + op.opId()
                     + " records the host return cell " + cells.hostBoundaryOpId()
                     + ", which is not a HOST_TO_DEAL boundary of the emitted closure"
                     + " (producer defect)");
@@ -4465,7 +4467,7 @@ public final class LuaSemanticEmitter {
                 layout = payload.layout();
             }
             if (layout == null) {
-                throw new IllegalStateException("CLASS_NEW " + op.opId() + " classId "
+                throw rejectedOp(op, "CLASS_NEW " + op.opId() + " classId "
                     + payload.classId() + " has no layout in the resolution context "
                     + "(producer defect)");
             }
@@ -4491,7 +4493,7 @@ public final class LuaSemanticEmitter {
                     // fields take the constant empty string at the
                     // construction site.
                 }
-                default -> throw new IllegalStateException("CLASS_NEW " + op.opId()
+                default -> throw rejectedOp(op, "CLASS_NEW " + op.opId()
                     + " carries defaultOwner " + payload.defaultOwner()
                     + " outside the emitted owners (producer defect)");
             }
@@ -4512,7 +4514,7 @@ public final class LuaSemanticEmitter {
             for (KindPayload.FieldBoundary entry : payload.fieldBoundaries()) {
                 SemanticOp boundary = opsById.get(entry.boundaryOpId());
                 if (boundary == null) {
-                    throw new IllegalStateException("CLASS_NEW " + op.opId()
+                    throw rejectedOp(op, "CLASS_NEW " + op.opId()
                         + " field boundary " + entry.boundaryOpId() + " does not "
                         + "resolve (producer defect)");
                 }
@@ -4580,7 +4582,7 @@ public final class LuaSemanticEmitter {
                                                         KindPayload.FieldBoundary entry) {
             SemanticOp boundary = opsById.get(entry.boundaryOpId());
             if (boundary == null) {
-                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                throw rejectedOp(op, "CLASS_NEW " + op.opId()
                     + " field boundary " + entry.boundaryOpId() + " does not "
                     + "resolve (producer defect)");
             }
@@ -4617,7 +4619,7 @@ public final class LuaSemanticEmitter {
                 KindPayload.ClassNewPayload payload, ClassLayout layout) {
             if (!ClassId.ERROR.equals(payload.classId())
                     || !layout.equals(ClassLayout.BUILTIN_ERROR)) {
-                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                throw rejectedOp(op, "CLASS_NEW " + op.opId()
                     + " carries defaultOwner BUILTIN_DEFAULTS for " + payload.classId()
                     + " over " + layout.classId() + ": the builtin-defaults owner is"
                     + " admissible only for the compiler-owned builtin Error class"
@@ -4644,7 +4646,7 @@ public final class LuaSemanticEmitter {
         private void emitClassNewHostDefaults(SemanticOp op,
                 KindPayload.ClassNewPayload payload, ClassLayout layout) {
             if (!isHostClass(payload.classId())) {
-                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                throw rejectedOp(op, "CLASS_NEW " + op.opId()
                     + " carries defaultOwner HOST_DEFAULTS for " + payload.classId()
                     + ", which is not a declared host class of the compile's"
                     + " declaration surface (the class defaults entry has exactly"
@@ -4652,7 +4654,7 @@ public final class LuaSemanticEmitter {
             }
             if (payload.classFactoryRef() != null
                     || !payload.classDefaultOpIds().isEmpty()) {
-                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                throw rejectedOp(op, "CLASS_NEW " + op.opId()
                     + " carries defaultOwner HOST_DEFAULTS with a non-null factory"
                     + " ref or a non-empty default child list: the host construction"
                     + " carries neither (the loaded defaults are data — a producer"
@@ -4674,7 +4676,7 @@ public final class LuaSemanticEmitter {
             // the shared route share).
             out.append("__okB, __instT = pcall(__rt.class_, ")
                 .append(luaString(payload.classId().text())).append(", ")
-                .append(hostDefaultsExpr(payload.classId())).append(", __provT, ")
+                .append(hostDefaultsExpr(op, payload.classId())).append(", __provT, ")
                 .append(classLiteralOriginArgs(op)).append(")\n");
             out.append("if not __okB then\n");
             out.append("  __eT = __hostError(__instT, ")
@@ -4707,7 +4709,7 @@ public final class LuaSemanticEmitter {
         private void emitClassNewFfiPlan(SemanticOp op,
                 KindPayload.ClassNewPayload payload, ClassLayout layout) {
             if (ffiClassModules.get(payload.classId()) == null) {
-                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                throw rejectedOp(op, "CLASS_NEW " + op.opId()
                     + " carries defaultOwner FFI_PLAN for " + payload.classId()
                     + ", which is not a declared extern-C class of the compile's"
                     + " declaration surface (the class plan entry has exactly one"
@@ -4715,7 +4717,7 @@ public final class LuaSemanticEmitter {
             }
             if (payload.classFactoryRef() != null
                     || !payload.classDefaultOpIds().isEmpty()) {
-                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                throw rejectedOp(op, "CLASS_NEW " + op.opId()
                     + " carries defaultOwner FFI_PLAN with a non-null factory"
                     + " ref or a non-empty default child list: the C-struct"
                     + " construction carries neither (the loaded plan's"
@@ -4745,7 +4747,7 @@ public final class LuaSemanticEmitter {
             // (3) The runtime's four phases over the loaded plan entry.
             out.append("__okB, __instT = pcall(__rt.class_plan_, ")
                 .append(luaString(payload.classId().text())).append(", ")
-                .append(ffiPlanExpr(payload.classId())).append(", __provT, ")
+                .append(ffiPlanExpr(op, payload.classId())).append(", __provT, ")
                 .append(classLiteralOriginArgs(op)).append(")\n");
             out.append("if not __okB then\n");
             out.append("  __eT = __hostError(__instT, ")
@@ -4784,7 +4786,7 @@ public final class LuaSemanticEmitter {
             for (OpId defaultOpId : payload.classDefaultOpIds()) {
                 SemanticOp defaultOp = opsById.get(defaultOpId);
                 if (defaultOp == null) {
-                    throw new IllegalStateException("CLASS_NEW " + op.opId()
+                    throw rejectedOp(op, "CLASS_NEW " + op.opId()
                         + " CLASS_DEFAULT child " + defaultOpId + " does not resolve "
                         + "(producer defect)");
                 }
@@ -4844,19 +4846,19 @@ public final class LuaSemanticEmitter {
             OpId factoryOpId = factoryOpIdOf(op, payload);
             SemanticOp factoryOp = opsById.get(factoryOpId);
             if (factoryOp == null || factoryOp.kind() != SemanticOpKind.CLASS_FACTORY) {
-                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                throw rejectedOp(factoryOp != null ? factoryOp : op, "CLASS_NEW " + op.opId()
                     + " resolves factory op " + factoryOpId + " outside the pinned "
                     + "kind (producer defect)");
             }
             KindPayload.ClassFactoryPayload factoryPayload =
                 (KindPayload.ClassFactoryPayload) factoryOp.payload();
             if (!factoryPayload.classId().equals(payload.classId())) {
-                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                throw rejectedOp(factoryOp, "CLASS_NEW " + op.opId()
                     + " resolves a factory of " + factoryPayload.classId()
                     + " (producer defect)");
             }
             if (!(factoryOp.result() instanceof ValueId factoryResult)) {
-                throw new IllegalStateException("CLASS_FACTORY " + factoryOp.opId()
+                throw rejectedOp(factoryOp, "CLASS_FACTORY " + factoryOp.opId()
                     + " publishes no ValueId result (producer defect)");
             }
             String ownerPath = factoryOpId.module().path();
@@ -4878,7 +4880,7 @@ public final class LuaSemanticEmitter {
             for (OpId defaultOpId : factoryPayload.classDefaultOpIds()) {
                 SemanticOp defaultOp = opsById.get(defaultOpId);
                 if (defaultOp == null) {
-                    throw new IllegalStateException("CLASS_FACTORY " + factoryOp.opId()
+                    throw rejectedOp(factoryOp, "CLASS_FACTORY " + factoryOp.opId()
                         + " CLASS_DEFAULT child " + defaultOpId + " does not resolve "
                         + "(producer defect)");
                 }
@@ -5018,7 +5020,7 @@ public final class LuaSemanticEmitter {
                     out.append("::").append(after).append("::\n");
                     emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
                 }
-                default -> throw new IllegalStateException("BRANCH selector "
+                default -> throw rejectedOp(op, "BRANCH selector "
                     + payload.selector());
             }
         }
@@ -5052,7 +5054,7 @@ public final class LuaSemanticEmitter {
                     out.append("goto ").append(cont).append("T\n");
                     out.append("::").append(exit).append("::\n");
                 }
-                default -> throw new IllegalStateException("LOOP selector "
+                default -> throw rejectedOp(op, "LOOP selector "
                     + payload.selector());
             }
             emitPlainSuccess(op);
@@ -5568,7 +5570,7 @@ public final class LuaSemanticEmitter {
         private String emittingModulePath(SemanticOp op) {
             ModuleId moduleId = opModule.get(op.opId());
             if (moduleId == null) {
-                throw new IllegalStateException("the op " + op.opId()
+                throw rejectedOp(op, "the op " + op.opId()
                     + " has no owning module (the export-surface key is the emitting "
                     + "module's identity — a producer defect, never a path guess)");
             }
@@ -5607,7 +5609,7 @@ public final class LuaSemanticEmitter {
             FunctionExecutionBinding binding = unit.functionBindings().get(
                 new FunctionAllocationIdentity(payload.function().id()));
             if (binding == null) {
-                throw new IllegalStateException("CALLBACK_INVOKE " + op.opId()
+                throw rejectedOp(op, "CALLBACK_INVOKE " + op.opId()
                     + " resolves no FunctionExecutionBinding (producer defect)");
             }
             String entry = "cb" + op.opId().id();
@@ -5723,7 +5725,7 @@ public final class LuaSemanticEmitter {
                     if (crossing == null
                             || !(crossing.payload()
                                 instanceof KindPayload.BoundaryPayload boundary)) {
-                        throw new IllegalStateException("CALLBACK_INVOKE "
+                        throw rejectedOp(op, "CALLBACK_INVOKE "
                             + op.opId() + " names the materializing host crossing "
                             + hostValue.materializingBoundaryOpId()
                             + ", which is not a boundary op of the emitted closure"
@@ -5731,7 +5733,7 @@ public final class LuaSemanticEmitter {
                     }
                     emitHostCallbackInvoke(op, payload, slot(boundary.input()));
                 }
-                default -> throw new IllegalStateException("CALLBACK_INVOKE "
+                default -> throw rejectedOp(op, "CALLBACK_INVOKE "
                     + op.opId() + " resolves a binding outside the statically-resolved "
                     + "slice: " + binding);
             }
@@ -5855,7 +5857,7 @@ public final class LuaSemanticEmitter {
                     return candidate;
                 }
             }
-            throw new IllegalStateException("the adapter-over-async task has no nested "
+            throw rejectedOp(outer, "the adapter-over-async task has no nested "
                 + "source ASYNC_START (producer defect)");
         }
 
@@ -5986,13 +5988,13 @@ public final class LuaSemanticEmitter {
                 case KindPayload.CallCallee.Indirect indirect -> {
                     FunctionExecutionBinding resolved = bindingOfIdentity(indirect.callee());
                     if (resolved == null) {
-                        throw new IllegalStateException("ASYNC_START " + op.opId()
+                        throw rejectedOp(op, "ASYNC_START " + op.opId()
                             + " resolves the indirect callee identity " + indirect.callee()
                             + " to no registered FunctionExecutionBinding (producer defect)");
                     }
                     yield resolved;
                 }
-                default -> throw new IllegalStateException("ASYNC_START " + op.opId()
+                default -> throw rejectedOp(op, "ASYNC_START " + op.opId()
                     + " resolves a callee outside the statically-resolved slice: "
                     + payload.callee());
             };
@@ -6090,7 +6092,7 @@ public final class LuaSemanticEmitter {
                             hostValue.hostModuleId().path(),
                             "@value#" + hostValue.materializingBoundaryOpId().id());
                     } else {
-                        emitAsyncHostStart(op, token, hostValueTarget(hostValue),
+                        emitAsyncHostStart(op, token, hostValueTarget(op, hostValue),
                             asyncStartArgs(op, payload));
                     }
                 }
@@ -6108,7 +6110,7 @@ public final class LuaSemanticEmitter {
                     out.append("end), S.__sa").append(op.opId().id()).append(")\n");
                 }
                 case FunctionExecutionBinding.DynamicFunctionValue dynamic ->
-                    throw new IllegalStateException("ASYNC_START " + op.opId()
+                    throw rejectedOp(op, "ASYNC_START " + op.opId()
                         + " resolves the dynamic function value produced by "
                         + dynamic.materializingOpId() + " outside the dynamic arm (a "
                         + "DynamicFunctionValue names no execution class and is never a "
@@ -6217,11 +6219,12 @@ public final class LuaSemanticEmitter {
          * {@code HostFunctionValue} crossing ({@code .f} is the loaded
          * wrapper's calling convention, exactly as the sync arm's).
          */
-        private String hostValueTarget(FunctionExecutionBinding.HostFunctionValue hostValue) {
+        private String hostValueTarget(SemanticOp op,
+                FunctionExecutionBinding.HostFunctionValue hostValue) {
             SemanticOp crossing = opsById.get(hostValue.materializingBoundaryOpId());
             if (crossing == null
                     || !(crossing.payload() instanceof KindPayload.BoundaryPayload boundary)) {
-                throw new IllegalStateException("ASYNC_START names the materializing"
+                throw rejectedOp(op, "ASYNC_START names the materializing"
                     + " host crossing " + hostValue.materializingBoundaryOpId()
                     + ", which is not a boundary op of the emitted closure"
                     + " (a producer defect)");
@@ -6232,7 +6235,7 @@ public final class LuaSemanticEmitter {
         private void emitAsyncExternalStart(SemanticOp op, AsyncTokenId token,
                                             ExternalAsyncLink link) {
             if (link == null) {
-                throw new IllegalStateException("ASYNC_START(EXTERNAL) without "
+                throw rejectedOp(op, "ASYNC_START(EXTERNAL) without "
                     + "its ExternalAsyncLink (producer defect)");
             }
             if (projectSession) {
@@ -6617,7 +6620,7 @@ public final class LuaSemanticEmitter {
                     ffiInput.manifestDirectory(), bindingsLocal,
                     importPrefix);
             if (generation.failure() != null) {
-                throw new IllegalStateException("the extern-C generated"
+                throw rejectedOp(op, "the extern-C generated"
                     + " module of '" + moduleId.path() + "' cannot be"
                     + " serialized into the load_ffi literals: "
                     + generation.failure().message());
@@ -6764,7 +6767,7 @@ public final class LuaSemanticEmitter {
         private String consumingModulePathOf(SemanticOp op) {
             ModuleId owner = opModule.get(op.opId());
             if (owner == null) {
-                throw new IllegalStateException("the extern-C import op "
+                throw rejectedOp(op, "the extern-C import op "
                     + op.opId() + " carries no owning module: the provider"
                     + " gap cannot name its consuming module (a producer"
                     + " defect)");
@@ -6981,7 +6984,7 @@ public final class LuaSemanticEmitter {
          */
         private static void requireParentlessModuleInit(SemanticOp op) {
             if (op.origin().parentOpId() != null) {
-                throw new IllegalStateException("MODULE_INIT " + op.opId()
+                throw rejectedOp(op, "MODULE_INIT " + op.opId()
                     + " records the structural parent " + op.origin().parentOpId()
                     + " (the module-level envelope op is parentless — a wrong parent is a "
                     + "producer defect, never a silent re-parenting)");
@@ -7025,7 +7028,7 @@ public final class LuaSemanticEmitter {
             ModuleImportKind kind = importKinds.get(payload.module());
             if (kind == ModuleImportKind.COMPILED && projectSession
                     && !units.containsKey(payload.module())) {
-                throw new IllegalStateException("the compiled EXPORT_READ of export '"
+                throw rejectedOp(op, "the compiled EXPORT_READ of export '"
                     + payload.name() + "' of module '" + payload.module().path()
                     + "' resolves an owner module outside the project session's"
                     + " closure (the one lowering resolves every COMPILED import to a"
@@ -7050,7 +7053,7 @@ public final class LuaSemanticEmitter {
                 // uses, so the read and the surface hold the identical
                 // object and the read never builds a per-read value.
                 out.append(slot((ValueId) op.result())).append(" = __stdlibEntry(")
-                    .append(stdlibRowArgs(stdlibRowOf(payload.module().path(),
+                    .append(stdlibRowArgs(stdlibRowOf(op, payload.module().path(),
                         payload.name()))).append(")\n");
             } else {
 

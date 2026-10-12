@@ -2,6 +2,8 @@ package deal.test;
 
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
 import deal.semantic.ir.AddressChainProtocol;
 import deal.semantic.ir.AdaptSourceRef;
 import deal.semantic.ir.AnchorId;
@@ -59,6 +61,11 @@ public class AddressChainProtocolTest {
     private static void fail(String message) {
         failed++;
         System.err.println("FAIL: " + message);
+    }
+
+    private static void checkEq(Object expected, Object actual, String message) {
+        check(expected == null ? actual == null : expected.equals(actual),
+            message + " (expected " + expected + ", got " + actual + ")");
     }
 
     // =========================================================================
@@ -119,6 +126,36 @@ public class AddressChainProtocolTest {
             new KindPayload.BoundaryPayload(kind, descriptor, input,
                 new BoundaryRealization.RuntimeValidation("check")),
             null, null, policy, parent);
+    }
+
+    /** A copied SOURCE origin with real inclusive positions and half-open offsets. */
+    private static SourceOrigin sourceOrigin(String file, int startLine, int startColumn,
+            int endLine, int endColumn, int startOffset, int endOffset, OpId parent) {
+        return new SourceOrigin(file,
+            new SourceSpan(file, startLine, startColumn, endLine, endColumn,
+                startOffset, endOffset),
+            SourceOriginKind.USER, new AnchorId(0), parent);
+    }
+
+    /** An op under an explicit copied origin (the offending-subject origin tests). */
+    private static SemanticOp opWithOrigin(OpId id, SemanticOpKind kind, KindPayload payload,
+            SemanticValue result, OpResultType resultType, FailurePolicyId policy,
+            SourceOrigin origin) {
+        OperationContractSnapshot contract =
+            contractFor(kind, payload, resultType, List.of(), policy, "placeholder");
+        String digest = ContractSnapshotCanonicalizer.digest(contract);
+        contract = contractFor(kind, payload, resultType, List.of(), policy, digest);
+        return new SemanticOp(id, kind, origin, result, resultType, List.of(), List.of(),
+            payload, policy, contract);
+    }
+
+    private static SemanticOp boundaryWithOrigin(OpId id, BoundaryKind kind,
+            RuntimeDescriptor descriptor, FailurePolicyId policy, OpId parent, ValueId input,
+            SourceOrigin origin) {
+        return opWithOrigin(id, SemanticOpKind.BOUNDARY,
+            new KindPayload.BoundaryPayload(kind, descriptor, input,
+                new BoundaryRealization.RuntimeValidation("check")),
+            null, null, policy, origin);
     }
 
     /** A CONST signed32 producer with a pinned result identity. */
@@ -982,7 +1019,191 @@ public class AddressChainProtocolTest {
     }
 
     // =========================================================================
-    // 5. Foundation regression (R-POLICY-KIND pin; the closed set is unchanged)
+    // 5. Offending-subject origins (child-owned vs chain-owned failures)
+    // =========================================================================
+
+    /**
+     * The complete message keeps naming the enclosing chain operation, while
+     * the diagnostic range follows the identified offending subject (D2): a
+     * child-owned rule failure carries the rejected child's own exact SOURCE
+     * range — including under an originless chain — and a chain-owned
+     * shape/count failure keeps the chain's own range.
+     */
+    private static void testOffendingSubjectOrigins() {
+        System.out.println("-- Offending-subject origins: child-owned defects carry the "
+            + "rejected child's own range, chain-owned failures the chain's --");
+
+        // (a) The rejected boundary's own span: a VARIABLE_DECLARATION boundary
+        // where VARIABLE_ASSIGNMENT is required. The chain and the boundary
+        // carry distinct exact SOURCE origins, so the assertion proves the
+        // range is the boundary's own, never the enclosing chain's.
+        {
+            OpId chainId = nextOpId();
+            ValueId value = nextValue();
+            OpId valueOp = nextOpId();
+            OpId boundaryOp = nextOpId();
+            OpId commitOp = nextOpId();
+            SourceOrigin chainOrigin = sourceOrigin("chain.deal", 2, 3, 2, 8, 70, 75, null);
+            SourceOrigin boundaryOrigin = sourceOrigin("boundary.deal", 3, 5, 3, 10, 30, 35,
+                chainId);
+            List<SemanticOp> ops = new ArrayList<>();
+            ops.add(opWithOrigin(valueOp, SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(new ScalarValue.Int(7)), value, INT,
+                FailurePolicyId.NO_DEAL_FAILURE,
+                sourceOrigin("value.deal", 4, 1, 4, 2, 50, 51, chainId)));
+            ops.add(boundaryWithOrigin(boundaryOp, BoundaryKind.VARIABLE_DECLARATION, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, chainId, value, boundaryOrigin));
+            ops.add(opWithOrigin(commitOp, SemanticOpKind.BINDING_STORE,
+                new KindPayload.BindingStorePayload(new BindingId(90), 1, value),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE,
+                sourceOrigin("commit.deal", 5, 1, 5, 2, 60, 61, chainId)));
+            ops.add(opWithOrigin(chainId, SemanticOpKind.ASSIGN,
+                new KindPayload.AssignPayload(AssignTargetKind.VARIABLE,
+                    List.of(valueOp, boundaryOp, commitOp)),
+                value, INT, FailurePolicyId.NO_DEAL_FAILURE, chainOrigin));
+
+            Optional<CompilerDiagnostic> diagnostic = AddressChainProtocol.validate(unit(ops));
+            assertE6005(diagnostic, AddressChainProtocol.RULE_ADDRESS_CHAIN_SHAPE,
+                "op " + chainId, "must carry kind VARIABLE_ASSIGNMENT", "VARIABLE_DECLARATION");
+            if (diagnostic.isPresent()) {
+                DiagnosticRange expected = boundaryOrigin.span().range();
+                check(expected.origin() == RangeOrigin.SOURCE && expected.scalarLength() == 5,
+                    "the rejected boundary's own range is an exact SOURCE range: " + expected);
+                check(expected.equals(diagnostic.get().range()),
+                    "the child-owned kind failure carries the rejected boundary's own range: "
+                        + diagnostic.get().range());
+                checkEq("boundary.deal", diagnostic.get().range().file(),
+                    "the child-owned failure names the boundary's own file");
+                check(!chainOrigin.span().range().equals(diagnostic.get().range()),
+                    "the child-owned failure never carries the enclosing chain's range");
+            }
+        }
+
+        // (b) A shared child check: the boundary records the wrong parentOpId,
+        // so the child-owned parentage failure carries the boundary's range.
+        {
+            OpId chainId = nextOpId();
+            ValueId value = nextValue();
+            OpId valueOp = nextOpId();
+            OpId boundaryOp = nextOpId();
+            OpId commitOp = nextOpId();
+            SourceOrigin chainOrigin = sourceOrigin("chain.deal", 6, 3, 6, 8, 80, 85, null);
+            SourceOrigin boundaryOrigin = sourceOrigin("boundary.deal", 7, 5, 7, 10, 40, 45,
+                nextOpId());
+            List<SemanticOp> ops = new ArrayList<>();
+            ops.add(opWithOrigin(valueOp, SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(new ScalarValue.Int(7)), value, INT,
+                FailurePolicyId.NO_DEAL_FAILURE,
+                sourceOrigin("value.deal", 8, 1, 8, 2, 52, 53, chainId)));
+            ops.add(boundaryWithOrigin(boundaryOp, BoundaryKind.VARIABLE_ASSIGNMENT, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, boundaryOrigin.parentOpId(), value,
+                boundaryOrigin));
+            ops.add(opWithOrigin(commitOp, SemanticOpKind.BINDING_STORE,
+                new KindPayload.BindingStorePayload(new BindingId(91), 1, value),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE,
+                sourceOrigin("commit.deal", 9, 1, 9, 2, 62, 63, chainId)));
+            ops.add(opWithOrigin(chainId, SemanticOpKind.ASSIGN,
+                new KindPayload.AssignPayload(AssignTargetKind.VARIABLE,
+                    List.of(valueOp, boundaryOp, commitOp)),
+                value, INT, FailurePolicyId.NO_DEAL_FAILURE, chainOrigin));
+
+            Optional<CompilerDiagnostic> diagnostic = AddressChainProtocol.validate(unit(ops));
+            assertE6005(diagnostic, AddressChainProtocol.RULE_ADDRESS_CHAIN_SHAPE,
+                "must record the chain op as its parentOpId");
+            if (diagnostic.isPresent()) {
+                check(boundaryOrigin.span().range().equals(diagnostic.get().range()),
+                    "the child-owned parentage failure carries the rejected boundary's "
+                        + "range: " + diagnostic.get().range());
+                checkEq("boundary.deal", diagnostic.get().range().file(),
+                    "the parentage failure names the boundary's own file");
+            }
+        }
+
+        // (c) The originless-chain control: no identifiable chain anchor, an
+        // identifiable offending child — the child's exact range still wins
+        // (never the canonical empty-file synthetic projection).
+        {
+            OpId chainId = nextOpId();
+            ValueId value = nextValue();
+            OpId valueOp = nextOpId();
+            OpId boundaryOp = nextOpId();
+            OpId commitOp = nextOpId();
+            SourceOrigin chainOrigin = new SourceOrigin("", SourceSpan.synthetic(""),
+                SourceOriginKind.SYNTHETIC, new AnchorId(0), null);
+            SourceOrigin boundaryOrigin = sourceOrigin("boundary.deal", 11, 5, 11, 10, 30, 35,
+                chainId);
+            List<SemanticOp> ops = new ArrayList<>();
+            ops.add(opWithOrigin(valueOp, SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(new ScalarValue.Int(7)), value, INT,
+                FailurePolicyId.NO_DEAL_FAILURE,
+                sourceOrigin("value.deal", 12, 1, 12, 2, 54, 55, chainId)));
+            ops.add(boundaryWithOrigin(boundaryOp, BoundaryKind.VARIABLE_DECLARATION, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, chainId, value, boundaryOrigin));
+            ops.add(opWithOrigin(commitOp, SemanticOpKind.BINDING_STORE,
+                new KindPayload.BindingStorePayload(new BindingId(92), 1, value),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE,
+                sourceOrigin("commit.deal", 13, 1, 13, 2, 64, 65, chainId)));
+            ops.add(opWithOrigin(chainId, SemanticOpKind.ASSIGN,
+                new KindPayload.AssignPayload(AssignTargetKind.VARIABLE,
+                    List.of(valueOp, boundaryOp, commitOp)),
+                value, INT, FailurePolicyId.NO_DEAL_FAILURE, chainOrigin));
+
+            check(chainOrigin.span().range().isCanonicalSynthetic(),
+                "the control chain itself is the canonical originless anchor: "
+                    + chainOrigin.span().range());
+            Optional<CompilerDiagnostic> diagnostic = AddressChainProtocol.validate(unit(ops));
+            assertE6005(diagnostic, AddressChainProtocol.RULE_ADDRESS_CHAIN_SHAPE,
+                "must carry kind VARIABLE_ASSIGNMENT");
+            if (diagnostic.isPresent()) {
+                check(!diagnostic.get().range().isCanonicalSynthetic(),
+                    "an originless chain with an identifiable child does not fall back to "
+                        + "the canonical synthetic range: " + diagnostic.get().range());
+                check(boundaryOrigin.span().range().equals(diagnostic.get().range()),
+                    "the identifiable child's own range wins under an originless chain: "
+                        + diagnostic.get().range());
+                checkEq("boundary.deal", diagnostic.get().range().file(),
+                    "the originless chain borrows no location: the child's file is named");
+            }
+        }
+
+        // (d) The chain-owned control: the wrong child count is the chain's
+        // own shape failure and keeps the chain's exact range even though the
+        // listed children carry distinct origins.
+        {
+            OpId chainId = nextOpId();
+            ValueId value = nextValue();
+            OpId valueOp = nextOpId();
+            OpId commitOp = nextOpId();
+            SourceOrigin chainOrigin = sourceOrigin("chain.deal", 14, 3, 14, 8, 90, 95, null);
+            List<SemanticOp> ops = new ArrayList<>();
+            ops.add(opWithOrigin(valueOp, SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(new ScalarValue.Int(7)), value, INT,
+                FailurePolicyId.NO_DEAL_FAILURE,
+                sourceOrigin("value.deal", 15, 1, 15, 2, 56, 57, chainId)));
+            ops.add(opWithOrigin(commitOp, SemanticOpKind.BINDING_STORE,
+                new KindPayload.BindingStorePayload(new BindingId(93), 1, value),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE,
+                sourceOrigin("commit.deal", 16, 1, 16, 2, 66, 67, chainId)));
+            ops.add(opWithOrigin(chainId, SemanticOpKind.ASSIGN,
+                new KindPayload.AssignPayload(AssignTargetKind.VARIABLE,
+                    List.of(valueOp, commitOp)),
+                value, INT, FailurePolicyId.NO_DEAL_FAILURE, chainOrigin));
+
+            Optional<CompilerDiagnostic> diagnostic = AddressChainProtocol.validate(unit(ops));
+            assertE6005(diagnostic, AddressChainProtocol.RULE_ADDRESS_CHAIN_SHAPE,
+                "no closed ASSIGN VARIABLE chain shape with 2 children");
+            if (diagnostic.isPresent()) {
+                check(chainOrigin.span().range().equals(diagnostic.get().range()),
+                    "the chain-owned count failure keeps the chain's own range: "
+                        + diagnostic.get().range());
+                checkEq("chain.deal", diagnostic.get().range().file(),
+                    "the chain-owned count failure names the chain's own file");
+            }
+        }
+    }
+
+    // =========================================================================
+    // 6. Foundation regression (R-POLICY-KIND pin; the closed set is unchanged)
     // =========================================================================
 
     private static void testFoundationUnchanged() {
@@ -1023,7 +1244,7 @@ public class AddressChainProtocolTest {
     }
 
     // =========================================================================
-    // 6. Determinism
+    // 7. Determinism
     // =========================================================================
 
     private static void testDeterminism() {
@@ -1069,6 +1290,7 @@ public class AddressChainProtocolTest {
         testPositiveComposition();
         testNegativeShapeControls();
         testNegativeSingleEvaluationControls();
+        testOffendingSubjectOrigins();
         testFoundationUnchanged();
         testDeterminism();
 

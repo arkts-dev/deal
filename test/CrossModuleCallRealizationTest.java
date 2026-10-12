@@ -40,6 +40,7 @@ import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
+import deal.semantic.ir.SourceOrigin;
 import deal.semantic.ir.StructuredBodyTable;
 
 import java.lang.reflect.Method;
@@ -892,8 +893,9 @@ public class CrossModuleCallRealizationTest {
     private static void testFailClosedSeeds(LoweredFixture baseline)
             throws Exception {
         System.out.println("-- the fail-closed seeds: a ref outside the closure, a "
-            + "non-entry ref, a RETAINED_ABI external, and a foreign callee module "
-            + "--");
+            + "non-entry ref, a RETAINED_ABI external, a foreign callee module, a "
+            + "statically-unresolved binding, a non-boundary host crossing, and a "
+            + "structural MODULE_INIT parent --");
         Fixture fixture = baseline.fixture();
         {
             SemanticLowerer.ProjectLoweringResult result = baseline.result();
@@ -961,7 +963,105 @@ public class CrossModuleCallRealizationTest {
                     + outside + " outside the session's closure (producer defect)",
                 replaceCallPayload(result.project(), appUnit, call, outsideCallee),
                 result.tables(), result.registries(), fixture);
+
+            // (d) The statically-unresolved binding: the CALL's binding is
+            // replaced with a DynamicFunctionValue registration (the closed
+            // fact no checker-valid program produces at a static callee)
+            // while the CALL origin stays. Both emitters identify the CALL
+            // and carry its own exact range.
+            KindPayload.CallPayload dynamicBinding = new KindPayload.CallPayload(
+                probePayload.mode(),
+                new KindPayload.CallCallee.Static(
+                    new FunctionExecutionBinding.DynamicFunctionValue(
+                        call.opId(), shared.descriptor())),
+                probePayload.signature(), probePayload.parameterBoundaryOpIds(),
+                probePayload.returnBoundaryOpId(), probePayload.dynamicReturnBoundary(),
+                probePayload.bodyBlock(), probePayload.externalEntryRef());
+            assertEmitterFailureCarriesOrigin(
+                "the CALL binding outside the statically-resolved slice", call,
+                "CALL " + call.opId()
+                    + " resolves a binding outside the statically-resolved slice: "
+                    + ((KindPayload.CallCallee.Static) dynamicBinding.callee())
+                        .binding(),
+                replaceCallPayload(result.project(), appUnit, call, dynamicBinding),
+                result.tables(), result.registries(), fixture);
+
+            // (e) The host-materialized function value naming a non-boundary
+            // crossing: the binding names the CALL itself as its
+            // materializing crossing (no checker-valid program produces the
+            // fact) while the CALL origin stays. Lua rejects at the crossing
+            // guard and the JVM at the declared-position guard; both carry
+            // the CALL's own exact range.
+            KindPayload.CallPayload hostValueBinding = new KindPayload.CallPayload(
+                probePayload.mode(),
+                new KindPayload.CallCallee.Static(
+                    new FunctionExecutionBinding.HostFunctionValue(
+                        new ModuleId("std.console"), call.opId(), shared.descriptor())),
+                probePayload.signature(), probePayload.parameterBoundaryOpIds(),
+                probePayload.returnBoundaryOpId(), probePayload.dynamicReturnBoundary(),
+                probePayload.bodyBlock(), probePayload.externalEntryRef());
+            assertHostValueCrossingRejected("the non-boundary host crossing", call,
+                "CALL " + call.opId()
+                    + " names the materializing host crossing " + call.opId()
+                    + ", which is not a boundary op of the emitted closure"
+                    + " (a producer defect)",
+                "the host-materialized function value of descriptor '"
+                    + shared.descriptor().canonicalSpecText()
+                    + "' has no declared function position in the compile's"
+                    + " declaration surface (a producer defect)",
+                replaceCallPayload(result.project(), appUnit, call, hostValueBinding),
+                result.tables(), result.registries(), fixture);
+
+            // (f) The MODULE_INIT structural parent: the entry envelope op
+            // records the CALL as its structural parent (the closed fact no
+            // checker-valid program produces) while its own origin stays.
+            // Both emitters identify the rejected envelope op and carry its
+            // own exact range.
+            SemanticOp moduleInit = ofKind(appUnit, SemanticOpKind.MODULE_INIT).get(0);
+            SourceOrigin parentedOrigin = new SourceOrigin(
+                moduleInit.origin().sourceId(), moduleInit.origin().span(),
+                moduleInit.origin().kind(), moduleInit.origin().anchorId(),
+                call.opId());
+            assertEmitterFailureCarriesOrigin(
+                "the MODULE_INIT structural parent", moduleInit,
+                "MODULE_INIT " + moduleInit.opId()
+                    + " records the structural parent " + call.opId()
+                    + " (the module-level envelope op is parentless \u2014 a wrong parent is a "
+                    + "producer defect, never a silent re-parenting)",
+                replaceProjectOpOrigin(result.project(), appUnit, moduleInit,
+                    parentedOrigin),
+                result.tables(), result.registries(), fixture);
         }
+    }
+
+    /**
+     * Rebuilds one op of one unit with a replaced copied origin (the
+     * hand-built MODULE_INIT structural-parent seed).
+     */
+    private static ExecutableLoweredProject replaceProjectOpOrigin(
+            ExecutableLoweredProject project, LoweredModuleUnit unit,
+            SemanticOp op, SourceOrigin replacedOrigin) {
+        List<SemanticOp> ops = new ArrayList<>();
+        for (SemanticOp candidate : unit.ops()) {
+            if (candidate.opId().equals(op.opId())) {
+                ops.add(new SemanticOp(candidate.opId(), candidate.kind(),
+                    replacedOrigin, candidate.result(), candidate.resultType(),
+                    candidate.operands(), candidate.operandTypes(), candidate.payload(),
+                    candidate.failurePolicy(), candidate.contract()));
+            } else {
+                ops.add(candidate);
+            }
+        }
+        Map<ModuleId, LoweredModuleUnit> modules = new LinkedHashMap<>();
+        for (Map.Entry<ModuleId, LoweredModuleUnit> entry : project.modules().entrySet()) {
+            if (entry.getKey().equals(unit.moduleId())) {
+                modules.put(entry.getKey(), withOps(unit, ops));
+            } else {
+                modules.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return new ExecutableLoweredProject(project.semanticProfile(),
+            project.interfaceIndex(), modules, project.entryModule());
     }
 
     /**
@@ -1202,6 +1302,70 @@ public class CrossModuleCallRealizationTest {
         check(originless.range().origin() == RangeOrigin.SYNTHETIC,
             what + ": the originless projection stays SYNTHETIC, got "
                 + originless.range().origin());
+    }
+
+    /**
+     * The host-materialized function value naming a non-boundary crossing:
+     * Lua rejects at the crossing guard and the JVM at its declared-position
+     * guard; both source-bearing signals carry the offending CALL's own
+     * exact range, and the production arm's projection merges it into the
+     * unchanged {@code SHARED_EMITTER_COVERAGE} E6005.
+     */
+    private static void assertHostValueCrossingRejected(String what,
+            SemanticOp offending, String luaMessage, String jvmMessage,
+            ExecutableLoweredProject project,
+            Map<ModuleId, StructuredBodyTable> tables,
+            Map<ModuleId, ClassFactoryRegistry> registries, Fixture fixture)
+            throws Exception {
+        DiagnosticRange expected = offending.origin().span().range();
+        check(expected.origin() == RangeOrigin.SOURCE && expected.scalarLength() > 0,
+            what + ": the offending CALL carries a real SOURCE span: " + expected);
+
+        SharedEmissionFailure luaRejection = null;
+        try {
+            LuaSemanticEmitter.emitProductionProject(project, tables, registries,
+                fixture.surface());
+            fail(what + ": the LuaJIT emitter rejects the identified fact");
+        } catch (IllegalStateException rejection) {
+            check(rejection instanceof SharedEmissionFailure,
+                what + ": the LuaJIT rejection is the source-bearing shared signal");
+            checkEq(luaMessage, rejection.getMessage(),
+                what + ": the LuaJIT rejection message is the unchanged text");
+            if (rejection instanceof SharedEmissionFailure failure) {
+                luaRejection = failure;
+                checkEq(expected, failure.diagnosticRange(),
+                    what + ": the LuaJIT rejection carries the CALL op's own exact "
+                        + "range");
+            }
+        }
+        try {
+            JvmSemanticEmitter.emitProductionProject(project, tables, registries,
+                "Probe", fixture.surface());
+            fail(what + ": the JVM emitter rejects the identified fact");
+        } catch (IllegalStateException rejection) {
+            check(rejection instanceof SharedEmissionFailure,
+                what + ": the JVM rejection is the source-bearing shared signal");
+            checkEq(jvmMessage, rejection.getMessage(),
+                what + ": the JVM rejection message is the unchanged text");
+            if (rejection instanceof SharedEmissionFailure failure) {
+                checkEq(expected, failure.diagnosticRange(),
+                    what + ": the JVM rejection carries the CALL op's own exact range");
+            }
+        }
+
+        if (luaRejection == null) {
+            return;
+        }
+        CompilerDiagnostic projected = projectEmitterRejection(
+            project.entryModule().path(), luaRejection);
+        checkEq("E6005", projected.code(),
+            what + ": the projected emitter failure is E6005");
+        checkEq(expected, projected.range(),
+            what + ": the projected E6005 carries the CALL op's own exact range");
+        check(projected.message().contains(luaMessage),
+            what + ": the projected E6005 keeps the complete rejection message");
+        check(projected.range().origin() == RangeOrigin.SOURCE,
+            what + ": the projected range is SOURCE, got " + projected.range().origin());
     }
 
     /**

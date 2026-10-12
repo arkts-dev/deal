@@ -314,13 +314,13 @@ public final class AddressChainProtocol {
         KindPayload.BoundaryPayload boundary =
             (KindPayload.BoundaryPayload) c[boundaryPos].payload();
         if (boundary.kind() != BoundaryKind.VARIABLE_ASSIGNMENT) {
-            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
+            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain, c[boundaryPos],
                 "the VARIABLE chain boundary at position " + boundaryPos + " must carry "
                     + "kind VARIABLE_ASSIGNMENT, got " + boundary.kind());
         }
         FailurePolicyId expectedPolicy = descriptorKindPolicy(boundary.descriptor());
         if (c[boundaryPos].failurePolicy() != expectedPolicy) {
-            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
+            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain, c[boundaryPos],
                 "the VARIABLE_ASSIGNMENT boundary at position " + boundaryPos + " must carry "
                     + "the descriptor-kind policy " + expectedPolicy.name()
                     + " for the declared descriptor " + boundary.descriptor().canonicalSpecText()
@@ -488,7 +488,7 @@ public final class AddressChainProtocol {
         KindPayload.IndexNormalizePayload normalize =
             (KindPayload.IndexNormalizePayload) c[normalizePos].payload();
         if (normalize.mode() != IndexMode.TABLE_WRITE) {
-            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
+            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain, c[normalizePos],
                 "the table chain normalize at position " + normalizePos + " must carry mode "
                     + "TABLE_WRITE (delete is a mutation context; the closed IndexMode set is "
                     + "not extended), got " + normalize.mode());
@@ -587,12 +587,12 @@ public final class AddressChainProtocol {
         }
         KindPayload.BoundaryPayload boundary = (KindPayload.BoundaryPayload) c[5].payload();
         if (boundary.kind() != BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT) {
-            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
+            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain, c[5],
                 "the ARRAY_SLOT write boundary at position 5 must carry kind "
                     + "ARRAY_ELEMENT_ASSIGNMENT, got " + boundary.kind());
         }
         if (c[5].failurePolicy() != FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT) {
-            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
+            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain, c[5],
                 "the ARRAY_ELEMENT_ASSIGNMENT boundary at position 5 must carry policy "
                     + "ARRAY_WRITE_BOUNDS_THEN_ELEMENT, got " + c[5].failurePolicy().name());
         }
@@ -701,12 +701,12 @@ public final class AddressChainProtocol {
         }
         KindPayload.BoundaryPayload boundary = (KindPayload.BoundaryPayload) c[5].payload();
         if (boundary.kind() != BoundaryKind.BYTE_ELEMENT_ASSIGNMENT) {
-            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
+            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain, c[5],
                 "the BYTES_SLOT write boundary at position 5 must carry kind "
                     + "BYTE_ELEMENT_ASSIGNMENT, got " + boundary.kind());
         }
         if (c[5].failurePolicy() != FailurePolicyId.BYTES_WRITE) {
-            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
+            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain, c[5],
                 "the BYTE_ELEMENT_ASSIGNMENT boundary at position 5 must carry policy "
                     + "BYTES_WRITE, got " + c[5].failurePolicy().name());
         }
@@ -799,7 +799,7 @@ public final class AddressChainProtocol {
         KindPayload.IndexNormalizePayload normalize =
             (KindPayload.IndexNormalizePayload) c[normalizePos].payload();
         if (normalize.mode() != expectedMode) {
-            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
+            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain, c[normalizePos],
                 "the chain normalize at position " + normalizePos + " must carry mode "
                     + expectedMode + " (delete is a mutation context; the closed IndexMode "
                     + "set is not extended), got " + normalize.mode());
@@ -1034,12 +1034,12 @@ public final class AddressChainProtocol {
         }
         KindPayload.BoundaryPayload boundary = (KindPayload.BoundaryPayload) c[4].payload();
         if (boundary.kind() != BoundaryKind.ARRAY_ELEMENT_DELETE) {
-            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
+            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain, c[4],
                 "the ARRAY_SLOT delete boundary at position 4 must carry kind "
                     + "ARRAY_ELEMENT_DELETE, got " + boundary.kind());
         }
         if (c[4].failurePolicy() != FailurePolicyId.ARRAY_DELETE_BOUNDS) {
-            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
+            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain, c[4],
                 "the ARRAY_ELEMENT_DELETE boundary at position 4 must carry policy "
                     + "ARRAY_DELETE_BOUNDS, got " + c[4].failurePolicy().name());
         }
@@ -1141,7 +1141,7 @@ public final class AddressChainProtocol {
         if (child.kind() == expected) {
             return Optional.empty();
         }
-        return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
+        return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain, child,
             "the " + role + " child at position " + position + " must be " + expected
                 + ", got " + child.kind());
     }
@@ -1153,7 +1153,7 @@ public final class AddressChainProtocol {
         if (child.result() instanceof ValueId) {
             return Optional.empty();
         }
-        return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
+        return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain, child,
             "the " + role + " child at position " + position + " (" + child.kind()
                 + ") must publish a ValueId result");
     }
@@ -1165,7 +1165,7 @@ public final class AddressChainProtocol {
         if (chain.opId().equals(child.origin().parentOpId())) {
             return Optional.empty();
         }
-        return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
+        return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain, child,
             "the child at position " + position + " (" + child.opId() + ") must record the "
                 + "chain op as its parentOpId, got " + child.origin().parentOpId());
     }
@@ -1187,7 +1187,7 @@ public final class AddressChainProtocol {
         if (child.failurePolicy() == expected) {
             return Optional.empty();
         }
-        return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
+        return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain, child,
             what + " must carry policy " + expected.name() + ", got "
                 + child.failurePolicy().name());
     }
@@ -1200,7 +1200,7 @@ public final class AddressChainProtocol {
         if (expected.equals(child.resultType())) {
             return Optional.empty();
         }
-        return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
+        return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain, child,
             what + " must carry resultType " + expected.canonicalSpecText() + ", got "
                 + (child.resultType() == null ? "none" : child.resultType()));
     }
@@ -1217,6 +1217,20 @@ public final class AddressChainProtocol {
 
     private static Optional<CompilerDiagnostic> fail(LoweredModuleUnit unit, String rule,
                                                      SemanticOp op, String reason) {
+        return fail(unit, rule, op, op, reason);
+    }
+
+    /**
+     * The message subject and the diagnostic subject are separate (D2):
+     * the complete existing message text keeps naming the chain operation
+     * ({@code op}), while an identified child-owned defect ({@code defect})
+     * supplies its own copied origin for the range — the rule rejected that
+     * child, never the enclosing chain. A chain-owned shape/count/reference
+     * failure passes the chain as both subjects.
+     */
+    private static Optional<CompilerDiagnostic> fail(LoweredModuleUnit unit, String rule,
+                                                     SemanticOp op, SemanticOp defect,
+                                                     String reason) {
         LoweringFailureDetail detail = new LoweringFailureDetail(
             unit.moduleId().path(),
             SemanticCapability.EVALUATION_ORDER,
@@ -1226,6 +1240,6 @@ public final class AddressChainProtocol {
             "AddressChainProtocol " + rule + " (op " + op.opId() + " at "
                 + op.origin().span() + ": " + reason + ")");
         return Optional.of(FailureContractRegistry.e6005(detail,
-            op.origin().span().range()));
+            defect.origin().span().range()));
     }
 }

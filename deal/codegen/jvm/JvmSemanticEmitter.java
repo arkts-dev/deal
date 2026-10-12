@@ -2937,7 +2937,7 @@ public final class JvmSemanticEmitter {
                 FunctionId functionId = payload.functions().get(i);
                 LoweredFunction function = functionOf(functionId);
                 if (function == null) {
-                    throw new IllegalStateException("group member " + functionId
+                    throw rejectedOp(op, "group member " + functionId
                         + " has no LoweredFunction record (producer defect)");
                 }
                 StringBuilder args = new StringBuilder();
@@ -3207,7 +3207,7 @@ public final class JvmSemanticEmitter {
 
         private void emitCall(SemanticOp op, int indent) {
             KindPayload.CallPayload payload = (KindPayload.CallPayload) op.payload();
-            FunctionExecutionBinding binding = callBinding(payload);
+            FunctionExecutionBinding binding = callBinding(op, payload);
             emitStart(op, indent);
 
             if (binding instanceof FunctionExecutionBinding.HostFunction host) {
@@ -3410,7 +3410,7 @@ public final class JvmSemanticEmitter {
                 }
                 case FunctionExecutionBinding.ExternalFunction external ->
                     emitExternalCall(op, payload, external, indent);
-                default -> throw new IllegalStateException("CALL " + op.opId()
+                default -> throw rejectedOp(op, "CALL " + op.opId()
                     + " resolves a binding outside the statically-resolved slice: "
                     + binding);
             }
@@ -3440,7 +3440,7 @@ public final class JvmSemanticEmitter {
             LoweredFunction calleeFunction =
                 calleeUnit.functions().get(entryPayload.function());
             if (calleeFunction == null) {
-                throw new IllegalStateException("EXTERNAL_ENTRY " + entry.opId()
+                throw rejectedOp(entry, "EXTERNAL_ENTRY " + entry.opId()
                     + " resolves the missing lowered function "
                     + entryPayload.function().id() + " (producer defect)");
             }
@@ -3682,7 +3682,8 @@ public final class JvmSemanticEmitter {
             return null;
         }
 
-        private FunctionExecutionBinding callBinding(KindPayload.CallPayload payload) {
+        private FunctionExecutionBinding callBinding(SemanticOp op,
+                KindPayload.CallPayload payload) {
             FunctionExecutionBinding binding = switch (payload.callee()) {
                 case KindPayload.CallCallee.Static staticCallee -> staticCallee.binding();
                 case KindPayload.CallCallee.Indirect indirect ->
@@ -3691,7 +3692,7 @@ public final class JvmSemanticEmitter {
             };
             if (binding == null
                     && !(payload.callee() instanceof KindPayload.CallCallee.Dynamic)) {
-                throw new IllegalStateException("CALL " + payload
+                throw rejectedOp(op, "CALL " + payload
                     + " resolves no FunctionExecutionBinding (producer defect)");
             }
             return binding;
@@ -3701,14 +3702,14 @@ public final class JvmSemanticEmitter {
                                      KindPayload.CallCallee.Dynamic callee, int indent) {
             KindPayload.DynamicReturnBoundary cells = payload.dynamicReturnBoundary();
             if (cells == null) {
-                throw new IllegalStateException("the dynamic CALL " + op.opId()
+                throw rejectedOp(op, "the dynamic CALL " + op.opId()
                     + " records no DynamicReturnBoundary cell set (producer defect)");
             }
             SemanticOp hostCell = opsById.get(cells.hostBoundaryOpId());
             if (hostCell == null
                     || !(hostCell.payload() instanceof KindPayload.BoundaryPayload boundary)
                     || boundary.kind() != BoundaryKind.HOST_TO_DEAL) {
-                throw new IllegalStateException("the dynamic CALL " + op.opId()
+                throw rejectedOp(op, "the dynamic CALL " + op.opId()
                     + " records the host return cell " + cells.hostBoundaryOpId()
                     + ", which is not a HOST_TO_DEAL boundary of the emitted closure"
                     + " (producer defect)");
@@ -4218,7 +4219,7 @@ public final class JvmSemanticEmitter {
                 return;
             }
             if (hostAbi == null) {
-                throw new IllegalStateException("CALL " + op.opId()
+                throw rejectedOp(op, "CALL " + op.opId()
                     + " resolves the host export '" + hostModuleId.path() + "."
                     + exportName + "' but the session carries no host ABI"
                     + " emission surface (a producer defect; only the"
@@ -4250,7 +4251,7 @@ public final class JvmSemanticEmitter {
                 if (descriptor instanceof RuntimeDescriptor.Nullable
                         || descriptor instanceof RuntimeDescriptor.Class
                         || descriptor instanceof RuntimeDescriptor.Func) {
-                    throw new IllegalStateException("the cataloged callable '"
+                    throw rejectedOp(op, "the cataloged callable '"
                         + row.declaredDescriptor().canonicalSpecText() + "' arrives at "
                         + op.opId() + " with the parameter position "
                         + descriptor.canonicalSpecText() + ", whose host-facing "
@@ -4316,7 +4317,7 @@ public final class JvmSemanticEmitter {
                 if (descriptor instanceof RuntimeDescriptor.Nullable
                         || descriptor instanceof RuntimeDescriptor.Class
                         || descriptor instanceof RuntimeDescriptor.Func) {
-                    throw new IllegalStateException("the conversion intrinsic '"
+                    throw rejectedOp(op, "the conversion intrinsic '"
                         + intrinsic.kind() + "' arrives at " + op.opId()
                         + " with the parameter position "
                         + descriptor.canonicalSpecText() + ", whose host-facing "
@@ -4343,7 +4344,7 @@ public final class JvmSemanticEmitter {
                 index++;
             }
             if (checked.size() != intrinsic.descriptor().paramTypes().size()) {
-                throw new IllegalStateException("the conversion intrinsic call "
+                throw rejectedOp(op, "the conversion intrinsic call "
                     + op.opId() + " records " + checked.size() + " parameter cell(s) for "
                     + "the '" + intrinsic.kind() + "' intrinsic's "
                     + intrinsic.descriptor().paramTypes().size() + " declared "
@@ -4435,7 +4436,7 @@ public final class JvmSemanticEmitter {
                 FunctionExecutionBinding.AdapterBinding adapter, int indent) {
             IntrinsicKind kind = adapterIntrinsicKind(adapter);
             if (kind == null) {
-                throw new IllegalStateException("CALL " + op.opId()
+                throw rejectedOp(op, "CALL " + op.opId()
                     + " records an adapter whose source is not the seeded intrinsic "
                     + "identity (producer defect)");
             }
@@ -4458,7 +4459,7 @@ public final class JvmSemanticEmitter {
             int m = adapter.sourceSignature().paramTypes().size();
             if (m != declared.paramTypes().size()
                     || m > payload.parameterBoundaryOpIds().size()) {
-                throw new IllegalStateException("the adapter-over-intrinsic call "
+                throw rejectedOp(op, "the adapter-over-intrinsic call "
                     + op.opId() + " projects " + m + " leading source argument(s) "
                     + "onto the '" + kind + "' intrinsic's "
                     + declared.paramTypes().size() + " declared parameter(s) with "
@@ -4540,17 +4541,17 @@ public final class JvmSemanticEmitter {
         private void emitHostValueCall(SemanticOp op, KindPayload.CallPayload payload,
                 FunctionExecutionBinding.HostFunctionValue hostValue, int indent) {
             if (hostAbi == null) {
-                throw new IllegalStateException("CALL " + op.opId()
+                throw rejectedOp(op, "CALL " + op.opId()
                     + " resolves the host-materialized function value of module '"
                     + hostValue.hostModuleId().path() + "' but the session carries"
                     + " no host ABI emission surface (a producer defect)");
             }
-            Type.Func declared = hostAbi.declaredFunctionValue(
+            Type.Func declared = hostAbi.declaredFunctionValue(op,
                 hostValue.descriptor().canonicalSpecText());
             SemanticOp crossing = opsById.get(hostValue.materializingBoundaryOpId());
             if (crossing == null
                     || !(crossing.payload() instanceof KindPayload.BoundaryPayload boundary)) {
-                throw new IllegalStateException("CALL " + op.opId()
+                throw rejectedOp(op, "CALL " + op.opId()
                     + " names the materializing host crossing "
                     + hostValue.materializingBoundaryOpId()
                     + ", which is not a boundary op of the emitted closure"
@@ -4784,7 +4785,7 @@ public final class JvmSemanticEmitter {
                 layout = payload.layout();
             }
             if (layout == null) {
-                throw new IllegalStateException("CLASS_NEW " + op.opId() + " classId "
+                throw rejectedOp(op, "CLASS_NEW " + op.opId() + " classId "
                     + payload.classId() + " has no layout in the resolution context "
                     + "(producer defect)");
             }
@@ -4800,7 +4801,7 @@ public final class JvmSemanticEmitter {
 
                 }
                 case FFI_PLAN ->
-                    throw new IllegalStateException("CLASS_NEW " + op.opId()
+                    throw rejectedOp(op, "CLASS_NEW " + op.opId()
                         + " carries defaultOwner " + payload.defaultOwner()
                         + ": the extern-C C-struct construction is the FFI"
                         + " child's and is not emitted here — a fail-closed"
@@ -4812,7 +4813,7 @@ public final class JvmSemanticEmitter {
                     // fields take the constant empty string at the
                     // construction site.
                 }
-                default -> throw new IllegalStateException("CLASS_NEW " + op.opId()
+                default -> throw rejectedOp(op, "CLASS_NEW " + op.opId()
                     + " carries defaultOwner " + payload.defaultOwner()
                     + " outside the emitted owners (producer defect)");
             }
@@ -4860,7 +4861,7 @@ public final class JvmSemanticEmitter {
             for (KindPayload.FieldBoundary entry : payload.fieldBoundaries()) {
                 SemanticOp boundary = opsById.get(entry.boundaryOpId());
                 if (boundary == null) {
-                    throw new IllegalStateException("CLASS_NEW " + op.opId()
+                    throw rejectedOp(op, "CLASS_NEW " + op.opId()
                         + " field boundary " + entry.boundaryOpId() + " does not "
                         + "resolve (producer defect)");
                 }
@@ -4922,7 +4923,7 @@ public final class JvmSemanticEmitter {
                                                         KindPayload.FieldBoundary entry) {
             SemanticOp boundary = opsById.get(entry.boundaryOpId());
             if (boundary == null) {
-                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                throw rejectedOp(op, "CLASS_NEW " + op.opId()
                     + " field boundary " + entry.boundaryOpId() + " does not "
                     + "resolve (producer defect)");
             }
@@ -4967,7 +4968,7 @@ public final class JvmSemanticEmitter {
                 KindPayload.ClassNewPayload payload, ClassLayout layout, int indent) {
             if (!ClassId.ERROR.equals(payload.classId())
                     || !layout.equals(ClassLayout.BUILTIN_ERROR)) {
-                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                throw rejectedOp(op, "CLASS_NEW " + op.opId()
                     + " carries defaultOwner BUILTIN_DEFAULTS for " + payload.classId()
                     + " over " + layout.classId() + ": the builtin-defaults owner is"
                     + " admissible only for the compiler-owned builtin Error class"
@@ -4984,7 +4985,7 @@ public final class JvmSemanticEmitter {
                 } else if ("message".equals(entry.field())) {
                     message = checked;
                 } else {
-                    throw new IllegalStateException("CLASS_NEW " + op.opId()
+                    throw rejectedOp(op, "CLASS_NEW " + op.opId()
                         + " names the builtin Error field '" + entry.field() + "':"
                         + " the builtin class declares exactly code and message —"
                         + " a fail-closed producer defect, never emitted");
@@ -5008,7 +5009,7 @@ public final class JvmSemanticEmitter {
             JvmHostAbiEmission.HostClassFacts facts = hostAbi == null ? null
                 : hostAbi.hostClassFacts(payload.classId());
             if (facts == null) {
-                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                throw rejectedOp(op, "CLASS_NEW " + op.opId()
                     + " carries defaultOwner HOST_DEFAULTS for " + payload.classId()
                     + ", which is not a declared host class of the compile's"
                     + " declaration surface (the class defaults capture has exactly"
@@ -5016,7 +5017,7 @@ public final class JvmSemanticEmitter {
             }
             if (payload.classFactoryRef() != null
                     || !payload.classDefaultOpIds().isEmpty()) {
-                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                throw rejectedOp(op, "CLASS_NEW " + op.opId()
                     + " carries defaultOwner HOST_DEFAULTS with a non-null factory"
                     + " ref or a non-empty default child list: the host construction"
                     + " carries neither (the loaded defaults are data — a producer"
@@ -5069,7 +5070,7 @@ public final class JvmSemanticEmitter {
                 String providedChecked = checked.get(field.name());
                 if (providedSlots.containsKey(field.name())) {
                     if (providedChecked == null) {
-                        throw new IllegalStateException("CLASS_NEW " + op.opId()
+                        throw rejectedOp(op, "CLASS_NEW " + op.opId()
                             + " provides field '" + field.name() + "' without its"
                             + " pinned CLASS_LITERAL_FIELD boundary child (producer"
                             + " defect)");
@@ -5112,7 +5113,7 @@ public final class JvmSemanticEmitter {
             for (OpId defaultOpId : payload.classDefaultOpIds()) {
                 SemanticOp defaultOp = opsById.get(defaultOpId);
                 if (defaultOp == null) {
-                    throw new IllegalStateException("CLASS_NEW " + op.opId()
+                    throw rejectedOp(op, "CLASS_NEW " + op.opId()
                         + " CLASS_DEFAULT child " + defaultOpId + " does not resolve "
                         + "(producer defect)");
                 }
@@ -5178,19 +5179,19 @@ public final class JvmSemanticEmitter {
             OpId factoryOpId = factoryOpIdOf(op, payload);
             SemanticOp factoryOp = opsById.get(factoryOpId);
             if (factoryOp == null || factoryOp.kind() != SemanticOpKind.CLASS_FACTORY) {
-                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                throw rejectedOp(factoryOp != null ? factoryOp : op, "CLASS_NEW " + op.opId()
                     + " resolves factory op " + factoryOpId + " outside the pinned "
                     + "kind (producer defect)");
             }
             KindPayload.ClassFactoryPayload factoryPayload =
                 (KindPayload.ClassFactoryPayload) factoryOp.payload();
             if (!factoryPayload.classId().equals(payload.classId())) {
-                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                throw rejectedOp(factoryOp, "CLASS_NEW " + op.opId()
                     + " resolves a factory of " + factoryPayload.classId()
                     + " (producer defect)");
             }
             if (!(factoryOp.result() instanceof ValueId factoryResult)) {
-                throw new IllegalStateException("CLASS_FACTORY " + factoryOp.opId()
+                throw rejectedOp(factoryOp, "CLASS_FACTORY " + factoryOp.opId()
                     + " publishes no ValueId result (producer defect)");
             }
             String ownerPath = factoryOpId.module().path();
@@ -5218,7 +5219,7 @@ public final class JvmSemanticEmitter {
             for (OpId defaultOpId : factoryPayload.classDefaultOpIds()) {
                 SemanticOp defaultOp = opsById.get(defaultOpId);
                 if (defaultOp == null) {
-                    throw new IllegalStateException("CLASS_FACTORY " + factoryOp.opId()
+                    throw rejectedOp(factoryOp, "CLASS_FACTORY " + factoryOp.opId()
                         + " CLASS_DEFAULT child " + defaultOpId + " does not resolve "
                         + "(producer defect)");
                 }
@@ -5542,7 +5543,7 @@ public final class JvmSemanticEmitter {
                     emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(),
                         indent);
                 }
-                default -> throw new IllegalStateException("BRANCH selector "
+                default -> throw rejectedOp(op, "BRANCH selector "
                     + payload.selector());
             }
         }
@@ -5592,7 +5593,7 @@ public final class JvmSemanticEmitter {
                     }
                     out.append(indent(indent)).append("}\n");
                 }
-                default -> throw new IllegalStateException("LOOP selector "
+                default -> throw rejectedOp(op, "LOOP selector "
                     + payload.selector());
             }
             emitPlainSuccess(op, indent);
@@ -6050,7 +6051,7 @@ public final class JvmSemanticEmitter {
         private String emittingModulePath(SemanticOp op) {
             ModuleId moduleId = opModule.get(op.opId());
             if (moduleId == null) {
-                throw new IllegalStateException("the op " + op.opId()
+                throw rejectedOp(op, "the op " + op.opId()
                     + " has no owning module (the export-surface key is the emitting "
                     + "module's identity — a producer defect, never a path guess)");
             }
@@ -6090,7 +6091,7 @@ public final class JvmSemanticEmitter {
                 new deal.semantic.ir.FunctionAllocationIdentity(
                     payload.function().id()));
             if (binding == null) {
-                throw new IllegalStateException("CALLBACK_INVOKE " + op.opId()
+                throw rejectedOp(op, "CALLBACK_INVOKE " + op.opId()
                     + " resolves no FunctionExecutionBinding (producer defect)");
             }
             String entry = "cb" + op.opId().id();
@@ -6231,7 +6232,7 @@ public final class JvmSemanticEmitter {
                     if (crossing == null
                             || !(crossing.payload()
                                 instanceof KindPayload.BoundaryPayload boundary)) {
-                        throw new IllegalStateException("CALLBACK_INVOKE "
+                        throw rejectedOp(op, "CALLBACK_INVOKE "
                             + op.opId() + " names the materializing host crossing "
                             + hostValue.materializingBoundaryOpId()
                             + ", which is not a boundary op of the emitted closure"
@@ -6240,15 +6241,15 @@ public final class JvmSemanticEmitter {
                     emitHostCallbackValue(op, payload, slot(boundary.input()), indent);
                 }
                 case FunctionExecutionBinding.IntrinsicFunction intrinsic ->
-                    throw new IllegalStateException("CALLBACK_INVOKE " + op.opId()
+                    throw rejectedOp(op, "CALLBACK_INVOKE " + op.opId()
                         + " resolves the " + intrinsic.kind() + " intrinsic carrier"
                         + " (the intrinsic carrier is the function-typed-value"
                         + " child's — a fail-closed producer defect)");
                 case FunctionExecutionBinding.ExternalFunction external ->
-                    throw new IllegalStateException("CALLBACK_INVOKE " + op.opId()
+                    throw rejectedOp(op, "CALLBACK_INVOKE " + op.opId()
                         + " resolves an external binding outside the statically-"
                         + "resolved slice (a fail-closed producer defect)");
-                default -> throw new IllegalStateException("CALLBACK_INVOKE "
+                default -> throw rejectedOp(op, "CALLBACK_INVOKE "
                     + op.opId() + " resolves a binding outside the statically-resolved "
                     + "slice: " + binding);
             }
@@ -6424,7 +6425,7 @@ public final class JvmSemanticEmitter {
                     return candidate;
                 }
             }
-            throw new IllegalStateException("the adapter-over-async task has no nested "
+            throw rejectedOp(outer, "the adapter-over-async task has no nested "
                 + "source ASYNC_START (producer defect)");
         }
 
@@ -6522,13 +6523,13 @@ public final class JvmSemanticEmitter {
                 case KindPayload.CallCallee.Indirect indirect -> {
                     FunctionExecutionBinding resolved = bindingOfIdentity(indirect.callee());
                     if (resolved == null) {
-                        throw new IllegalStateException("ASYNC_START " + op.opId()
+                        throw rejectedOp(op, "ASYNC_START " + op.opId()
                             + " resolves the indirect callee identity " + indirect.callee()
                             + " to no registered FunctionExecutionBinding (producer defect)");
                     }
                     yield resolved;
                 }
-                default -> throw new IllegalStateException("ASYNC_START " + op.opId()
+                default -> throw rejectedOp(op, "ASYNC_START " + op.opId()
                     + " resolves a callee outside the statically-resolved slice: "
                     + payload.callee());
             };
@@ -6643,7 +6644,7 @@ public final class JvmSemanticEmitter {
                 case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
 
                     if (args.size() != intrinsic.descriptor().paramTypes().size()) {
-                        throw new IllegalStateException("ASYNC_START " + op.opId()
+                        throw rejectedOp(op, "ASYNC_START " + op.opId()
                             + " carries " + args.size() + " argument(s) for the '"
                             + intrinsic.kind() + "' intrinsic's "
                             + intrinsic.descriptor().paramTypes().size()
@@ -6662,7 +6663,7 @@ public final class JvmSemanticEmitter {
                         .append("));\n");
                 }
                 case FunctionExecutionBinding.DynamicFunctionValue dynamic ->
-                    throw new IllegalStateException("ASYNC_START " + op.opId()
+                    throw rejectedOp(op, "ASYNC_START " + op.opId()
                         + " resolves the dynamic function value produced by "
                         + dynamic.materializingOpId() + " outside the dynamic arm (a "
                         + "DynamicFunctionValue names no execution class and is never a "
@@ -6711,7 +6712,7 @@ public final class JvmSemanticEmitter {
                 (KindPayload.AsyncStartPayload) op.payload();
             String label = payload.hostOperationLabel();
             if (hostAbi == null) {
-                throw new IllegalStateException("ASYNC_START " + op.opId()
+                throw rejectedOp(op, "ASYNC_START " + op.opId()
                     + " resolves the host export '" + moduleId.path() + "."
                     + exportName + "' but the session carries no host ABI emission"
                     + " surface (a producer defect; only the production project"
@@ -6742,7 +6743,7 @@ public final class JvmSemanticEmitter {
                 (KindPayload.AsyncStartPayload) op.payload();
             String label = payload.hostOperationLabel();
             if (hostAbi == null) {
-                throw new IllegalStateException("ASYNC_START " + op.opId()
+                throw rejectedOp(op, "ASYNC_START " + op.opId()
                     + " resolves the host-materialized function value of module '"
                     + hostValue.hostModuleId().path() + "' but the session carries"
                     + " no host ABI emission surface (a producer defect)");
@@ -6750,7 +6751,7 @@ public final class JvmSemanticEmitter {
             SemanticOp crossing = opsById.get(hostValue.materializingBoundaryOpId());
             if (crossing == null
                     || !(crossing.payload() instanceof KindPayload.BoundaryPayload boundary)) {
-                throw new IllegalStateException("ASYNC_START " + op.opId()
+                throw rejectedOp(op, "ASYNC_START " + op.opId()
                     + " names the materializing host crossing "
                     + hostValue.materializingBoundaryOpId()
                     + ", which is not a boundary op of the emitted closure"
@@ -6799,7 +6800,7 @@ public final class JvmSemanticEmitter {
         private void emitAsyncExternalStart(SemanticOp op, int indent, AsyncTokenId token,
                                             ExternalAsyncLink link, List<String> args) {
             if (link == null) {
-                throw new IllegalStateException("ASYNC_START(EXTERNAL) without "
+                throw rejectedOp(op, "ASYNC_START(EXTERNAL) without "
                     + "its ExternalAsyncLink (producer defect)");
             }
             // The entry returns this activation's own task instance and the
@@ -7242,10 +7243,11 @@ public final class JvmSemanticEmitter {
          * or a producer defect: the lowering's STDLIB guard already rejects an
          * out-of-catalog member, so an emitted read always names a row.
          */
-        private static StdlibFunctionCatalog.Entry stdlibRowOf(String modulePath,
+        private static StdlibFunctionCatalog.Entry stdlibRowOf(SemanticOp op,
+                                                              String modulePath,
                                                               String exportName) {
             return StdlibFunctionCatalog.lookup(modulePath, exportName)
-                .orElseThrow(() -> new IllegalStateException("the STDLIB export read '"
+                .orElseThrow(() -> rejectedOp(op, "the STDLIB export read '"
                     + modulePath + "#" + exportName + "' resolves no closed catalog row"
                     + " (the catalog is the STDLIB kind's resolution authority — a"
                     + " producer defect)"));
@@ -7271,7 +7273,7 @@ public final class JvmSemanticEmitter {
             ModuleImportKind kind = importKinds.get(payload.module());
             if (kind == ModuleImportKind.COMPILED && projectSession
                     && !units.containsKey(payload.module())) {
-                throw new IllegalStateException("the compiled EXPORT_READ of export '"
+                throw rejectedOp(op, "the compiled EXPORT_READ of export '"
                     + payload.name() + "' of module '" + payload.module().path()
                     + "' resolves an owner module outside the project session's"
                     + " closure (the one lowering resolves every COMPILED import to a"
@@ -7294,7 +7296,7 @@ public final class JvmSemanticEmitter {
                 // identical object and the read never builds a per-read
                 // value.
                 out.append(" = JvmRuntime.stdlibCallable(")
-                    .append(stdlibRowArgs(stdlibRowOf(payload.module().path(),
+                    .append(stdlibRowArgs(stdlibRowOf(op, payload.module().path(),
                         payload.name()))).append(");\n");
             } else {
 

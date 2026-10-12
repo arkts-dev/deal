@@ -1,5 +1,6 @@
 package deal.codegen.jvm;
 
+import deal.codegen.SharedEmissionFailure;
 import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalModuleIdentity;
 import deal.semantic.DescriptorService;
@@ -553,7 +554,7 @@ final class JvmHostAbiEmission {
      * descriptor with no declared position is a fail-closed producer
      * defect.
      */
-    Type.Func declaredFunctionValue(String descriptorText) {
+    Type.Func declaredFunctionValue(SemanticOp op, String descriptorText) {
         for (HostModule module : modules) {
             for (Type export : module.facts().exports().values()) {
                 Type.Func found = findDeclaredFunction(export, descriptorText);
@@ -571,9 +572,14 @@ final class JvmHostAbiEmission {
                 }
             }
         }
-        throw new IllegalStateException("the host-materialized function value of"
+        throw rejectedOp(op, "the host-materialized function value of"
             + " descriptor '" + descriptorText + "' has no declared function"
             + " position in the compile's declaration surface (a producer defect)");
+    }
+
+    /** The source-bearing rejection of one explicitly rejected op (D4). */
+    private static SharedEmissionFailure rejectedOp(SemanticOp op, String message) {
+        return new SharedEmissionFailure(message, op.origin().span().range());
     }
 
     private static Type.Func findDeclaredFunction(Type type, String descriptorText) {
