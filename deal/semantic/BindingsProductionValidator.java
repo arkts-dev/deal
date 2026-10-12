@@ -1589,10 +1589,13 @@ public final class BindingsProductionValidator {
                 : model.initsBySite.entrySet()) {
             List<SemanticOp> inits = entry.getValue();
             if (inits.size() != 1) {
-                // No unique offending op exists for a zero-or-multiple INIT
-                // conflict (the incarnation key is the identified fact), so
-                // the failure stays originless.
-                return fail(null, model, BINDING_INIT_ONCE, "the incarnation {"
+                // A zero-INIT conflict identifies no operation and stays
+                // originless; a multiple-INIT conflict (duplicate pinned
+                // initializing writes) is detected on the second init in
+                // the retained unit operation order, which becomes the
+                // explicit offending subject (design D3).
+                SemanticOp duplicate = inits.size() > 1 ? inits.get(1) : null;
+                return fail(duplicate, model, BINDING_INIT_ONCE, "the incarnation {"
                     + entry.getKey().binding() + ", " + entry.getKey().generation()
                     + "} has " + inits.size() + " BINDING_INIT ops (exactly one per "
                     + "source-declaration incarnation)");

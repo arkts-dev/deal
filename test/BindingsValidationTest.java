@@ -274,10 +274,11 @@ public class BindingsValidationTest {
 
     /**
      * The bindings failure origins (ISSUE-0750): a per-op rule carries the
-     * offending operation's own SOURCE range; an offsetless known-file
-     * origin keeps its file but stays SYNTHETIC; and a rule conflict with
-     * no unique offending operation keeps the canonical empty-file
-     * synthetic range.
+     * offending operation's own SOURCE range (including the duplicate-INIT
+     * conflict, whose second init in the retained unit order detects the
+     * violation); an offsetless known-file origin keeps its file but stays
+     * SYNTHETIC; and a rule conflict with no identified offending operation
+     * keeps the canonical empty-file synthetic range.
      */
     private static void testFailureOriginProjection() {
         System.out.println("-- bindings failure origins: the offending op's exact range, "
@@ -336,22 +337,68 @@ public class BindingsValidationTest {
                 + "SOURCE anchor: "
                 + (offsetless.isEmpty() ? "none" : offsetless.get().range()));
 
-        // The genuinely originless conflict: two INIT ops of one incarnation
-        // identify no unique offending op, so the canonical empty-file
-        // synthetic range stays.
+        // The duplicate-INIT conflict: the rule is detected on the second
+        // init in the retained unit order, whose own SOURCE range is the
+        // offending span; the earlier init's distinct origin is never
+        // substituted.
         BindingId z = nextBindingId();
         SemanticOp allocZ = allocOp(z, INIT_BLOCK, 0);
-        SemanticOp initZ1 = initOp(z, 0, nextValue());
-        SemanticOp initZ2 = initOp(z, 0, nextValue());
+        SourceOrigin firstInitOrigin = new SourceOrigin("first.deal",
+            new SourceSpan("first.deal", 1, 1, 1, 6, 0, 5),
+            SourceOriginKind.USER, new AnchorId(21), null);
+        SourceOrigin secondInitOrigin = new SourceOrigin("second.deal",
+            new SourceSpan("second.deal", 2, 3, 2, 8, 30, 35),
+            SourceOriginKind.USER, new AnchorId(22), null);
+        SemanticOp initZ1 = withOrigin(initOp(z, 0, nextValue()), firstInitOrigin);
+        SemanticOp initZ2 = withOrigin(initOp(z, 0, nextValue()), secondInitOrigin);
         LoweredModuleUnit unitZ = unit(Map.of(), Map.of(), List.of(allocZ, initZ1, initZ2));
         StructuredBodyTable tableZ =
             tableOf(Map.of(INIT_BLOCK, List.of(allocZ, initZ1, initZ2)));
-        Optional<CompilerDiagnostic> originless =
+        Optional<CompilerDiagnostic> duplicateInit =
             BindingsProductionValidator.validate(unitZ, tableZ);
-        assertE6005(originless, "BINDING_INIT_ONCE", "the duplicate-INIT conflict");
+        assertE6005(duplicateInit, "BINDING_INIT_ONCE", "the duplicate-INIT conflict",
+            "has 2 BINDING_INIT ops");
+        check(duplicateInit.isPresent()
+                && secondInitOrigin.span().range().equals(duplicateInit.get().range()),
+            "the duplicate-INIT failure carries the second init's own SOURCE range: "
+                + (duplicateInit.isEmpty() ? "none" : duplicateInit.get().range()));
+        check(duplicateInit.isPresent()
+                && duplicateInit.get().range().origin() == RangeOrigin.SOURCE
+                && "second.deal".equals(duplicateInit.get().range().file())
+                && duplicateInit.get().range().startLine() == 2
+                && duplicateInit.get().range().startColumn() == 3
+                && duplicateInit.get().range().endColumn() == 9
+                && duplicateInit.get().range().startScalarOffset() == 30
+                && duplicateInit.get().range().endScalarOffset() == 35
+                && duplicateInit.get().range().scalarLength() == 5,
+            "the duplicate-INIT range is the second init's own exact half-open span: "
+                + (duplicateInit.isEmpty() ? "none" : duplicateInit.get().range()));
+        check(duplicateInit.isPresent()
+                && !firstInitOrigin.span().range().equals(duplicateInit.get().range()),
+            "the diagnosing init's range is not the earlier init's origin: "
+                + (duplicateInit.isEmpty() ? "none" : duplicateInit.get().range()));
+
+        // The genuinely originless control: an import-alias allocation named
+        // by no MODULE_IMPORT completion identifies no offending operation,
+        // so the canonical empty-file synthetic range stays.
+        BindingId aliasA = nextBindingId();
+        BindingId aliasB = nextBindingId();
+        SemanticOp aliasAllocA = allocOp(aliasA, INIT_BLOCK, 0);
+        SemanticOp aliasAllocB = allocOp(aliasB, INIT_BLOCK, 0);
+        SemanticOp completion = moduleImportOp(aliasA);
+        LoweredModuleUnit unitAlias = unit(Map.of(), Map.of(),
+            List.of(aliasAllocA, aliasAllocB, completion));
+        StructuredBodyTable tableAlias = tableOf(Map.of(INIT_BLOCK,
+            List.of(aliasAllocA, aliasAllocB, completion)));
+        Optional<CompilerDiagnostic> originless = BindingsProductionValidator.validate(
+            unitAlias, tableAlias,
+            new BindingsProductionValidator.PinnedWriteFacts(Set.of(), Set.of(aliasB)));
+        assertE6005(originless, "BINDING_INIT_ONCE",
+            "the import alias named by no completion",
+            "is named by no MODULE_IMPORT completion");
         check(originless.isPresent() && originless.get().range().isCanonicalSynthetic()
                 && "".equals(originless.get().range().file()),
-            "a conflict with no unique offending operation keeps the canonical "
+            "a conflict with no identified offending operation keeps the canonical "
                 + "empty-file synthetic range: "
                 + (originless.isEmpty() ? "none" : originless.get().range()));
     }

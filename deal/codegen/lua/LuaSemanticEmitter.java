@@ -3219,7 +3219,7 @@ public final class LuaSemanticEmitter {
             }
             LoweredModuleUnit calleeUnit = units.get(external.moduleId());
             if (calleeUnit == null) {
-                throw new IllegalStateException("CALL " + op.opId()
+                throw rejectedOp(op, "CALL " + op.opId()
                     + " resolves the external callee module " + external.moduleId()
                     + " outside the session's closure (producer defect)");
             }

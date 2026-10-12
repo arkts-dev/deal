@@ -892,7 +892,8 @@ public class CrossModuleCallRealizationTest {
     private static void testFailClosedSeeds(LoweredFixture baseline)
             throws Exception {
         System.out.println("-- the fail-closed seeds: a ref outside the closure, a "
-            + "non-entry ref, and a RETAINED_ABI external --");
+            + "non-entry ref, a RETAINED_ABI external, and a foreign callee module "
+            + "--");
         Fixture fixture = baseline.fixture();
         {
             SemanticLowerer.ProjectLoweringResult result = baseline.result();
@@ -936,6 +937,29 @@ public class CrossModuleCallRealizationTest {
                 probePayload.bodyBlock(), probePayload.externalEntryRef());
             assertRetainedOwnerRejected("the RETAINED_ABI external", call, shared,
                 replaceCallPayload(result.project(), appUnit, call, retained),
+                result.tables(), result.registries(), fixture);
+
+            // (c) The external callee module outside the closure: the
+            // resolved callee module is replaced with a foreign module
+            // (the closed external fact no checker-valid program
+            // produces) while SHARED_BODY and the CALL origin stay. The
+            // identified emitter rejection carries the offending CALL's
+            // own exact range, not the empty-file synthetic anchor.
+            ModuleId outside = new ModuleId("outside");
+            KindPayload.CallPayload outsideCallee = new KindPayload.CallPayload(
+                probePayload.mode(),
+                new KindPayload.CallCallee.Static(
+                    new FunctionExecutionBinding.ExternalFunction(
+                        outside, shared.exportName(), shared.descriptor(),
+                        ExternalExecutionOwner.SHARED_BODY)),
+                probePayload.signature(), probePayload.parameterBoundaryOpIds(),
+                probePayload.returnBoundaryOpId(), probePayload.dynamicReturnBoundary(),
+                probePayload.bodyBlock(), probePayload.externalEntryRef());
+            assertEmitterFailureCarriesOrigin(
+                "the external callee module outside the closure", call,
+                "CALL " + call.opId() + " resolves the external callee module "
+                    + outside + " outside the session's closure (producer defect)",
+                replaceCallPayload(result.project(), appUnit, call, outsideCallee),
                 result.tables(), result.registries(), fixture);
         }
     }
@@ -1057,8 +1081,6 @@ public class CrossModuleCallRealizationTest {
      * shared emitter signal carrying the offending CALL operation's own
      * exact range; the production arm's own projection then merges that
      * range into the unchanged {@code SHARED_EMITTER_COVERAGE} E6005.
-     * An ordinary originless emitter refusal keeps the canonical
-     * synthetic projection.
      */
     private static void assertRetainedOwnerRejected(String what,
             SemanticOp offending,
@@ -1067,11 +1089,30 @@ public class CrossModuleCallRealizationTest {
             Map<ModuleId, StructuredBodyTable> tables,
             Map<ModuleId, ClassFactoryRegistry> registries, Fixture fixture)
             throws Exception {
-        String expectedMessage = "CALL " + offending.opId()
-            + " resolves the external binding " + shared.moduleId() + "."
-            + shared.exportName() + " with execution owner "
-            + ExternalExecutionOwner.RETAINED_ABI + " (a RETAINED_ABI external has"
-            + " no production emission arm — producer defect)";
+        assertEmitterFailureCarriesOrigin(what, offending,
+            "CALL " + offending.opId()
+                + " resolves the external binding " + shared.moduleId() + "."
+                + shared.exportName() + " with execution owner "
+                + ExternalExecutionOwner.RETAINED_ABI + " (a RETAINED_ABI external has"
+                + " no production emission arm — producer defect)",
+            project, tables, registries, fixture);
+    }
+
+    /**
+     * The shared source-bearing emitter rejection (ISSUE-0750 D4)
+     * exercised end to end: both emitter boundaries carry the offending
+     * CALL operation's own exact range beside the unchanged complete
+     * message, the production arm's own projection merges it into the
+     * unchanged {@code SHARED_EMITTER_COVERAGE} E6005, and an ordinary
+     * originless emitter refusal keeps the canonical synthetic
+     * projection.
+     */
+    private static void assertEmitterFailureCarriesOrigin(String what,
+            SemanticOp offending, String expectedMessage,
+            ExecutableLoweredProject project,
+            Map<ModuleId, StructuredBodyTable> tables,
+            Map<ModuleId, ClassFactoryRegistry> registries, Fixture fixture)
+            throws Exception {
         DiagnosticRange expected = offending.origin().span().range();
         check(expected.origin() == RangeOrigin.SOURCE && expected.scalarLength() > 0,
             what + ": the offending CALL carries a real SOURCE span: " + expected);
@@ -1080,12 +1121,12 @@ public class CrossModuleCallRealizationTest {
         try {
             LuaSemanticEmitter.emitProductionProject(project, tables, registries,
                 fixture.surface());
-            fail(what + ": the LuaJIT emitter rejects the retained-ABI external");
+            fail(what + ": the LuaJIT emitter rejects the identified fact");
         } catch (IllegalStateException rejection) {
             luaRejection = rejection;
             check(rejection.getMessage() != null
-                    && rejection.getMessage().contains("RETAINED_ABI"),
-                what + ": the LuaJIT rejection names the retained execution owner: "
+                    && rejection.getMessage().contains(offending.opId().toString()),
+                what + ": the LuaJIT rejection names the offending CALL op: "
                     + rejection.getMessage());
             check(rejection instanceof SharedEmissionFailure,
                 what + ": the LuaJIT rejection is the source-bearing shared "
@@ -1101,11 +1142,11 @@ public class CrossModuleCallRealizationTest {
         try {
             JvmSemanticEmitter.emitProductionProject(project, tables, registries,
                 "Probe", fixture.surface());
-            fail(what + ": the JVM emitter rejects the retained-ABI external");
+            fail(what + ": the JVM emitter rejects the identified fact");
         } catch (IllegalStateException rejection) {
             check(rejection.getMessage() != null
-                    && rejection.getMessage().contains("RETAINED_ABI"),
-                what + ": the JVM rejection names the retained execution owner: "
+                    && rejection.getMessage().contains(offending.opId().toString()),
+                what + ": the JVM rejection names the offending CALL op: "
                     + rejection.getMessage());
             check(rejection instanceof SharedEmissionFailure,
                 what + ": the JVM rejection is the source-bearing shared "
