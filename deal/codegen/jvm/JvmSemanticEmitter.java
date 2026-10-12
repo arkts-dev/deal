@@ -4226,9 +4226,9 @@ public final class JvmSemanticEmitter {
                     + " production project entry carries the compile's"
                     + " declaration surface)");
             }
-            String wrapper = hostAbi.requireWrapper(hostModuleId.path(), exportName);
-            Type.Func declared = hostAbi.declaredFunction(hostModuleId.path(),
-                exportName);
+            String wrapper = hostAbi.requireWrapper(op, hostModuleId.path(), exportName);
+            Type.Func declared = hostAbi.declaredFunction(op,
+                hostModuleId.path(), exportName);
             HostCallArguments arguments = emitHostArguments(op, payload, declared, indent);
             StringBuilder call = new StringBuilder(wrapper).append('(');
             for (String projected : arguments.projected()) {
@@ -6222,9 +6222,9 @@ public final class JvmSemanticEmitter {
                 }
                 case FunctionExecutionBinding.HostFunction host ->
                     emitHostCallbackInvoke(op, payload,
-                        hostAbi.requireWrapper(host.hostModuleId().path(),
+                        hostAbi.requireWrapper(op, host.hostModuleId().path(),
                             host.exportName()),
-                        hostAbi.declaredFunction(host.hostModuleId().path(),
+                        hostAbi.declaredFunction(op, host.hostModuleId().path(),
                             host.exportName()), indent);
                 case FunctionExecutionBinding.HostFunctionValue hostValue -> {
                     SemanticOp crossing = opsById.get(
@@ -6718,7 +6718,7 @@ public final class JvmSemanticEmitter {
                     + " surface (a producer defect; only the production project"
                     + " entry carries the compile's declaration surface)");
             }
-            String wrapper = hostAbi.requireWrapper(moduleId.path(), exportName);
+            String wrapper = hostAbi.requireWrapper(op, moduleId.path(), exportName);
             StringBuilder call = new StringBuilder(wrapper).append('(');
             for (String arg : args) {
                 call.append(arg).append(", ");

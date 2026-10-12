@@ -26,22 +26,32 @@ import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticOracle;
 import deal.semantic.SemanticRequirementManifest;
 import deal.semantic.SemanticRuntimeModel;
+import deal.semantic.ir.AsyncStartSource;
+import deal.semantic.ir.AsyncTokenId;
+import deal.semantic.ir.AsyncTokenOwner;
 import deal.semantic.ir.BoundaryKind;
+import deal.semantic.ir.BoundaryRealization;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ExternalExecutionOwner;
+import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
+import deal.semantic.ir.InternalResultType;
 import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.OpId;
+import deal.semantic.ir.OpResultType;
+import deal.semantic.ir.ParameterBoundaryMode;
 import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
+import deal.semantic.ir.SemanticValue;
 import deal.semantic.ir.SourceOrigin;
 import deal.semantic.ir.StructuredBodyTable;
+import deal.semantic.ir.ValueId;
 
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
@@ -894,8 +904,9 @@ public class CrossModuleCallRealizationTest {
             throws Exception {
         System.out.println("-- the fail-closed seeds: a ref outside the closure, a "
             + "non-entry ref, a RETAINED_ABI external, a foreign callee module, a "
-            + "statically-unresolved binding, a non-boundary host crossing, and a "
-            + "structural MODULE_INIT parent --");
+            + "statically-unresolved binding, a non-boundary host crossing, a "
+            + "structural MODULE_INIT parent, and the unresolved host export at "
+            + "the CALL, CALLBACK_INVOKE, and ASYNC_START arms --");
         Fixture fixture = baseline.fixture();
         {
             SemanticLowerer.ProjectLoweringResult result = baseline.result();
@@ -1031,6 +1042,77 @@ public class CrossModuleCallRealizationTest {
                 replaceProjectOpOrigin(result.project(), appUnit, moduleInit,
                     parentedOrigin),
                 result.tables(), result.registries(), fixture);
+
+            // (g) The unresolved host export: the CALL's static binding is
+            // replaced with a HostFunction naming a host module/export the
+            // compile's declaration surface does not carry (the closed fact
+            // no checker-valid program produces) while the CALL origin
+            // stays. The JVM host-wrapper lookup identifies the CALL and
+            // carries its own exact range.
+            FunctionExecutionBinding.HostFunction missingHost =
+                new FunctionExecutionBinding.HostFunction(
+                    new ModuleId("host/missing"), "absent", shared.descriptor());
+            String missingHostMessage =
+                "the host call resolves 'host/missing.absent' but the emitted"
+                    + " host ABI surface carries no per-export wrapper for it"
+                    + " (a producer defect)";
+            KindPayload.CallPayload unresolvedHost = new KindPayload.CallPayload(
+                probePayload.mode(),
+                new KindPayload.CallCallee.Static(missingHost),
+                probePayload.signature(), probePayload.parameterBoundaryOpIds(),
+                probePayload.returnBoundaryOpId(), probePayload.dynamicReturnBoundary(),
+                probePayload.bodyBlock(), probePayload.externalEntryRef());
+            assertJvmEmitterFailureCarriesOrigin(
+                "the unresolved host export at the CALL arm", call,
+                missingHostMessage,
+                replaceCallPayload(result.project(), appUnit, call, unresolvedHost),
+                result.tables(), result.registries(), fixture);
+
+            // (h) The same unresolved host binding reached through the
+            // callback arm: the CALL position is rebuilt as a
+            // CALLBACK_INVOKE whose registered function binding is the
+            // unresolved host function (the closed fact no checker-valid
+            // program produces), with the callback's own DEAL_TO_HOST
+            // return position. The callback arm's host-wrapper lookup
+            // carries the offending op's own exact range.
+            long callbackIdentity = 900001L;
+            OpId callbackReturn = new OpId(appUnit.moduleId(), 900900L);
+            assertJvmEmitterFailureCarriesOrigin(
+                "the unresolved host export at the CALLBACK_INVOKE arm", call,
+                missingHostMessage,
+                replaceOp(result.project(), appUnit, call,
+                    SemanticOpKind.CALLBACK_INVOKE, call.result(), call.resultType(),
+                    new KindPayload.CallbackInvokePayload(
+                        new ValueId(callbackIdentity), probePayload.signature(),
+                        probePayload.parameterBoundaryOpIds(), callbackReturn),
+                    Map.<FunctionAllocationIdentity, FunctionExecutionBinding>of(
+                        new FunctionAllocationIdentity(callbackIdentity),
+                        missingHost),
+                    List.of(dealToHostReturnBoundary(appUnit, call, callbackReturn))),
+                result.tables(), result.registries(), fixture);
+
+            // (i) The same unresolved host binding reached through the
+            // async arm: the CALL position is rebuilt as an ASYNC_START
+            // whose static callee binding is the unresolved host function.
+            // The async host arm's wrapper lookup carries the offending
+            // op's own exact range.
+            assertJvmEmitterFailureCarriesOrigin(
+                "the unresolved host export at the ASYNC_START arm", call,
+                missingHostMessage,
+                replaceOp(result.project(), appUnit, call,
+                    SemanticOpKind.ASYNC_START,
+                    new AsyncTokenId.Canonical(900002L,
+                        AsyncTokenOwner.HOST_OPERATION),
+                    InternalResultType.INTERNAL_ASYNC,
+                    new KindPayload.AsyncStartPayload(
+                        new KindPayload.CallCallee.Static(missingHost),
+                        AsyncStartSource.HOST,
+                        ParameterBoundaryMode.ELIDED_BY_ADAPTER, List.of(),
+                        probePayload.signature().returnType(), null,
+                        "host/missing.absent", null),
+                    Map.<FunctionAllocationIdentity, FunctionExecutionBinding>of(),
+                    List.of()),
+                result.tables(), result.registries(), fixture);
         }
     }
 
@@ -1123,11 +1205,105 @@ public class CrossModuleCallRealizationTest {
 
     private static LoweredModuleUnit withOps(LoweredModuleUnit unit,
             List<SemanticOp> ops) {
+        return withOps(unit, ops, unit.functionBindings());
+    }
+
+    private static LoweredModuleUnit withOps(LoweredModuleUnit unit,
+            List<SemanticOp> ops,
+            Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings) {
         return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(),
             unit.classLayouts(), unit.functions(), unit.moduleInit(),
-            unit.exportPlan(), unit.functionBindings(), ops);
+            unit.exportPlan(), bindings, ops);
+    }
+
+    /**
+     * Rebuilds one op of one unit with a replaced kind, result, result type
+     * and payload, optionally extending the unit's function bindings: the
+     * hand-built facts the fail-closed seeds need (no checker-valid program
+     * produces them). The op constructor and contract snapshot pin the
+     * payload instance, the kind, and the result type together, so the
+     * snapshot is rewired over the same replaced instances.
+     */
+    private static ExecutableLoweredProject replaceOp(
+            ExecutableLoweredProject project, LoweredModuleUnit unit,
+            SemanticOp op, SemanticOpKind kind, SemanticValue result,
+            OpResultType resultType, KindPayload payload,
+            Map<FunctionAllocationIdentity, FunctionExecutionBinding> addedBindings,
+            List<SemanticOp> addedOps) {
+        deal.semantic.ir.OperationContractSnapshot old = op.contract();
+        deal.semantic.ir.OperationContractSnapshot rewired =
+            new deal.semantic.ir.OperationContractSnapshot(old.version(), kind,
+                resultType, old.operandTypes(), old.selector(), payload,
+                old.failurePolicy(), old.referencedSemanticIds(),
+                old.canonicalDigest());
+        List<SemanticOp> ops = new ArrayList<>();
+        for (SemanticOp candidate : unit.ops()) {
+            if (candidate.opId().equals(op.opId())) {
+                ops.add(new SemanticOp(candidate.opId(), kind, candidate.origin(),
+                    result, resultType, candidate.operands(), candidate.operandTypes(),
+                    payload, candidate.failurePolicy(), rewired));
+            } else {
+                ops.add(candidate);
+            }
+        }
+        ops.addAll(addedOps);
+        Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings =
+            new LinkedHashMap<>(unit.functionBindings());
+        bindings.putAll(addedBindings);
+        Map<ModuleId, LoweredModuleUnit> modules = new LinkedHashMap<>();
+        for (Map.Entry<ModuleId, LoweredModuleUnit> entry : project.modules().entrySet()) {
+            if (entry.getKey().equals(unit.moduleId())) {
+                modules.put(entry.getKey(), withOps(unit, ops, bindings));
+            } else {
+                modules.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return new ExecutableLoweredProject(project.semanticProfile(),
+            project.interfaceIndex(), modules, project.entryModule());
+    }
+
+    /**
+     * One hand-built {@code DEAL_TO_HOST} return position of the callback
+     * invocation replacing the CALL probe: the callback payload's
+     * non-null return-boundary reference, parented to the callback op and
+     * shaped from the unit's existing boundary scaffolding (the emitter
+     * identifies the unresolved host binding before running the return
+     * position).
+     */
+    private static SemanticOp dealToHostReturnBoundary(LoweredModuleUnit unit,
+            SemanticOp callback, OpId boundaryId) {
+        SemanticOp template = null;
+        for (SemanticOp candidate : unit.ops()) {
+            if (candidate.kind() == SemanticOpKind.BOUNDARY
+                    && candidate.payload() instanceof KindPayload.BoundaryPayload) {
+                template = candidate;
+                break;
+            }
+        }
+        if (template == null) {
+            throw new IllegalStateException("the probe unit carries no boundary op "
+                + "to shape a CALLBACK_INVOKE return position from");
+        }
+        KindPayload.BoundaryPayload templatePayload =
+            (KindPayload.BoundaryPayload) template.payload();
+        KindPayload.BoundaryPayload payload = new KindPayload.BoundaryPayload(
+            BoundaryKind.DEAL_TO_HOST, templatePayload.descriptor(),
+            (ValueId) callback.result(),
+            new BoundaryRealization.RuntimeValidation("check"));
+        deal.semantic.ir.OperationContractSnapshot old = template.contract();
+        deal.semantic.ir.OperationContractSnapshot contract =
+            new deal.semantic.ir.OperationContractSnapshot(old.version(),
+                SemanticOpKind.BOUNDARY, template.resultType(), old.operandTypes(),
+                old.selector(), payload, template.failurePolicy(),
+                old.referencedSemanticIds(), old.canonicalDigest());
+        SourceOrigin origin = new SourceOrigin(callback.origin().sourceId(),
+            callback.origin().span(), callback.origin().kind(),
+            callback.origin().anchorId(), callback.opId());
+        return new SemanticOp(boundaryId, SemanticOpKind.BOUNDARY, origin,
+            template.result(), template.resultType(), template.operands(),
+            template.operandTypes(), payload, template.failurePolicy(), contract);
     }
 
     /**
@@ -1213,17 +1389,14 @@ public class CrossModuleCallRealizationTest {
             Map<ModuleId, StructuredBodyTable> tables,
             Map<ModuleId, ClassFactoryRegistry> registries, Fixture fixture)
             throws Exception {
-        DiagnosticRange expected = offending.origin().span().range();
-        check(expected.origin() == RangeOrigin.SOURCE && expected.scalarLength() > 0,
-            what + ": the offending CALL carries a real SOURCE span: " + expected);
+        DiagnosticRange expected = assertOffendingSourceSpan(what, offending);
 
-        IllegalStateException luaRejection = null;
+        SharedEmissionFailure luaRejection = null;
         try {
             LuaSemanticEmitter.emitProductionProject(project, tables, registries,
                 fixture.surface());
             fail(what + ": the LuaJIT emitter rejects the identified fact");
         } catch (IllegalStateException rejection) {
-            luaRejection = rejection;
             check(rejection.getMessage() != null
                     && rejection.getMessage().contains(offending.opId().toString()),
                 what + ": the LuaJIT rejection names the offending CALL op: "
@@ -1238,16 +1411,67 @@ public class CrossModuleCallRealizationTest {
                     && expected.equals(carrier.diagnosticRange()),
                 what + ": the LuaJIT rejection carries the CALL op's own exact "
                     + "range");
+            if (rejection instanceof SharedEmissionFailure failure) {
+                luaRejection = failure;
+            }
         }
+        assertJvmEmitterRejection(what, offending, expected, expectedMessage, project,
+            tables, registries, fixture);
+        if (luaRejection == null) {
+            return;
+        }
+        assertProjectedEmitterOrigin(what, offending, expected, expectedMessage,
+            project, luaRejection);
+    }
+
+    /**
+     * The JVM-only source-bearing emitter boundaries: the host-wrapper and
+     * declared-function lookups identify the rejected op whose resolved
+     * binding names a host module/export the compile's declaration surface
+     * does not carry, so the signal must carry that op's own exact range
+     * and the production arm's projection must merge it.
+     */
+    private static void assertJvmEmitterFailureCarriesOrigin(String what,
+            SemanticOp offending, String expectedMessage,
+            ExecutableLoweredProject project,
+            Map<ModuleId, StructuredBodyTable> tables,
+            Map<ModuleId, ClassFactoryRegistry> registries, Fixture fixture)
+            throws Exception {
+        DiagnosticRange expected = assertOffendingSourceSpan(what, offending);
+        SharedEmissionFailure rejection = assertJvmEmitterRejection(what, offending,
+            expected, expectedMessage, project, tables, registries, fixture);
+        if (rejection == null) {
+            return;
+        }
+        assertProjectedEmitterOrigin(what, offending, expected, expectedMessage,
+            project, rejection);
+    }
+
+    /** The offending op carries a real SOURCE span (never a synthetic anchor). */
+    private static DiagnosticRange assertOffendingSourceSpan(String what,
+            SemanticOp offending) {
+        DiagnosticRange expected = offending.origin().span().range();
+        check(expected.origin() == RangeOrigin.SOURCE && expected.scalarLength() > 0,
+            what + ": the offending CALL carries a real SOURCE span: " + expected);
+        return expected;
+    }
+
+    /**
+     * One JVM emitter boundary: the unchanged rejection text beside the
+     * source-bearing shared signal carrying the offending op's own exact
+     * range, with the {@code IllegalStateException} classification intact.
+     */
+    private static SharedEmissionFailure assertJvmEmitterRejection(String what,
+            SemanticOp offending, DiagnosticRange expected, String expectedMessage,
+            ExecutableLoweredProject project,
+            Map<ModuleId, StructuredBodyTable> tables,
+            Map<ModuleId, ClassFactoryRegistry> registries, Fixture fixture)
+            throws Exception {
         try {
             JvmSemanticEmitter.emitProductionProject(project, tables, registries,
                 "Probe", fixture.surface());
             fail(what + ": the JVM emitter rejects the identified fact");
         } catch (IllegalStateException rejection) {
-            check(rejection.getMessage() != null
-                    && rejection.getMessage().contains(offending.opId().toString()),
-                what + ": the JVM rejection names the offending CALL op: "
-                    + rejection.getMessage());
             check(rejection instanceof SharedEmissionFailure,
                 what + ": the JVM rejection is the source-bearing shared "
                     + "emitter signal (the IllegalStateException classification "
@@ -1257,19 +1481,26 @@ public class CrossModuleCallRealizationTest {
             check(rejection instanceof deal.semantic.ir.DiagnosticOriginCarrier carrier
                     && expected.equals(carrier.diagnosticRange()),
                 what + ": the JVM rejection carries the CALL op's own exact range");
+            return rejection instanceof SharedEmissionFailure failure ? failure : null;
         }
+        return null;
+    }
 
-        if (luaRejection == null) {
-            return;
-        }
-        // The production arm's own projection of the carried signal (the
-        // real sharedEmitterCoverage step of ProductionProjectEmission.run,
-        // which the lowering entry cannot re-enter with a hand-built
-        // project): the merged E6005 keeps the complete message and
-        // carries the offending CALL's exact range.
+    /**
+     * The production arm's own projection of the carried signal (the real
+     * sharedEmitterCoverage step of ProductionProjectEmission.run, which
+     * the lowering entry cannot re-enter with a hand-built project): the
+     * merged E6005 keeps the complete message and carries the offending
+     * op's exact range, and an ordinary emitter refusal keeps the canonical
+     * empty-file synthetic projection.
+     */
+    private static void assertProjectedEmitterOrigin(String what,
+            SemanticOp offending, DiagnosticRange expected, String expectedMessage,
+            ExecutableLoweredProject project, SharedEmissionFailure rejection)
+            throws Exception {
         String entryPath = project.entryModule().path();
         CompilerDiagnostic projected =
-            projectEmitterRejection(entryPath, luaRejection);
+            projectEmitterRejection(entryPath, rejection);
         checkEq("E6005", projected.code(),
             what + ": the projected emitter failure is E6005");
         check(projected.message().contains(
@@ -1317,9 +1548,7 @@ public class CrossModuleCallRealizationTest {
             Map<ModuleId, StructuredBodyTable> tables,
             Map<ModuleId, ClassFactoryRegistry> registries, Fixture fixture)
             throws Exception {
-        DiagnosticRange expected = offending.origin().span().range();
-        check(expected.origin() == RangeOrigin.SOURCE && expected.scalarLength() > 0,
-            what + ": the offending CALL carries a real SOURCE span: " + expected);
+        DiagnosticRange expected = assertOffendingSourceSpan(what, offending);
 
         SharedEmissionFailure luaRejection = null;
         try {
@@ -1356,16 +1585,8 @@ public class CrossModuleCallRealizationTest {
         if (luaRejection == null) {
             return;
         }
-        CompilerDiagnostic projected = projectEmitterRejection(
-            project.entryModule().path(), luaRejection);
-        checkEq("E6005", projected.code(),
-            what + ": the projected emitter failure is E6005");
-        checkEq(expected, projected.range(),
-            what + ": the projected E6005 carries the CALL op's own exact range");
-        check(projected.message().contains(luaMessage),
-            what + ": the projected E6005 keeps the complete rejection message");
-        check(projected.range().origin() == RangeOrigin.SOURCE,
-            what + ": the projected range is SOURCE, got " + projected.range().origin());
+        assertProjectedEmitterOrigin(what, offending, expected, luaMessage, project,
+            luaRejection);
     }
 
     /**

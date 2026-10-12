@@ -505,9 +505,12 @@ final class JvmHostAbiEmission {
      * The per-export wrapper name of one resolved host module and declared
      * function export: the emitted surface entry the sync host arms invoke.
      * A call whose resolved module or export has no emitted wrapper is a
-     * fail-closed producer defect — never a silent call.
+     * fail-closed producer defect — never a silent call. The explicit
+     * rejected operation supplies the source-bearing rejection signal's
+     * own range (design D4): the lookup's caller holds the op the resolved
+     * binding belongs to.
      */
-    String requireWrapper(String modulePath, String exportName) {
+    String requireWrapper(SemanticOp op, String modulePath, String exportName) {
             for (HostModule module : modules) {
                 if (!module.modulePath().equals(modulePath)) {
                     continue;
@@ -520,7 +523,7 @@ final class JvmHostAbiEmission {
                     }
                 }
             }
-            throw new IllegalStateException("the host call resolves '" + modulePath
+            throw rejectedOp(op, "the host call resolves '" + modulePath
                 + "." + exportName + "' but the emitted host ABI surface carries"
                 + " no per-export wrapper for it (a producer defect)");
         }
@@ -529,9 +532,10 @@ final class JvmHostAbiEmission {
      * The declared signature of one host module's function export: the
      * declaration surface's own type (the H7 crossing projection's single
      * declared-type source). A missing module or export is the same
-     * fail-closed producer defect as {@link #requireWrapper}.
+     * fail-closed producer defect as {@link #requireWrapper}, attributed to
+     * the same explicit rejected operation.
      */
-    Type.Func declaredFunction(String modulePath, String exportName) {
+    Type.Func declaredFunction(SemanticOp op, String modulePath, String exportName) {
             for (HostModule module : modules) {
                 if (!module.modulePath().equals(modulePath)) {
                     continue;
@@ -541,7 +545,7 @@ final class JvmHostAbiEmission {
                     return func;
                 }
             }
-            throw new IllegalStateException("the host call resolves '" + modulePath
+            throw rejectedOp(op, "the host call resolves '" + modulePath
                 + "." + exportName + "' but the declaration surface carries no"
                 + " declared function export for it (a producer defect)");
         }
