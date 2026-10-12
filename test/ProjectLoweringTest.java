@@ -4,6 +4,8 @@ import deal.ast.ClassField;
 import deal.checker.BuiltinErrorDeclaration;
 import deal.codegen.Backend;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
 import deal.ffi.FfiGeneratedModule;
 import deal.identity.CanonicalModuleIdentity;
 import deal.module.CompilationOrchestrator;
@@ -19,6 +21,7 @@ import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticRequirementManifest;
 import deal.semantic.ir.AddressChainProtocol;
+import deal.semantic.ir.AnchorId;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BindingCellKind;
 import deal.semantic.ir.BlockId;
@@ -41,6 +44,7 @@ import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.LoweringContextHash;
 import deal.semantic.ir.ModuleId;
+import deal.semantic.ir.ModuleImportKind;
 import deal.semantic.ir.ModuleInitPlan;
 import deal.semantic.ir.NamespaceRegistration;
 import deal.semantic.ir.NamespaceRegistrations;
@@ -53,6 +57,9 @@ import deal.semantic.ir.SemanticIrValidator;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
+import deal.semantic.ir.SourceOrigin;
+import deal.semantic.ir.SourceOriginKind;
+import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.SharedFactoryFacts;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ValueId;
@@ -658,6 +665,183 @@ public class ProjectLoweringTest {
                 dumpedHostCells,
                 "the dumped MODULE_IMPORT payloads carry the registered cells");
         }
+    }
+
+    /**
+     * The namespace-recording failure origins (ISSUE-0750 D3): every
+     * completion-specific recording rejection carries the offending
+     * {@code MODULE_IMPORT} operation's own exact source range — a
+     * conflict detected on a second completion carries that second
+     * completion's range, never the first naming op's — while the
+     * aggregate rejection that names only an uncompleted alias allocation
+     * (no produced completion exists to identify) keeps the canonical
+     * empty-file synthetic range. Messages, predicates, and first-failure
+     * order are unchanged.
+     */
+    private static void testNamespaceRegistrationFailureOrigins(
+            LoweredProject baseline) throws Exception {
+        System.out.println("-- the namespace-registration failure origins: the "
+            + "offending MODULE_IMPORT completion's own range, and the canonical "
+            + "synthetic range of the aggregate uncompleted-alias failure --");
+        RealProject project = baseline.project();
+        SemanticLowerer.ProjectLoweringResult result = baseline.result();
+        if (result.project() == null) {
+            fail("the project lowers: " + result.diagnostics());
+            return;
+        }
+        LoweredModuleUnit app = result.project().modules().get(APP);
+        SemanticOp utilImport = app == null ? null : moduleImportOf(app, UTIL);
+        check(app != null && utilImport != null,
+            "the entry unit records the MODULE_IMPORT completion of util");
+        if (app == null || utilImport == null) {
+            return;
+        }
+        String appFile = project.root().resolve("src/app.deal").toAbsolutePath()
+            .normalize().toString();
+        DiagnosticRange completionRange = utilImport.origin().span().range();
+        check(completionRange.origin() == RangeOrigin.SOURCE
+                && completionRange.scalarLength() > 0,
+            "the offending completion carries a real SOURCE span: "
+                + completionRange);
+
+        // (a) The kind mismatch: the completion's own exact SOURCE range.
+        Optional<CompilerDiagnostic> mismatchFailure =
+            new NamespaceRegistrations.Recorder(Map.of(UTIL, ModuleImportKind.HOST))
+                .record(app);
+        check(mismatchFailure.isPresent(),
+            "the pre-registered HOST entry kind rejects the COMPILED completion");
+        if (mismatchFailure.isPresent()) {
+            CompilerDiagnostic diagnostic = mismatchFailure.get();
+            checkEq("E6005", diagnostic.code(),
+                "the kind mismatch is one E6005");
+            checkEq("Common semantic lowering failed: module 'app', capability"
+                    + " MODULES, validatorRule NAMESPACE_REGISTRATION,"
+                    + " semanticProfile DEAL_V1_2_INT32, irVersion"
+                    + " deal.semantic-ir/1, origin NamespaceRegistrations record"
+                    + " (the MODULE_IMPORT completion " + utilImport.opId()
+                    + " of util carries the kind COMPILED but the module's"
+                    + " registration entry kind is HOST (a completion's"
+                    + " ModuleImportKind equals its entry's kind))",
+                diagnostic.message(),
+                "the kind-mismatch message is the unchanged pinned text");
+            checkEq(completionRange, diagnostic.range(),
+                "the kind-mismatch diagnostic carries the offending completion's"
+                    + " own exact range");
+            checkEq(appFile, diagnostic.range().file(),
+                "the kind-mismatch range names the offending file");
+            checkEq(1, diagnostic.range().startLine(),
+                "the kind-mismatch range starts at the import statement's line");
+            checkEq(1, diagnostic.range().startColumn(),
+                "the kind-mismatch range starts at the import statement's column");
+            check(!diagnostic.range().isCanonicalSynthetic(),
+                "the kind-mismatch range is never the canonical synthetic anchor");
+            check(diagnostic.notes().isEmpty(),
+                "the well-formed completion origin adds no note: "
+                    + diagnostic.notes());
+        }
+
+        // (b) A conflict detected on a second completion: the detecting
+        // completion's own range, never the first naming op's.
+        SourceSpan doctoredSpan = new SourceSpan(appFile, 9, 4, 9, 10, 100, 106);
+        SourceOrigin doctoredOrigin = new SourceOrigin(
+            utilImport.origin().sourceId(), doctoredSpan, SourceOriginKind.USER,
+            new AnchorId(9999), utilImport.origin().parentOpId());
+        SemanticOp duplicated = new SemanticOp(
+            new OpId(APP, 999999), utilImport.kind(), doctoredOrigin,
+            utilImport.result(), utilImport.resultType(), utilImport.operands(),
+            utilImport.operandTypes(), utilImport.payload(),
+            utilImport.failurePolicy(), utilImport.contract());
+        List<SemanticOp> doubled = new ArrayList<>(app.ops());
+        doubled.add(duplicated);
+        Optional<CompilerDiagnostic> duplicateFailure =
+            new NamespaceRegistrations.Recorder(Map.of()).record(
+                withOps(app, doubled));
+        check(duplicateFailure.isPresent(),
+            "the second naming of the same alias cell is rejected");
+        if (duplicateFailure.isPresent()) {
+            CompilerDiagnostic diagnostic = duplicateFailure.get();
+            checkEq("E6005", diagnostic.code(),
+                "the duplicate naming is one E6005");
+            check(diagnostic.message().contains("the cell "
+                    + ((KindPayload.ModuleImportPayload) utilImport.payload())
+                        .aliasCells().get(0)
+                    + " is named by two MODULE_IMPORT completions")
+                    && diagnostic.message().contains(
+                        "NamespaceRegistrations record"),
+                "the duplicate-naming message is the unchanged text: "
+                    + diagnostic.message());
+            checkEq(doctoredSpan.range(), diagnostic.range(),
+                "the duplicate-naming diagnostic carries the detecting"
+                    + " completion's own exact range");
+            check(!diagnostic.range().equals(completionRange),
+                "the duplicate-naming range is never the first naming op's range");
+            checkEq(9, diagnostic.range().startLine(),
+                "the duplicate-naming range starts at the detecting completion's"
+                    + " line");
+            checkEq(4, diagnostic.range().startColumn(),
+                "the duplicate-naming range starts at the detecting completion's"
+                    + " column");
+            checkEq(11, diagnostic.range().endColumn(),
+                "the duplicate-naming range keeps the half-open end conversion");
+            checkEq(100, diagnostic.range().startScalarOffset(),
+                "the duplicate-naming range carries the recorded start offset");
+            checkEq(106, diagnostic.range().endScalarOffset(),
+                "the duplicate-naming range carries the recorded end offset");
+            checkEq(6, diagnostic.range().scalarLength(),
+                "the duplicate-naming range covers the recorded span");
+            check(diagnostic.range().origin() == RangeOrigin.SOURCE,
+                "the duplicate-naming range is SOURCE, got "
+                    + diagnostic.range().origin());
+        }
+
+        // (c) The aggregate failure: the alias allocation the unit leaves
+        // uncompleted has no produced completion to identify, so the
+        // canonical empty-file synthetic range stays.
+        List<SemanticOp> withoutUtil = new ArrayList<>();
+        for (SemanticOp op : app.ops()) {
+            if (!op.opId().equals(utilImport.opId())) {
+                withoutUtil.add(op);
+            }
+        }
+        Optional<CompilerDiagnostic> uncompletedFailure =
+            new NamespaceRegistrations.Recorder(Map.of()).record(
+                withOps(app, withoutUtil));
+        check(uncompletedFailure.isPresent(),
+            "the uncompleted alias allocation is rejected");
+        if (uncompletedFailure.isPresent()) {
+            CompilerDiagnostic diagnostic = uncompletedFailure.get();
+            checkEq("E6005", diagnostic.code(),
+                "the uncompleted alias is one E6005");
+            check(diagnostic.message().contains(
+                    "is named by no MODULE_IMPORT completion"),
+                "the uncompleted-alias message is the unchanged aggregate text: "
+                    + diagnostic.message());
+            check(diagnostic.range().isCanonicalSynthetic(),
+                "the aggregate failure keeps the canonical synthetic range, got "
+                    + diagnostic.range());
+            checkEq("", diagnostic.range().file(),
+                "the aggregate failure borrows no source file");
+            check(diagnostic.range().origin() == RangeOrigin.SYNTHETIC,
+                "the aggregate failure stays SYNTHETIC, got "
+                    + diagnostic.range().origin());
+            checkEq(0, diagnostic.range().scalarLength(),
+                "the aggregate failure keeps the zero-length anchor");
+            check(diagnostic.notes().isEmpty(),
+                "the originless aggregate adds no note: " + diagnostic.notes());
+        }
+    }
+
+    /** The unit's completion of the given resolved module, or null. */
+    private static SemanticOp moduleImportOf(LoweredModuleUnit unit,
+            ModuleId module) {
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() == SemanticOpKind.MODULE_IMPORT
+                    && op.payload() instanceof KindPayload.ModuleImportPayload payload
+                    && payload.resolvedModule().equals(module)) {
+                return op;
+            }
+        }
+        return null;
     }
 
     // =========================================================================
@@ -1787,6 +1971,7 @@ public class ProjectLoweringTest {
                 lower(project, invocation()));
             testOneProjectLoweringAndDeterminism(baseline);
             testSeedsIntrinsicsAndNamespaces(baseline);
+            testNamespaceRegistrationFailureOrigins(baseline);
             testComposedChainOverUnifiedUnits(baseline);
             testInProjectClassArm();
             importedProject = compileProject(IMPORTED_CLASS_APP_SOURCE,

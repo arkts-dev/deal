@@ -2,10 +2,14 @@ package deal.test;
 
 import deal.checker.BuiltinErrorDeclaration;
 import deal.codegen.Backend;
+import deal.codegen.SharedEmissionFailure;
 import deal.codegen.jvm.JvmBackend;
 import deal.codegen.jvm.JvmSemanticEmitter;
 import deal.codegen.lua.LuaSemanticEmitter;
 import deal.distribution.DistributionHome;
+import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
 import deal.ffi.FfiGeneratedModule;
 import deal.identity.CanonicalModuleIdentity;
 import deal.module.CompilationOrchestrator;
@@ -38,6 +42,7 @@ import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.StructuredBodyTable;
 
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -929,7 +934,7 @@ public class CrossModuleCallRealizationTest {
                 probePayload.signature(), probePayload.parameterBoundaryOpIds(),
                 probePayload.returnBoundaryOpId(), probePayload.dynamicReturnBoundary(),
                 probePayload.bodyBlock(), probePayload.externalEntryRef());
-            assertRetainedOwnerRejected("the RETAINED_ABI external",
+            assertRetainedOwnerRejected("the RETAINED_ABI external", call, shared,
                 replaceCallPayload(result.project(), appUnit, call, retained),
                 result.tables(), result.registries(), fixture);
         }
@@ -1046,19 +1051,52 @@ public class CrossModuleCallRealizationTest {
         }
     }
 
+    /**
+     * Both emitters reject the hand-built RETAINED_ABI external with the
+     * unchanged message and, since ISSUE-0750 D4, the source-bearing
+     * shared emitter signal carrying the offending CALL operation's own
+     * exact range; the production arm's own projection then merges that
+     * range into the unchanged {@code SHARED_EMITTER_COVERAGE} E6005.
+     * An ordinary originless emitter refusal keeps the canonical
+     * synthetic projection.
+     */
     private static void assertRetainedOwnerRejected(String what,
+            SemanticOp offending,
+            FunctionExecutionBinding.ExternalFunction shared,
             ExecutableLoweredProject project,
             Map<ModuleId, StructuredBodyTable> tables,
-            Map<ModuleId, ClassFactoryRegistry> registries, Fixture fixture) {
+            Map<ModuleId, ClassFactoryRegistry> registries, Fixture fixture)
+            throws Exception {
+        String expectedMessage = "CALL " + offending.opId()
+            + " resolves the external binding " + shared.moduleId() + "."
+            + shared.exportName() + " with execution owner "
+            + ExternalExecutionOwner.RETAINED_ABI + " (a RETAINED_ABI external has"
+            + " no production emission arm — producer defect)";
+        DiagnosticRange expected = offending.origin().span().range();
+        check(expected.origin() == RangeOrigin.SOURCE && expected.scalarLength() > 0,
+            what + ": the offending CALL carries a real SOURCE span: " + expected);
+
+        IllegalStateException luaRejection = null;
         try {
             LuaSemanticEmitter.emitProductionProject(project, tables, registries,
                 fixture.surface());
             fail(what + ": the LuaJIT emitter rejects the retained-ABI external");
         } catch (IllegalStateException rejection) {
+            luaRejection = rejection;
             check(rejection.getMessage() != null
                     && rejection.getMessage().contains("RETAINED_ABI"),
                 what + ": the LuaJIT rejection names the retained execution owner: "
                     + rejection.getMessage());
+            check(rejection instanceof SharedEmissionFailure,
+                what + ": the LuaJIT rejection is the source-bearing shared "
+                    + "emitter signal (the IllegalStateException classification "
+                    + "is unchanged)");
+            checkEq(expectedMessage, rejection.getMessage(),
+                what + ": the LuaJIT rejection message is the unchanged text");
+            check(rejection instanceof deal.semantic.ir.DiagnosticOriginCarrier carrier
+                    && expected.equals(carrier.diagnosticRange()),
+                what + ": the LuaJIT rejection carries the CALL op's own exact "
+                    + "range");
         }
         try {
             JvmSemanticEmitter.emitProductionProject(project, tables, registries,
@@ -1069,7 +1107,78 @@ public class CrossModuleCallRealizationTest {
                     && rejection.getMessage().contains("RETAINED_ABI"),
                 what + ": the JVM rejection names the retained execution owner: "
                     + rejection.getMessage());
+            check(rejection instanceof SharedEmissionFailure,
+                what + ": the JVM rejection is the source-bearing shared "
+                    + "emitter signal (the IllegalStateException classification "
+                    + "is unchanged)");
+            checkEq(expectedMessage, rejection.getMessage(),
+                what + ": the JVM rejection message is the unchanged text");
+            check(rejection instanceof deal.semantic.ir.DiagnosticOriginCarrier carrier
+                    && expected.equals(carrier.diagnosticRange()),
+                what + ": the JVM rejection carries the CALL op's own exact range");
         }
+
+        if (luaRejection == null) {
+            return;
+        }
+        // The production arm's own projection of the carried signal (the
+        // real sharedEmitterCoverage step of ProductionProjectEmission.run,
+        // which the lowering entry cannot re-enter with a hand-built
+        // project): the merged E6005 keeps the complete message and
+        // carries the offending CALL's exact range.
+        String entryPath = project.entryModule().path();
+        CompilerDiagnostic projected =
+            projectEmitterRejection(entryPath, luaRejection);
+        checkEq("E6005", projected.code(),
+            what + ": the projected emitter failure is E6005");
+        check(projected.message().contains(
+                ProductionProjectEmission.SHARED_EMITTER_COVERAGE),
+            what + ": the projected failure keeps the SHARED_EMITTER_COVERAGE "
+                + "classification: " + projected.message());
+        check(projected.message().contains(expectedMessage),
+            what + ": the projected E6005 keeps the complete emitter message");
+        checkEq(expected, projected.range(),
+            what + ": the projected E6005 carries the CALL op's own exact range");
+        checkEq(offending.origin().span().file(), projected.range().file(),
+            what + ": the projected range names the offending file");
+        check(projected.range().origin() == RangeOrigin.SOURCE,
+            what + ": the projected range is SOURCE, got "
+                + projected.range().origin());
+        check(projected.notes().isEmpty(),
+            what + ": the well-formed carried origin adds no note: "
+                + projected.notes());
+
+        // The genuinely originless control: an ordinary emitter refusal
+        // carries no origin and keeps the canonical empty-file synthetic
+        // projection.
+        CompilerDiagnostic originless = projectEmitterRejection(entryPath,
+            new IllegalStateException("an ordinary emitter refusal"));
+        check(originless.range().isCanonicalSynthetic(),
+            what + ": an ordinary emitter refusal keeps the canonical synthetic "
+                + "projection, got " + originless.range());
+        checkEq("", originless.range().file(),
+            what + ": the originless projection borrows no source file");
+        check(originless.range().origin() == RangeOrigin.SYNTHETIC,
+            what + ": the originless projection stays SYNTHETIC, got "
+                + originless.range().origin());
+    }
+
+    /**
+     * The production arm's own projection of one emitter rejection (the
+     * private {@code sharedEmitterCoverage} classification step of
+     * {@link ProductionProjectEmission#run}), invoked so the retained
+     * regression exercises the real projection instead of re-implementing
+     * it.
+     */
+    private static CompilerDiagnostic projectEmitterRejection(
+            String entryModulePath, IllegalStateException rejection)
+            throws Exception {
+        Method projection = ProductionProjectEmission.class.getDeclaredMethod(
+            "sharedEmitterCoverage", String.class, IllegalStateException.class,
+            CompilerInvocation.class);
+        projection.setAccessible(true);
+        return (CompilerDiagnostic) projection.invoke(null, entryModulePath,
+            rejection, productionInvocation());
     }
 
     // =========================================================================

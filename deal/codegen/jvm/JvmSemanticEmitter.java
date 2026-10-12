@@ -3422,7 +3422,7 @@ public final class JvmSemanticEmitter {
                 FunctionExecutionBinding.ExternalFunction external, int indent) {
             if (external.executionOwner()
                     != deal.semantic.ir.ExternalExecutionOwner.SHARED_BODY) {
-                throw new IllegalStateException("CALL " + op.opId()
+                throw rejectedOp(op, "CALL " + op.opId()
                     + " resolves the external binding " + external.moduleId() + "."
                     + external.exportName() + " with execution owner "
                     + external.executionOwner() + " (a RETAINED_ABI external has no"

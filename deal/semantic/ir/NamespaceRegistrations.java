@@ -178,7 +178,7 @@ public record NamespaceRegistrations(Map<ModuleId, NamespaceRegistration> regist
                 }
                 ModuleImportKind entryKind = kinds.get(module);
                 if (entryKind != payload.kind()) {
-                    return Optional.of(fail(unit, "the MODULE_IMPORT completion "
+                    return Optional.of(fail(unit, op, "the MODULE_IMPORT completion "
                         + op.opId() + " of " + module + " carries the kind "
                         + payload.kind()
                         + " but the module's registration entry kind is " + entryKind
@@ -187,20 +187,20 @@ public record NamespaceRegistrations(Map<ModuleId, NamespaceRegistration> regist
                 List<BindingId> entryCells = cells.get(module);
                 for (BindingId cell : payload.aliasCells()) {
                     if (!aliases.contains(cell)) {
-                        return Optional.of(fail(unit, "the MODULE_IMPORT completion "
+                        return Optional.of(fail(unit, op, "the MODULE_IMPORT completion "
                             + op.opId() + " of " + module + " names the cell " + cell
                             + " which is not an import-alias allocation of the unit "
                             + "(a completion names import-alias cells only)"));
                     }
                     ModuleId previousOwner = ownerOfCell.putIfAbsent(cell, module);
                     if (previousOwner != null && !previousOwner.equals(module)) {
-                        return Optional.of(fail(unit, "the cell " + cell
+                        return Optional.of(fail(unit, op, "the cell " + cell
                             + " is registered under two modules (" + previousOwner
                             + " and " + module
                             + "; every alias cell appears in exactly one entry)"));
                     }
                     if (!named.add(cell)) {
-                        return Optional.of(fail(unit, "the cell " + cell
+                        return Optional.of(fail(unit, op, "the cell " + cell
                             + " is named by two MODULE_IMPORT completions (exactly"
                             + " one pinned initializing write per import-alias"
                             + " allocation)"));
@@ -234,16 +234,38 @@ public record NamespaceRegistrations(Map<ModuleId, NamespaceRegistration> regist
             return new Assembly(new NamespaceRegistrations(registrations), List.of());
         }
 
-        /** The first-defect E6005 of one recording step, with no register set. */
+        /**
+         * The first-defect E6005 of one recording step, with no register
+         * set: the aggregate failure that identifies no produced
+         * completion keeps the canonical originless synthetic range.
+         */
         private static CompilerDiagnostic fail(LoweredModuleUnit unit, String what) {
-            LoweringFailureDetail detail = new LoweringFailureDetail(
+            return FailureContractRegistry.e6005(detail(unit, what));
+        }
+
+        /**
+         * The first-defect E6005 of one recording step at the offending
+         * completion's own origin (D3): the rule failure names the
+         * {@code MODULE_IMPORT} operation whose processing detects the
+         * violation, and the diagnostic carries that operation's copied
+         * source range instead of the canonical synthetic anchor.
+         */
+        private static CompilerDiagnostic fail(LoweredModuleUnit unit,
+                SemanticOp offending, String what) {
+            return FailureContractRegistry.e6005(detail(unit, what),
+                offending.origin().span().range());
+        }
+
+        /** The E6005 detail of one recording step's first defect. */
+        private static LoweringFailureDetail detail(LoweredModuleUnit unit,
+                String what) {
+            return new LoweringFailureDetail(
                 unit.moduleId().path(),
                 SemanticCapability.MODULES,
                 NAMESPACE_REGISTRATION,
                 unit.semanticProfile(),
                 LoweredModuleUnit.FORMAT_VERSION,
                 "NamespaceRegistrations record (" + what + ")");
-            return FailureContractRegistry.e6005(detail);
         }
     }
 
