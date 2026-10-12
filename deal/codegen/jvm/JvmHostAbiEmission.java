@@ -753,8 +753,9 @@ final class JvmHostAbiEmission {
      * {@code parameter {i} type mismatch} at the call origin), the
      * reflective invocation through the module binding, and the declared
      * return cells rendered by the closed arms ({@code
-     * HOST_SYNC_RETURN_NOTHING} for a missing mandatory value, {@code
-     * HOST_SYNC_RETURN_CELL}'s composite for a wrong value); a
+     * HOST_SYNC_RETURN_NOTHING} for an absent result of any declared sync
+     * return descriptor, {@code HOST_SYNC_RETURN_CELL}'s composite for a
+     * wrong value); a
      * declared async return runs the operation-shape check and returns the
      * host operation handle.
      */
@@ -866,12 +867,20 @@ final class JvmHostAbiEmission {
             return;
         }
         boolean nullable = ret instanceof Type.Nullable;
-        // The JVM host surface's zero-result form is Java null (the corpus
-        // pins HOST_SYNC_RETURN_NOTHING for a null return of a mandatory
-        // position); the reflective invocation's own absent marker funnels
-        // into that same form, so the declared sync cells below read exactly
-        // the host's null carrier.
-        out.append("    if (__r == JvmRuntime.MISSING) { __r = null; }\n");
+        // The declared sync return cell's presence rule (HOST_SYNC_RETURN):
+        // the reflective invocation's absent marker is the declared void
+        // method's no-result terminal, and absence selects
+        // HOST_SYNC_RETURN_NOTHING before any descriptor checking — every
+        // declared sync return descriptor (null, nullable, and mandatory
+        // alike) rejects it, so a void host method never succeeds at a
+        // nullable or null position. A present Java null keeps its carrier:
+        // the language-null admission of the null/nullable cells, and the
+        // mandatory cell's zero-result rule (the corpus pins
+        // HOST_SYNC_RETURN_NOTHING for a null return of a mandatory
+        // position).
+        out.append("    if (__r == JvmRuntime.MISSING) {\n");
+        emitNothingArm(out, desc);
+        out.append("    }\n");
         if (ret instanceof Type.Null) {
             out.append("    __hostCheck(\"null\", __r, false, oFile, oLine,"
                 + " oCol);\n");
@@ -879,14 +888,10 @@ final class JvmHostAbiEmission {
             return;
         }
         if (!nullable) {
-            // The HOST_SYNC_RETURN_NOTHING arm's own render (the no-value
-            // presence rule): the emitted wrapper holds no failure text.
+            // The mandatory cell's zero-result rule (the host surface's
+            // Java-null form): the emitted wrapper holds no failure text.
             out.append("    if (__r == null) {\n");
-            out.append("      throw JvmRuntime.arm("
-                    + "deal.semantic.ir.FailureArmId.HOST_SYNC_RETURN_NOTHING,"
-                    + " java.util.Map.of(\"expected\", ").append(javaString(desc))
-                .append("), oFile + \":\" + oLine + \":\" + oCol, ")
-                .append(javaString(desc)).append(", \"nothing\");\n");
+            emitNothingArm(out, desc);
             out.append("    }\n");
         }
         String checked = "__hostCheck(" + javaString(desc)
@@ -902,6 +907,20 @@ final class JvmHostAbiEmission {
         String carrier = carrierType(ret, nullable);
         out.append("    return ").append(castExpression(carrier, checked))
             .append(";\n");
+    }
+
+    /**
+     * One {@code HOST_SYNC_RETURN_NOTHING} throw of the declared return
+     * cell: the closed arm's own render (the no-value presence rule), with
+     * the declared descriptor as its expected projection and the fixed
+     * {@code nothing} actual — never a locally composed failure text.
+     */
+    private static void emitNothingArm(StringBuilder out, String desc) {
+        out.append("      throw JvmRuntime.arm("
+                + "deal.semantic.ir.FailureArmId.HOST_SYNC_RETURN_NOTHING,"
+                + " java.util.Map.of(\"expected\", ").append(javaString(desc))
+            .append("), oFile + \":\" + oLine + \":\" + oCol, ")
+            .append(javaString(desc)).append(", \"nothing\");\n");
     }
 
     /** The Java cast of one checked return value onto its settled carrier. */

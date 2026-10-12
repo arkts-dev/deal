@@ -413,11 +413,29 @@ public final class SemanticOracle {
      */
     public interface HostResponder {
 
-        /** One sync host terminal: the returned value or the thrown host error. */
-        sealed interface SyncOutcome permits SyncOutcome.Returned, SyncOutcome.Thrown {
+        /**
+         * One sync host terminal: the returned value, the host's absent
+         * result (the declared void method / the zero-result return), or
+         * the thrown host error.
+         */
+        sealed interface SyncOutcome
+                permits SyncOutcome.Returned, SyncOutcome.Absent, SyncOutcome.Thrown {
 
             /** The host returned a value. */
             record Returned(Value value) implements SyncOutcome {
+            }
+
+            /**
+             * The host produced no result at all: the closed no-value
+             * terminal of the sync host call. It is not a runtime value:
+             * the recorded {@code HOST_SYNC_RETURN} cell projects it as
+             * {@link ActualKind#NOTHING}, so absence selects
+             * {@code HOST_SYNC_RETURN_NOTHING} before any descriptor
+             * checking — independently of the declared return's
+             * nullability — exactly like the LuaJIT wrapper's zero-result
+             * return and the JVM host surface's declared void method.
+             */
+            record Absent() implements SyncOutcome {
             }
 
             /** The host threw an error (code/message preserved). */
@@ -558,7 +576,8 @@ public final class SemanticOracle {
 
     /** The oracle's closed runtime-value model. */
     public sealed interface Value
-        permits Value.NullValue, Value.MissingValue, Value.BoolValue, Value.IntValue,
+        permits Value.NullValue, Value.MissingValue, Value.AbsentValue,
+                Value.BoolValue, Value.IntValue,
                 Value.NumValue, Value.StrValue, Value.TableValue, Value.ArrayValue,
                 Value.BytesValue, Value.FuncValue, Value.AdapterValue, Value.IntrinsicValue,
                 Value.ErrorValue, Value.SlotValue, Value.ClassValue,
@@ -567,6 +586,19 @@ public final class SemanticOracle {
         enum NullValue implements Value { INSTANCE }
 
         enum MissingValue implements Value { INSTANCE }
+
+        /**
+         * The host terminal's no-result marker: a sync host invocation
+         * that produced no result at all (the declared void method on the
+         * JVM host surface, the zero-result return on the LuaJIT one). It
+         * is not a runtime value and is never published: the recorded
+         * {@code HOST_SYNC_RETURN} cell projects it as the closed no-value
+         * terminal ({@link ActualKind#NOTHING}), so absence selects
+         * {@code HOST_SYNC_RETURN_NOTHING} before any descriptor checking,
+         * independently of the declared return's nullability. Every other
+         * consumer of the closed value model fails closed on it.
+         */
+        enum AbsentValue implements Value { INSTANCE }
 
         record BoolValue(boolean value) implements Value {
         }
@@ -1353,6 +1385,7 @@ public final class SemanticOracle {
             return switch (value) {
                 case Value.NullValue ignored -> "null";
                 case Value.MissingValue ignored -> "missing";
+                case Value.AbsentValue ignored -> "missing";
                 case Value.BoolValue bool -> "bool:" + bool.value();
                 case Value.IntValue intValue -> SemanticRuntimeModel.intAtom(intValue.value());
                 case Value.NumValue num -> SemanticRuntimeModel.numberAtom(num.value());
@@ -2890,6 +2923,9 @@ public final class SemanticOracle {
             return switch (value) {
                 case Value.NullValue ignored -> ClassOpsExecutor.Value.Null.INSTANCE;
                 case Value.MissingValue ignored -> ClassOpsExecutor.Value.Missing.INSTANCE;
+                case Value.AbsentValue ignored -> throw new IllegalStateException(
+                    "the host no-result marker is never a construction input "
+                        + "(producer defect)");
                 case Value.BoolValue bool ->
                     new ClassOpsExecutor.Value.Bool(bool.value());
                 case Value.IntValue intValue ->
@@ -3676,6 +3712,12 @@ public final class SemanticOracle {
             return switch (value) {
                 case Value.NullValue ignored -> BoundaryValueView.nullView();
                 case Value.MissingValue ignored -> BoundaryValueView.of(ActualKind.MISSING);
+                case Value.AbsentValue ignored ->
+                    // The host terminal's no-result marker: the closed
+                    // no-value boundary view the HOST_SYNC_RETURN cell
+                    // selects HOST_SYNC_RETURN_NOTHING on (never the absent
+                    // marker's MISSING view).
+                    BoundaryValueView.of(ActualKind.NOTHING);
                 case Value.BoolValue bool -> BoundaryValueView.of(ActualKind.BOOLEAN);
                 case Value.IntValue intValue -> BoundaryValueView.ofInt(intValue.value());
                 case Value.NumValue num -> BoundaryValueView.ofNumber(num.value());
@@ -4626,6 +4668,17 @@ public final class SemanticOracle {
                         module.path() + "." + export + "=" + atomOf(returned.value())));
                     yield returned.value();
                 }
+                case HostResponder.SyncOutcome.Absent absent -> {
+                    // The host produced no result: the recorded return cell
+                    // receives the closed no-result marker, whose boundary
+                    // view is the no-value terminal, so the cell selects
+                    // HOST_SYNC_RETURN_NOTHING before any descriptor check.
+                    effects.add(new SemanticRuntimeModel.EffectEvent(
+                        SemanticRuntimeModel.EffectEvent.Kind.HOST_RETURN,
+                        module.path() + "." + export + "="
+                            + atomOf(Value.AbsentValue.INSTANCE)));
+                    yield Value.AbsentValue.INSTANCE;
+                }
                 case HostResponder.SyncOutcome.Thrown thrown -> {
                     effects.add(new SemanticRuntimeModel.EffectEvent(
                         SemanticRuntimeModel.EffectEvent.Kind.HOST_THROW,
@@ -5518,6 +5571,16 @@ public final class SemanticOracle {
                                 List.copyOf(frames));
                             task.completed = true;
                         }
+                        case HostResponder.SyncOutcome.Absent ignored ->
+                            // The async completion terminal carries its
+                            // completion value or its thrown error (the
+                            // reference host surfaces cannot complete an
+                            // operation with no value): scripting absence
+                            // here is a producer defect, never a silent
+                            // no-value completion.
+                            throw new IllegalStateException("the host async "
+                                + "completion terminal '" + label + "' carries no "
+                                + "value and no error (producer defect)");
                     }
                 }
                 if (task.failure != null) {
@@ -5900,6 +5963,7 @@ public final class SemanticOracle {
         private String canonicalKind(Value input) {
             return switch (input) {
                 case Value.NullValue ignored -> "null";
+                case Value.AbsentValue ignored -> "nil";
                 case Value.BoolValue ignored -> "boolean";
                 case Value.IntValue ignored -> "int";
                 case Value.NumValue ignored -> "number";
@@ -6022,6 +6086,9 @@ public final class SemanticOracle {
             return switch (value) {
                 case Value.NullValue ignored ->
                     SharedStdlibSemantics.Value.Null.INSTANCE;
+                case Value.AbsentValue ignored -> throw new IllegalStateException(
+                    "the host no-result marker is never a stdlib argument carrier "
+                        + "(producer defect)");
                 case Value.BoolValue bool ->
                     new SharedStdlibSemantics.Value.Bool(bool.value());
                 case Value.IntValue intValue -> {

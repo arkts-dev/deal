@@ -108,6 +108,16 @@ import java.util.stream.Stream;
  *       composite on all three consumers, and the JVM probe observes that
  *       the rejected return left every retained slot and the nested array
  *       alias untouched.</li>
+ *   <li><b>The synchronous host result presence.</b> The recorded
+ *       {@code HOST_SYNC_RETURN} cell selects
+ *       {@code HOST_SYNC_RETURN_NOTHING} for a host invocation that
+ *       produced no result at all — the oracle's absent terminal, the
+ *       LuaJIT wrapper's zero-result return, the JVM host surface's
+ *       declared void method — at a {@code null}, a nullable, and a
+ *       mandatory return, while a present language null is admitted by a
+ *       {@code null} or nullable return and never collapses into absence;
+ *       the corpus-pinned {@code host-empty-return-bad} cell additionally
+ *       drives the full program on all three consumers.</li>
  *   <li><b>The closed arm table's renderer identity.</b> Every declared
  *       arm renders its own template with the same named parameters,
  *       expected token, and actual token from the registry renderer, the
@@ -723,6 +733,20 @@ public class CanonicalProjectionParityTest {
      * carrier marks of the bad_string fixture).
      */
     private static SemanticOracle.HostResponder responderFor(Case spec) {
+        if ("empty_return".equals(spec.hostStem())) {
+            // The declared void host's no-result terminal: the full-program
+            // oracle drive passes the absent result through the recorded
+            // return cell, where it selects HOST_SYNC_RETURN_NOTHING exactly
+            // like the two production wrappers' zero-result returns.
+            return new SemanticOracle.HostResponder() {
+                @Override
+                public SyncOutcome call(ModuleId module, String export,
+                        RuntimeDescriptor.Func descriptor,
+                        List<SemanticOracle.Value> args) {
+                    return new SyncOutcome.Absent();
+                }
+            };
+        }
         if ("bad_string".equals(spec.hostStem())) {
             return new SemanticOracle.HostResponder() {
                 @Override
@@ -1277,9 +1301,27 @@ public class CanonicalProjectionParityTest {
                         + ": the oracle and the JVM artifact render the "
                         + "identical tuple");
                 }
-                case "host-abi/host-empty-return-bad" -> assertOracleCell(spec, lua,
-                    FailurePolicyId.HOST_SYNC_RETURN, RuntimeDescriptor.Int.INSTANCE,
-                    BoundaryValueView.of(ActualKind.NOTHING), BoundaryContext.none());
+                case "host-abi/host-empty-return-bad" -> {
+                    // The full production program of the corpus-pinned
+                    // empty-return cell: the oracle's absent terminal runs
+                    // the recorded return cell at the probe's own call
+                    // origin and renders the sidecar's complete tuple; the
+                    // closed boundary engine's direct view of the same cell
+                    // renders the identical arm.
+                    assertModuleExportOrigins(compiled);
+                    Tuple oracle = oracleTuple(compiled);
+                    assertPinned(oracle, pin, spec, "oracle");
+                    checkEq(null, firstDifferingField(oracle, lua), spec.what()
+                        + ": the oracle and the LuaJIT artifact render the "
+                        + "identical tuple");
+                    checkEq(null, firstDifferingField(oracle, jvm), spec.what()
+                        + ": the oracle and the JVM artifact render the "
+                        + "identical tuple");
+                    assertOracleCell(spec, lua, FailurePolicyId.HOST_SYNC_RETURN,
+                        RuntimeDescriptor.Int.INSTANCE,
+                        BoundaryValueView.of(ActualKind.NOTHING),
+                        BoundaryContext.none());
+                }
                 case "host-abi/host-bad-return" -> assertOracleCell(spec, lua,
                     FailurePolicyId.HOST_SYNC_RETURN, RuntimeDescriptor.Int.INSTANCE,
                     BoundaryValueView.of(ActualKind.STRING), BoundaryContext.none());
@@ -1634,6 +1676,523 @@ public class CanonicalProjectionParityTest {
                     SemanticOracle.Value.NullValue.INSTANCE);
             }
         };
+    }
+
+    // =========================================================================
+    // The synchronous host result presence (ISSUE-0696 remediation)
+    // =========================================================================
+
+    /**
+     * The synchronous host result presence: the recorded
+     * {@code HOST_SYNC_RETURN} cell selects {@code HOST_SYNC_RETURN_NOTHING}
+     * for a host invocation that produced no result at all — the oracle's
+     * {@link SemanticOracle.HostResponder.SyncOutcome.Absent}, the LuaJIT
+     * wrapper's zero-result return, the JVM host surface's declared void
+     * method — before any descriptor checking and independently of the
+     * declared return's nullability. A present language null — the
+     * oracle's {@link SemanticOracle.Value.NullValue}, the deployed
+     * runtime's null sentinel, a returned Java null — is a value: it is
+     * admitted by a declared {@code null} or nullable return and never
+     * collapses into absence, while the mandatory cell keeps its own
+     * zero-result rule. The drive's declaration and both host
+     * implementations are caller-owned, so no corpus or host-fixture
+     * membership changes.
+     */
+    private static final String SYNC_PRESENCE_DECLARATION = """
+        export function fetchNullable(): string | null;
+        export function pingNull(): null;
+        export function fetchMandatory(): int;
+        """;
+
+    /**
+     * The drive's entry module: a statement-call probe per declared return
+     * descriptor and a consuming probe for the admitted nullable/null
+     * returns ({@code test_use_nullable} asserts the admitted carrier is
+     * the language null). {@code main} calls nothing, so every probe is
+     * driven alone and its own pinned call origin is the compared span.
+     */
+    private static final String SYNC_PRESENCE_DRIVER = """
+        import * as host from "host/sync_presence"
+
+        export function test_drop_nullable(): null {
+          host.fetchNullable()
+          return null
+        }
+
+        export function test_drop_null(): null {
+          host.pingNull()
+          return null
+        }
+
+        export function test_drop_mandatory(): null {
+          host.fetchMandatory()
+          return null
+        }
+
+        export function test_use_nullable(): null {
+          let v: string | null = host.fetchNullable()
+          if (v !== null) {
+            throw { code: "PROBE_SYNC_PRESENCE", message: "the host null return was not the language null" }
+          }
+          return null
+        }
+
+        export function test_use_null(): null {
+          host.pingNull()
+          return null
+        }
+
+        export function test_use_mandatory(): null {
+          host.fetchMandatory()
+          return null
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
+    /** The LuaJIT absent host: every declared export returns zero results. */
+    private static String luaAbsentSyncHost() {
+        return """
+            return {
+              fetchNullable = function()
+              end,
+              pingNull = function()
+              end,
+              fetchMandatory = function()
+              end,
+            }
+            """;
+    }
+
+    /** The JVM absent host: every declared export is a declared void method. */
+    private static String jvmAbsentSyncHost() {
+        return """
+            final class HostSync_presence {
+              public static void fetchNullable() {
+              }
+              public static void pingNull() {
+              }
+              public static void fetchMandatory() {
+              }
+            }
+            """;
+    }
+
+    /**
+     * The LuaJIT present-null host: every declared export returns the
+     * deployed runtime's language-null sentinel (a present value, never a
+     * zero-result return).
+     */
+    private static String luaPresentNullSyncHost() {
+        return """
+            local rt = require("deal.runtime")
+
+            return {
+              fetchNullable = function()
+                return rt.__NULL
+              end,
+              pingNull = function()
+                return rt.__NULL
+              end,
+              fetchMandatory = function()
+                return rt.__NULL
+              end,
+            }
+            """;
+    }
+
+    /** The JVM present-null host: every declared export returns a present Java null. */
+    private static String jvmPresentNullSyncHost() {
+        return """
+            final class HostSync_presence {
+              public static Object fetchNullable() {
+                return null;
+              }
+              public static Object pingNull() {
+                return null;
+              }
+              public static Object fetchMandatory() {
+                return null;
+              }
+            }
+            """;
+    }
+
+    /** The LuaJIT present-value host: {@code fetchMandatory} returns a real int. */
+    private static String luaPresentValueSyncHost() {
+        return """
+            local rt = require("deal.runtime")
+
+            return {
+              fetchNullable = function()
+                return "ok"
+              end,
+              pingNull = function()
+                return rt.__NULL
+              end,
+              fetchMandatory = function()
+                return 7
+              end,
+            }
+            """;
+    }
+
+    /** The JVM present-value host: {@code fetchMandatory} returns a real boxed long. */
+    private static String jvmPresentValueSyncHost() {
+        return """
+            final class HostSync_presence {
+              public static Object fetchNullable() {
+                return "ok";
+              }
+              public static Object pingNull() {
+                return null;
+              }
+              public static Object fetchMandatory() {
+                return java.lang.Integer.valueOf(7);
+              }
+            }
+            """;
+    }
+
+    /** The absent sync host seam: every call terminal produces no result. */
+    private static SemanticOracle.HostResponder absentSyncResponder() {
+        return new SemanticOracle.HostResponder() {
+            @Override
+            public SyncOutcome call(ModuleId module, String export,
+                    RuntimeDescriptor.Func descriptor,
+                    List<SemanticOracle.Value> args) {
+                return new SyncOutcome.Absent();
+            }
+        };
+    }
+
+    /** The present-null sync host seam: every call terminal returns the language null. */
+    private static SemanticOracle.HostResponder presentNullSyncResponder() {
+        return new SemanticOracle.HostResponder() {
+            @Override
+            public SyncOutcome call(ModuleId module, String export,
+                    RuntimeDescriptor.Func descriptor,
+                    List<SemanticOracle.Value> args) {
+                return new SyncOutcome.Returned(
+                    SemanticOracle.Value.NullValue.INSTANCE);
+            }
+        };
+    }
+
+    /** The present-value sync host seam: {@code fetchMandatory} returns a real int. */
+    private static SemanticOracle.HostResponder presentValueSyncResponder() {
+        return new SemanticOracle.HostResponder() {
+            @Override
+            public SyncOutcome call(ModuleId module, String export,
+                    RuntimeDescriptor.Func descriptor,
+                    List<SemanticOracle.Value> args) {
+                return new SyncOutcome.Returned(
+                    new SemanticOracle.Value.IntValue(7L));
+            }
+        };
+    }
+
+    /**
+     * The synchronous host result presence drive: absence at every declared
+     * return descriptor, the admitted present language nulls, and a present
+     * value control — each on the oracle, the LuaJIT artifact, and the JVM
+     * artifact through their own host terminals.
+     */
+    private static void testHostSyncReturnPresence() throws Exception {
+        System.out.println("-- the synchronous host result presence: absence "
+            + "selects HOST_SYNC_RETURN_NOTHING before descriptor checking for "
+            + "every declared return descriptor, while a present language null is "
+            + "admitted by a null or nullable return and never collapses into "
+            + "absence --");
+        safely("the absent synchronous host results",
+            CanonicalProjectionParityTest::driveHostAbsentSyncReturns);
+        safely("the present synchronous host nulls",
+            CanonicalProjectionParityTest::driveHostPresentNullSyncReturns);
+        safely("the present synchronous host value",
+            CanonicalProjectionParityTest::driveHostPresentValueSyncReturn);
+    }
+
+    /** The caller-owned sync-presence project (one declaration and driver). */
+    private static Compiled compileSyncPresence() throws Exception {
+        Case spec = new Case("host-abi/host-async-shape-bad", "test_drop_nullable",
+            Entry.MAIN, List.of(), null, null);
+        return compile(spec, SYNC_PRESENCE_DRIVER,
+            Map.of("sync_presence", SYNC_PRESENCE_DECLARATION));
+    }
+
+    /**
+     * The absent host results: a declared void method (JVM), a zero-result
+     * return (LuaJIT), and the absent terminal (oracle) select the closed
+     * {@code HOST_SYNC_RETURN_NOTHING} arm at a {@code string | null}, a
+     * {@code null}, and a mandatory {@code int} return, byte-exact and
+     * identical on all three consumers.
+     */
+    private static void driveHostAbsentSyncReturns() throws Exception {
+        Compiled compiled = compileSyncPresence();
+        try {
+            SemanticOracle.HostResponder absent = absentSyncResponder();
+            assertSyncPresenceFailure(compiled, absent, "test_drop_nullable",
+                hostNothingTuple("?string", 4, 3), luaAbsentSyncHost(),
+                jvmAbsentSyncHost(), "the absent ?string return");
+            assertSyncPresenceFailure(compiled, absent, "test_drop_null",
+                hostNothingTuple("null", 9, 3), luaAbsentSyncHost(),
+                jvmAbsentSyncHost(), "the absent null return");
+            assertSyncPresenceFailure(compiled, absent, "test_drop_mandatory",
+                hostNothingTuple("int", 14, 3), luaAbsentSyncHost(),
+                jvmAbsentSyncHost(), "the absent int return");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /**
+     * The present language nulls: the explicit null sentinel (LuaJIT), a
+     * present Java null (JVM), and the oracle's {@code NullValue} are
+     * admitted by a declared {@code null} or {@code string | null} return
+     * — the consuming probe observes the language null — and are never
+     * collapsed into absence. At the mandatory {@code int} return the
+     * oracle and the LuaJIT artifact render the closed
+     * {@code HOST_SYNC_RETURN_CELL} composite (a present wrong kind), while
+     * the JVM host surface's Java null is its mandated zero-result form at a
+     * mandatory position (the corpus pin {@code host-abi/host-empty-return-bad}).
+     */
+    private static void driveHostPresentNullSyncReturns() throws Exception {
+        Compiled compiled = compileSyncPresence();
+        try {
+            SemanticOracle.HostResponder presentNull = presentNullSyncResponder();
+            assertSyncPresenceSuccess(compiled, presentNull, "test_use_nullable",
+                luaPresentNullSyncHost(), jvmPresentNullSyncHost(),
+                "the present null ?string return");
+            assertSyncPresenceSuccess(compiled, presentNull, "test_use_null",
+                luaPresentNullSyncHost(), jvmPresentNullSyncHost(),
+                "the present null null return");
+            assertSyncPresenceFailure(compiled, presentNull, "test_use_mandatory",
+                hostReturnCellTuple("int", FailureProjections.kindReason(
+                    RuntimeDescriptor.Int.INSTANCE), "table", 32, 3),
+                luaPresentNullSyncHost(), jvmPresentNullSyncHost(),
+                "the present null int return", hostNothingTuple("int", 32, 3));
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /**
+     * The present-value control: a real int result at the mandatory return
+     * is admitted on all three consumers, so the presence rule never
+     * treats a present value as absence.
+     */
+    private static void driveHostPresentValueSyncReturn() throws Exception {
+        Compiled compiled = compileSyncPresence();
+        try {
+            assertSyncPresenceSuccess(compiled, presentValueSyncResponder(),
+                "test_drop_mandatory", luaPresentValueSyncHost(),
+                jvmPresentValueSyncHost(), "the present int return");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /**
+     * Drives one probe export of the sync-presence project through the
+     * oracle (under the supplied responder), the LuaJIT artifact (under the
+     * supplied host implementation), and the JVM artifact, asserting each
+     * captures the expected tuple and that the consumers agree.
+     */
+    private static void assertSyncPresenceFailure(Compiled compiled,
+            SemanticOracle.HostResponder responder, String export, Tuple expected,
+            String luaHost, String jvmHost, String what) throws Exception {
+        assertSyncPresenceFailure(compiled, responder, export, expected, luaHost,
+            jvmHost, what, expected);
+    }
+
+    private static void assertSyncPresenceFailure(Compiled compiled,
+            SemanticOracle.HostResponder responder, String export, Tuple oracleExpected,
+            String luaHost, String jvmHost, String what, Tuple jvmExpected)
+            throws Exception {
+        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeSyncEntry(
+            compiled.project(), compiled.tables(), compiled.registries(), responder,
+            compiled.checkedProject().entryModule(), export, List.of());
+        Tuple oracle = failureTuple(compiled, run);
+        checkEq(oracleExpected, oracle, what + " (oracle): the complete tuple");
+        Tuple lua = luaSyncPresenceFailure(compiled, luaHost, export);
+        checkEq(oracleExpected, lua, what + " (luajit): the complete tuple");
+        Tuple jvm = jvmSyncPresenceFailure(compiled, jvmHost, export);
+        checkEq(jvmExpected, jvm, what + " (jvm): the complete tuple");
+        if (oracle != null && lua != null) {
+            checkEq(null, firstDifferingField(oracle, lua), what
+                + ": the oracle and the LuaJIT artifact render the identical tuple");
+        }
+        if (oracle != null && jvm != null
+                && Objects.equals(jvmExpected, oracleExpected)) {
+            checkEq(null, firstDifferingField(oracle, jvm), what
+                + ": the oracle and the JVM artifact render the identical tuple");
+        }
+    }
+
+    /** One admitted-presence probe on all three consumers. */
+    private static void assertSyncPresenceSuccess(Compiled compiled,
+            SemanticOracle.HostResponder responder, String export, String luaHost,
+            String jvmHost, String what) throws Exception {
+        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeSyncEntry(
+            compiled.project(), compiled.tables(), compiled.registries(), responder,
+            compiled.checkedProject().entryModule(), export, List.of());
+        check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+            what + " (oracle): the admitted presence completes: " + run.terminal());
+        String lua = luaArtifactOutput(compiled, Map.of("sync_presence", luaHost),
+            luaExportProbe(compiled, export));
+        check(lua.contains("OK") && !lua.contains("ERR|"), what + " (luajit): "
+            + "the admitted presence completes without a failure event: " + lua);
+        String jvm = jvmArtifactOutput(compiled, jvmExportProbe(compiled, export),
+            Map.of("sync_presence", jvmHost));
+        check(jvm != null && jvm.contains("OK") && !jvm.contains("ERR|"), what
+            + " (jvm): the admitted presence completes without a failure event: "
+            + jvm);
+    }
+
+    /** The LuaJIT artifact's failure tuple of one named sync-presence probe. */
+    private static Tuple luaSyncPresenceFailure(Compiled compiled, String hostSource,
+            String export) throws Exception {
+        String output = luaArtifactOutput(compiled, Map.of("sync_presence", hostSource),
+            luaExportProbe(compiled, export));
+        Tuple tuple = parseLuaProbe(output, compiled);
+        check(tuple != null, export + " (luajit, sync_presence): the probe captures "
+            + "the failure: " + output);
+        return tuple;
+    }
+
+    /** The JVM artifact's failure tuple of one named sync-presence probe. */
+    private static Tuple jvmSyncPresenceFailure(Compiled compiled, String hostSource,
+            String export) throws Exception {
+        String output = jvmArtifactOutput(compiled, jvmExportProbe(compiled, export),
+            Map.of("sync_presence", hostSource));
+        if (output == null) {
+            return null;
+        }
+        Tuple tuple = parseJvmProbe(output, compiled);
+        check(tuple != null, export + " (jvm, sync_presence): the probe captures the "
+            + "failure: " + output);
+        return tuple;
+    }
+
+    /** The closed {@code HOST_SYNC_RETURN_NOTHING} tuple at one probe origin. */
+    private static Tuple hostNothingTuple(String descriptor, int line, int column) {
+        BoundaryFailure arm = FailureContractRegistry.render(
+            FailureArmId.HOST_SYNC_RETURN_NOTHING, Map.of("expected", descriptor),
+            descriptor, "nothing", null);
+        return new Tuple(arm.code().name(), arm.message(), "app.deal", line, column,
+            arm.expected(), arm.actual());
+    }
+
+    /** The closed {@code HOST_SYNC_RETURN_CELL} tuple at one probe origin. */
+    private static Tuple hostReturnCellTuple(String descriptor, String inner,
+            String actual, int line, int column) {
+        BoundaryFailure arm = FailureContractRegistry.render(
+            FailureArmId.HOST_SYNC_RETURN_CELL, Map.of("inner", inner), descriptor,
+            actual, null);
+        return new Tuple(arm.code().name(), arm.message(), "app.deal", line, column,
+            arm.expected(), arm.actual());
+    }
+
+    /**
+     * The LuaJIT deferred-entry probe of one named sync export: the module
+     * entry runs once and the named export is invoked alone, so the
+     * captured failure is that probe's own call origin.
+     */
+    private static String luaExportProbe(Compiled compiled, String export) {
+        return """
+            local function emit(e)
+              if type(e) == "table" and e.__d then
+                local file, line, column = nil, nil, nil
+                if e.o ~= nil then
+                  file, line, column = tostring(e.o):match("^(.*):(%%d+):(%%d+)$")
+                end
+                if file == nil and e.file ~= nil then
+                  file, line, column = tostring(e.file), tostring(e.line),
+                    tostring(e.column)
+                end
+                print("ERR|" .. tostring(e.code) .. "|" .. tostring(e.m) .. "|"
+                  .. tostring(file) .. "|" .. tostring(line) .. "|"
+                  .. tostring(column) .. "|" .. (e.e == nil and "" or tostring(e.e))
+                  .. "|" .. (e.a == nil and "" or tostring(e.a)))
+                return
+              end
+              print("RAW|" .. tostring(e))
+            end
+            local chunk = dofile("%s")
+            local ok, err = __dealMain()
+            if not ok then emit(err) os.exit(0) end
+            local ok2, err2 = pcall(__exportSurfaces["%s"]["%s"].f)
+            if not ok2 then emit(err2) os.exit(0) end
+            print("OK")
+            """.formatted(artifactPath(compiled),
+                compiled.checkedProject().entryModule().path(), export);
+    }
+
+    /**
+     * The JVM deferred-entry probe of one named sync export: the module
+     * entry runs once and the named export is invoked alone.
+     */
+    private static String jvmExportProbe(Compiled compiled, String export) {
+        String entryModule = compiled.checkedProject().entryModule().path();
+        return """
+            final class Probe {
+              public static void main(String[] args) {
+                try {
+                  %s.dealMain();
+                } catch (Throwable t) {
+                  report(t);
+                  return;
+                }
+                deal.codegen.jvm.JvmRuntime.Table surface =
+                    %s.EXPORT_SURFACES.get("%s");
+                if (surface == null) { System.out.println("NOSURFACE"); return; }
+                try {
+                  ((deal.codegen.jvm.JvmRuntime.FunctionValue) surface.read("%s"))
+                      .fn.invoke(new java.lang.Object[]{ });
+                } catch (Throwable t) {
+                  report(t);
+                  return;
+                }
+                System.out.println("OK");
+              }
+              private static void report(java.lang.Throwable t) {
+                while (t instanceof java.lang.ExceptionInInitializerError
+                        && t.getCause() != null) {
+                  t = t.getCause();
+                }
+                try {
+                  System.out.println("ERR|" + str(t, "code") + "|" + t.getMessage()
+                    + "|" + str(t, "origin") + "|" + str(t, "expected") + "|"
+                    + str(t, "actual"));
+                } catch (java.lang.Exception unreadable) {
+                  System.out.println("UNREADABLE|" + unreadable);
+                }
+              }
+              private static java.lang.String str(java.lang.Throwable t,
+                  java.lang.String name) throws java.lang.Exception {
+                java.lang.reflect.Field field = findField(t.getClass(), name);
+                if (field == null) { return ""; }
+                field.setAccessible(true);
+                java.lang.Object value = field.get(t);
+                return value == null ? "" : java.lang.String.valueOf(value);
+              }
+              private static java.lang.reflect.Field findField(
+                  java.lang.Class<?> type, java.lang.String name)
+                  throws java.lang.Exception {
+                for (java.lang.Class<?> c = type; c != null; c = c.getSuperclass()) {
+                  try {
+                    return c.getDeclaredField(name);
+                  } catch (java.lang.NoSuchFieldException absent) {
+                    // the next level
+                  }
+                }
+                return null;
+              }
+            }
+            """.formatted(JvmBackend.classNameFor(entryModule), JvmBackend.classNameFor(
+                entryModule), entryModule, export);
     }
 
     /**
@@ -5409,6 +5968,7 @@ public class CanonicalProjectionParityTest {
         testNamedDivergences();
         testArmFamilies();
         testHostNullCompletions();
+        testHostSyncReturnPresence();
         testCallbackEntrySlot();
         testInvalidUnicodeBoundaryOriginDrive();
         testHostStringCarrierProducers();
