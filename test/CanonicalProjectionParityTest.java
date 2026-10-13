@@ -2418,7 +2418,8 @@ public class CanonicalProjectionParityTest {
      * The caller-owned array-completion declaration of the array drives
      * (no corpus or host-fixture membership change): a mandatory int
      * array, a nullable int array, an int-or-null element array, a nested
-     * int array, a nested string array, and a string array.
+     * int array, a nested string array, a string array, and a mandatory
+     * number array.
      */
     private static final String ARRAY_COMPLETION_DECLARATION = """
         export async function fetchInts(): int[];
@@ -2427,6 +2428,7 @@ public class CanonicalProjectionParityTest {
         export async function fetchNestedInts(): int[][];
         export async function fetchNestedStrings(): string[][];
         export async function fetchStrings(): string[];
+        export async function fetchNumbers(): number[];
         """;
 
     /**
@@ -2520,6 +2522,30 @@ public class CanonicalProjectionParityTest {
         }
         """;
 
+    /**
+     * The admitted number-array probe: the boxed int element is admitted at
+     * the declared number element position — exactly like the oracle's
+     * IntValue and the Lua artifact's integral number — and consumed by a
+     * real number comparison, so a rejected carrier cannot reach the
+     * probe's success.
+     */
+    private static final String ARRAY_COMPLETION_NUMBER_DRIVER = """
+        import * as host from "host/async_arrays"
+
+        export async function test_use_number_array(): int {
+          let xs: number[] = await host.fetchNumbers()
+          let v: number = xs[0]
+          if (v !== 7.0) {
+            throw { code: "PROBE_BOXED_ELEMENT", message: "the boxed int element did not land 7" }
+          }
+          return 8
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
     /** The wrong-kind string-array probe: only the crossing's own check rejects it. */
     private static final String ARRAY_COMPLETION_STRING_DRIVER = """
         import * as host from "host/async_arrays"
@@ -2586,6 +2612,16 @@ public class CanonicalProjectionParityTest {
             "the host completion seam keeps the completed tree's identities: one "
                 + "repeated inner carrier stays one array (the reference-identity "
                 + "contract) and its boxed element settles in place");
+        JvmRuntime.Array boxedNumber = new JvmRuntime.Array(2);
+        boxedNumber.elements.add(Integer.valueOf(7));
+        boxedNumber.elements.add(null);
+        Object settledNumber = JvmRuntime.hostCompletion(
+            "array(nullable(number))", "array", boxedNumber);
+        check(settledNumber == boxedNumber
+                && Long.valueOf(7L).equals(boxedNumber.elements.get(0))
+                && boxedNumber.elements.get(1) == null,
+            "the host completion seam admits a boxed int at a nullable number "
+                + "element position in place and keeps the language null element");
         JvmRuntime.Array wrongKind = new JvmRuntime.Array(1);
         wrongKind.elements.add(Integer.valueOf(7));
         try {
@@ -2645,6 +2681,8 @@ public class CanonicalProjectionParityTest {
             CanonicalProjectionParityTest::driveHostNullableElementArrayCompletion);
         safely("the nested int[][] host completion",
             CanonicalProjectionParityTest::driveHostNestedIntArrayCompletion);
+        safely("the number[] host completion",
+            CanonicalProjectionParityTest::driveHostNumberArrayCompletion);
         safely("the wrong-kind string[] host completion",
             CanonicalProjectionParityTest::driveHostStringArrayCompletion);
         safely("the wrong-kind nested string[][] host completion",
@@ -2728,6 +2766,13 @@ public class CanonicalProjectionParityTest {
             RuntimeDescriptor.parseCanonicalText("[int]"), false);
     }
 
+    /** The oracle's one-element number array completion value (the boxed element). */
+    private static SemanticOracle.Value oracleNumberArrayElement(long value) {
+        return new SemanticOracle.Value.ArrayValue(
+            new ArrayList<>(List.of(new SemanticOracle.Value.IntValue(value))),
+            RuntimeDescriptor.Number.INSTANCE, false);
+    }
+
     /** The oracle's int-or-null element array completion value. */
     private static SemanticOracle.Value oracleNullableElementArray() {
         return new SemanticOracle.Value.ArrayValue(
@@ -2768,8 +2813,12 @@ public class CanonicalProjectionParityTest {
               fetchStrings = function()
                 return rt.async_start(function() return %s end)
               end,
+              fetchNumbers = function()
+                return rt.async_start(function() return %s end)
+              end,
             }
-            """.formatted(carrier, carrier, carrier, carrier, carrier, carrier);
+            """.formatted(carrier, carrier, carrier, carrier, carrier, carrier,
+                carrier);
     }
 
     /** The JVM array-completion host: one completed-future carrier per export. */
@@ -2806,8 +2855,12 @@ public class CanonicalProjectionParityTest {
               public static Object fetchStrings() {
                 return CompletableFuture.completedFuture(%s);
               }
+              public static Object fetchNumbers() {
+                return CompletableFuture.completedFuture(%s);
+              }
             }
-            """.formatted(carrier, carrier, carrier, carrier, carrier, carrier);
+            """.formatted(carrier, carrier, carrier, carrier, carrier, carrier,
+                carrier);
     }
 
     /** The admitted int[] completion: the boxed element settles and is consumed. */
@@ -2874,6 +2927,25 @@ public class CanonicalProjectionParityTest {
                     "{__a = true, __n = 1, [1] = {__a = true, __n = 1, [1] = 7}}"),
                 jvmAsyncArrayHost("array(array(java.lang.Integer.valueOf(7)))"),
                 "the nested boxed int int[][] completion");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /**
+     * The admitted number[] completion: the boxed int element is admitted at
+     * the declared number element position exactly like the oracle's IntValue
+     * and the Lua artifact's integral number, and the probe consumes it.
+     */
+    private static void driveHostNumberArrayCompletion() throws Exception {
+        Compiled compiled = compileArrayCompletion("test_use_number_array",
+            ARRAY_COMPLETION_NUMBER_DRIVER);
+        try {
+            assertAsyncArrayCompletionSuccess(compiled, "test_use_number_array",
+                "int:8", arrayCompletionResponder(oracleNumberArrayElement(7L)),
+                luaAsyncArrayHost("{__a = true, __n = 1, [1] = 7}"),
+                jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7))"),
+                "the boxed int number[] completion");
         } finally {
             deleteRecursively(compiled.root());
         }

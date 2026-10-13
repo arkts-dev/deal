@@ -1249,11 +1249,12 @@ public final class JvmRuntime {
      * <p>The completed array carrier's element positions follow the same
      * settling rule recursively (the complete completion is validated
      * before any conversion commits): a boxed Integer element — including
-     * a nested array's element — becomes the production int carrier, a
-     * Long and an admitted Double keep their own variants, and every other
-     * element (the language null included) crosses unchanged. A wrong-kind
-     * element therefore projects its own kind through the canonical
-     * element failure arm, and an int element is admitted exactly like the
+     * a nested array's element — becomes the production int carrier at a
+     * declared int and at a declared number position alike, a Long and an
+     * admitted Double keep their own variants, and every other element
+     * (the language null included) crosses unchanged. A wrong-kind element
+     * therefore projects its own kind through the canonical element
+     * failure arm, and an int element is admitted exactly like the
      * oracle's IntValue and the emitted Lua completion cell's integral
      * number. The original carrier identities are preserved: an
      * identity-aware traversal collects the boxed-Integer element
@@ -1332,9 +1333,9 @@ public final class JvmRuntime {
         // inner carrier and a reference-cyclic host carrier each terminate
         // and no position is collected twice), the complete completion is
         // then validated on the original carriers — the crossing's own
-        // boxing admission included — and only a successful validation
-        // commits the collected conversions onto those carriers. A rejected
-        // completion therefore mutates nothing.
+        // boxed-Integer admission included — and only a successful
+        // validation commits the collected conversions onto those carriers.
+        // A rejected completion therefore mutates nothing.
         IdentityHashMap<Array, Boolean> visited = new IdentityHashMap<>();
         List<BoxedIntElement> pending = new ArrayList<>();
         collectBoxedIntElements(v, visited, pending);
@@ -1483,6 +1484,17 @@ public final class JvmRuntime {
         if ("number".equals(desc)) {
             if (v instanceof Double || v instanceof Long) {
                 return v;
+            }
+            if (hostCompletionCrossing && v instanceof Integer intValue) {
+                // The host-completion crossing's boxed int carrier at a
+                // declared number position (a completed array's element
+                // positions recursively included): admitted like the
+                // crossing's top-level number rule, which also settles the
+                // boxed Integer onto the production int carrier while the
+                // admitted Long and Double keep their own variants, and
+                // committed onto the original carrier by the collected
+                // settlement after the complete completion was validated.
+                return Long.valueOf(intValue.longValue());
             }
             throw kindFailure("number", actual, completion);
         }
