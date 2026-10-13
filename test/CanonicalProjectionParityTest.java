@@ -2687,6 +2687,8 @@ public class CanonicalProjectionParityTest {
             CanonicalProjectionParityTest::driveHostStringArrayCompletion);
         safely("the wrong-kind nested string[][] host completion",
             CanonicalProjectionParityTest::driveHostNestedStringArrayCompletion);
+        safely("the deep later-subtree string[] host completion",
+            CanonicalProjectionParityTest::driveHostDeepStringArrayCompletion);
         safely("the repeated shared int[] host completion",
             CanonicalProjectionParityTest::driveHostSharedArrayCompletion);
     }
@@ -2990,6 +2992,136 @@ public class CanonicalProjectionParityTest {
         } finally {
             deleteRecursively(compiled.root());
         }
+    }
+
+    /**
+     * The deep later-subtree level count of the host-carrier depth
+     * regression: the completed array's second element is a chain this many
+     * production array carriers deep — a subtree the declared string element
+     * descriptor never inspects.
+     */
+    private static final int DEEP_HOST_SUBTREE_LEVELS = 20000;
+
+    /**
+     * The deep later-subtree string[] completion: the production hosts
+     * complete the declared string array operation with the early wrong-kind
+     * boxed int followed by a deep acyclic chain of production array
+     * carriers. The canonical first-failing-element rule must decide the
+     * tuple before any settlement traversal visits the raw host graph, so the
+     * JVM artifact renders the same complete E8003 tuple as the oracle and
+     * the LuaJIT artifact — never a raw host error for the irrelevant later
+     * subtree. The oracle's completion value carries the same early
+     * wrong-kind element only: the depth is a raw-host-carrier fact of the
+     * two production hosts, and the canonical tuple is already decided at the
+     * first failing element.
+     */
+    private static void driveHostDeepStringArrayCompletion() throws Exception {
+        Compiled compiled = compileArrayCompletion("test_drop_string_array",
+            ARRAY_COMPLETION_STRING_DRIVER);
+        try {
+            assertAsyncCompletionFailure(compiled, "async_arrays",
+                arrayCompletionResponder(oracleStringArrayElement(
+                    new SemanticOracle.Value.IntValue(7L))),
+                "test_drop_string_array",
+                asyncElementTuple(ARRAY_COMPLETION_STRING_DRIVER, 4, 1, "string",
+                    "int"),
+                luaDeepStringArrayHost(DEEP_HOST_SUBTREE_LEVELS),
+                jvmDeepStringArrayHost(DEEP_HOST_SUBTREE_LEVELS),
+                "the deep later-subtree string[] completion");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /**
+     * The deep later-subtree LuaJIT host: the completed value's first element
+     * is the wrong-kind number and its second element is a chain of
+     * production array carriers {@code levels} deep, built iteratively so the
+     * host fixture itself never depends on the stack.
+     */
+    private static String luaDeepStringArrayHost(int levels) {
+        return """
+            local rt = require("deal.runtime")
+
+            local node = {__a = true, __n = 0}
+            for i = 1, %d do
+              node = {__a = true, __n = 1, [1] = node}
+            end
+
+            local function completion()
+              return {__a = true, __n = 2, [1] = 7, [2] = node}
+            end
+
+            return {
+              fetchInts = function() return rt.async_start(completion) end,
+              fetchNullableInts = function() return rt.async_start(completion) end,
+              fetchNullableElements = function() return rt.async_start(completion) end,
+              fetchNestedInts = function() return rt.async_start(completion) end,
+              fetchNestedStrings = function() return rt.async_start(completion) end,
+              fetchStrings = function() return rt.async_start(completion) end,
+              fetchNumbers = function() return rt.async_start(completion) end,
+            }
+            """.formatted(levels);
+    }
+
+    /**
+     * The deep later-subtree JVM host: the completed future's first element
+     * is the wrong-kind boxed int and its second element is a chain of
+     * production array carriers {@code levels} deep, built iteratively so the
+     * host fixture itself never depends on the stack.
+     */
+    private static String jvmDeepStringArrayHost(int levels) {
+        return """
+            import java.util.concurrent.CompletableFuture;
+
+            final class HostAsync_arrays {
+              private static deal.codegen.jvm.JvmRuntime.Array array(
+                  java.lang.Object... elements) {
+                deal.codegen.jvm.JvmRuntime.Array array =
+                    new deal.codegen.jvm.JvmRuntime.Array(elements.length);
+                for (java.lang.Object element : elements) {
+                  array.elements.add(element);
+                }
+                return array;
+              }
+
+              private static deal.codegen.jvm.JvmRuntime.Array deep(int levels) {
+                deal.codegen.jvm.JvmRuntime.Array node =
+                    new deal.codegen.jvm.JvmRuntime.Array(0);
+                for (int i = 0; i < levels; i++) {
+                  node = array(node);
+                }
+                return node;
+              }
+
+              public static Object fetchInts() {
+                return CompletableFuture.completedFuture(completion(%d));
+              }
+              public static Object fetchNullableInts() {
+                return CompletableFuture.completedFuture(completion(%d));
+              }
+              public static Object fetchNullableElements() {
+                return CompletableFuture.completedFuture(completion(%d));
+              }
+              public static Object fetchNestedInts() {
+                return CompletableFuture.completedFuture(completion(%d));
+              }
+              public static Object fetchNestedStrings() {
+                return CompletableFuture.completedFuture(completion(%d));
+              }
+              public static Object fetchStrings() {
+                return CompletableFuture.completedFuture(completion(%d));
+              }
+              public static Object fetchNumbers() {
+                return CompletableFuture.completedFuture(completion(%d));
+              }
+
+              private static deal.codegen.jvm.JvmRuntime.Array completion(
+                  int levels) {
+                return array(java.lang.Integer.valueOf(7), deep(levels));
+              }
+            }
+            """.formatted(levels, levels, levels, levels, levels, levels, levels);
     }
 
     /**

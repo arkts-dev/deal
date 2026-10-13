@@ -1247,26 +1247,29 @@ public final class JvmRuntime {
      * origin.</p>
      *
      * <p>The completed array carrier's element positions follow the same
-     * settling rule recursively (the complete completion is validated
-     * before any conversion commits): a boxed Integer element — including
-     * a nested array's element — becomes the production int carrier at a
+     * settling rule recursively: a boxed Integer element — including a
+     * nested array's element — becomes the production int carrier at a
      * declared int and at a declared number position alike, a Long and an
      * admitted Double keep their own variants, and every other element
      * (the language null included) crosses unchanged. A wrong-kind element
      * therefore projects its own kind through the canonical element
      * failure arm, and an int element is admitted exactly like the
      * oracle's IntValue and the emitted Lua completion cell's integral
-     * number. The original carrier identities are preserved: an
-     * identity-aware traversal collects the boxed-Integer element
-     * positions — one repeated inner carrier is collected once and a
-     * reference-cyclic host carrier terminates — the complete completion
-     * is validated first, and only then are the admitted conversions
-     * committed onto the original carriers. A rejected completion commits
-     * nothing and leaves the host's own carrier untouched, while an
+     * number. The complete completion is validated on the original
+     * carriers first — the canonical first-failing-element rule decides
+     * before any settlement traversal visits the raw host graph, so a
+     * subtree the descriptor check would never inspect can never replace
+     * the first failure with a raw host error — and only a successful
+     * validation reaches the settlement commit. The original carrier
+     * identities are preserved: the settlement is an identity-keyed
+     * iterative traversal (one repeated inner carrier is settled once and
+     * a reference-cyclic host carrier terminates), so the commit has no
+     * recursive dependence on the raw host graph's depth, and the
      * admitted crossing returns the very carrier the host completed with,
      * so two awaits of the same completed array observe one array (the
      * reference-identity contract) and a write through one alias stays
-     * visible through every other.</p>
+     * visible through every other. A rejected completion commits nothing
+     * and leaves the host's own carrier untouched.</p>
      */
     public static Object hostCompletion(String desc, String staticKind, Object v) {
         return hostCompletion(desc, staticKind, v, null);
@@ -1328,54 +1331,51 @@ public final class JvmRuntime {
                 return v;
             }
         }
-        // The boxed-Integer element positions of the completed tree are
-        // collected first (an identity-aware traversal, so a repeated
-        // inner carrier and a reference-cyclic host carrier each terminate
-        // and no position is collected twice), the complete completion is
-        // then validated on the original carriers — the crossing's own
-        // boxed-Integer admission included — and only a successful
-        // validation commits the collected conversions onto those carriers.
-        // A rejected completion therefore mutates nothing.
-        IdentityHashMap<Array, Boolean> visited = new IdentityHashMap<>();
-        List<BoxedIntElement> pending = new ArrayList<>();
-        collectBoxedIntElements(v, visited, pending);
+        // The complete completion is validated first — the crossing's own
+        // boxed-Integer admission included, so an int element admits the
+        // boxed carrier and a wrong-kind element renders the canonical
+        // element arm — and only a successful validation reaches the
+        // settlement of the original carriers. The canonical
+        // first-failing-element rule therefore decides before any
+        // settlement traversal visits the raw host graph: a subtree the
+        // descriptor check would never inspect can never replace the first
+        // failure with a raw host error, and a rejected completion commits
+        // nothing.
         Object admitted = bcheck(desc, staticKind, v, true, canon, true);
-        for (BoxedIntElement settlement : pending) {
-            settlement.carrier().elements.set(settlement.index(),
-                Long.valueOf(settlement.value()));
+        if (v instanceof Array array) {
+            settleBoxedIntElements(array);
         }
         return admitted;
     }
 
     /**
-     * One collected boxed-Integer element settlement of the host completion
-     * crossing: the identity-known carrier, the element position, and the
-     * boxed value that commits onto the production int carrier (Long) once
-     * the complete completion has been validated.
+     * The identity-keyed settlement of one validated host completion's
+     * boxed-Integer element positions: every Integer element of every array
+     * in the reachable graph — the nested arrays included, each carrier
+     * visited once — commits onto the production int carrier (Long) in
+     * place, while every other carrier (the language null included) stays
+     * unchanged. The traversal carries an explicit work list, so the commit
+     * has no recursive dependence on the raw host graph's depth: a deep
+     * acyclic subtree settles without exhausting the stack and a
+     * reference-cyclic host carrier terminates through the identity visit
+     * set. Only a completion that passed the crossing's validation reaches
+     * this commit.
      */
-    private record BoxedIntElement(Array carrier, int index, int value) {
-    }
-
-    /**
-     * The identity-aware collection of one host-completed value's boxed
-     * Integer element positions: every Integer element of every array in
-     * the tree — the nested arrays included — is recorded for the commit
-     * that follows a successful validation, while every other carrier
-     * (the language null included) is left for the crossing's own check.
-     * The identity-keyed visit set keeps one repeated inner carrier one
-     * collection and terminates a reference-cyclic host carrier.
-     */
-    private static void collectBoxedIntElements(Object v,
-            IdentityHashMap<Array, Boolean> visited, List<BoxedIntElement> pending) {
-        if (!(v instanceof Array array) || visited.put(array, Boolean.TRUE) != null) {
-            return;
-        }
-        for (int i = 0; i < array.elements.size(); i++) {
-            Object element = array.elements.get(i);
-            if (element instanceof Integer boxed) {
-                pending.add(new BoxedIntElement(array, i, boxed.intValue()));
-            } else {
-                collectBoxedIntElements(element, visited, pending);
+    private static void settleBoxedIntElements(Array root) {
+        IdentityHashMap<Array, Boolean> visited = new IdentityHashMap<>();
+        ArrayDeque<Array> pending = new ArrayDeque<>();
+        visited.put(root, Boolean.TRUE);
+        pending.push(root);
+        while (!pending.isEmpty()) {
+            Array array = pending.pop();
+            for (int i = 0; i < array.elements.size(); i++) {
+                Object element = array.elements.get(i);
+                if (element instanceof Integer boxed) {
+                    array.elements.set(i, Long.valueOf(boxed.longValue()));
+                } else if (element instanceof Array inner
+                        && visited.put(inner, Boolean.TRUE) == null) {
+                    pending.push(inner);
+                }
             }
         }
     }
@@ -1426,13 +1426,12 @@ public final class JvmRuntime {
     /**
      * The acceptance logic of {@link #bcheck(String, String, Object, boolean,
      * String)} with the host-completion crossing's boxed-Integer admission:
-     * the crossing's collected boxed-Integer element settlements are not yet
-     * committed when the complete completion is validated, so an
-     * {@code int} position — the completed array's element positions
+     * the complete completion is validated before any settlement commits, so
+     * an {@code int} position — the completed array's element positions
      * recursively included — admits the boxed carrier exactly like the
-     * crossing's top-level rule admits it, and the commit applies the
-     * collected conversions only after the whole completion passed. A
-     * non-crossing check never admits the boxed carrier.
+     * crossing's top-level rule admits it, and the settlement applies the
+     * conversions only after the whole completion passed. A non-crossing
+     * check never admits the boxed carrier.
      */
     private static Object bcheck(String desc, String staticKind, Object v,
             boolean completion, String canon, boolean hostCompletionCrossing) {
@@ -1458,7 +1457,7 @@ public final class JvmRuntime {
                 // The host-completion crossing's boxed int carrier (the
                 // host-side spelling of the production int carrier):
                 // admitted like the crossing's top-level rule, and the
-                // collected settlement commits it onto the production
+                // crossing's settlement commits it onto the production
                 // carrier after the complete completion was validated.
                 return Long.valueOf(intValue.longValue());
             }
@@ -1492,7 +1491,7 @@ public final class JvmRuntime {
                 // crossing's top-level number rule, which also settles the
                 // boxed Integer onto the production int carrier while the
                 // admitted Long and Double keep their own variants, and
-                // committed onto the original carrier by the collected
+                // committed onto the original carrier by the crossing's
                 // settlement after the complete completion was validated.
                 return Long.valueOf(intValue.longValue());
             }
