@@ -1250,6 +1250,10 @@ public final class BindingsProductionValidator {
                         + " LoweredBody registrations (exactly one per member, B5)");
                 }
             }
+            // A separate BINDING_ALLOC/BINDING_INIT for a member binding
+            // is itself the offending operation (D3): the diagnostic
+            // carries that op's own copied range while the message keeps
+            // naming the member binding.
             for (BindingId binding : bindings) {
                 for (SemanticOp other : model.unit.ops()) {
                     if (other == op) {
@@ -1257,14 +1261,14 @@ public final class BindingsProductionValidator {
                     }
                     if (other.payload() instanceof KindPayload.BindingAllocPayload alloc
                             && alloc.binding().equals(binding)) {
-                        return fail(op, model, GROUP_SHAPE, "the group member binding " + binding
-                            + " has a separate BINDING_ALLOC op " + other.opId()
+                        return fail(other, model, GROUP_SHAPE, "the group member binding "
+                            + binding + " has a separate BINDING_ALLOC op " + other.opId()
                             + " (member cells are SHARED_CELL by construction, B2)");
                     }
                     if (other.payload() instanceof KindPayload.BindingInitPayload init
                             && init.binding().equals(binding)) {
-                        return fail(op, model, GROUP_SHAPE, "the group member binding " + binding
-                            + " has a separate BINDING_INIT op " + other.opId()
+                        return fail(other, model, GROUP_SHAPE, "the group member binding "
+                            + binding + " has a separate BINDING_INIT op " + other.opId()
                             + " (members have no separate INIT, B1/B4)");
                     }
                 }

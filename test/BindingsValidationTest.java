@@ -403,6 +403,191 @@ public class BindingsValidationTest {
                 + (originless.isEmpty() ? "none" : originless.get().range()));
     }
 
+    /**
+     * The GROUP_SHAPE offender attribution (ISSUE-0750 D3): a separate
+     * BINDING_ALLOC or BINDING_INIT for a member binding is named by the
+     * group message but is itself the offending operation, so the
+     * diagnostic carries the separate op's own range. The group keeps
+     * only the message role; an originless group yields to an available
+     * offender anchor, and an offsetless offender keeps its own known
+     * file and SYNTHETIC anchor instead of borrowing the group's source
+     * location.
+     */
+    private static void testGroupShapeOffenderOrigins() {
+        System.out.println("-- group-shape offender origins: the separate ALLOC/INIT op's "
+            + "own range, the originless group, the offsetless offender --");
+
+        // The distinct group origin shared by the probes below.
+        SourceOrigin groupSource = new SourceOrigin("group.deal",
+            new SourceSpan("group.deal", 2, 3, 2, 8, 10, 15),
+            SourceOriginKind.USER, new AnchorId(31), null);
+
+        // A separate BINDING_ALLOC for a member binding: the failure
+        // carries the separate op's own SOURCE range, never the group's.
+        BindingId allocMember = nextBindingId();
+        FunctionId allocMemberFn = nextFunctionId();
+        BlockId allocMemberBody = nextBlock();
+        SourceOrigin rogueAllocSource = new SourceOrigin("rogue.deal",
+            new SourceSpan("rogue.deal", 4, 2, 4, 9, 30, 37),
+            SourceOriginKind.USER, new AnchorId(32), null);
+        SemanticOp groupAlloc = withOrigin(
+            groupOp(List.of(allocMember), List.of(allocMemberFn)), groupSource);
+        SemanticOp rogueAlloc = withOrigin(
+            allocOp(allocMember, INIT_BLOCK, 0), rogueAllocSource);
+        LoweredModuleUnit unitAlloc = unit(
+            Map.of(allocMemberFn,
+                function(allocMemberFn, SIG0, List.of(), allocMemberBody)),
+            Map.of(nextIdentity(),
+                new FunctionExecutionBinding.LoweredBody(allocMemberFn, allocMemberBody)),
+            List.of(groupAlloc, rogueAlloc));
+        StructuredBodyTable tableAlloc = tableOf(Map.of(INIT_BLOCK,
+            List.of(groupAlloc, rogueAlloc), allocMemberBody, List.of()));
+        Optional<CompilerDiagnostic> allocFailure =
+            BindingsProductionValidator.validate(unitAlloc, tableAlloc);
+        assertE6005(allocFailure, "GROUP_SHAPE",
+            "the group member binding with a separate ALLOC",
+            "separate BINDING_ALLOC", rogueAlloc.opId().toString());
+        check(allocFailure.isPresent()
+                && rogueAllocSource.span().range().equals(allocFailure.get().range()),
+            "the separate-ALLOC failure carries the offending ALLOC's own SOURCE range: "
+                + (allocFailure.isEmpty() ? "none" : allocFailure.get().range()));
+        check(allocFailure.isPresent()
+                && allocFailure.get().range().origin() == RangeOrigin.SOURCE
+                && "rogue.deal".equals(allocFailure.get().range().file())
+                && allocFailure.get().range().startLine() == 4
+                && allocFailure.get().range().startColumn() == 2
+                && allocFailure.get().range().endColumn() == 10
+                && allocFailure.get().range().startScalarOffset() == 30
+                && allocFailure.get().range().endScalarOffset() == 37
+                && allocFailure.get().range().scalarLength() == 7,
+            "the separate-ALLOC range is the offending op's own exact half-open span: "
+                + (allocFailure.isEmpty() ? "none" : allocFailure.get().range()));
+        check(allocFailure.isPresent()
+                && !groupSource.span().range().equals(allocFailure.get().range()),
+            "the separate-ALLOC range is never the enclosing group's origin: "
+                + (allocFailure.isEmpty() ? "none" : allocFailure.get().range()));
+
+        // A separate BINDING_INIT for a member binding: the same
+        // attribution through the INIT branch.
+        BindingId initMember = nextBindingId();
+        FunctionId initMemberFn = nextFunctionId();
+        BlockId initMemberBody = nextBlock();
+        SourceOrigin rogueInitSource = new SourceOrigin("init-rogue.deal",
+            new SourceSpan("init-rogue.deal", 7, 5, 7, 11, 70, 76),
+            SourceOriginKind.USER, new AnchorId(33), null);
+        SemanticOp groupInit = withOrigin(
+            groupOp(List.of(initMember), List.of(initMemberFn)), groupSource);
+        SemanticOp rogueInit = withOrigin(
+            initOp(initMember, 0, nextValue()), rogueInitSource);
+        LoweredModuleUnit unitInit = unit(
+            Map.of(initMemberFn,
+                function(initMemberFn, SIG0, List.of(), initMemberBody)),
+            Map.of(nextIdentity(),
+                new FunctionExecutionBinding.LoweredBody(initMemberFn, initMemberBody)),
+            List.of(groupInit, rogueInit));
+        StructuredBodyTable tableInit = tableOf(Map.of(INIT_BLOCK,
+            List.of(groupInit, rogueInit), initMemberBody, List.of()));
+        Optional<CompilerDiagnostic> initFailure =
+            BindingsProductionValidator.validate(unitInit, tableInit);
+        assertE6005(initFailure, "GROUP_SHAPE",
+            "the group member binding with a separate INIT",
+            "separate BINDING_INIT", rogueInit.opId().toString());
+        check(initFailure.isPresent()
+                && rogueInitSource.span().range().equals(initFailure.get().range()),
+            "the separate-INIT failure carries the offending INIT's own SOURCE range: "
+                + (initFailure.isEmpty() ? "none" : initFailure.get().range()));
+        check(initFailure.isPresent()
+                && initFailure.get().range().origin() == RangeOrigin.SOURCE
+                && "init-rogue.deal".equals(initFailure.get().range().file())
+                && initFailure.get().range().startLine() == 7
+                && initFailure.get().range().startColumn() == 5
+                && initFailure.get().range().endColumn() == 12
+                && initFailure.get().range().startScalarOffset() == 70
+                && initFailure.get().range().endScalarOffset() == 76
+                && initFailure.get().range().scalarLength() == 6,
+            "the separate-INIT range is the offending op's own exact half-open span: "
+                + (initFailure.isEmpty() ? "none" : initFailure.get().range()));
+        check(initFailure.isPresent()
+                && !groupSource.span().range().equals(initFailure.get().range()),
+            "the separate-INIT range is never the enclosing group's origin: "
+                + (initFailure.isEmpty() ? "none" : initFailure.get().range()));
+
+        // An originless group with an identifiable offending ALLOC: the
+        // offender's own range still wins; the canonical empty-file
+        // synthetic anchor is never substituted for an available source
+        // location.
+        SourceOrigin originlessGroup = new SourceOrigin("", SourceSpan.synthetic(""),
+            SourceOriginKind.SYNTHETIC, new AnchorId(0), null);
+        BindingId originlessMember = nextBindingId();
+        FunctionId originlessMemberFn = nextFunctionId();
+        BlockId originlessMemberBody = nextBlock();
+        SemanticOp groupSynthetic = withOrigin(
+            groupOp(List.of(originlessMember), List.of(originlessMemberFn)),
+            originlessGroup);
+        SemanticOp rogueSyntheticAlloc = withOrigin(
+            allocOp(originlessMember, INIT_BLOCK, 0), rogueAllocSource);
+        LoweredModuleUnit unitSynthetic = unit(
+            Map.of(originlessMemberFn,
+                function(originlessMemberFn, SIG0, List.of(), originlessMemberBody)),
+            Map.of(nextIdentity(),
+                new FunctionExecutionBinding.LoweredBody(originlessMemberFn,
+                    originlessMemberBody)),
+            List.of(groupSynthetic, rogueSyntheticAlloc));
+        StructuredBodyTable tableSynthetic = tableOf(Map.of(INIT_BLOCK,
+            List.of(groupSynthetic, rogueSyntheticAlloc), originlessMemberBody, List.of()));
+        Optional<CompilerDiagnostic> syntheticFailure =
+            BindingsProductionValidator.validate(unitSynthetic, tableSynthetic);
+        assertE6005(syntheticFailure, "GROUP_SHAPE",
+            "the originless group with an identifiable separate ALLOC",
+            "separate BINDING_ALLOC");
+        check(syntheticFailure.isPresent()
+                && rogueAllocSource.span().range().equals(syntheticFailure.get().range()),
+            "an originless group does not replace the offending ALLOC's own SOURCE "
+                + "range: "
+                + (syntheticFailure.isEmpty() ? "none" : syntheticFailure.get().range()));
+        check(syntheticFailure.isPresent()
+                && !syntheticFailure.get().range().isCanonicalSynthetic(),
+            "the available offender anchor is never the canonical empty-file synthetic "
+                + "range: "
+                + (syntheticFailure.isEmpty() ? "none" : syntheticFailure.get().range()));
+
+        // An offsetless offending ALLOC with a source-bearing group: the
+        // offending op keeps its own known file and stays SYNTHETIC; the
+        // group's SOURCE location is never borrowed.
+        BindingId offsetlessMember = nextBindingId();
+        FunctionId offsetlessMemberFn = nextFunctionId();
+        BlockId offsetlessMemberBody = nextBlock();
+        SemanticOp groupSourceOp = withOrigin(
+            groupOp(List.of(offsetlessMember), List.of(offsetlessMemberFn)), groupSource);
+        SemanticOp rogueOffsetless = withOrigin(
+            allocOp(offsetlessMember, INIT_BLOCK, 0), origin(null));
+        LoweredModuleUnit unitOffsetless = unit(
+            Map.of(offsetlessMemberFn,
+                function(offsetlessMemberFn, SIG0, List.of(), offsetlessMemberBody)),
+            Map.of(nextIdentity(),
+                new FunctionExecutionBinding.LoweredBody(offsetlessMemberFn,
+                    offsetlessMemberBody)),
+            List.of(groupSourceOp, rogueOffsetless));
+        StructuredBodyTable tableOffsetless = tableOf(Map.of(INIT_BLOCK,
+            List.of(groupSourceOp, rogueOffsetless), offsetlessMemberBody, List.of()));
+        Optional<CompilerDiagnostic> offsetlessFailure =
+            BindingsProductionValidator.validate(unitOffsetless, tableOffsetless);
+        assertE6005(offsetlessFailure, "GROUP_SHAPE",
+            "the offsetless separate ALLOC with a source-bearing group",
+            "separate BINDING_ALLOC");
+        check(offsetlessFailure.isPresent()
+                && origin(null).span().range().equals(offsetlessFailure.get().range()),
+            "the offsetless offender keeps its own anchor instead of the group's span: "
+                + (offsetlessFailure.isEmpty() ? "none" : offsetlessFailure.get().range()));
+        check(offsetlessFailure.isPresent()
+                && offsetlessFailure.get().range().origin() == RangeOrigin.SYNTHETIC
+                && "test.deal".equals(offsetlessFailure.get().range().file())
+                && !groupSource.span().range().equals(offsetlessFailure.get().range()),
+            "an offsetless offending op stays SYNTHETIC with its known file, never the "
+                + "group's SOURCE location: "
+                + (offsetlessFailure.isEmpty() ? "none" : offsetlessFailure.get().range()));
+    }
+
     private static OperationContractSnapshot contractFor(SemanticOpKind kind, KindPayload payload,
             OpResultType resultType, List<RuntimeDescriptor> operandTypes,
             FailurePolicyId policy, String digest) {
@@ -1786,6 +1971,7 @@ public class BindingsValidationTest {
         testIrLevelNegatives();
         testIrLevelPositives();
         testFailureOriginProjection();
+        testGroupShapeOffenderOrigins();
         testCombinedCorpusAndDeterminism();
 
         System.out.println("\nBindings production validation: " + passed + " passed, "
