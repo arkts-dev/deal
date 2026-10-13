@@ -8,52 +8,15 @@ public final class LuaAbi {
         // Stateless utility class — no instances.
     }
 
-    /** Name of the generated-namespace table local in emitted Lua chunks. */
-    public static final String NAMESPACE = "__deal";
-
-    /**
-     * The LuaJIT target keyword set: Lua 5.1's 21 reserved words plus the
-     * three LuaJIT 2.1 hard tokens ({@code goto}, {@code const},
-     * {@code continue}). Immutable.
-     */
-    public static final Set<String> RESERVED = Set.of(
+    /** Lua 5.1 keywords and LuaJIT 2.1 hard tokens. */
+    private static final Set<String> RESERVED = Set.of(
         "and", "break", "do", "else", "elseif", "end", "false", "for",
         "function", "goto", "if", "in", "local", "nil", "not", "or",
         "repeat", "return", "then", "true", "until", "while",
         "const", "continue");
 
-    /** The Lua emission encoding of the safe/unsafe key decision. */
-    public enum KeyForm { DOT, BRACKET }
-
-    /**
-     * The six kinds of per-class generated artifacts. {@link #PLAN} is the
-     * v1.2 extension of the frozen helper-key set (emitter page D4): the
-     * module-scope compiler-class default-plan artifact ({@code <C>_plan})
-     * holding the ordered field-entry list with evaluator closures. Host
-     * modules never carry a PLAN key ({@code host-module-abi} D1/D2) —
-     * host-declared classes keep the {@link #DEFAULTS} defaults-map seam.
-     */
-    public enum HelperKind { DEFAULTS, META, FIELDS, FROM_JSON, TO_JSON, PLAN }
-
-    // =========================================================================
-    // Backend-neutral decision surface (reusable for future backends)
-    // =========================================================================
-
-    public static boolean isReserved(Set<String> reserved, String name) {
-        if (name == null) return false;
-        return reserved.contains(name);
-    }
-
-    /**
-     * Returns true iff {@code name} has the DEAL identifier shape
-     * (ASCII {@code [A-Za-z_][A-Za-z0-9_]*}) and is not in the
-     * caller-supplied reserved set.
-     *
-     * <p>The ASCII shape rule is the DEAL identifier grammar; it also
-     * rejects {@code $}-containing names, because Lua identifiers cannot
-     * contain {@code $}.</p>
-     */
-    public static boolean isSafeIdentifier(Set<String> reserved, String name) {
+    /** ASCII DEAL identifier shape, excluding Lua keywords. */
+    private static boolean isSafeIdentifier(String name) {
         if (name == null || name.isEmpty()) return false;
         char first = name.charAt(0);
         if (!isAsciiLetter(first) && first != '_') return false;
@@ -63,56 +26,14 @@ public final class LuaAbi {
                 return false;
             }
         }
-        return !reserved.contains(name);
+        return !RESERVED.contains(name);
     }
 
-    /**
-     * Returns the emission key form for {@code name} under the
-     * caller-supplied reserved set: {@link KeyForm#DOT} iff
-     * {@code isSafeIdentifier(reserved, name)}, else
-     * {@link KeyForm#BRACKET}.
-     */
-    public static KeyForm fieldKeyForm(Set<String> reserved, String name) {
-        return isSafeIdentifier(reserved, name) ? KeyForm.DOT : KeyForm.BRACKET;
-    }
-
-    /**
-     * Returns the raw DEAL artifact name for a class helper of the given
-     * kind (e.g. {@code User_defaults}, {@code User$fromJson},
-     * {@code User_plan}). The returned names are the frozen export keys;
-     * {@code $} names are preserved raw.
-     */
-    public static String helperKey(String className, HelperKind kind) {
-        return switch (kind) {
-            case DEFAULTS -> className + "_defaults";
-            case META -> className + "_meta";
-            case FIELDS -> className + "_fields";
-            case FROM_JSON -> className + "$fromJson";
-            case TO_JSON -> className + "$toJson";
-            case PLAN -> className + "_plan";
-        };
-    }
-
-    // =========================================================================
-    // Lua emission composers (evaluate the predicates with RESERVED)
-    // =========================================================================
-
-    public static String stringKeyLiteral(String key) {
+    private static String stringKeyLiteral(String key) {
         return "[" + stringLiteral(key) + "]";
     }
 
-    /**
-     * Returns a plain double-quoted Lua-5.1 string literal
-     * ({@code "<escaped text>"}) with the pinned escape set: the
-     * standard escapes ({@code \\}, {@code \"}, {@code \n},
-     * {@code \r}, {@code \t}), the Lua named escapes for bell,
-     * backspace, form feed, and vertical tab ({@code \a}, {@code \b},
-     * {@code \f}, {@code \v}), and decimal {@code \ddd} escapes for
-     * every other control byte. String-typed generated content
-     * (descriptors, keys, cdef texts, loader texts, plan contents)
-     * routes through this composer so every literal site shares one
-     * escaping policy.
-     */
+    /** Lua 5.1 string literal; decimal control escapes cannot absorb digits. */
     public static String stringLiteral(String text) {
         StringBuilder sb = new StringBuilder("\"");
         for (int i = 0; i < text.length(); i++) {
@@ -142,12 +63,6 @@ public final class LuaAbi {
         return sb.toString();
     }
 
-    /**
-     * Appends a {@code \ddd} decimal escape for a control byte. When the
-     * next character is a decimal digit the escape is exactly three digits
-     * (zero-padded), so the following digit is not absorbed into the
-     * escape sequence (Lua 5.1 takes up to three decimal digits).
-     */
     private static void appendDecimalEscape(StringBuilder sb, char c,
                                             boolean followedByDigit) {
         String digits = Integer.toString(c);
@@ -167,72 +82,19 @@ public final class LuaAbi {
         return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
     }
 
-    /**
-     * Emits a member access on {@code objExpr} for DEAL field
-     * {@code field}: {@code obj.field} when safe, else
-     * {@code obj["<field>"]}.
-     */
+    /** Member access using brackets for unsafe field names. */
     public static String memberAccess(String objExpr, String field) {
-        if (fieldKeyForm(RESERVED, field) == KeyForm.DOT) {
+        if (isSafeIdentifier(field)) {
             return objExpr + "." + field;
         }
         return objExpr + stringKeyLiteral(field);
     }
 
-    /**
-     * Emits a {@code has()} presence check for a field:
-     * {@code obj.field ~= nil} when safe, else
-     * {@code obj["<field>"] ~= nil}.
-     */
-    public static String hasCheck(String objExpr, String field) {
-        return memberAccess(objExpr, field) + " ~= nil";
-    }
-
-    /**
-     * Emits a table-constructor field entry: {@code key = value} when the
-     * key is safe, else {@code ["key"] = value}.
-     */
+    /** Table-constructor entry using brackets for unsafe keys. */
     public static String tableField(String key, String valueExpr) {
-        if (fieldKeyForm(RESERVED, key) == KeyForm.DOT) {
+        if (isSafeIdentifier(key)) {
             return key + " = " + valueExpr;
         }
         return stringKeyLiteral(key) + " = " + valueExpr;
-    }
-
-    /**
-     * Emits an assignment on the module's {@code exports} local:
-     * {@code exports.key = value} when safe, else
-     * {@code exports["key"] = value}.
-     */
-    public static String exportAssignment(String key, String valueExpr) {
-        if (fieldKeyForm(RESERVED, key) == KeyForm.DOT) {
-            return "exports." + key + " = " + valueExpr;
-        }
-        return "exports" + stringKeyLiteral(key) + " = " + valueExpr;
-    }
-
-    /**
-     * Emits a reference to a generated (compiler-owned) DEAL name:
-     * {@code __deal["<name>"]}.
-     */
-    public static String generatedRef(String dealName) {
-        return NAMESPACE + stringKeyLiteral(dealName);
-    }
-
-    /**
-     * Emits a reference to a class artifact:
-     * {@code __deal["<C>_defaults"]}, {@code __deal["<C>$fromJson"]},
-     * {@code __deal["<C>_plan"]}, etc.
-     */
-    public static String helperRef(String className, HelperKind kind) {
-        return generatedRef(helperKey(className, kind));
-    }
-
-    /**
-     * Emits an assignment of a generated artifact into the namespace
-     * table: {@code __deal["<name>"] = <valueExpr>}.
-     */
-    public static String namespaceAssignment(String dealName, String valueExpr) {
-        return generatedRef(dealName) + " = " + valueExpr;
     }
 }

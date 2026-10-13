@@ -384,21 +384,6 @@ public class TypesBytesTest {
                         Type.Bytes.INSTANCE, true))),
             "JvmBackend.typeDescriptor(async(bytes)->bytes) == \"async(bytes)->bytes\"");
 
-        // LuaBackend.typeDescriptor — private instance producer, reached
-        // through its public constructor + reflection.
-        try {
-            deal.codegen.lua.LuaBackend lua = new deal.codegen.lua.LuaBackend(
-                Map.of(), new SymbolTable(), "test.deal");
-            Method m = deal.codegen.lua.LuaBackend.class.getDeclaredMethod(
-                "typeDescriptor", Type.class);
-            m.setAccessible(true);
-            String desc = (String) m.invoke(lua, Type.Bytes.INSTANCE);
-            check("bytes".equals(desc),
-                "LuaBackend.typeDescriptor(bytes) == \"bytes\"");
-        } catch (Throwable t) {
-            fail("LuaBackend.typeDescriptor reflection failed: " + t);
-        }
-
         deal.module.ModuleIdentityResolver.IdentityIndex index =
             deal.module.ModuleIdentityResolver.buildIndex(
                 Map.of("", deal.identity.CanonicalModuleIdentity.BuiltinModule.INSTANCE));

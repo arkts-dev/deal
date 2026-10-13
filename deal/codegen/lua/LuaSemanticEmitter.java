@@ -321,9 +321,7 @@ public final class LuaSemanticEmitter {
             this.entryModule = entryModule;
             registerUnit(unit, table, new ClassFactoryRegistry(Map.of()));
             if (!entryModule) {
-                // A non-entry module never runs its ENTRY_INVOKE delegation
-                // (the retained emitter invokes main() only from the entry
-                // module): skip the entry op and its delegated CALL.
+                // Non-entry modules skip ENTRY_INVOKE and its delegated CALL.
                 markSkippedEntryOps(unit);
             }
         }
@@ -4673,8 +4671,7 @@ public final class LuaSemanticEmitter {
             }
             // (2)-(4) The deep copy, the provided overlay with the extra-key
             // rejection, the sentinel removal, and the tag: the deployed
-            // construction entry (the one authority the retained route and
-            // the shared route share).
+            // runtime construction entry.
             out.append("__okB, __instT = pcall(__rt.class_, ")
                 .append(luaString(payload.classId().text())).append(", ")
                 .append(hostDefaultsExpr(op, payload.classId())).append(", __provT, ")

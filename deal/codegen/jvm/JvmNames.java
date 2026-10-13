@@ -17,8 +17,8 @@ import java.util.Set;
  *
  * <p>The surface is a pure function of its inputs (no compilation
  * state); the production emitters, the JVM host ABI emission, the async
- * export invoker, the production project emission, and the retained
- * test-scope AST emitter all resolve names through it, so one name
+ * export invoker, and the production project emission resolve names
+ * through it, so one name
  * derivation exists per name class.</p>
  */
 public final class JvmNames {

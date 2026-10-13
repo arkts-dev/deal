@@ -285,9 +285,7 @@ public final class JvmSemanticEmitter {
                 : null;
             registerUnit(unit, table, new ClassFactoryRegistry(Map.of()));
             if (!entryModule) {
-                // A non-entry module never runs its ENTRY_INVOKE delegation
-                // (the retained emitter invokes main() only from the entry
-                // module): skip the entry op and its delegated CALL.
+                // Non-entry modules skip ENTRY_INVOKE and its delegated CALL.
                 markSkippedEntryOps(unit);
             }
         }
@@ -1268,8 +1266,7 @@ public final class JvmSemanticEmitter {
                     // cannot complete normally, so every later op of the
                     // block would be unreachable Java — javac rejects it, no
                     // consumer ever executes it (the oracle's block walk
-                    // stops on the same non-completing path), and the
-                    // retained emitter applies the same skip rule. The skip
+                    // stops on the same non-completing path). The skip
                     // emits no event, exactly like the never-taken path.
                     if (!reported) {
                         out.append(indent(indent)).append("// unreachable: the"
@@ -1285,8 +1282,7 @@ public final class JvmSemanticEmitter {
 
         /**
          * Whether the emitted Java of one op's statement can complete
-         * normally (the JLS §14.21 mirror the retained emitter also
-         * applies): {@code THROW}/{@code BREAK}/{@code CONTINUE} /
+         * normally under JLS §14.21: {@code THROW}/{@code BREAK}/{@code CONTINUE} /
          * {@code RETURN} transfer unconditionally, a {@code BRANCH} can
          * only when one of its branches can, and a {@code TRY_CATCH} only
          * when its try block or its catch block can (its emitted

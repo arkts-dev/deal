@@ -84,23 +84,10 @@ public final class LuaFfiBindingGenerator {
     public record FfiFailure(String message) {
     }
 
-    /**
-     * The four argument literals of the {@code load_ffi} call, in the
-     * pinned five-position envelope order (the span triplet is appended
-     * by the backend from the import node's span), plus the import
-     * prelude: one {@code local <prefix><alias> = require("<module>")}
-     * line per provider module the plan evaluators reference (graph
-     * order, first-reference order) — the retained per-module backend
-     * emits them before the bindings local so every evaluator closure
-     * captures a bound provider. The production project session
-     * re-points the same bindings at the chunk's export-surface registry
-     * through {@link #providerBindings} (never a {@code require} line:
-     * the one-chunk layout has no per-provider module artifact).
-     */
+    /** Load arguments; the project emitter binds providers through its registry. */
     public record LoadCallParts(String moduleKeyLiteral, String bundleLiteral,
                                 String plansLiteral,
-                                String bindingsLiteral,
-                                List<String> importLines) {
+                                String bindingsLiteral) {
     }
 
     /**
@@ -180,18 +167,15 @@ public final class LuaFfiBindingGenerator {
 
         return new Generation(null, new LoadCallParts(
             LuaAbi.stringLiteral(descriptor.moduleKey()),
-            bundleLiteral, (String) plans[0], bindingsLiteral,
-            importPrelude(module.bindings(), importPrefix)));
+            bundleLiteral, (String) plans[0], bindingsLiteral));
     }
 
     /**
      * The provider bindings of one generated module, in graph order
      * (first reference per alias; the validator's import surface binds
      * one alias to exactly one provider module, so the first reference
-     * is the binding): the one alias &rarr; provider-module mapping
-     * authority both emission layouts consume — the retained per-module
-     * prelude through {@link #importPrelude} and the production project
-     * session through the chunk export-surface registry.
+     * is the binding). The project emitter resolves this mapping through
+     * the chunk export-surface registry.
      *
      */
     public static List<ProviderBinding> providerBindings(
@@ -213,22 +197,6 @@ public final class LuaFfiBindingGenerator {
             result.add(new ProviderBinding(entry.getKey(), entry.getValue()));
         }
         return List.copyOf(result);
-    }
-
-    /**
-     * The import prelude: one {@code local <prefix><alias> =
-     * require("<dotted module path>")} line per provider module the
-     * carried references name, in graph order.
-     */
-    private static List<String> importPrelude(FfiForwardBindings bindings,
-            String importPrefix) {
-        List<String> lines = new ArrayList<>();
-        for (ProviderBinding binding : providerBindings(bindings)) {
-            lines.add("local " + importPrefix + binding.importAlias()
-                + " = require("
-                + LuaAbi.stringLiteral(binding.importedModulePath()) + ")");
-        }
-        return lines;
     }
 
     // =========================================================================
@@ -593,7 +561,7 @@ public final class LuaFfiBindingGenerator {
      * default forms — int/number/boolean/string/null literals and calls
      * of declared functions (a same-file callee dereferences the
      * same-module forward cell; an {@code alias.export} callee routes
-     * through the prelude's required provider module) — and fails closed
+     * through the project-bound provider) — and fails closed
      * on every other shape so no artifact ever misrepresents a default.
      */
     private static Object[] lowerEvaluator(String content,
@@ -675,8 +643,8 @@ public final class LuaFfiBindingGenerator {
      * naming a same-file declared function — the wrapper is dereferenced
      * through the module's forward cell (adopted D6) — or an
      * {@code alias.export} member naming a graph-ordered imported
-     * function reference (seam S6), invoked through the prelude's
-     * required provider module. Either wrapper is invoked with the
+     * function reference (seam S6), invoked through the project-bound
+     * provider. Either wrapper is invoked with the
      * rendered arguments plus the pinned trailing call-site triplet. The
      * evaluator content carries the default expression's scalar range
      * only (no line/column triplet), so the forwarded span fields are
@@ -707,7 +675,7 @@ public final class LuaFfiBindingGenerator {
                 bindingsLocal + ".cells", name) + ".wrapper";
         } else if ("member".equals(calleeKind)) {
             // An imported provider function: alias.<export> routes
-            // through the prelude's required provider module (the
+            // through the project-bound provider (the
             // graph-ordered imported references, seam S6).
             CanonicalJson.Value object = objValue(calleeObj, "object");
             String alias = object instanceof CanonicalJson.Obj objectObj

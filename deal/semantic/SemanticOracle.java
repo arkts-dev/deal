@@ -5684,9 +5684,8 @@ public final class SemanticOracle {
         private String executeEntryInvoke(SemanticOp op) {
             // Only the entry module's ENTRY_INVOKE delegation runs: a
             // non-entry module's delegation and its delegated CALL stay
-            // skipped, exactly like the shared emitters' non-entry skip
-            // (the retained emitter invokes main() only from the entry
-            // module). The op's unit is the resolution authority: the
+            // skipped, like the shared emitters. The op's unit is the
+            // resolution authority: the
             // project form's entry module is this execution's unit, and a
             // companion's delegation never runs.
             if (!stateOf(op.opId()).unit.moduleId().equals(unit.moduleId())) {

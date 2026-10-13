@@ -13,15 +13,7 @@ import java.util.Map;
 public final class SymbolTable {
 
     private final SymbolTable parent;
-    // The storage field itself is insertion-ordered
-    // (deterministic-diagnostics D2): iteration order is the define()
-    // insertion order, never a JDK hash-bucket order.  First-match
-    // selection over symbols() — e.g. the retained LuaJIT AST emitter's
-    // import-alias class lookup —
-    // is therefore deterministic over definition order across JVM
-    // restarts and JDK versions.  The field type is the cross-JDK
-    // guarantee: copying a HashMap into a LinkedHashMap preserves the
-    // HashMap's hash-bucket order, not insertion order.
+    // Preserve definition order across JVM restarts and JDK versions.
     private final Map<String, Symbol> symbols = new LinkedHashMap<>();
 
     public SymbolTable() {
@@ -100,20 +92,8 @@ public final class SymbolTable {
     /**
      * Returns all symbols defined in this scope (for exports, etc.).
      *
-     * <p>The returned map is a defensive insertion-ordered copy of the
-     * insertion-ordered storage field: its iteration order is the
-     * {@code define()} insertion order (earliest-defined first).  This
-     * is the contractual order (deterministic-diagnostics D2), so a
-     * first-match selection over the returned entries — e.g. the
-     * retained LuaJIT AST emitter's import-alias class lookup, which
-     * returns the first module alias whose export carries a given class
-     * identity —
-     * resolves to the earliest-defined alias.  Hash-bucket order is a
-     * JDK implementation artifact, not a resolution model; the
-     * insertion-ordered storage type makes that selection deterministic
-     * across JVM restarts and JDK versions.</p>
-     *
-     * <p>Mutations of the returned map never affect this table.</p>
+     * <p>Returns a defensive copy in {@code define()} insertion order;
+     * mutations of the copy never affect this table.</p>
      *
      */
     public Map<String, Symbol> symbols() {

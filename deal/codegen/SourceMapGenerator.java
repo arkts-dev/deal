@@ -7,7 +7,7 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * Records line/column mappings from generated Lua code positions back to
+ * Records line/column mappings from generated code positions back to
  * original DEAL source {@link Span}s during codegen, and produces a JSON
  * sidecar file after codegen completes.
  *
@@ -51,13 +51,7 @@ public final class SourceMapGenerator {
     }
 
     /**
-     * Records a mapping from the given generated Lua position to the
-     * originating DEAL source span.
-     *
-     * <p>Called by the retained LuaJIT AST emitter before emitting each
-     * statement.
-     * Only the start line/column of the span are recorded, since that
-     * is the primary position used for error reporting.</p>
+     * Records the originating span's start at a generated position.
      */
     public void emitStatement(int generatedLine, int generatedColumn,
                               Span sourceSpan) {

@@ -1527,51 +1527,6 @@ public class DiagnosticRangeTest {
                         + wsE2012.notes());
             }
 
-            // PS5: JvmBackend E6004 on the same commented program shape —
-            // the backend's entry gate anchors at program.span(), which
-            // is SOURCE-exact through the parser's spanBetween
-            // construction.
-            JvmBackend.JvmCodegenResult res = jvmEntryGenerate(commented,
-                "ps_e6004.deal");
-            CompilerDiagnostic e6004 = firstCode(res.diagnostics(), "E6004");
-            check(e6004 != null, "PS5: E6004 present: " + res.diagnostics());
-            if (e6004 != null) {
-                int expectedStart = ScalarSourceCursor.scalarCount(commented, 0,
-                    commented.indexOf("export"));
-                DiagnosticRange r = e6004.range();
-                check(r.origin() == RangeOrigin.SOURCE
-                        && r.startLine() == 2 && r.startColumn() == 1
-                        && r.startScalarOffset() == expectedStart
-                        && r.endScalarOffset() > r.startScalarOffset()
-                        && r.scalarLength() == r.endScalarOffset() - r.startScalarOffset(),
-                    "PS5: E6004 anchors SOURCE at 2:1 with the exact non-zero start offset ("
-                        + expectedStart + "): " + r);
-                check(e6004.notes().isEmpty(),
-                    "PS5: the SOURCE-anchored E6004 carries no anchor note: "
-                        + e6004.notes());
-                checkFormattedStructuredAgree(e6004, "PS5");
-            }
-
-            // PS6: JvmBackend E6004 for an empty program pins the
-            // explicit zero-length SOURCE range at file start.
-            JvmBackend.JvmCodegenResult emptyRes = jvmEntryGenerate("",
-                "ps_e6004_empty.deal");
-            CompilerDiagnostic emptyE6004 = firstCode(emptyRes.diagnostics(), "E6004");
-            check(emptyE6004 != null,
-                "PS6: empty program produces E6004: " + emptyRes.diagnostics());
-            if (emptyE6004 != null) {
-                DiagnosticRange r = emptyE6004.range();
-                check(r.origin() == RangeOrigin.SOURCE
-                        && r.startLine() == 1 && r.startColumn() == 1
-                        && r.endLine() == 1 && r.endColumn() == 1
-                        && r.startScalarOffset() == 0
-                        && r.endScalarOffset() == 0
-                        && r.scalarLength() == 0,
-                    "PS6: empty-program E6004 pins (file,1,1,1,1,0,0,0,SOURCE): " + r);
-                check(emptyE6004.notes().isEmpty(),
-                    "PS6: empty-program E6004 carries no anchor note: "
-                        + emptyE6004.notes());
-            }
         } finally {
             try {
                 Files.walk(tmp).sorted(Comparator.reverseOrder()).forEach(f -> {
@@ -1583,20 +1538,6 @@ public class DiagnosticRangeTest {
             } catch (IOException ignored) {
             }
         }
-    }
-
-    /** JVM backend entry gate over the full frontend pipeline. */
-    private static JvmBackend.JvmCodegenResult jvmEntryGenerate(String source,
-                                                                String filename) {
-        LexResult lex = new Lexer(source, filename).tokenize();
-        ParseResult parse = new Parser(lex.tokens(), filename, lex.directiveEvents()).parse();
-        StubModuleResolver resolver = new StubModuleResolver();
-        NameResolver nr = new NameResolver(filename, resolver);
-        SymbolTable symTable = nr.resolve(parse.program());
-        CheckResult result = TypeChecker.check(filename, symTable, nr,
-            parse.program());
-        return JvmBackend.generate(parse.program(), result, filename, "main",
-            Map.of(), Map.of(), Map.of(), true);
     }
 
     /** First diagnostic with the given code, or null. */
