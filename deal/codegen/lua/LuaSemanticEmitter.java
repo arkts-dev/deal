@@ -14,7 +14,6 @@ import deal.semantic.StdlibFunctionCatalog;
 import deal.semantic.ir.AdaptSourceRef;
 import deal.semantic.ir.AsyncLinkKind;
 import deal.semantic.ir.AsyncTokenId;
-import deal.semantic.ir.AsyncTokenOwner;
 import deal.semantic.ir.BindingCellKind;
 import deal.semantic.ir.BindingGeneration;
 import deal.semantic.ir.BindingId;
@@ -5813,15 +5812,6 @@ public final class LuaSemanticEmitter {
             return current.tokenId();
         }
 
-        /** The canonical referent's closed owner (statically resolved). */
-        private AsyncTokenOwner canonicalOwnerOf(AsyncTokenId token) {
-            AsyncTokenId current = token;
-            while (current instanceof AsyncTokenId.Alias alias) {
-                current = alias.referent();
-            }
-            return ((AsyncTokenId.Canonical) current).owner();
-        }
-
         /** The canonical token atom of an ASYNC_START/EXTERNAL_ENTRY SUCCESS. */
         private String tokenAtom(AsyncTokenId token) {
             return switch (token) {
@@ -6355,22 +6345,33 @@ public final class LuaSemanticEmitter {
             emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__tA.err)");
             out.append("  error(__tA.err, 0)\n");
             out.append("end\n");
-            // The single ASYNC_COMPLETION boundary at the await site: a
-            // host completion atomizes by its runtime carrier; a DEAL body
-            // value atomizes by the declared descriptor. A boundary
-            // failure is re-originated at the boundary's own origin (the
-            // await expression) and publishes the boundary's FAILURE
-            // beside the await op's — the oracle's boundary-child pair.
-            if (canonicalOwnerOf(payload.token()) == AsyncTokenOwner.HOST_OPERATION) {
-                emitBoundaryStartAtom(boundary, "__hostAtom(__tA.value)");
-            } else {
-                emitBoundaryStart(boundary, "__tA.value", boundaryPayload.descriptor());
-            }
+            // The single ASYNC_COMPLETION boundary at the await site: the
+            // crossing follows the effective ownership of the task the
+            // await resolved at run time — a host operation's raw value
+            // keeps its own numeric variant (the value model's variant
+            // carrier, exactly like the oracle's Int/Num carrier and the
+            // shared JVM runtime's preserved boxed Long/Double), while a
+            // DEAL body value keeps the declared descriptor's
+            // representation. The static token owner alone cannot select
+            // the crossing: a dynamic async start over a value-carried host
+            // entry registers the resolved host operation under the start
+            // token while its canonical token owner stays the DEAL body
+            // task. A boundary failure is re-originated at the boundary's
+            // own origin (the await expression) and publishes the
+            // boundary's FAILURE beside the await op's — the oracle's
+            // boundary-child pair.
+            out.append("__cA = __tA.value\n");
+            out.append("if __tA.owner == \"HOST_OPERATION\" then\n");
+            out.append("  __cA = __hostNumVar(__cA)\n");
+            emitBoundaryStartAtom(boundary, "__hostAtom(__tA.value)");
+            out.append("else\n");
+            emitBoundaryStart(boundary, "__tA.value", boundaryPayload.descriptor());
+            out.append("end\n");
             out.append("__okB, __chkB = pcall(__bcheck, ")
                 .append(luaString(descriptorText(boundaryPayload.descriptor())))
                 .append(", ")
                 .append(luaString(staticKind(boundaryPayload.descriptor())))
-                .append(", __tA.value, ")
+                .append(", __cA, ")
                 .append(containsFunction(boundaryPayload.descriptor())
                     ? luaString(boundaryPayload.descriptor().canonicalSpecText())
                     : "nil")
@@ -8242,6 +8243,16 @@ end
 -- would be clobbered by the next chunk) without spending a main-chunk
 -- local.
 __factories.__hostParamAdmit = function(desc, index, v, origin)
+  -- The value model's numeric variant carrier (the read-side carrier and
+  -- the host completion crossing's carrier) projects to the number it
+  -- stands for: the loaded matcher admits a plain number at an int, a
+  -- number, or a nullable-numeric position and the raw host observes the
+  -- number its declared host-facing carrier names, exactly like the
+  -- shared JVM runtime hands the host method the declared boxed
+  -- carrier's value. A carrier at any other declared position loses its
+  -- internal table shape too, so the closed inner reason is the
+  -- position's own text, never the carrier table's Lua type.
+  if type(v) == "table" and v.__jn then v = v.d end
   if v == __MISSING or (__rtMissing ~= nil and v == __rtMissing) then
     if string.sub(desc, 1, 1) == "?" then return __rt.__NULL end
     local inner = __renderTemplate("TYPED_BOUNDARY_KIND",
@@ -10618,6 +10629,37 @@ local function __hostAtom(v)
   end
   if t == "string" then return "str:"..__esc(v) end
   return "ref:"..__allocId(v)
+end
+-- The host completion crossing's numeric variant materialization (the
+-- AWAIT site's host-operation arm): the raw value a host operation
+-- completed its future with keeps its own numeric variant — an integral
+-- finite value inside the signed32 range is the int carrier, every other
+-- numeric value the number carrier — materialized as the value model's
+-- variant carrier so every later container mark (__numKey), read-side
+-- materialization (__readVar), typed projection, trace atom and JSON
+-- spelling observes the host value's own variant, exactly like the
+-- oracle's Int/Num carrier and the shared JVM runtime's preserved boxed
+-- Long/Double (an Integer settles onto the int carrier; a Long and a
+-- Double keep their own). The int carrier stays inside the signed32
+-- range the cell trusts it for: a fractional, nonfinite, or
+-- out-of-range integral value is the number carrier, so the int cell's
+-- own ladder still selects the refinement and E8004 range arms. A value
+-- that already carries its variant (the model's own carrier) and every
+-- non-number value cross unchanged. A host value is classified by its
+-- own variant, never by the declared completion descriptor beside the
+-- position: a plain number returned for a declared completion is the int
+-- carrier when it is an in-range integral value. Chunk-global like the
+-- other emitted helper functions (never a chunk-level local: the emitted
+-- module-init walk spends nearly the whole 200-local budget).
+__hostNumVar = function(v)
+  if type(v) ~= "number" then return v end
+  if v ~= v or v == math.huge or v == -math.huge then
+    return {__jn = true, k = "number", d = v}
+  end
+  if v % 1 ~= 0 or v < -2147483648 or v > 2147483647 then
+    return {__jn = true, k = "number", d = v}
+  end
+  return {__jn = true, k = "int", d = v}
 end
 -- The adapter's source-signature check (D15): the resolved source's
 -- carried canonical spec text must equal the recorded source signature;

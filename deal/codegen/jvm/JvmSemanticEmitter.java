@@ -8,7 +8,6 @@ import deal.semantic.StdlibFunctionCatalog;
 import deal.semantic.ir.AdaptSourceRef;
 import deal.semantic.ir.AsyncLinkKind;
 import deal.semantic.ir.AsyncTokenId;
-import deal.semantic.ir.AsyncTokenOwner;
 import deal.semantic.ir.BindingCellKind;
 import deal.semantic.ir.BindingGeneration;
 import deal.semantic.ir.BindingId;
@@ -482,12 +481,13 @@ public final class JvmSemanticEmitter {
          * The host-operation completion crossing of the {@code AWAIT}
          * boundary: the raw value a host operation completed its future
          * with crosses through {@link JvmRuntime#hostCompletion} — the
-         * closed host numeric carriers are validated and settled onto the
-         * declared production carrier — and then through the completion
-         * cell's own check, so the failing arm and its tuple are the
-         * completion cell's. Every non-host completion (a DEAL body's value,
-         * the external-entry activation's value) takes the plain
-         * {@link #bcheckCompletionArgs} route.
+         * closed host numeric carriers are validated in the pinned int
+         * order and every admitted carrier keeps its own variant (only the
+         * boxed Integer settles onto the production int carrier), and then
+         * through the completion cell's own check, so the failing arm
+         * and its tuple are the completion cell's. Every non-host
+         * completion (a DEAL body's value, the external-entry activation's
+         * value) takes the plain {@link #bcheckCompletionArgs} route.
          */
         static String hostCompletionArgs(RuntimeDescriptor descriptor, String value) {
             return bcheckArgs("JvmRuntime.hostCompletion", descriptor, value);
@@ -6368,15 +6368,6 @@ public final class JvmSemanticEmitter {
             return current.tokenId();
         }
 
-        /** The canonical referent's closed owner (statically resolved). */
-        private AsyncTokenOwner canonicalOwnerOf(AsyncTokenId token) {
-            AsyncTokenId current = token;
-            while (current instanceof AsyncTokenId.Alias alias) {
-                current = alias.referent();
-            }
-            return ((AsyncTokenId.Canonical) current).owner();
-        }
-
         /** The canonical token atom of an ASYNC_START/EXTERNAL_ENTRY SUCCESS. */
         private String tokenAtom(AsyncTokenId token) {
             return switch (token) {
@@ -6846,7 +6837,7 @@ public final class JvmSemanticEmitter {
             // (a local body or a dynamic start binding its own identity,
             // an adapter-over-async token entering the nested source's
             // slot).
-            String awaitCall = "JvmRuntime.awaitEntryTask("
+            String awaitCall = "JvmRuntime.awaitEntryTaskOwned("
                 + (externalLink
                     ? payload.token().tokenId() + "L, true, "
                     : canonicalId + "L, false, ")
@@ -6856,39 +6847,57 @@ public final class JvmSemanticEmitter {
                 (KindPayload.BoundaryPayload) boundary.payload();
             emitStart(op, indent);
             String awaited = "__av_" + op.opId().id();
+            String awaitedTask = "__aw_" + op.opId().id();
+            String hostOwned = "__ah_" + op.opId().id();
             out.append(indent(indent)).append("Object ").append(awaited)
                 .append(";\n");
+            out.append(indent(indent)).append("boolean ").append(hostOwned)
+                .append(";\n");
             out.append(indent(indent)).append("try {\n");
-            out.append(indent(indent + 1)).append(awaited)
-                .append(" = ").append(awaitCall).append(";\n");
+            out.append(indent(indent + 1)).append("JvmRuntime.AwaitedCompletion ")
+                .append(awaitedTask).append(" = ").append(awaitCall).append(";\n");
+            out.append(indent(indent + 1)).append(awaited).append(" = ")
+                .append(awaitedTask).append(".value();\n");
+            out.append(indent(indent + 1)).append(hostOwned).append(" = ")
+                .append(awaitedTask).append(".hostOwned();\n");
             out.append(indent(indent)).append("} catch (JvmRuntime.DealError __e) {\n");
             emitFailureEvent(op.opId(), op.kind().name(), op, "JvmRuntime.errtext(__e)",
                 indent + 1);
             out.append(indent(indent + 1)).append("throw __e;\n");
             out.append(indent(indent)).append("}\n");
-            // The single ASYNC_COMPLETION boundary at the await site: a
-            // host completion atomizes by its runtime carrier and crosses
-            // through the host-completion seam (the closed host numeric
-            // carriers are validated and settled onto the declared
-            // production carrier, exactly like the synchronous host return
-            // cell); a DEAL body value atomizes by the declared descriptor
-            // and takes the plain completion check.
-            boolean hostCompletion =
-                canonicalOwnerOf(payload.token()) == AsyncTokenOwner.HOST_OPERATION;
-            if (hostCompletion) {
+            // The single ASYNC_COMPLETION boundary at the await site: the
+            // crossing follows the effective ownership of the task the
+            // await resolved at run time — a host completion (a static
+            // host operation or a dynamic async start over a value-carried
+            // host entry, whose canonical token owner stays the DEAL body
+            // task) atomizes by its runtime carrier and crosses through the
+            // host-completion seam (the closed host numeric carriers are
+            // validated in the pinned int order and every admitted carrier
+            // keeps its own variant — only the boxed Integer settles onto
+            // the production int carrier — exactly like the oracle's
+            // completion cell); a DEAL body
+            // value atomizes by the declared descriptor and takes the plain
+            // completion check. The static token owner alone cannot select
+            // the crossing: the dynamic start's host registration is a
+            // runtime fact of the resolved task.
+            if (trace) {
+                out.append(indent(indent)).append("if (").append(hostOwned)
+                    .append(") {\n");
                 emitBoundaryStartAtom(boundary, "JvmRuntime.hostAtom(" + awaited + ")",
-                    indent);
-            } else {
+                    indent + 1);
+                out.append(indent(indent)).append("} else {\n");
                 emitBoundaryStart(boundary, awaited, boundaryPayload.descriptor(),
-                    indent);
+                    indent + 1);
+                out.append(indent(indent)).append("}\n");
             }
             String checked = "__avc_" + op.opId().id();
             out.append(indent(indent)).append("Object ").append(checked).append(";\n");
             out.append(indent(indent)).append("try {\n");
             out.append(indent(indent + 1)).append(checked).append(" = ")
-                .append(hostCompletion
-                    ? hostCompletionArgs(boundaryPayload.descriptor(), awaited)
-                    : bcheckCompletionArgs(boundaryPayload.descriptor(), awaited))
+                .append(hostOwned).append("\n                    ? ")
+                .append(hostCompletionArgs(boundaryPayload.descriptor(), awaited))
+                .append("\n                    : ")
+                .append(bcheckCompletionArgs(boundaryPayload.descriptor(), awaited))
                 .append(";\n");
             out.append(indent(indent)).append("} catch (JvmRuntime.DealError __be) {\n");
             out.append(indent(indent + 1)).append("JvmRuntime.DealError __bre = new "

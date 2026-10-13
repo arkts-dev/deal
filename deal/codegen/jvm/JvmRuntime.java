@@ -1214,17 +1214,27 @@ public final class JvmRuntime {
     /**
      * The host asynchronous completion crossing (the {@code AWAIT} site's
      * host-operation arm): the raw value a host operation completed its
-     * future with is validated and settled onto the declared production
-     * carrier before it enters the DEAL value model, exactly like the
-     * synchronous host return cell's declared-carrier normalization. The
-     * closed host numeric carriers — the boxed {@code int} (Integer), the
-     * signed32 {@code long}, and the {@code double} — are admitted in the
-     * pinned int order (NaN, infinity, non-fractional, then the signed32
-     * range) at a declared {@code int} and settled: an Integer or an
-     * admitted integral Double becomes the production int carrier (Long);
-     * every admitted numeric carrier of a declared {@code number} becomes
-     * the production number carrier (Double). A nullable cell keeps its
-     * language null.
+     * future with is validated for the declared completion cell before it
+     * enters the DEAL value model. The closed host
+     * numeric carriers — the boxed {@code int} (Integer), the signed32
+     * {@code long}, and the {@code double} — are admitted in the pinned
+     * int order (NaN, infinity, non-fractional, then the signed32 range)
+     * at a declared {@code int}, and every admitted carrier keeps its own
+     * variant: only the boxed Integer, the host-side spelling of the
+     * production int carrier, settles onto that carrier (Long), while the
+     * signed32 {@code long} and the admitted integral {@code double}
+     * cross unchanged. A declared {@code number} cell follows the same
+     * rule. The preserved variant is the one the oracle's {@code core}
+     * Number case keeps (the admitted view passes through and
+     * {@code valueOfView} publishes the original value) and the one the
+     * emitted Lua completion crossing materializes (an integral in-range
+     * raw number is the int carrier, every other numeric value the number
+     * carrier, and a value-model carrier keeps its own); narrowing an
+     * admitted long or double here would change every later typed
+     * projection of the stored completion (a number carrier re-spelled as
+     * the int carrier renders {@code int} where the oracle and the LuaJIT
+     * artifact render {@code number}). A nullable cell keeps its language
+     * null.
      *
      * <p>Every non-numeric value and every other descriptor crosses to the
      * completion cell's own check ({@link #bcheckCompletion}) unchanged, so
@@ -1272,10 +1282,28 @@ public final class JvmRuntime {
                 if (value < -2147483648d || value > 2147483647d) {
                     throw hostCompletionRangeFailure();
                 }
-                return Long.valueOf((long) value);
+                // The admitted integral Double keeps the number carrier
+                // (the preserved variant); the closed int consumption
+                // rows unwrap it through longOf exactly like the emitted
+                // Lua arithmetic unwraps its carrier.
+                return v;
             }
             if ("number".equals(inner)) {
-                return Double.valueOf(((Number) v).doubleValue());
+                // The declared number cell admits both closed numeric
+                // carriers and keeps the admitted carrier's own variant
+                // (the oracle's core Number case passes the view through
+                // and the emitted Lua completion cell returns its carrier
+                // unchanged): the signed32 carrier and the number carrier
+                // stay themselves, and only the boxed Integer — the
+                // host-side spelling of the production int carrier —
+                // settles onto its production carrier. Converting an
+                // admitted Long would re-spell an int value as a number
+                // value and change every later typed projection of the
+                // stored completion.
+                if (v instanceof Integer intValue) {
+                    return Long.valueOf(intValue.longValue());
+                }
+                return v;
             }
         }
         return bcheck(desc, staticKind, v, true, canon);
@@ -1871,10 +1899,36 @@ public final class JvmRuntime {
      */
     public static Object awaitEntryTask(long tokenId, boolean externalLink,
                                         String awaitOrigin) {
+        return awaitEntryTaskOwned(tokenId, externalLink, awaitOrigin).value();
+    }
+
+    /**
+     * The ownership-carrying AWAIT resolution of one local or external
+     * async activation: the awaited value and the effective ownership of
+     * the task the await consumed. The ownership is read from the resolved
+     * task record, never from the static token, because a dynamic async
+     * start over a value-carried host entry registers the resolved host
+     * operation under the start token while the canonical token owner
+     * stays the DEAL body task: the completion crossing must follow the
+     * host operation the token actually names, so its raw carriers are
+     * validated and settled at the same crossing the synchronous host
+     * return cell uses. The resolved task keeps the AWAIT's own release
+     * rule (a fresh per-activation instance is removed here; a canonical
+     * token keeps its single static record).
+     */
+    public static AwaitedCompletion awaitEntryTaskOwned(long tokenId,
+            boolean externalLink, String awaitOrigin) {
         drainTasks();
         long resolved = externalLink ? takeEntryTask(tokenId)
             : takeEntryTaskOr(tokenId);
-        return completeAwait(resolved, awaitOrigin);
+        return completeAwaitOwned(resolved, awaitOrigin);
+    }
+
+    /**
+     * One awaited completion: the value and the effective task ownership
+     * (a host operation or a DEAL body task).
+     */
+    public record AwaitedCompletion(Object value, boolean hostOwned) {
     }
 
     /**
@@ -1887,13 +1941,28 @@ public final class JvmRuntime {
      * per token identity, pre-existing behavior).
      */
     private static Object completeAwait(long tokenId, String awaitOrigin) {
+        return completeAwaitOwned(tokenId, awaitOrigin).value();
+    }
+
+    /**
+     * The post-drain completion of one awaited task or host operation with
+     * its effective ownership. A fresh per-activation instance (a negative
+     * instance id: a local body task or an external entry activation) is
+     * released here on the success and failure paths — one AWAIT is its
+     * single consumer — so a long-running sequential await loop retains no
+     * completed activation record. A canonical token keeps its single
+     * static record (one key per token identity, pre-existing behavior).
+     */
+    private static AwaitedCompletion completeAwaitOwned(long tokenId,
+                                                        String awaitOrigin) {
         AsyncTask task = TASKS.get(tokenId);
         if (task == null) {
             throw new IllegalStateException("AWAIT consumes an unbound token " + tokenId
                 + " (producer defect)");
         }
         try {
-            return completeAwaitTask(tokenId, task, awaitOrigin);
+            return new AwaitedCompletion(completeAwaitTask(tokenId, task, awaitOrigin),
+                task.hostLabel != null);
         } finally {
             if (tokenId < 0) {
                 TASKS.remove(tokenId);
@@ -2066,22 +2135,22 @@ public final class JvmRuntime {
         }
         switch (selector) {
             case "INT32_EQ" -> {
-                return ((Long) l).longValue() == ((Long) r).longValue();
+                return longOf(l) == longOf(r);
             }
             case "INT32_NE" -> {
-                return ((Long) l).longValue() != ((Long) r).longValue();
+                return longOf(l) != longOf(r);
             }
             case "INT32_LT" -> {
-                return ((Long) l).longValue() < ((Long) r).longValue();
+                return longOf(l) < longOf(r);
             }
             case "INT32_LE" -> {
-                return ((Long) l).longValue() <= ((Long) r).longValue();
+                return longOf(l) <= longOf(r);
             }
             case "INT32_GT" -> {
-                return ((Long) l).longValue() > ((Long) r).longValue();
+                return longOf(l) > longOf(r);
             }
             case "INT32_GE" -> {
-                return ((Long) l).longValue() >= ((Long) r).longValue();
+                return longOf(l) >= longOf(r);
             }
             case "NUMBER_EQ" -> {
                 return ((Number) l).doubleValue() == ((Number) r).doubleValue();
@@ -2197,7 +2266,7 @@ public final class JvmRuntime {
             return !((Boolean) v);
         }
         if ("INT32_NEG".equals(selector)) {
-            long result = -((Long) v).longValue();
+            long result = -longOf(v);
             return int32Result(result, opKey, digest, parent, origin, "UNARY");
         }
         return -((Number) v).doubleValue();
@@ -2207,39 +2276,39 @@ public final class JvmRuntime {
                                String digest, String parent, String origin) {
         switch (selector) {
             case "INT32_ADD" -> {
-                return int32Result(((Long) l) + ((Long) r), opKey, digest, parent, origin,
+                return int32Result(longOf(l) + longOf(r), opKey, digest, parent, origin,
                     "BINARY");
             }
             case "INT32_SUB" -> {
-                return int32Result(((Long) l) - ((Long) r), opKey, digest, parent, origin,
+                return int32Result(longOf(l) - longOf(r), opKey, digest, parent, origin,
                     "BINARY");
             }
             case "INT32_MUL" -> {
-                return int32Result(((Long) l) * ((Long) r), opKey, digest, parent, origin,
+                return int32Result(longOf(l) * longOf(r), opKey, digest, parent, origin,
                     "BINARY");
             }
             case "INT32_DIV_TRUNC" -> {
-                long divisor = ((Long) r);
+                long divisor = longOf(r);
                 if (divisor == 0) {
                     raiseArm(deal.semantic.ir.FailureArmId.INT32_DIVISION_BY_ZERO,
                         java.util.Map.of(), null, null, opKey, digest, parent, origin,
                         "BINARY");
                 }
-                return int32Result(((Long) l) / divisor, opKey, digest, parent, origin,
+                return int32Result(longOf(l) / divisor, opKey, digest, parent, origin,
                     "BINARY");
             }
             case "INT32_MOD_TRUNC" -> {
-                long divisor = ((Long) r);
+                long divisor = longOf(r);
                 if (divisor == 0) {
                     raiseArm(deal.semantic.ir.FailureArmId.INT32_DIVISION_BY_ZERO,
                         java.util.Map.of(), null, null, opKey, digest, parent, origin,
                         "BINARY");
                 }
-                return int32Result(((Long) l) % divisor, opKey, digest, parent, origin,
+                return int32Result(longOf(l) % divisor, opKey, digest, parent, origin,
                     "BINARY");
             }
             case "INT32_POW" -> {
-                long exponent = ((Long) r);
+                long exponent = longOf(r);
                 if (exponent < 0) {
                     raiseArm(deal.semantic.ir.FailureArmId.INT32_NEGATIVE_EXPONENT,
                         java.util.Map.of(), null, null, opKey, digest, parent, origin,
@@ -2248,7 +2317,7 @@ public final class JvmRuntime {
                 long result = 1;
                 try {
                     for (long i = 0; i < exponent; i++) {
-                        result = Math.multiplyExact(result, ((Long) l));
+                        result = Math.multiplyExact(result, longOf(l));
                     }
                 } catch (ArithmeticException overflow) {
                     raiseArm(deal.semantic.ir.FailureArmId.INT32_RANGE,
@@ -2596,7 +2665,15 @@ public final class JvmRuntime {
         return text.toString();
     }
 
-    /** An int parameter carrier: a Long or an in-range integral Double (unchanged). */
+    /**
+     * The int consumption unwrap of one runtime value: the production int
+     * carrier (Long) and the value model's preserved integral number
+     * carrier (Double — the variant an admitted typed-boundary or host
+     * completion crossing keeps) unwrap to the same long, exactly like
+     * the emitted Lua arithmetic's carrier unwrap, so the closed int
+     * arithmetic/comparison rows consume a preserved number carrier
+     * instead of casting it blind.
+     */
     private static long longOf(Object value) {
         if (value instanceof Long longValue) {
             return longValue.longValue();

@@ -1910,14 +1910,14 @@ public final class SemanticOracle {
                 case BOOL_NOT -> publish(op,
                     new Value.BoolValue(!((Value.BoolValue) input).value()));
                 case INT32_NEG -> {
-                    long value = ((Value.IntValue) input).value();
+                    long value = integerUse(input);
                     if (value == Integer.MIN_VALUE) {
                         throw int32ResultFailure(op);
                     }
                     yield publish(op, new Value.IntValue(-value));
                 }
                 case NUMBER_NEG -> publish(op,
-                    new Value.NumValue(-((Value.NumValue) input).value()));
+                    new Value.NumValue(-numberUse(input)));
             };
         }
 
@@ -1937,48 +1937,79 @@ public final class SemanticOracle {
                     return publish(op, arithmetic(op, payload.selector(), left, right));
                 }
             }
+            // An int boundary admits integral number variants without changing
+            // storage. Supply integer views only to integer comparison consumers.
+            boolean integerComparison = payload.selector().name().startsWith("INT32_")
+                || payload.innerDescriptor() instanceof RuntimeDescriptor.Int;
+            boolean numberComparison = payload.selector().name().startsWith("NUMBER_")
+                || payload.innerDescriptor() instanceof RuntimeDescriptor.Number;
             boolean result = ComparisonExecutor.compare(payload.selector(),
-                viewOf(left), viewOf(right), payload.innerDescriptor(), payload.side());
+                integerComparison ? integerComparisonView(left)
+                    : numberComparison ? numberComparisonView(left) : viewOf(left),
+                integerComparison ? integerComparisonView(right)
+                    : numberComparison ? numberComparisonView(right) : viewOf(right),
+                payload.innerDescriptor(), payload.side());
             return publish(op, new Value.BoolValue(result));
+        }
+
+        /** A numeric view for integer use; the admitted value itself is never replaced. */
+        private long integerUse(Value value) {
+            if (value instanceof Value.IntValue integer) {
+                return integer.value();
+            }
+            return (long) ((Value.NumValue) value).value();
+        }
+
+        private ComparisonOperandView integerComparisonView(Value value) {
+            return value instanceof Value.NumValue
+                ? new ComparisonOperandView.Int((int) integerUse(value)) : viewOf(value);
+        }
+
+        /** A numeric view for number use, without replacing the stored carrier. */
+        private double numberUse(Value value) {
+            return value instanceof Value.IntValue integer
+                ? integer.value() : ((Value.NumValue) value).value();
+        }
+
+        private ComparisonOperandView numberComparisonView(Value value) {
+            return value instanceof Value.IntValue
+                ? new ComparisonOperandView.Number(numberUse(value)) : viewOf(value);
         }
 
         /** The closed int32/number arithmetic rows (E8004/E8005/E8006 projections). */
         private Value arithmetic(SemanticOp op, deal.semantic.ir.BinarySelector selector,
                                  Value left, Value right) {
             return switch (selector) {
-                case INT32_ADD -> int32Result(op,
-                    ((Value.IntValue) left).value() + ((Value.IntValue) right).value());
-                case INT32_SUB -> int32Result(op,
-                    ((Value.IntValue) left).value() - ((Value.IntValue) right).value());
-                case INT32_MUL -> int32Result(op,
-                    ((Value.IntValue) left).value() * ((Value.IntValue) right).value());
+                case INT32_ADD -> int32Result(op, integerUse(left) + integerUse(right));
+                case INT32_SUB -> int32Result(op, integerUse(left) - integerUse(right));
+                case INT32_MUL -> int32Result(op, integerUse(left) * integerUse(right));
                 case INT32_DIV_TRUNC -> {
-                    long divisor = ((Value.IntValue) right).value();
+                    long divisor = integerUse(right);
                     if (divisor == 0) {
                         throw registryFailure(op, FailurePolicyId.INT32_DIVISOR_THEN_RESULT,
                             null, null);
                     }
-                    long dividend = ((Value.IntValue) left).value();
+                    long dividend = integerUse(left);
                     if (dividend == Integer.MIN_VALUE && divisor == -1) {
                         throw registryFailure(op, FailurePolicyId.INT32_RESULT, null, null);
                     }
                     yield int32Result(op, dividend / divisor);
                 }
                 case INT32_MOD_TRUNC -> {
-                    long divisor = ((Value.IntValue) right).value();
+                    long divisor = integerUse(right);
                     if (divisor == 0) {
                         throw registryFailure(op, FailurePolicyId.INT32_DIVISOR_THEN_RESULT,
                             null, null);
                     }
-                    yield int32Result(op, ((Value.IntValue) left).value() % divisor);
+                    yield int32Result(op, integerUse(left) % divisor);
                 }
                 case INT32_POW -> {
-                    long exponent = ((Value.IntValue) right).value();
+                    long exponent = integerUse(right);
                     if (exponent < 0) {
                         throw registryFailure(op, FailurePolicyId.INT32_EXPONENT_THEN_RESULT,
                             null, null);
                     }
-                    long base = ((Value.IntValue) left).value();
+                    long base = integerUse(left);
                     long result = 1;
                     try {
                         for (long i = 0; i < exponent; i++) {
@@ -1989,22 +2020,17 @@ public final class SemanticOracle {
                     }
                     yield int32Result(op, result);
                 }
-                case NUMBER_ADD -> new Value.NumValue(
-                    ((Value.NumValue) left).value() + ((Value.NumValue) right).value());
-                case NUMBER_SUB -> new Value.NumValue(
-                    ((Value.NumValue) left).value() - ((Value.NumValue) right).value());
-                case NUMBER_MUL -> new Value.NumValue(
-                    ((Value.NumValue) left).value() * ((Value.NumValue) right).value());
-                case NUMBER_DIV_IEEE -> new Value.NumValue(
-                    ((Value.NumValue) left).value() / ((Value.NumValue) right).value());
+                case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
+                case NUMBER_SUB -> new Value.NumValue(numberUse(left) - numberUse(right));
+                case NUMBER_MUL -> new Value.NumValue(numberUse(left) * numberUse(right));
+                case NUMBER_DIV_IEEE -> new Value.NumValue(numberUse(left) / numberUse(right));
                 case NUMBER_MOD_FLOOR -> {
-                    double a = ((Value.NumValue) left).value();
-                    double b = ((Value.NumValue) right).value();
+                    double a = numberUse(left);
+                    double b = numberUse(right);
                     yield new Value.NumValue(a - Math.floor(a / b) * b);
                 }
                 case NUMBER_POW_IEEE -> new Value.NumValue(
-                    Math.pow(((Value.NumValue) left).value(),
-                        ((Value.NumValue) right).value()));
+                    Math.pow(numberUse(left), numberUse(right)));
                 default -> throw new IllegalStateException(
                     "selector " + selector + " is not an arithmetic row");
             };
@@ -3432,7 +3458,7 @@ public final class SemanticOracle {
                     // the bounds check already ran at the chain's
                     // BYTE_ELEMENT_ASSIGNMENT boundary.
                     Value.BytesValue target = (Value.BytesValue) container;
-                    long written = ((Value.IntValue) value).value();
+                    long written = integerUse(value);
                     if (written < 0 || written > 255) {
                         throw DealFailure.of(BoundaryExecutor.bytesWriteRangeFailure(),
                             commit.origin(), List.copyOf(frames));
@@ -3469,11 +3495,11 @@ public final class SemanticOracle {
             Value currentLength = valueOf(payload.currentLength());
             NormalizedSlot slot = switch (payload.mode()) {
                 case ARRAY_READ, ARRAY_WRITE -> NormalizedSlot.arraySlot(payload.mode(),
-                    (int) ((Value.IntValue) rawKey).value(),
-                    (int) ((Value.IntValue) currentLength).value());
+                    (int) integerUse(rawKey),
+                    (int) integerUse(currentLength));
                 case BYTES_READ, BYTES_WRITE -> NormalizedSlot.bytesSlot(payload.mode(),
-                    (int) ((Value.IntValue) rawKey).value(),
-                    (int) ((Value.IntValue) currentLength).value());
+                    (int) integerUse(rawKey),
+                    (int) integerUse(currentLength));
                 case TABLE_READ, TABLE_WRITE -> NormalizedSlot.tableSlot(payload.mode(),
                     ((Value.StrValue) rawKey).value());
             };
@@ -5833,7 +5859,7 @@ public final class SemanticOracle {
          * evaluation).
          */
         private Value allocateBytes(SemanticOp op, Value input) {
-            long length = ((Value.IntValue) input).value();
+            long length = integerUse(input);
             if (length < 0) {
                 throw DealFailure.of(FailureContractRegistry.render(
                     FailureArmId.BYTES_ALLOCATE, new LinkedHashMap<>(), null, null, null),
