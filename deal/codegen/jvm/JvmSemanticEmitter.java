@@ -482,11 +482,14 @@ public final class JvmSemanticEmitter {
          * closed host numeric carriers are validated in the pinned int
          * order and every admitted carrier keeps its own variant (only the
          * boxed Integer settles onto the production int carrier), at the
-         * completed array's element positions recursively included, and
-         * then through the completion cell's own check, so the failing arm
-         * and its tuple are the completion cell's. Every non-host
-         * completion (a DEAL body's value, the external-entry activation's
-         * value) takes the plain {@link #bcheckCompletionArgs} route.
+         * completed array's element positions recursively included, with
+         * the completed carriers' own identities preserved and every
+         * settlement committed in place only after the complete completion
+         * passed — and then through the completion cell's own check, so the
+         * failing arm and its tuple are the completion cell's. Every
+         * non-host completion (a DEAL body's value, the external-entry
+         * activation's value) takes the plain
+         * {@link #bcheckCompletionArgs} route.
          */
         static String hostCompletionArgs(RuntimeDescriptor descriptor, String value) {
             return bcheckArgs("JvmRuntime.hostCompletion", descriptor, value);
@@ -6872,7 +6875,9 @@ public final class JvmSemanticEmitter {
             // validated in the pinned int order and every admitted carrier
             // keeps its own variant — only the boxed Integer settles onto
             // the production int carrier, at the completed array's element
-            // positions recursively included — exactly like the oracle's
+            // positions recursively included, with the completed
+            // carriers' own identities preserved — exactly like the
+            // oracle's
             // completion cell); a DEAL body
             // value atomizes by the declared descriptor and takes the plain
             // completion check. The static token owner alone cannot select

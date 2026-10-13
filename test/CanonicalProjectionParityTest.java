@@ -2563,19 +2563,16 @@ public class CanonicalProjectionParityTest {
      */
     private static void testHostArrayCompletions() throws Exception {
         System.out.println("-- the array host async completions: the boxed int at "
-            + "array element positions settles onto the production carrier and a "
-            + "wrong-kind boxed int projects its own kind on all three consumers --");
+            + "array element positions settles onto the production carrier in place "
+            + "and a wrong-kind boxed int projects its own kind on all three "
+            + "consumers --");
         JvmRuntime.Array boxed = new JvmRuntime.Array(1);
         boxed.elements.add(Integer.valueOf(7));
         Object settled = JvmRuntime.hostCompletion("array(int)", "array", boxed);
-        check(settled instanceof JvmRuntime.Array settledArray
-                && settledArray.elements.size() == 1
-                && Long.valueOf(7L).equals(settledArray.elements.get(0)),
-            "the host completion seam settles a boxed int array element onto the "
-                + "production int carrier");
-        check(boxed.elements.get(0) instanceof Integer,
-            "the host completion seam leaves the host's own array carrier "
-                + "untouched");
+        check(settled == boxed && boxed.elements.size() == 1
+                && Long.valueOf(7L).equals(boxed.elements.get(0)),
+            "the host completion seam preserves the completed array's identity and "
+                + "settles its boxed int element onto the production int carrier");
         JvmRuntime.Array inner = new JvmRuntime.Array(1);
         inner.elements.add(Integer.valueOf(7));
         JvmRuntime.Array nested = new JvmRuntime.Array(2);
@@ -2583,12 +2580,16 @@ public class CanonicalProjectionParityTest {
         nested.elements.add(inner);
         Object settledNested = JvmRuntime.hostCompletion("array(array(int))",
             "array", nested);
-        check(settledNested instanceof JvmRuntime.Array settledOuter
-                && settledOuter.elements.get(0) == settledOuter.elements.get(1),
-            "the host completion seam keeps one repeated inner carrier one settled "
-                + "array (the reference-identity contract)");
+        check(settledNested == nested && nested.elements.get(0) == inner
+                && nested.elements.get(1) == inner
+                && Long.valueOf(7L).equals(inner.elements.get(0)),
+            "the host completion seam keeps the completed tree's identities: one "
+                + "repeated inner carrier stays one array (the reference-identity "
+                + "contract) and its boxed element settles in place");
+        JvmRuntime.Array wrongKind = new JvmRuntime.Array(1);
+        wrongKind.elements.add(Integer.valueOf(7));
         try {
-            JvmRuntime.hostCompletion("array(string)", "array", boxed);
+            JvmRuntime.hostCompletion("array(string)", "array", wrongKind);
             check(false, "the host completion seam rejects the boxed int at a "
                 + "string element position");
         } catch (JvmRuntime.DealError element) {
@@ -2601,6 +2602,26 @@ public class CanonicalProjectionParityTest {
                     + element.msg + " expected " + element.expected + " actual "
                     + element.actual);
         }
+        check(wrongKind.elements.get(0) instanceof Integer,
+            "the rejected host completion commits nothing: the host's own carrier "
+                + "keeps its boxed int element untouched");
+        JvmRuntime.Array nestedWrongKind = new JvmRuntime.Array(1);
+        JvmRuntime.Array nestedWrongInner = new JvmRuntime.Array(1);
+        nestedWrongInner.elements.add(Integer.valueOf(7));
+        nestedWrongKind.elements.add(nestedWrongInner);
+        try {
+            JvmRuntime.hostCompletion("array(array(string))", "array",
+                nestedWrongKind);
+            check(false, "the host completion seam rejects the nested boxed int at "
+                + "a string element position");
+        } catch (JvmRuntime.DealError nestedElement) {
+            check("E8003".equals(nestedElement.code),
+                "the host completion seam renders the nested element failure: "
+                    + nestedElement.code + " " + nestedElement.msg);
+        }
+        check(nestedWrongInner.elements.get(0) instanceof Integer,
+            "the rejected nested host completion commits nothing: the inner "
+                + "carrier keeps its boxed int element untouched");
         JvmRuntime.Array cyclic = new JvmRuntime.Array(1);
         cyclic.elements.add(cyclic);
         try {
@@ -2628,6 +2649,8 @@ public class CanonicalProjectionParityTest {
             CanonicalProjectionParityTest::driveHostStringArrayCompletion);
         safely("the wrong-kind nested string[][] host completion",
             CanonicalProjectionParityTest::driveHostNestedStringArrayCompletion);
+        safely("the repeated shared int[] host completion",
+            CanonicalProjectionParityTest::driveHostSharedArrayCompletion);
     }
 
     /** The array-completion case anchor of one probe export. */
@@ -2892,6 +2915,114 @@ public class CanonicalProjectionParityTest {
                     "{__a = true, __n = 1, [1] = {__a = true, __n = 1, [1] = 7}}"),
                 jvmAsyncArrayHost("array(array(java.lang.Integer.valueOf(7)))"),
                 "the nested boxed int string[][] completion");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /**
+     * The repeated-completion declaration of the shared-array drive (no
+     * corpus or host-fixture membership change): one mandatory int array
+     * operation the driver awaits twice.
+     */
+    private static final String SHARED_ARRAY_COMPLETION_DECLARATION = """
+        export async function fetchSharedInts(): int[];
+        """;
+
+    /**
+     * The repeated-completion probe: two awaits of one host operation whose
+     * completed future carries the same static production array. The
+     * crossing must preserve that array's identity — array equality is
+     * reference identity — so the two awaited bindings are one array, and a
+     * write through one alias must stay visible through the other; a copied
+     * or per-crossing rebuilt array fails the probe before it can return.
+     */
+    private static final String SHARED_ARRAY_COMPLETION_DRIVER = """
+        import * as host from "host/async_arrays"
+
+        export async function test_reuse_int_array(): int {
+          let xs: int[] = await host.fetchSharedInts()
+          let ys: int[] = await host.fetchSharedInts()
+          if (xs !== ys) {
+            throw { code: "PROBE_IDENTITY", message: "the same completed array did not keep its identity" }
+          }
+          xs[0] = 8
+          let v: int = ys[0]
+          if (v !== 8) {
+            throw { code: "PROBE_ALIAS", message: "the alias-observed write was lost" }
+          }
+          return v
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
+    /**
+     * The shared-array drive's LuaJIT host: both calls complete with the one
+     * module-level table, so the crossing is the only place a copy could
+     * enter.
+     */
+    private static final String LUA_SHARED_ARRAY_HOST = """
+        local rt = require("deal.runtime")
+
+        local shared = {__a = true, __n = 1, [1] = 7}
+
+        return {
+          fetchSharedInts = function()
+            return rt.async_start(function() return shared end)
+          end,
+        }
+        """;
+
+    /**
+     * The shared-array drive's JVM host: both calls complete with the one
+     * static production array, so the crossing is the only place a copy could
+     * enter.
+     */
+    private static final String JVM_SHARED_ARRAY_HOST = """
+        import java.util.concurrent.CompletableFuture;
+
+        final class HostAsync_arrays {
+          private static final deal.codegen.jvm.JvmRuntime.Array SHARED =
+              array(java.lang.Integer.valueOf(7));
+
+          private static deal.codegen.jvm.JvmRuntime.Array array(
+              java.lang.Object... elements) {
+            deal.codegen.jvm.JvmRuntime.Array array =
+                new deal.codegen.jvm.JvmRuntime.Array(elements.length);
+            for (java.lang.Object element : elements) {
+              array.elements.add(element);
+            }
+            return array;
+          }
+
+          public static Object fetchSharedInts() {
+            return CompletableFuture.completedFuture(SHARED);
+          }
+        }
+        """;
+
+    /**
+     * The repeated shared int[] completion on all three consumers: the host
+     * completes two awaits of one operation with the identical production
+     * array, the awaited bindings must compare equal by reference, and the
+     * write through the first alias must be observed through the second. The
+     * oracle's responder returns the one Value instance, the LuaJIT host the
+     * one table, and the JVM host the one static array — so any per-crossing
+     * rebuild fails the drives' own in-language probes and cannot print OK.
+     */
+    private static void driveHostSharedArrayCompletion() throws Exception {
+        Case spec = new Case("host-abi/host-async-shape-bad",
+            "test_reuse_int_array", Entry.ASYNC, List.of(), "async_arrays", null);
+        Compiled compiled = compile(spec, SHARED_ARRAY_COMPLETION_DRIVER,
+            Map.of("async_arrays", SHARED_ARRAY_COMPLETION_DECLARATION));
+        try {
+            assertAsyncArrayCompletionSuccess(compiled, "test_reuse_int_array",
+                "int:8", arrayCompletionResponder(oracleIntArrayElement(7L)),
+                LUA_SHARED_ARRAY_HOST, JVM_SHARED_ARRAY_HOST,
+                "the repeated shared int[] completion");
         } finally {
             deleteRecursively(compiled.root());
         }
